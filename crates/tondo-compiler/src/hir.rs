@@ -20,6 +20,7 @@ mod check;
 mod const_eval;
 mod lower;
 mod termination;
+mod traits;
 mod verify;
 
 pub use check::{ExpressionCheckLimits, HirCheckOutput, check_expressions};
@@ -34,6 +35,7 @@ pub enum HirError {
     PatternAnalysisLimit { file: FileId, offset: u32 },
     TraitObligationLimit { file: FileId, offset: u32 },
     TraitTerminationInvariant { message: String },
+    TraitSelectionInvariant { message: String },
     Invariant(HirInvariantError),
     Diagnostic(DiagnosticError),
     Package(PackageGraphError),
@@ -62,6 +64,9 @@ impl fmt::Display for HirError {
             ),
             Self::TraitTerminationInvariant { message } => {
                 write!(formatter, "trait termination invariant failed: {message}")
+            }
+            Self::TraitSelectionInvariant { message } => {
+                write!(formatter, "trait selection invariant failed: {message}")
             }
             Self::Invariant(error) => error.fmt(formatter),
             Self::Diagnostic(error) => error.fmt(formatter),

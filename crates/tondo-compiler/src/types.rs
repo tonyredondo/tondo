@@ -391,6 +391,7 @@ enum ScopedUnificationTask {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ScopedSolverMode {
     Unify,
+    MatchLeft,
     Equivalent,
 }
 
@@ -817,6 +818,64 @@ impl TypeInterner {
             )?
             .is_some(),
         ))
+    }
+
+    /// Matches a list of implementation-header patterns against one query and
+    /// returns the query-side type chosen for every header binder.
+    ///
+    /// Only generic parameters in `patterns` are variables. Generic parameters
+    /// in `actuals` remain rigid, which lets a generic body select an
+    /// implementation header without treating its own binders as inference
+    /// variables. All roots share one substitution and normalized unions retain
+    /// their unordered matching semantics.
+    pub fn first_order_pattern_substitution(
+        &self,
+        patterns: &[TypeId],
+        actuals: &[TypeId],
+        parameter_count: u32,
+    ) -> Result<Option<Vec<TypeId>>, TypeError> {
+        if patterns.len() != actuals.len() {
+            return Ok(None);
+        }
+        self.validate_children(patterns)?;
+        self.validate_children(actuals)?;
+        let equations = patterns
+            .iter()
+            .copied()
+            .zip(actuals.iter().copied())
+            .map(|(pattern, actual)| {
+                ScopedUnificationTask::Pair(
+                    ScopedTypePattern::left(pattern),
+                    ScopedTypePattern::right(actual),
+                )
+            })
+            .collect();
+        let Some(unifier) = ScopedTypeUnifier::solve(
+            self,
+            BTreeMap::new(),
+            equations,
+            ScopedSolverMode::MatchLeft,
+        )?
+        else {
+            return Ok(None);
+        };
+
+        let mut arguments = Vec::with_capacity(parameter_count as usize);
+        for position in 0..parameter_count {
+            let parameter = ScopedGenericParameter {
+                scope: TypePatternScope::Left,
+                position,
+            };
+            let Some(replacement) = unifier.substitutions.get(&parameter).copied() else {
+                return Ok(None);
+            };
+            let replacement = unifier.resolve(self, replacement)?;
+            if replacement.scope != TypePatternScope::Right {
+                return Ok(None);
+            }
+            arguments.push(replacement.ty);
+        }
+        Ok(Some(arguments))
     }
 
     fn unify_iterative(
@@ -1301,15 +1360,18 @@ impl ScopedTypeUnifier {
         let left_kind = interner.kind(left.ty)?.clone();
         let right_kind = interner.kind(right.ty)?.clone();
         match (left_kind, right_kind) {
-            (TypeKind::GenericParameter(position), _) if mode == ScopedSolverMode::Unify => self
-                .bind(
+            (TypeKind::GenericParameter(position), _)
+                if matches!(mode, ScopedSolverMode::Unify | ScopedSolverMode::MatchLeft) =>
+            {
+                self.bind(
                     interner,
                     ScopedGenericParameter {
                         scope: left.scope,
                         position,
                     },
                     right,
-                ),
+                )
+            }
             (_, TypeKind::GenericParameter(position)) if mode == ScopedSolverMode::Unify => self
                 .bind(
                     interner,
@@ -1573,8 +1635,9 @@ impl ScopedTypeUnifier {
                 continue;
             }
             match (interner.kind(left.ty)?, interner.kind(right.ty)?) {
-                (TypeKind::GenericParameter(_), _) | (_, TypeKind::GenericParameter(_))
-                    if mode == ScopedSolverMode::Unify => {}
+                (TypeKind::GenericParameter(_), _)
+                    if matches!(mode, ScopedSolverMode::Unify | ScopedSolverMode::MatchLeft) => {}
+                (_, TypeKind::GenericParameter(_)) if mode == ScopedSolverMode::Unify => {}
                 (TypeKind::GenericParameter(_), _) | (_, TypeKind::GenericParameter(_)) => {
                     return Ok(false);
                 }
@@ -2854,6 +2917,46 @@ mod tests {
             interner
                 .first_order_independent_unifiable(&[left_union], &[right_union])
                 .unwrap()
+        );
+    }
+
+    #[test]
+    fn one_way_pattern_matching_keeps_query_binders_rigid() {
+        let mut interner = TypeInterner::default();
+        let first = interner.generic_parameter(0).unwrap();
+        let second = interner.generic_parameter(1).unwrap();
+        let query_binder = interner.generic_parameter(2).unwrap();
+        let int = interner.scalar(ScalarType::Int);
+        let string = interner.scalar(ScalarType::String);
+        let pattern_array = interner
+            .intrinsic(IntrinsicType::Array, vec![second])
+            .unwrap();
+        let pattern = interner.tuple(vec![first, pattern_array]).unwrap();
+        let query_array = interner
+            .intrinsic(IntrinsicType::Array, vec![query_binder])
+            .unwrap();
+        let query = interner.tuple(vec![int, query_array]).unwrap();
+
+        assert_eq!(
+            interner
+                .first_order_pattern_substitution(&[pattern], &[query], 2)
+                .unwrap(),
+            Some(vec![int, query_binder])
+        );
+        assert_eq!(
+            interner
+                .first_order_pattern_substitution(&[int], &[query_binder], 0)
+                .unwrap(),
+            None
+        );
+
+        let repeated = interner.tuple(vec![first, first]).unwrap();
+        let mixed = interner.tuple(vec![int, string]).unwrap();
+        assert_eq!(
+            interner
+                .first_order_pattern_substitution(&[repeated], &[mixed], 1)
+                .unwrap(),
+            None
         );
     }
 

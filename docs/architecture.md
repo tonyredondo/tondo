@@ -155,8 +155,14 @@ signatures and bounds, required/default membership, and the closed/open prelude
 protocol split before checking implementation bodies. A separate program-wide
 coherence pass alpha-renames each implementation's binders, ignores positive
 bounds, rejects unifiable complete headers, and enforces the functional
-`Iterator[T]` target-to-element relation. Termination, constraint selection, and
-trait dispatch remain separate later phases. Pattern checking is part of the
+`Iterator[T]` target-to-element relation. Once coherence succeeds, size-change
+termination turns every open-trait header bound into a canonical query edge,
+constructs structural `<`/`=`/`?` matrices, and saturates them inside trait-name
+SCCs. Every idempotent self matrix must decrease on its diagonal; otherwise HIR
+emits `E1112` with a deterministic cycle witness. Closed structural capabilities
+create no edges, all analysis uses an explicit work budget, and the admission
+verifier independently reconstructs the proof before MIR. Constraint selection
+and trait dispatch remain separate later phases. Pattern checking is part of the
 same typed-HIR boundary and records typed pattern arenas, guarded match arms,
 irrefutability, reachability, and exhaustiveness without deferring decisions to MIR. Assignment
 checking resolves target projections before the RHS and records compound

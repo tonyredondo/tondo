@@ -28,8 +28,11 @@ checked bodies. Defaults may be omitted or replaced; missing, extra, or
 signature-drifting methods and manual implementations of closed protocols are
 rejected with `E1114`. Coherence compares independently scoped generic headers
 before resolving bounds, rejects ordinary overlap with `E1111`, and enforces
-the unique `Iterator[T]` element for each target with `E1113`. Termination of
-trait obligations and static dispatch remain later M4 work. The same HIR covers
+the unique `Iterator[T]` element for each target with `E1113`. Generic
+implementation bounds then pass the normative size-change termination analysis:
+canonical query matrices are saturated inside trait SCCs, non-decreasing
+idempotent cycles produce `E1112`, and all analysis work is explicitly bounded.
+Constraint selection and static dispatch remain later M4 work. The same HIR covers
 constants, bindings, functions, inherent methods, blocks, conditionals, loops,
 scalar operators, calls, `Option`,
 `Result`, `fail`, `?`, every pattern form, and exhaustive guarded `match`, with

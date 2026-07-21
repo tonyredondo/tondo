@@ -1,12 +1,12 @@
 # Tondo: tracker de implementación
 
 **Estado:** activo  
-**Versión del tracker:** 0.25
+**Versión del tracker:** 0.26
 **Última actualización:** 2026-07-21  
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
-**Objetivo inmediato:** implementar la terminación normativa por cambio de
-tamaño de las obligaciones de trait (TRAIT-004) sobre cabeceras ya coherentes,
-sin activar todavía selección ni dispatch estático.
+**Objetivo inmediato:** implementar selección y dispatch estático de traits,
+llamadas calificadas y métodos visibles por constraints (TRAIT-005), sobre una
+tabla de implementaciones ya coherente y con terminación demostrada.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -974,7 +974,7 @@ dinámicos ni dispatch oculto.
 
 - [x] **TRAIT-003 — Detectar impls solapados antes de resolver constraints.**
 
-- [ ] **TRAIT-004 — Implementar el control de terminación por cambio de tamaño.**
+- [x] **TRAIT-004 — Implementar el control de terminación por cambio de tamaño.**
 
 - [ ] **TRAIT-005 — Implementar dispatch estático, llamadas calificadas y
   métodos visibles a través de constraints.**
@@ -996,7 +996,7 @@ dinámicos ni dispatch oculto.
 - [ ] **CALL-004 — Implementar closures sync, async y unsafe en la
   representación semántica, aunque sus runtimes se activen después.**
 
-Evidencia observada el 2026-07-21 para GEN-001, GEN-002 y TRAIT-001 a TRAIT-003:
+Evidencia observada el 2026-07-21 para GEN-001, GEN-002 y TRAIT-001 a TRAIT-004:
 
 - Los bodies genéricos bounded y unbounded se comprueban una sola vez con
   parámetros rígidos. Las llamadas explícitas e inferidas cierran todas las
@@ -1006,7 +1006,7 @@ Evidencia observada el 2026-07-21 para GEN-001, GEN-002 y TRAIT-001 a TRAIT-003:
   ya la prueba estructural cerrada y rechaza `Join`, bounds no reenviados y
   function values inválidos con `E1105`; los demás traits permanecen
   representados y presupuestados, pero sus pruebas dependen de CAP-001 y
-  TRAIT-003 a TRAIT-005.
+  TRAIT-005.
 - La monomorfización se ejecuta entre MIR verificado y bytecode. Parte de todos
   los callables no genéricos y de function values constantes, sigue referencias
   transitivas, sustituye todos los tipos de firma y body y deduplica por
@@ -1054,7 +1054,22 @@ Evidencia observada el 2026-07-21 para GEN-001, GEN-002 y TRAIT-001 a TRAIT-003:
   cubren scopes alfa independientes, occurs checks, uniones sin orden, bounds
   ignorados, aliases, instanciaciones distintas, no cascada, orden de archivos,
   mutación del HIR y diagnósticos JSON públicos.
-- El gate acumulado pasa 339 tests, `git diff --check`, formatter check, build
+- La terminación convierte cada bound abierto de un `impl` genérico en una
+  arista entre consultas canónicas, excluye las capacidades cerradas y deriva
+  matrices `<`/`=`/`?` por subterm estructural sin depender de tipos concretos
+  futuros.
+- Un worklist satura matrices dentro de cada SCC de identidades de trait y
+  rechaza con `E1112` toda matriz idempotente sin descenso diagonal. El
+  diagnóstico reconstruye una ruta completa y estable con spans relacionados;
+  las aristas acíclicas no necesitan descenso.
+- Construcción, recorridos de tipos, composición, idempotencia y expansión del
+  testigo consumen un presupuesto explícito y fallan como `T0002`. El verifier
+  reconstruye independientemente el grafo y vuelve a demostrar terminación
+  antes de MIR.
+- Las regresiones cubren descenso, adaptadores acíclicos, ciclos iguales,
+  mutuos, permutaciones, crecimiento, múltiples SCC, álgebra de composición,
+  precedencia frente a overlap, orden lógico, HIR mutado y límite público.
+- El gate acumulado pasa 350 tests, `git diff --check`, formatter check, build
   de todos los targets, Clippy con warnings denegados y Rustdoc con warnings
   denegados.
 
@@ -1696,13 +1711,26 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es TRAIT-004: construir el grafo de obligaciones de
-cada `impl` genérico y aplicar la comprobación normativa de terminación por
-cambio de tamaño antes de selección o dispatch estático.
+La siguiente acción activa es TRAIT-005: seleccionar la implementación única
+después de sustituir una consulta, demostrar sus bounds, materializar llamadas
+calificadas y por constraint, y bajar todo dispatch como llamada estática.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.26 — 2026-07-21
+
+- Se completa TRAIT-004 con consultas canónicas, matrices normativas de cambio
+  de tamaño, SCCs deterministas y saturación iterativa bajo presupuesto.
+- Los ciclos idempotentes sin descenso diagonal producen `E1112` con la ruta y
+  matriz testigo; las capacidades cerradas no crean aristas y los adaptadores
+  acíclicos siguen siendo válidos.
+- El admission verifier repite la prueba antes de MIR y las regresiones cubren
+  álgebra, descenso, conservación, permutación, crecimiento, múltiples SCC,
+  orden de archivos, precedencia diagnóstica, mutación y agotamiento `T0002`.
+- El gate acumulado queda en 350 tests, formatter check, build de todos los
+  targets, Clippy y Rustdoc sin warnings; la cola avanza a TRAIT-005.
 
 ### 0.25 — 2026-07-21
 

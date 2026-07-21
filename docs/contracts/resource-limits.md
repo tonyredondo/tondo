@@ -54,8 +54,11 @@ checking shares one typed-HIR budget between expression and pattern arenas.
 Pattern usefulness, reachability, and exhaustiveness share a separate
 matrix-work budget and use an explicit worklist rather than the process stack.
 Every generic-bound proof attempt consumes the trait-obligation budget. The
-currently closed `Discard` proof completes in HIR; obligations owned by later
-capability or trait phases remain incomplete rather than being guessed.
+same configured ceiling independently bounds size-change termination work:
+matrix cells, structural-subterm traversal, matrix composition, idempotence
+checks, and diagnostic-witness expansion. The currently closed `Discard` proof
+completes in HIR; obligations owned by later capability or trait phases remain
+incomplete rather than being guessed.
 
 MIR and bytecode construction bound every request-local table before growth;
 their initialization, lifetime, and tag-refinement analyses share independent

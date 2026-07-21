@@ -207,6 +207,31 @@ emits `E1111`; otherwise the functional target-to-element rule emits `E1113`.
 This pass runs before any constraint proof, so adding or removing positive
 bounds cannot change coherence.
 
+Termination admission runs only after the complete implementation table passes
+coherence, preventing overlap errors from cascading into cycle diagnostics. A
+generic implementation contributes one edge from its complete normalized
+header query —trait arguments followed by target— to every open source or
+prelude trait bound on a header binder. The destination query contains the bound
+arguments followed by that binder. Closed `Copy`, `Discard`, `Equatable`, `Key`,
+`Send`, `Share`, `Call`, `CallMut`, and `CallOnce` bounds create no edge.
+
+Each edge owns a size-change matrix whose rows are destination components and
+whose columns are source components. Exact canonical terms are `=`, strict
+structural subterms are `<`, and every other relation is `?`. Matrix composition
+implements the normative strongest-path algebra, and a deterministic worklist
+saturates the finite matrix set inside each SCC of the trait-identity graph.
+Every idempotent matrix returning to its source trait must contain `<` on its
+diagonal. A failing SCC emits one `E1112` with the complete reconstructed trait
+path, the non-decreasing matrix, and related spans for the other contributing
+implementations. Acyclic edges need no decrease.
+
+Matrix construction, structural walks, compositions, idempotence checks, and
+witness expansion consume an explicit ceiling derived from the request's trait-
+obligation limit; exhaustion is `T0002`, never partial admission or a panic.
+The algorithm is iterative over type graphs, SCCs, saturation, and witnesses.
+The admission verifier rebuilds every edge and repeats the complete termination
+proof independently before HIR can cross into MIR.
+
 Parameter and generic-binder spellings are intentionally absent from this
 comparison. `Display` requires `fn display(self): String`; `Iterator[T]`
 requires `fn next(mut self): T?`. A trait default remains a generic template;
@@ -221,8 +246,8 @@ coverage, table/callable correspondence, receiver metadata, and the propagated
 `Self: Send` requirement. The structural proof that a concrete target actually
 satisfies `Send` belongs to CAP-001; the obligation is retained now rather than
 silently discarded. The verifier also independently reruns ordinary and
-`Iterator[T]` coherence over the admitted table. TRAIT-004 and TRAIT-005 own
-termination, selection, qualified calls, and static dispatch.
+`Iterator[T]` coherence and size-change termination over the admitted table.
+TRAIT-005 owns selection, qualified calls, and static dispatch.
 
 ## Generic constraints
 
@@ -242,8 +267,8 @@ specialized function values alike.
 
 Other intrinsic capability bounds and source/external trait bounds remain
 normalized in HIR and consume the same budget, but mark the semantic output
-incomplete when an instantiation needs proof. CAP-001 and TRAIT-004 through
-TRAIT-005 own those proof rules. The driver therefore cannot run or report a
+incomplete when an instantiation needs proof. CAP-001 and TRAIT-005 own those
+proof rules. The driver therefore cannot run or report a
 complete check for such an instantiation by silently assuming the bound.
 
 Range HIR distinguishes exclusive and inclusive ends and accepts only identical

@@ -54,7 +54,11 @@ impl SizeChangeMatrix {
                 limit: budget.limit,
             },
         )?;
-        budget.consume(cell_count as u64)?;
+        let matrix_work =
+            u64::try_from(cell_count).map_err(|_| TraitTerminationError::ResourceLimit {
+                limit: budget.limit,
+            })?;
+        budget.consume(matrix_work)?;
         let mut cells = Vec::with_capacity(cell_count);
         for destination in destination {
             for source in source {
@@ -198,6 +202,12 @@ struct Summary<N> {
 }
 
 #[derive(Debug, Clone)]
+struct SaturationFailure<N> {
+    summary_id: usize,
+    summaries: Vec<Summary<N>>,
+}
+
+#[derive(Debug, Clone)]
 pub(crate) struct TraitTerminationFailure<N> {
     traits: Vec<N>,
     origins: Vec<usize>,
@@ -337,13 +347,12 @@ where
         if !has_cycle {
             continue;
         }
-        let Some((summary_id, summaries)) = saturate_component(&prepared, &members, &mut budget)?
-        else {
+        let Some(failure) = saturate_component(&prepared, &members, &mut budget)? else {
             continue;
         };
         failures.push(reconstruct_failure(
-            summary_id,
-            &summaries,
+            failure.summary_id,
+            &failure.summaries,
             &prepared,
             &mut budget,
         )?);
@@ -355,7 +364,7 @@ fn saturate_component<N>(
     edges: &[PreparedEdge<N>],
     members: &BTreeSet<N>,
     budget: &mut AnalysisBudget,
-) -> Result<Option<(usize, Vec<Summary<N>>)>, TraitTerminationError>
+) -> Result<Option<SaturationFailure<N>>, TraitTerminationError>
 where
     N: Clone + Ord,
 {
@@ -409,15 +418,20 @@ where
         }
     }
 
+    let mut failing_summary = None;
     for (key, summary_id) in &by_key {
         if key.source == key.destination
             && key.matrix.is_idempotent(budget)?
             && !key.matrix.has_decreasing_diagonal()
         {
-            return Ok(Some((*summary_id, summaries)));
+            failing_summary = Some(*summary_id);
+            break;
         }
     }
-    Ok(None)
+    Ok(failing_summary.map(|summary_id| SaturationFailure {
+        summary_id,
+        summaries,
+    }))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -646,6 +660,25 @@ mod tests {
     }
 
     #[test]
+    fn size_relation_composition_matches_the_normative_table() {
+        use SizeRelation::{Decrease, Equal, Unknown};
+
+        for (after, before, expected) in [
+            (Unknown, Unknown, Unknown),
+            (Unknown, Equal, Unknown),
+            (Unknown, Decrease, Unknown),
+            (Equal, Unknown, Unknown),
+            (Equal, Equal, Equal),
+            (Equal, Decrease, Decrease),
+            (Decrease, Unknown, Unknown),
+            (Decrease, Equal, Decrease),
+            (Decrease, Decrease, Decrease),
+        ] {
+            assert_eq!(SizeRelation::compose(after, before), expected);
+        }
+    }
+
+    #[test]
     fn size_change_accepts_descent_and_acyclic_unknown_edges() {
         let mut interner = TypeInterner::default();
         let parameter = interner.generic_parameter(0).unwrap();
@@ -700,5 +733,22 @@ mod tests {
             analyze_trait_termination(&interner, &equal, 0),
             Err(TraitTerminationError::ResourceLimit { limit: 0 })
         ));
+    }
+
+    #[test]
+    fn size_change_reports_each_failing_component_in_stable_order() {
+        let mut interner = TypeInterner::default();
+        let parameter = interner.generic_parameter(0).unwrap();
+        let edges = [
+            edge("Zulu", vec![parameter], "Zulu", vec![parameter], 9),
+            edge("Alpha", vec![parameter], "Alpha", vec![parameter], 4),
+        ];
+
+        let failures = analyze_trait_termination(&interner, &edges, 10_000).unwrap();
+        assert_eq!(failures.len(), 2);
+        assert_eq!(failures[0].traits(), ["Alpha", "Alpha"]);
+        assert_eq!(failures[0].origins(), [4]);
+        assert_eq!(failures[1].traits(), ["Zulu", "Zulu"]);
+        assert_eq!(failures[1].origins(), [9]);
     }
 }

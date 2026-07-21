@@ -18,6 +18,7 @@ use crate::types::{
 use super::const_eval::{
     ConstantEvaluationError, evaluate, has_unavailable_input, is_nan, values_equal,
 };
+use super::traits::{TraitQuery, TraitSelectionError, select_implementation};
 
 use super::{
     HirAssertMessagePart, HirAssignmentOperator, HirAssignmentTarget, HirAssignmentTargetKind,
@@ -246,6 +247,7 @@ struct BodyContext {
     receiver_permission: PlacePermission,
     callable: Option<CallableContext>,
     trait_body: Option<TraitBodyContext>,
+    trait_assumptions: Vec<TraitQuery>,
     discard_statuses: BTreeMap<u32, DiscardStatus>,
     loops: Vec<HirLoopId>,
 }
@@ -347,8 +349,7 @@ enum ConstantDiagnosticKind {
 }
 
 struct ExplicitGenericArguments {
-    first_position: u32,
-    arguments: Vec<TypeId>,
+    arguments: BTreeMap<u32, TypeId>,
 }
 
 struct GenericCallInference {
@@ -387,6 +388,13 @@ struct FlowSummary {
 }
 
 type DiscardStatus = super::HirDiscardStatus;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TraitProofStatus {
+    Satisfied,
+    Deferred,
+    Unsatisfied,
+}
 
 struct DiscardNode {
     floor: DiscardStatus,
@@ -694,6 +702,7 @@ impl<'a> ExpressionChecker<'a> {
             };
             let mut context = BodyContext {
                 discard_statuses: callable_discard_statuses(&callable),
+                trait_assumptions: self.callable_trait_assumptions(&callable)?,
                 ..BodyContext::default()
             };
             context.trait_body = self.trait_body_context(callable.id);
@@ -911,6 +920,64 @@ impl<'a> ExpressionChecker<'a> {
             self_type: definition.self_type(),
             fixed_arity,
         })
+    }
+
+    fn callable_trait_assumptions(
+        &mut self,
+        callable: &HirCallableSignature,
+    ) -> Result<Vec<TraitQuery>, HirError> {
+        let mut assumptions = Vec::new();
+        for parameter in &callable.generics {
+            let target = self
+                .program
+                .interner
+                .generic_parameter(parameter.position)?;
+            assumptions.extend(
+                parameter
+                    .bounds
+                    .iter()
+                    .map(|bound| TraitQuery::new(bound, target)),
+            );
+        }
+
+        match callable.id {
+            HirCallableId::Member(member) => {
+                let Some(member) = self.resolved.member(member) else {
+                    return Ok(assumptions);
+                };
+                if matches!(
+                    member.kind(),
+                    MemberKind::TraitMethod | MemberKind::TraitAssociatedFunction
+                ) && let MemberOwner::Type(owner) = member.owner()
+                    && let Some(declaration) = self.program.declaration(owner)
+                    && matches!(declaration.kind(), HirTypeDeclarationKind::Trait(_))
+                {
+                    let arity = u32::try_from(declaration.parameters().len())
+                        .map_err(|_| crate::types::TypeError::ResourceLimit { limit: u32::MAX })?;
+                    let arguments = (0..arity)
+                        .map(|position| self.program.interner.generic_parameter(position))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    let target = self.program.interner.generic_parameter(arity)?;
+                    assumptions.push(TraitQuery::from_parts(
+                        HirTraitConstructor::Symbol(owner),
+                        arguments,
+                        target,
+                    ));
+                }
+            }
+            HirCallableId::Implementation(method) => {
+                if let Some(implementation) = self.program.implementation(method.implementation()) {
+                    assumptions.push(TraitQuery::new(
+                        &implementation.trait_reference,
+                        implementation.target,
+                    ));
+                }
+            }
+            HirCallableId::Symbol(_) => {}
+        }
+        assumptions.sort();
+        assumptions.dedup();
+        Ok(assumptions)
     }
 
     fn check_reachability_warnings(&mut self) -> Result<(), HirError> {
@@ -1974,7 +2041,7 @@ impl<'a> ExpressionChecker<'a> {
             self.sources.span(file, bracket.range())?,
             &callable,
             &arguments,
-            &context.discard_statuses,
+            context,
         )?;
         let function_type = TypeSubstitution::new(arguments.clone())
             .apply(&mut self.program.interner, callable.function_type)?;
@@ -6090,7 +6157,7 @@ impl<'a> ExpressionChecker<'a> {
         span: Span,
         callable: &HirCallableSignature,
         arguments: &[TypeId],
-        generic_discard_statuses: &BTreeMap<u32, DiscardStatus>,
+        context: &BodyContext,
     ) -> Result<(), HirError> {
         for parameter in &callable.generics {
             let Some(argument) = arguments.get(parameter.position as usize).copied() else {
@@ -6101,56 +6168,191 @@ impl<'a> ExpressionChecker<'a> {
                 .into());
             };
             for bound in &parameter.bounds {
-                if self.trait_obligations_remaining == 0 {
-                    return Err(HirError::TraitObligationLimit {
-                        file: span.file(),
-                        offset: span.range().start(),
-                    });
-                }
-                self.trait_obligations_remaining -= 1;
-
-                // Instantiate every bound argument now even when its resolver belongs to a
-                // later phase. This keeps the obligation closed and prevents inference or a
-                // callable-local generic parameter from escaping the call boundary.
-                let _arguments = self.instantiate_types(arguments, bound.arguments())?;
-                match bound.constructor() {
-                    HirTraitConstructor::Prelude(name) if name.as_str() == "Discard" => {
-                        self.require_discard_with_generics(
-                            span,
-                            argument,
-                            generic_discard_statuses,
-                            "generic bound `Discard`",
-                        )?;
-                    }
-                    HirTraitConstructor::Prelude(name)
-                        if matches!(
-                            name.as_str(),
-                            "Copy"
-                                | "Equatable"
-                                | "Key"
-                                | "Send"
-                                | "Share"
-                                | "Call"
-                                | "CallMut"
-                                | "CallOnce"
-                                | "Iterator"
-                                | "Display"
-                        ) =>
-                    {
-                        // The obligation is represented and budgeted here. Its proof is
-                        // supplied by CAP-001 or trait resolution rather than guessed.
-                        self.complete = false;
-                    }
-                    HirTraitConstructor::Symbol(_) | HirTraitConstructor::External(_) => {
-                        self.complete = false;
-                    }
-                    HirTraitConstructor::Prelude(_) => {
-                        self.complete = false;
-                    }
-                }
+                let bound_arguments = self.instantiate_types(arguments, bound.arguments())?;
+                self.require_trait_query(
+                    span,
+                    TraitQuery::from_parts(bound.constructor().clone(), bound_arguments, argument),
+                    context,
+                )?;
             }
         }
         Ok(())
+    }
+
+    fn require_trait_query(
+        &mut self,
+        span: Span,
+        query: TraitQuery,
+        context: &BodyContext,
+    ) -> Result<bool, HirError> {
+        let mut active = BTreeSet::new();
+        let mut memo = BTreeMap::new();
+        match self.prove_trait_query(span, &query, context, &mut active, &mut memo)? {
+            TraitProofStatus::Satisfied => Ok(true),
+            TraitProofStatus::Deferred => {
+                self.complete = false;
+                Ok(false)
+            }
+            TraitProofStatus::Unsatisfied => {
+                let requirement = self.trait_query_name(&query)?;
+                let actual = self.program.interner.canonical(query.target())?;
+                self.emit(
+                    span,
+                    "E1105",
+                    format!("type `{actual}` does not satisfy required trait `{requirement}`"),
+                    Vec::new(),
+                    Some((requirement, actual)),
+                )?;
+                Ok(false)
+            }
+        }
+    }
+
+    fn prove_trait_query(
+        &mut self,
+        span: Span,
+        query: &TraitQuery,
+        context: &BodyContext,
+        active: &mut BTreeSet<TraitQuery>,
+        memo: &mut BTreeMap<TraitQuery, TraitProofStatus>,
+    ) -> Result<TraitProofStatus, HirError> {
+        if let Some(status) = memo.get(query).copied() {
+            return Ok(status);
+        }
+        if self.trait_obligations_remaining == 0 {
+            return Err(HirError::TraitObligationLimit {
+                file: span.file(),
+                offset: span.range().start(),
+            });
+        }
+        self.trait_obligations_remaining -= 1;
+
+        if context.trait_assumptions.contains(query) {
+            memo.insert(query.clone(), TraitProofStatus::Satisfied);
+            return Ok(TraitProofStatus::Satisfied);
+        }
+
+        if let HirTraitConstructor::Prelude(name) = query.constructor() {
+            match name.as_str() {
+                "Discard" => {
+                    let status = match self
+                        .discard_status_with_generics(query.target(), &context.discard_statuses)?
+                    {
+                        DiscardStatus::Satisfied => TraitProofStatus::Satisfied,
+                        DiscardStatus::Deferred => TraitProofStatus::Deferred,
+                        DiscardStatus::Unsatisfied => TraitProofStatus::Unsatisfied,
+                    };
+                    memo.insert(query.clone(), status);
+                    return Ok(status);
+                }
+                "Copy" | "Equatable" | "Key" | "Send" | "Share" | "Call" | "CallMut"
+                | "CallOnce" => {
+                    memo.insert(query.clone(), TraitProofStatus::Deferred);
+                    return Ok(TraitProofStatus::Deferred);
+                }
+                "Display" | "Iterator" => {}
+                _ => {
+                    memo.insert(query.clone(), TraitProofStatus::Deferred);
+                    return Ok(TraitProofStatus::Deferred);
+                }
+            }
+        }
+
+        if !active.insert(query.clone()) {
+            return Err(HirError::TraitSelectionInvariant {
+                message: format!(
+                    "accepted implementation table re-entered `{}`",
+                    self.trait_query_name(query)?
+                ),
+            });
+        }
+        let selection = match select_implementation(
+            &self.program.interner,
+            &self.program.implementations,
+            query,
+        ) {
+            Ok(selection) => selection,
+            Err(TraitSelectionError::Type(error)) => return Err(error.into()),
+            Err(TraitSelectionError::Ambiguous) => {
+                return Err(HirError::TraitSelectionInvariant {
+                    message: format!(
+                        "coherent table has multiple matches for `{}`",
+                        self.trait_query_name(query)?
+                    ),
+                });
+            }
+        };
+        let Some(selection) = selection else {
+            active.remove(query);
+            let status = if matches!(query.constructor(), HirTraitConstructor::External(_)) {
+                TraitProofStatus::Deferred
+            } else {
+                TraitProofStatus::Unsatisfied
+            };
+            memo.insert(query.clone(), status);
+            return Ok(status);
+        };
+        let implementation = self
+            .program
+            .implementation(selection.implementation())
+            .expect("trait selection returns an indexed implementation")
+            .clone();
+        let substitution = TypeSubstitution::new(selection.arguments().to_vec());
+        let mut status = TraitProofStatus::Satisfied;
+        for parameter in &implementation.parameters {
+            let target = *selection
+                .arguments()
+                .get(parameter.position as usize)
+                .expect("implementation binders are determined by their header");
+            for bound in &parameter.bounds {
+                let arguments = bound
+                    .arguments
+                    .iter()
+                    .map(|argument| {
+                        substitution
+                            .apply(&mut self.program.interner, *argument)
+                            .map_err(HirError::from)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let obligation =
+                    TraitQuery::from_parts(bound.constructor.clone(), arguments, target);
+                match self.prove_trait_query(span, &obligation, context, active, memo)? {
+                    TraitProofStatus::Satisfied => {}
+                    TraitProofStatus::Deferred => {
+                        if status == TraitProofStatus::Satisfied {
+                            status = TraitProofStatus::Deferred;
+                        }
+                    }
+                    TraitProofStatus::Unsatisfied => status = TraitProofStatus::Unsatisfied,
+                }
+            }
+        }
+        active.remove(query);
+        memo.insert(query.clone(), status);
+        Ok(status)
+    }
+
+    fn trait_query_name(&self, query: &TraitQuery) -> Result<String, HirError> {
+        let mut name = match query.constructor() {
+            HirTraitConstructor::Symbol(symbol) => self
+                .resolved
+                .symbol(*symbol)
+                .map(|symbol| symbol.identity().canonical_name())
+                .unwrap_or_else(|| format!("trait#{}", symbol.index())),
+            HirTraitConstructor::Prelude(name) => name.as_str().to_owned(),
+            HirTraitConstructor::External(identity) => identity.canonical_name(),
+        };
+        if !query.arguments().is_empty() {
+            let arguments = query
+                .arguments()
+                .iter()
+                .map(|argument| self.program.interner.canonical(*argument))
+                .collect::<Result<Vec<_>, _>>()?;
+            name.push('[');
+            name.push_str(&arguments.join(", "));
+            name.push(']');
+        }
+        Ok(name)
     }
 
     fn discard_status_with_generics(
@@ -8760,7 +8962,7 @@ impl<'a> ExpressionChecker<'a> {
             self.sources.span(file, brackets[0].range())?,
             &callable,
             &arguments,
-            &context.discard_statuses,
+            context,
         )?;
         let function_type = TypeSubstitution::new(arguments.clone())
             .apply(&mut self.program.interner, callable.function_type)?;
@@ -8834,6 +9036,20 @@ impl<'a> ExpressionChecker<'a> {
                 return Ok(None);
             };
             if resolved_index + 1 < tokens.len() {
+                if let Some(call) = self.check_qualified_source_trait_call(
+                    file,
+                    range,
+                    base_node,
+                    suffix,
+                    explicit_bracket,
+                    &tokens,
+                    resolved_index,
+                    &resolved,
+                    expected,
+                    context,
+                )? {
+                    return Ok(Some(call));
+                }
                 let resolved_is_type = match &resolved {
                     ResolvedName::Symbol(symbol) => {
                         self.resolved.symbol(*symbol).is_some_and(|symbol| {
@@ -8885,6 +9101,7 @@ impl<'a> ExpressionChecker<'a> {
                             suffix,
                             None,
                             explicit_bracket,
+                            BTreeMap::new(),
                             expected,
                             context,
                         )
@@ -8941,6 +9158,205 @@ impl<'a> ExpressionChecker<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn check_qualified_source_trait_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        base_node: SyntaxNodeRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        tokens: &[SyntaxTokenRef<'_>],
+        resolved_index: usize,
+        resolved: &ResolvedName,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let ResolvedName::Symbol(owner) = resolved else {
+            return Ok(None);
+        };
+        if !self
+            .resolved
+            .symbol(*owner)
+            .is_some_and(|symbol| symbol.kind() == SymbolKind::Trait)
+        {
+            return Ok(None);
+        }
+        if resolved_index + 2 != tokens.len() {
+            return Ok(None);
+        }
+        let member_token = *tokens.last().expect("a qualified call has a member token");
+        let Some(member) = self.callable_member(
+            file,
+            *owner,
+            member_token,
+            &[MemberKind::TraitMethod, MemberKind::TraitAssociatedFunction],
+        )?
+        else {
+            self.emit(
+                self.sources.span(file, member_token.range())?,
+                "E1102",
+                "the qualified trait has no callable member with this name",
+                Vec::new(),
+                None,
+            )?;
+            return Ok(Some(self.recovery_expression(file, range)?));
+        };
+        let declaration = self
+            .program
+            .declaration(*owner)
+            .expect("resolved source traits have HIR declarations");
+        let trait_arity = u32::try_from(declaration.parameters().len())
+            .map_err(|_| crate::types::TypeError::ResourceLimit { limit: u32::MAX })?;
+        let mut trait_brackets = Vec::new();
+        let mut method_brackets = Vec::new();
+        for bracket in base_node
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::BracketPostfix)
+        {
+            if bracket.range().end() <= member_token.range().start() {
+                trait_brackets.push(bracket);
+            } else {
+                method_brackets.push(bracket);
+            }
+        }
+        if let Some(bracket) = explicit_bracket
+            && !method_brackets
+                .iter()
+                .any(|existing| existing.range() == bracket.range())
+        {
+            method_brackets.push(bracket);
+        }
+        if trait_brackets.len() > 1 || method_brackets.len() > 1 {
+            self.emit(
+                self.sources.span(file, base_node.range())?,
+                "E1104",
+                "a qualified trait call has at most one trait list and one method list",
+                Vec::new(),
+                None,
+            )?;
+            return Ok(Some(self.recovery_expression(file, range)?));
+        }
+
+        let trait_arguments = if let Some(bracket) = trait_brackets.first().copied() {
+            let Some(arguments) = self.expression_generic_arguments(file, bracket)? else {
+                return Ok(Some(self.recovery_expression(file, range)?));
+            };
+            arguments
+        } else {
+            Vec::new()
+        };
+        if trait_arguments.len() != trait_arity as usize {
+            self.emit(
+                self.sources.span(file, base_node.range())?,
+                "E1104",
+                format!(
+                    "qualified trait expects {trait_arity} type arguments, found {}",
+                    trait_arguments.len()
+                ),
+                Vec::new(),
+                None,
+            )?;
+            return Ok(Some(self.recovery_expression(file, range)?));
+        }
+
+        let member_declaration = self
+            .resolved
+            .member(member)
+            .expect("trait member lookup returns an indexed member");
+        let has_receiver = member_declaration.kind() == MemberKind::TraitMethod;
+        let method_arity = member_declaration.generic_arity();
+        let method_arguments = if let Some(bracket) = method_brackets.first().copied() {
+            let Some(arguments) = self.expression_generic_arguments(file, bracket)? else {
+                return Ok(Some(self.recovery_expression(file, range)?));
+            };
+            arguments
+        } else {
+            Vec::new()
+        };
+        let required_method_arguments = method_arity + u32::from(!has_receiver);
+        if method_arguments.len() != required_method_arguments as usize {
+            self.emit(
+                self.sources.span(file, member_token.range())?,
+                "E1104",
+                if has_receiver {
+                    format!(
+                        "qualified trait method expects {method_arity} method type arguments, found {}",
+                        method_arguments.len()
+                    )
+                } else {
+                    format!(
+                        "qualified associated trait operation expects Self plus {method_arity} method type arguments, found {}",
+                        method_arguments.len()
+                    )
+                },
+                Vec::new(),
+                None,
+            )?;
+            return Ok(Some(self.recovery_expression(file, range)?));
+        }
+
+        let mut fixed = BTreeMap::new();
+        for (position, argument) in trait_arguments.iter().copied().enumerate() {
+            fixed.insert(
+                u32::try_from(position).expect("trait arity fits in u32"),
+                argument,
+            );
+        }
+        let method_start = trait_arity
+            .checked_add(u32::from(has_receiver))
+            .expect("trait method prefix fits in u32");
+        for (index, argument) in method_arguments.iter().copied().enumerate() {
+            let position = method_start
+                .checked_add(u32::try_from(index).expect("method arity fits in u32"))
+                .expect("trait method generic positions fit in u32");
+            fixed.insert(position, argument);
+        }
+
+        let call = self.finish_resolved_member_call(
+            file,
+            range,
+            member_token,
+            member,
+            suffix,
+            None,
+            None,
+            fixed,
+            expected,
+            context,
+        )?;
+        let HirExpressionKind::Call { callee, .. } = self.program.expressions[call.0 as usize].kind
+        else {
+            return Ok(Some(call));
+        };
+        let HirExpressionKind::SpecializedFunction {
+            callable: HirCallableId::Member(selected_member),
+            ref arguments,
+        } = self.program.expressions[callee.0 as usize].kind
+        else {
+            return Ok(Some(call));
+        };
+        if selected_member != member {
+            return Err(HirError::TraitSelectionInvariant {
+                message: "qualified trait call changed its callable identity".into(),
+            });
+        }
+        let target = *arguments
+            .get(trait_arity as usize)
+            .expect("trait call inference resolves contextual Self");
+        let query = TraitQuery::from_parts(
+            HirTraitConstructor::Symbol(*owner),
+            arguments[..trait_arity as usize].to_vec(),
+            target,
+        );
+        self.require_trait_query(
+            self.sources.span(file, member_token.range())?,
+            query,
+            context,
+        )?;
+        Ok(Some(call))
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn finish_value_member_call(
         &mut self,
         file: FileId,
@@ -8970,6 +9386,7 @@ impl<'a> ExpressionChecker<'a> {
                     suffix,
                     Some(receiver),
                     explicit_bracket,
+                    BTreeMap::new(),
                     expected,
                     context,
                 )
@@ -8993,6 +9410,70 @@ impl<'a> ExpressionChecker<'a> {
                     suffix,
                     Some(receiver),
                     explicit_bracket,
+                    BTreeMap::new(),
+                    expected,
+                    context,
+                )
+                .map(Some);
+        }
+        let mut constrained = Vec::new();
+        for query in &context.trait_assumptions {
+            if query.target() != receiver_type {
+                continue;
+            }
+            let HirTraitConstructor::Symbol(owner) = query.constructor() else {
+                continue;
+            };
+            let Some(member) =
+                self.callable_member(file, *owner, member_token, &[MemberKind::TraitMethod])?
+            else {
+                continue;
+            };
+            constrained.push((query.clone(), member));
+        }
+        constrained.sort_by_key(|(query, member)| (query.clone(), *member));
+        constrained.dedup();
+        if constrained.len() > 1 {
+            self.emit(
+                self.sources.span(file, member_token.range())?,
+                "E1004",
+                "method name is provided by more than one visible trait constraint; use a qualified trait call",
+                constrained
+                    .iter()
+                    .filter_map(|(_, member)| self.resolved.member(*member))
+                    .map(|member| ("candidate trait method", member.span()))
+                    .collect(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        if let Some((query, member)) = constrained.pop() {
+            let mut fixed = query
+                .arguments()
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(position, argument)| {
+                    (
+                        u32::try_from(position).expect("trait arity fits in u32"),
+                        argument,
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            fixed.insert(
+                u32::try_from(query.arguments().len()).expect("trait arity fits in u32"),
+                query.target(),
+            );
+            return self
+                .finish_resolved_member_call(
+                    file,
+                    range,
+                    member_token,
+                    member,
+                    suffix,
+                    Some(receiver),
+                    explicit_bracket,
+                    fixed,
                     expected,
                     context,
                 )
@@ -9054,6 +9535,7 @@ impl<'a> ExpressionChecker<'a> {
         suffix: SyntaxNodeRef<'_>,
         receiver: Option<HirExpressionId>,
         explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        mut fixed_generics: BTreeMap<u32, TypeId>,
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
@@ -9089,7 +9571,7 @@ impl<'a> ExpressionChecker<'a> {
             self.complete = false;
             return self.recovery_expression(file, range);
         };
-        let explicit_generics = if let Some(bracket) = explicit_bracket {
+        if let Some(bracket) = explicit_bracket {
             if member_generic_arity == 0 {
                 self.emit(
                     self.sources.span(file, bracket.range())?,
@@ -9116,16 +9598,21 @@ impl<'a> ExpressionChecker<'a> {
                 )?;
                 return self.recovery_expression(file, range);
             }
-            Some(ExplicitGenericArguments {
-                first_position: callable
-                    .generic_arity
-                    .checked_sub(member_generic_arity)
-                    .expect("member-local generic arity is part of the callable arity"),
-                arguments,
-            })
-        } else {
-            None
-        };
+            let first = callable
+                .generic_arity
+                .checked_sub(member_generic_arity)
+                .expect("member-local generic arity is part of the callable arity");
+            for (index, argument) in arguments.into_iter().enumerate() {
+                let index = u32::try_from(index).expect("generic arity fits in u32");
+                let position = first
+                    .checked_add(index)
+                    .expect("member-local generic positions fit in u32");
+                fixed_generics.insert(position, argument);
+            }
+        }
+        let explicit_generics = (!fixed_generics.is_empty()).then_some(ExplicitGenericArguments {
+            arguments: fixed_generics,
+        });
         self.record_member_reference(self.sources.span(file, token.range())?, member);
         let callee = self.allocate_expression(HirExpression {
             span: self.sources.span(file, token.range())?,
@@ -9542,13 +10029,9 @@ impl<'a> ExpressionChecker<'a> {
                 .map_or(0, |(_, body)| body.fixed_arity);
             let arguments = (0..callable.generic_arity)
                 .map(|position| {
-                    let explicit = explicit_generics.as_ref().and_then(|explicit| {
-                        position
-                            .checked_sub(explicit.first_position)
-                            .and_then(|index| usize::try_from(index).ok())
-                            .and_then(|index| explicit.arguments.get(index))
-                            .copied()
-                    });
+                    let explicit = explicit_generics
+                        .as_ref()
+                        .and_then(|explicit| explicit.arguments.get(&position).copied());
                     if let Some(explicit) = explicit {
                         Ok(explicit)
                     } else if position < fixed_arity {
@@ -9942,7 +10425,7 @@ impl<'a> ExpressionChecker<'a> {
                 self.sources.span(file, suffix.range())?,
                 &inferred_callable,
                 &type_arguments,
-                &context.discard_statuses,
+                context,
             )?;
             let function_type = inferred_callable.function_type;
             let final_type = TypeSubstitution::new(type_arguments.clone())
@@ -11833,6 +12316,124 @@ mod tests {
              }\n",
         );
         assert_eq!(codes(&missing), ["E1102"]);
+    }
+
+    #[test]
+    fn source_trait_calls_are_visible_by_constraint_and_qualified_explicitly() {
+        let (_, resolved, output) = check(
+            "trait Summary {\n\
+                 fn summarize(self): String\n\
+             }\n\
+             type User = { name: String }\n\
+             impl Summary for User {\n\
+                 fn summarize(self): String { self.name }\n\
+             }\n\
+             fn generic[T: Summary](value: T): String { value.summarize() }\n\
+             fn qualified(value: User): String { Summary.summarize(value) }\n\
+             fn main() {\n\
+                 let user = User { name: \"Tony\" }\n\
+                 _ = generic(user)\n\
+                 _ = qualified(user)\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let summary = resolved
+            .symbols()
+            .find(|symbol| symbol.name().as_str() == "Summary")
+            .unwrap();
+        let summarize = resolved
+            .members()
+            .find(|member| {
+                member.owner() == MemberOwner::Type(summary.id())
+                    && member.name().as_str() == "summarize"
+            })
+            .unwrap()
+            .id();
+        let specializations = output
+            .program()
+            .expressions()
+            .filter_map(|expression| {
+                let HirExpressionKind::SpecializedFunction {
+                    callable: HirCallableId::Member(member),
+                    arguments,
+                } = expression.kind()
+                else {
+                    return None;
+                };
+                (*member == summarize).then(|| {
+                    arguments
+                        .iter()
+                        .map(|argument| output.program().interner().canonical(*argument).unwrap())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(specializations.contains(&vec!["$0".into()]));
+        assert!(
+            specializations
+                .iter()
+                .any(|arguments| { arguments.len() == 1 && arguments[0].ends_with("::User") })
+        );
+    }
+
+    #[test]
+    fn constraint_method_collisions_require_qualification() {
+        let (_, _, ambiguous) = check(
+            "trait Left { fn label(self): String }\n\
+             trait Right { fn label(self): String }\n\
+             fn choose[T: Left + Right](value: T): String { value.label() }\n",
+        );
+        assert_eq!(codes(&ambiguous), ["E1004"]);
+
+        let (_, _, qualified) = check(
+            "trait Left { fn label(self): String }\n\
+             trait Right { fn label(self): String }\n\
+             fn choose[T: Left + Right](value: T): String { Left.label(value) }\n",
+        );
+        assert!(
+            qualified.diagnostics().is_empty(),
+            "{:#?}",
+            qualified.diagnostics()
+        );
+        assert!(qualified.is_complete());
+    }
+
+    #[test]
+    fn qualified_trait_calls_prove_recursive_implementation_bounds() {
+        let (_, _, accepted) = check(
+            "trait Summary { fn summarize(self): String }\n\
+             type Leaf = { value: String }\n\
+             type Box[T] = { value: T }\n\
+             impl Summary for Leaf {\n\
+                 fn summarize(self): String { self.value }\n\
+             }\n\
+             impl[T: Summary] Summary for Box[T] {\n\
+                 fn summarize(self): String { self.value.summarize() }\n\
+             }\n\
+             fn render(value: Box[Leaf]): String { Summary.summarize(value) }\n",
+        );
+        assert!(
+            accepted.diagnostics().is_empty(),
+            "{:#?}",
+            accepted.diagnostics()
+        );
+        assert!(accepted.is_complete());
+
+        let (_, _, rejected) = check(
+            "trait Summary { fn summarize(self): String }\n\
+             type Box[T] = { value: T }\n\
+             impl[T: Summary] Summary for Box[T] {\n\
+                 fn summarize(self): String { self.value.summarize() }\n\
+             }\n\
+             fn render(value: Box[Int]): String { Summary.summarize(value) }\n",
+        );
+        assert_eq!(codes(&rejected), ["E1105"]);
     }
 
     #[test]

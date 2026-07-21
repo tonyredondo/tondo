@@ -30,7 +30,7 @@ field or variant projection.
 Source constraints are checked before an instance is admitted. The closed
 bootstrap `Discard` constraint is executable now. Other intrinsic and user
 trait obligations remain represented and budgeted, but cannot admit executable
-code until CAP-001 and TRAIT-001 through TRAIT-005 provide their proof rules.
+code until CAP-001 and TRAIT-005 provide their remaining proof rules.
 
 ## Consequences
 
