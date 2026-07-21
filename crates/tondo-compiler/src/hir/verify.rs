@@ -15,7 +15,8 @@ use super::{
     HirConstantValueKind, HirConstantVariantValue, HirExpression, HirExpressionId,
     HirExpressionKind, HirFlow, HirForKind, HirGenericParameter, HirIterationProtocol, HirPattern,
     HirPatternId, HirPatternKind, HirProgram, HirStatement, HirTraitConstructor, HirTraitIdentity,
-    HirTraitMethodKey, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue,
+    HirTraitMethodKey, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
+    HirVariantValue,
 };
 
 /// Reports a compiler defect at the boundary between typed HIR and MIR.
@@ -1649,9 +1650,9 @@ impl Verifier<'_> {
                 let complete_arguments = if arguments.is_empty() {
                     (0..method.generic_arity())
                         .map(|position| {
-                            interner.generic_parameter(position).map_err(|error| {
-                                HirInvariantError::new(context, error.to_string())
-                            })
+                            interner
+                                .generic_parameter(position)
+                                .map_err(|error| HirInvariantError::new(context, error.to_string()))
                         })
                         .collect::<Result<Vec<_>, _>>()?
                 } else {
@@ -1849,8 +1850,7 @@ impl Verifier<'_> {
         let expected_element = match protocol {
             HirIterationProtocol::Intrinsic => match self.program.interner.kind(source.ty) {
                 Ok(TypeKind::Intrinsic {
-                    constructor:
-                        IntrinsicType::Array | IntrinsicType::Set | IntrinsicType::Range,
+                    constructor: IntrinsicType::Array | IntrinsicType::Set | IntrinsicType::Range,
                     arguments,
                 }) => Some(arguments[0]),
                 Ok(TypeKind::Intrinsic {

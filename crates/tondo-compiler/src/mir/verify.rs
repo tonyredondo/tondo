@@ -2155,10 +2155,7 @@ impl Verifier<'_> {
         };
         let mut fixed = Vec::new();
         let mut receiver = None;
-        if matches!(
-            callee.kind,
-            MirOperandKind::PreludeTraitFunction { .. }
-        ) {
+        if matches!(callee.kind, MirOperandKind::PreludeTraitFunction { .. }) {
             if function.variadic().is_some() || function.parameters().len() != 1 {
                 return Err(MirInvariantError::new(
                     context,

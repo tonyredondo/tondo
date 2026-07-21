@@ -22,13 +22,12 @@ use super::{
     HirAssertMessagePart, HirAssignmentOperator, HirAssignmentTarget, HirAssignmentTargetKind,
     HirBinaryOperator, HirBody, HirBootstrapHostFunction, HirCallArgument, HirCallArgumentTarget,
     HirCallableId, HirCallableSignature, HirContainmentKind, HirError, HirExpression,
-    HirExpressionId, HirExpressionKind, HirField, HirFlow, HirForKind, HirIndexAccess, HirLiteral,
-    HirIterationProtocol, HirLoopId, HirMapEntry, HirMatchArm, HirMemberReference,
-    HirNominalShape, HirPattern, HirPatternField, HirPatternId, HirPatternKind,
-    HirPrefixOperator, HirPreludeTraitMethod, HirProgram, HirRangeKind, HirRecordFieldValue,
-    HirStatement, HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory,
-    HirVariantPayload, HirVariantValue, HirWriteKind, TraitQuery, TraitSelectionError,
-    select_implementation,
+    HirExpressionId, HirExpressionKind, HirField, HirFlow, HirForKind, HirIndexAccess,
+    HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry, HirMatchArm, HirMemberReference,
+    HirNominalShape, HirPattern, HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator,
+    HirPreludeTraitMethod, HirProgram, HirRangeKind, HirRecordFieldValue, HirStatement,
+    HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
+    HirVariantValue, HirWriteKind, TraitQuery, TraitSelectionError, select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6275,10 +6274,14 @@ impl<'a> ExpressionChecker<'a> {
                     "E1105",
                     match origin {
                         TraitRequirementOrigin::Direct => {
-                            format!("type `{actual}` does not satisfy required trait `{requirement}`")
+                            format!(
+                                "type `{actual}` does not satisfy required trait `{requirement}`"
+                            )
                         }
                         TraitRequirementOrigin::GenericBound => {
-                            format!("type `{actual}` does not satisfy generic bound `{requirement}`")
+                            format!(
+                                "type `{actual}` does not satisfy generic bound `{requirement}`"
+                            )
                         }
                     },
                     Vec::new(),
@@ -7331,10 +7334,7 @@ impl<'a> ExpressionChecker<'a> {
                         TraitRequirementOrigin::Direct,
                     )? {
                         let function_type = HirPreludeTraitMethod::IteratorNext
-                            .function_type(
-                                &mut self.program.interner,
-                                &[element, source_type],
-                            )?
+                            .function_type(&mut self.program.interner, &[element, source_type])?
                             .expect("Iterator.next has one trait argument and Self");
                         (
                             element,
@@ -7499,15 +7499,14 @@ impl<'a> ExpressionChecker<'a> {
             else {
                 continue;
             };
-            let element = TypeSubstitution::new(arguments)
-                .apply(&mut self.program.interner, element)?;
+            let element =
+                TypeSubstitution::new(arguments).apply(&mut self.program.interner, element)?;
             let query = HirPreludeTraitMethod::IteratorNext
                 .query(&[element, source])
                 .expect("Iterator queries contain the element and Self");
             if selected.replace((implementation, query)).is_some() {
                 return Err(HirError::TraitSelectionInvariant {
-                    message: "coherent Iterator table selected more than one target header"
-                        .into(),
+                    message: "coherent Iterator table selected more than one target header".into(),
                 });
             }
         }
@@ -9527,10 +9526,10 @@ impl<'a> ExpressionChecker<'a> {
         let ResolvedName::Symbol(owner) = resolved else {
             return Ok(None);
         };
-        if !self
+        if self
             .resolved
             .symbol(*owner)
-            .is_some_and(|symbol| symbol.kind() == SymbolKind::Trait)
+            .is_none_or(|symbol| symbol.kind() != SymbolKind::Trait)
         {
             return Ok(None);
         }
@@ -10519,66 +10518,65 @@ impl<'a> ExpressionChecker<'a> {
             }
             _ => None,
         };
-        let mut inference = if let Some((target, generic_arity, function_type, fixed_arity)) =
-            generic_template
-        {
-            let arguments = (0..generic_arity)
-                .map(|position| {
-                    let explicit = explicit_generics
-                        .as_ref()
-                        .and_then(|explicit| explicit.arguments.get(&position).copied());
-                    if let Some(explicit) = explicit {
-                        Ok(explicit)
-                    } else if position < fixed_arity {
-                        self.program
-                            .interner
-                            .generic_parameter(position)
-                            .map_err(HirError::from)
-                    } else {
-                        self.program
-                            .interner
-                            .fresh_inference()
-                            .map_err(HirError::from)
-                    }
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            let inferred_type = TypeSubstitution::new(arguments.clone())
-                .apply(&mut self.program.interner, function_type)?;
-            function = match self.program.interner.kind(inferred_type)?.clone() {
-                TypeKind::Function(function) => function,
-                _ => unreachable!("callable signatures always lower to function types"),
-            };
-            let mut inference = GenericCallInference {
-                target,
-                function_type,
-                arguments,
-                solver: InferenceContext::new(),
-                contradiction: false,
-            };
-            if let Some(expectation) = expected {
-                let contextual = match expectation {
-                    ExpressionExpectation::Direct(ty) => ty,
-                    ExpressionExpectation::CallableOutcome { full, success } => {
-                        if matches!(
-                            self.program.interner.kind(function.outcome())?,
-                            TypeKind::Result { .. }
-                        ) {
-                            full
+        let mut inference =
+            if let Some((target, generic_arity, function_type, fixed_arity)) = generic_template {
+                let arguments = (0..generic_arity)
+                    .map(|position| {
+                        let explicit = explicit_generics
+                            .as_ref()
+                            .and_then(|explicit| explicit.arguments.get(&position).copied());
+                        if let Some(explicit) = explicit {
+                            Ok(explicit)
+                        } else if position < fixed_arity {
+                            self.program
+                                .interner
+                                .generic_parameter(position)
+                                .map_err(HirError::from)
                         } else {
-                            success
+                            self.program
+                                .interner
+                                .fresh_inference()
+                                .map_err(HirError::from)
                         }
-                    }
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let inferred_type = TypeSubstitution::new(arguments.clone())
+                    .apply(&mut self.program.interner, function_type)?;
+                function = match self.program.interner.kind(inferred_type)?.clone() {
+                    TypeKind::Function(function) => function,
+                    _ => unreachable!("callable signatures always lower to function types"),
                 };
-                let _ = self.constrain_inference_assignment(
-                    &mut inference.solver,
-                    function.outcome(),
-                    contextual,
-                )?;
-            }
-            Some(inference)
-        } else {
-            None
-        };
+                let mut inference = GenericCallInference {
+                    target,
+                    function_type,
+                    arguments,
+                    solver: InferenceContext::new(),
+                    contradiction: false,
+                };
+                if let Some(expectation) = expected {
+                    let contextual = match expectation {
+                        ExpressionExpectation::Direct(ty) => ty,
+                        ExpressionExpectation::CallableOutcome { full, success } => {
+                            if matches!(
+                                self.program.interner.kind(function.outcome())?,
+                                TypeKind::Result { .. }
+                            ) {
+                                full
+                            } else {
+                                success
+                            }
+                        }
+                    };
+                    let _ = self.constrain_inference_assignment(
+                        &mut inference.solver,
+                        function.outcome(),
+                        contextual,
+                    )?;
+                }
+                Some(inference)
+            } else {
+                None
+            };
         let argument_nodes = suffix
             .child_nodes()
             .filter(|child| child.kind() == SyntaxKind::CallArgument)
@@ -13005,7 +13003,11 @@ mod tests {
                  Codec[Json].decode[User, String](value)\n\
              }\n",
         );
-        assert!(output.diagnostics().is_empty(), "{:#?}", output.diagnostics());
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
         assert!(output.is_complete());
 
         let (_, _, missing_self) = check(
@@ -13072,7 +13074,11 @@ mod tests {
                  }\n",
             ),
         ]);
-        assert!(output.diagnostics().is_empty(), "{:#?}", output.diagnostics());
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
         assert!(output.is_complete());
     }
 
@@ -13128,10 +13134,7 @@ mod tests {
                 && arguments.len() == 1
                 && arguments[0].ends_with("::Label")
         }));
-        assert!(specializations.contains(&(
-            HirPreludeTraitMethod::Display,
-            vec!["$0".into()]
-        )));
+        assert!(specializations.contains(&(HirPreludeTraitMethod::Display, vec!["$0".into()])));
         assert!(specializations.iter().any(|(method, arguments)| {
             *method == HirPreludeTraitMethod::IteratorNext
                 && arguments.len() == 2

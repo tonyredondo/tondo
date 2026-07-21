@@ -65,12 +65,7 @@ pub fn lower_to_bytecode(
         BytecodeError::construction("MIR admission", format!("input MIR is invalid: {error}"))
     })?;
 
-    let monomorphization = monomorphize(
-        resolved,
-        hir,
-        mir,
-        limits.max_generic_instantiations,
-    )?;
+    let monomorphization = monomorphize(resolved, hir, mir, limits.max_generic_instantiations)?;
     let nominal_ids = nominal_ids(hir, limits.max_nominals)?;
     let callable_ids = callable_ids(&monomorphization.callables, limits.max_callables)?;
     let function_ids = function_ids(&monomorphization.functions, limits.max_functions)?;
@@ -229,7 +224,7 @@ fn monomorphize(
                 | FunctionReference::PreludeTrait { arguments, .. } => arguments,
             };
             let arguments = templates
-                .into_iter()
+                .iter()
                 .map(|template| {
                     substitution
                         .apply(&mut interner, *template)
@@ -367,9 +362,7 @@ fn register_reference(
             if existing != &target {
                 return Err(BytecodeError::construction(
                     "trait dispatch",
-                    format!(
-                        "{reference:?} resolved inconsistently to {existing:?} and {target:?}"
-                    ),
+                    format!("{reference:?} resolved inconsistently to {existing:?} and {target:?}"),
                 ));
             }
         } else {
@@ -410,9 +403,7 @@ fn register_prelude_reference(
         if existing != &target {
             return Err(BytecodeError::construction(
                 "trait dispatch",
-                format!(
-                    "{reference:?} resolved inconsistently to {existing:?} and {target:?}"
-                ),
+                format!("{reference:?} resolved inconsistently to {existing:?} and {target:?}"),
             ));
         }
     } else {
@@ -436,19 +427,22 @@ fn resolve_prelude_trait_dispatch(
     interner: &mut TypeInterner,
     reference: &PreludeTraitInstance,
 ) -> Result<CallableInstance, BytecodeError> {
-    let query = reference.method.query(&reference.arguments).ok_or_else(|| {
-        BytecodeError::construction(
-            "trait dispatch",
-            format!(
-                "prelude method {:?} has {} type arguments instead of {}",
-                reference.method,
-                reference.arguments.len(),
-                reference.method.generic_arity()
-            ),
-        )
-    })?;
+    let query = reference
+        .method
+        .query(&reference.arguments)
+        .ok_or_else(|| {
+            BytecodeError::construction(
+                "trait dispatch",
+                format!(
+                    "prelude method {:?} has {} type arguments instead of {}",
+                    reference.method,
+                    reference.arguments.len(),
+                    reference.method.generic_arity()
+                ),
+            )
+        })?;
     let selection = select_implementation(interner, hir.implementations(), &query)
-        .map_err(|error| prelude_trait_dispatch_selection_error(error))?
+        .map_err(prelude_trait_dispatch_selection_error)?
         .ok_or_else(|| {
             BytecodeError::construction(
                 "trait dispatch",
@@ -578,9 +572,9 @@ fn resolve_source_trait_dispatch(
     let MemberOwner::Type(owner) = member_declaration.owner() else {
         return Ok(None);
     };
-    if !resolved
+    if resolved
         .symbol(owner)
-        .is_some_and(|symbol| symbol.kind() == SymbolKind::Trait)
+        .is_none_or(|symbol| symbol.kind() != SymbolKind::Trait)
     {
         return Ok(None);
     }
@@ -724,8 +718,12 @@ fn verify_dispatch_signature(
             "trait dispatch",
             format!(
                 "selected target has type `{}` instead of `{}`",
-                interner.canonical(target_type).unwrap_or_else(|_| target_type.to_string()),
-                interner.canonical(source_type).unwrap_or_else(|_| source_type.to_string())
+                interner
+                    .canonical(target_type)
+                    .unwrap_or_else(|_| target_type.to_string()),
+                interner
+                    .canonical(source_type)
+                    .unwrap_or_else(|_| source_type.to_string())
             ),
         ));
     }
@@ -1413,10 +1411,7 @@ fn collect_terminator_types(terminator: &MirTerminator, types: &mut BTreeSet<Typ
     }
 }
 
-fn collect_function_references(
-    function: &MirFunction,
-    references: &mut Vec<FunctionReference>,
-) {
+fn collect_function_references(function: &MirFunction, references: &mut Vec<FunctionReference>) {
     for block in function.blocks() {
         for statement in block.statements() {
             if let MirStatementKind::Assign { value, .. } = statement.kind() {
@@ -1449,10 +1444,7 @@ fn collect_operand_function_references(
     }
 }
 
-fn collect_rvalue_function_references(
-    value: &MirRvalue,
-    references: &mut Vec<FunctionReference>,
-) {
+fn collect_rvalue_function_references(value: &MirRvalue, references: &mut Vec<FunctionReference>) {
     match value.kind() {
         MirRvalueKind::Use(value)
         | MirRvalueKind::Length(value)
@@ -2038,19 +2030,7 @@ fn lower_function(
         .collect::<Result<_, BytecodeError>>()?;
     let blocks = function
         .blocks()
-        .map(|block| {
-            lower_block(
-                block,
-                &span_ids,
-                context.catalog,
-                context.nominal_ids,
-                context.callable_ids,
-                context.dispatches,
-                context.prelude_dispatches,
-                context.constant_ids,
-                type_map,
-            )
-        })
+        .map(|block| lower_block(block, &span_ids, context, type_map))
         .collect::<Result<_, BytecodeError>>()?;
     let spans = span_ids.keys().copied().collect::<Vec<_>>();
 
@@ -2113,12 +2093,7 @@ fn function_span_ids(
 fn lower_block(
     block: &MirBasicBlock,
     span_ids: &BTreeMap<bc::BytecodeSpan, bc::BytecodeSpanId>,
-    catalog: &TypeCatalog,
-    nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
-    callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
-    dispatches: &BTreeMap<CallableInstance, CallableInstance>,
-    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
-    constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
+    context: &FunctionLoweringContext<'_>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeBlock, BytecodeError> {
     Ok(bc::BytecodeBlock {
@@ -2129,42 +2104,16 @@ fn lower_block(
         instructions: block
             .statements()
             .iter()
-            .map(|statement| {
-                lower_statement(
-                    statement,
-                    span_ids,
-                    catalog,
-                    nominal_ids,
-                    callable_ids,
-                    dispatches,
-                    prelude_dispatches,
-                    constant_ids,
-                    type_map,
-                )
-            })
+            .map(|statement| lower_statement(statement, span_ids, context, type_map))
             .collect::<Result<_, BytecodeError>>()?,
-        terminator: lower_terminator(
-            block.terminator(),
-            span_ids,
-            catalog,
-            callable_ids,
-            dispatches,
-            prelude_dispatches,
-            constant_ids,
-            type_map,
-        )?,
+        terminator: lower_terminator(block.terminator(), span_ids, context, type_map)?,
     })
 }
 
 fn lower_statement(
     statement: &MirStatement,
     span_ids: &BTreeMap<bc::BytecodeSpan, bc::BytecodeSpanId>,
-    catalog: &TypeCatalog,
-    nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
-    callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
-    dispatches: &BTreeMap<CallableInstance, CallableInstance>,
-    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
-    constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
+    context: &FunctionLoweringContext<'_>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeInstruction, BytecodeError> {
     let kind = match statement.kind() {
@@ -2175,17 +2124,8 @@ fn lower_statement(
             bc::BytecodeInstructionKind::StorageDead(bc::BytecodeSlotId::new(local.index()))
         }
         MirStatementKind::Assign { destination, value } => bc::BytecodeInstructionKind::Store {
-            destination: lower_place(destination, catalog, type_map)?,
-            value: lower_rvalue(
-                value,
-                catalog,
-                nominal_ids,
-                callable_ids,
-                dispatches,
-                prelude_dispatches,
-                constant_ids,
-                type_map,
-            )?,
+            destination: lower_place(destination, context.catalog, type_map)?,
+            value: lower_rvalue(value, context, type_map)?,
         },
     };
     Ok(bc::BytecodeInstruction {
@@ -2197,11 +2137,7 @@ fn lower_statement(
 fn lower_terminator(
     terminator: &MirTerminator,
     span_ids: &BTreeMap<bc::BytecodeSpan, bc::BytecodeSpanId>,
-    catalog: &TypeCatalog,
-    callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
-    dispatches: &BTreeMap<CallableInstance, CallableInstance>,
-    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
-    constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
+    context: &FunctionLoweringContext<'_>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeTerminator, BytecodeError> {
     let kind = match terminator.kind() {
@@ -2213,15 +2149,7 @@ fn lower_terminator(
             if_true,
             if_false,
         } => bc::BytecodeTerminatorKind::BranchBool {
-            condition: lower_operand(
-                condition,
-                catalog,
-                callable_ids,
-                dispatches,
-                prelude_dispatches,
-                constant_ids,
-                type_map,
-            )?,
+            condition: lower_operand(condition, context, type_map)?,
             if_true: block_id(*if_true),
             if_false: block_id(*if_false),
         },
@@ -2230,18 +2158,15 @@ fn lower_terminator(
             cases,
             otherwise,
         } => bc::BytecodeTerminatorKind::BranchTag {
-            value: lower_operand(
-                value,
-                catalog,
-                callable_ids,
-                dispatches,
-                prelude_dispatches,
-                constant_ids,
-                type_map,
-            )?,
+            value: lower_operand(value, context, type_map)?,
             cases: cases
                 .iter()
-                .map(|(tag, target)| Ok((lower_tag(*tag, catalog, type_map)?, block_id(*target))))
+                .map(|(tag, target)| {
+                    Ok((
+                        lower_tag(*tag, context.catalog, type_map)?,
+                        block_id(*target),
+                    ))
+                })
                 .collect::<Result<_, BytecodeError>>()?,
             otherwise: block_id(*otherwise),
         },
@@ -2251,18 +2176,10 @@ fn lower_terminator(
             target,
             unwind,
         } => bc::BytecodeTerminatorKind::Invoke {
-            operation: lower_operation(
-                operation,
-                catalog,
-                callable_ids,
-                dispatches,
-                prelude_dispatches,
-                constant_ids,
-                type_map,
-            )?,
+            operation: lower_operation(operation, context, type_map)?,
             destination: destination
                 .as_ref()
-                .map(|place| lower_place(place, catalog, type_map))
+                .map(|place| lower_place(place, context.catalog, type_map))
                 .transpose()?,
             target: target.map(block_id),
             unwind: block_id(*unwind),
@@ -2274,8 +2191,8 @@ fn lower_terminator(
             exhausted,
             unwind,
         } => bc::BytecodeTerminatorKind::IteratorNext {
-            state: lower_place(state, catalog, type_map)?,
-            destination: lower_place(destination, catalog, type_map)?,
+            state: lower_place(state, context.catalog, type_map)?,
+            destination: lower_place(destination, context.catalog, type_map)?,
             has_value: block_id(*has_value),
             exhausted: block_id(*exhausted),
             unwind: block_id(*unwind),
@@ -2289,24 +2206,14 @@ fn lower_terminator(
         } => bc::BytecodeTerminatorKind::ValidatePlaces {
             places: places
                 .iter()
-                .map(|place| lower_place(place, catalog, type_map))
+                .map(|place| lower_place(place, context.catalog, type_map))
                 .collect::<Result<_, BytecodeError>>()?,
             replacements: replacements
                 .iter()
                 .map(|replacement| {
                     replacement
                         .as_ref()
-                        .map(|replacement| {
-                            lower_operand(
-                                replacement,
-                                catalog,
-                                callable_ids,
-                                dispatches,
-                                prelude_dispatches,
-                                constant_ids,
-                                type_map,
-                            )
-                        })
+                        .map(|replacement| lower_operand(replacement, context, type_map))
                         .transpose()
                 })
                 .collect::<Result<_, BytecodeError>>()?,
@@ -2394,22 +2301,18 @@ fn lower_projection(
 
 fn lower_operand(
     operand: &MirOperand,
-    catalog: &TypeCatalog,
-    callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
-    dispatches: &BTreeMap<CallableInstance, CallableInstance>,
-    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
-    constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
+    context: &FunctionLoweringContext<'_>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeOperand, BytecodeError> {
     let kind = match operand.kind() {
         MirOperandKind::Constant(value) => {
-            bc::BytecodeOperandKind::Constant(lower_immediate(value, constant_ids)?)
+            bc::BytecodeOperandKind::Constant(lower_immediate(value, context.constant_ids)?)
         }
         MirOperandKind::Copy(place) => {
-            bc::BytecodeOperandKind::Copy(lower_place(place, catalog, type_map)?)
+            bc::BytecodeOperandKind::Copy(lower_place(place, context.catalog, type_map)?)
         }
         MirOperandKind::Move(place) => {
-            bc::BytecodeOperandKind::Move(lower_place(place, catalog, type_map)?)
+            bc::BytecodeOperandKind::Move(lower_place(place, context.catalog, type_map)?)
         }
         MirOperandKind::Function {
             callable,
@@ -2423,8 +2326,8 @@ fn lower_operand(
                         .map(|argument| mapped_type(*argument, type_map))
                         .collect::<Result<_, _>>()?,
                 };
-                let target = dispatches.get(&source).unwrap_or(&source);
-                map_callable_instance(target, callable_ids)?
+                let target = context.dispatches.get(&source).unwrap_or(&source);
+                map_callable_instance(target, context.callable_ids)?
             },
             arguments: Vec::new(),
         },
@@ -2436,20 +2339,20 @@ fn lower_operand(
                     .map(|argument| mapped_type(*argument, type_map))
                     .collect::<Result<_, _>>()?,
             };
-            let target = prelude_dispatches.get(&source).ok_or_else(|| {
+            let target = context.prelude_dispatches.get(&source).ok_or_else(|| {
                 BytecodeError::construction(
                     "trait dispatch",
                     format!("prelude trait reference {source:?} has no selected target"),
                 )
             })?;
             bc::BytecodeOperandKind::Function {
-                callable: map_callable_instance(target, callable_ids)?,
+                callable: map_callable_instance(target, context.callable_ids)?,
                 arguments: Vec::new(),
             }
         }
     };
     Ok(bc::BytecodeOperand {
-        ty: mapped_catalog_id(operand.ty(), type_map, catalog)?,
+        ty: mapped_catalog_id(operand.ty(), type_map, context.catalog)?,
         kind,
     })
 }
@@ -2478,25 +2381,10 @@ fn lower_immediate(
 
 fn lower_rvalue(
     value: &MirRvalue,
-    catalog: &TypeCatalog,
-    nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
-    callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
-    dispatches: &BTreeMap<CallableInstance, CallableInstance>,
-    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
-    constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
+    context: &FunctionLoweringContext<'_>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeRvalue, BytecodeError> {
-    let operand = |value: &MirOperand| {
-        lower_operand(
-            value,
-            catalog,
-            callable_ids,
-            dispatches,
-            prelude_dispatches,
-            constant_ids,
-            type_map,
-        )
-    };
+    let operand = |value: &MirOperand| lower_operand(value, context, type_map);
     let kind = match value.kind() {
         MirRvalueKind::Use(value) => bc::BytecodeRvalueKind::Use(operand(value)?),
         MirRvalueKind::Prefix {
@@ -2516,7 +2404,7 @@ fn lower_rvalue(
             right: operand(right)?,
         },
         MirRvalueKind::Aggregate { shape, values } => bc::BytecodeRvalueKind::Construct {
-            shape: lower_aggregate(shape, nominal_ids)?,
+            shape: lower_aggregate(shape, context.nominal_ids)?,
             values: values
                 .iter()
                 .map(operand)
@@ -2562,7 +2450,7 @@ fn lower_rvalue(
         }
     };
     Ok(bc::BytecodeRvalue {
-        ty: mapped_catalog_id(value.ty(), type_map, catalog)?,
+        ty: mapped_catalog_id(value.ty(), type_map, context.catalog)?,
         kind,
     })
 }
@@ -2598,24 +2486,10 @@ fn lower_aggregate(
 
 fn lower_operation(
     operation: &MirOperation,
-    catalog: &TypeCatalog,
-    callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
-    dispatches: &BTreeMap<CallableInstance, CallableInstance>,
-    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
-    constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
+    context: &FunctionLoweringContext<'_>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeOperation, BytecodeError> {
-    let operand = |value: &MirOperand| {
-        lower_operand(
-            value,
-            catalog,
-            callable_ids,
-            dispatches,
-            prelude_dispatches,
-            constant_ids,
-            type_map,
-        )
-    };
+    let operand = |value: &MirOperand| lower_operand(value, context, type_map);
     let kind = match operation.kind() {
         MirOperationKind::CheckedPrefix {
             operator,
@@ -2667,17 +2541,7 @@ fn lower_operation(
             callee: operand(callee)?,
             arguments: arguments
                 .iter()
-                .map(|argument| {
-                    lower_call_argument(
-                        argument,
-                        catalog,
-                        callable_ids,
-                        dispatches,
-                        prelude_dispatches,
-                        constant_ids,
-                        type_map,
-                    )
-                })
+                .map(|argument| lower_call_argument(argument, context, type_map))
                 .collect::<Result<_, BytecodeError>>()?,
         },
         MirOperationKind::ExplicitPanic { message } => bc::BytecodeOperationKind::ExplicitPanic {
@@ -2716,18 +2580,14 @@ fn lower_operation(
         },
     };
     Ok(bc::BytecodeOperation {
-        ty: mapped_catalog_id(operation.ty(), type_map, catalog)?,
+        ty: mapped_catalog_id(operation.ty(), type_map, context.catalog)?,
         kind,
     })
 }
 
 fn lower_call_argument(
     argument: &MirCallArgument,
-    catalog: &TypeCatalog,
-    callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
-    dispatches: &BTreeMap<CallableInstance, CallableInstance>,
-    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
-    constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
+    context: &FunctionLoweringContext<'_>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeCallArgument, BytecodeError> {
     use crate::hir::HirCallArgumentTarget;
@@ -2747,15 +2607,7 @@ fn lower_call_argument(
     Ok(bc::BytecodeCallArgument {
         mode: parameter_mode(argument.mode()),
         target,
-        value: lower_operand(
-            argument.value(),
-            catalog,
-            callable_ids,
-            dispatches,
-            prelude_dispatches,
-            constant_ids,
-            type_map,
-        )?,
+        value: lower_operand(argument.value(), context, type_map)?,
     })
 }
 
@@ -3425,12 +3277,8 @@ mod tests {
             .callables
             .iter()
             .enumerate()
-            .filter_map(|(index, callable)| {
-                callable
-                    .name
-                    .starts_with("implementation#")
-                    .then(|| bc::BytecodeCallableId::new(index as u32))
-            })
+            .filter(|(_, callable)| callable.name.starts_with("implementation#"))
+            .map(|(index, _)| bc::BytecodeCallableId::new(index as u32))
             .collect::<BTreeSet<_>>();
         assert_eq!(implementation_ids.len(), 2);
 

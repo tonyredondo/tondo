@@ -26,8 +26,8 @@ mod verify;
 
 pub use check::{ExpressionCheckLimits, HirCheckOutput, check_expressions};
 pub use lower::{TypeLoweringLimits, lower_types};
-pub use verify::HirInvariantError;
 pub(crate) use traits::{TraitQuery, TraitSelectionError, select_implementation};
+pub use verify::HirInvariantError;
 pub(crate) use verify::verify_typed_hir;
 
 #[derive(Debug)]

@@ -1553,15 +1553,12 @@ impl<'a> FunctionBuilder<'a> {
         let state = self.allocate_temporary(source_type, span, block)?;
         self.assign_operand(block, span, self.local_place(state), source)?;
 
-        let outcome = match self
-            .hir
-            .interner()
-            .kind(function_type)
-            .map_err(|error| MirError::Construction {
+        let outcome = match self.hir.interner().kind(function_type).map_err(|error| {
+            MirError::Construction {
                 span,
                 message: format!("Iterator.next has an invalid function type: {error}"),
-            })?
-        {
+            }
+        })? {
             TypeKind::Function(function) => function.outcome(),
             _ => {
                 return Err(MirError::Construction {
@@ -1619,9 +1616,7 @@ impl<'a> FunctionBuilder<'a> {
             },
             span,
         )?;
-        self.finish_iterating_for(
-            span, id, pattern, item, body, header, body_start, exit,
-        )
+        self.finish_iterating_for(span, id, pattern, item, body, header, body_start, exit)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1643,8 +1638,7 @@ impl<'a> FunctionBuilder<'a> {
                 continue_target: header,
             },
         );
-        let Some(body_start) = self.bind_irrefutable(pattern, item, body_start)?
-        else {
+        let Some(body_start) = self.bind_irrefutable(pattern, item, body_start)? else {
             return Err(MirError::Construction {
                 span,
                 message: "irrefutable iterator pattern diverged while binding".into(),
