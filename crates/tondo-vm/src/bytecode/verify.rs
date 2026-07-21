@@ -1885,7 +1885,7 @@ impl Verifier<'_> {
                     return Err(operation_error(context));
                 }
             }
-            BytecodeOperationKind::BuildMap(entries) => {
+            BytecodeOperationKind::BuildMap { entries, .. } => {
                 let key =
                     self.intrinsic_argument(operation.ty, BytecodeIntrinsicType::Map, 0, context)?;
                 let value =
@@ -1947,11 +1947,13 @@ impl Verifier<'_> {
             }
             BytecodeOperationKind::Assert {
                 condition,
+                condition_repr,
                 message_parts,
             } => {
                 self.verify_operand(function, condition, context)?;
                 if !self.is_scalar(condition.ty, BytecodeScalarType::Bool)
                     || !self.is_scalar(operation.ty, BytecodeScalarType::Unit)
+                    || condition_repr.is_empty()
                 {
                     return Err(operation_error(context));
                 }
@@ -2195,19 +2197,40 @@ impl Verifier<'_> {
             }
             BytecodeTerminatorKind::ValidatePlaces {
                 places,
+                replacements,
+                for_write,
                 target,
                 unwind,
             } => {
-                if block.kind != BytecodeBlockKind::Normal || places.is_empty() {
+                if block.kind != BytecodeBlockKind::Normal
+                    || places.is_empty()
+                    || places.len() != replacements.len()
+                {
                     return Err(terminator_error(context));
                 }
                 let mut unique = Vec::new();
-                for place in places {
+                for (place, replacement) in places.iter().zip(replacements) {
                     self.verify_place(function, place, context)?;
                     if unique.contains(place) {
                         return Err(terminator_error(context));
                     }
                     unique.push(place.clone());
+                    let slice = matches!(
+                        place.projections.last().map(|projection| &projection.kind),
+                        Some(BytecodeProjectionKind::Slice { .. })
+                    );
+                    match (*for_write, slice, replacement) {
+                        (false, _, None) | (true, false, None) => {}
+                        (true, true, Some(replacement)) => {
+                            self.verify_operand(function, replacement, context)?;
+                            if replacement.ty != place.ty
+                                || !matches!(replacement.kind, BytecodeOperandKind::Copy(_))
+                            {
+                                return Err(terminator_error(context));
+                            }
+                        }
+                        _ => return Err(terminator_error(context)),
+                    }
                 }
                 self.normal_target(function, *target, context)?;
                 self.cleanup_target(function, *unwind, context)?;
@@ -3179,9 +3202,16 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
             push_place_events(state, true, &mut events);
             push_destination_reads(destination, &mut events);
         }
-        BytecodeTerminatorKind::ValidatePlaces { places, .. } => {
+        BytecodeTerminatorKind::ValidatePlaces {
+            places,
+            replacements,
+            ..
+        } => {
             for place in places {
                 push_destination_reads(place, &mut events);
+            }
+            for replacement in replacements.iter().flatten() {
+                push_operand_events(replacement, &mut events);
             }
         }
         BytecodeTerminatorKind::Return => events.push(LocalEvent::Read(function.return_slot)),
@@ -3227,9 +3257,16 @@ fn tag_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<TagEven
             push_tag_place(function, state, false, &mut events);
             push_tag_place(function, destination, false, &mut events);
         }
-        BytecodeTerminatorKind::ValidatePlaces { places, .. } => {
+        BytecodeTerminatorKind::ValidatePlaces {
+            places,
+            replacements,
+            ..
+        } => {
             for place in places {
                 push_tag_place(function, place, false, &mut events);
+            }
+            for replacement in replacements.iter().flatten() {
+                push_tag_operand(function, replacement, &mut events);
             }
         }
     }
@@ -3291,7 +3328,7 @@ fn push_tag_operation(
             push_tag_operand(function, left, events);
             push_tag_operand(function, right, events);
         }
-        BytecodeOperationKind::BuildMap(entries) => {
+        BytecodeOperationKind::BuildMap { entries, .. } => {
             for (key, value) in entries {
                 push_tag_operand(function, key, events);
                 push_tag_operand(function, value, events);
@@ -3324,6 +3361,7 @@ fn push_tag_operation(
         BytecodeOperationKind::Assert {
             condition,
             message_parts,
+            ..
         } => {
             push_tag_operand(function, condition, events);
             for part in message_parts {
@@ -3490,7 +3528,7 @@ fn push_operation_events(operation: &BytecodeOperation, events: &mut Vec<LocalEv
             push_operand_events(left, events);
             push_operand_events(right, events);
         }
-        BytecodeOperationKind::BuildMap(entries) => {
+        BytecodeOperationKind::BuildMap { entries, .. } => {
             for (key, value) in entries {
                 push_operand_events(key, events);
                 push_operand_events(value, events);
@@ -3523,6 +3561,7 @@ fn push_operation_events(operation: &BytecodeOperation, events: &mut Vec<LocalEv
         BytecodeOperationKind::Assert {
             condition,
             message_parts,
+            ..
         } => {
             push_operand_events(condition, events);
             for part in message_parts {

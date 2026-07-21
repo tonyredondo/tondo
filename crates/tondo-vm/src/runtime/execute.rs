@@ -395,11 +395,13 @@ impl<'program, 'host> Engine<'program, 'host> {
             }
             BytecodeTerminatorKind::ValidatePlaces {
                 places,
+                replacements,
+                for_write,
                 target,
                 unwind,
             } => {
                 let span = self.resolve_span(frame, terminator.span)?;
-                let result = self.validate_places(frame, places);
+                let result = self.validate_places(frame, places, replacements, *for_write);
                 match result {
                     Ok(()) => self.jump(frame, *target),
                     Err(PlaceFailure::Panic(code, message)) => {
@@ -1804,10 +1806,56 @@ impl Engine<'_, '_> {
         &mut self,
         frame: usize,
         places: &[BytecodePlace],
+        replacements: &[Option<BytecodeOperand>],
+        for_write: bool,
     ) -> Result<(), PlaceFailure> {
+        if places.len() != replacements.len() {
+            return Err(PlaceFailure::Vm(VmError::invariant(
+                "place validation inputs are not aligned",
+            )));
+        }
         let mut paths = Vec::with_capacity(places.len());
-        for place in places {
-            paths.push(self.validate_place(frame, place)?);
+        for (place, replacement) in places.iter().zip(replacements) {
+            let path = self.validate_place(frame, place)?;
+            if for_write && matches!(path.components.last(), Some(PlaceComponent::Slice(_))) {
+                let replacement = replacement.as_ref().ok_or_else(|| {
+                    PlaceFailure::Vm(VmError::invariant(
+                        "slice write validation has no replacement operand",
+                    ))
+                })?;
+                let value = self
+                    .evaluate_operand(frame, replacement)
+                    .map_err(PlaceFailure::Vm)?;
+                let Value::Heap(handle) = value else {
+                    return Err(PlaceFailure::Vm(VmError::invariant(
+                        "slice assignment replacement is not an Array",
+                    )));
+                };
+                let HeapObject::Array(values) = self.heap.get(handle).map_err(PlaceFailure::Vm)?
+                else {
+                    return Err(PlaceFailure::Vm(VmError::invariant(
+                        "slice assignment replacement is not an Array",
+                    )));
+                };
+                let Some(PlaceComponent::Slice(indices)) = path.components.last() else {
+                    unreachable!("the branch established a slice component")
+                };
+                if indices.len() != values.len() {
+                    return Err(PlaceFailure::Panic(
+                        PanicCode::ArrayShapeMismatch,
+                        format!(
+                            "slice assignment has destination length {} and replacement length {}",
+                            indices.len(),
+                            values.len()
+                        ),
+                    ));
+                }
+            } else if replacement.is_some() {
+                return Err(PlaceFailure::Vm(VmError::invariant(
+                    "non-slice place validation has a replacement operand",
+                )));
+            }
+            paths.push(path);
         }
         for left in 0..paths.len() {
             for right in left + 1..paths.len() {
@@ -2008,13 +2056,27 @@ impl Engine<'_, '_> {
                     },
                 )
             }
-            BytecodeOperationKind::BuildMap(entries) => {
+            BytecodeOperationKind::BuildMap {
+                entries,
+                reject_dynamic_duplicates,
+            } => {
+                let mut evaluated = Vec::with_capacity(entries.len());
+                for (key, value) in entries {
+                    evaluated.push((
+                        self.evaluate_operand(frame, key)?,
+                        self.evaluate_operand(frame, value)?,
+                    ));
+                }
                 let mut output: Vec<(Option<Value>, Option<Value>)> =
                     Vec::with_capacity(entries.len());
-                for (key, value) in entries {
-                    let key = self.evaluate_operand(frame, key)?;
-                    let value = self.evaluate_operand(frame, value)?;
+                for (key, value) in evaluated {
                     if let Some(index) = self.find_map_entry(&output, &key)? {
+                        if *reject_dynamic_duplicates {
+                            return Ok(OperationResult::Panic(
+                                PanicCode::DuplicateDynamicMapKey,
+                                "map literal produced a duplicate dynamic key".into(),
+                            ));
+                        }
                         output[index].1 = Some(value);
                     } else {
                         output.push((Some(key), Some(value)));
@@ -2073,6 +2135,7 @@ impl Engine<'_, '_> {
             }
             BytecodeOperationKind::Assert {
                 condition,
+                condition_repr,
                 message_parts,
             } => {
                 let condition = self.evaluate_operand(frame, condition)?;
@@ -2108,7 +2171,7 @@ impl Engine<'_, '_> {
                         }
                     }
                     if message_parts.is_empty() {
-                        message = "assertion failed".into();
+                        message = format!("assertion failed: {condition_repr}");
                     }
                     Ok(OperationResult::Panic(PanicCode::AssertionFailed, message))
                 }

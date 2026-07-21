@@ -591,7 +591,10 @@ pub enum BytecodeOperationKind {
         left: BytecodeOperand,
         right: BytecodeOperand,
     },
-    BuildMap(Vec<(BytecodeOperand, BytecodeOperand)>),
+    BuildMap {
+        entries: Vec<(BytecodeOperand, BytecodeOperand)>,
+        reject_dynamic_duplicates: bool,
+    },
     Index {
         base: BytecodeOperand,
         index: BytecodeOperand,
@@ -612,6 +615,7 @@ pub enum BytecodeOperationKind {
     },
     Assert {
         condition: BytecodeOperand,
+        condition_repr: String,
         message_parts: Vec<BytecodeAssertMessagePart>,
     },
     BootstrapHostCall {
@@ -690,6 +694,8 @@ pub enum BytecodeTerminatorKind {
     },
     ValidatePlaces {
         places: Vec<BytecodePlace>,
+        replacements: Vec<Option<BytecodeOperand>>,
+        for_write: bool,
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
     },

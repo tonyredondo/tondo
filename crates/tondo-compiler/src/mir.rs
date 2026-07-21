@@ -461,7 +461,10 @@ pub enum MirOperationKind {
         left: MirOperand,
         right: MirOperand,
     },
-    BuildMap(Vec<(MirOperand, MirOperand)>),
+    BuildMap {
+        entries: Vec<(MirOperand, MirOperand)>,
+        reject_dynamic_duplicates: bool,
+    },
     Index {
         base: MirOperand,
         index: MirOperand,
@@ -482,6 +485,7 @@ pub enum MirOperationKind {
     },
     Assert {
         condition: MirOperand,
+        condition_repr: String,
         message_parts: Vec<MirAssertMessagePart>,
     },
     BootstrapHostCall {
@@ -578,6 +582,8 @@ pub enum MirTerminatorKind {
     },
     ValidatePlaces {
         places: Vec<MirPlace>,
+        replacements: Vec<Option<MirOperand>>,
+        for_write: bool,
         target: MirBlockId,
         unwind: MirBlockId,
     },

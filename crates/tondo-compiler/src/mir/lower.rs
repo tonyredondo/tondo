@@ -122,6 +122,19 @@ enum LoweredAssignmentTarget {
     },
 }
 
+fn assignment_target_contains_slice(target: &LoweredAssignmentTarget) -> bool {
+    match target {
+        LoweredAssignmentTarget::Place { place, .. } => matches!(
+            place.projections.last().map(MirProjection::kind),
+            Some(MirProjectionKind::Slice { .. })
+        ),
+        LoweredAssignmentTarget::Discard => false,
+        LoweredAssignmentTarget::Tuple { items, .. } => {
+            items.iter().any(assignment_target_contains_slice)
+        }
+    }
+}
+
 impl<'a> FunctionBuilder<'a> {
     fn new(
         hir: &'a HirProgram,
@@ -310,7 +323,10 @@ impl<'a> FunctionBuilder<'a> {
                 destination,
                 block,
             ),
-            HirExpressionKind::Map(entries) => {
+            HirExpressionKind::Map {
+                entries,
+                reject_dynamic_duplicates,
+            } => {
                 let mut current = block;
                 let mut values = Vec::with_capacity(entries.len());
                 for entry in entries {
@@ -329,7 +345,10 @@ impl<'a> FunctionBuilder<'a> {
                     Some(destination),
                     MirOperation {
                         ty: expression.ty(),
-                        kind: MirOperationKind::BuildMap(values),
+                        kind: MirOperationKind::BuildMap {
+                            entries: values,
+                            reject_dynamic_duplicates: *reject_dynamic_duplicates,
+                        },
                     },
                 )
             }
@@ -737,6 +756,7 @@ impl<'a> FunctionBuilder<'a> {
             }
             HirExpressionKind::PreludeAssert {
                 condition,
+                condition_repr,
                 message_parts,
             } => {
                 let Some((mut current, condition)) = self.lower_value(*condition, block)? else {
@@ -761,6 +781,7 @@ impl<'a> FunctionBuilder<'a> {
                         ty: expression.ty(),
                         kind: MirOperationKind::Assert {
                             condition,
+                            condition_repr: condition_repr.clone(),
                             message_parts: lowered_parts,
                         },
                     },
@@ -1009,11 +1030,12 @@ impl<'a> FunctionBuilder<'a> {
         let Some((block, target)) = self.lower_assignment_target(target, block)? else {
             return Ok(None);
         };
-        let block = self.validate_assignment_places(&target, block, span)?;
         if operator == HirAssignmentOperator::Assign {
             let Some((block, value)) = self.lower_value(value, block)? else {
                 return Ok(None);
             };
+            let block =
+                self.validate_assignment_places(&target, Some(&value), true, block, span)?;
             self.write_assignment_target(&target, value, block, span)?;
             return Ok(Some(block));
         }
@@ -1030,6 +1052,11 @@ impl<'a> FunctionBuilder<'a> {
                 message: "compound assignment target has a contextual coercion".into(),
             });
         }
+        let access_target = LoweredAssignmentTarget::Place {
+            place: place.clone(),
+            coercion,
+        };
+        let block = self.validate_assignment_places(&access_target, None, false, block, span)?;
         let previous = self.allocate_temporary(place.ty, span, block)?;
         self.assign_operand(
             block,
@@ -1050,11 +1077,13 @@ impl<'a> FunctionBuilder<'a> {
                 message: "compound assignment has no corresponding binary operator".into(),
             })?;
         let left = self.copy_local(previous);
-        if self.binary_may_panic(binary, left.ty) {
-            self.invoke(
+        let result = self.allocate_temporary(left.ty, span, block)?;
+        let result_place = self.local_place(result);
+        let block = if self.binary_may_panic(binary, left.ty) {
+            let Some(block) = self.invoke(
                 block,
                 span,
-                Some(place),
+                Some(result_place),
                 MirOperation {
                     ty: left.ty,
                     kind: MirOperationKind::CheckedBinary {
@@ -1063,12 +1092,16 @@ impl<'a> FunctionBuilder<'a> {
                         right,
                     },
                 },
-            )
+            )?
+            else {
+                return Ok(None);
+            };
+            block
         } else {
             self.assign(
                 block,
                 span,
-                place,
+                result_place,
                 MirRvalue {
                     ty: left.ty,
                     kind: MirRvalueKind::Binary {
@@ -1078,8 +1111,13 @@ impl<'a> FunctionBuilder<'a> {
                     },
                 },
             )?;
-            Ok(Some(block))
-        }
+            block
+        };
+        let result = self.copy_local(result);
+        let block =
+            self.validate_assignment_places(&access_target, Some(&result), true, block, span)?;
+        self.write_assignment_target(&access_target, result, block, span)?;
+        Ok(Some(block))
     }
 
     fn lower_assignment_target(
@@ -1127,20 +1165,21 @@ impl<'a> FunctionBuilder<'a> {
     fn validate_assignment_places(
         &mut self,
         target: &LoweredAssignmentTarget,
+        replacement: Option<&MirOperand>,
+        for_write: bool,
         block: MirBlockId,
         span: Span,
     ) -> Result<MirBlockId, MirError> {
         let mut places = Vec::new();
-        let mut pending = vec![target];
-        while let Some(target) = pending.pop() {
-            match target {
-                LoweredAssignmentTarget::Place { place, .. } => places.push(place.clone()),
-                LoweredAssignmentTarget::Discard => {}
-                LoweredAssignmentTarget::Tuple { items, .. } => {
-                    pending.extend(items.iter().rev());
-                }
-            }
-        }
+        let mut replacements = Vec::new();
+        self.collect_assignment_validations(
+            target,
+            replacement,
+            for_write,
+            span,
+            &mut places,
+            &mut replacements,
+        )?;
         if places.is_empty() {
             return Ok(block);
         }
@@ -1150,11 +1189,114 @@ impl<'a> FunctionBuilder<'a> {
             span,
             MirTerminatorKind::ValidatePlaces {
                 places,
+                replacements,
+                for_write,
                 target: target_block,
                 unwind: self.unwind,
             },
         )?;
         Ok(target_block)
+    }
+
+    fn collect_assignment_validations(
+        &mut self,
+        target: &LoweredAssignmentTarget,
+        replacement: Option<&MirOperand>,
+        for_write: bool,
+        span: Span,
+        places: &mut Vec<MirPlace>,
+        replacements: &mut Vec<Option<MirOperand>>,
+    ) -> Result<(), MirError> {
+        match target {
+            LoweredAssignmentTarget::Place { place, coercion } => {
+                let slice = matches!(
+                    place.projections.last().map(MirProjection::kind),
+                    Some(MirProjectionKind::Slice { .. })
+                );
+                let replacement = if for_write && slice {
+                    if *coercion != crate::types::Assignability::Exact {
+                        return Err(MirError::Construction {
+                            span,
+                            message: "slice assignment cannot defer a contextual coercion".into(),
+                        });
+                    }
+                    Some(replacement.cloned().ok_or_else(|| MirError::Construction {
+                        span,
+                        message: "slice write validation has no replacement value".into(),
+                    })?)
+                } else {
+                    None
+                };
+                places.push(place.clone());
+                replacements.push(replacement);
+            }
+            LoweredAssignmentTarget::Discard => {}
+            LoweredAssignmentTarget::Tuple { ty, items } => {
+                for (index, item) in items.iter().enumerate() {
+                    let projected = if for_write && assignment_target_contains_slice(item) {
+                        let value = replacement.ok_or_else(|| MirError::Construction {
+                            span,
+                            message: "tuple slice write validation has no replacement value".into(),
+                        })?;
+                        Some(self.project_operand(
+                            value,
+                            MirProjection {
+                                ty: self.assignment_target_item_type(*ty, index, item, span)?,
+                                kind: MirProjectionKind::TupleField(index as u32),
+                            },
+                            span,
+                        )?)
+                    } else {
+                        None
+                    };
+                    self.collect_assignment_validations(
+                        item,
+                        projected.as_ref(),
+                        for_write,
+                        span,
+                        places,
+                        replacements,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn assignment_target_item_type(
+        &self,
+        tuple: TypeId,
+        index: usize,
+        item: &LoweredAssignmentTarget,
+        span: Span,
+    ) -> Result<TypeId, MirError> {
+        match item {
+            LoweredAssignmentTarget::Place { place, .. } => Ok(place.ty),
+            LoweredAssignmentTarget::Tuple { ty, .. } => Ok(*ty),
+            LoweredAssignmentTarget::Discard => {
+                let TypeKind::Tuple(types) =
+                    self.hir
+                        .interner()
+                        .kind(tuple)
+                        .map_err(|_| MirError::Construction {
+                            span,
+                            message: "tuple assignment target has an invalid type".into(),
+                        })?
+                else {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "multiple-assignment target is not a tuple".into(),
+                    });
+                };
+                types
+                    .get(index)
+                    .copied()
+                    .ok_or_else(|| MirError::Construction {
+                        span,
+                        message: "multiple-assignment target index is out of range".into(),
+                    })
+            }
+        }
     }
 
     fn write_assignment_target(
@@ -1195,27 +1337,7 @@ impl<'a> FunctionBuilder<'a> {
                     });
                 }
                 for (index, item) in items.iter().enumerate() {
-                    let item_ty = match item {
-                        LoweredAssignmentTarget::Place { place, .. } => place.ty,
-                        LoweredAssignmentTarget::Discard => {
-                            let TypeKind::Tuple(types) =
-                                self.hir.interner().kind(*ty).map_err(|_| {
-                                    MirError::Construction {
-                                        span,
-                                        message: "tuple assignment target has an invalid type"
-                                            .into(),
-                                    }
-                                })?
-                            else {
-                                return Err(MirError::Construction {
-                                    span,
-                                    message: "multiple-assignment target is not a tuple".into(),
-                                });
-                            };
-                            types[index]
-                        }
-                        LoweredAssignmentTarget::Tuple { ty, .. } => *ty,
-                    };
+                    let item_ty = self.assignment_target_item_type(*ty, index, item, span)?;
                     let projected = self.project_operand(
                         &value,
                         MirProjection {
@@ -2912,6 +3034,7 @@ mod tests {
             ExpressionCheckLimits {
                 max_nodes: 100_000,
                 max_pattern_steps: 100_000,
+                max_trait_obligations: 100_000,
                 max_diagnostics: 100,
             },
         )
@@ -3074,15 +3197,22 @@ mod tests {
         let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         let update = mir.function(function_id(&resolved, "update")).unwrap();
 
+        let validations = update
+            .blocks()
+            .filter_map(|block| match block.terminator().kind() {
+                MirTerminatorKind::ValidatePlaces {
+                    for_write, unwind, ..
+                } if *unwind == update.unwind() => Some(*for_write),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
         assert_eq!(
-            update
-                .blocks()
-                .filter(|block| matches!(
-                    block.terminator().kind(),
-                    MirTerminatorKind::ValidatePlaces { unwind, .. } if *unwind == update.unwind()
-                ))
-                .count(),
+            validations.iter().filter(|for_write| **for_write).count(),
             3
+        );
+        assert_eq!(
+            validations.iter().filter(|for_write| !**for_write).count(),
+            1
         );
         assert!(update.blocks().any(|block| matches!(
             block.terminator().kind(),
@@ -3176,7 +3306,7 @@ mod tests {
                     block.terminator().kind(),
                     MirTerminatorKind::Invoke {
                         operation: MirOperation {
-                            kind: MirOperationKind::BuildMap(_),
+                            kind: MirOperationKind::BuildMap { .. },
                             ..
                         },
                         ..
@@ -3562,6 +3692,64 @@ mod tests {
         projection.kind = MirProjectionKind::TupleField(99);
         let error = verify_mir(&resolved, &hir, &invalid_projection).unwrap_err();
         assert!(error.message().contains("out of range"));
+
+        let (resolved, hir) = checked(
+            "fn replace() {\n\
+                 var values = [1, 2]\n\
+                 values[:] = [3, 4]\n\
+             }\n",
+        );
+        let mut invalid_slice =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = invalid_slice
+            .functions
+            .get_mut(&function_id(&resolved, "replace"))
+            .unwrap();
+        let replacement = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::ValidatePlaces {
+                    replacements,
+                    for_write: true,
+                    ..
+                } => replacements
+                    .iter_mut()
+                    .find(|replacement| replacement.is_some()),
+                _ => None,
+            })
+            .expect("slice assignment has a checked replacement");
+        *replacement = None;
+        let error = verify_mir(&resolved, &hir, &invalid_slice).unwrap_err();
+        assert!(error.message().contains("replacement shape"));
+    }
+
+    #[test]
+    fn mir_verifier_rejects_an_assert_without_its_condition_representation() {
+        let (resolved, hir) = checked("fn check() { assert(true) }\n");
+        let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = mir
+            .functions
+            .get_mut(&function_id(&resolved, "check"))
+            .unwrap();
+        let condition_repr = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::Invoke {
+                    operation:
+                        MirOperation {
+                            kind: MirOperationKind::Assert { condition_repr, .. },
+                            ..
+                        },
+                    ..
+                } => Some(condition_repr),
+                _ => None,
+            })
+            .expect("assert lowers to a checked MIR operation");
+        condition_repr.clear();
+        let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
+        assert!(error.message().contains("condition representation"));
     }
 
     #[test]

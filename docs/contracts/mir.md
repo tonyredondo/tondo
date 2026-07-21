@@ -89,11 +89,22 @@ propagation. Recovery and incomplete interpolation nodes cannot cross the HIR
 admission boundary and therefore have no executable MIR interpretation.
 
 Checked operations use `Invoke`; indexed and sliced reads therefore cannot
-bypass their bounds/unwind edge. Assignment first resolves and validates all
-destination places and only then performs writes. Static callees remain
+bypass their bounds/unwind edge. Assignment first resolves all destination
+places, then materializes its complete RHS, then validates overlap, bounds, and
+slice replacement lengths before performing any write. Compound assignment
+uses an access validation before reading its previous value and validates the
+fully computed replacement again before storing it. Static callees remain
 callable operands instead of being erased into ordinary temporaries, preserving
 the selected declaration, receiver mode, generic specialization, and variadic
 argument association.
+
+Map construction is an `Invoke` carrying the HIR-selected duplicate policy, so
+`P0009` has an ordinary unwind edge and last-write-wins is never an implicit VM
+choice.
+
+An `assert` operation also carries the checked condition's nonempty source
+representation. The MIR verifier rejects its loss before bytecode lowering,
+while the condition and message operands remain in ordinary evaluation order.
 
 ## Cleanup and suspension capacity
 

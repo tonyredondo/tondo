@@ -433,6 +433,12 @@ impl TypeInterner {
         self.kinds.is_empty()
     }
 
+    pub fn ids(&self) -> impl ExactSizeIterator<Item = TypeId> + '_ {
+        (0..self.kinds.len()).map(|index| {
+            TypeId(u32::try_from(index).expect("the type interner is limited to u32 entries"))
+        })
+    }
+
     pub fn kind(&self, ty: TypeId) -> Result<&TypeKind, TypeError> {
         self.kinds
             .get(ty.0 as usize)

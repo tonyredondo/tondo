@@ -1,6 +1,6 @@
 # Typed slot bytecode contract
 
-**Status:** BC-001 through BC-005 implemented; VM execution pending
+**Status:** BC-001 through BC-005 and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -76,12 +76,20 @@ normal destination/target and cleanup target. This includes checked arithmetic,
 map construction, indexing, slicing, calls, `assert`, and `panic`. Other
 terminators cover direct branches, boolean and discriminant dispatch,
 iterator-next, atomic destination validation, return, panic resumption, and
-unreachable code.
+unreachable code. A write validation aligns each destination with an optional
+copied replacement; a slice write must include an `Array` replacement of the
+place type, allowing the VM to raise `P0006` before the first store. Missing or
+misaligned metadata is invalid bytecode.
 
 Places start at one slot and carry typed projections. Projections include
 record/newtype fields, tuple positions, enum/option/result/union payloads,
 array-pattern segments, dynamic indexing, and slices. Index and bound operands
 are slots evaluated earlier, preserving MIR evaluation order.
+
+Map construction includes an explicit reject-versus-replace flag for dynamic
+duplicate keys. The VM evaluates the already-materialized entry operands in
+order, detects duplicates before allocating the final map, and either preserves
+the first insertion position while replacing its value or raises `P0009`.
 
 ## Independent verification
 
@@ -102,6 +110,8 @@ Before execution, the verifier proves:
   exist only on their successful edge, and the return slot is initialized;
 - payload projections are dominated by their matching discriminant edge and a
   potentially overlapping write invalidates that refinement; and
+- every `assert` retains a nonempty condition representation for its default
+  runtime message; and
 - unreachable retained blocks contain no executable bytecode.
 
 Initialization/lifetime and discriminant refinement are separate forward

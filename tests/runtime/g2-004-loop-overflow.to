@@ -1,0 +1,7 @@
+fn main() {
+    var value = 126i8
+    for value < 127i8 {
+        value += 1i8
+    }
+    value += 1i8
+}

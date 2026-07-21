@@ -25,3 +25,5 @@ does not edit history silently: it adds a new ADR that supersedes the old one.
 The detailed implemented object and tracing model selected collectively by
 ADR-006 through ADR-011 is recorded in
 [`docs/contracts/vm-runtime.md`](../contracts/vm-runtime.md).
+The provisional standard-library boundary selected for DEC-007 is recorded in
+[`docs/contracts/bootstrap-host.md`](../contracts/bootstrap-host.md).

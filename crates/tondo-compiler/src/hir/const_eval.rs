@@ -217,7 +217,7 @@ fn constant_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
         HirExpressionKind::Tuple(items)
         | HirExpressionKind::Array(items)
         | HirExpressionKind::Set(items) => items.clone(),
-        HirExpressionKind::Map(entries) => entries
+        HirExpressionKind::Map { entries, .. } => entries
             .iter()
             .flat_map(|entry| [entry.key(), entry.value()])
             .collect(),
@@ -261,6 +261,7 @@ fn constant_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
         HirExpressionKind::PreludeAssert {
             condition,
             message_parts,
+            ..
         } => std::iter::once(*condition)
             .chain(message_parts.iter().map(|part| part.value()))
             .collect(),
@@ -344,7 +345,7 @@ fn evaluate_composite(
                 .map(|item| value(*item))
                 .collect::<Result<_, _>>()?,
         ),
-        HirExpressionKind::Map(entries) => HirConstantValueKind::Map(
+        HirExpressionKind::Map { entries, .. } => HirConstantValueKind::Map(
             entries
                 .iter()
                 .map(|entry| Ok((value(entry.key())?, value(entry.value())?)))

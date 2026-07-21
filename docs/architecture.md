@@ -253,6 +253,10 @@ The implemented synchronous engine uses iterative frames, checked slot states,
 normal/unwind continuations, precise roots, generational heap handles, and a
 stop-the-world mark-and-sweep collector. Its exact object, tracing, panic, host,
 and admission boundary is recorded in `docs/contracts/vm-runtime.md`.
+The sole M3 standard-library bridge, capability-gated
+`std.console.print(String): Unit`, is isolated by
+`docs/contracts/bootstrap-host.md` and is not a general FFI or a frozen stdlib
+ABI.
 
 ## Data ownership across phases
 

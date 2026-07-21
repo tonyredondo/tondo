@@ -74,6 +74,7 @@ pub fn lower_types<'a>(
             patterns: Vec::new(),
             bodies: BTreeMap::new(),
             local_types: BTreeMap::new(),
+            discard_statuses: Vec::new(),
             expression_check_complete: false,
         },
         diagnostics: lowerer.diagnostics,

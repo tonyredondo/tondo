@@ -23,6 +23,13 @@ Managed heap objects cover:
 - ranges and lazy iterator state; and
 - the identity cell used by the future `Ref[T]` surface.
 
+M4 closures will pair a callable identity with a managed environment whose
+capture fields use the same optional-value move representation as other
+aggregates. The environment traces every present capture and is rooted by the
+closure value in a frame or parent object. It is deliberately absent from the
+M3 bytecode surface until closure conversion exists; adding it does not change
+the collector, handle identity, or root rules fixed here.
+
 Compound payload fields are individually optional internally. Absence records
 a logical move and is never a Tondo `none`. Bytecode verification and runtime
 checks prevent an absent field from being observed as a value.
@@ -80,7 +87,9 @@ A panic stores its normative `P` code, stable name, message, primary source
 span, and a canonical innermost-first call stack. Cleanup blocks execute while
 the pending panic crosses frames. Tondo 0.1 cannot catch it. `assert` evaluates
 its condition and every message part from left to right; a failed assertion
-concatenates ordinary and spread `Array[String]` parts without a separator.
+concatenates ordinary and spread `Array[String]` parts without a separator. If
+there are no message parts, the VM reports `assertion failed: <condition>` from
+the verified source representation while the panic span supplies the location.
 
 Host functions are reached only through verified bytecode identities. The host
 receives detached `RuntimeValue` snapshots and returns another detached value;
@@ -113,3 +122,17 @@ stack traces. Heap tests retain reachable graphs, reclaim unreachable cycles,
 reject stale generations, and collect under allocation pressure. A mutated
 bytecode fixture must prove that admission fails before host or instruction
 execution.
+
+Slice assignment materializes the complete RHS before its write validation.
+The validation terminator carries aligned destination/replacement metadata,
+checks normalized lengths and all destination overlap before the first store,
+and produces `P0006` for a shape mismatch. The bytecode verifier rejects a
+slice-write validation whose copied replacement is absent or has the wrong
+type.
+
+Map construction carries its duplicate policy explicitly through HIR, MIR, and
+bytecode. Values satisfying `Discard` use ordered last-write-wins replacement
+for dynamic duplicate keys. A value that may retain a terminal obligation uses
+the rejecting policy: all entry expressions are already evaluated left to
+right, duplicate detection precedes map ownership transfer, and a collision
+produces `P0009`.

@@ -1204,6 +1204,9 @@ fn import_error_message(error: &ImportResolutionError) -> String {
         ImportResolutionError::UnknownModule(module) => {
             format!("module `{module}` is not available for this target")
         }
+        ImportResolutionError::MissingTargetCapability { module, capability } => format!(
+            "module `{module}` is not available because target capability `{capability}` is missing"
+        ),
         ImportResolutionError::UnknownFromPackage(package) => {
             format!("importing package `{package}` is not in the closed graph")
         }

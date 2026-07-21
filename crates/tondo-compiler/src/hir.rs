@@ -31,6 +31,7 @@ pub enum HirError {
     DiagnosticLimit { file: FileId, offset: u32 },
     NodeLimit { file: FileId, offset: u32 },
     PatternAnalysisLimit { file: FileId, offset: u32 },
+    TraitObligationLimit { file: FileId, offset: u32 },
     Invariant(HirInvariantError),
     Diagnostic(DiagnosticError),
     Package(PackageGraphError),
@@ -52,6 +53,10 @@ impl fmt::Display for HirError {
             Self::PatternAnalysisLimit { file, offset } => write!(
                 formatter,
                 "pattern analysis limit exceeded in file {file} at byte {offset}"
+            ),
+            Self::TraitObligationLimit { file, offset } => write!(
+                formatter,
+                "trait obligation limit exceeded in file {file} at byte {offset}"
             ),
             Self::Invariant(error) => error.fmt(formatter),
             Self::Diagnostic(error) => error.fmt(formatter),
@@ -128,6 +133,7 @@ pub struct HirProgram {
     patterns: Vec<HirPattern>,
     bodies: BTreeMap<HirCallableId, HirBody>,
     local_types: BTreeMap<LocalId, TypeId>,
+    discard_statuses: Vec<HirDiscardStatus>,
     expression_check_complete: bool,
 }
 
@@ -292,9 +298,20 @@ impl HirProgram {
         self.local_types.get(&local).copied()
     }
 
+    pub fn discard_status(&self, ty: TypeId) -> Option<HirDiscardStatus> {
+        self.discard_statuses.get(ty.index() as usize).copied()
+    }
+
     pub fn expression_check_complete(&self) -> bool {
         self.expression_check_complete
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum HirDiscardStatus {
+    Satisfied,
+    Deferred,
+    Unsatisfied,
 }
 
 fn range_contains_offset(range: TextRange, offset: u32) -> bool {
@@ -841,7 +858,10 @@ pub enum HirExpressionKind {
     Receiver,
     Tuple(Vec<HirExpressionId>),
     Array(Vec<HirExpressionId>),
-    Map(Vec<HirMapEntry>),
+    Map {
+        entries: Vec<HirMapEntry>,
+        reject_dynamic_duplicates: bool,
+    },
     Set(Vec<HirExpressionId>),
     Newtype {
         constructor: SymbolId,
@@ -915,6 +935,7 @@ pub enum HirExpressionKind {
     },
     PreludeAssert {
         condition: HirExpressionId,
+        condition_repr: String,
         message_parts: Vec<HirAssertMessagePart>,
     },
     BootstrapHostCall {

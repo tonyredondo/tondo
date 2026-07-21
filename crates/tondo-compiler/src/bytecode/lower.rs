@@ -525,7 +525,7 @@ fn collect_operation_types(operation: &MirOperation, types: &mut BTreeSet<TypeId
             collect_operand_types(left, types);
             collect_operand_types(right, types);
         }
-        MirOperationKind::BuildMap(entries) => {
+        MirOperationKind::BuildMap { entries, .. } => {
             for (key, value) in entries {
                 collect_operand_types(key, types);
                 collect_operand_types(value, types);
@@ -555,6 +555,7 @@ fn collect_operation_types(operation: &MirOperation, types: &mut BTreeSet<TypeId
         MirOperationKind::Assert {
             condition,
             message_parts,
+            ..
         } => {
             collect_operand_types(condition, types);
             for part in message_parts {
@@ -600,9 +601,16 @@ fn collect_terminator_types(terminator: &MirTerminator, types: &mut BTreeSet<Typ
             collect_place_types(state, types);
             collect_place_types(destination, types);
         }
-        MirTerminatorKind::ValidatePlaces { places, .. } => {
+        MirTerminatorKind::ValidatePlaces {
+            places,
+            replacements,
+            ..
+        } => {
             for place in places {
                 collect_place_types(place, types);
+            }
+            for replacement in replacements.iter().flatten() {
+                collect_operand_types(replacement, types);
             }
         }
     }
@@ -1229,6 +1237,8 @@ fn lower_terminator(
         },
         MirTerminatorKind::ValidatePlaces {
             places,
+            replacements,
+            for_write,
             target,
             unwind,
         } => bc::BytecodeTerminatorKind::ValidatePlaces {
@@ -1236,6 +1246,18 @@ fn lower_terminator(
                 .iter()
                 .map(|place| lower_place(place, catalog))
                 .collect::<Result<_, BytecodeError>>()?,
+            replacements: replacements
+                .iter()
+                .map(|replacement| {
+                    replacement
+                        .as_ref()
+                        .map(|replacement| {
+                            lower_operand(replacement, catalog, callable_ids, constant_ids)
+                        })
+                        .transpose()
+                })
+                .collect::<Result<_, BytecodeError>>()?,
+            for_write: *for_write,
             target: block_id(*target),
             unwind: block_id(*unwind),
         },
@@ -1494,12 +1516,16 @@ fn lower_operation(
             left: operand(left)?,
             right: operand(right)?,
         },
-        MirOperationKind::BuildMap(entries) => bc::BytecodeOperationKind::BuildMap(
-            entries
+        MirOperationKind::BuildMap {
+            entries,
+            reject_dynamic_duplicates,
+        } => bc::BytecodeOperationKind::BuildMap {
+            entries: entries
                 .iter()
                 .map(|(key, value)| Ok((operand(key)?, operand(value)?)))
                 .collect::<Result<_, BytecodeError>>()?,
-        ),
+            reject_dynamic_duplicates: *reject_dynamic_duplicates,
+        },
         MirOperationKind::Index {
             base,
             index,
@@ -1532,9 +1558,11 @@ fn lower_operation(
         },
         MirOperationKind::Assert {
             condition,
+            condition_repr,
             message_parts,
         } => bc::BytecodeOperationKind::Assert {
             condition: operand(condition)?,
+            condition_repr: condition_repr.clone(),
             message_parts: message_parts
                 .iter()
                 .map(|part| {
@@ -1859,6 +1887,7 @@ mod tests {
             ExpressionCheckLimits {
                 max_nodes: 100_000,
                 max_pattern_steps: 100_000,
+                max_trait_obligations: 100_000,
                 max_diagnostics: 100,
             },
         )
@@ -2236,6 +2265,26 @@ mod tests {
     }
 
     #[test]
+    fn verified_bytecode_executes_the_bootstrap_scalar_and_tuple_values() {
+        let value = execute_function(
+            "fn values(): (Unit, Bool, Int, Float, String) {\n\
+                 ((), true, 42, 1.5, \"Tondo\")\n\
+             }\n",
+            "values",
+        );
+        assert_eq!(
+            value,
+            RuntimeValue::Tuple(vec![
+                RuntimeValue::Unit,
+                RuntimeValue::Bool(true),
+                RuntimeValue::Integer(42),
+                RuntimeValue::Float(1.5),
+                RuntimeValue::String("Tondo".into()),
+            ])
+        );
+    }
+
+    #[test]
     fn verified_bytecode_executes_records_enums_options_results_and_collections() {
         let value = execute_function(
             "type Pair = { left: Int, right: Int }\n\
@@ -2295,6 +2344,108 @@ mod tests {
             assert_eq!(panic.code.code(), expected.code());
             assert!(!panic.stack.is_empty());
         }
+
+        let VmOutcome::Panicked(overlap) = execute_outcome(
+            "fn left(): Int { 0 }\n\
+             fn right(): Int { 0 }\n\
+             fn explode() {\n\
+                 var values = [0, 0]\n\
+                 (values[left()], values[right()]) = (1, 2)\n\
+             }\n",
+            "explode",
+        ) else {
+            panic!("a dynamically overlapping assignment must panic")
+        };
+        assert_eq!(overlap.code, PanicCode::OverlappingBorrow);
+        assert_eq!(overlap.code.code(), "P0004");
+    }
+
+    #[test]
+    fn runtime_validates_slice_assignment_after_the_rhs_and_before_any_write() {
+        let value = execute_function(
+            "fn replace(): Array[Int] {\n\
+                 var values = [1, 2, 3]\n\
+                 values[1:3] = values[0:2]\n\
+                 values\n\
+             }\n",
+            "replace",
+        );
+        assert_eq!(
+            value,
+            RuntimeValue::Array(vec![
+                RuntimeValue::Integer(1),
+                RuntimeValue::Integer(1),
+                RuntimeValue::Integer(2),
+            ])
+        );
+
+        let VmOutcome::Panicked(mismatch) = execute_outcome(
+            "fn replace() {\n\
+                 var values = [1, 2, 3]\n\
+                 values[0:2] = [9]\n\
+             }\n",
+            "replace",
+        ) else {
+            panic!("a mismatched slice assignment must panic")
+        };
+        assert_eq!(mismatch.code, PanicCode::ArrayShapeMismatch);
+        assert!(mismatch.message.contains("destination length 2"));
+        assert!(mismatch.message.contains("replacement length 1"));
+
+        let VmOutcome::Panicked(rhs) = execute_outcome(
+            "fn replace() {\n\
+                 var values = [1]\n\
+                 values[99] = panic(\"rhs-first\")\n\
+             }\n",
+            "replace",
+        ) else {
+            panic!("the diverging RHS must panic")
+        };
+        assert_eq!(rhs.code, PanicCode::ExplicitPanic);
+        assert_eq!(rhs.message, "rhs-first");
+    }
+
+    #[test]
+    fn runtime_map_duplicate_policy_is_explicit_and_supports_p0009() {
+        let source = "fn key(): String { \"same\" }\n\
+                      fn build(): Map[String, Int] { [key(): 1, key(): 2] }\n";
+        assert_eq!(
+            execute_function(source, "build"),
+            RuntimeValue::Map(vec![(
+                RuntimeValue::String("same".into()),
+                RuntimeValue::Integer(2),
+            )])
+        );
+
+        let mut program = lowered(source);
+        let entry = function_id(&program, "build");
+        let reject = program.functions[entry.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind:
+                                bc::BytecodeOperationKind::BuildMap {
+                                    reject_dynamic_duplicates,
+                                    ..
+                                },
+                            ..
+                        },
+                    ..
+                } => Some(reject_dynamic_duplicates),
+                _ => None,
+            })
+            .expect("the map literal lowers to a checked map construction");
+        *reject = true;
+        let mut host = RejectingHost;
+        let outcome = execute(&program, entry, &mut host).unwrap().outcome;
+        let VmOutcome::Panicked(panic) = outcome else {
+            panic!("a rejecting map construction must panic on a duplicate key")
+        };
+        assert_eq!(panic.code, PanicCode::DuplicateDynamicMapKey);
+        assert_eq!(panic.code.code(), "P0009");
     }
 
     #[test]
@@ -2321,6 +2472,16 @@ mod tests {
         assert_eq!(panic.message, "startmiddleend");
         assert_eq!(panic.stack.len(), 1);
         assert!(panic.stack[0].function.ends_with("::value::explode"));
+
+        let VmOutcome::Panicked(default) = execute_outcome(
+            "fn default_message() { assert(20 + 20 == 42) }\n",
+            "default_message",
+        ) else {
+            panic!("failed assertion without message parts must panic");
+        };
+        assert_eq!(default.code, PanicCode::AssertionFailed);
+        assert_eq!(default.message, "assertion failed: 20 + 20 == 42");
+        assert_eq!(default.span, default.stack[0].span);
     }
 
     #[test]
@@ -2417,10 +2578,74 @@ mod tests {
 
     #[test]
     fn runtime_rejects_invalid_bytecode_before_execution() {
-        let mut program = lowered("fn main() {}\n");
+        #[derive(Default)]
+        struct CountingHost {
+            calls: usize,
+        }
+
+        impl VmHost for CountingHost {
+            fn invoke(
+                &mut self,
+                _name: &str,
+                _arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                self.calls += 1;
+                Ok(RuntimeValue::Unit)
+            }
+        }
+
+        let mut program =
+            lowered("import std.console\nfn main() { console.print(\"must not execute\") }\n");
         let entry = function_id(&program, "main");
         program.functions[entry.index() as usize].entry = bc::BytecodeBlockId::new(u32::MAX);
-        let mut host = RejectingHost;
+        let mut host = CountingHost::default();
+        let error = execute(&program, entry, &mut host).unwrap_err();
+        assert!(matches!(error, VmError::InvalidBytecode(_)));
+        assert_eq!(host.calls, 0);
+
+        let mut program = lowered(
+            "fn replace() {\n\
+                 var values = [1, 2]\n\
+                 values[:] = [3, 4]\n\
+             }\n",
+        );
+        let entry = function_id(&program, "replace");
+        let replacement = program.functions[entry.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::ValidatePlaces {
+                    replacements,
+                    for_write: true,
+                    ..
+                } => replacements
+                    .iter_mut()
+                    .find(|replacement| replacement.is_some()),
+                _ => None,
+            })
+            .expect("slice assignment has a checked replacement");
+        *replacement = None;
+        let error = execute(&program, entry, &mut host).unwrap_err();
+        assert!(matches!(error, VmError::InvalidBytecode(_)));
+
+        let mut program = lowered("fn check() { assert(true) }\n");
+        let entry = function_id(&program, "check");
+        let condition_repr = program.functions[entry.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Assert { condition_repr, .. },
+                            ..
+                        },
+                    ..
+                } => Some(condition_repr),
+                _ => None,
+            })
+            .expect("assert lowers to a checked operation");
+        condition_repr.clear();
         let error = execute(&program, entry, &mut host).unwrap_err();
         assert!(matches!(error, VmError::InvalidBytecode(_)));
     }

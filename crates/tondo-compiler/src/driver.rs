@@ -8,8 +8,8 @@ use crate::diagnostics::{
     Related, Severity,
 };
 use crate::hir::{
-    ExpressionCheckLimits, HirCallableId, HirError, HirProgram, TypeLoweringLimits,
-    check_expressions, lower_types,
+    ExpressionCheckLimits, HirCallableId, HirDiscardStatus, HirError, HirProgram,
+    TypeLoweringLimits, check_expressions, lower_types,
 };
 use crate::mir::{MirError, MirLoweringLimits, lower_to_mir};
 pub use crate::package::Edition;
@@ -123,10 +123,8 @@ impl BuildTarget {
     }
 
     pub fn vm_hosted_capabilities() -> BTreeSet<CapabilityName> {
-        BTreeSet::from([
-            CapabilityName::new("console")
-                .expect("console is a registered Tondo target capability"),
-        ])
+        BTreeSet::from([CapabilityName::new("console")
+            .expect("console is a registered Tondo target capability")])
     }
 }
 
@@ -651,6 +649,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
         ExpressionCheckLimits {
             max_nodes: request.limits.max_hir_nodes,
             max_pattern_steps: request.limits.max_pattern_analysis_steps,
+            max_trait_obligations: request.limits.max_trait_obligations,
             max_diagnostics: remaining_diagnostics,
         },
     ) {
@@ -668,6 +667,9 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                 "pattern exhaustiveness analysis",
                 offset,
             );
+        }
+        Err(HirError::TraitObligationLimit { file, offset }) => {
+            return syntax_resource_output(&request, file, "trait obligation", offset);
         }
         Err(HirError::Type(TypeError::ResourceLimit { .. })) => {
             return syntax_resource_output(&request, request.root, "interned type node count", 0);
@@ -1048,6 +1050,9 @@ fn select_hosted_main(
                 TypeKind::Scalar(ScalarType::Unit)
             ) =>
         {
+            if hir.discard_status(*error) != Some(HirDiscardStatus::Satisfied) {
+                violations.push("declare an error type that satisfies Discard");
+            }
             Some(hir.interner().canonical(*error).map_err(HirError::from)?)
         }
         _ => {
@@ -1296,6 +1301,22 @@ mod tests {
         source_form: SourceForm,
         limits: ResourceLimits,
     ) -> CompilationRequest {
+        operation_request_with_capabilities(
+            operation,
+            bytes,
+            source_form,
+            limits,
+            BuildTarget::vm_hosted_capabilities(),
+        )
+    }
+
+    fn operation_request_with_capabilities(
+        operation: Operation,
+        bytes: &[u8],
+        source_form: SourceForm,
+        limits: ResourceLimits,
+        capabilities: BTreeSet<CapabilityName>,
+    ) -> CompilationRequest {
         let mut sources = SourceDatabase::new();
         let root = sources
             .add(SourceInput::virtual_file(
@@ -1310,7 +1331,7 @@ mod tests {
             Edition::V0_1,
             BuildTarget::vm_hosted(),
             HostProfile::Hosted,
-            BuildTarget::vm_hosted_capabilities(),
+            capabilities,
             DiagnosticFormat::Json,
             source_form,
             limits,
@@ -1319,6 +1340,112 @@ mod tests {
             root,
         )
         .unwrap()
+    }
+
+    fn multimodule_request(
+        operation: Operation,
+        main_source: &[u8],
+        api_source: &[u8],
+    ) -> CompilationRequest {
+        let mut sources = SourceDatabase::new();
+        let source_id = SourceId::new("source:driver-multimodule").unwrap();
+        let root = sources
+            .add(SourceInput::virtual_file(
+                source_id.clone(),
+                ModulePath::new("main").unwrap(),
+                LogicalPath::new("main.to").unwrap(),
+                Arc::<[u8]>::from(main_source),
+            ))
+            .unwrap();
+        sources
+            .add(SourceInput::virtual_file(
+                source_id.clone(),
+                ModulePath::new("api").unwrap(),
+                LogicalPath::new("api.to").unwrap(),
+                Arc::<[u8]>::from(api_source),
+            ))
+            .unwrap();
+        let app = PackageId::new("pkg:driver-multimodule").unwrap();
+        let standard = PackageId::new("pkg:std").unwrap();
+        let graph = PackageGraph::new(
+            app.clone(),
+            standard.clone(),
+            [
+                PackageNode::new(
+                    app,
+                    source_id,
+                    PackageAlias::new("app").unwrap(),
+                    Edition::V0_1,
+                    [
+                        ModulePath::new("api").unwrap(),
+                        ModulePath::new("main").unwrap(),
+                    ],
+                    [],
+                )
+                .unwrap(),
+                PackageNode::new(
+                    standard,
+                    SourceId::new("source:std").unwrap(),
+                    PackageAlias::new("tondoStd").unwrap(),
+                    Edition::V0_1,
+                    [],
+                    [],
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        CompilationRequest::new(
+            operation,
+            Edition::V0_1,
+            BuildTarget::vm_hosted(),
+            HostProfile::Hosted,
+            BuildTarget::vm_hosted_capabilities(),
+            DiagnosticFormat::Json,
+            SourceForm::Script,
+            ResourceLimits::default(),
+            graph,
+            sources,
+            root,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn bootstrap_standard_modules_follow_the_closed_target_capabilities() {
+        let source = b"import std.console\nfn main() { console.print(\"ready\") }\n";
+        let rejected = execute(operation_request_with_capabilities(
+            Operation::Check,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(rejected.status(), CompilationStatus::Rejected);
+        let diagnostic = &rejected.diagnostics().diagnostics()[0];
+        assert_eq!(diagnostic.code(), "E1008");
+        assert!(
+            diagnostic
+                .message()
+                .contains("capability `console` is missing")
+        );
+
+        let accepted = execute(operation_request(
+            Operation::Check,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(accepted.status(), CompilationStatus::Success);
+        assert!(accepted.diagnostics().diagnostics().is_empty());
+
+        assert!(CapabilityName::new("console").is_ok());
+        assert!(matches!(
+            CapabilityName::new("made-up-capability"),
+            Err(DriverError::InvalidCapability(_))
+        ));
     }
 
     #[test]
@@ -1971,6 +2098,33 @@ mod tests {
     }
 
     #[test]
+    fn unbounded_generics_infer_invariant_arguments_and_execute() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"fn identity[T](value: T): T { value }\n\
+              fn main() {\n\
+                  let inferred: Int = identity(42)\n\
+                  let expected: String = identity(\"Tondo\")\n\
+                  let explicit = identity[Bool](true)\n\
+                  assert(inferred == 42)\n\
+                  assert(expected == \"Tondo\")\n\
+                  assert(explicit)\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics().diagnostics()
+        );
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
     fn hosted_main_validation_reports_missing_invalid_and_duplicate_entries() {
         let missing = execute(operation_request(
             Operation::Run,
@@ -1988,6 +2142,7 @@ mod tests {
             &b"fn main[T]() {}\n"[..],
             &b"fn main(): Int { 1 }\n"[..],
             &b"unsafe fn main() {}\n"[..],
+            &b"fn main(): !Join[Int, Never] { panic(\"unreachable\") }\n"[..],
         ] {
             let output = execute(operation_request(
                 Operation::Run,
@@ -2002,6 +2157,16 @@ mod tests {
                 "E1803",
                 "{source:?}"
             );
+            if source
+                .windows(b"Join".len())
+                .any(|window| window == b"Join")
+            {
+                assert!(
+                    output.diagnostics().diagnostics()[0]
+                        .message()
+                        .contains("Discard")
+                );
+            }
         }
 
         let duplicate = execute(operation_request(
@@ -2081,10 +2246,10 @@ mod tests {
     }
 
     #[test]
-    fn hosted_console_print_is_captured_as_exact_program_stdout() {
+    fn g2_002_hello_world_is_captured_as_exact_program_stdout() {
         let output = execute(operation_request(
             Operation::Run,
-            b"import std.console\nfn main() {\n    console.print(\"Hello\")\n    console.print(\", Tondo!\")\n}\n",
+            b"import std.console\n\nfn main() {\n    console.print(\"Hello, world\")\n}\n",
             SourceForm::Script,
             ResourceLimits::default(),
         ))
@@ -2092,7 +2257,7 @@ mod tests {
         assert_eq!(output.status(), CompilationStatus::Success);
         assert_eq!(output.exit_code(), 0);
         assert!(output.diagnostics().diagnostics().is_empty());
-        assert_eq!(output.stdout(), b"Hello, Tondo!");
+        assert_eq!(output.stdout(), b"Hello, world");
     }
 
     #[test]
@@ -2156,78 +2321,55 @@ mod tests {
     }
 
     #[test]
-    fn completed_multimodule_bootstrap_program_is_accepted_by_check() {
-        let mut sources = SourceDatabase::new();
-        let source_id = SourceId::new("source:driver-multimodule").unwrap();
-        let root = sources
-            .add(SourceInput::virtual_file(
-                source_id.clone(),
-                ModulePath::new("main").unwrap(),
-                LogicalPath::new("main.to").unwrap(),
-                Arc::<[u8]>::from(
-                    &b"import app.api\nfn main(): Int { api.add(api.Base, 2) }\n"[..],
-                ),
-            ))
-            .unwrap();
-        sources
-            .add(SourceInput::virtual_file(
-                source_id.clone(),
-                ModulePath::new("api").unwrap(),
-                LogicalPath::new("api.to").unwrap(),
-                Arc::<[u8]>::from(
-                    &b"pub const Base: Int = 40\npub fn add(left: Int, right: Int): Int { left + right }\n"[..],
-                ),
-            ))
-            .unwrap();
-        let app = PackageId::new("pkg:driver-multimodule").unwrap();
-        let standard = PackageId::new("pkg:std").unwrap();
-        let graph = PackageGraph::new(
-            app.clone(),
-            standard.clone(),
-            [
-                PackageNode::new(
-                    app,
-                    source_id,
-                    PackageAlias::new("app").unwrap(),
-                    Edition::V0_1,
-                    [
-                        ModulePath::new("api").unwrap(),
-                        ModulePath::new("main").unwrap(),
-                    ],
-                    [],
-                )
-                .unwrap(),
-                PackageNode::new(
-                    standard,
-                    SourceId::new("source:std").unwrap(),
-                    PackageAlias::new("tondoStd").unwrap(),
-                    Edition::V0_1,
-                    [],
-                    [],
-                )
-                .unwrap(),
-            ],
-        )
+    fn g2_005_multimodule_program_executes_with_visibility_and_nominal_identity() {
+        let api = b"pub type Answer = {\n    value: Int\n    priv secret: Int\n}\n\
+                    pub fn answer(): Answer { Answer { value: 42, secret: 7 } }\n\
+                    pub fn value(input: Answer): Int { input.value }\n";
+        let output = execute(multimodule_request(
+            Operation::Run,
+            b"import app.api\n\
+              fn main() { assert(api.value(api.answer()) == 42) }\n",
+            api,
+        ))
         .unwrap();
-        let request = CompilationRequest::new(
-            Operation::Check,
-            Edition::V0_1,
-            BuildTarget::vm_hosted(),
-            HostProfile::Hosted,
-            BTreeSet::new(),
-            DiagnosticFormat::Json,
-            SourceForm::Module,
-            ResourceLimits::default(),
-            graph,
-            sources,
-            root,
-        )
-        .unwrap();
-
-        let output = execute(request).unwrap();
-        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics().diagnostics()
+        );
+        assert_eq!(output.exit_code(), 0);
         assert!(output.diagnostics().diagnostics().is_empty());
         assert!(output.semantic_model().is_some());
+
+        let nominal_mismatch = execute(multimodule_request(
+            Operation::Check,
+            b"import app.api\n\
+              type Answer = { value: Int, secret: Int }\n\
+              fn main() { api.value(Answer { value: 42, secret: 7 }) }\n",
+            api,
+        ))
+        .unwrap();
+        assert_eq!(nominal_mismatch.status(), CompilationStatus::Rejected);
+        assert_eq!(
+            nominal_mismatch.diagnostics().diagnostics()[0].code(),
+            "E1102"
+        );
+
+        let private_access = execute(multimodule_request(
+            Operation::Check,
+            b"import app.api\n\
+              fn main() { let answer = api.answer()\n    _ = answer.secret\n}\n",
+            api,
+        ))
+        .unwrap();
+        assert_eq!(private_access.status(), CompilationStatus::Rejected);
+        assert_eq!(
+            private_access.diagnostics().diagnostics()[0].code(),
+            "E1501",
+            "{:#?}",
+            private_access.diagnostics().diagnostics()
+        );
     }
 
     #[test]

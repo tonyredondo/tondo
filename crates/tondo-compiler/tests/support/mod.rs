@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -79,7 +78,7 @@ impl Fixture {
             Edition::V0_1,
             BuildTarget::vm_hosted(),
             HostProfile::Hosted,
-            BTreeSet::new(),
+            BuildTarget::vm_hosted_capabilities(),
             DiagnosticFormat::Json,
             source_form,
             ResourceLimits::default(),
@@ -98,6 +97,7 @@ impl Fixture {
 
         Ok(FixtureObservation {
             status: output.status(),
+            exit_code: output.exit_code(),
             codes,
             json: output
                 .diagnostics()
@@ -202,6 +202,7 @@ impl Fixture {
 #[derive(Debug)]
 pub struct FixtureObservation {
     status: CompilationStatus,
+    exit_code: u8,
     codes: Vec<String>,
     json: String,
     human: String,
@@ -211,10 +212,7 @@ pub struct FixtureObservation {
 
 impl FixtureObservation {
     fn exit_code(&self) -> i32 {
-        match self.status {
-            CompilationStatus::Success => 0,
-            CompilationStatus::Rejected => 1,
-        }
+        i32::from(self.exit_code)
     }
 }
 
@@ -293,7 +291,7 @@ pub fn inline_request(operation: Operation, source_name: &str, bytes: &[u8]) -> 
         Edition::V0_1,
         BuildTarget::vm_hosted(),
         HostProfile::Hosted,
-        BTreeSet::new(),
+        BuildTarget::vm_hosted_capabilities(),
         DiagnosticFormat::Json,
         SourceForm::Fragment,
         ResourceLimits::default(),

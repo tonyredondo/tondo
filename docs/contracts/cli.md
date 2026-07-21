@@ -61,9 +61,12 @@ stdout with machine-readable compiler output.
 | `1` | Tondo diagnostics rejected the operation, or `fmt --check` found a formatting difference |
 | `2` | Invalid invocation, unreadable input, or unsupported CLI shape |
 | `3` | Internal toolchain failure |
+| `101` | An executed Tondo program ended in a language panic |
 
-The process exit behavior of a successfully launched Tondo program is defined by
-the language and hosted runtime; it will be incorporated when `run` can execute.
+For a launched synchronous program, returning `Unit` or `ok(Unit)` exits 0. A
+fallible `main` is admitted only when its error type satisfies `Discard`; an
+unhandled admitted error emits `R0001` and exits 1. A language panic emits its
+normative `P` diagnostic and exits 101.
 
 ## Bootstrap honesty
 
@@ -71,7 +74,9 @@ Every implemented phase runs before the bootstrap marker. A lexical or later
 language error therefore returns only its normative diagnostics with exit code
 1 and no partial formatter output. `fmt` is complete for its one-file bootstrap
 surface and succeeds after syntax validation. `check` succeeds with exit code 0
-when expression checking reports a complete M2 semantic snapshot; warnings are
-rendered without changing that status. A deliberately deferred semantic
-surface, and every `run` request until M3 is complete, returns `T0001` with exit
-code 1. The CLI never returns success for an unimplemented operation.
+when expression checking reports a complete semantic snapshot; warnings are
+rendered without changing that status. `run` lowers a valid synchronous
+explicit `main` through verified HIR, MIR, and bytecode and executes it in the
+VM. Async entry points and implicit script bodies remain explicit later
+milestones and return `T0001`. The CLI never returns success for an
+unimplemented operation.

@@ -16,8 +16,9 @@ resolution, visibility checks, public-API validation, and foundational
 canonical type interner are also implemented. Source type expressions now lower
 to semantic declarations and callable signatures, including aliases, generic
 bounds, normalized unions, and recursive-productivity checks. The typed HIR now
-checks the non-generic bootstrap core: constants, bindings, functions, inherent
-methods, blocks, conditionals, loops, scalar operators, calls, `Option`,
+checks the bootstrap core, including unbounded generic bodies and invariant
+call inference: constants, bindings, functions, inherent methods, blocks,
+conditionals, loops, scalar operators, calls, `Option`,
 `Result`, `fail`, `?`, every pattern form, and exhaustive guarded `match`, with
 explicit coercions and structured diagnostics. Field and tuple-slot access,
 array indexing/slicing, map lookup, array arithmetic, and simple, compound, and
@@ -37,10 +38,13 @@ Record construction/update, method dispatch, closed generic-call inference,
 range/membership checking, and compile-time constant evaluation are implemented
 for the bootstrap subset. `tondo check` now succeeds when that entire subset is
 understood. Complete HIR lowers through a verified typed MIR and then to
-verified in-memory slot bytecode with source maps; `tondo run` reaches the
-explicit `T0001` marker only after those phases succeed. VM execution and
-ownership analysis remain under construction, so the workspace does not yet
-claim full Tondo support.
+verified in-memory slot bytecode with source maps. `tondo run` executes a
+synchronous explicit `main` in an iterative VM with checked operations,
+normative panics, precise generational mark-and-sweep collection, defensive
+limits, and a provisional capability-gated `std.console.print` host shim. Async
+entry points, implicit script bodies, ownership analysis, and later language
+milestones remain under construction, so the workspace identifies itself as a
+bootstrap and does not claim full Tondo conformance.
 
 ## Project documentation
 
@@ -56,6 +60,10 @@ claim full Tondo support.
   admission invariants.
 - `docs/contracts/bytecode.md` records the in-memory slot format, source maps,
   verifier, and tooling-only disassembler.
+- `docs/contracts/vm-runtime.md` records the executable object, GC, panic, and
+  admission model.
+- `docs/contracts/bootstrap-host.md` records the provisional console shim and
+  capability boundary.
 - `docs/contracts/semantic-queries.md` records the request-owned tooling
   snapshot and CHECK-009 query boundary.
 - `docs/contracts/types.md` records the canonical semantic type representation.
@@ -63,7 +71,8 @@ claim full Tondo support.
 ## Local validation
 
 ~~~text
-cargo fmt --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace
+cargo fmt --all -- --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --all-targets --locked
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --locked
 ~~~

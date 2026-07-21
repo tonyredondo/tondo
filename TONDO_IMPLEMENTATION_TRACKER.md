@@ -1,13 +1,12 @@
 # Tondo: tracker de implementación
 
 **Estado:** activo  
-**Versión del tracker:** 0.20  
+**Versión del tracker:** 0.21
 **Última actualización:** 2026-07-21  
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
-**Objetivo inmediato:** ejecutar el bytecode por slots ya verificado en la VM y
-alcanzar los cinco programas de aceptación de G2, sin intentar resolver
-simultáneamente el backend nativo, la librería estándar completa ni las
-optimizaciones del runtime.
+**Objetivo inmediato:** completar parámetros genéricos, constraints e
+instanciación monomorfizada como primera parte de M4, preservando los límites y
+la ruta de bytecode verificado alcanzada en G2.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -186,10 +185,10 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   demostrado cada fase y dónde se representan moves, loans, cleanup y puntos de
   suspensión.
 
-- [ ] **DEC-006 — Modelo de objetos de la VM.** Fijar roots, heap objects,
+- [x] **DEC-006 — Modelo de objetos de la VM.** Fijar roots, heap objects,
   tracing, strings, environments, `Ref[T]`, payloads de enum y collections.
 
-- [ ] **DEC-007 — Frontera bootstrap de la stdlib.** Definir el shim mínimo para
+- [x] **DEC-007 — Frontera bootstrap de la stdlib.** Definir el shim mínimo para
   consola y host sin congelar prematuramente la futura API estándar.
 
 - [x] **DEC-008 — Targets iniciales.** Nombrar el target de la VM y el primer
@@ -862,33 +861,33 @@ Evidencia observada el 2026-07-21:
 
 ### 8.3 VM bootstrap
 
-- [ ] **VM-001 — Implementar frames, slots, llamadas y retorno.**
+- [x] **VM-001 — Implementar frames, slots, llamadas y retorno.**
 
-- [ ] **VM-002 — Implementar `Bool`, enteros, floats, `Unit`, strings bootstrap,
+- [x] **VM-002 — Implementar `Bool`, enteros, floats, `Unit`, strings bootstrap,
   tuples, records y enums.**
 
-- [ ] **VM-003 — Implementar aritmética comprobada y clases de pánico
+- [x] **VM-003 — Implementar aritmética comprobada y clases de pánico
   normativas.**
 
-- [ ] **VM-004 — Implementar branches, loops y pattern dispatch.**
+- [x] **VM-004 — Implementar branches, loops y pattern dispatch.**
 
-- [ ] **VM-005 — Implementar `assert` y `panic` con ubicación y stack trace
+- [x] **VM-005 — Implementar `assert` y `panic` con ubicación y stack trace
   cuando haya símbolos.**
 
-- [ ] **VM-006 — Implementar `main` síncrono, exit status y frontera de error.**
+- [x] **VM-006 — Implementar `main` síncrono, exit status y frontera de error.**
 
-- [ ] **VM-007 — Crear un shim bootstrap de `std.console.print`.** Debe quedar
+- [x] **VM-007 — Crear un shim bootstrap de `std.console.print`.** Debe quedar
   aislado de la futura API estándar y documentado como provisional.
 
-- [ ] **VM-008 — Implementar el heap preciso, no móvil y mark-and-sweep
+- [x] **VM-008 — Implementar el heap preciso, no móvil y mark-and-sweep
   bootstrap.** Debe recorrer roots de frames y objetos existentes, aunque M5
   amplíe después el universo trazable y sus pruebas bajo presión.
 
-- [ ] **VM-009 — Probar que bytecode inválido se rechaza antes de ejecutar.**
+- [x] **VM-009 — Probar que bytecode inválido se rechaza antes de ejecutar.**
 
 ### 8.4 Programas de aceptación de G2
 
-- [ ] **ACCEPT-001 — Programa sin I/O.**
+- [x] **ACCEPT-001 — Programa sin I/O.**
 
   ~~~tondo
   fn add(left: Int, right: Int): Int {
@@ -900,7 +899,7 @@ Evidencia observada el 2026-07-21:
   }
   ~~~
 
-- [ ] **ACCEPT-002 — `Hello, world`.**
+- [x] **ACCEPT-002 — `Hello, world`.**
 
   ~~~tondo
   import std.console
@@ -910,11 +909,40 @@ Evidencia observada el 2026-07-21:
   }
   ~~~
 
-- [ ] **ACCEPT-003 — Enum, `match`, `Result` y `?`.**
+- [x] **ACCEPT-003 — Enum, `match`, `Result` y `?`.**
 
-- [ ] **ACCEPT-004 — Loop, checked overflow y panic con span.**
+- [x] **ACCEPT-004 — Loop, checked overflow y panic con span.**
 
-- [ ] **ACCEPT-005 — Dos módulos con visibilidad e identidad nominal.**
+- [x] **ACCEPT-005 — Dos módulos con visibilidad e identidad nominal.**
+
+Evidencia observada el 2026-07-21:
+
+- La VM usa frames iterativos, slots tipados y continuaciones explícitas; ejecuta
+  scalars, strings, tuples, records, enums, options, results, colecciones,
+  branches, loops, pattern dispatch, llamadas, retornos y unwind sin recurrir al
+  stack Rust para llamadas Tondo.
+- Las diez clases bootstrap `P0001` a `P0010` tienen identidad y nombre estables.
+  Los tests cubren overflow, división por cero, bounds, step cero, shift
+  inválido, overlap dinámico, shape de arrays, claves dinámicas duplicadas,
+  `assert` y `panic`. `assert` conserva la representación fuente de la condición
+  a través de HIR, MIR y bytecode para el mensaje por defecto.
+- `main` síncrono valida unicidad, privacidad, aridad, genéricos, `unsafe`,
+  outcome y `Discard` del error. `Unit`, `ok(Unit)`, error no manejado y pánico
+  terminan respectivamente con 0, 0, 1 y 101.
+- `std.console.print(String): Unit` es un host op tipado, provisional y gated por
+  la capability cerrada `console`; sin ella el módulo no existe y el import
+  produce `E1008`. La salida exacta no añade newline.
+- El heap preciso, no móvil y generacional conserva roots, recupera ciclos,
+  rechaza handles stale y recolecta bajo presión antes de OOM. La ejecución
+  verifica todo el bytecode antes de seleccionar un frame o invocar al host; un
+  test mutado demuestra cero llamadas host.
+- Los fixtures `g2-001` a `g2-004` recorren la ruta pública y el caso
+  multimódulo `g2-005` ejecuta bytecode mientras prueba además `E1102` para
+  identidad nominal y `E1501` para privacidad. Los smoke tests del binario
+  confirman exits 0/101, `P0005` y `Hello, world` byte por byte.
+- `cargo test --workspace --all-targets --locked` pasa 307 tests; también pasan
+  `git diff --check`, formatter check, Clippy con warnings denegados y Rustdoc
+  con warnings denegados.
 
 ### Gate G2
 
@@ -933,7 +961,7 @@ Evidencia observada el 2026-07-21:
 **Objetivo:** completar el modelo de abstracción estática sin introducir objetos
 dinámicos ni dispatch oculto.
 
-- [ ] **GEN-001 — Implementar parámetros genéricos invariantes e inferencia de
+- [x] **GEN-001 — Implementar parámetros genéricos invariantes e inferencia de
   argumentos desde argumentos y tipo esperado.**
 
 - [ ] **GEN-002 — Implementar constraints e instanciación monomorfizada.**
@@ -1589,8 +1617,8 @@ pública definitiva hasta ser fijados por la especificación estándar.
 
 ## 19. Cola inmediata
 
-Estas son las siguientes acciones en orden. No deben adelantarse tareas de M4 o
-posteriores mientras esta cola no alcance el primer loop ejecutable.
+Estas son las siguientes acciones históricas en orden; G2 ya habilita avanzar a
+M4 sin adelantar trabajo de ownership o async.
 
 1. [x] Crear el repositorio y workspace Rust mínimo.
 2. [x] Escribir `architecture.md` y los ADR de partida.
@@ -1603,15 +1631,27 @@ posteriores mientras esta cola no alcance el primer loop ejecutable.
 9. [x] Implementar el subconjunto semántico de G1.
 10. [x] Diseñar MIR con cleanup edges antes de escribir la VM.
 11. [x] Implementar bytecode verificado por slots.
-12. [ ] Implementar la VM y ejecutar los programas de aceptación de G2.
+12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es fijar el modelo de objetos bootstrap y ejecutar
-frames, slots, llamadas, valores y control de flujo sobre bytecode verificado
-(DEC-006 y VM-001 a VM-004).
+La siguiente acción activa es cerrar GEN-001 y GEN-002: completar la inferencia
+genérica ya iniciada, fijar constraints ejecutables e introducir
+monomorfización limitada antes del dispatch de traits.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.21 — 2026-07-21
+
+- Se completan DEC-006, DEC-007, VM-001 a VM-009 y los cinco programas de
+  aceptación; G2 queda cerrado como primer compilador bootstrap ejecutable.
+- Frames por slots, pánicos normativos, frontera de `main`, consola tipada y GC
+  preciso no móvil están conectados al driver y al binario públicos.
+- Se corrigen durante la aceptación la atomicidad de asignación de slices, la
+  política dinámica de duplicados de `Map`, el mensaje fuente de `assert` y la
+  obligación `Discard` del error de `main`.
+- El gate acumulado queda en 307 tests, smoke tests G2, formatter check, Clippy
+  y Rustdoc sin warnings; la cola avanza a GEN-001 y GEN-002.
 
 ### 0.20 — 2026-07-21
 

@@ -490,17 +490,22 @@ impl Verifier<'_> {
             }
             MirTerminatorKind::ValidatePlaces {
                 places,
+                replacements,
+                for_write,
                 target,
                 unwind,
             } => {
-                if block.kind != MirBlockKind::Normal || places.is_empty() {
+                if block.kind != MirBlockKind::Normal
+                    || places.is_empty()
+                    || places.len() != replacements.len()
+                {
                     return Err(MirInvariantError::new(
                         &context,
-                        "place validation must be a non-empty ordinary operation",
+                        "place validation must be a non-empty aligned ordinary operation",
                     ));
                 }
                 let mut unique = Vec::new();
-                for place in places {
+                for (place, replacement) in places.iter().zip(replacements) {
                     self.verify_place(function, place, &context)?;
                     if unique.contains(&place) {
                         return Err(MirInvariantError::new(
@@ -509,6 +514,30 @@ impl Verifier<'_> {
                         ));
                     }
                     unique.push(place);
+                    let slice = matches!(
+                        place.projections().last().map(MirProjection::kind),
+                        Some(MirProjectionKind::Slice { .. })
+                    );
+                    match (*for_write, slice, replacement) {
+                        (false, _, None) | (true, false, None) => {}
+                        (true, true, Some(replacement)) => {
+                            self.verify_operand(function, replacement, &context)?;
+                            if replacement.ty() != place.ty()
+                                || !matches!(replacement.kind(), MirOperandKind::Copy(_))
+                            {
+                                return Err(MirInvariantError::new(
+                                    &context,
+                                    "slice write validation requires a copied replacement of the place type",
+                                ));
+                            }
+                        }
+                        _ => {
+                            return Err(MirInvariantError::new(
+                                &context,
+                                "place validation replacement shape disagrees with its mode",
+                            ));
+                        }
+                    }
                 }
                 self.normal_block(function, *target, &context)?;
                 if self.block(function, *unwind, &context)?.kind != MirBlockKind::Cleanup {
@@ -731,7 +760,7 @@ impl Verifier<'_> {
                     ));
                 }
             }
-            MirOperationKind::BuildMap(entries) => {
+            MirOperationKind::BuildMap { entries, .. } => {
                 let arguments =
                     self.intrinsic_arguments(operation.ty, IntrinsicType::Map, context)?;
                 for (key, value) in entries {
@@ -800,6 +829,7 @@ impl Verifier<'_> {
             }
             MirOperationKind::Assert {
                 condition,
+                condition_repr,
                 message_parts,
             } => {
                 self.verify_operand(function, condition, context)?;
@@ -807,6 +837,12 @@ impl Verifier<'_> {
                     return Err(MirInvariantError::new(
                         context,
                         "assert operation condition is not Bool",
+                    ));
+                }
+                if condition_repr.is_empty() {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "assert operation has no condition representation",
                     ));
                 }
                 let string_type = self.hir.interner().scalar(ScalarType::String);
@@ -2641,9 +2677,16 @@ impl Verifier<'_> {
                 push_place_events(state, true, &mut events);
                 push_destination_reads(destination, &mut events);
             }
-            MirTerminatorKind::ValidatePlaces { places, .. } => {
+            MirTerminatorKind::ValidatePlaces {
+                places,
+                replacements,
+                ..
+            } => {
                 for place in places {
                     push_destination_reads(place, &mut events);
+                }
+                for replacement in replacements.iter().flatten() {
+                    push_operand_events(replacement, &mut events);
                 }
             }
             MirTerminatorKind::Return => events.push(LocalEvent::Read(function.return_local)),
@@ -2760,9 +2803,16 @@ fn tag_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<TagEvent> {
             push_tag_place(function, state, false, &mut events);
             push_tag_place(function, destination, false, &mut events);
         }
-        MirTerminatorKind::ValidatePlaces { places, .. } => {
+        MirTerminatorKind::ValidatePlaces {
+            places,
+            replacements,
+            ..
+        } => {
             for place in places {
                 push_tag_place(function, place, false, &mut events);
+            }
+            for replacement in replacements.iter().flatten() {
+                push_tag_operand(function, replacement, &mut events);
             }
         }
     }
@@ -2820,7 +2870,7 @@ fn push_tag_operation(
             push_tag_operand(function, left, events);
             push_tag_operand(function, right, events);
         }
-        MirOperationKind::BuildMap(entries) => {
+        MirOperationKind::BuildMap { entries, .. } => {
             for (key, value) in entries {
                 push_tag_operand(function, key, events);
                 push_tag_operand(function, value, events);
@@ -2853,6 +2903,7 @@ fn push_tag_operation(
         MirOperationKind::Assert {
             condition,
             message_parts,
+            ..
         } => {
             push_tag_operand(function, condition, events);
             for part in message_parts {
@@ -3122,7 +3173,7 @@ fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>)
             push_operand_events(left, events);
             push_operand_events(right, events);
         }
-        MirOperationKind::BuildMap(entries) => {
+        MirOperationKind::BuildMap { entries, .. } => {
             for (key, value) in entries {
                 push_operand_events(key, events);
                 push_operand_events(value, events);
@@ -3153,6 +3204,7 @@ fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>)
         MirOperationKind::Assert {
             condition,
             message_parts,
+            ..
         } => {
             push_operand_events(condition, events);
             for part in message_parts {

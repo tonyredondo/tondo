@@ -34,6 +34,7 @@ use super::{
 pub struct ExpressionCheckLimits {
     pub max_nodes: u32,
     pub max_pattern_steps: u32,
+    pub max_trait_obligations: u32,
     pub max_diagnostics: usize,
 }
 
@@ -83,6 +84,7 @@ pub fn check_expressions<'a>(
         diagnostics: Vec::new(),
         max_nodes: limits.max_nodes,
         pattern_steps_remaining: u64::from(limits.max_pattern_steps),
+        trait_obligations_remaining: u64::from(limits.max_trait_obligations),
         max_diagnostics: limits.max_diagnostics,
         complete: true,
         next_loop_id: 0,
@@ -93,6 +95,11 @@ pub fn check_expressions<'a>(
     checker.check_callables()?;
     checker.check_constant_collection_diagnostics()?;
     checker.check_reachability_warnings()?;
+    let types = checker.program.interner.ids().collect::<Vec<_>>();
+    checker.program.discard_statuses = types
+        .into_iter()
+        .map(|ty| checker.discard_status_with_generics(ty, &BTreeMap::new()))
+        .collect::<Result<_, _>>()?;
     checker.program.expression_check_complete = checker.complete;
     if checker.complete
         && !checker
@@ -238,6 +245,7 @@ struct BodyContext {
     receiver: Option<TypeId>,
     receiver_permission: PlacePermission,
     callable: Option<CallableContext>,
+    discard_statuses: BTreeMap<u32, DiscardStatus>,
     loops: Vec<HirLoopId>,
 }
 
@@ -365,12 +373,7 @@ struct FlowSummary {
     breaks: BTreeSet<HirLoopId>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum DiscardStatus {
-    Satisfied,
-    Deferred,
-    Unsatisfied,
-}
+type DiscardStatus = super::HirDiscardStatus;
 
 struct DiscardNode {
     floor: DiscardStatus,
@@ -425,6 +428,7 @@ struct ExpressionChecker<'a> {
     diagnostics: Vec<Diagnostic>,
     max_nodes: u32,
     pattern_steps_remaining: u64,
+    trait_obligations_remaining: u64,
     max_diagnostics: usize,
     complete: bool,
     next_loop_id: u32,
@@ -435,27 +439,7 @@ impl<'a> ExpressionChecker<'a> {
     fn check_discard_parameters(&mut self) -> Result<(), HirError> {
         let callables = self.program.callables.clone();
         for callable in callables {
-            let generic_statuses = callable
-                .generics
-                .iter()
-                .map(|parameter| {
-                    let satisfied = parameter.bounds.iter().any(|bound| {
-                        matches!(
-                            bound.constructor(),
-                            HirTraitConstructor::Prelude(name)
-                                if matches!(name.as_str(), "Copy" | "Discard" | "Key")
-                        )
-                    });
-                    (
-                        parameter.position,
-                        if satisfied {
-                            DiscardStatus::Satisfied
-                        } else {
-                            DiscardStatus::Unsatisfied
-                        },
-                    )
-                })
-                .collect::<BTreeMap<_, _>>();
+            let generic_statuses = callable_discard_statuses(&callable);
             for parameter in callable
                 .parameters
                 .iter()
@@ -687,7 +671,7 @@ impl<'a> ExpressionChecker<'a> {
             let Some(body_source) = callable.body_source else {
                 continue;
             };
-            if !callable.generics.is_empty() || !self.is_bootstrap_callable(&callable) {
+            if !self.is_bootstrap_callable(&callable) {
                 self.complete = false;
                 continue;
             }
@@ -696,6 +680,7 @@ impl<'a> ExpressionChecker<'a> {
                 continue;
             };
             let mut context = BodyContext::default();
+            context.discard_statuses = callable_discard_statuses(&callable);
             let (success, error) = match self.program.interner.kind(callable.outcome)? {
                 TypeKind::Result { success, error } => (*success, Some(*error)),
                 _ => (callable.outcome, None),
@@ -737,7 +722,7 @@ impl<'a> ExpressionChecker<'a> {
             .program
             .expressions_with_ids()
             .filter_map(|(id, expression)| match expression.kind() {
-                HirExpressionKind::Map(entries) => Some((
+                HirExpressionKind::Map { entries, .. } => Some((
                     id,
                     expression.span(),
                     ConstantDiagnosticKind::Map(entries.clone()),
@@ -904,7 +889,7 @@ impl<'a> ExpressionChecker<'a> {
                 | HirExpressionKind::Set(items)
                 | HirExpressionKind::InterpolatedString { values: items, .. } => self
                     .queue_reachable_sequence(items.iter().copied(), &mut pending, &mut warnings),
-                HirExpressionKind::Map(entries) => self.queue_reachable_sequence(
+                HirExpressionKind::Map { entries, .. } => self.queue_reachable_sequence(
                     entries
                         .iter()
                         .flat_map(|entry| [entry.key(), entry.value()]),
@@ -1001,6 +986,7 @@ impl<'a> ExpressionChecker<'a> {
                 HirExpressionKind::PreludeAssert {
                     condition,
                     message_parts,
+                    ..
                 } => self.queue_reachable_sequence(
                     std::iter::once(*condition)
                         .chain(message_parts.iter().map(|part| part.value())),
@@ -1866,7 +1852,13 @@ impl<'a> ExpressionChecker<'a> {
                             _ => None,
                         };
                         value = if let Some(callable) = callable {
-                            self.specialize_function_value(file, node.range(), suffix, callable)?
+                            self.specialize_function_value(
+                                file,
+                                node.range(),
+                                suffix,
+                                callable,
+                                context,
+                            )?
                         } else {
                             self.project_bracket_expression(
                                 file,
@@ -1890,6 +1882,7 @@ impl<'a> ExpressionChecker<'a> {
         range: TextRange,
         bracket: SyntaxNodeRef<'_>,
         id: HirCallableId,
+        context: &BodyContext,
     ) -> Result<HirExpressionId, HirError> {
         let Some(callable) = self.callable(id).cloned() else {
             self.complete = false;
@@ -1922,13 +1915,12 @@ impl<'a> ExpressionChecker<'a> {
             )?;
             return self.recovery_expression(file, range);
         }
-        if callable
-            .generics
-            .iter()
-            .any(|parameter| !parameter.bounds.is_empty())
-        {
-            self.complete = false;
-        }
+        self.validate_generic_bounds(
+            self.sources.span(file, bracket.range())?,
+            &callable,
+            &arguments,
+            &context.discard_statuses,
+        )?;
         let function_type = TypeSubstitution::new(arguments.clone())
             .apply(&mut self.program.interner, callable.function_type)?;
         self.allocate_expression(HirExpression {
@@ -2073,6 +2065,11 @@ impl<'a> ExpressionChecker<'a> {
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
         let base_type = self.expression_type(base);
+        let base_category = self
+            .program
+            .expression(base)
+            .expect("allocated expression IDs remain valid")
+            .category();
         let kind = self.program.interner.kind(base_type)?.clone();
         match kind {
             TypeKind::Intrinsic {
@@ -2117,7 +2114,7 @@ impl<'a> ExpressionChecker<'a> {
                 self.allocate_expression(HirExpression {
                     span: self.sources.span(file, range)?,
                     ty: arguments[0],
-                    category: HirValueCategory::Place,
+                    category: base_category,
                     kind: HirExpressionKind::Index {
                         base,
                         index,
@@ -2420,11 +2417,17 @@ impl<'a> ExpressionChecker<'a> {
                 .interner
                 .intrinsic(IntrinsicType::Map, vec![key_type, value_type])?,
         );
+        let reject_dynamic_duplicates = self
+            .discard_status_with_generics(value_type, &BTreeMap::new())?
+            != DiscardStatus::Satisfied;
         self.allocate_expression(HirExpression {
             span: self.sources.span(file, node.range())?,
             ty,
             category: HirValueCategory::Value,
-            kind: HirExpressionKind::Map(entries),
+            kind: HirExpressionKind::Map {
+                entries,
+                reject_dynamic_duplicates,
+            },
         })
     }
 
@@ -3396,7 +3399,11 @@ impl<'a> ExpressionChecker<'a> {
         };
         let value_type = self.expression_type(value);
         let target = if operator == HirAssignmentOperator::Assign {
-            self.finalize_assignment_target(&checked_target, value_type)?
+            self.finalize_assignment_target(
+                &checked_target,
+                value_type,
+                &context.discard_statuses,
+            )?
         } else {
             self.finalize_compound_assignment_target(
                 file,
@@ -3571,6 +3578,7 @@ impl<'a> ExpressionChecker<'a> {
         &mut self,
         target: &CheckedAssignmentTarget,
         actual: TypeId,
+        generic_statuses: &BTreeMap<u32, DiscardStatus>,
     ) -> Result<HirAssignmentTarget, HirError> {
         match &target.kind {
             CheckedAssignmentTargetKind::Place(place) => {
@@ -3586,7 +3594,12 @@ impl<'a> ExpressionChecker<'a> {
                 })
             }
             CheckedAssignmentTargetKind::Discard => {
-                self.require_discard(target.span, actual)?;
+                self.require_discard_with_generics(
+                    target.span,
+                    actual,
+                    generic_statuses,
+                    "`_ =`",
+                )?;
                 Ok(HirAssignmentTarget {
                     span: target.span,
                     ty: actual,
@@ -3615,7 +3628,8 @@ impl<'a> ExpressionChecker<'a> {
                 let mut items = Vec::with_capacity(targets.len());
                 let mut types = Vec::with_capacity(targets.len());
                 for (target, actual) in targets.iter().zip(actual_items) {
-                    let item = self.finalize_assignment_target(target, actual)?;
+                    let item =
+                        self.finalize_assignment_target(target, actual, generic_statuses)?;
                     types.push(item.ty);
                     items.push(item);
                 }
@@ -3642,7 +3656,11 @@ impl<'a> ExpressionChecker<'a> {
         right: TypeId,
     ) -> Result<HirAssignmentTarget, HirError> {
         let CheckedAssignmentTargetKind::Place(place) = &target.kind else {
-            return self.finalize_assignment_target(target, self.program.interner.error());
+            return self.finalize_assignment_target(
+                target,
+                self.program.interner.error(),
+                &BTreeMap::new(),
+            );
         };
         if place.map_entry || place.permission == PlacePermission::Invalid {
             return Ok(HirAssignmentTarget {
@@ -8231,6 +8249,7 @@ impl<'a> ExpressionChecker<'a> {
             .filter(|child| child.kind() == SyntaxKind::CallArgument)
             .collect::<Vec<_>>();
         let mut condition = None;
+        let mut condition_repr = None;
         let mut message = None;
         let mut message_parts = Vec::new();
         let mut named_started = false;
@@ -8369,6 +8388,7 @@ impl<'a> ExpressionChecker<'a> {
                         Some(ExpressionExpectation::Direct(bool_type)),
                         context,
                     )?;
+                    condition_repr = Some(self.source_text(file, expression.range())?.to_owned());
                     if condition.replace(value).is_some() {
                         self.emit(
                             self.sources.span(file, argument.range())?,
@@ -8431,12 +8451,15 @@ impl<'a> ExpressionChecker<'a> {
             )?;
             return Ok(Some(self.recovery_expression(file, range)?));
         };
+        let condition_repr =
+            condition_repr.expect("a checked assert condition retains its source representation");
         Ok(Some(self.allocate_expression(HirExpression {
             span,
             ty: self.program.interner.scalar(ScalarType::Unit),
             category: HirValueCategory::Value,
             kind: HirExpressionKind::PreludeAssert {
                 condition,
+                condition_repr,
                 message_parts,
             },
         })?))
@@ -8614,13 +8637,12 @@ impl<'a> ExpressionChecker<'a> {
             )?;
             return Ok(Some(self.recovery_expression(file, range)?));
         }
-        if callable
-            .generics
-            .iter()
-            .any(|parameter| !parameter.bounds.is_empty())
-        {
-            self.complete = false;
-        }
+        self.validate_generic_bounds(
+            self.sources.span(file, brackets[0].range())?,
+            &callable,
+            &arguments,
+            &context.discard_statuses,
+        )?;
         let function_type = TypeSubstitution::new(arguments.clone())
             .apply(&mut self.program.interner, callable.function_type)?;
         let callee = self.allocate_expression(HirExpression {
@@ -9681,15 +9703,17 @@ impl<'a> ExpressionChecker<'a> {
                     return self.recovery_expression(file, range);
                 }
             };
-            if self.callable(generic.callable).is_some_and(|callable| {
-                callable.generics.iter().any(|item| !item.bounds.is_empty())
-            }) {
-                self.complete = false;
-            }
-            let function_type = self
+            let inferred_callable = self
                 .callable(generic.callable)
                 .expect("an inferred callable remains indexed")
-                .function_type;
+                .clone();
+            self.validate_generic_bounds(
+                self.sources.span(file, suffix.range())?,
+                &inferred_callable,
+                &type_arguments,
+                &context.discard_statuses,
+            )?;
+            let function_type = inferred_callable.function_type;
             let final_type = TypeSubstitution::new(type_arguments.clone())
                 .apply(&mut self.program.interner, function_type)?;
             let final_function = match self.program.interner.kind(final_type)?.clone() {
@@ -10226,7 +10250,7 @@ impl<'a> ExpressionChecker<'a> {
             | HirExpressionKind::InterpolatedString { values: items, .. } => {
                 self.expression_sequence(items.iter().copied())
             }
-            HirExpressionKind::Map(entries) => self.expression_sequence(
+            HirExpressionKind::Map { entries, .. } => self.expression_sequence(
                 entries
                     .iter()
                     .flat_map(|entry| [entry.key(), entry.value()]),
@@ -10329,6 +10353,7 @@ impl<'a> ExpressionChecker<'a> {
             HirExpressionKind::PreludeAssert {
                 condition,
                 message_parts,
+                ..
             } => self.expression_sequence(
                 std::iter::once(*condition).chain(message_parts.iter().map(|part| part.value())),
             ),
@@ -10720,6 +10745,32 @@ fn binary_operator(token: TokenKind) -> Option<HirBinaryOperator> {
         TokenKind::Or => HirBinaryOperator::LogicalOr,
         _ => return None,
     })
+}
+
+fn callable_discard_statuses(
+    callable: &HirCallableSignature,
+) -> BTreeMap<u32, DiscardStatus> {
+    callable
+        .generics
+        .iter()
+        .map(|parameter| {
+            let satisfied = parameter.bounds.iter().any(|bound| {
+                matches!(
+                    bound.constructor(),
+                    HirTraitConstructor::Prelude(name)
+                        if matches!(name.as_str(), "Copy" | "Discard" | "Key")
+                )
+            });
+            (
+                parameter.position,
+                if satisfied {
+                    DiscardStatus::Satisfied
+                } else {
+                    DiscardStatus::Unsatisfied
+                },
+            )
+        })
+        .collect()
 }
 
 fn assignment_operator(token: TokenKind) -> Option<HirAssignmentOperator> {
@@ -11228,6 +11279,7 @@ mod tests {
             ExpressionCheckLimits {
                 max_nodes: 100_000,
                 max_pattern_steps: 100_000,
+                max_trait_obligations: 100_000,
                 max_diagnostics: 100,
             },
         )
@@ -11319,6 +11371,7 @@ mod tests {
             ExpressionCheckLimits {
                 max_nodes: 100_000,
                 max_pattern_steps: 100_000,
+                max_trait_obligations: 100_000,
                 max_diagnostics: 100,
             },
         )
@@ -11442,7 +11495,7 @@ mod tests {
         for expression in output.program().expressions() {
             match expression.kind() {
                 HirExpressionKind::Array(_) => arrays += 1,
-                HirExpressionKind::Map(entries) => {
+                HirExpressionKind::Map { entries, .. } => {
                     maps += 1;
                     assert!(entries.iter().all(|entry| {
                         output.program().expression(entry.key()).is_some()
@@ -12550,7 +12603,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
         let arguments = output
             .program()
             .expressions()
@@ -12591,7 +12644,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
         let specializations = output
             .program()
             .expressions()
@@ -12642,6 +12695,13 @@ mod tests {
              }\n",
         );
         assert_eq!(codes(&ambiguous), ["E1101"]);
+
+        let (_, _, invalid_body) = check(
+            "fn invalid[T](value: T): Int { value }\n\
+             fn main() {}\n",
+        );
+        assert_eq!(codes(&invalid_body), ["E1102"]);
+        assert!(invalid_body.is_complete());
     }
 
     #[test]
@@ -12974,10 +13034,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(
-            !output.is_complete(),
-            "generic bodies remain deferred to M4"
-        );
+        assert!(output.is_complete());
         let missing = output
             .program()
             .constants()
@@ -14007,6 +14064,7 @@ mod tests {
             ExpressionCheckLimits {
                 max_nodes: 100_000,
                 max_pattern_steps: 100_000,
+                max_trait_obligations: 100_000,
                 max_diagnostics: 100,
             },
         )

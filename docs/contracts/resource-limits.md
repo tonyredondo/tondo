@@ -27,6 +27,11 @@ with different explicit limits; the CLI uses the defaults.
 | Bytecode slots and blocks per function | 1,000,000 each |
 | Bytecode instructions and spans per function | 4,000,000 each |
 | Bytecode verification dataflow work | 32,000,000 |
+| VM executed instructions | 100,000,000 |
+| VM frame depth | 65,536 |
+| VM live heap objects | 1,000,000 |
+| VM live heap bytes | 1 GiB |
+| VM initial collection threshold | 1,024 objects |
 | Generic instantiations | 1,000,000 |
 | Trait obligations | 1,000,000 |
 | Primary diagnostics | 10,000 |
@@ -50,9 +55,10 @@ Pattern usefulness, reachability, and exhaustiveness share a separate
 matrix-work budget and use an explicit worklist rather than the process stack.
 MIR and bytecode construction bound every request-local table before growth;
 their initialization, lifetime, and tag-refinement analyses share independent
-step budgets and use worklists. Each later phase must enforce its budget when
-that phase becomes reachable. Bootstrap resource exhaustion uses diagnostic
-code `T0002`.
+step budgets and use worklists. VM admission and execution enforce non-zero
+verification, instruction, frame, object, byte, and initial-collection budgets.
+The collector performs a full collection before reporting heap exhaustion.
+Bootstrap resource exhaustion uses diagnostic code `T0002`.
 
 The handwritten parser also clamps an embedding host's requested nesting depth
 to 256. This is a process-safety ceiling for the recursive bootstrap parser,

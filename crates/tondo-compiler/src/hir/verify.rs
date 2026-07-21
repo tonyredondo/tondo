@@ -90,6 +90,16 @@ impl Verifier<'_> {
                 ),
             ));
         }
+        if self.program.discard_statuses.len() != self.program.interner.len() {
+            return Err(HirInvariantError::new(
+                "type capabilities",
+                format!(
+                    "{} types and {} Discard statuses are not aligned",
+                    self.program.interner.len(),
+                    self.program.discard_statuses.len()
+                ),
+            ));
+        }
 
         self.verify_declarations()?;
         self.verify_constants()?;
@@ -727,6 +737,7 @@ impl Verifier<'_> {
             }
             HirExpressionKind::PreludeAssert {
                 condition,
+                condition_repr,
                 message_parts,
             } => {
                 let condition = self.expression(*condition, context)?;
@@ -734,6 +745,7 @@ impl Verifier<'_> {
                 let string_type = self.program.interner.scalar(ScalarType::String);
                 if condition.ty != bool_type
                     || expression.ty != self.program.interner.scalar(ScalarType::Unit)
+                    || condition_repr.is_empty()
                 {
                     return Err(HirInvariantError::new(
                         context,
@@ -785,7 +797,7 @@ impl Verifier<'_> {
             | HirExpressionKind::Receiver
             | HirExpressionKind::Tuple(_)
             | HirExpressionKind::Array(_)
-            | HirExpressionKind::Map(_)
+            | HirExpressionKind::Map { .. }
             | HirExpressionKind::Set(_)
             | HirExpressionKind::NumericConversion { .. }
             | HirExpressionKind::Block { .. }
@@ -1103,7 +1115,7 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
         | HirExpressionKind::Tuple(values)
         | HirExpressionKind::Array(values)
         | HirExpressionKind::Set(values) => children.extend(values),
-        HirExpressionKind::Map(entries) => {
+        HirExpressionKind::Map { entries, .. } => {
             for entry in entries {
                 children.push(entry.key);
                 children.push(entry.value);
@@ -1179,6 +1191,7 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
         HirExpressionKind::PreludeAssert {
             condition,
             message_parts,
+            ..
         } => {
             children.push(*condition);
             children.extend(message_parts.iter().map(|part| part.value()));
@@ -1296,7 +1309,7 @@ mod tests {
     use super::*;
 
     fn checked_program() -> (ResolvedProgram, HirProgram) {
-        let source = "fn main() {\n    let value = 1\n    _ = value\n}\n";
+        let source = "fn main() {\n    let value = 1\n    assert(value == 1)\n    _ = value\n}\n";
         let mut sources = SourceDatabase::new();
         let file = sources
             .add(SourceInput::virtual_file(
@@ -1343,6 +1356,7 @@ mod tests {
             ExpressionCheckLimits {
                 max_nodes: 10_000,
                 max_pattern_steps: 10_000,
+                max_trait_obligations: 10_000,
                 max_diagnostics: 100,
             },
         )
@@ -1384,6 +1398,23 @@ mod tests {
     }
 
     #[test]
+    fn assert_retains_a_nonempty_condition_representation() {
+        let (resolved, mut program) = checked_program();
+        let expression = program
+            .expressions
+            .iter_mut()
+            .find(|expression| matches!(expression.kind, HirExpressionKind::PreludeAssert { .. }))
+            .unwrap();
+        let HirExpressionKind::PreludeAssert { condition_repr, .. } = &mut expression.kind else {
+            unreachable!()
+        };
+        assert_eq!(condition_repr, "value == 1");
+        condition_repr.clear();
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert!(error.message().contains("prelude assert"));
+    }
+
+    #[test]
     fn expression_edges_are_topological_and_metadata_arenas_are_aligned() {
         let (resolved, mut program) = checked_program();
         program.expressions[0].kind = HirExpressionKind::Prefix {
@@ -1399,6 +1430,12 @@ mod tests {
         let error = verify_typed_hir(&resolved, &program).unwrap_err();
         assert_eq!(error.context(), "expression arena");
         assert!(error.message().contains("not aligned"));
+
+        let (resolved, mut program) = checked_program();
+        program.discard_statuses.pop();
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert_eq!(error.context(), "type capabilities");
+        assert!(error.message().contains("Discard statuses"));
     }
 
     #[test]

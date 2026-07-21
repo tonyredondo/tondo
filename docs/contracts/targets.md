@@ -9,13 +9,15 @@ name                 = tondo-vm-hosted
 diagnostic source ID = target:tondo-vm-hosted
 profile              = hosted
 edition              = 0.1
-capabilities         = []
+capabilities         = [console]
 ~~~
 
-An empty capability set is deliberate. Console output currently exists only as
-a future bootstrap shim and is not yet exposed to Tondo source. Process,
-filesystem, network, threads, FFI, and other hosted capabilities remain absent
-until their contracts and runtime paths exist.
+`console` exposes only the provisional `std.console.print(String): Unit` shim
+recorded in `bootstrap-host.md`. Process, filesystem, network, threads, FFI, and
+other hosted capabilities remain absent until their contracts and runtime paths
+exist. A custom request may omit `console`; its selected bootstrap standard
+package then omits `std.console`, and an import is rejected with `E1008` rather
+than reaching a failing runtime stub.
 
 The VM target is a real target identity, not shorthand for the current host
 machine. Adding a capability changes build identity and applicable conformance
