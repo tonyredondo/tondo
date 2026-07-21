@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -9,12 +9,14 @@ use crate::types::{
     TypeInterner, TypeKind, TypeSubstitution,
 };
 
+use super::termination::{TraitTerminationEdge, analyze_trait_termination};
 use super::{
     HirAssignmentTarget, HirAssignmentTargetKind, HirCallableId, HirConstantValue,
     HirConstantValueKind, HirConstantVariantValue, HirExpression, HirExpressionId,
     HirExpressionKind, HirFlow, HirForKind, HirGenericParameter, HirPattern, HirPatternId,
-    HirPatternKind, HirProgram, HirStatement, HirTraitConstructor, HirTraitMethodKey,
-    HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue,
+    HirPatternKind, HirProgram, HirStatement, HirTraitConstructor, HirTraitIdentity,
+    HirTraitMethodKey, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
+    HirVariantValue,
 };
 
 /// Reports a compiler defect at the boundary between typed HIR and MIR.
@@ -615,6 +617,8 @@ impl Verifier<'_> {
                 ));
             }
         }
+        self.verify_implementation_coherence()?;
+        self.verify_trait_termination()?;
 
         let callable_ids = self
             .program
@@ -632,6 +636,207 @@ impl Verifier<'_> {
             ));
         }
         Ok(())
+    }
+
+    fn verify_implementation_coherence(&self) -> Result<(), HirInvariantError> {
+        let mut groups = BTreeMap::<HirTraitIdentity, Vec<&super::HirImplementation>>::new();
+        for implementation in &self.program.implementations {
+            let context = format!("implementation#{}", implementation.id.index());
+            let identity =
+                self.trait_identity(&implementation.trait_reference.constructor, &context)?;
+            groups.entry(identity).or_default().push(implementation);
+        }
+
+        for (identity, implementations) in groups {
+            for left_index in 0..implementations.len() {
+                for right_index in left_index + 1..implementations.len() {
+                    let earlier = implementations[left_index];
+                    let later = implementations[right_index];
+                    let context = format!("implementation#{}", later.id.index());
+                    if matches!(
+                        &identity,
+                        HirTraitIdentity::Prelude(name) if name.as_str() == "Iterator"
+                    ) {
+                        let earlier_element = earlier
+                            .trait_reference
+                            .arguments
+                            .first()
+                            .copied()
+                            .ok_or_else(|| {
+                                HirInvariantError::new(
+                                    &context,
+                                    "Iterator implementation has no element argument",
+                                )
+                            })?;
+                        let later_element = later
+                            .trait_reference
+                            .arguments
+                            .first()
+                            .copied()
+                            .ok_or_else(|| {
+                                HirInvariantError::new(
+                                    &context,
+                                    "Iterator implementation has no element argument",
+                                )
+                            })?;
+                        match self
+                            .program
+                            .interner
+                            .first_order_independent_equivalent_after_unifying(
+                                &[earlier.target],
+                                &[later.target],
+                                earlier_element,
+                                later_element,
+                            )
+                            .map_err(|error| HirInvariantError::new(&context, error.to_string()))?
+                        {
+                            None => {}
+                            Some(true) => {
+                                return Err(HirInvariantError::new(
+                                    &context,
+                                    format!(
+                                        "coherence header overlaps implementation#{}",
+                                        earlier.id.index()
+                                    ),
+                                ));
+                            }
+                            Some(false) => {
+                                return Err(HirInvariantError::new(
+                                    &context,
+                                    format!(
+                                        "Iterator target conflicts functionally with implementation#{}",
+                                        earlier.id.index()
+                                    ),
+                                ));
+                            }
+                        }
+                        continue;
+                    }
+
+                    let mut earlier_header = earlier.trait_reference.arguments.clone();
+                    earlier_header.push(earlier.target);
+                    let mut later_header = later.trait_reference.arguments.clone();
+                    later_header.push(later.target);
+                    if self
+                        .program
+                        .interner
+                        .first_order_independent_unifiable(&earlier_header, &later_header)
+                        .map_err(|error| HirInvariantError::new(&context, error.to_string()))?
+                    {
+                        return Err(HirInvariantError::new(
+                            &context,
+                            format!(
+                                "coherence header overlaps implementation#{}",
+                                earlier.id.index()
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_trait_termination(&self) -> Result<(), HirInvariantError> {
+        let mut edges = Vec::new();
+        for (implementation_index, implementation) in
+            self.program.implementations.iter().enumerate()
+        {
+            if implementation.parameters.is_empty() {
+                continue;
+            }
+            let context = format!("implementation#{}", implementation.id.index());
+            let source =
+                self.trait_identity(&implementation.trait_reference.constructor, &context)?;
+            let mut source_query = implementation.trait_reference.arguments.clone();
+            source_query.push(implementation.target);
+            for parameter in &implementation.parameters {
+                let target = self
+                    .program
+                    .local_types
+                    .get(&parameter.local)
+                    .copied()
+                    .ok_or_else(|| {
+                        HirInvariantError::new(
+                            &context,
+                            format!(
+                                "generic local#{} has no canonical type",
+                                parameter.local.index()
+                            ),
+                        )
+                    })?;
+                if !matches!(
+                    self.program.interner.kind(target),
+                    Ok(TypeKind::GenericParameter(position)) if *position == parameter.position
+                ) {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        format!(
+                            "generic local#{} does not retain position {}",
+                            parameter.local.index(),
+                            parameter.position
+                        ),
+                    ));
+                }
+                for bound in &parameter.bounds {
+                    let destination = self.trait_identity(&bound.constructor, &context)?;
+                    if destination.is_closed_prelude() {
+                        continue;
+                    }
+                    let mut destination_query = bound.arguments.clone();
+                    destination_query.push(target);
+                    edges.push(TraitTerminationEdge {
+                        source: source.clone(),
+                        source_query: source_query.clone(),
+                        destination,
+                        destination_query,
+                        origin: implementation_index,
+                    });
+                }
+            }
+        }
+
+        let failures = analyze_trait_termination(&self.program.interner, &edges, u64::MAX)
+            .map_err(|error| HirInvariantError::new("trait termination", error.to_string()))?;
+        if let Some(failure) = failures.first() {
+            let origin = failure.origins().last().copied().ok_or_else(|| {
+                HirInvariantError::new("trait termination", "failure has no witness edge")
+            })?;
+            return Err(HirInvariantError::new(
+                format!("implementation#{origin}"),
+                format!(
+                    "nonterminating trait cycle `{}` has matrix `{}`",
+                    failure
+                        .traits()
+                        .iter()
+                        .map(HirTraitIdentity::canonical_name)
+                        .collect::<Vec<_>>()
+                        .join(" -> "),
+                    failure.matrix().render()
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn trait_identity(
+        &self,
+        constructor: &HirTraitConstructor,
+        context: &str,
+    ) -> Result<HirTraitIdentity, HirInvariantError> {
+        match constructor {
+            HirTraitConstructor::Symbol(symbol) => self
+                .resolved
+                .symbol(*symbol)
+                .map(|declaration| HirTraitIdentity::Symbol(declaration.identity().clone()))
+                .ok_or_else(|| {
+                    HirInvariantError::new(context, "trait identity has no resolved declaration")
+                }),
+            HirTraitConstructor::Prelude(name) => Ok(HirTraitIdentity::Prelude(name.clone())),
+            HirTraitConstructor::External(identity) => {
+                Ok(HirTraitIdentity::Symbol(identity.clone()))
+            }
+        }
     }
 
     fn verify_implementation_method_key(
@@ -2132,6 +2337,7 @@ mod tests {
             &resolved,
             TypeLoweringLimits {
                 max_type_nodes: 10_000,
+                max_trait_obligations: 10_000,
                 max_diagnostics: 100,
             },
         )
@@ -2313,6 +2519,45 @@ mod tests {
             error.message().contains("required trait method")
                 || error.message().contains("one-to-one correspondence")
         );
+    }
+
+    #[test]
+    fn implementation_coherence_is_rederived_before_mir() {
+        const SOURCE: &str = "trait Codec[T] {}\n\
+             type Json = { id: Int }\n\
+             type Xml = { id: Int }\n\
+             type Payload = { value: Int }\n\
+             impl Codec[Json] for Payload {}\n\
+             impl Codec[Xml] for Payload {}\n\
+             fn main() {}\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut overlapping) = checked_program_from(SOURCE);
+        let first_argument = overlapping.implementations[0].trait_reference.arguments[0];
+        overlapping.implementations[1].trait_reference.arguments[0] = first_argument;
+        let error = verify_typed_hir(&resolved, &overlapping).unwrap_err();
+        assert_eq!(error.context(), "implementation#1");
+        assert!(error.message().contains("coherence header overlaps"));
+    }
+
+    #[test]
+    fn trait_termination_is_rederived_before_mir() {
+        const SOURCE: &str = "trait Walk {}\n\
+             impl[T: Walk] Walk for Array[T] {}\n\
+             fn main() {}\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut nonterminating) = checked_program_from(SOURCE);
+        let parameter = nonterminating.implementations[0].parameters[0].local;
+        nonterminating.implementations[0].target = nonterminating.local_types[&parameter];
+        let error = verify_typed_hir(&resolved, &nonterminating).unwrap_err();
+        assert_eq!(error.context(), "implementation#0");
+        assert!(error.message().contains("nonterminating trait cycle"));
+        assert!(error.message().contains("[[=]]"));
     }
 
     #[test]

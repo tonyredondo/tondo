@@ -19,6 +19,7 @@ use crate::types::{
 mod check;
 mod const_eval;
 mod lower;
+mod termination;
 mod verify;
 
 pub use check::{ExpressionCheckLimits, HirCheckOutput, check_expressions};
@@ -32,6 +33,7 @@ pub enum HirError {
     NodeLimit { file: FileId, offset: u32 },
     PatternAnalysisLimit { file: FileId, offset: u32 },
     TraitObligationLimit { file: FileId, offset: u32 },
+    TraitTerminationInvariant { message: String },
     Invariant(HirInvariantError),
     Diagnostic(DiagnosticError),
     Package(PackageGraphError),
@@ -58,6 +60,9 @@ impl fmt::Display for HirError {
                 formatter,
                 "trait obligation limit exceeded in file {file} at byte {offset}"
             ),
+            Self::TraitTerminationInvariant { message } => {
+                write!(formatter, "trait termination invariant failed: {message}")
+            }
             Self::Invariant(error) => error.fmt(formatter),
             Self::Diagnostic(error) => error.fmt(formatter),
             Self::Package(error) => error.fmt(formatter),
@@ -625,6 +630,40 @@ pub enum HirTraitConstructor {
     Symbol(SymbolId),
     Prelude(Name),
     External(SymbolIdentity),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum HirTraitIdentity {
+    Symbol(SymbolIdentity),
+    Prelude(Name),
+}
+
+impl HirTraitIdentity {
+    pub(crate) fn canonical_name(&self) -> String {
+        match self {
+            Self::Symbol(identity) => identity.canonical_name(),
+            Self::Prelude(name) => name.as_str().to_owned(),
+        }
+    }
+
+    pub(crate) fn is_closed_prelude(&self) -> bool {
+        matches!(
+            self,
+            Self::Prelude(name)
+                if matches!(
+                    name.as_str(),
+                    "Copy"
+                        | "Discard"
+                        | "Equatable"
+                        | "Key"
+                        | "Send"
+                        | "Share"
+                        | "Call"
+                        | "CallMut"
+                        | "CallOnce"
+                )
+        )
+    }
 }
 
 #[derive(Debug, Clone)]

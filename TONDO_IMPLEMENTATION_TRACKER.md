@@ -1,12 +1,12 @@
 # Tondo: tracker de implementación
 
 **Estado:** activo  
-**Versión del tracker:** 0.23
+**Versión del tracker:** 0.25
 **Última actualización:** 2026-07-21  
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
-**Objetivo inmediato:** implementar `impl`, orphan rules y coincidencia exacta
-del contrato (TRAIT-002) sobre declaraciones y defaults ya comprobados, sin
-activar todavía selección ni dispatch de traits.
+**Objetivo inmediato:** implementar la terminación normativa por cambio de
+tamaño de las obligaciones de trait (TRAIT-004) sobre cabeceras ya coherentes,
+sin activar todavía selección ni dispatch estático.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -969,10 +969,10 @@ dinámicos ni dispatch oculto.
 
 - [x] **TRAIT-001 — Implementar declaración de trait y métodos por defecto.**
 
-- [ ] **TRAIT-002 — Implementar `impl`, orphan rules y coincidencia exacta del
+- [x] **TRAIT-002 — Implementar `impl`, orphan rules y coincidencia exacta del
   contrato.**
 
-- [ ] **TRAIT-003 — Detectar impls solapados antes de resolver constraints.**
+- [x] **TRAIT-003 — Detectar impls solapados antes de resolver constraints.**
 
 - [ ] **TRAIT-004 — Implementar el control de terminación por cambio de tamaño.**
 
@@ -996,7 +996,7 @@ dinámicos ni dispatch oculto.
 - [ ] **CALL-004 — Implementar closures sync, async y unsafe en la
   representación semántica, aunque sus runtimes se activen después.**
 
-Evidencia observada el 2026-07-21 para GEN-001, GEN-002 y TRAIT-001:
+Evidencia observada el 2026-07-21 para GEN-001, GEN-002 y TRAIT-001 a TRAIT-003:
 
 - Los bodies genéricos bounded y unbounded se comprueban una sola vez con
   parámetros rígidos. Las llamadas explícitas e inferidas cierran todas las
@@ -1006,7 +1006,7 @@ Evidencia observada el 2026-07-21 para GEN-001, GEN-002 y TRAIT-001:
   ya la prueba estructural cerrada y rechaza `Join`, bounds no reenviados y
   function values inválidos con `E1105`; los demás traits permanecen
   representados y presupuestados, pero sus pruebas dependen de CAP-001 y
-  TRAIT-002 a TRAIT-005.
+  TRAIT-003 a TRAIT-005.
 - La monomorfización se ejecuta entre MIR verificado y bytecode. Parte de todos
   los callables no genéricos y de function values constantes, sigue referencias
   transitivas, sustituye todos los tipos de firma y body y deduplica por
@@ -1032,7 +1032,29 @@ Evidencia observada el 2026-07-21 para GEN-001, GEN-002 y TRAIT-001:
   clasificación de receptor, aridad completa, prefijo genérico, presencia de
   body y requisito async. Los defaults mantienen `Self` genérico y no se
   convierten accidentalmente en roots de bytecode antes de TRAIT-005.
-- El gate acumulado pasa 324 tests, `git diff --check`, formatter check, build
+- Cada `impl` publica una identidad estable, su cabecera normalizada, binders,
+  métodos y contratos instanciados. La coincidencia exige nombre, receptor,
+  modos, variadicidad, genéricos, bounds, `async`, `unsafe`, éxito y error
+  exactos; un default puede omitirse o sustituirse.
+- Las orphan rules se aplican después de expandir aliases y usan el constructor
+  nominal exterior. Los protocolos cerrados no admiten `impl` manual, mientras
+  `Display` e `Iterator[T]` exponen contratos prelude implementables.
+- Los bodies de implementación atraviesan el checker ordinario. El admission
+  verifier reconstruye cada contrato desde el trait y vuelve a comprobar IDs,
+  binders, propiedad, cobertura y correspondencia uno-a-uno con callables.
+- La coherencia agrupa por identidad de trait y compara la cabecera completa
+  con ámbitos de binders independientes y una sola sustitución multi-raíz. Los
+  bounds positivos no participan y aliases, shorthands y uniones llegan ya
+  normalizados.
+- Una cabecera ordinaria unificable produce `E1111`. `Iterator[T]` unifica
+  primero el target y distingue una duplicación `E1111` de dos elementos
+  funcionalmente incompatibles `E1113`; ambos diagnósticos apuntan al `impl`
+  posterior y relacionan el anterior en orden lógico estable.
+- El verifier repite la prueba de coherencia antes de MIR. Las regresiones
+  cubren scopes alfa independientes, occurs checks, uniones sin orden, bounds
+  ignorados, aliases, instanciaciones distintas, no cascada, orden de archivos,
+  mutación del HIR y diagnósticos JSON públicos.
+- El gate acumulado pasa 339 tests, `git diff --check`, formatter check, build
   de todos los targets, Clippy con warnings denegados y Rustdoc con warnings
   denegados.
 
@@ -1674,13 +1696,40 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es TRAIT-002: materializar `impl`, aplicar orphan
-rules y exigir coincidencia exacta con el contrato antes de implementar
-overlap, terminación de constraints o dispatch estático.
+La siguiente acción activa es TRAIT-004: construir el grafo de obligaciones de
+cada `impl` genérico y aplicar la comprobación normativa de terminación por
+cambio de tamaño antes de selección o dispatch estático.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.25 — 2026-07-21
+
+- Se completa TRAIT-003 con unificación first-order multi-raíz cuyos binders
+  izquierdo y derecho tienen scopes independientes, occurs checks y matching
+  no ordenado de uniones normalizadas.
+- La coherencia ignora bounds, compara grupos por identidad de trait y emite
+  `E1111` de forma determinista; la dependencia funcional de `Iterator[T]`
+  distingue duplicación `E1111` de elemento incompatible `E1113`.
+- El admission verifier vuelve a derivar la unicidad de la tabla y las pruebas
+  cubren aliases, bounds, no solapamiento, orden lógico, HIR mutado y la ruta
+  diagnóstica pública con evidencia relacionada.
+- El gate acumulado queda en 339 tests, formatter check, build de todos los
+  targets, Clippy y Rustdoc sin warnings; la cola avanza a TRAIT-004.
+
+### 0.24 — 2026-07-21
+
+- Se completa TRAIT-002 con tablas deterministas de implementaciones y métodos,
+  cabeceras normalizadas, binders completos y bodies comprobados por la ruta HIR
+  ordinaria.
+- Orphan rules, protocolos prelude abiertos/cerrados y contratos exactos se
+  validan antes de admitir un `impl`; defaults omitidos o sustituidos conservan
+  la firma y los bounds del trait.
+- El verifier reconstruye los contratos sin confiar en la tabla producida por
+  lowering y rechaza mutaciones de IDs, firmas, claves, cobertura o metadata.
+- La cola avanza a TRAIT-003; overlap, terminación, selección y dispatch siguen
+  deliberadamente fuera de TRAIT-002.
 
 ### 0.23 — 2026-07-21
 

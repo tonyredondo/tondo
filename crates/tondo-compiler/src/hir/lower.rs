@@ -13,18 +13,20 @@ use crate::types::{
     TypeInterner, TypeKind, TypeSubstitution,
 };
 
+use super::termination::{TraitTerminationEdge, TraitTerminationError, analyze_trait_termination};
 use super::{
     HirCallableId, HirCallableSignature, HirConstant, HirError, HirField, HirGenericParameter,
     HirImplementation, HirImplementationId, HirImplementationMethod,
     HirImplementationMethodContract, HirImplementationMethodId, HirNominalDefinition,
     HirNominalShape, HirOutput, HirParameter, HirPreludeTraitMethod, HirProgram,
-    HirTraitConstructor, HirTraitDefinition, HirTraitMethod, HirTraitMethodKey, HirTraitReference,
-    HirTypeDeclaration, HirTypeDeclarationKind, HirVariant, HirVariantPayload,
+    HirTraitConstructor, HirTraitDefinition, HirTraitIdentity, HirTraitMethod, HirTraitMethodKey,
+    HirTraitReference, HirTypeDeclaration, HirTypeDeclarationKind, HirVariant, HirVariantPayload,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TypeLoweringLimits {
     pub max_type_nodes: u32,
+    pub max_trait_obligations: u32,
     pub max_diagnostics: usize,
 }
 
@@ -43,6 +45,7 @@ pub fn lower_types<'a>(
         resolved,
         diagnostics: Vec::new(),
         max_diagnostics: limits.max_diagnostics,
+        max_trait_termination_steps: u64::from(limits.max_trait_obligations),
         interner: TypeInterner::new(limits.max_type_nodes)?,
         sites: BTreeMap::new(),
         alias_dependencies: BTreeMap::new(),
@@ -100,6 +103,12 @@ struct ImplementationSite<'a> {
     node: SyntaxNodeRef<'a>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CoherenceConflictKind {
+    Overlap,
+    IteratorElement,
+}
+
 #[derive(Debug, Clone)]
 struct ExpectedTraitMethod {
     name: Name,
@@ -146,6 +155,7 @@ struct TypeLowerer<'a> {
     resolved: &'a ResolvedProgram,
     diagnostics: Vec<Diagnostic>,
     max_diagnostics: usize,
+    max_trait_termination_steps: u64,
     interner: TypeInterner,
     sites: BTreeMap<SymbolId, DeclarationSite<'a>>,
     alias_dependencies: BTreeMap<SymbolId, Vec<SymbolId>>,
@@ -1609,6 +1619,11 @@ impl<'a> TypeLowerer<'a> {
                 .map_err(|_| crate::types::TypeError::ResourceLimit { limit: u32::MAX })?;
             self.lower_implementation(HirImplementationId(index), site.file, site.node)?;
         }
+        let diagnostics_before_coherence = self.diagnostics.len();
+        self.validate_implementation_coherence()?;
+        if self.diagnostics.len() == diagnostics_before_coherence {
+            self.validate_trait_termination()?;
+        }
         Ok(())
     }
 
@@ -1810,6 +1825,7 @@ impl<'a> TypeLowerer<'a> {
         file: FileId,
         declaration: SyntaxNodeRef<'a>,
     ) -> Result<(), HirError> {
+        let diagnostics_before = self.diagnostics.len();
         let groups = declaration
             .child_nodes()
             .filter(|child| child.kind() == SyntaxKind::GenericParams)
@@ -1897,6 +1913,7 @@ impl<'a> TypeLowerer<'a> {
             requires_self_send: false,
         };
         self.validate_implementation_contract(&mut implementation)?;
+        implementation.contract_complete &= self.diagnostics.len() == diagnostics_before;
         self.implementations.push(implementation);
         Ok(())
     }
@@ -1982,6 +1999,212 @@ impl<'a> TypeLowerer<'a> {
                 .methods
                 .iter()
                 .all(|method| method.contract.is_some());
+        Ok(())
+    }
+
+    fn validate_implementation_coherence(&mut self) -> Result<(), HirError> {
+        let mut groups = BTreeMap::<HirTraitIdentity, Vec<usize>>::new();
+        for (index, implementation) in self.implementations.iter().enumerate() {
+            if !implementation.contract_complete {
+                continue;
+            }
+            let Some(identity) = self.trait_identity(&implementation.trait_reference.constructor)
+            else {
+                continue;
+            };
+            groups.entry(identity).or_default().push(index);
+        }
+
+        let mut conflicts = Vec::new();
+        for (identity, implementations) in groups {
+            for left_index in 0..implementations.len() {
+                for right_index in left_index + 1..implementations.len() {
+                    let earlier_index = implementations[left_index];
+                    let later_index = implementations[right_index];
+                    let earlier = &self.implementations[earlier_index];
+                    let later = &self.implementations[later_index];
+                    let conflict = if matches!(
+                        &identity,
+                        HirTraitIdentity::Prelude(name) if name.as_str() == "Iterator"
+                    ) {
+                        let Some(earlier_element) =
+                            earlier.trait_reference.arguments.first().copied()
+                        else {
+                            continue;
+                        };
+                        let Some(later_element) = later.trait_reference.arguments.first().copied()
+                        else {
+                            continue;
+                        };
+                        match self
+                            .interner
+                            .first_order_independent_equivalent_after_unifying(
+                                &[earlier.target],
+                                &[later.target],
+                                earlier_element,
+                                later_element,
+                            )? {
+                            None => None,
+                            Some(true) => Some(CoherenceConflictKind::Overlap),
+                            Some(false) => Some(CoherenceConflictKind::IteratorElement),
+                        }
+                    } else {
+                        let mut earlier_header = earlier.trait_reference.arguments.clone();
+                        earlier_header.push(earlier.target);
+                        let mut later_header = later.trait_reference.arguments.clone();
+                        later_header.push(later.target);
+                        self.interner
+                            .first_order_independent_unifiable(&earlier_header, &later_header)?
+                            .then_some(CoherenceConflictKind::Overlap)
+                    };
+                    if let Some(conflict) = conflict {
+                        conflicts.push((earlier_index, later_index, conflict));
+                    }
+                }
+            }
+        }
+
+        for (earlier_index, later_index, conflict) in conflicts {
+            let earlier = &self.implementations[earlier_index];
+            let later = &self.implementations[later_index];
+            let (code, message, related) = match conflict {
+                CoherenceConflictKind::Overlap => (
+                    "E1111",
+                    "implementation header overlaps an earlier implementation",
+                    "earlier overlapping implementation",
+                ),
+                CoherenceConflictKind::IteratorElement => (
+                    "E1113",
+                    "the same Iterator target can produce a different element type",
+                    "earlier Iterator implementation for this target",
+                ),
+            };
+            self.emit(
+                later.span.file(),
+                later.span.range(),
+                code,
+                message,
+                Some(vec![(related, earlier.span)]),
+                None,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn trait_identity(&self, constructor: &HirTraitConstructor) -> Option<HirTraitIdentity> {
+        match constructor {
+            HirTraitConstructor::Symbol(symbol) => self
+                .resolved
+                .symbol(*symbol)
+                .map(|symbol| HirTraitIdentity::Symbol(symbol.identity().clone())),
+            HirTraitConstructor::External(identity) => {
+                Some(HirTraitIdentity::Symbol(identity.clone()))
+            }
+            HirTraitConstructor::Prelude(name) => Some(HirTraitIdentity::Prelude(name.clone())),
+        }
+    }
+
+    fn validate_trait_termination(&mut self) -> Result<(), HirError> {
+        let mut edges = Vec::new();
+        for (implementation_index, implementation) in self.implementations.iter().enumerate() {
+            if !implementation.contract_complete || implementation.parameters.is_empty() {
+                continue;
+            }
+            let Some(source) = self.trait_identity(&implementation.trait_reference.constructor)
+            else {
+                continue;
+            };
+            let mut source_query = implementation.trait_reference.arguments.clone();
+            source_query.push(implementation.target);
+            for parameter in &implementation.parameters {
+                let target = self.generic_types[&parameter.local];
+                for bound in &parameter.bounds {
+                    let Some(destination) = self.trait_identity(&bound.constructor) else {
+                        continue;
+                    };
+                    if destination.is_closed_prelude() {
+                        continue;
+                    }
+                    let mut destination_query = bound.arguments.clone();
+                    destination_query.push(target);
+                    edges.push(TraitTerminationEdge {
+                        source: source.clone(),
+                        source_query: source_query.clone(),
+                        destination,
+                        destination_query,
+                        origin: implementation_index,
+                    });
+                }
+            }
+        }
+        if edges.is_empty() {
+            return Ok(());
+        }
+
+        let failures = match analyze_trait_termination(
+            &self.interner,
+            &edges,
+            self.max_trait_termination_steps,
+        ) {
+            Ok(failures) => failures,
+            Err(TraitTerminationError::ResourceLimit { .. }) => {
+                let span = self.implementations[edges[0].origin].span;
+                return Err(HirError::TraitObligationLimit {
+                    file: span.file(),
+                    offset: span.range().start(),
+                });
+            }
+            Err(TraitTerminationError::Type(error)) => return Err(error.into()),
+            Err(error) => {
+                return Err(HirError::TraitTerminationInvariant {
+                    message: error.to_string(),
+                });
+            }
+        };
+
+        let mut reports = Vec::new();
+        for failure in failures {
+            let primary_origin = *failure
+                .origins()
+                .last()
+                .expect("a termination failure contains a nonempty cycle");
+            let primary = self.implementations[primary_origin].span;
+            let path = failure
+                .traits()
+                .iter()
+                .map(HirTraitIdentity::canonical_name)
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            let message = format!(
+                "trait obligation cycle `{path}` has idempotent size-change matrix `{}` without a decreasing diagonal",
+                failure.matrix().render()
+            );
+            let mut seen = BTreeSet::from([primary]);
+            let mut related = Vec::new();
+            for origin in failure.origins() {
+                let span = self.implementations[*origin].span;
+                if seen.insert(span) {
+                    related.push(span);
+                }
+            }
+            reports.push((primary, message, related));
+        }
+
+        for (primary, message, related) in reports {
+            self.emit(
+                primary.file(),
+                primary.range(),
+                "E1112",
+                message,
+                Some(
+                    related
+                        .into_iter()
+                        .map(|span| ("cycle obligation introduced here", span))
+                        .collect(),
+                ),
+                None,
+            )?;
+        }
         Ok(())
     }
 
@@ -3362,6 +3585,7 @@ mod tests {
             &resolved,
             TypeLoweringLimits {
                 max_type_nodes: 100_000,
+                max_trait_obligations: 100_000,
                 max_diagnostics: 100,
             },
         )
@@ -3439,6 +3663,7 @@ mod tests {
             &resolved,
             TypeLoweringLimits {
                 max_type_nodes: 100_000,
+                max_trait_obligations: 100_000,
                 max_diagnostics: 100,
             },
         )
@@ -3463,7 +3688,9 @@ mod tests {
             .collect()
     }
 
-    fn lowering_snapshot(inputs: &[(&str, &str)]) -> (Vec<String>, Vec<(String, String)>) {
+    type LoweringSnapshot = (Vec<String>, Vec<(String, String, String, u32)>);
+
+    fn lowering_snapshot(inputs: &[(&str, &str)]) -> LoweringSnapshot {
         let mut sources = SourceDatabase::new();
         let mut parsed = Vec::new();
         for (path, source) in inputs {
@@ -3506,6 +3733,7 @@ mod tests {
             &resolved,
             TypeLoweringLimits {
                 max_type_nodes: 100_000,
+                max_trait_obligations: 100_000,
                 max_diagnostics: 100,
             },
         )
@@ -3551,9 +3779,14 @@ mod tests {
             .diagnostics()
             .iter()
             .map(|diagnostic| {
+                let PrimaryLocation::Source(span) = diagnostic.location() else {
+                    panic!("HIR lowering diagnostics must retain source locations")
+                };
                 (
                     diagnostic.code().as_str().to_owned(),
                     diagnostic.message().to_owned(),
+                    sources.get(span.file()).unwrap().path().as_str().to_owned(),
+                    span.range().start(),
                 )
             })
             .collect::<Vec<_>>();
@@ -4166,6 +4399,240 @@ mod tests {
         assert_eq!(forward, reverse);
         assert!(forward.0.iter().any(|item| item == "impl#0:a_impl.to:0"));
         assert!(forward.0.iter().any(|item| item == "impl#1:z_impl.to:0"));
+    }
+
+    #[test]
+    fn coherence_diagnostics_follow_logical_source_order() {
+        let contract = "trait Marker {}\n\
+                        type Box[T] = { value: T }\n";
+        let broad = "impl[T] Marker for Box[T] {}\n";
+        let nested = "impl[U] Marker for Box[Array[U]] {}\n";
+        let forward = lowering_snapshot(&[
+            ("contract.to", contract),
+            ("z_impl.to", nested),
+            ("a_impl.to", broad),
+        ]);
+        let reverse = lowering_snapshot(&[
+            ("a_impl.to", broad),
+            ("z_impl.to", nested),
+            ("contract.to", contract),
+        ]);
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.1.len(), 1);
+        assert_eq!(forward.1[0].0, "E1111");
+        assert_eq!(forward.1[0].2, "z_impl.to");
+    }
+
+    #[test]
+    fn coherence_rejects_generic_overlap_and_ignores_positive_bounds() {
+        let (_, _, independently_scoped) = lower(
+            "trait Marker {}\n\
+             type Box[T] = { value: T }\n\
+             impl[T] Marker for Box[T] {}\n\
+             impl[U] Marker for Box[Array[U]] {}\n",
+        );
+        assert_eq!(codes(&independently_scoped), ["E1111"]);
+        assert!(
+            independently_scoped.diagnostics()[0]
+                .message()
+                .contains("overlaps")
+        );
+
+        let (_, _, bounded) = lower(
+            "trait Left {}\n\
+             trait Right {}\n\
+             trait Marker {}\n\
+             type Box[T] = { value: T }\n\
+             impl[T: Left] Marker for Box[T] {}\n\
+             impl[U: Right] Marker for Box[U] {}\n",
+        );
+        assert_eq!(codes(&bounded), ["E1111"]);
+
+        let (_, _, aliases) = lower(
+            "trait Marker {}\n\
+             type Box[T] = { value: T }\n\
+             alias Wrapped[T] = Box[T]\n\
+             impl Marker for Box[Int] {}\n\
+             impl Marker for Wrapped[Int] {}\n",
+        );
+        assert_eq!(codes(&aliases), ["E1111"]);
+    }
+
+    #[test]
+    fn coherence_keeps_nonunifiable_trait_instantiations_distinct() {
+        let (_, _, output) = lower(
+            "trait Codec[T] {}\n\
+             trait Other {}\n\
+             type Json = { id: Int }\n\
+             type Xml = { id: Int }\n\
+             type Payload = { value: Int }\n\
+             impl Codec[Json] for Payload {}\n\
+             impl Codec[Xml] for Payload {}\n\
+             impl Other for Payload {}\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+
+        let (_, _, invalid_contract) = lower(
+            "trait Marker {\n\
+                 fn mark(self)\n\
+             }\n\
+             type Payload = { value: Int }\n\
+             impl Marker for Payload {\n\
+                 fn mark(self) {}\n\
+             }\n\
+             impl Marker for Payload {}\n",
+        );
+        assert_eq!(codes(&invalid_contract), ["E1114"]);
+    }
+
+    #[test]
+    fn iterator_coherence_distinguishes_overlap_from_element_conflicts() {
+        let (_, _, conflicting_element) = lower(
+            "type Cursor = { value: Int }\n\
+             impl Iterator[Int] for Cursor {\n\
+                 fn next(mut self): Int? { none }\n\
+             }\n\
+             impl Iterator[String] for Cursor {\n\
+                 fn next(mut self): String? { none }\n\
+             }\n",
+        );
+        assert_eq!(codes(&conflicting_element), ["E1113"]);
+
+        let (_, _, overlapping) = lower(
+            "type Cursor[T] = { value: T }\n\
+             impl[T] Iterator[T] for Cursor[T] {\n\
+                 fn next(mut self): T? { none }\n\
+             }\n\
+             impl Iterator[String] for Cursor[String] {\n\
+                 fn next(mut self): String? { none }\n\
+             }\n",
+        );
+        assert_eq!(codes(&overlapping), ["E1111"]);
+
+        let (_, _, substituted_conflict) = lower(
+            "type Cursor[T] = { value: T }\n\
+             impl[T] Iterator[T] for Cursor[T] {\n\
+                 fn next(mut self): T? { none }\n\
+             }\n\
+             impl Iterator[Int] for Cursor[String] {\n\
+                 fn next(mut self): Int? { none }\n\
+             }\n",
+        );
+        assert_eq!(codes(&substituted_conflict), ["E1113"]);
+    }
+
+    #[test]
+    fn trait_termination_accepts_structural_descent_and_acyclic_adapters() {
+        let (_, _, descending) = lower(
+            "trait Walk {}\n\
+             impl[T: Walk] Walk for Array[T] {}\n",
+        );
+        assert!(
+            descending.diagnostics().is_empty(),
+            "{:#?}",
+            descending.diagnostics()
+        );
+
+        let (_, _, mutual_descent) = lower(
+            "trait Left {}\n\
+             trait Right {}\n\
+             impl[T: Right] Left for Array[T] {}\n\
+             impl[T: Left] Right for T {}\n",
+        );
+        assert!(
+            mutual_descent.diagnostics().is_empty(),
+            "{:#?}",
+            mutual_descent.diagnostics()
+        );
+
+        let (_, _, acyclic) = lower(
+            "trait Summary {}\n\
+             trait Render {}\n\
+             impl[T: Summary] Render for T {}\n",
+        );
+        assert!(
+            acyclic.diagnostics().is_empty(),
+            "{:#?}",
+            acyclic.diagnostics()
+        );
+
+        let (_, _, closed_bound) = lower(
+            "trait Render {}\n\
+             type Box[T] = { value: T }\n\
+             impl[T: Discard] Render for Box[T] {}\n",
+        );
+        assert!(
+            closed_bound.diagnostics().is_empty(),
+            "{:#?}",
+            closed_bound.diagnostics()
+        );
+    }
+
+    #[test]
+    fn trait_termination_rejects_equal_permuting_and_growing_cycles() {
+        for source in [
+            "trait Loop {}\n\
+             impl[T: Loop] Loop for T {}\n",
+            "trait Left {}\n\
+             trait Right {}\n\
+             impl[T: Right] Left for T {}\n\
+             impl[T: Left] Right for T {}\n",
+            "trait Rotate[A, B] {}\n\
+             impl[A: Rotate[B, A], B] Rotate[A, B] for A {}\n",
+            "trait Grow[T] {}\n\
+             impl[T: Grow[Array[T]]] Grow[T] for T {}\n",
+        ] {
+            let (_, _, output) = lower(source);
+            assert_eq!(
+                codes(&output),
+                ["E1112"],
+                "{source}\n{:#?}",
+                output.diagnostics()
+            );
+            let diagnostic = &output.diagnostics()[0];
+            assert!(diagnostic.message().contains("cycle"));
+            assert!(diagnostic.message().contains("matrix"));
+            assert!(
+                diagnostic
+                    .message()
+                    .contains("without a decreasing diagonal")
+            );
+        }
+    }
+
+    #[test]
+    fn overlap_preempts_trait_termination_diagnostics() {
+        let (_, _, output) = lower(
+            "trait Loop {}\n\
+             impl[T: Loop] Loop for T {}\n\
+             impl[U: Loop] Loop for Array[U] {}\n",
+        );
+        assert_eq!(codes(&output), ["E1111"]);
+    }
+
+    #[test]
+    fn trait_termination_witnesses_follow_logical_source_order() {
+        let contract = "trait Left {}\ntrait Right {}\n";
+        let left = "impl[T: Right] Left for T {}\n";
+        let right = "impl[T: Left] Right for T {}\n";
+        let forward = lowering_snapshot(&[
+            ("contract.to", contract),
+            ("z_left.to", left),
+            ("a_right.to", right),
+        ]);
+        let reverse = lowering_snapshot(&[
+            ("a_right.to", right),
+            ("z_left.to", left),
+            ("contract.to", contract),
+        ]);
+        assert_eq!(forward, reverse);
+        assert_eq!(forward.1.len(), 1);
+        assert_eq!(forward.1[0].0, "E1112");
+        assert_eq!(forward.1[0].2, "a_right.to");
     }
 
     #[test]

@@ -162,9 +162,9 @@ same trait; it does not search unrelated traits or concrete implementations.
 Both inferred calls such as `self.choose(value)` and explicit calls such as
 `self.choose[Int](value)` produce a complete `SpecializedFunction` argument
 vector. This is declaration checking, not dispatch. Implementation validation
-is a separate contract-admission pass; overlap, qualified trait calls,
-constraint-visible methods, and selection of a concrete implementation remain
-separate operations.
+has separate contract and program-wide coherence admission passes. Qualified
+trait calls, constraint-visible methods, and selection of a concrete
+implementation remain separate operations.
 
 Implementation declarations are indexed by stable logical source identity
 (`SourceId`, module path, logical path, then start byte), never by request-local
@@ -190,6 +190,23 @@ Contract admission performs these checks before any body is typechecked:
   `Copy`, `Discard`, `Equatable`, `Key`, `Send`, `Share`, `Call`, `CallMut`, and
   `CallOnce` reject manual implementations.
 
+After every individually complete contract is materialized, coherence groups
+implementations by the resolved trait identity and compares pairs in stable
+implementation-ID order. Generic positions belong to independent binder scopes
+on each side; all trait arguments followed by the target share one first-order
+substitution, while positive bounds never select between candidates. Aliases and
+shorthands are already absent from the canonical types and structural unions are
+matched as normalized unordered sets. A unifiable complete header emits `E1111`
+at the later implementation with the earlier declaration as related evidence.
+Invalid contracts do not participate, preventing a secondary overlap cascade.
+
+`Iterator[T]` first unifies only the two targets. If they do not unify, both
+implementations are independent. If they unify and their element arguments are
+already identical under that most-general substitution, ordinary coherence
+emits `E1111`; otherwise the functional target-to-element rule emits `E1113`.
+This pass runs before any constraint proof, so adding or removing positive
+bounds cannot change coherence.
+
 Parameter and generic-binder spellings are intentionally absent from this
 comparison. `Display` requires `fn display(self): String`; `Iterator[T]`
 requires `fn next(mut self): T?`. A trait default remains a generic template;
@@ -203,8 +220,9 @@ orphan ownership, deterministic IDs, generic prefixes, required/default
 coverage, table/callable correspondence, receiver metadata, and the propagated
 `Self: Send` requirement. The structural proof that a concrete target actually
 satisfies `Send` belongs to CAP-001; the obligation is retained now rather than
-silently discarded. TRAIT-003 through TRAIT-005 own overlap, termination,
-selection, qualified calls, and static dispatch.
+silently discarded. The verifier also independently reruns ordinary and
+`Iterator[T]` coherence over the admitted table. TRAIT-004 and TRAIT-005 own
+termination, selection, qualified calls, and static dispatch.
 
 ## Generic constraints
 
@@ -224,7 +242,7 @@ specialized function values alike.
 
 Other intrinsic capability bounds and source/external trait bounds remain
 normalized in HIR and consume the same budget, but mark the semantic output
-incomplete when an instantiation needs proof. CAP-001 and TRAIT-003 through
+incomplete when an instantiation needs proof. CAP-001 and TRAIT-004 through
 TRAIT-005 own those proof rules. The driver therefore cannot run or report a
 complete check for such an instantiation by silently assuming the bound.
 
@@ -496,9 +514,12 @@ explicit same-trait calls, async receiver requirements, invalid bodies, and
 unknown members. Implementation tests cover deterministic IDs, generic header
 occurrence, local-trait structural targets, cross-module orphan rejection,
 source and prelude contracts, closed protocols, method generics and bound sets,
-required/default/extra membership, signature drift, checked bodies, and the
-public MIR/bytecode/VM path. Construction tests cover every nominal shape, contextual generic
-instances, `with`, numeric conversions, ranges, membership, and cross-module
+required/default/extra membership, signature drift, checked bodies,
+independently scoped generic overlap, ignored positive bounds, alias-normalized
+duplicates, distinct trait instantiations, deterministic source ordering,
+`E1111` versus `E1113`, verifier mutation, and the public diagnostic and
+MIR/bytecode/VM paths. Construction tests cover every nominal shape, contextual
+generic instances, `with`, numeric conversions, ranges, membership, and cross-module
 visibility without leaking omitted private field names. Driver
 tests prove that semantic diagnostics and all HIR resource limits are observable
 through the public compilation path. Reachability tests cover infinite,

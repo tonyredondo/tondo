@@ -72,7 +72,8 @@ or enum defined by the current module; violations produce `E1504`. Duplicate
 method declarations inside one `impl` are rejected before contract checking.
 Resolution deliberately does not install implementation methods into an open
 member namespace and does not decide trait satisfaction. Typed HIR owns the
-coherence header, orphan rule, exact contract match, and implementation body.
+coherence header, orphan rule, exact contract match, program-wide overlap and
+`Iterator[T]` functional checks, and implementation body.
 
 ## Lexical scopes
 

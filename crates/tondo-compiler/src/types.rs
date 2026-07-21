@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -338,6 +338,67 @@ pub enum TypeKind {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum TypePatternScope {
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ScopedTypePattern {
+    scope: TypePatternScope,
+    ty: TypeId,
+}
+
+impl ScopedTypePattern {
+    fn left(ty: TypeId) -> Self {
+        Self {
+            scope: TypePatternScope::Left,
+            ty,
+        }
+    }
+
+    fn right(ty: TypeId) -> Self {
+        Self {
+            scope: TypePatternScope::Right,
+            ty,
+        }
+    }
+
+    fn child(self, ty: TypeId) -> Self {
+        Self {
+            scope: self.scope,
+            ty,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ScopedGenericParameter {
+    scope: TypePatternScope,
+    position: u32,
+}
+
+#[derive(Debug, Clone)]
+enum ScopedUnificationTask {
+    Pair(ScopedTypePattern, ScopedTypePattern),
+    UnionMembers {
+        left: Vec<ScopedTypePattern>,
+        right: Vec<ScopedTypePattern>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScopedSolverMode {
+    Unify,
+    Equivalent,
+}
+
+#[derive(Debug, Clone, Default)]
+struct ScopedTypeUnifier {
+    substitutions: BTreeMap<ScopedGenericParameter, ScopedTypePattern>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TypeError {
     ResourceLimit {
@@ -670,6 +731,92 @@ impl TypeInterner {
         self.validate_child(right)?;
         let mut substitutions = BTreeMap::new();
         self.unify_iterative(left, right, &mut substitutions)
+    }
+
+    /// Returns whether two lists of type patterns have a shared first-order
+    /// unifier when generic parameter positions belong to independent binder
+    /// scopes on the left and right.
+    ///
+    /// This is the relation used by coherence headers. A `$0` in one
+    /// declaration is not the same variable as `$0` in another declaration,
+    /// while repeated positions within either declaration remain linked.
+    pub fn first_order_independent_unifiable(
+        &self,
+        left: &[TypeId],
+        right: &[TypeId],
+    ) -> Result<bool, TypeError> {
+        if left.len() != right.len() {
+            return Ok(false);
+        }
+        self.validate_children(left)?;
+        self.validate_children(right)?;
+        let equations = left
+            .iter()
+            .copied()
+            .zip(right.iter().copied())
+            .map(|(left, right)| {
+                ScopedUnificationTask::Pair(
+                    ScopedTypePattern::left(left),
+                    ScopedTypePattern::right(right),
+                )
+            })
+            .collect();
+        Ok(
+            ScopedTypeUnifier::solve(self, BTreeMap::new(), equations, ScopedSolverMode::Unify)?
+                .is_some(),
+        )
+    }
+
+    /// Unifies the two independent constraint lists and, when they have a
+    /// most-general unifier, reports whether an additional pair is already
+    /// identical under that substitution without adding a new equation.
+    ///
+    /// `None` means the constraints themselves do not unify. `Some(false)`
+    /// distinguishes two still-different outputs of the same input pattern;
+    /// this is the functional-dependency relation used by `Iterator[T]`.
+    pub fn first_order_independent_equivalent_after_unifying(
+        &self,
+        left_constraints: &[TypeId],
+        right_constraints: &[TypeId],
+        left: TypeId,
+        right: TypeId,
+    ) -> Result<Option<bool>, TypeError> {
+        if left_constraints.len() != right_constraints.len() {
+            return Ok(None);
+        }
+        self.validate_children(left_constraints)?;
+        self.validate_children(right_constraints)?;
+        self.validate_child(left)?;
+        self.validate_child(right)?;
+        let equations = left_constraints
+            .iter()
+            .copied()
+            .zip(right_constraints.iter().copied())
+            .map(|(left, right)| {
+                ScopedUnificationTask::Pair(
+                    ScopedTypePattern::left(left),
+                    ScopedTypePattern::right(right),
+                )
+            })
+            .collect();
+        let Some(unifier) =
+            ScopedTypeUnifier::solve(self, BTreeMap::new(), equations, ScopedSolverMode::Unify)?
+        else {
+            return Ok(None);
+        };
+        let comparison = vec![ScopedUnificationTask::Pair(
+            ScopedTypePattern::left(left),
+            ScopedTypePattern::right(right),
+        )];
+        Ok(Some(
+            ScopedTypeUnifier::solve(
+                self,
+                unifier.substitutions,
+                comparison,
+                ScopedSolverMode::Equivalent,
+            )?
+            .is_some(),
+        ))
     }
 
     fn unify_iterative(
@@ -1033,6 +1180,605 @@ impl TypeInterner {
             }
         }
         Ok(output)
+    }
+}
+
+impl ScopedTypeUnifier {
+    fn solve(
+        interner: &TypeInterner,
+        substitutions: BTreeMap<ScopedGenericParameter, ScopedTypePattern>,
+        tasks: Vec<ScopedUnificationTask>,
+        mode: ScopedSolverMode,
+    ) -> Result<Option<Self>, TypeError> {
+        let mut states = vec![(Self { substitutions }, tasks)];
+        let mut explored = 0_u32;
+        while let Some((mut unifier, mut tasks)) = states.pop() {
+            explored = explored.checked_add(1).ok_or(TypeError::ResourceLimit {
+                limit: interner.limit,
+            })?;
+            if explored > interner.limit {
+                return Err(TypeError::ResourceLimit {
+                    limit: interner.limit,
+                });
+            }
+
+            let mut failed = false;
+            let mut branched = false;
+            while let Some(task) = tasks.pop() {
+                match task {
+                    ScopedUnificationTask::Pair(left, right) => {
+                        if !unifier.reduce_pair(interner, left, right, &mut tasks, mode)? {
+                            failed = true;
+                            break;
+                        }
+                    }
+                    ScopedUnificationTask::UnionMembers {
+                        mut left,
+                        mut right,
+                    } => {
+                        if left.len() != right.len() {
+                            failed = true;
+                            break;
+                        }
+                        if left.is_empty() {
+                            continue;
+                        }
+                        let mut selected = None::<(usize, Vec<usize>)>;
+                        for (left_index, candidate) in left.iter().copied().enumerate() {
+                            let mut candidates = Vec::new();
+                            for (right_index, other) in right.iter().copied().enumerate() {
+                                if unifier.possibly_compatible(interner, candidate, other, mode)? {
+                                    candidates.push(right_index);
+                                }
+                            }
+                            if candidates.is_empty() {
+                                selected = Some((left_index, candidates));
+                                break;
+                            }
+                            if selected
+                                .as_ref()
+                                .is_none_or(|(_, current)| candidates.len() < current.len())
+                            {
+                                selected = Some((left_index, candidates));
+                            }
+                        }
+                        let (left_index, candidates) =
+                            selected.expect("a nonempty union has a selected member");
+                        if candidates.is_empty() {
+                            failed = true;
+                            break;
+                        }
+                        let selected_left = left.remove(left_index);
+                        if candidates.len() == 1 {
+                            let selected_right = right.remove(candidates[0]);
+                            if !left.is_empty() {
+                                tasks.push(ScopedUnificationTask::UnionMembers { left, right });
+                            }
+                            tasks.push(ScopedUnificationTask::Pair(selected_left, selected_right));
+                            continue;
+                        }
+
+                        for right_index in candidates.into_iter().rev() {
+                            let mut branch_tasks = tasks.clone();
+                            let mut branch_right = right.clone();
+                            let selected_right = branch_right.remove(right_index);
+                            if !left.is_empty() {
+                                branch_tasks.push(ScopedUnificationTask::UnionMembers {
+                                    left: left.clone(),
+                                    right: branch_right,
+                                });
+                            }
+                            branch_tasks
+                                .push(ScopedUnificationTask::Pair(selected_left, selected_right));
+                            states.push((unifier.clone(), branch_tasks));
+                        }
+                        branched = true;
+                        break;
+                    }
+                }
+            }
+            if branched || failed {
+                continue;
+            }
+            return Ok(Some(unifier));
+        }
+        Ok(None)
+    }
+
+    fn reduce_pair(
+        &mut self,
+        interner: &TypeInterner,
+        left: ScopedTypePattern,
+        right: ScopedTypePattern,
+        tasks: &mut Vec<ScopedUnificationTask>,
+        mode: ScopedSolverMode,
+    ) -> Result<bool, TypeError> {
+        let left = self.resolve(interner, left)?;
+        let right = self.resolve(interner, right)?;
+        if left == right {
+            return Ok(true);
+        }
+        let left_kind = interner.kind(left.ty)?.clone();
+        let right_kind = interner.kind(right.ty)?.clone();
+        match (left_kind, right_kind) {
+            (TypeKind::GenericParameter(position), _) if mode == ScopedSolverMode::Unify => self
+                .bind(
+                    interner,
+                    ScopedGenericParameter {
+                        scope: left.scope,
+                        position,
+                    },
+                    right,
+                ),
+            (_, TypeKind::GenericParameter(position)) if mode == ScopedSolverMode::Unify => self
+                .bind(
+                    interner,
+                    ScopedGenericParameter {
+                        scope: right.scope,
+                        position,
+                    },
+                    left,
+                ),
+            (TypeKind::GenericParameter(_), _) | (_, TypeKind::GenericParameter(_)) => Ok(false),
+            (TypeKind::Scalar(left), TypeKind::Scalar(right)) => Ok(left == right),
+            (
+                TypeKind::Nominal {
+                    identity: left_identity,
+                    arguments: left_arguments,
+                },
+                TypeKind::Nominal {
+                    identity: right_identity,
+                    arguments: right_arguments,
+                },
+            ) if left_identity == right_identity
+                && left_arguments.len() == right_arguments.len() =>
+            {
+                Self::push_pairs(tasks, left, &left_arguments, right, &right_arguments);
+                Ok(true)
+            }
+            (TypeKind::Tuple(left_items), TypeKind::Tuple(right_items))
+                if left_items.len() == right_items.len() =>
+            {
+                Self::push_pairs(tasks, left, &left_items, right, &right_items);
+                Ok(true)
+            }
+            (TypeKind::Union(left_members), TypeKind::Union(right_members))
+                if left_members.len() == right_members.len() =>
+            {
+                tasks.push(ScopedUnificationTask::UnionMembers {
+                    left: left_members.into_iter().map(|ty| left.child(ty)).collect(),
+                    right: right_members
+                        .into_iter()
+                        .map(|ty| right.child(ty))
+                        .collect(),
+                });
+                Ok(true)
+            }
+            (TypeKind::Function(left_function), TypeKind::Function(right_function))
+                if left_function.is_async == right_function.is_async
+                    && left_function.is_unsafe == right_function.is_unsafe
+                    && left_function.parameters.len() == right_function.parameters.len()
+                    && left_function.variadic.is_some() == right_function.variadic.is_some() =>
+            {
+                for (left_parameter, right_parameter) in left_function
+                    .parameters
+                    .iter()
+                    .zip(&right_function.parameters)
+                {
+                    if left_parameter.mode != right_parameter.mode {
+                        return Ok(false);
+                    }
+                }
+                tasks.push(ScopedUnificationTask::Pair(
+                    left.child(left_function.outcome),
+                    right.child(right_function.outcome),
+                ));
+                if let (Some(left_variadic), Some(right_variadic)) =
+                    (left_function.variadic, right_function.variadic)
+                {
+                    tasks.push(ScopedUnificationTask::Pair(
+                        left.child(left_variadic),
+                        right.child(right_variadic),
+                    ));
+                }
+                for (left_parameter, right_parameter) in left_function
+                    .parameters
+                    .into_iter()
+                    .zip(right_function.parameters)
+                    .rev()
+                {
+                    tasks.push(ScopedUnificationTask::Pair(
+                        left.child(left_parameter.ty),
+                        right.child(right_parameter.ty),
+                    ));
+                }
+                Ok(true)
+            }
+            (TypeKind::Option(left_item), TypeKind::Option(right_item)) => {
+                tasks.push(ScopedUnificationTask::Pair(
+                    left.child(left_item),
+                    right.child(right_item),
+                ));
+                Ok(true)
+            }
+            (
+                TypeKind::Result {
+                    success: left_success,
+                    error: left_error,
+                },
+                TypeKind::Result {
+                    success: right_success,
+                    error: right_error,
+                },
+            ) => {
+                tasks.push(ScopedUnificationTask::Pair(
+                    left.child(left_error),
+                    right.child(right_error),
+                ));
+                tasks.push(ScopedUnificationTask::Pair(
+                    left.child(left_success),
+                    right.child(right_success),
+                ));
+                Ok(true)
+            }
+            (
+                TypeKind::Intrinsic {
+                    constructor: left_constructor,
+                    arguments: left_arguments,
+                },
+                TypeKind::Intrinsic {
+                    constructor: right_constructor,
+                    arguments: right_arguments,
+                },
+            ) if left_constructor == right_constructor
+                && left_arguments.len() == right_arguments.len() =>
+            {
+                Self::push_pairs(tasks, left, &left_arguments, right, &right_arguments);
+                Ok(true)
+            }
+            (TypeKind::OpaqueResult(left), TypeKind::OpaqueResult(right)) => Ok(left == right),
+            (
+                TypeKind::Generated {
+                    identity: left_identity,
+                    arguments: left_arguments,
+                },
+                TypeKind::Generated {
+                    identity: right_identity,
+                    arguments: right_arguments,
+                },
+            ) if left_identity == right_identity
+                && left_arguments.len() == right_arguments.len() =>
+            {
+                Self::push_pairs(tasks, left, &left_arguments, right, &right_arguments);
+                Ok(true)
+            }
+            (
+                TypeKind::Cursor {
+                    mode: left_mode,
+                    collection: left_collection,
+                },
+                TypeKind::Cursor {
+                    mode: right_mode,
+                    collection: right_collection,
+                },
+            ) if left_mode == right_mode => {
+                tasks.push(ScopedUnificationTask::Pair(
+                    left.child(left_collection),
+                    right.child(right_collection),
+                ));
+                Ok(true)
+            }
+            (TypeKind::Inference(left), TypeKind::Inference(right)) => Ok(left == right),
+            (TypeKind::Error, TypeKind::Error) => Ok(true),
+            (TypeKind::Error, _) | (_, TypeKind::Error) if mode == ScopedSolverMode::Unify => {
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+
+    fn push_pairs(
+        tasks: &mut Vec<ScopedUnificationTask>,
+        left: ScopedTypePattern,
+        left_items: &[TypeId],
+        right: ScopedTypePattern,
+        right_items: &[TypeId],
+    ) {
+        for (left_item, right_item) in left_items.iter().zip(right_items).rev() {
+            tasks.push(ScopedUnificationTask::Pair(
+                left.child(*left_item),
+                right.child(*right_item),
+            ));
+        }
+    }
+
+    fn resolve(
+        &self,
+        interner: &TypeInterner,
+        mut pattern: ScopedTypePattern,
+    ) -> Result<ScopedTypePattern, TypeError> {
+        let mut remaining = self.substitutions.len().saturating_add(1);
+        while let TypeKind::GenericParameter(position) = interner.kind(pattern.ty)? {
+            let parameter = ScopedGenericParameter {
+                scope: pattern.scope,
+                position: *position,
+            };
+            let Some(replacement) = self.substitutions.get(&parameter).copied() else {
+                break;
+            };
+            pattern = replacement;
+            remaining = remaining
+                .checked_sub(1)
+                .expect("occurs checks prevent cyclic scoped substitutions");
+        }
+        Ok(pattern)
+    }
+
+    fn bind(
+        &mut self,
+        interner: &TypeInterner,
+        parameter: ScopedGenericParameter,
+        pattern: ScopedTypePattern,
+    ) -> Result<bool, TypeError> {
+        if self.occurs(interner, parameter, pattern)? {
+            return Ok(false);
+        }
+        self.substitutions.insert(parameter, pattern);
+        Ok(true)
+    }
+
+    fn occurs(
+        &self,
+        interner: &TypeInterner,
+        parameter: ScopedGenericParameter,
+        pattern: ScopedTypePattern,
+    ) -> Result<bool, TypeError> {
+        let mut pending = vec![pattern];
+        let mut visited = BTreeSet::new();
+        while let Some(pattern) = pending.pop() {
+            let pattern = self.resolve(interner, pattern)?;
+            if !visited.insert(pattern) {
+                continue;
+            }
+            match interner.kind(pattern.ty)? {
+                TypeKind::GenericParameter(position) => {
+                    if parameter
+                        == (ScopedGenericParameter {
+                            scope: pattern.scope,
+                            position: *position,
+                        })
+                    {
+                        return Ok(true);
+                    }
+                }
+                kind => Self::push_pattern_children(pattern, kind, &mut pending),
+            }
+        }
+        Ok(false)
+    }
+
+    fn possibly_compatible(
+        &self,
+        interner: &TypeInterner,
+        left: ScopedTypePattern,
+        right: ScopedTypePattern,
+        mode: ScopedSolverMode,
+    ) -> Result<bool, TypeError> {
+        let mut pending = vec![(left, right)];
+        let mut visited = BTreeSet::new();
+        while let Some((left, right)) = pending.pop() {
+            let left = self.resolve(interner, left)?;
+            let right = self.resolve(interner, right)?;
+            if !visited.insert((left, right)) || left == right {
+                continue;
+            }
+            match (interner.kind(left.ty)?, interner.kind(right.ty)?) {
+                (TypeKind::GenericParameter(_), _) | (_, TypeKind::GenericParameter(_))
+                    if mode == ScopedSolverMode::Unify => {}
+                (TypeKind::GenericParameter(_), _) | (_, TypeKind::GenericParameter(_)) => {
+                    return Ok(false);
+                }
+                (TypeKind::Scalar(left), TypeKind::Scalar(right)) if left == right => {}
+                (
+                    TypeKind::Nominal {
+                        identity: left_identity,
+                        arguments: left_arguments,
+                    },
+                    TypeKind::Nominal {
+                        identity: right_identity,
+                        arguments: right_arguments,
+                    },
+                ) if left_identity == right_identity
+                    && left_arguments.len() == right_arguments.len() =>
+                {
+                    Self::extend_compatibility_pairs(
+                        &mut pending,
+                        left,
+                        left_arguments,
+                        right,
+                        right_arguments,
+                    );
+                }
+                (TypeKind::Tuple(left_items), TypeKind::Tuple(right_items))
+                    if left_items.len() == right_items.len() =>
+                {
+                    Self::extend_compatibility_pairs(
+                        &mut pending,
+                        left,
+                        left_items,
+                        right,
+                        right_items,
+                    );
+                }
+                (TypeKind::Union(left_items), TypeKind::Union(right_items))
+                    if left_items.len() == right_items.len() => {}
+                (TypeKind::Function(left_function), TypeKind::Function(right_function))
+                    if left_function.is_async == right_function.is_async
+                        && left_function.is_unsafe == right_function.is_unsafe
+                        && left_function.parameters.len() == right_function.parameters.len()
+                        && left_function.variadic.is_some()
+                            == right_function.variadic.is_some() =>
+                {
+                    if !left_function
+                        .parameters
+                        .iter()
+                        .zip(&right_function.parameters)
+                        .all(|(left, right)| left.mode == right.mode)
+                    {
+                        return Ok(false);
+                    }
+                    pending.push((
+                        left.child(left_function.outcome),
+                        right.child(right_function.outcome),
+                    ));
+                    if let (Some(left_variadic), Some(right_variadic)) =
+                        (left_function.variadic, right_function.variadic)
+                    {
+                        pending.push((left.child(left_variadic), right.child(right_variadic)));
+                    }
+                    pending.extend(
+                        left_function
+                            .parameters
+                            .iter()
+                            .zip(&right_function.parameters)
+                            .map(|(left_parameter, right_parameter)| {
+                                (
+                                    left.child(left_parameter.ty),
+                                    right.child(right_parameter.ty),
+                                )
+                            }),
+                    );
+                }
+                (TypeKind::Option(left_item), TypeKind::Option(right_item)) => {
+                    pending.push((left.child(*left_item), right.child(*right_item)));
+                }
+                (
+                    TypeKind::Result {
+                        success: left_success,
+                        error: left_error,
+                    },
+                    TypeKind::Result {
+                        success: right_success,
+                        error: right_error,
+                    },
+                ) => {
+                    pending.push((left.child(*left_success), right.child(*right_success)));
+                    pending.push((left.child(*left_error), right.child(*right_error)));
+                }
+                (
+                    TypeKind::Intrinsic {
+                        constructor: left_constructor,
+                        arguments: left_arguments,
+                    },
+                    TypeKind::Intrinsic {
+                        constructor: right_constructor,
+                        arguments: right_arguments,
+                    },
+                ) if left_constructor == right_constructor
+                    && left_arguments.len() == right_arguments.len() =>
+                {
+                    Self::extend_compatibility_pairs(
+                        &mut pending,
+                        left,
+                        left_arguments,
+                        right,
+                        right_arguments,
+                    );
+                }
+                (TypeKind::OpaqueResult(left), TypeKind::OpaqueResult(right)) if left == right => {}
+                (
+                    TypeKind::Generated {
+                        identity: left_identity,
+                        arguments: left_arguments,
+                    },
+                    TypeKind::Generated {
+                        identity: right_identity,
+                        arguments: right_arguments,
+                    },
+                ) if left_identity == right_identity
+                    && left_arguments.len() == right_arguments.len() =>
+                {
+                    Self::extend_compatibility_pairs(
+                        &mut pending,
+                        left,
+                        left_arguments,
+                        right,
+                        right_arguments,
+                    );
+                }
+                (
+                    TypeKind::Cursor {
+                        mode: left_mode,
+                        collection: left_collection,
+                    },
+                    TypeKind::Cursor {
+                        mode: right_mode,
+                        collection: right_collection,
+                    },
+                ) if left_mode == right_mode => {
+                    pending.push((left.child(*left_collection), right.child(*right_collection)));
+                }
+                (TypeKind::Inference(left), TypeKind::Inference(right)) if left == right => {}
+                (TypeKind::Error, TypeKind::Error) => {}
+                (TypeKind::Error, _) | (_, TypeKind::Error) if mode == ScopedSolverMode::Unify => {}
+                _ => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
+
+    fn extend_compatibility_pairs(
+        pending: &mut Vec<(ScopedTypePattern, ScopedTypePattern)>,
+        left: ScopedTypePattern,
+        left_items: &[TypeId],
+        right: ScopedTypePattern,
+        right_items: &[TypeId],
+    ) {
+        pending.extend(
+            left_items
+                .iter()
+                .zip(right_items)
+                .map(|(left_item, right_item)| (left.child(*left_item), right.child(*right_item))),
+        );
+    }
+
+    fn push_pattern_children(
+        pattern: ScopedTypePattern,
+        kind: &TypeKind,
+        pending: &mut Vec<ScopedTypePattern>,
+    ) {
+        match kind {
+            TypeKind::Nominal { arguments, .. }
+            | TypeKind::Tuple(arguments)
+            | TypeKind::Union(arguments)
+            | TypeKind::Intrinsic { arguments, .. }
+            | TypeKind::Generated { arguments, .. } => {
+                pending.extend(arguments.iter().map(|ty| pattern.child(*ty)));
+            }
+            TypeKind::Function(function) => {
+                pending.extend(
+                    function
+                        .parameters
+                        .iter()
+                        .map(|parameter| pattern.child(parameter.ty)),
+                );
+                pending.extend(function.variadic.map(|ty| pattern.child(ty)));
+                pending.push(pattern.child(function.outcome));
+            }
+            TypeKind::Option(item) => pending.push(pattern.child(*item)),
+            TypeKind::Result { success, error } => {
+                pending.push(pattern.child(*success));
+                pending.push(pattern.child(*error));
+            }
+            TypeKind::Cursor { collection, .. } => {
+                pending.push(pattern.child(*collection));
+            }
+            TypeKind::Error
+            | TypeKind::Scalar(_)
+            | TypeKind::GenericParameter(_)
+            | TypeKind::Inference(_)
+            | TypeKind::OpaqueResult(_) => {}
+        }
     }
 }
 
@@ -2061,6 +2807,108 @@ mod tests {
             !interner
                 .first_order_unifiable(parameter, recursive)
                 .unwrap()
+        );
+    }
+
+    #[test]
+    fn independent_first_order_unification_scopes_binders_and_matches_unions() {
+        let mut interner = TypeInterner::default();
+        let first = interner.generic_parameter(0).unwrap();
+        let second = interner.generic_parameter(1).unwrap();
+        let int = interner.scalar(ScalarType::Int);
+        let string = interner.scalar(ScalarType::String);
+        let array_first = interner
+            .intrinsic(IntrinsicType::Array, vec![first])
+            .unwrap();
+
+        assert!(!interner.first_order_unifiable(first, array_first).unwrap());
+        assert!(
+            interner
+                .first_order_independent_unifiable(&[first], &[array_first])
+                .unwrap()
+        );
+        assert!(
+            interner
+                .first_order_independent_unifiable(&[first, first], &[second, int])
+                .unwrap()
+        );
+        assert!(
+            !interner
+                .first_order_independent_unifiable(&[first, first], &[int, string])
+                .unwrap()
+        );
+
+        let left_repeated = interner.tuple(vec![first, first]).unwrap();
+        let array_second = interner
+            .intrinsic(IntrinsicType::Array, vec![second])
+            .unwrap();
+        let left_recursive = interner.tuple(vec![second, array_second]).unwrap();
+        let left_union = interner.union([left_repeated, left_recursive]).unwrap();
+        let right_repeated = interner.tuple(vec![second, second]).unwrap();
+        let array_first = interner
+            .intrinsic(IntrinsicType::Array, vec![first])
+            .unwrap();
+        let right_recursive = interner.tuple(vec![first, array_first]).unwrap();
+        let right_union = interner.union([right_recursive, right_repeated]).unwrap();
+        assert!(
+            interner
+                .first_order_independent_unifiable(&[left_union], &[right_union])
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn independent_unification_can_compare_a_functional_output() {
+        let mut interner = TypeInterner::default();
+        let element = interner.generic_parameter(0).unwrap();
+        let int = interner.scalar(ScalarType::Int);
+        let string = interner.scalar(ScalarType::String);
+        let generic_target = interner
+            .intrinsic(IntrinsicType::Array, vec![element])
+            .unwrap();
+        let string_target = interner
+            .intrinsic(IntrinsicType::Array, vec![string])
+            .unwrap();
+        let int_target = interner.intrinsic(IntrinsicType::Set, vec![int]).unwrap();
+
+        assert_eq!(
+            interner
+                .first_order_independent_equivalent_after_unifying(
+                    &[generic_target],
+                    &[string_target],
+                    element,
+                    string,
+                )
+                .unwrap(),
+            Some(true)
+        );
+        assert_eq!(
+            interner
+                .first_order_independent_equivalent_after_unifying(
+                    &[generic_target],
+                    &[string_target],
+                    int,
+                    string,
+                )
+                .unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            interner
+                .first_order_independent_equivalent_after_unifying(
+                    &[generic_target],
+                    &[int_target],
+                    element,
+                    int,
+                )
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            interner
+                .first_order_independent_equivalent_after_unifying(&[], &[], element, int,)
+                .unwrap(),
+            Some(false)
         );
     }
 

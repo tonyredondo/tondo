@@ -152,11 +152,13 @@ carry IDs derived from logical source order, their complete trait/target header,
 generic binders, source-ordered methods, and the instantiated contract of each
 method. HIR enforces determinable binders, module-based orphan rules, exact
 signatures and bounds, required/default membership, and the closed/open prelude
-protocol split before checking implementation bodies. Overlap, termination,
-constraint selection, and trait dispatch remain separate later phases. Pattern checking is
-part of the same typed-HIR
-boundary and records typed pattern arenas, guarded match arms, irrefutability,
-reachability, and exhaustiveness without deferring decisions to MIR. Assignment
+protocol split before checking implementation bodies. A separate program-wide
+coherence pass alpha-renames each implementation's binders, ignores positive
+bounds, rejects unifiable complete headers, and enforces the functional
+`Iterator[T]` target-to-element relation. Termination, constraint selection, and
+trait dispatch remain separate later phases. Pattern checking is part of the
+same typed-HIR boundary and records typed pattern arenas, guarded match arms,
+irrefutability, reachability, and exhaustiveness without deferring decisions to MIR. Assignment
 checking resolves target projections before the RHS and records compound
 operators, per-leaf conversions, write extent requirements, and tuple write
 order explicitly. Structured control-flow checking records normal completion

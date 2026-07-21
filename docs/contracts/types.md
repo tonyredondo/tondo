@@ -34,6 +34,17 @@ normalization, so substituting two parameters with one type cannot leave a
 duplicate union member. Missing arguments are typed errors rather than implicit
 inference variables.
 
+The interner exposes two distinct first-order relations. Declaration-local
+overlap keeps one binder scope, as required when checking members of the same
+generic union. Coherence compares lists of roots with independent left and right
+binder scopes, so `$0` in two `impl` declarations is alpha-renamed rather than
+silently identified. Repeated occurrences inside either header remain linked,
+occurs checks reject infinite substitutions, normalized unions match as
+unordered member sets, and all roots share one substitution. A second operation
+can compare an output after computing the most-general input unifier without
+adding another equation; `Iterator[T]` uses that distinction for its functional
+target-to-element rule. Trait bounds are intentionally outside both relations.
+
 Source syntax is connected to this representation by `hir::lower_types`; the
 lowering boundary and its recovery rules are recorded in
 `docs/contracts/hir.md`.
@@ -143,5 +154,6 @@ namespace checks, intrinsic arity, function serialization, option/result
 equivalence, recursive union normalization, substitution and renormalization,
 stable generated identities, exact top-level assignment, the closed numeric
 conversion table, local inference rollback and occurs checks, first-order
-generic overlap, deep graph handling, and the prohibition on serializing
-unresolved inference or recovery types.
+generic overlap, independently scoped multi-root coherence, unordered
+alpha-equivalent unions, functional-output comparison, deep graph handling, and
+the prohibition on serializing unresolved inference or recovery types.

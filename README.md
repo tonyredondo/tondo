@@ -26,8 +26,10 @@ Explicit implementations now have deterministic HIR identities, normalized
 coherence headers, exact source/prelude method contracts, orphan checks, and
 checked bodies. Defaults may be omitted or replaced; missing, extra, or
 signature-drifting methods and manual implementations of closed protocols are
-rejected with `E1114`. Overlap, termination of trait obligations, and static
-dispatch remain later M4 work. The same HIR covers
+rejected with `E1114`. Coherence compares independently scoped generic headers
+before resolving bounds, rejects ordinary overlap with `E1111`, and enforces
+the unique `Iterator[T]` element for each target with `E1113`. Termination of
+trait obligations and static dispatch remain later M4 work. The same HIR covers
 constants, bindings, functions, inherent methods, blocks, conditionals, loops,
 scalar operators, calls, `Option`,
 `Result`, `fail`, `?`, every pattern form, and exhaustive guarded `match`, with

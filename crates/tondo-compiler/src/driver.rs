@@ -610,6 +610,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
         &resolved_program,
         TypeLoweringLimits {
             max_type_nodes: request.limits.max_type_nodes,
+            max_trait_obligations: request.limits.max_trait_obligations,
             max_diagnostics: remaining_diagnostics,
         },
     ) {
@@ -619,6 +620,9 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
         }
         Err(HirError::Type(TypeError::ResourceLimit { .. })) => {
             return syntax_resource_output(&request, request.root, "interned type node count", 0);
+        }
+        Err(HirError::TraitObligationLimit { file, offset }) => {
+            return syntax_resource_output(&request, file, "trait obligation", offset);
         }
         Err(error) => return Err(error.into()),
     };
@@ -2220,6 +2224,95 @@ mod tests {
         .unwrap();
         assert_eq!(invalid_body.status(), CompilationStatus::Rejected);
         assert_eq!(invalid_body.diagnostics().diagnostics()[0].code(), "E1102");
+    }
+
+    #[test]
+    fn implementation_coherence_uses_public_diagnostics_before_constraints() {
+        let overlap = execute(operation_request(
+            Operation::Check,
+            b"trait Marker {}\n\
+              type Box[T] = { value: T }\n\
+              impl[T] Marker for Box[T] {}\n\
+              impl[U] Marker for Box[Array[U]] {}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(overlap.status(), CompilationStatus::Rejected);
+        assert_eq!(overlap.diagnostics().diagnostics().len(), 1);
+        assert_eq!(overlap.diagnostics().diagnostics()[0].code(), "E1111");
+        assert!(
+            overlap
+                .diagnostics()
+                .json_lines()
+                .unwrap()
+                .contains("earlier overlapping implementation")
+        );
+
+        let iterator = execute(operation_request(
+            Operation::Check,
+            b"type Cursor = { value: Int }\n\
+              impl Iterator[Int] for Cursor {\n\
+                  fn next(mut self): Int? { none }\n\
+              }\n\
+              impl Iterator[String] for Cursor {\n\
+                  fn next(mut self): String? { none }\n\
+              }\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(iterator.status(), CompilationStatus::Rejected);
+        assert_eq!(iterator.diagnostics().diagnostics().len(), 1);
+        assert_eq!(iterator.diagnostics().diagnostics()[0].code(), "E1113");
+        assert!(
+            iterator
+                .diagnostics()
+                .json_lines()
+                .unwrap()
+                .contains("earlier Iterator implementation")
+        );
+    }
+
+    #[test]
+    fn trait_termination_reports_witnesses_and_obeys_the_public_budget() {
+        let cycle = execute(operation_request(
+            Operation::Check,
+            b"trait Left {}\n\
+              trait Right {}\n\
+              impl[T: Right] Left for T {}\n\
+              impl[T: Left] Right for T {}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(cycle.status(), CompilationStatus::Rejected);
+        assert_eq!(cycle.diagnostics().diagnostics().len(), 1);
+        assert_eq!(cycle.diagnostics().diagnostics()[0].code(), "E1112");
+        let json = cycle.diagnostics().json_lines().unwrap();
+        assert!(json.contains("idempotent size-change matrix"));
+        assert!(json.contains("[[=]]"));
+        assert!(json.contains("cycle obligation introduced here"));
+
+        let limited = execute(operation_request(
+            Operation::Check,
+            b"trait Summary {}\n\
+              trait Render {}\n\
+              impl[T: Summary] Render for T {}\n",
+            SourceForm::Module,
+            ResourceLimits {
+                max_trait_obligations: 0,
+                ..ResourceLimits::default()
+            },
+        ))
+        .unwrap();
+        assert_eq!(limited.status(), CompilationStatus::Rejected);
+        assert_eq!(limited.diagnostics().diagnostics()[0].code(), "T0002");
+        assert!(
+            limited.diagnostics().diagnostics()[0]
+                .message()
+                .contains("trait obligation")
+        );
     }
 
     #[test]

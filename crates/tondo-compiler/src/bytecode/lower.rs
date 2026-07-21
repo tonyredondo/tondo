@@ -2486,6 +2486,7 @@ mod tests {
             &resolved,
             TypeLoweringLimits {
                 max_type_nodes: 100_000,
+                max_trait_obligations: 100_000,
                 max_diagnostics: 100,
             },
         )
