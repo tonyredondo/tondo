@@ -534,7 +534,7 @@ fn evaluate_composite(
         HirExpressionKind::Coerce { kind, value: inner } => {
             let mut inner = value(*inner)?;
             match kind {
-                Assignability::Exact => {
+                Assignability::Exact | Assignability::Opaque => {
                     inner.ty = ty;
                     return Ok(inner);
                 }

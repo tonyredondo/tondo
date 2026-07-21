@@ -4039,6 +4039,70 @@ mod tests {
     }
 
     #[test]
+    fn mir_verifier_rejects_mutated_opaque_seals() {
+        let source = "fn hidden(): impl Discard { 42 }\n";
+        let (resolved, hir) = checked(source);
+        let mut wrong_kind = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &wrong_kind).unwrap();
+        let value = wrong_kind
+            .functions
+            .values_mut()
+            .flat_map(|function| &mut function.blocks)
+            .flat_map(|block| &mut block.statements)
+            .find_map(|statement| {
+                let MirStatementKind::Assign { value, .. } = &mut statement.kind else {
+                    return None;
+                };
+                matches!(
+                    &value.kind,
+                    MirRvalueKind::Coerce {
+                        kind: crate::types::Assignability::Opaque,
+                        ..
+                    }
+                )
+                .then_some(value)
+            })
+            .expect("opaque return lowers to a MIR seal");
+        let MirRvalueKind::Coerce { kind, .. } = &mut value.kind else {
+            unreachable!()
+        };
+        *kind = crate::types::Assignability::OptionLift;
+        let error = verify_mir(&resolved, &hir, &wrong_kind).unwrap_err();
+        assert!(error.message().contains("closed assignability relation"));
+
+        let mut wrong_type = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let value = wrong_type
+            .functions
+            .values_mut()
+            .flat_map(|function| &mut function.blocks)
+            .flat_map(|block| &mut block.statements)
+            .find_map(|statement| {
+                let MirStatementKind::Assign { value, .. } = &mut statement.kind else {
+                    return None;
+                };
+                matches!(
+                    &value.kind,
+                    MirRvalueKind::Coerce {
+                        kind: crate::types::Assignability::Opaque,
+                        ..
+                    }
+                )
+                .then_some(value)
+            })
+            .expect("opaque return lowers to a MIR seal");
+        let MirRvalueKind::Coerce { value: witness, .. } = &value.kind else {
+            unreachable!()
+        };
+        let witness = witness.ty;
+        value.ty = witness;
+        let error = verify_mir(&resolved, &hir, &wrong_type).unwrap_err();
+        assert!(
+            error.message().contains("closed assignability relation")
+                || error.message().contains("rvalue type")
+        );
+    }
+
+    #[test]
     fn mir_construction_limits_fail_before_unbounded_growth() {
         let (resolved, hir) = checked("fn main() {}\n");
         let error = lower_to_mir(

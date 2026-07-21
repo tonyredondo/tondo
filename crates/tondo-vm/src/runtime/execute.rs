@@ -1011,7 +1011,7 @@ impl Engine<'_, '_> {
             BytecodeRvalueKind::Coerce { kind, value } => {
                 let value_result = self.evaluate_operand(frame, value)?;
                 match kind {
-                    BytecodeCoercion::Exact => Ok(value_result),
+                    BytecodeCoercion::Exact | BytecodeCoercion::Opaque => Ok(value_result),
                     BytecodeCoercion::UnionInjection => self.allocate(
                         HeapObject::Union {
                             member: value.ty,
@@ -1342,6 +1342,62 @@ impl Engine<'_, '_> {
                     }
                     let left_object = self.heap.get(left)?;
                     let right_object = self.heap.get(right)?;
+                    match (left_object, right_object) {
+                        (HeapObject::Set(left), HeapObject::Set(right)) => {
+                            if left.len() != right.len() {
+                                return Ok(false);
+                            }
+                            let mut matched = vec![false; right.len()];
+                            for left in left {
+                                let left = present(left, "set item")?;
+                                let mut found = false;
+                                for (index, right) in right.iter().enumerate() {
+                                    if !matched[index]
+                                        && self.value_equal(left, present(right, "set item")?)?
+                                    {
+                                        matched[index] = true;
+                                        found = true;
+                                        break;
+                                    }
+                                }
+                                if !found {
+                                    return Ok(false);
+                                }
+                            }
+                            continue;
+                        }
+                        (HeapObject::Map(left), HeapObject::Map(right)) => {
+                            if left.len() != right.len() {
+                                return Ok(false);
+                            }
+                            let mut matched = vec![false; right.len()];
+                            for (left_key, left_value) in left {
+                                let left_key = present(left_key, "map key")?;
+                                let mut found = None;
+                                for (index, (right_key, right_value)) in right.iter().enumerate() {
+                                    if !matched[index]
+                                        && self
+                                            .value_equal(left_key, present(right_key, "map key")?)?
+                                    {
+                                        found = Some((index, right_value));
+                                        break;
+                                    }
+                                }
+                                let Some((index, right_value)) = found else {
+                                    return Ok(false);
+                                };
+                                matched[index] = true;
+                                if !self.value_equal(
+                                    present(left_value, "map value")?,
+                                    present(right_value, "map value")?,
+                                )? {
+                                    return Ok(false);
+                                }
+                            }
+                            continue;
+                        }
+                        _ => {}
+                    }
                     if !queue_object_equality(left_object, right_object, &mut pending)? {
                         return Ok(false);
                     }
@@ -3089,24 +3145,8 @@ fn queue_object_equality(
     Ok(match (left, right) {
         (HeapObject::String(left), HeapObject::String(right)) => left == right,
         (HeapObject::Tuple(left), HeapObject::Tuple(right))
-        | (HeapObject::Array(left), HeapObject::Array(right))
-        | (HeapObject::Set(left), HeapObject::Set(right)) => queue_options(left, right, pending)?,
-        (HeapObject::Map(left), HeapObject::Map(right)) => {
-            if left.len() != right.len() {
-                false
-            } else {
-                for ((left_key, left_value), (right_key, right_value)) in left.iter().zip(right) {
-                    pending.push((
-                        present(left_key, "map key")?.clone(),
-                        present(right_key, "map key")?.clone(),
-                    ));
-                    pending.push((
-                        present(left_value, "map value")?.clone(),
-                        present(right_value, "map value")?.clone(),
-                    ));
-                }
-                true
-            }
+        | (HeapObject::Array(left), HeapObject::Array(right)) => {
+            queue_options(left, right, pending)?
         }
         (
             HeapObject::Newtype {

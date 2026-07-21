@@ -27,10 +27,11 @@ concrete forms. Generic nominal declarations remain once as layout templates;
 the bytecode verifier substitutes their concrete arguments when checking a
 field or variant projection.
 
-Source constraints are checked before an instance is admitted. The closed
-bootstrap `Discard` constraint is executable now. Other intrinsic and user
-trait obligations remain represented and budgeted, but cannot admit executable
-code until CAP-001 and TRAIT-005 provide their remaining proof rules.
+Source constraints are checked before an instance is admitted. All six closed
+intrinsic constraints (`Copy`, `Discard`, `Equatable`, `Key`, `Send`, and
+`Share`) use the completed structural proof; open source/prelude traits use the
+unique coherent static-selection proof. Callable capabilities remain deferred
+to the closure milestones and cannot be guessed to admit executable code.
 
 ## Consequences
 

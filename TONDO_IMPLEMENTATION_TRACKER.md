@@ -1,12 +1,11 @@
 # Tondo: tracker de implementación
 
 **Estado:** activo  
-**Versión del tracker:** 0.26
+**Versión del tracker:** 0.29
 **Última actualización:** 2026-07-21  
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
-**Objetivo inmediato:** implementar selección y dispatch estático de traits,
-llamadas calificadas y métodos visibles por constraints (TRAIT-005), sobre una
-tabla de implementaciones ya coherente y con terminación demostrada.
+**Objetivo inmediato:** implementar funciones como valores y su coerción exacta
+a `fn(...)` (CALL-001).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -676,9 +675,9 @@ Evidencia observada el 2026-07-21:
 - `some`, `none`, `ok`, `err`, la elevación de éxito, `fail` y ambos canales de
   `?` están implementados sin doble envoltura de `Result`. El widening cerrado
   distingue inyección de un error y ampliación de una unión-subconjunto.
-- Las fuentes intrínsecas de `for` se comprueban ahora; un nominal potencialmente
-  iterable se difiere hasta trait resolution en vez de recibir un falso
-  `E1206`.
+- Las fuentes intrínsecas de `for` conservan su protocolo cerrado. Un nominal
+  exige ahora un `Iterator[T]` visible o implementado; HIR fija el elemento y la
+  firma de `next`, y la ausencia real produce `E1206`.
 - `E1101`, `E1102`, `E1109`, `E1115`, `E1116`, `E1205`, `E1206`, `E1301` a
   `E1304`, `E1405`, `E1407`, `E1411` y `E1901` a `E1903` preemptan `T0001` en
   el driver. El
@@ -976,13 +975,13 @@ dinámicos ni dispatch oculto.
 
 - [x] **TRAIT-004 — Implementar el control de terminación por cambio de tamaño.**
 
-- [ ] **TRAIT-005 — Implementar dispatch estático, llamadas calificadas y
+- [x] **TRAIT-005 — Implementar dispatch estático, llamadas calificadas y
   métodos visibles a través de constraints.**
 
-- [ ] **TRAIT-006 — Implementar resultados opacos `impl Bound` con un único
+- [x] **TRAIT-006 — Implementar resultados opacos `impl Bound` con un único
   testigo concreto.**
 
-- [ ] **CAP-001 — Implementar las capacidades intrínsecas `Copy`, `Discard`,
+- [x] **CAP-001 — Implementar las capacidades intrínsecas `Copy`, `Discard`,
   `Equatable`, `Key`, `Send` y `Share` como contratos cerrados.**
 
 - [ ] **CALL-001 — Implementar funciones como valores y coerción exacta a
@@ -996,17 +995,18 @@ dinámicos ni dispatch oculto.
 - [ ] **CALL-004 — Implementar closures sync, async y unsafe en la
   representación semántica, aunque sus runtimes se activen después.**
 
-Evidencia observada el 2026-07-21 para GEN-001, GEN-002 y TRAIT-001 a TRAIT-004:
+Evidencia observada el 2026-07-21 para GEN-001, GEN-002, TRAIT-001 a TRAIT-006
+y CAP-001:
 
 - Los bodies genéricos bounded y unbounded se comprueban una sola vez con
   parámetros rígidos. Las llamadas explícitas e inferidas cierran todas las
   variables invariantes y pueden reenviar el binder exterior en tipos
   compuestos como `T?` y `Array[T]`.
-- Cada especialización valida sus bounds antes de publicar HIR. `Discard` usa
-  ya la prueba estructural cerrada y rechaza `Join`, bounds no reenviados y
-  function values inválidos con `E1105`; los demás traits permanecen
-  representados y presupuestados, pero sus pruebas dependen de CAP-001 y
-  TRAIT-005.
+- Cada especialización valida sus bounds antes de publicar HIR. `Copy`,
+  `Discard`, `Equatable`, `Key`, `Send` y `Share` comparten una prueba
+  estructural cerrada; traits fuente, `Display` e `Iterator[T]` usan selección
+  estática y prueba recursiva. `Call`, `CallMut` y `CallOnce` permanecen en las
+  tareas de closures.
 - La monomorfización se ejecuta entre MIR verificado y bytecode. Parte de todos
   los callables no genéricos y de function values constantes, sigue referencias
   transitivas, sustituye todos los tipos de firma y body y deduplica por
@@ -1030,8 +1030,8 @@ Evidencia observada el 2026-07-21 para GEN-001, GEN-002 y TRAIT-001 a TRAIT-004:
   corchetes de un index siguen recorriendo su ruta ordinaria.
 - El verifier exige correspondencia exacta entre resolución y tabla HIR,
   clasificación de receptor, aridad completa, prefijo genérico, presencia de
-  body y requisito async. Los defaults mantienen `Self` genérico y no se
-  convierten accidentalmente en roots de bytecode antes de TRAIT-005.
+  body y requisito async. Los defaults mantienen `Self` genérico y sólo se
+  convierten en roots de bytecode cuando un dispatch concreto los selecciona.
 - Cada `impl` publica una identidad estable, su cabecera normalizada, binders,
   métodos y contratos instanciados. La coincidencia exige nombre, receptor,
   modos, variadicidad, genéricos, bounds, `async`, `unsafe`, éxito y error
@@ -1069,7 +1069,63 @@ Evidencia observada el 2026-07-21 para GEN-001, GEN-002 y TRAIT-001 a TRAIT-004:
 - Las regresiones cubren descenso, adaptadores acíclicos, ciclos iguales,
   mutuos, permutaciones, crecimiento, múltiples SCC, álgebra de composición,
   precedencia frente a overlap, orden lógico, HIR mutado y límite público.
-- El gate acumulado pasa 350 tests, `git diff --check`, formatter check, build
+- El lookup de método ordinario prioriza inherentes y sólo después consulta los
+  traits visibles por constraints; nunca escanea impls globales. Una colisión
+  produce `E1004` y exige calificación explícita, también entre traits fuente y
+  prelude.
+- Las llamadas calificadas cierran argumentos del trait, `Self` y genéricos del
+  método, respetan modos de receptor y módulos importados, y prueban la consulta
+  completa. La ausencia de implementación o de un bound sustituido produce
+  `E1105`.
+- HIR representa los contratos prelude con `PreludeTraitFunction` y verifica
+  aridad, tipos canónicos y firma exacta. MIR conserva el operando estático y
+  vuelve a verificar su receptor y outcome antes de bytecode.
+- La monomorfización sustituye la consulta alcanzada, selecciona un único impl,
+  distingue override de default, verifica igualdad exacta de firmas y encola
+  sólo el callable destino. El bytecode contiene llamadas directas sin vtables,
+  witnesses ni type packs runtime; source traits, defaults y bounds genéricos
+  tienen regresiones que ejecutan en la VM.
+- `for` distingue protocolo intrínseco y `Iterator[T]` de usuario. El segundo
+  evalúa la fuente una vez, llama estáticamente a `next`, ramifica sobre `T?` y
+  nunca usa el terminador intrínseco; la legalidad final del préstamo `mut`
+  pertenece a BORROW-001 en M5.
+- `impl Bound` sólo se admite como éxito superior de funciones libres,
+  inherentes y asociadas. El parser recupera las posiciones prohibidas con
+  `E0004` sin fabricar un tipo opaco ni perder progreso.
+- Cada declaración publica una familia nominal estable formada por su identidad
+  y argumentos genéricos invariantes. El canal `! E` permanece exterior y las
+  especializaciones concretas conservan identidades opacas distintas.
+- El checker infiere un único testigo exacto para todos los éxitos normales
+  alcanzables. `Never` y `err` no aportan testigo; no se inventan option lifts,
+  uniones ni coerciones de función, y los contenedores vacíos usan el mismo
+  contexto de inferencia. Ausencia, conflicto o ciclos producen `E1117`.
+- Todos los bounds publicados se demuestran contra el testigo bajo los binders
+  de la declaración. Los callers sólo obtienen esa superficie; los métodos
+  inherentes y la representación concreta no atraviesan la frontera pública de
+  HIR ni el desensamblado.
+- HIR y MIR conservan un sello `Assignability::Opaque`; bytecode lo representa
+  como una coerción verificada de coste cero. La VM reenvía el valor sin wrapper,
+  allocation, vtable, witness table ni type pack runtime.
+- Los tres verifiers rechazan bounds duplicados o falsos, testigos genéricos,
+  `Never` o cíclicos, familias duplicadas y sellos alterados. Las regresiones
+  cubren resultados fallibles, familias genéricas, funciones libres,
+  inherentes, asociadas y async, bounds fuente y prelude, y mutaciones en cada
+  frontera.
+- Un único motor calcula `Copy`, `Discard`, `Equatable`, `Key`, `Send` y
+  `Share` mediante resúmenes nominales simbólicos y un punto fijo coinductivo.
+  `Copy` implica `Discard`; `Key` implica `Copy`, `Equatable` y `Discard`.
+- La tabla completa queda alineada con el interner HIR. Los bounds opacos sólo
+  publican lo declarado, los binders genéricos sólo usan constraints visibles y
+  un trait con receptor async aporta y exige `Self: Send`.
+- La formación de `Map`, `Set` y `Ref`, la igualdad estructural, membership,
+  map lookup, política de duplicados y discard consumen la misma prueba cerrada.
+  Las regresiones cubren genéricos, nominals recursivos y toda la matriz
+  intrínseca positiva y negativa.
+- El admission verifier reconstruye la tabla y vuelve a probar cada consumo;
+  MIR comprueba que sus operaciones coinciden y el verifier VM deriva otra vez
+  las capacidades desde el catálogo bytecode cerrado. La igualdad runtime de
+  maps y sets ignora el orden de inserción.
+- El gate acumulado pasa 398 tests, `git diff --check`, formatter check, build
   de todos los targets, Clippy con warnings denegados y Rustdoc con warnings
   denegados.
 
@@ -1711,13 +1767,51 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es TRAIT-005: seleccionar la implementación única
-después de sustituir una consulta, demostrar sus bounds, materializar llamadas
-calificadas y por constraint, y bajar todo dispatch como llamada estática.
+La siguiente acción activa es CALL-001: completar funciones como valores y su
+coerción exacta al tipo uniforme `fn(...)`, incluidas sus fronteras HIR, MIR,
+bytecode y VM.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.29 — 2026-07-21
+
+- Se completa CAP-001 con un motor estructural y coinductivo común para `Copy`,
+  `Discard`, `Equatable`, `Key`, `Send` y `Share`, incluidas sus implicaciones,
+  bounds genéricos y contratos opacos.
+- Formación de colecciones/referencias, igualdad, membership, map lookup,
+  duplicados y receptores async consumen una única tabla HIR verificada; MIR y
+  bytecode mantienen fronteras de comprobación independientes.
+- La VM ejecuta igualdad estructural de nominals y colecciones; maps y sets se
+  comparan por contenido, sin hacer observable el orden de inserción.
+- El gate acumulado queda en 398 tests, formatter check, build de todos los
+  targets, Clippy y Rustdoc sin warnings; la cola avanza a CALL-001.
+
+### 0.28 — 2026-07-21
+
+- Se completa TRAIT-006 con familias opacas por identidad de declaración,
+  argumentos genéricos invariantes y un único testigo concreto exacto por body.
+- Los bounds publicados se prueban estáticamente; el canal de error sigue
+  visible y callers, tooling y dispatch no acceden a la representación privada.
+- HIR, MIR y bytecode conservan sellos verificables; la ejecución es un no-op
+  sin wrapper, allocation ni dispatch dinámico, y los verifiers rechazan
+  metadata, ciclos o coerciones forjados.
+- El gate acumulado queda en 389 tests, formatter check, build de todos los
+  targets, Clippy y Rustdoc sin warnings; la cola avanza a CAP-001.
+
+### 0.27 — 2026-07-21
+
+- Se completa TRAIT-005 con lookup cerrado por constraints, calificación
+  explícita, selección única tras sustitución y prueba recursiva de bounds.
+- Traits fuente, defaults, overrides, `Display` e `Iterator[T]` llegan a
+  bytecode como callables directos; no existe dispatch dinámico ni metadata de
+  witness en runtime.
+- Los `for` de usuario conservan su protocolo en HIR, bajan la llamada estática
+  a `next` en MIR y ramifican sobre `Option`; los verifiers rechazan aridad,
+  firma o protocolo mutados.
+- El gate acumulado queda en 370 tests, formatter check, build de todos los
+  targets, Clippy y Rustdoc sin warnings; la cola avanza a TRAIT-006.
 
 ### 0.26 — 2026-07-21
 

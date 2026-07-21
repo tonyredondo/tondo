@@ -11,22 +11,23 @@ use crate::source::{FileId, SourceDatabase, Span, TextRange};
 use crate::syntax::ast::{Expression as AstExpression, Pattern as AstPattern};
 use crate::syntax::{Parsed, SyntaxElement, SyntaxKind, SyntaxNodeRef, SyntaxTokenRef, TokenKind};
 use crate::types::{
-    Assignability, InferenceContext, InferenceError, IntrinsicType, NumericConversion,
+    Assignability, InferenceContext, InferenceError, InferenceId, IntrinsicType, NumericConversion,
     ParameterMode, ScalarType, TypeId, TypeKind, TypeSubstitution, numeric_conversion,
 };
 
+use super::capabilities::{CapabilityAnalysis, CapabilityAssumptions};
 use super::const_eval::{
     ConstantEvaluationError, evaluate, has_unavailable_input, is_nan, values_equal,
 };
 use super::{
     HirAssertMessagePart, HirAssignmentOperator, HirAssignmentTarget, HirAssignmentTargetKind,
     HirBinaryOperator, HirBody, HirBootstrapHostFunction, HirCallArgument, HirCallArgumentTarget,
-    HirCallableId, HirCallableSignature, HirContainmentKind, HirError, HirExpression,
-    HirExpressionId, HirExpressionKind, HirField, HirFlow, HirForKind, HirIndexAccess,
-    HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry, HirMatchArm, HirMemberReference,
-    HirNominalShape, HirPattern, HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator,
-    HirPreludeTraitMethod, HirProgram, HirRangeKind, HirRecordFieldValue, HirStatement,
-    HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
+    HirCallableId, HirCallableSignature, HirCapability, HirCapabilityStatus, HirContainmentKind,
+    HirError, HirExpression, HirExpressionId, HirExpressionKind, HirField, HirFlow, HirForKind,
+    HirIndexAccess, HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry, HirMatchArm,
+    HirMemberReference, HirNominalShape, HirPattern, HirPatternField, HirPatternId, HirPatternKind,
+    HirPrefixOperator, HirPreludeTraitMethod, HirProgram, HirRangeKind, HirRecordFieldValue,
+    HirStatement, HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
     HirVariantValue, HirWriteKind, TraitQuery, TraitSelectionError, select_implementation,
 };
 
@@ -88,18 +89,30 @@ pub fn check_expressions<'a>(
         max_diagnostics: limits.max_diagnostics,
         complete: true,
         next_loop_id: 0,
-        discard_summaries: None,
+        capability_analysis: None,
+        reported_capability_requirements: BTreeSet::new(),
+        opaque_body: None,
     };
+    checker.check_capability_contracts()?;
     checker.check_discard_parameters()?;
     checker.check_constants()?;
     checker.check_callables()?;
     checker.check_constant_collection_diagnostics()?;
     checker.check_reachability_warnings()?;
     let types = checker.program.interner.ids().collect::<Vec<_>>();
-    checker.program.discard_statuses = types
+    let analysis = CapabilityAnalysis::new(&checker.program, resolved)?;
+    let assumptions = CapabilityAssumptions::default();
+    checker.program.capability_statuses = types
         .into_iter()
-        .map(|ty| checker.discard_status_with_generics(ty, &BTreeMap::new()))
-        .collect::<Result<_, _>>()?;
+        .map(|ty| {
+            let mut statuses = [HirCapabilityStatus::Satisfied; HirCapability::COUNT];
+            for capability in HirCapability::ALL {
+                statuses[capability.index()] =
+                    analysis.status(&checker.program, ty, capability, &assumptions)?;
+            }
+            Ok(statuses)
+        })
+        .collect::<Result<_, crate::types::TypeError>>()?;
     checker.program.expression_check_complete = checker.complete;
     if checker.complete
         && !checker
@@ -248,7 +261,7 @@ struct BodyContext {
     contextual_self: Option<TypeId>,
     trait_body: Option<TraitBodyContext>,
     trait_assumptions: Vec<TraitQuery>,
-    discard_statuses: BTreeMap<u32, DiscardStatus>,
+    capability_assumptions: CapabilityAssumptions,
     loops: Vec<HirLoopId>,
 }
 
@@ -385,6 +398,15 @@ enum InferenceAssignment {
     Mismatch,
 }
 
+enum OpaqueExpectedMatch {
+    NotOpaque,
+    Matched {
+        target: TypeId,
+        coercion: Assignability,
+    },
+    Mismatch,
+}
+
 fn explicit_receiver_argument_mode(mode: ParameterMode) -> ParameterMode {
     match mode {
         ParameterMode::Ref | ParameterMode::Value => ParameterMode::Value,
@@ -414,7 +436,7 @@ struct FlowSummary {
     breaks: BTreeSet<HirLoopId>,
 }
 
-type DiscardStatus = super::HirDiscardStatus;
+type DiscardStatus = HirCapabilityStatus;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TraitProofStatus {
@@ -429,24 +451,13 @@ enum TraitRequirementOrigin {
     GenericBound,
 }
 
-struct DiscardNode {
-    floor: DiscardStatus,
-    dependencies: Vec<TypeId>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct DiscardRequirement {
-    floor: DiscardStatus,
-    parameters: BTreeSet<u32>,
-}
-
-impl Default for DiscardRequirement {
-    fn default() -> Self {
-        Self {
-            floor: DiscardStatus::Satisfied,
-            parameters: BTreeSet::new(),
-        }
-    }
+struct OpaqueBodyInference {
+    callable: HirCallableId,
+    solver: InferenceContext,
+    variables: BTreeSet<InferenceId>,
+    witness: TypeId,
+    expression_start: usize,
+    pattern_start: usize,
 }
 
 impl FlowSummary {
@@ -486,14 +497,185 @@ struct ExpressionChecker<'a> {
     max_diagnostics: usize,
     complete: bool,
     next_loop_id: u32,
-    discard_summaries: Option<BTreeMap<SymbolId, DiscardRequirement>>,
+    capability_analysis: Option<CapabilityAnalysis>,
+    reported_capability_requirements: BTreeSet<(Span, TypeId, HirCapability)>,
+    opaque_body: Option<OpaqueBodyInference>,
 }
 
 impl<'a> ExpressionChecker<'a> {
+    fn check_capability_contracts(&mut self) -> Result<(), HirError> {
+        let declarations = self
+            .program
+            .declarations
+            .values()
+            .map(|declaration| {
+                let mut roots = declaration
+                    .parameters
+                    .iter()
+                    .flat_map(generic_bound_type_roots)
+                    .collect::<Vec<_>>();
+                match &declaration.kind {
+                    HirTypeDeclarationKind::Alias { target } => roots.push(*target),
+                    HirTypeDeclarationKind::Nominal(definition) => {
+                        roots.extend(nominal_type_roots(definition.shape()));
+                    }
+                    HirTypeDeclarationKind::Trait(definition) => {
+                        roots.push(definition.self_type());
+                    }
+                }
+                (declaration.span, declaration.parameters.clone(), roots)
+            })
+            .collect::<Vec<_>>();
+        for (span, parameters, roots) in declarations {
+            self.check_type_formations(
+                span,
+                roots,
+                &CapabilityAssumptions::from_generics(&self.program, &parameters),
+            )?;
+        }
+
+        let callables = self
+            .program
+            .callables
+            .iter()
+            .map(|callable| {
+                let mut roots = vec![callable.function_type];
+                roots.extend(callable.generics.iter().flat_map(generic_bound_type_roots));
+                (callable.span, callable.generics.clone(), roots)
+            })
+            .collect::<Vec<_>>();
+        for (span, parameters, roots) in callables {
+            self.check_type_formations(
+                span,
+                roots,
+                &CapabilityAssumptions::from_generics(&self.program, &parameters),
+            )?;
+        }
+
+        let constants = self
+            .program
+            .constants
+            .values()
+            .filter_map(|constant| constant.declared_type.map(|ty| (constant.span, vec![ty])))
+            .collect::<Vec<_>>();
+        for (span, roots) in constants {
+            self.check_type_formations(span, roots, &CapabilityAssumptions::default())?;
+        }
+
+        let implementations = self
+            .program
+            .implementations
+            .iter()
+            .map(|implementation| {
+                let mut roots = vec![implementation.target];
+                roots.extend(implementation.trait_reference.arguments.iter().copied());
+                roots.extend(
+                    implementation
+                        .parameters
+                        .iter()
+                        .flat_map(generic_bound_type_roots),
+                );
+                (
+                    implementation.span,
+                    implementation.parameters.clone(),
+                    roots,
+                    implementation.contract_complete && implementation.requires_self_send,
+                    implementation.target,
+                )
+            })
+            .collect::<Vec<_>>();
+        for (span, parameters, roots, requires_self_send, target) in implementations {
+            let assumptions = CapabilityAssumptions::from_generics(&self.program, &parameters);
+            self.check_type_formations(span, roots, &assumptions)?;
+            if requires_self_send {
+                let _ = self.require_capability_with_generics(
+                    span,
+                    target,
+                    HirCapability::Send,
+                    &assumptions,
+                    "an implementation of a trait with an async receiver method",
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn check_type_formations(
+        &mut self,
+        span: Span,
+        roots: impl IntoIterator<Item = TypeId>,
+        assumptions: &CapabilityAssumptions,
+    ) -> Result<(), HirError> {
+        let mut pending = roots.into_iter().collect::<Vec<_>>();
+        let mut visited = BTreeSet::new();
+        while let Some(ty) = pending.pop() {
+            if !visited.insert(ty) {
+                continue;
+            }
+            match self.program.interner.kind(ty)?.clone() {
+                TypeKind::Function(function) => {
+                    pending.extend(function.parameters().iter().map(|parameter| parameter.ty()));
+                    pending.extend(function.variadic());
+                    pending.push(function.outcome());
+                }
+                TypeKind::Nominal { arguments, .. }
+                | TypeKind::Tuple(arguments)
+                | TypeKind::Union(arguments)
+                | TypeKind::Generated { arguments, .. }
+                | TypeKind::OpaqueResult { arguments, .. } => pending.extend(arguments),
+                TypeKind::Option(item) => pending.push(item),
+                TypeKind::Result { success, error } => {
+                    pending.push(success);
+                    pending.push(error);
+                }
+                TypeKind::Intrinsic {
+                    constructor,
+                    arguments,
+                } => {
+                    let requirement = match constructor {
+                        IntrinsicType::Map => {
+                            Some((arguments[0], HirCapability::Key, "Map key formation"))
+                        }
+                        IntrinsicType::Set => {
+                            Some((arguments[0], HirCapability::Key, "Set key formation"))
+                        }
+                        IntrinsicType::Ref => {
+                            Some((arguments[0], HirCapability::Discard, "Ref target formation"))
+                        }
+                        IntrinsicType::Array
+                        | IntrinsicType::Range
+                        | IntrinsicType::Pointer
+                        | IntrinsicType::Join
+                        | IntrinsicType::Command
+                        | IntrinsicType::Pipeline
+                        | IntrinsicType::NumericConversionError => None,
+                    };
+                    if let Some((required, capability, context)) = requirement {
+                        let _ = self.require_capability_with_generics(
+                            span,
+                            required,
+                            capability,
+                            assumptions,
+                            context,
+                        )?;
+                    }
+                    pending.extend(arguments);
+                }
+                TypeKind::Cursor { collection, .. } => pending.push(collection),
+                TypeKind::Error
+                | TypeKind::Scalar(_)
+                | TypeKind::GenericParameter(_)
+                | TypeKind::Inference(_) => {}
+            }
+        }
+        Ok(())
+    }
+
     fn check_discard_parameters(&mut self) -> Result<(), HirError> {
         let callables = self.program.callables.clone();
         for callable in callables {
-            let generic_statuses = callable_discard_statuses(&callable);
+            let assumptions =
+                CapabilityAssumptions::from_generics(&self.program, &callable.generics);
             for parameter in callable
                 .parameters
                 .iter()
@@ -502,7 +684,7 @@ impl<'a> ExpressionChecker<'a> {
                 self.require_discard_with_generics(
                     parameter.span,
                     parameter.ty,
-                    &generic_statuses,
+                    &assumptions,
                     "discard parameter",
                 )?;
             }
@@ -658,6 +840,7 @@ impl<'a> ExpressionChecker<'a> {
             self.complete = false;
             return Ok(());
         };
+        let expression_start = self.program.expressions.len();
         let mut context = BodyContext::default();
         let value = self.check_expression(
             constant.initializer.file(),
@@ -675,6 +858,15 @@ impl<'a> ExpressionChecker<'a> {
             constant.ty = Some(ty);
             constant.value = Some(value);
         }
+        let mut roots = BTreeSet::new();
+        for expression in &self.program.expressions[expression_start..] {
+            collect_expression_type_roots(expression, &mut roots);
+        }
+        self.check_type_formations(
+            constant.initializer,
+            roots,
+            &CapabilityAssumptions::default(),
+        )?;
         let evaluated = match evaluate(&self.program, value) {
             Ok(value) => Some(value),
             Err(ConstantEvaluationError::Nonconstant { span, reason }) => {
@@ -733,19 +925,48 @@ impl<'a> ExpressionChecker<'a> {
                 self.complete = false;
                 continue;
             };
+            let expression_start = self.program.expressions.len();
+            let pattern_start = self.program.patterns.len();
             let mut context = BodyContext {
-                discard_statuses: callable_discard_statuses(&callable),
+                capability_assumptions: CapabilityAssumptions::from_generics(
+                    &self.program,
+                    &callable.generics,
+                ),
                 trait_assumptions: self.callable_trait_assumptions(&callable)?,
                 contextual_self: self.callable_contextual_self(callable.id),
                 ..BodyContext::default()
             };
             context.trait_body = self.trait_body_context(callable.id);
-            let (success, error) = match self.program.interner.kind(callable.outcome)? {
+            let (declared_success, error) = match self.program.interner.kind(callable.outcome)? {
                 TypeKind::Result { success, error } => (*success, Some(*error)),
                 _ => (callable.outcome, None),
             };
+            let (full, success) = if callable.opaque_result.is_some() {
+                let mut solver = InferenceContext::new();
+                let witness = solver.fresh(&mut self.program.interner)?;
+                let inference = match self.program.interner.kind(witness)? {
+                    TypeKind::Inference(inference) => *inference,
+                    _ => unreachable!("fresh inference produces an inference type"),
+                };
+                let full = if let Some(error) = error {
+                    self.program.interner.result(witness, error)?
+                } else {
+                    witness
+                };
+                self.opaque_body = Some(OpaqueBodyInference {
+                    callable: callable.id,
+                    solver,
+                    variables: BTreeSet::from([inference]),
+                    witness,
+                    expression_start: self.program.expressions.len(),
+                    pattern_start: self.program.patterns.len(),
+                });
+                (full, witness)
+            } else {
+                (callable.outcome, declared_success)
+            };
             context.callable = Some(CallableContext {
-                full: callable.outcome,
+                full,
                 success,
                 error,
                 signature: callable.span,
@@ -770,8 +991,328 @@ impl<'a> ExpressionChecker<'a> {
                 Some(context.callable.expect("just initialized").expectation()),
                 &mut context,
             )?;
+            let root = if callable.opaque_result.is_some() {
+                self.finish_opaque_body(&callable, root, &mut context)?
+            } else {
+                root
+            };
+            let mut roots = BTreeSet::new();
+            for expression in &self.program.expressions[expression_start..] {
+                collect_expression_type_roots(expression, &mut roots);
+            }
+            for pattern in &self.program.patterns[pattern_start..] {
+                collect_pattern_type_roots(pattern, &mut roots);
+            }
+            roots.extend(context.locals.values().copied());
+            self.check_type_formations(callable.span, roots, &context.capability_assumptions)?;
             self.program.local_types.extend(context.locals);
             self.program.bodies.insert(callable.id, HirBody { root });
+        }
+        self.validate_opaque_reachable_witnesses()?;
+        self.validate_opaque_witness_cycles()?;
+        Ok(())
+    }
+
+    fn finish_opaque_body(
+        &mut self,
+        callable: &HirCallableSignature,
+        root: HirExpressionId,
+        context: &mut BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        let state = self
+            .opaque_body
+            .take()
+            .expect("an opaque callable starts body-local inference");
+        if state.callable != callable.id {
+            return Err(HirError::TraitSelectionInvariant {
+                message: "opaque body inference changed callable identity".into(),
+            });
+        }
+        let opaque = callable
+            .opaque_result
+            .as_ref()
+            .expect("the opaque callable retains its contract");
+        let witness = match state
+            .solver
+            .resolve(&mut self.program.interner, state.witness)
+        {
+            Ok(witness)
+                if witness != self.program.interner.error()
+                    && witness != self.program.interner.scalar(ScalarType::Never) =>
+            {
+                witness
+            }
+            Ok(_) | Err(InferenceError::Unsolved(_)) => {
+                self.emit(
+                    opaque.span,
+                    "E1117",
+                    "an opaque result requires at least one reachable normal path with an unambiguous concrete witness",
+                    Vec::new(),
+                    None,
+                )?;
+                return Ok(root);
+            }
+            Err(InferenceError::Type(error)) => return Err(error.into()),
+            Err(InferenceError::Mismatch { .. } | InferenceError::RecursiveSolution { .. }) => {
+                self.emit(
+                    opaque.span,
+                    "E1117",
+                    "opaque result inference could not produce one finite concrete witness",
+                    Vec::new(),
+                    None,
+                )?;
+                return Ok(root);
+            }
+        };
+
+        self.resolve_opaque_body_types(&state, context)?;
+        let signature = self
+            .program
+            .callables
+            .iter_mut()
+            .find(|candidate| candidate.id == callable.id)
+            .expect("the checked callable remains indexed");
+        signature
+            .opaque_result
+            .as_mut()
+            .expect("the checked callable retains opaque metadata")
+            .witness = Some(witness);
+
+        self.validate_opaque_bounds(opaque, witness, context)?;
+        let declared_outcome = callable.outcome;
+        if self.expression_flow(root).may_complete() {
+            self.wrap_opaque_value(root, declared_outcome)
+        } else {
+            if let HirExpressionKind::Coerce {
+                kind: Assignability::Diverging,
+                ..
+            } = self.program.expressions[root.0 as usize].kind
+            {
+                self.program.expressions[root.0 as usize].ty = declared_outcome;
+            }
+            Ok(root)
+        }
+    }
+
+    fn wrap_opaque_value(
+        &mut self,
+        value: HirExpressionId,
+        outcome: TypeId,
+    ) -> Result<HirExpressionId, HirError> {
+        if self.expression_type(value) == outcome {
+            return Ok(value);
+        }
+        self.coerce_with(value, outcome, Assignability::Opaque)
+    }
+
+    fn validate_opaque_bounds(
+        &mut self,
+        opaque: &super::HirOpaqueResult,
+        witness: TypeId,
+        context: &BodyContext,
+    ) -> Result<(), HirError> {
+        for bound in &opaque.bounds {
+            let query =
+                TraitQuery::from_parts(bound.constructor.clone(), bound.arguments.clone(), witness);
+            let mut active = BTreeSet::new();
+            let mut memo = BTreeMap::new();
+            match self.prove_trait_query(opaque.span, &query, context, &mut active, &mut memo)? {
+                TraitProofStatus::Satisfied => {}
+                TraitProofStatus::Deferred => self.complete = false,
+                TraitProofStatus::Unsatisfied => {
+                    self.emit(
+                        opaque.span,
+                        "E1117",
+                        format!(
+                            "opaque witness `{}` does not satisfy published bound `{}`",
+                            self.program.interner.canonical(witness)?,
+                            self.trait_query_name(&query)?
+                        ),
+                        Vec::new(),
+                        None,
+                    )?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn resolve_opaque_body_types(
+        &mut self,
+        state: &OpaqueBodyInference,
+        context: &mut BodyContext,
+    ) -> Result<(), HirError> {
+        let mut roots = BTreeSet::new();
+        for expression in &self.program.expressions[state.expression_start..] {
+            collect_expression_type_roots(expression, &mut roots);
+        }
+        for pattern in &self.program.patterns[state.pattern_start..] {
+            collect_pattern_type_roots(pattern, &mut roots);
+        }
+        roots.extend(context.locals.values().copied());
+
+        let mut replacements = BTreeMap::new();
+        for root in roots {
+            if type_contains_inference_set(&self.program.interner, root, &state.variables)? {
+                let resolved = state.solver.resolve(&mut self.program.interner, root)?;
+                replacements.insert(root, resolved);
+            }
+        }
+        for expression in &mut self.program.expressions[state.expression_start..] {
+            rewrite_expression_types(expression, &replacements);
+        }
+        for pattern in &mut self.program.patterns[state.pattern_start..] {
+            rewrite_pattern_types(pattern, &replacements);
+        }
+        for ty in context.locals.values_mut() {
+            *ty = replaced_type(*ty, &replacements);
+        }
+        Ok(())
+    }
+
+    fn validate_opaque_reachable_witnesses(&mut self) -> Result<(), HirError> {
+        let callables = self
+            .program
+            .callables
+            .iter()
+            .filter_map(|callable| {
+                let opaque = callable.opaque_result.as_ref()?;
+                opaque.witness?;
+                let fallible = matches!(
+                    self.program.interner.kind(callable.outcome),
+                    Ok(TypeKind::Result { .. })
+                );
+                Some((callable.id, opaque.span, fallible))
+            })
+            .collect::<Vec<_>>();
+
+        for (callable, span, fallible) in callables {
+            let Some(root) = self.program.body(callable).map(HirBody::root) else {
+                continue;
+            };
+            let mut reachable = BTreeSet::new();
+            let mut ignored_warnings = Vec::new();
+            self.collect_reachable_expressions(vec![root], &mut reachable, &mut ignored_warnings);
+            let implicit = self.expression_flow(root).may_complete()
+                && self.opaque_expression_may_produce_success(root, fallible, &reachable);
+            let explicit = reachable.iter().copied().any(|id| {
+                let HirExpressionKind::Return { value: Some(value) } =
+                    self.program.expressions[id.0 as usize].kind
+                else {
+                    return false;
+                };
+                self.opaque_expression_may_produce_success(value, fallible, &reachable)
+            });
+            if !implicit && !explicit {
+                self.emit(
+                    span,
+                    "E1117",
+                    "an opaque result requires at least one reachable normal success path",
+                    Vec::new(),
+                    None,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn opaque_expression_may_produce_success(
+        &self,
+        expression: HirExpressionId,
+        fallible: bool,
+        reachable: &BTreeSet<HirExpressionId>,
+    ) -> bool {
+        if !reachable.contains(&expression) || !self.expression_flow(expression).may_complete() {
+            return false;
+        }
+        if !fallible {
+            return true;
+        }
+        match &self.program.expressions[expression.0 as usize].kind {
+            HirExpressionKind::ResultErr { .. } => false,
+            HirExpressionKind::Coerce { value, .. } => {
+                self.opaque_expression_may_produce_success(*value, true, reachable)
+            }
+            HirExpressionKind::Block { tail, .. } => tail.is_none_or(|tail| {
+                self.opaque_expression_may_produce_success(tail, true, reachable)
+            }),
+            HirExpressionKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                self.opaque_expression_may_produce_success(*then_branch, true, reachable)
+                    || else_branch.is_none_or(|branch| {
+                        self.opaque_expression_may_produce_success(branch, true, reachable)
+                    })
+            }
+            HirExpressionKind::Match { arms, .. } => arms
+                .iter()
+                .any(|arm| self.opaque_expression_may_produce_success(arm.body, true, reachable)),
+            _ => true,
+        }
+    }
+
+    fn validate_opaque_witness_cycles(&mut self) -> Result<(), HirError> {
+        let definitions = self
+            .program
+            .callables
+            .iter()
+            .filter_map(|callable| {
+                let opaque = callable.opaque_result.as_ref()?;
+                Some((opaque.identity.clone(), opaque.span, opaque.witness?))
+            })
+            .collect::<Vec<_>>();
+        let identities = definitions
+            .iter()
+            .map(|(identity, _, _)| identity.clone())
+            .collect::<BTreeSet<_>>();
+        let mut adjacency = BTreeMap::new();
+        for (identity, _, witness) in &definitions {
+            let dependencies = collect_opaque_dependencies(&self.program.interner, *witness)?
+                .into_iter()
+                .filter(|dependency| identities.contains(dependency))
+                .collect::<BTreeSet<_>>();
+            adjacency.insert(identity.clone(), dependencies);
+        }
+
+        let mut cyclic = BTreeSet::new();
+        for start in &identities {
+            let mut pending = adjacency
+                .get(start)
+                .into_iter()
+                .flat_map(|dependencies| dependencies.iter().cloned())
+                .collect::<Vec<_>>();
+            let mut visited = BTreeSet::new();
+            while let Some(current) = pending.pop() {
+                if current == *start {
+                    cyclic.insert(start.clone());
+                    break;
+                }
+                if !visited.insert(current.clone()) {
+                    continue;
+                }
+                pending.extend(
+                    adjacency
+                        .get(&current)
+                        .into_iter()
+                        .flat_map(|dependencies| dependencies.iter().cloned()),
+                );
+            }
+        }
+        for (identity, span, _) in definitions {
+            if cyclic.contains(&identity) {
+                self.emit(
+                    span,
+                    "E1117",
+                    format!(
+                        "opaque result `{}` has a cyclic representation without a concrete witness",
+                        identity.canonical_name()
+                    ),
+                    Vec::new(),
+                    None,
+                )?;
+            }
         }
         Ok(())
     }
@@ -1036,7 +1577,7 @@ impl<'a> ExpressionChecker<'a> {
     }
 
     fn check_reachability_warnings(&mut self) -> Result<(), HirError> {
-        let mut pending = self
+        let roots = self
             .program
             .constants
             .values()
@@ -1045,7 +1586,22 @@ impl<'a> ExpressionChecker<'a> {
             .collect::<Vec<_>>();
         let mut visited = BTreeSet::new();
         let mut warnings = Vec::new();
+        self.collect_reachable_expressions(roots, &mut visited, &mut warnings);
 
+        warnings.sort_by_key(|span| (span.file(), span.range().start(), span.range().end()));
+        warnings.dedup();
+        for span in warnings {
+            self.emit_warning(span, "W1006", "unreachable code")?;
+        }
+        Ok(())
+    }
+
+    fn collect_reachable_expressions(
+        &self,
+        mut pending: Vec<HirExpressionId>,
+        visited: &mut BTreeSet<HirExpressionId>,
+        warnings: &mut Vec<Span>,
+    ) {
         while let Some(id) = pending.pop() {
             if !visited.insert(id) {
                 continue;
@@ -1065,45 +1621,46 @@ impl<'a> ExpressionChecker<'a> {
                 HirExpressionKind::Tuple(items)
                 | HirExpressionKind::Array(items)
                 | HirExpressionKind::Set(items)
-                | HirExpressionKind::InterpolatedString { values: items, .. } => self
-                    .queue_reachable_sequence(items.iter().copied(), &mut pending, &mut warnings),
+                | HirExpressionKind::InterpolatedString { values: items, .. } => {
+                    self.queue_reachable_sequence(items.iter().copied(), &mut pending, warnings)
+                }
                 HirExpressionKind::Map { entries, .. } => self.queue_reachable_sequence(
                     entries
                         .iter()
                         .flat_map(|entry| [entry.key(), entry.value()]),
                     &mut pending,
-                    &mut warnings,
+                    warnings,
                 ),
                 HirExpressionKind::Newtype { value, .. } => pending.push(*value),
                 HirExpressionKind::NumericConversion { value, .. } => pending.push(*value),
                 HirExpressionKind::Record { fields, .. } => self.queue_reachable_sequence(
                     fields.iter().map(HirRecordFieldValue::value),
                     &mut pending,
-                    &mut warnings,
+                    warnings,
                 ),
                 HirExpressionKind::Variant { payload, .. } => match payload {
                     HirVariantValue::Unit => {}
                     HirVariantValue::Tuple(values) => self.queue_reachable_sequence(
                         values.iter().copied(),
                         &mut pending,
-                        &mut warnings,
+                        warnings,
                     ),
                     HirVariantValue::Record(fields) => self.queue_reachable_sequence(
                         fields.iter().map(HirRecordFieldValue::value),
                         &mut pending,
-                        &mut warnings,
+                        warnings,
                     ),
                 },
                 HirExpressionKind::RecordUpdate { base, fields } => self.queue_reachable_sequence(
                     std::iter::once(*base).chain(fields.iter().map(HirRecordFieldValue::value)),
                     &mut pending,
-                    &mut warnings,
+                    warnings,
                 ),
                 HirExpressionKind::Block { statements, tail } => {
                     let mut reachable = true;
                     for statement in statements {
                         if reachable {
-                            self.queue_reachable_statement(statement, &mut pending, &mut warnings);
+                            self.queue_reachable_statement(statement, &mut pending, warnings);
                             reachable = self.statement_summary(statement).flow.may_complete();
                         } else {
                             warnings.push(statement.span());
@@ -1141,7 +1698,7 @@ impl<'a> ExpressionChecker<'a> {
                     base: left,
                     index: right,
                     ..
-                } => self.queue_reachable_sequence([*left, *right], &mut pending, &mut warnings),
+                } => self.queue_reachable_sequence([*left, *right], &mut pending, warnings),
                 HirExpressionKind::Slice {
                     base,
                     start,
@@ -1153,12 +1710,12 @@ impl<'a> ExpressionChecker<'a> {
                         .chain(end.iter().copied())
                         .chain(step.iter().copied()),
                     &mut pending,
-                    &mut warnings,
+                    warnings,
                 ),
                 HirExpressionKind::Call { callee, arguments } => self.queue_reachable_sequence(
                     std::iter::once(*callee).chain(arguments.iter().map(HirCallArgument::value)),
                     &mut pending,
-                    &mut warnings,
+                    warnings,
                 ),
                 HirExpressionKind::PreludePanic { message } => pending.push(*message),
                 HirExpressionKind::PreludeAssert {
@@ -1169,14 +1726,11 @@ impl<'a> ExpressionChecker<'a> {
                     std::iter::once(*condition)
                         .chain(message_parts.iter().map(|part| part.value())),
                     &mut pending,
-                    &mut warnings,
+                    warnings,
                 ),
-                HirExpressionKind::BootstrapHostCall { arguments, .. } => self
-                    .queue_reachable_sequence(
-                        arguments.iter().copied(),
-                        &mut pending,
-                        &mut warnings,
-                    ),
+                HirExpressionKind::BootstrapHostCall { arguments, .. } => {
+                    self.queue_reachable_sequence(arguments.iter().copied(), &mut pending, warnings)
+                }
                 HirExpressionKind::If {
                     condition,
                     then_branch,
@@ -1220,13 +1774,6 @@ impl<'a> ExpressionChecker<'a> {
                 HirExpressionKind::Fail { error } => pending.push(*error),
             }
         }
-
-        warnings.sort_by_key(|span| (span.file(), span.range().start(), span.range().end()));
-        warnings.dedup();
-        for span in warnings {
-            self.emit_warning(span, "W1006", "unreachable code")?;
-        }
-        Ok(())
     }
 
     fn queue_reachable_sequence(
@@ -1309,6 +1856,50 @@ impl<'a> ExpressionChecker<'a> {
             if actual == self.program.interner.scalar(ScalarType::Never) {
                 return self.coerce_existing(value, full);
             }
+            match self.match_opaque_expected(actual, full)? {
+                OpaqueExpectedMatch::Matched { target, coercion } => {
+                    if is_result_type(self.program.interner.kind(actual)?) {
+                        return if coercion == Assignability::Exact {
+                            Ok(value)
+                        } else {
+                            self.coerce_with(value, target, coercion)
+                        };
+                    }
+                }
+                OpaqueExpectedMatch::Mismatch
+                    if is_result_type(self.program.interner.kind(actual)?) =>
+                {
+                    self.emit_opaque_witness_mismatch(
+                        self.sources.span(file, node.range())?,
+                        actual,
+                    )?;
+                    return self.recovery_expression(file, node.range());
+                }
+                OpaqueExpectedMatch::NotOpaque | OpaqueExpectedMatch::Mismatch => {}
+            }
+            match self.match_opaque_expected(actual, success)? {
+                OpaqueExpectedMatch::Matched { target, coercion } => {
+                    let value = if coercion == Assignability::Exact {
+                        value
+                    } else {
+                        self.coerce_with(value, target, coercion)?
+                    };
+                    return self.allocate_expression(HirExpression {
+                        span: self.sources.span(file, node.range())?,
+                        ty: full,
+                        category: HirValueCategory::Value,
+                        kind: HirExpressionKind::ResultOk { value },
+                    });
+                }
+                OpaqueExpectedMatch::Mismatch => {
+                    self.emit_opaque_witness_mismatch(
+                        self.sources.span(file, node.range())?,
+                        actual,
+                    )?;
+                    return self.recovery_expression(file, node.range());
+                }
+                OpaqueExpectedMatch::NotOpaque => {}
+            }
             let Some(assignability) = self.program.interner.assignability(actual, success)? else {
                 let expected_name = self.program.interner.canonical(success)?;
                 let actual_name = self.program.interner.canonical(actual)?;
@@ -1336,6 +1927,20 @@ impl<'a> ExpressionChecker<'a> {
             });
         }
         let expected = expectation.contextual_type();
+        match self.match_opaque_expected(actual, expected)? {
+            OpaqueExpectedMatch::Matched { target, coercion } => {
+                return if coercion == Assignability::Exact {
+                    Ok(value)
+                } else {
+                    self.coerce_with(value, target, coercion)
+                };
+            }
+            OpaqueExpectedMatch::Mismatch => {
+                self.emit_opaque_witness_mismatch(self.sources.span(file, node.range())?, actual)?;
+                return self.recovery_expression(file, node.range());
+            }
+            OpaqueExpectedMatch::NotOpaque => {}
+        }
         let Some(assignability) = self.program.interner.assignability(actual, expected)? else {
             let expected_name = self.program.interner.canonical(expected)?;
             let actual_name = self.program.interner.canonical(actual)?;
@@ -1450,7 +2055,12 @@ impl<'a> ExpressionChecker<'a> {
                     )?;
                     return self.recovery_expression(file, node.range());
                 };
-                if !self.program.interner.accepts_none(expected)? {
+                let option = if self.program.interner.accepts_none(expected)? {
+                    Some(expected)
+                } else {
+                    self.opaque_contextual_intrinsic(expected, None)?
+                };
+                let Some(option) = option else {
                     self.emit(
                         self.sources.span(file, node.range())?,
                         "E1304",
@@ -1459,8 +2069,8 @@ impl<'a> ExpressionChecker<'a> {
                         None,
                     )?;
                     return self.recovery_expression(file, node.range());
-                }
-                (HirLiteral::None, expected)
+                };
+                (HirLiteral::None, option)
             }
             TokenKind::IntegerLiteral => {
                 let spelling = self.token_text(file, token)?.to_owned();
@@ -1708,6 +2318,20 @@ impl<'a> ExpressionChecker<'a> {
         let actual = self.expression_type(value);
         if actual == self.program.interner.error() {
             return Ok(value);
+        }
+        match self.match_opaque_expected(actual, expected)? {
+            OpaqueExpectedMatch::Matched { target, coercion } => {
+                return if coercion == Assignability::Exact {
+                    Ok(value)
+                } else {
+                    self.coerce_with(value, target, coercion)
+                };
+            }
+            OpaqueExpectedMatch::Mismatch => {
+                self.emit_opaque_witness_mismatch(self.sources.span(file, node.range())?, actual)?;
+                return self.recovery_expression(file, node.range());
+            }
+            OpaqueExpectedMatch::NotOpaque => {}
         }
         let Some(assignability) = self.program.interner.assignability(actual, expected)? else {
             let expected_name = self.program.interner.canonical(expected)?;
@@ -2340,6 +2964,15 @@ impl<'a> ExpressionChecker<'a> {
                     Some(ExpressionExpectation::Direct(arguments[0])),
                     context,
                 )?;
+                if !self.require_capability_with_generics(
+                    self.sources.span(file, bracket.range())?,
+                    arguments[1],
+                    HirCapability::Copy,
+                    &context.capability_assumptions,
+                    "map lookup",
+                )? {
+                    return self.recovery_expression(file, range);
+                }
                 let ty = self.program.interner.option(arguments[1])?;
                 self.allocate_expression(HirExpression {
                     span: self.sources.span(file, range)?,
@@ -2479,11 +3112,17 @@ impl<'a> ExpressionChecker<'a> {
             .child_nodes()
             .filter(|child| AstExpression::cast(*child).is_some())
             .collect::<Vec<_>>();
-        let contextual = expected
+        let mut contextual = expected
             .map(ExpressionExpectation::contextual_type)
             .map(|ty| self.unique_intrinsic_member(ty, IntrinsicType::Array))
             .transpose()?
             .flatten();
+        if contextual.is_none()
+            && items.is_empty()
+            && let Some(expected) = expected.map(ExpressionExpectation::contextual_type)
+        {
+            contextual = self.opaque_contextual_intrinsic(expected, Some(IntrinsicType::Array))?;
+        }
         let contextual_item = contextual
             .map(|ty| self.intrinsic_arguments(ty, IntrinsicType::Array))
             .transpose()?
@@ -2541,11 +3180,17 @@ impl<'a> ExpressionChecker<'a> {
             .child_nodes()
             .filter(|child| AstExpression::cast(*child).is_some())
             .collect::<Vec<_>>();
-        let contextual = expected
+        let mut contextual = expected
             .map(ExpressionExpectation::contextual_type)
             .map(|ty| self.unique_intrinsic_member(ty, IntrinsicType::Map))
             .transpose()?
             .flatten();
+        if contextual.is_none()
+            && items.is_empty()
+            && let Some(expected) = expected.map(ExpressionExpectation::contextual_type)
+        {
+            contextual = self.opaque_contextual_intrinsic(expected, Some(IntrinsicType::Map))?;
+        }
         let contextual_arguments = contextual
             .map(|ty| self.intrinsic_arguments(ty, IntrinsicType::Map))
             .transpose()?
@@ -2601,9 +3246,11 @@ impl<'a> ExpressionChecker<'a> {
                 .interner
                 .intrinsic(IntrinsicType::Map, vec![key_type, value_type])?,
         );
-        let reject_dynamic_duplicates = self
-            .discard_status_with_generics(value_type, &BTreeMap::new())?
-            != DiscardStatus::Satisfied;
+        let reject_dynamic_duplicates = self.capability_status_with_generics(
+            value_type,
+            HirCapability::Discard,
+            &context.capability_assumptions,
+        )? != DiscardStatus::Satisfied;
         self.allocate_expression(HirExpression {
             span: self.sources.span(file, node.range())?,
             ty,
@@ -2626,11 +3273,17 @@ impl<'a> ExpressionChecker<'a> {
             .child_nodes()
             .filter(|child| AstExpression::cast(*child).is_some())
             .collect::<Vec<_>>();
-        let contextual = expected
+        let mut contextual = expected
             .map(ExpressionExpectation::contextual_type)
             .map(|ty| self.unique_intrinsic_member(ty, IntrinsicType::Set))
             .transpose()?
             .flatten();
+        if contextual.is_none()
+            && items.is_empty()
+            && let Some(expected) = expected.map(ExpressionExpectation::contextual_type)
+        {
+            contextual = self.opaque_contextual_intrinsic(expected, Some(IntrinsicType::Set))?;
+        }
         let contextual_item = contextual
             .map(|ty| self.intrinsic_arguments(ty, IntrinsicType::Set))
             .transpose()?
@@ -2703,6 +3356,39 @@ impl<'a> ExpressionChecker<'a> {
             .filter(|member| matches_constructor(*member));
         let first = candidates.next();
         Ok(first.filter(|_| candidates.next().is_none()))
+    }
+
+    fn opaque_contextual_intrinsic(
+        &mut self,
+        expected: TypeId,
+        constructor: Option<IntrinsicType>,
+    ) -> Result<Option<TypeId>, HirError> {
+        if !self.type_contains_opaque_inference(expected)? {
+            return Ok(None);
+        }
+        let arity = constructor.map_or(1, IntrinsicType::arity);
+        let mut arguments = Vec::with_capacity(arity);
+        for _ in 0..arity {
+            arguments.push(self.fresh_opaque_inference()?);
+        }
+        Ok(Some(if let Some(constructor) = constructor {
+            self.program.interner.intrinsic(constructor, arguments)?
+        } else {
+            self.program.interner.option(arguments[0])?
+        }))
+    }
+
+    fn fresh_opaque_inference(&mut self) -> Result<TypeId, HirError> {
+        let state = self
+            .opaque_body
+            .as_mut()
+            .expect("opaque contextual inference requires an active body");
+        let ty = state.solver.fresh(&mut self.program.interner)?;
+        let TypeKind::Inference(inference) = self.program.interner.kind(ty)? else {
+            unreachable!("fresh inference produces an inference type")
+        };
+        state.variables.insert(*inference);
+        Ok(ty)
     }
 
     fn intrinsic_arguments(
@@ -3592,7 +4278,11 @@ impl<'a> ExpressionChecker<'a> {
         };
         let value_type = self.expression_type(value);
         let target = if operator == HirAssignmentOperator::Assign {
-            self.finalize_assignment_target(&checked_target, value_type, &context.discard_statuses)?
+            self.finalize_assignment_target(
+                &checked_target,
+                value_type,
+                &context.capability_assumptions,
+            )?
         } else {
             self.finalize_compound_assignment_target(
                 file,
@@ -3767,7 +4457,7 @@ impl<'a> ExpressionChecker<'a> {
         &mut self,
         target: &CheckedAssignmentTarget,
         actual: TypeId,
-        generic_statuses: &BTreeMap<u32, DiscardStatus>,
+        assumptions: &CapabilityAssumptions,
     ) -> Result<HirAssignmentTarget, HirError> {
         match &target.kind {
             CheckedAssignmentTargetKind::Place(place) => {
@@ -3783,7 +4473,7 @@ impl<'a> ExpressionChecker<'a> {
                 })
             }
             CheckedAssignmentTargetKind::Discard => {
-                self.require_discard_with_generics(target.span, actual, generic_statuses, "`_ =`")?;
+                self.require_discard_with_generics(target.span, actual, assumptions, "`_ =`")?;
                 Ok(HirAssignmentTarget {
                     span: target.span,
                     ty: actual,
@@ -3812,7 +4502,7 @@ impl<'a> ExpressionChecker<'a> {
                 let mut items = Vec::with_capacity(targets.len());
                 let mut types = Vec::with_capacity(targets.len());
                 for (target, actual) in targets.iter().zip(actual_items) {
-                    let item = self.finalize_assignment_target(target, actual, generic_statuses)?;
+                    let item = self.finalize_assignment_target(target, actual, assumptions)?;
                     types.push(item.ty);
                     items.push(item);
                 }
@@ -3842,7 +4532,7 @@ impl<'a> ExpressionChecker<'a> {
             return self.finalize_assignment_target(
                 target,
                 self.program.interner.error(),
-                &BTreeMap::new(),
+                &CapabilityAssumptions::default(),
             );
         };
         if place.map_entry || place.permission == PlacePermission::Invalid {
@@ -6292,6 +6982,94 @@ impl<'a> ExpressionChecker<'a> {
         }
     }
 
+    fn opaque_trait_queries(&mut self, ty: TypeId) -> Result<Vec<TraitQuery>, HirError> {
+        let TypeKind::OpaqueResult {
+            identity,
+            arguments,
+        } = self.program.interner.kind(ty)?.clone()
+        else {
+            return Ok(Vec::new());
+        };
+        let opaque = self
+            .program
+            .opaque_result(&identity)
+            .ok_or_else(|| HirError::TraitSelectionInvariant {
+                message: format!(
+                    "opaque type `{}` has no declaration contract",
+                    identity.canonical_name()
+                ),
+            })?
+            .clone();
+        let substitution = TypeSubstitution::new(arguments);
+        opaque
+            .bounds
+            .iter()
+            .map(|bound| {
+                let arguments = bound
+                    .arguments
+                    .iter()
+                    .map(|argument| {
+                        substitution
+                            .apply(&mut self.program.interner, *argument)
+                            .map_err(HirError::from)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(TraitQuery::from_parts(
+                    bound.constructor.clone(),
+                    arguments,
+                    ty,
+                ))
+            })
+            .collect()
+    }
+
+    fn opaque_published_trait_status(
+        &mut self,
+        query: &TraitQuery,
+    ) -> Result<Option<TraitProofStatus>, HirError> {
+        let published = self.opaque_trait_queries(query.target())?;
+        if published.is_empty()
+            && !matches!(
+                self.program.interner.kind(query.target())?,
+                TypeKind::OpaqueResult { .. }
+            )
+        {
+            return Ok(None);
+        }
+        if published.contains(query) {
+            return Ok(Some(TraitProofStatus::Satisfied));
+        }
+        let HirTraitConstructor::Prelude(required) = query.constructor() else {
+            return Ok(Some(TraitProofStatus::Unsatisfied));
+        };
+        let has = |name: &str, arguments: &[TypeId]| {
+            published.iter().any(|bound| {
+                matches!(
+                    bound.constructor(),
+                    HirTraitConstructor::Prelude(candidate) if candidate.as_str() == name
+                ) && bound.arguments() == arguments
+            })
+        };
+        let discard = has("Discard", &[]) || has("Copy", &[]) || has("Key", &[]);
+        let satisfied = match required.as_str() {
+            "Discard" => discard,
+            "Copy" => has("Copy", &[]) || has("Key", &[]),
+            "Equatable" => has("Equatable", &[]) || has("Key", &[]),
+            "CallMut" => has("CallMut", query.arguments()) || has("Call", query.arguments()),
+            "CallOnce" => {
+                has("CallOnce", query.arguments())
+                    || (discard
+                        && (has("CallMut", query.arguments()) || has("Call", query.arguments())))
+            }
+            _ => false,
+        };
+        Ok(Some(if satisfied {
+            TraitProofStatus::Satisfied
+        } else {
+            TraitProofStatus::Unsatisfied
+        }))
+    }
+
     fn prove_trait_query(
         &mut self,
         span: Span,
@@ -6316,21 +7094,30 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(TraitProofStatus::Satisfied);
         }
 
+        if let HirTraitConstructor::Prelude(name) = query.constructor()
+            && let Some(capability) = HirCapability::from_name(name.as_str())
+        {
+            let status = match self.capability_status_with_generics(
+                query.target(),
+                capability,
+                &context.capability_assumptions,
+            )? {
+                HirCapabilityStatus::Satisfied => TraitProofStatus::Satisfied,
+                HirCapabilityStatus::Deferred => TraitProofStatus::Deferred,
+                HirCapabilityStatus::Unsatisfied => TraitProofStatus::Unsatisfied,
+            };
+            memo.insert(query.clone(), status);
+            return Ok(status);
+        }
+
+        if let Some(status) = self.opaque_published_trait_status(query)? {
+            memo.insert(query.clone(), status);
+            return Ok(status);
+        }
+
         if let HirTraitConstructor::Prelude(name) = query.constructor() {
             match name.as_str() {
-                "Discard" => {
-                    let status = match self
-                        .discard_status_with_generics(query.target(), &context.discard_statuses)?
-                    {
-                        DiscardStatus::Satisfied => TraitProofStatus::Satisfied,
-                        DiscardStatus::Deferred => TraitProofStatus::Deferred,
-                        DiscardStatus::Unsatisfied => TraitProofStatus::Unsatisfied,
-                    };
-                    memo.insert(query.clone(), status);
-                    return Ok(status);
-                }
-                "Copy" | "Equatable" | "Key" | "Send" | "Share" | "Call" | "CallMut"
-                | "CallOnce" => {
+                "Call" | "CallMut" | "CallOnce" => {
                     memo.insert(query.clone(), TraitProofStatus::Deferred);
                     return Ok(TraitProofStatus::Deferred);
                 }
@@ -6439,357 +7226,74 @@ impl<'a> ExpressionChecker<'a> {
         Ok(name)
     }
 
-    fn discard_status_with_generics(
+    fn capability_status_with_generics(
         &mut self,
         root: TypeId,
-        generic_statuses: &BTreeMap<u32, DiscardStatus>,
-    ) -> Result<DiscardStatus, HirError> {
-        let by_identity = self.local_nominal_symbols();
-        if self.discard_summaries.is_none() {
-            self.discard_summaries = Some(self.compute_discard_summaries(&by_identity)?);
+        capability: HirCapability,
+        assumptions: &CapabilityAssumptions,
+    ) -> Result<HirCapabilityStatus, HirError> {
+        if self.capability_analysis.is_none() {
+            self.capability_analysis = Some(CapabilityAnalysis::new(&self.program, self.resolved)?);
         }
-        let summaries = self
-            .discard_summaries
+        self.capability_analysis
             .as_ref()
-            .expect("discard summaries were initialized");
-        let mut nodes = BTreeMap::<TypeId, DiscardNode>::new();
-        let mut pending = vec![root];
-        while let Some(ty) = pending.pop() {
-            if nodes.contains_key(&ty) {
-                continue;
-            }
-            let mut node = self.discard_node(ty, &by_identity, summaries, generic_statuses)?;
-            node.dependencies.sort_unstable();
-            node.dependencies.dedup();
-            pending.extend(node.dependencies.iter().copied());
-            nodes.insert(ty, node);
-        }
-
-        let mut statuses = nodes
-            .iter()
-            .map(|(ty, node)| (*ty, node.floor))
-            .collect::<BTreeMap<_, _>>();
-        let mut users = nodes
-            .keys()
-            .copied()
-            .map(|ty| (ty, Vec::new()))
-            .collect::<BTreeMap<_, Vec<TypeId>>>();
-        for (user, node) in &nodes {
-            for dependency in &node.dependencies {
-                users
-                    .get_mut(dependency)
-                    .expect("all discard dependencies are indexed")
-                    .push(*user);
-            }
-        }
-        let mut changed = statuses
-            .iter()
-            .filter_map(|(ty, status)| (*status != DiscardStatus::Satisfied).then_some(*ty))
-            .collect::<BTreeSet<_>>();
-        while let Some(dependency) = changed.pop_first() {
-            for user in &users[&dependency] {
-                let node = &nodes[user];
-                let next = node
-                    .dependencies
-                    .iter()
-                    .fold(node.floor, |status, dependency| {
-                        status.max(statuses[dependency])
-                    });
-                let current = statuses
-                    .get_mut(user)
-                    .expect("all discard graph users have a status");
-                if next > *current {
-                    *current = next;
-                    changed.insert(*user);
-                }
-            }
-        }
-        Ok(statuses[&root])
-    }
-
-    fn local_nominal_symbols(&self) -> BTreeMap<SymbolIdentity, SymbolId> {
-        self.program
-            .declarations
-            .iter()
-            .filter_map(|(symbol, declaration)| {
-                matches!(declaration.kind(), HirTypeDeclarationKind::Nominal(_))
-                    .then(|| {
-                        self.resolved
-                            .symbol(*symbol)
-                            .map(|resolved| (resolved.identity().clone(), *symbol))
-                    })
-                    .flatten()
-            })
-            .collect()
-    }
-
-    fn compute_discard_summaries(
-        &self,
-        by_identity: &BTreeMap<SymbolIdentity, SymbolId>,
-    ) -> Result<BTreeMap<SymbolId, DiscardRequirement>, HirError> {
-        let roots = self
-            .program
-            .declarations
-            .iter()
-            .filter_map(|(symbol, declaration)| {
-                let HirTypeDeclarationKind::Nominal(definition) = declaration.kind() else {
-                    return None;
-                };
-                Some((*symbol, nominal_discard_roots(definition.shape())))
-            })
-            .collect::<BTreeMap<_, _>>();
-        let mut summaries = roots
-            .keys()
-            .copied()
-            .map(|symbol| (symbol, DiscardRequirement::default()))
-            .collect::<BTreeMap<_, _>>();
-        let mut users = roots
-            .keys()
-            .copied()
-            .map(|symbol| (symbol, BTreeSet::new()))
-            .collect::<BTreeMap<_, BTreeSet<SymbolId>>>();
-        for (user, types) in &roots {
-            for dependency in self.nominal_references(types, by_identity)? {
-                users.entry(dependency).or_default().insert(*user);
-            }
-        }
-
-        let mut pending = roots.keys().copied().collect::<BTreeSet<_>>();
-        while let Some(symbol) = pending.pop_first() {
-            let next = self.discard_requirement(&roots[&symbol], by_identity, &summaries)?;
-            if summaries[&symbol] == next {
-                continue;
-            }
-            summaries.insert(symbol, next);
-            pending.extend(users.get(&symbol).into_iter().flatten().copied());
-        }
-        Ok(summaries)
-    }
-
-    fn nominal_references(
-        &self,
-        roots: &[TypeId],
-        by_identity: &BTreeMap<SymbolIdentity, SymbolId>,
-    ) -> Result<BTreeSet<SymbolId>, HirError> {
-        let mut references = BTreeSet::new();
-        let mut visited = BTreeSet::new();
-        let mut pending = roots.to_vec();
-        while let Some(ty) = pending.pop() {
-            if !visited.insert(ty) {
-                continue;
-            }
-            match self.program.interner.kind(ty)? {
-                TypeKind::Nominal {
-                    identity,
-                    arguments,
-                } => {
-                    if let Some(symbol) = by_identity.get(identity) {
-                        references.insert(*symbol);
-                    }
-                    pending.extend(arguments.iter().copied());
-                }
-                TypeKind::Tuple(items) | TypeKind::Union(items) => {
-                    pending.extend(items.iter().copied());
-                }
-                TypeKind::Option(item) => pending.push(*item),
-                TypeKind::Result { success, error } => {
-                    pending.push(*success);
-                    pending.push(*error);
-                }
-                TypeKind::Intrinsic { arguments, .. } | TypeKind::Generated { arguments, .. } => {
-                    pending.extend(arguments.iter().copied());
-                }
-                TypeKind::Cursor { collection, .. } => pending.push(*collection),
-                TypeKind::Error
-                | TypeKind::Scalar(_)
-                | TypeKind::Function(_)
-                | TypeKind::GenericParameter(_)
-                | TypeKind::Inference(_)
-                | TypeKind::OpaqueResult(_) => {}
-            }
-        }
-        Ok(references)
-    }
-
-    fn discard_requirement(
-        &self,
-        roots: &[TypeId],
-        by_identity: &BTreeMap<SymbolIdentity, SymbolId>,
-        summaries: &BTreeMap<SymbolId, DiscardRequirement>,
-    ) -> Result<DiscardRequirement, HirError> {
-        let mut requirement = DiscardRequirement::default();
-        let mut visited = BTreeSet::new();
-        let mut pending = roots.to_vec();
-        while let Some(ty) = pending.pop() {
-            if !visited.insert(ty) {
-                continue;
-            }
-            match self.program.interner.kind(ty)? {
-                TypeKind::Error | TypeKind::Scalar(_) | TypeKind::Function(_) => {}
-                TypeKind::Tuple(items) | TypeKind::Union(items) => {
-                    pending.extend(items.iter().copied());
-                }
-                TypeKind::Option(item) => pending.push(*item),
-                TypeKind::Result { success, error } => {
-                    pending.push(*success);
-                    pending.push(*error);
-                }
-                TypeKind::Intrinsic {
-                    constructor: IntrinsicType::Join,
-                    ..
-                } => requirement.floor = DiscardStatus::Unsatisfied,
-                TypeKind::Intrinsic {
-                    constructor:
-                        IntrinsicType::Array
-                        | IntrinsicType::Map
-                        | IntrinsicType::Set
-                        | IntrinsicType::Range,
-                    arguments,
-                } => pending.extend(arguments.iter().copied()),
-                TypeKind::Intrinsic {
-                    constructor:
-                        IntrinsicType::Ref
-                        | IntrinsicType::Pointer
-                        | IntrinsicType::Command
-                        | IntrinsicType::Pipeline
-                        | IntrinsicType::NumericConversionError,
-                    ..
-                } => {}
-                TypeKind::Nominal {
-                    identity,
-                    arguments,
-                } => {
-                    let Some(symbol) = by_identity.get(identity) else {
-                        requirement.floor = requirement.floor.max(DiscardStatus::Deferred);
-                        continue;
-                    };
-                    let summary = &summaries[symbol];
-                    requirement.floor = requirement.floor.max(summary.floor);
-                    for position in &summary.parameters {
-                        if let Some(argument) = arguments.get(*position as usize) {
-                            pending.push(*argument);
-                        } else {
-                            requirement.floor = requirement.floor.max(DiscardStatus::Deferred);
-                        }
-                    }
-                }
-                TypeKind::GenericParameter(position) => {
-                    requirement.parameters.insert(*position);
-                }
-                TypeKind::Inference(_)
-                | TypeKind::OpaqueResult(_)
-                | TypeKind::Generated { .. }
-                | TypeKind::Cursor { .. } => {
-                    requirement.floor = requirement.floor.max(DiscardStatus::Deferred);
-                }
-            }
-        }
-        Ok(requirement)
-    }
-
-    fn discard_node(
-        &self,
-        ty: TypeId,
-        by_identity: &BTreeMap<SymbolIdentity, SymbolId>,
-        summaries: &BTreeMap<SymbolId, DiscardRequirement>,
-        generic_statuses: &BTreeMap<u32, DiscardStatus>,
-    ) -> Result<DiscardNode, HirError> {
-        let satisfied = |dependencies| DiscardNode {
-            floor: DiscardStatus::Satisfied,
-            dependencies,
-        };
-        let terminal = || DiscardNode {
-            floor: DiscardStatus::Unsatisfied,
-            dependencies: Vec::new(),
-        };
-        let deferred = || DiscardNode {
-            floor: DiscardStatus::Deferred,
-            dependencies: Vec::new(),
-        };
-
-        let node = match self.program.interner.kind(ty)?.clone() {
-            TypeKind::Error | TypeKind::Scalar(_) | TypeKind::Function(_) => satisfied(Vec::new()),
-            TypeKind::Tuple(items) | TypeKind::Union(items) => satisfied(items),
-            TypeKind::Option(item) => satisfied(vec![item]),
-            TypeKind::Result { success, error } => satisfied(vec![success, error]),
-            TypeKind::Intrinsic {
-                constructor: IntrinsicType::Join,
-                ..
-            } => terminal(),
-            TypeKind::Intrinsic {
-                constructor:
-                    IntrinsicType::Array
-                    | IntrinsicType::Map
-                    | IntrinsicType::Set
-                    | IntrinsicType::Range,
-                arguments,
-            } => satisfied(arguments),
-            TypeKind::Intrinsic {
-                constructor:
-                    IntrinsicType::Ref
-                    | IntrinsicType::Pointer
-                    | IntrinsicType::Command
-                    | IntrinsicType::Pipeline
-                    | IntrinsicType::NumericConversionError,
-                ..
-            } => satisfied(Vec::new()),
-            TypeKind::Nominal {
-                identity,
-                arguments,
-            } => {
-                let Some(symbol) = by_identity.get(&identity) else {
-                    return Ok(deferred());
-                };
-                let summary = &summaries[symbol];
-                let mut dependencies = Vec::with_capacity(summary.parameters.len());
-                for position in &summary.parameters {
-                    let Some(argument) = arguments.get(*position as usize) else {
-                        return Ok(deferred());
-                    };
-                    dependencies.push(*argument);
-                }
-                DiscardNode {
-                    floor: summary.floor,
-                    dependencies,
-                }
-            }
-            TypeKind::GenericParameter(position) => DiscardNode {
-                floor: generic_statuses
-                    .get(&position)
-                    .copied()
-                    .unwrap_or(DiscardStatus::Deferred),
-                dependencies: Vec::new(),
-            },
-            TypeKind::Inference(_)
-            | TypeKind::OpaqueResult(_)
-            | TypeKind::Generated { .. }
-            | TypeKind::Cursor { .. } => deferred(),
-        };
-        Ok(node)
+            .expect("capability analysis was initialized")
+            .status(&self.program, root, capability, assumptions)
+            .map_err(HirError::from)
     }
 
     fn require_discard_with_generics(
         &mut self,
         span: Span,
         ty: TypeId,
-        generic_statuses: &BTreeMap<u32, DiscardStatus>,
+        assumptions: &CapabilityAssumptions,
         context: &str,
     ) -> Result<(), HirError> {
-        match self.discard_status_with_generics(ty, generic_statuses)? {
-            DiscardStatus::Satisfied => {}
-            DiscardStatus::Deferred => self.complete = false,
+        let _ = self.require_capability_with_generics(
+            span,
+            ty,
+            HirCapability::Discard,
+            assumptions,
+            context,
+        )?;
+        Ok(())
+    }
+
+    fn require_capability_with_generics(
+        &mut self,
+        span: Span,
+        ty: TypeId,
+        capability: HirCapability,
+        assumptions: &CapabilityAssumptions,
+        context: &str,
+    ) -> Result<bool, HirError> {
+        let satisfied = match self.capability_status_with_generics(ty, capability, assumptions)? {
+            DiscardStatus::Satisfied => true,
+            DiscardStatus::Deferred => {
+                self.complete = false;
+                true
+            }
             DiscardStatus::Unsatisfied => {
                 let actual = self.program.interner.canonical(ty)?;
-                self.emit(
-                    span,
-                    "E1105",
-                    format!("type `{actual}` does not satisfy `Discard` required by {context}"),
-                    Vec::new(),
-                    Some(("Discard".to_owned(), actual)),
-                )?;
+                if self
+                    .reported_capability_requirements
+                    .insert((span, ty, capability))
+                {
+                    self.emit(
+                        span,
+                        "E1105",
+                        format!(
+                            "type `{actual}` does not satisfy `{}` required by {context}",
+                            capability.as_str()
+                        ),
+                        Vec::new(),
+                        Some((capability.as_str().to_owned(), actual)),
+                    )?;
+                }
+                false
             }
-        }
-        Ok(())
+        };
+        Ok(satisfied)
     }
 
     fn select_pattern_member(
@@ -7148,13 +7652,19 @@ impl<'a> ExpressionChecker<'a> {
                     .child_nodes()
                     .find(|child| AstExpression::cast(*child).is_some());
                 let callable = context.callable;
-                let value = match (expression, callable) {
+                let mut value = match (expression, callable) {
                     (Some(expression), Some(callable)) => Some(self.check_expression(
                         file,
                         expression,
                         Some(callable.expectation()),
                         context,
                     )?),
+                    (None, Some(callable)) if self.opaque_body.is_some() => {
+                        Some(self.check_opaque_unit_return(
+                            self.sources.span(file, node.range())?,
+                            callable,
+                        )?)
+                    }
                     (None, Some(callable))
                         if callable.success == self.program.interner.scalar(ScalarType::Unit) =>
                     {
@@ -7184,6 +7694,23 @@ impl<'a> ExpressionChecker<'a> {
                         None
                     }
                 };
+                if let Some(checked) = value
+                    && self.opaque_body.is_some()
+                    && self.expression_flow(checked).may_complete()
+                    && self.expression_type(checked) != self.program.interner.error()
+                {
+                    let callable = self
+                        .opaque_body
+                        .as_ref()
+                        .expect("the opaque return remains active")
+                        .callable;
+                    let outcome = self
+                        .program
+                        .callable(callable)
+                        .expect("the opaque return callable remains indexed")
+                        .outcome;
+                    value = Some(self.wrap_opaque_value(checked, outcome)?);
+                }
                 HirExpressionKind::Return { value }
             }
             SyntaxKind::BreakStmt => {
@@ -7220,6 +7747,46 @@ impl<'a> ExpressionChecker<'a> {
             category: HirValueCategory::Value,
             kind,
         })
+    }
+
+    fn check_opaque_unit_return(
+        &mut self,
+        span: Span,
+        callable: CallableContext,
+    ) -> Result<HirExpressionId, HirError> {
+        let unit_type = self.program.interner.scalar(ScalarType::Unit);
+        let unit = self.allocate_expression(HirExpression {
+            span,
+            ty: unit_type,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Literal(HirLiteral::Unit),
+        })?;
+        match self.match_opaque_expected(unit_type, callable.success)? {
+            OpaqueExpectedMatch::Matched { target, coercion } => {
+                let unit = if coercion == Assignability::Exact {
+                    unit
+                } else {
+                    self.coerce_with(unit, target, coercion)?
+                };
+                if callable.error.is_some() {
+                    self.allocate_expression(HirExpression {
+                        span,
+                        ty: callable.full,
+                        category: HirValueCategory::Value,
+                        kind: HirExpressionKind::ResultOk { value: unit },
+                    })
+                } else {
+                    Ok(unit)
+                }
+            }
+            OpaqueExpectedMatch::Mismatch => {
+                self.emit_opaque_witness_mismatch(span, unit_type)?;
+                self.recovery_expression(span.file(), span.range())
+            }
+            OpaqueExpectedMatch::NotOpaque => unreachable!(
+                "an opaque unit return always checks against the active witness inference"
+            ),
+        }
     }
 
     fn check_fail(
@@ -7866,6 +8433,15 @@ impl<'a> ExpressionChecker<'a> {
         if assignability == Assignability::Exact {
             return Ok(value);
         }
+        self.coerce_with(value, expected, assignability)
+    }
+
+    fn coerce_with(
+        &mut self,
+        value: HirExpressionId,
+        expected: TypeId,
+        assignability: Assignability,
+    ) -> Result<HirExpressionId, HirError> {
         let span = self.program.expressions[value.0 as usize].span;
         self.allocate_expression(HirExpression {
             span,
@@ -7876,6 +8452,142 @@ impl<'a> ExpressionChecker<'a> {
                 value,
             },
         })
+    }
+
+    fn match_opaque_expected(
+        &mut self,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> Result<OpaqueExpectedMatch, HirError> {
+        if !self.type_contains_opaque_inference(expected)? {
+            return Ok(OpaqueExpectedMatch::NotOpaque);
+        }
+        if actual == self.program.interner.scalar(ScalarType::Never) {
+            return Ok(OpaqueExpectedMatch::Matched {
+                target: expected,
+                coercion: Assignability::Diverging,
+            });
+        }
+
+        let solver = self
+            .opaque_body
+            .as_ref()
+            .expect("opaque inference presence implies an active body")
+            .solver
+            .clone();
+        let resolved_actual = match solver.resolve(&mut self.program.interner, actual) {
+            Ok(ty) => Some(ty),
+            Err(InferenceError::Unsolved(_)) => None,
+            Err(InferenceError::Type(error)) => return Err(error.into()),
+            Err(InferenceError::Mismatch { .. } | InferenceError::RecursiveSolution { .. }) => {
+                return Ok(OpaqueExpectedMatch::Mismatch);
+            }
+        };
+        let resolved_expected = match solver.resolve(&mut self.program.interner, expected) {
+            Ok(ty) => Some(ty),
+            Err(InferenceError::Unsolved(_)) => None,
+            Err(InferenceError::Type(error)) => return Err(error.into()),
+            Err(InferenceError::Mismatch { .. } | InferenceError::RecursiveSolution { .. }) => {
+                return Ok(OpaqueExpectedMatch::Mismatch);
+            }
+        };
+        if let (Some(actual), Some(expected)) = (resolved_actual, resolved_expected) {
+            return Ok(if actual == expected {
+                OpaqueExpectedMatch::Matched {
+                    target: expected,
+                    coercion: Assignability::Exact,
+                }
+            } else {
+                OpaqueExpectedMatch::Mismatch
+            });
+        }
+
+        let state = self
+            .opaque_body
+            .as_mut()
+            .expect("opaque inference presence implies an active body");
+        match state
+            .solver
+            .equate(&self.program.interner, actual, expected)
+        {
+            Ok(()) => Ok(OpaqueExpectedMatch::Matched {
+                target: actual,
+                coercion: Assignability::Exact,
+            }),
+            Err(InferenceError::Type(error)) => Err(error.into()),
+            Err(
+                InferenceError::Mismatch { .. }
+                | InferenceError::RecursiveSolution { .. }
+                | InferenceError::Unsolved(_),
+            ) => Ok(OpaqueExpectedMatch::Mismatch),
+        }
+    }
+
+    fn type_contains_opaque_inference(&self, root: TypeId) -> Result<bool, HirError> {
+        let Some(state) = self.opaque_body.as_ref() else {
+            return Ok(false);
+        };
+        let mut pending = vec![root];
+        let mut visited = BTreeSet::new();
+        while let Some(ty) = pending.pop() {
+            if !visited.insert(ty) {
+                continue;
+            }
+            match self.program.interner.kind(ty)? {
+                TypeKind::Inference(inference) => {
+                    if state.variables.contains(inference) {
+                        return Ok(true);
+                    }
+                }
+                TypeKind::Nominal { arguments, .. }
+                | TypeKind::Tuple(arguments)
+                | TypeKind::Union(arguments)
+                | TypeKind::Intrinsic { arguments, .. }
+                | TypeKind::Generated { arguments, .. }
+                | TypeKind::OpaqueResult { arguments, .. } => {
+                    pending.extend(arguments.iter().copied());
+                }
+                TypeKind::Function(function) => {
+                    pending.extend(function.parameters().iter().map(|parameter| parameter.ty()));
+                    pending.extend(function.variadic());
+                    pending.push(function.outcome());
+                }
+                TypeKind::Option(item) => pending.push(*item),
+                TypeKind::Result { success, error } => {
+                    pending.push(*success);
+                    pending.push(*error);
+                }
+                TypeKind::Cursor { collection, .. } => pending.push(*collection),
+                TypeKind::Error | TypeKind::Scalar(_) | TypeKind::GenericParameter(_) => {}
+            }
+        }
+        Ok(false)
+    }
+
+    fn emit_opaque_witness_mismatch(&mut self, span: Span, actual: TypeId) -> Result<(), HirError> {
+        let state = self
+            .opaque_body
+            .as_ref()
+            .expect("opaque witness diagnostics require an active body");
+        let signature = self
+            .program
+            .callable(state.callable)
+            .expect("the active opaque callable remains indexed")
+            .span();
+        let actual = self
+            .program
+            .interner
+            .canonical(actual)
+            .unwrap_or_else(|_| "<contextual value>".into());
+        self.emit(
+            span,
+            "E1117",
+            format!(
+                "opaque result paths must produce one exact concrete type; this path produces `{actual}`"
+            ),
+            vec![("opaque result is declared here", signature)],
+            None,
+        )
     }
 
     fn check_prefix(
@@ -8078,6 +8790,20 @@ impl<'a> ExpressionChecker<'a> {
         {
             return self.recovery_expression(file, node.range());
         }
+        if matches!(
+            operator,
+            HirBinaryOperator::Equal | HirBinaryOperator::NotEqual
+        ) && left_type == right_type
+            && !self.require_capability_with_generics(
+                self.sources.span(file, operator_token.range())?,
+                left_type,
+                HirCapability::Equatable,
+                &context.capability_assumptions,
+                "equality",
+            )?
+        {
+            return self.recovery_expression(file, node.range());
+        }
         let result = self.binary_result(operator, left_type, right_type)?;
         let Some(ty) = result else {
             self.emit_invalid_operator(file, operator_token.range(), left_type, Some(right_type))?;
@@ -8276,11 +9002,31 @@ impl<'a> ExpressionChecker<'a> {
             )?;
             return self.recovery_expression(file, range);
         }
-        if !matches!(
-            self.program.interner.kind(expected_item)?,
-            TypeKind::Scalar(_)
-        ) {
-            self.complete = false;
+        let required = match kind {
+            HirContainmentKind::Array => Some(HirCapability::Equatable),
+            HirContainmentKind::MapKey | HirContainmentKind::Set => Some(HirCapability::Key),
+            HirContainmentKind::Range => {
+                if !matches!(
+                    self.program.interner.kind(expected_item)?,
+                    TypeKind::Scalar(scalar)
+                        if is_integer_scalar(*scalar) || *scalar == ScalarType::Char
+                ) {
+                    self.complete = false;
+                }
+                None
+            }
+            HirContainmentKind::StringChar => None,
+        };
+        if let Some(capability) = required
+            && !self.require_capability_with_generics(
+                self.sources.span(file, operator.range())?,
+                expected_item,
+                capability,
+                &context.capability_assumptions,
+                "membership",
+            )?
+        {
+            return self.recovery_expression(file, range);
         }
         self.allocate_expression(HirExpression {
             span: self.sources.span(file, range)?,
@@ -8455,9 +9201,7 @@ impl<'a> ExpressionChecker<'a> {
             | HirBinaryOperator::LessEqual
             | HirBinaryOperator::Greater
             | HirBinaryOperator::GreaterEqual => left_scalar.is_some_and(is_relational_scalar),
-            HirBinaryOperator::Equal | HirBinaryOperator::NotEqual => {
-                left_scalar.is_some_and(is_bootstrap_equatable_scalar)
-            }
+            HirBinaryOperator::Equal | HirBinaryOperator::NotEqual => true,
             HirBinaryOperator::LogicalAnd | HirBinaryOperator::LogicalOr => {
                 left_scalar == Some(ScalarType::Bool)
             }
@@ -9777,8 +10521,11 @@ impl<'a> ExpressionChecker<'a> {
         let member_name = member_token
             .token()
             .normalized_identifier()
-            .unwrap_or(self.token_text(file, member_token)?);
-        for query in &context.trait_assumptions {
+            .unwrap_or(self.token_text(file, member_token)?)
+            .to_owned();
+        let mut visible_queries = context.trait_assumptions.clone();
+        visible_queries.extend(self.opaque_trait_queries(receiver_type)?);
+        for query in &visible_queries {
             if query.target() != receiver_type {
                 continue;
             }
@@ -9799,7 +10546,7 @@ impl<'a> ExpressionChecker<'a> {
                     });
                 }
                 HirTraitConstructor::Prelude(name) => {
-                    let method = match (name.as_str(), member_name) {
+                    let method = match (name.as_str(), member_name.as_str()) {
                         ("Display", "display") => Some(HirPreludeTraitMethod::Display),
                         ("Iterator", "next") => Some(HirPreludeTraitMethod::IteratorNext),
                         _ => None,
@@ -11998,30 +12745,6 @@ fn binary_operator(token: TokenKind) -> Option<HirBinaryOperator> {
     })
 }
 
-fn callable_discard_statuses(callable: &HirCallableSignature) -> BTreeMap<u32, DiscardStatus> {
-    callable
-        .generics
-        .iter()
-        .map(|parameter| {
-            let satisfied = parameter.bounds.iter().any(|bound| {
-                matches!(
-                    bound.constructor(),
-                    HirTraitConstructor::Prelude(name)
-                        if matches!(name.as_str(), "Copy" | "Discard" | "Key")
-                )
-            });
-            (
-                parameter.position,
-                if satisfied {
-                    DiscardStatus::Satisfied
-                } else {
-                    DiscardStatus::Unsatisfied
-                },
-            )
-        })
-        .collect()
-}
-
 fn assignment_operator(token: TokenKind) -> Option<HirAssignmentOperator> {
     Some(match token {
         TokenKind::Eq => HirAssignmentOperator::Assign,
@@ -12082,21 +12805,6 @@ fn collect_assignment_target_expressions(
                 collect_assignment_target_expressions(item, output);
             }
         }
-    }
-}
-
-fn nominal_discard_roots(shape: &HirNominalShape) -> Vec<TypeId> {
-    match shape {
-        HirNominalShape::Newtype { underlying } => vec![*underlying],
-        HirNominalShape::Record { fields } => fields.iter().map(HirField::ty).collect(),
-        HirNominalShape::Enum { variants } => variants
-            .iter()
-            .flat_map(|variant| match variant.payload() {
-                HirVariantPayload::Unit => Vec::new(),
-                HirVariantPayload::Tuple(types) => types.clone(),
-                HirVariantPayload::Record(fields) => fields.iter().map(HirField::ty).collect(),
-            })
-            .collect(),
     }
 }
 
@@ -12399,8 +13107,248 @@ fn is_relational_scalar(scalar: ScalarType) -> bool {
         )
 }
 
-fn is_bootstrap_equatable_scalar(scalar: ScalarType) -> bool {
-    !matches!(scalar, ScalarType::Never)
+fn generic_bound_type_roots(parameter: &super::HirGenericParameter) -> Vec<TypeId> {
+    parameter
+        .bounds
+        .iter()
+        .flat_map(|bound| bound.arguments.iter().copied())
+        .collect()
+}
+
+fn nominal_type_roots(shape: &HirNominalShape) -> Vec<TypeId> {
+    match shape {
+        HirNominalShape::Newtype { underlying } => vec![*underlying],
+        HirNominalShape::Record { fields } => fields.iter().map(HirField::ty).collect(),
+        HirNominalShape::Enum { variants } => variants
+            .iter()
+            .flat_map(|variant| match variant.payload() {
+                HirVariantPayload::Unit => Vec::new(),
+                HirVariantPayload::Tuple(items) => items.clone(),
+                HirVariantPayload::Record(fields) => fields.iter().map(HirField::ty).collect(),
+            })
+            .collect(),
+    }
+}
+
+fn collect_expression_type_roots(expression: &HirExpression, roots: &mut BTreeSet<TypeId>) {
+    roots.insert(expression.ty);
+    match &expression.kind {
+        HirExpressionKind::SpecializedFunction { arguments, .. }
+        | HirExpressionKind::PreludeTraitFunction { arguments, .. } => {
+            roots.extend(arguments.iter().copied());
+        }
+        HirExpressionKind::Block { statements, .. } => {
+            for statement in statements {
+                collect_statement_type_roots(statement, roots);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_statement_type_roots(statement: &HirStatement, roots: &mut BTreeSet<TypeId>) {
+    match statement {
+        HirStatement::Binding { declared_type, .. } => {
+            roots.extend(*declared_type);
+        }
+        HirStatement::Assignment { target, .. } => {
+            collect_assignment_target_type_roots(target, roots);
+        }
+        HirStatement::For { kind, .. } => {
+            if let HirForKind::Iterate {
+                protocol:
+                    HirIterationProtocol::Trait {
+                        element,
+                        function_type,
+                    },
+                ..
+            } = kind
+            {
+                roots.insert(*element);
+                roots.insert(*function_type);
+            }
+        }
+        HirStatement::Expression { .. } | HirStatement::Discard { .. } => {}
+    }
+}
+
+fn collect_assignment_target_type_roots(
+    target: &HirAssignmentTarget,
+    roots: &mut BTreeSet<TypeId>,
+) {
+    roots.insert(target.ty);
+    if let HirAssignmentTargetKind::Tuple(items) = &target.kind {
+        for item in items {
+            collect_assignment_target_type_roots(item, roots);
+        }
+    }
+}
+
+fn collect_pattern_type_roots(pattern: &HirPattern, roots: &mut BTreeSet<TypeId>) {
+    roots.insert(pattern.ty);
+    if let HirPatternKind::UnionMember { member, .. } = pattern.kind {
+        roots.insert(member);
+    }
+}
+
+fn rewrite_expression_types(
+    expression: &mut HirExpression,
+    replacements: &BTreeMap<TypeId, TypeId>,
+) {
+    expression.ty = replaced_type(expression.ty, replacements);
+    match &mut expression.kind {
+        HirExpressionKind::SpecializedFunction { arguments, .. }
+        | HirExpressionKind::PreludeTraitFunction { arguments, .. } => {
+            for argument in arguments {
+                *argument = replaced_type(*argument, replacements);
+            }
+        }
+        HirExpressionKind::Block { statements, .. } => {
+            for statement in statements {
+                rewrite_statement_types(statement, replacements);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_statement_types(statement: &mut HirStatement, replacements: &BTreeMap<TypeId, TypeId>) {
+    match statement {
+        HirStatement::Binding { declared_type, .. } => {
+            if let Some(ty) = declared_type {
+                *ty = replaced_type(*ty, replacements);
+            }
+        }
+        HirStatement::Assignment { target, .. } => {
+            rewrite_assignment_target_types(target, replacements);
+        }
+        HirStatement::For { kind, .. } => {
+            if let HirForKind::Iterate {
+                protocol:
+                    HirIterationProtocol::Trait {
+                        element,
+                        function_type,
+                    },
+                ..
+            } = kind
+            {
+                *element = replaced_type(*element, replacements);
+                *function_type = replaced_type(*function_type, replacements);
+            }
+        }
+        HirStatement::Expression { .. } | HirStatement::Discard { .. } => {}
+    }
+}
+
+fn rewrite_assignment_target_types(
+    target: &mut HirAssignmentTarget,
+    replacements: &BTreeMap<TypeId, TypeId>,
+) {
+    target.ty = replaced_type(target.ty, replacements);
+    if let HirAssignmentTargetKind::Tuple(items) = &mut target.kind {
+        for item in items {
+            rewrite_assignment_target_types(item, replacements);
+        }
+    }
+}
+
+fn rewrite_pattern_types(pattern: &mut HirPattern, replacements: &BTreeMap<TypeId, TypeId>) {
+    pattern.ty = replaced_type(pattern.ty, replacements);
+    if let HirPatternKind::UnionMember { member, .. } = &mut pattern.kind {
+        *member = replaced_type(*member, replacements);
+    }
+}
+
+fn replaced_type(ty: TypeId, replacements: &BTreeMap<TypeId, TypeId>) -> TypeId {
+    replacements.get(&ty).copied().unwrap_or(ty)
+}
+
+fn type_contains_inference_set(
+    interner: &crate::types::TypeInterner,
+    root: TypeId,
+    variables: &BTreeSet<InferenceId>,
+) -> Result<bool, crate::types::TypeError> {
+    let mut pending = vec![root];
+    let mut visited = BTreeSet::new();
+    while let Some(ty) = pending.pop() {
+        if !visited.insert(ty) {
+            continue;
+        }
+        match interner.kind(ty)? {
+            TypeKind::Inference(inference) => {
+                if variables.contains(inference) {
+                    return Ok(true);
+                }
+            }
+            TypeKind::Nominal { arguments, .. }
+            | TypeKind::Tuple(arguments)
+            | TypeKind::Union(arguments)
+            | TypeKind::Intrinsic { arguments, .. }
+            | TypeKind::Generated { arguments, .. }
+            | TypeKind::OpaqueResult { arguments, .. } => {
+                pending.extend(arguments.iter().copied());
+            }
+            TypeKind::Function(function) => {
+                pending.extend(function.parameters().iter().map(|parameter| parameter.ty()));
+                pending.extend(function.variadic());
+                pending.push(function.outcome());
+            }
+            TypeKind::Option(item) => pending.push(*item),
+            TypeKind::Result { success, error } => {
+                pending.push(*success);
+                pending.push(*error);
+            }
+            TypeKind::Cursor { collection, .. } => pending.push(*collection),
+            TypeKind::Error | TypeKind::Scalar(_) | TypeKind::GenericParameter(_) => {}
+        }
+    }
+    Ok(false)
+}
+
+fn collect_opaque_dependencies(
+    interner: &crate::types::TypeInterner,
+    root: TypeId,
+) -> Result<BTreeSet<SymbolIdentity>, crate::types::TypeError> {
+    let mut output = BTreeSet::new();
+    let mut pending = vec![root];
+    let mut visited = BTreeSet::new();
+    while let Some(ty) = pending.pop() {
+        if !visited.insert(ty) {
+            continue;
+        }
+        match interner.kind(ty)? {
+            TypeKind::OpaqueResult {
+                identity,
+                arguments,
+            } => {
+                output.insert(identity.clone());
+                pending.extend(arguments.iter().copied());
+            }
+            TypeKind::Nominal { arguments, .. }
+            | TypeKind::Tuple(arguments)
+            | TypeKind::Union(arguments)
+            | TypeKind::Intrinsic { arguments, .. }
+            | TypeKind::Generated { arguments, .. } => {
+                pending.extend(arguments.iter().copied());
+            }
+            TypeKind::Function(function) => {
+                pending.extend(function.parameters().iter().map(|parameter| parameter.ty()));
+                pending.extend(function.variadic());
+                pending.push(function.outcome());
+            }
+            TypeKind::Option(item) => pending.push(*item),
+            TypeKind::Result { success, error } => {
+                pending.push(*success);
+                pending.push(*error);
+            }
+            TypeKind::Cursor { collection, .. } => pending.push(*collection),
+            TypeKind::Error
+            | TypeKind::Scalar(_)
+            | TypeKind::GenericParameter(_)
+            | TypeKind::Inference(_) => {}
+        }
+    }
+    Ok(output)
 }
 
 fn strongly_connected_components(
@@ -13961,6 +14909,266 @@ mod tests {
         source.push_str("fn invalid(value: Node0) {\n    _ = value\n}\n");
         let (_, _, output) = check(&source);
         assert_eq!(codes(&output), ["E1105"]);
+    }
+
+    #[test]
+    fn closed_capability_matrix_covers_intrinsics_and_structural_values() {
+        let (_, _, output) = check(
+            "fn inspect(\n\
+                 integer: Int,\n\
+                 float: Float,\n\
+                 function: fn(Int): Int,\n\
+                 array: Array[Int],\n\
+                 map: Map[String, Int],\n\
+                 set: Set[String],\n\
+                 range: Range[Int],\n\
+                 reference: Ref[Int],\n\
+                 pointer: Pointer[Int],\n\
+                 join: Join[Int, Never],\n\
+                 command: Command,\n\
+                 pipeline: Pipeline,\n\
+             ) {}\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let status = |name: &str, capability: HirCapability| {
+            let ty = output
+                .program()
+                .interner()
+                .ids()
+                .find(|ty| {
+                    output
+                        .program()
+                        .interner()
+                        .canonical(*ty)
+                        .is_ok_and(|actual| actual == name)
+                })
+                .unwrap_or_else(|| panic!("missing interned type `{name}`"));
+            output.program().capability_status(ty, capability).unwrap()
+        };
+        let satisfied = |name, capabilities: &[HirCapability]| {
+            for capability in HirCapability::ALL {
+                assert_eq!(
+                    status(name, capability),
+                    if capabilities.contains(&capability) {
+                        HirCapabilityStatus::Satisfied
+                    } else {
+                        HirCapabilityStatus::Unsatisfied
+                    },
+                    "unexpected {} status for {name}",
+                    capability.as_str()
+                );
+            }
+        };
+        let value_capabilities = [
+            HirCapability::Copy,
+            HirCapability::Discard,
+            HirCapability::Equatable,
+            HirCapability::Send,
+            HirCapability::Share,
+        ];
+        let transferable = [
+            HirCapability::Copy,
+            HirCapability::Discard,
+            HirCapability::Send,
+            HirCapability::Share,
+        ];
+        satisfied("Int", &HirCapability::ALL);
+        satisfied("Float", &value_capabilities);
+        satisfied("fn(Int): Int", &transferable);
+        satisfied("Array[Int]", &value_capabilities);
+        satisfied("Map[String, Int]", &value_capabilities);
+        satisfied("Set[String]", &value_capabilities);
+        satisfied("Range[Int]", &transferable);
+        satisfied("Ref[Int]", &HirCapability::ALL);
+        satisfied(
+            "Pointer[Int]",
+            &[HirCapability::Copy, HirCapability::Discard],
+        );
+        satisfied("Join[Int, Never]", &[]);
+        satisfied("Command", &transferable);
+        satisfied("Pipeline", &transferable);
+    }
+
+    #[test]
+    fn map_set_and_ref_formation_require_their_closed_capabilities() {
+        let (_, _, valid) = check(
+            "type Cache[K: Key, V] = {\n\
+                 values: Map[K, V]\n\
+                 visited: Set[K]\n\
+             }\n\
+             fn hold[T: Discard](value: Ref[T]) {}\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        for source in [
+            "fn invalid(value: Map[Float, Int]) {}\n",
+            "fn invalid(value: Set[Float]) {}\n",
+            "fn invalid(value: Ref[Join[Int, Never]]) {}\n",
+            "type Invalid[T] = { values: Map[T, Int] }\n",
+            "fn invalid() { let values = [1.0: 1]\n    _ = values\n}\n",
+            "fn invalid() { let values = Set[1.0]\n    _ = values\n}\n",
+        ] {
+            let (_, _, invalid) = check(source);
+            assert_eq!(
+                codes(&invalid),
+                ["E1105"],
+                "{source}\n{:#?}",
+                invalid.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn equality_and_membership_use_structural_equatable_proofs() {
+        let (_, _, valid) = check(
+            "type User = { id: Int, name: String }\n\
+             type Node = { next: Node? }\n\
+             fn usersEqual(left: User, right: User): Bool { left == right }\n\
+             fn nodesEqual(left: Node, right: Node): Bool { left != right }\n\
+             fn generic[T: Equatable](left: T, right: T): Bool { left == right }\n\
+             fn keyed[T: Key](left: T, right: T): Bool { left == right }\n\
+             fn contains[T: Equatable](needle: T, values: Array[T]): Bool {\n\
+                 needle in values\n\
+             }\n\
+             fn mapsEqual[K: Key, V: Equatable](\n\
+                 left: Map[K, V],\n\
+                 right: Map[K, V],\n\
+             ): Bool { left == right }\n\
+             fn recursiveKey(left: Node, right: Node): Map[Node, Int] {\n\
+                 [left: 1, right: 2]\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        for source in [
+            "fn invalid(left: fn(Int): Int, right: fn(Int): Int): Bool { left == right }\n",
+            "fn invalid(left: Pointer[Int], right: Pointer[Int]): Bool { left == right }\n",
+            "fn invalid(left: Range[Int], right: Range[Int]): Bool { left == right }\n",
+            "fn invalid(left: Array[Join[Int, Never]], right: Array[Join[Int, Never]]): Bool { left == right }\n",
+            "fn invalid[T](left: T, right: T): Bool { left == right }\n",
+            "fn invalid(needle: fn(Int): Int, values: Array[fn(Int): Int]): Bool { needle in values }\n",
+        ] {
+            let (_, _, invalid) = check(source);
+            assert_eq!(
+                codes(&invalid),
+                ["E1105"],
+                "{source}\n{:#?}",
+                invalid.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn map_lookup_requires_copy_without_restricting_affine_storage() {
+        let (_, _, valid) = check(
+            "fn lookup[K: Key, V: Copy](values: Map[K, V], key: K): V? {\n\
+                 values[key]\n\
+             }\n\
+             fn store(values: Map[String, Join[Int, Never]]) {}\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        for source in [
+            "fn invalid(values: Map[String, Join[Int, Never]], key: String): Join[Int, Never]? { values[key] }\n",
+            "fn invalid[K: Key, V](values: Map[K, V], key: K): V? { values[key] }\n",
+        ] {
+            let (_, _, invalid) = check(source);
+            assert_eq!(
+                codes(&invalid),
+                ["E1105"],
+                "{source}\n{:#?}",
+                invalid.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn every_closed_capability_is_enforced_and_forwarded_parametrically() {
+        let (_, _, valid) = check(
+            "fn needCopy[T: Copy](value: T) {}\n\
+             fn needDiscard[T: Discard](value: T) {}\n\
+             fn needEquatable[T: Equatable](value: T) {}\n\
+             fn needKey[T: Key](value: T) {}\n\
+             fn needSend[T: Send](value: T) {}\n\
+             fn needShare[T: Share](value: T) {}\n\
+             fn keyImplications[T: Key](value: T) {\n\
+                 needCopy(value)\n\
+                 needDiscard(value)\n\
+                 needEquatable(value)\n\
+                 needKey(value)\n\
+             }\n\
+             fn concurrency[T: Send + Share](value: T) {\n\
+                 needSend(value)\n\
+                 needShare(value)\n\
+             }\n\
+             fn hidden[T: Key](value: T): impl Copy + Discard + Equatable { value }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        for source in [
+            "fn need[T: Copy](value: T) {}\nfn invalid(value: Join[Int, Never]) { need(value) }\n",
+            "fn need[T: Key](value: T) {}\nfn invalid(value: Float) { need(value) }\n",
+            "fn need[T: Equatable](value: T) {}\nfn invalid(value: Pointer[Int]) { need(value) }\n",
+            "fn need[T: Send](value: T) {}\nfn invalid(value: Pointer[Int]) { need(value) }\n",
+            "fn need[T: Share](value: T) {}\nfn invalid(value: Pointer[Int]) { need(value) }\n",
+        ] {
+            let (_, _, invalid) = check(source);
+            assert_eq!(
+                codes(&invalid),
+                ["E1105"],
+                "{source}\n{:#?}",
+                invalid.diagnostics()
+            );
+        }
+
+        let (_, _, opaque_failure) = check("fn invalid(): impl Key { 1.0 }\n");
+        assert_eq!(codes(&opaque_failure), ["E1117"]);
+    }
+
+    #[test]
+    fn async_receiver_traits_imply_send_for_implementations_generics_and_opaques() {
+        let (_, _, valid) = check(
+            "trait Poll {\n\
+                 async fn poll(self): Bool\n\
+             }\n\
+             type Worker[T] = { value: T }\n\
+             impl[T: Send] Poll for Worker[T] {\n\
+                 async fn poll(self): Bool { true }\n\
+             }\n\
+             fn needSend[T: Send](value: T) {}\n\
+             fn inferred[T: Poll](value: T) { needSend(value) }\n\
+             fn hidden(): impl Poll + Discard { Worker[Int] { value: 1 } }\n\
+             fn outer(): impl Send + Discard { hidden() }\n\
+             fn consumeHidden() {\n\
+                 needSend(hidden())\n\
+                 needSend(outer())\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        for source in [
+            "trait Poll {\n    async fn poll(self): Bool\n}\nimpl Poll for Pointer[Int] {\n    async fn poll(self): Bool { true }\n}\n",
+            "trait Poll {\n    async fn poll(self): Bool\n}\ntype Worker[T] = { value: T }\nimpl[T] Poll for Worker[T] {\n    async fn poll(self): Bool { true }\n}\n",
+        ] {
+            let (_, _, invalid) = check(source);
+            assert_eq!(
+                codes(&invalid),
+                ["E1105"],
+                "{source}\n{:#?}",
+                invalid.diagnostics()
+            );
+        }
     }
 
     #[test]
@@ -16356,6 +17564,270 @@ mod tests {
                 "source should fail with E1102: {source}\n{:#?}",
                 output.diagnostics()
             );
+        }
+    }
+
+    #[test]
+    fn opaque_results_infer_one_witness_and_seal_every_normal_exit() {
+        let (_, _, output) = check(
+            "fn choose(flag: Bool): impl Discard {\n\
+                 if flag {\n\
+                     return 1\n\
+                 }\n\
+                 2\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let callable = output.program().callables().next().unwrap();
+        let opaque = callable.opaque_result().unwrap();
+        assert_eq!(
+            opaque.witness(),
+            Some(output.program().interner().scalar(ScalarType::Int))
+        );
+        let seals = output
+            .program()
+            .expressions()
+            .filter(|expression| {
+                matches!(
+                    expression.kind(),
+                    HirExpressionKind::Coerce {
+                        kind: Assignability::Opaque,
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(seals, 2);
+    }
+
+    #[test]
+    fn opaque_results_share_inference_across_branches_and_contextual_literals() {
+        let (_, _, output) = check(
+            "fn values(flag: Bool): impl Discard {\n\
+                 if flag { [] } else { [1] }\n\
+             }\n\
+             fn fallible(flag: Bool): impl Discard ! String {\n\
+                 if flag { 1 } else { err(\"bad\") }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let mut callables = output.program().callables();
+        let fallible = callables.next().unwrap();
+        let values = callables.next().unwrap();
+        assert_eq!(
+            fallible.opaque_result().unwrap().witness(),
+            Some(output.program().interner().scalar(ScalarType::Int))
+        );
+        let array_int = output
+            .program()
+            .interner()
+            .ids()
+            .find(|ty| {
+                matches!(
+                    output.program().interner().kind(*ty),
+                    Ok(TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Array,
+                        arguments,
+                    }) if arguments == &[output.program().interner().scalar(ScalarType::Int)]
+                )
+            })
+            .unwrap();
+        assert_eq!(values.opaque_result().unwrap().witness(), Some(array_int));
+    }
+
+    #[test]
+    fn opaque_results_reject_distinct_missing_and_cyclic_witnesses() {
+        let (_, _, distinct) = check(
+            "fn invalid(flag: Bool): impl Discard {\n\
+                 if flag { 1 } else { \"text\" }\n\
+             }\n",
+        );
+        assert_eq!(codes(&distinct), ["E1117"]);
+
+        let (_, _, lifted) = check(
+            "fn invalid(flag: Bool): impl Discard {\n\
+                 if flag { some(1) } else { 2 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&lifted), ["E1117"]);
+
+        let (_, _, missing) = check(
+            "fn invalid(): impl Discard {\n\
+                 panic(\"never\")\n\
+             }\n",
+        );
+        assert_eq!(codes(&missing), ["E1117"]);
+
+        let (_, _, cyclic) = check(
+            "fn invalid(): impl Discard {\n\
+                 invalid()\n\
+             }\n",
+        );
+        assert_eq!(codes(&cyclic), ["E1117"]);
+
+        let (_, _, unreachable_only) = check(
+            "fn invalid(): impl Discard {\n\
+                 panic(\"never\")\n\
+                 1\n\
+             }\n",
+        );
+        assert!(codes(&unreachable_only).contains(&"E1117"));
+        assert!(codes(&unreachable_only).contains(&"W1006"));
+    }
+
+    #[test]
+    fn opaque_results_expose_only_published_bounds_to_callers() {
+        let (_, _, output) = check(
+            "trait Summary {\n\
+                 fn summarize(self): String\n\
+             }\n\
+             type User = { name: String }\n\
+             impl Summary for User {\n\
+                 fn summarize(self): String { self.name }\n\
+             }\n\
+             fn hidden(): impl Summary + Discard {\n\
+                 User { name: \"Tony\" }\n\
+             }\n\
+             fn generic[T: Summary](value: T): String { value.summarize() }\n\
+             fn direct(): String { hidden().summarize() }\n\
+             fn forwarded(): String { generic(hidden()) }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let (_, _, hidden_member) = check(
+            "type User = { name: String }\n\
+             fn User.secret(self): String { self.name }\n\
+             fn hidden(): impl Discard { User { name: \"Tony\" } }\n\
+             fn invalid(): String { hidden().secret() }\n",
+        );
+        assert_eq!(codes(&hidden_member), ["E1102"]);
+
+        let (_, _, missing_bound) = check(
+            "trait Summary {\n\
+                 fn summarize(self): String\n\
+             }\n\
+             fn invalid(): impl Summary + Discard { 1 }\n",
+        );
+        assert_eq!(codes(&missing_bound), ["E1117"]);
+    }
+
+    #[test]
+    fn generic_opaque_result_families_keep_arguments_and_template_witnesses() {
+        let (_, _, output) = check("fn hide[T: Discard](value: T): impl Discard { value }\n");
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let callable = output.program().callables().next().unwrap();
+        let TypeKind::OpaqueResult { arguments, .. } = output
+            .program()
+            .interner()
+            .kind(callable.outcome())
+            .unwrap()
+        else {
+            panic!("generic opaque success must retain nominal arguments")
+        };
+        assert_eq!(arguments.len(), 1);
+        assert!(matches!(
+            output.program().interner().kind(arguments[0]).unwrap(),
+            TypeKind::GenericParameter(0)
+        ));
+        assert_eq!(
+            callable.opaque_result().unwrap().witness(),
+            Some(arguments[0])
+        );
+        assert!(
+            output
+                .program()
+                .interner()
+                .canonical(callable.outcome())
+                .unwrap()
+                .ends_with("#result[$0]")
+        );
+    }
+
+    #[test]
+    fn generic_opaque_witnesses_derive_discard_through_structural_containers() {
+        let (_, _, output) = check(
+            "type Box[T] = { value: T }\n\
+             fn hideArray[T: Discard](value: T): impl Discard { [value] }\n\
+             fn hideBox[T: Discard](value: T): impl Discard {\n\
+                 Box[T] { value }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        assert_eq!(
+            output
+                .program()
+                .callables()
+                .filter(|callable| callable.opaque_result().is_some())
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn inherent_and_associated_opaque_results_own_distinct_generic_families() {
+        let (_, _, output) = check(
+            "type Box[T] = { value: T }\n\
+             fn Box[T: Discard].hide(self): impl Discard { self.value }\n\
+             fn Box[T: Discard].make(value: T): impl Discard { value }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let opaque = output
+            .program()
+            .callables()
+            .filter_map(|callable| callable.opaque_result())
+            .collect::<Vec<_>>();
+        assert_eq!(opaque.len(), 2);
+        assert_ne!(opaque[0].identity(), opaque[1].identity());
+        for contract in opaque {
+            let callable = output
+                .program()
+                .callables()
+                .find(|callable| {
+                    callable
+                        .opaque_result()
+                        .is_some_and(|opaque| opaque.identity() == contract.identity())
+                })
+                .unwrap();
+            let TypeKind::OpaqueResult { arguments, .. } = output
+                .program()
+                .interner()
+                .kind(callable.outcome())
+                .unwrap()
+            else {
+                panic!("member opaque outcome must retain its family")
+            };
+            assert_eq!(arguments.len(), 1);
+            assert_eq!(contract.witness(), Some(arguments[0]));
         }
     }
 }

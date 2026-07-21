@@ -645,6 +645,19 @@ impl Parser<'_> {
     }
 
     fn parse_primary_type(&mut self) -> ParseResult {
+        if self.at(TokenKind::Impl) {
+            self.start(SyntaxKind::Error)?;
+            self.syntax_error("`impl Bound` is only valid as an admitted declaration outcome")?;
+            self.bump();
+            if self.at(TokenKind::Identifier) {
+                self.parse_generic_bound()?;
+                if self.eat(TokenKind::Bang) {
+                    self.parse_error_type_operand()?;
+                }
+            }
+            self.finish();
+            return Ok(());
+        }
         if self.at_function_type_start() {
             return self.parse_function_type();
         }
@@ -2601,6 +2614,51 @@ mod tests {
             SyntaxKind::Module
         );
         assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn opaque_outcomes_are_syntax_only_for_free_inherent_and_associated_functions() {
+        let valid = br#"type Item = { value: Int }
+fn free(): impl Discard { 1 }
+fn Item.method(self): impl Discard { self.value }
+fn Item.associated(): impl Discard { 1 }
+async fn later(): impl Discard ! String { 1 }
+"#;
+        let (_, _, parsed) = parse_source(valid, ParseMode::Module);
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
+        );
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::OpaqueOutcome)
+                .count(),
+            4
+        );
+
+        for source in [
+            &b"trait Invalid {\n    fn make(): impl Discard\n}\n"[..],
+            &b"trait Contract { fn make(): Int }\ntype Item = Int\nimpl Contract for Item {\n    fn make(): impl Discard { 1 }\n}\n"[..],
+            &b"alias Invalid = impl Discard\n"[..],
+            &b"type Invalid = { value: impl Discard }\n"[..],
+            &b"fn invalid(value: impl Discard) {}\n"[..],
+            &b"fn invalid() {\n    let closure = (): impl Discard { 1 }\n}\n"[..],
+        ] {
+            let (_, _, parsed) = parse_source(source, ParseMode::Module);
+            assert!(!parsed.diagnostics().is_empty(), "source: {source:?}");
+            assert!(
+                parsed
+                    .cst()
+                    .nodes()
+                    .iter()
+                    .all(|node| node.kind() != SyntaxKind::OpaqueOutcome),
+                "source: {source:?}"
+            );
+        }
     }
 
     #[test]

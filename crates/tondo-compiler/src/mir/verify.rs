@@ -4,8 +4,9 @@ use std::error::Error;
 use std::fmt;
 
 use crate::hir::{
-    HirBinaryOperator, HirCallableId, HirContainmentKind, HirIndexAccess, HirNominalShape,
-    HirPrefixOperator, HirProgram, HirTypeDeclarationKind, HirVariantPayload,
+    HirBinaryOperator, HirCallableId, HirCapability, HirCapabilityStatus, HirContainmentKind,
+    HirIndexAccess, HirNominalShape, HirPrefixOperator, HirProgram, HirTypeDeclarationKind,
+    HirVariantPayload,
 };
 use crate::resolve::{MemberKind, MemberOwner, ResolvedProgram, SymbolId};
 use crate::types::{
@@ -652,16 +653,28 @@ impl Verifier<'_> {
                 value: operand,
             } => {
                 self.verify_operand(function, operand, context)?;
-                let actual = self
-                    .hir
-                    .interner()
-                    .assignability(operand.ty, value.ty)
-                    .map_err(|error| {
-                        MirInvariantError::new(
-                            context,
-                            format!("cannot validate MIR coercion: {error}"),
-                        )
-                    })?;
+                let actual = if *kind == Assignability::Opaque {
+                    let mut interner = self.hir.interner().clone();
+                    self.hir
+                        .opaque_coercion_matches(&mut interner, operand.ty, value.ty)
+                        .map_err(|error| {
+                            MirInvariantError::new(
+                                context,
+                                format!("cannot validate opaque MIR coercion: {error}"),
+                            )
+                        })?
+                        .then_some(Assignability::Opaque)
+                } else {
+                    self.hir
+                        .interner()
+                        .assignability(operand.ty, value.ty)
+                        .map_err(|error| {
+                            MirInvariantError::new(
+                                context,
+                                format!("cannot validate MIR coercion: {error}"),
+                            )
+                        })?
+                };
                 if actual != Some(*kind) || *kind == Assignability::Exact {
                     return Err(MirInvariantError::new(
                         context,
@@ -1341,7 +1354,18 @@ impl Verifier<'_> {
                     }
                     pending.push((left.outcome(), right.outcome()));
                 }
-                (TypeKind::OpaqueResult(left), TypeKind::OpaqueResult(right)) if left == right => {}
+                (
+                    TypeKind::OpaqueResult {
+                        identity: left_identity,
+                        arguments: left,
+                    },
+                    TypeKind::OpaqueResult {
+                        identity: right_identity,
+                        arguments: right,
+                    },
+                ) if left_identity == right_identity && left.len() == right.len() => {
+                    pending.extend(left.iter().copied().zip(right.iter().copied()));
+                }
                 (
                     TypeKind::Generated {
                         identity: left_identity,
@@ -1517,9 +1541,10 @@ impl Verifier<'_> {
             | HirBinaryOperator::LessEqual
             | HirBinaryOperator::Greater
             | HirBinaryOperator::GreaterEqual => left_scalar.is_some_and(is_relational),
-            HirBinaryOperator::Equal | HirBinaryOperator::NotEqual => {
-                left_scalar.is_some_and(|scalar| scalar != ScalarType::Never)
-            }
+            HirBinaryOperator::Equal | HirBinaryOperator::NotEqual => !matches!(
+                self.hir.capability_status(left, HirCapability::Equatable),
+                None | Some(HirCapabilityStatus::Unsatisfied)
+            ),
             HirBinaryOperator::LogicalAnd | HirBinaryOperator::LogicalOr => {
                 left_scalar == Some(ScalarType::Bool)
             }
@@ -1657,6 +1682,22 @@ impl Verifier<'_> {
             return Err(MirInvariantError::new(
                 context,
                 "containment item or result type is inconsistent",
+            ));
+        }
+        let capability = match kind {
+            HirContainmentKind::Array => Some(HirCapability::Equatable),
+            HirContainmentKind::MapKey | HirContainmentKind::Set => Some(HirCapability::Key),
+            HirContainmentKind::Range | HirContainmentKind::StringChar => None,
+        };
+        if let Some(capability) = capability
+            && matches!(
+                self.hir.capability_status(expected, capability),
+                None | Some(HirCapabilityStatus::Unsatisfied)
+            )
+        {
+            return Err(MirInvariantError::new(
+                context,
+                "containment item lacks its closed capability",
             ));
         }
         Ok(())
@@ -1883,7 +1924,11 @@ impl Verifier<'_> {
                 } else if access == HirIndexAccess::MapEntry {
                     result == arguments[1]
                 } else {
-                    matches!(self.kind(result, context)?, TypeKind::Option(item) if *item == arguments[1])
+                    !matches!(
+                        self.hir
+                            .capability_status(arguments[1], HirCapability::Copy),
+                        None | Some(HirCapabilityStatus::Unsatisfied)
+                    ) && matches!(self.kind(result, context)?, TypeKind::Option(item) if *item == arguments[1])
                 }
             }
         };

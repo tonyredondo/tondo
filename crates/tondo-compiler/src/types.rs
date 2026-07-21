@@ -153,6 +153,7 @@ pub enum ParameterMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Assignability {
     Exact,
+    Opaque,
     UnionInjection,
     UnionWidening,
     OptionLift,
@@ -327,7 +328,10 @@ pub enum TypeKind {
     },
     GenericParameter(u32),
     Inference(InferenceId),
-    OpaqueResult(SymbolIdentity),
+    OpaqueResult {
+        identity: SymbolIdentity,
+        arguments: Vec<TypeId>,
+    },
     Generated {
         identity: GeneratedTypeIdentity,
         arguments: Vec<TypeId>,
@@ -418,6 +422,7 @@ pub enum TypeError {
         arity: usize,
     },
     UnresolvedInference(InferenceId),
+    CyclicOpaqueRepresentation,
     RecoveryTypeHasNoCanonicalName,
 }
 
@@ -455,6 +460,9 @@ impl fmt::Display for TypeError {
                 "inference variable ${} has no canonical public type",
                 inference.index()
             ),
+            Self::CyclicOpaqueRepresentation => {
+                formatter.write_str("opaque result representations form a cycle")
+            }
             Self::RecoveryTypeHasNoCanonicalName => {
                 formatter.write_str("the internal recovery type has no canonical public name")
             }
@@ -646,11 +654,19 @@ impl TypeInterner {
         Ok(ty)
     }
 
-    pub fn opaque_result(&mut self, identity: SymbolIdentity) -> Result<TypeId, TypeError> {
+    pub fn opaque_result(
+        &mut self,
+        identity: SymbolIdentity,
+        arguments: Vec<TypeId>,
+    ) -> Result<TypeId, TypeError> {
         if identity.namespace() != Namespace::Value {
             return Err(TypeError::InvalidNominalNamespace(identity.namespace()));
         }
-        self.intern_raw(TypeKind::OpaqueResult(identity))
+        self.validate_children(&arguments)?;
+        self.intern_raw(TypeKind::OpaqueResult {
+            identity,
+            arguments,
+        })
     }
 
     pub fn generated(
@@ -970,7 +986,20 @@ impl TypeInterner {
                 {
                     pending.extend(left_arguments.into_iter().zip(right_arguments));
                 }
-                (TypeKind::OpaqueResult(left), TypeKind::OpaqueResult(right)) if left == right => {}
+                (
+                    TypeKind::OpaqueResult {
+                        identity: left_identity,
+                        arguments: left_arguments,
+                    },
+                    TypeKind::OpaqueResult {
+                        identity: right_identity,
+                        arguments: right_arguments,
+                    },
+                ) if left_identity == right_identity
+                    && left_arguments.len() == right_arguments.len() =>
+                {
+                    pending.extend(left_arguments.into_iter().zip(right_arguments));
+                }
                 (
                     TypeKind::Generated {
                         identity: left_identity,
@@ -1057,7 +1086,8 @@ impl TypeInterner {
                 | TypeKind::Tuple(arguments)
                 | TypeKind::Union(arguments)
                 | TypeKind::Intrinsic { arguments, .. }
-                | TypeKind::Generated { arguments, .. } => {
+                | TypeKind::Generated { arguments, .. }
+                | TypeKind::OpaqueResult { arguments, .. } => {
                     pending.extend(arguments.iter().copied());
                 }
                 TypeKind::Function(function) => {
@@ -1071,10 +1101,7 @@ impl TypeInterner {
                     pending.push(*error);
                 }
                 TypeKind::Cursor { collection, .. } => pending.push(*collection),
-                TypeKind::Error
-                | TypeKind::Scalar(_)
-                | TypeKind::Inference(_)
-                | TypeKind::OpaqueResult(_) => {}
+                TypeKind::Error | TypeKind::Scalar(_) | TypeKind::Inference(_) => {}
             }
         }
         Ok(false)
@@ -1208,9 +1235,13 @@ impl TypeInterner {
                 TypeKind::Inference(inference) => {
                     return Err(TypeError::UnresolvedInference(inference));
                 }
-                TypeKind::OpaqueResult(identity) => {
+                TypeKind::OpaqueResult {
+                    identity,
+                    arguments,
+                } => {
                     output.push_str(&identity.canonical_name());
                     output.push_str("#result");
+                    push_application(&mut output, &mut pending, &arguments);
                 }
                 TypeKind::Generated {
                     identity,
@@ -1498,7 +1529,21 @@ impl ScopedTypeUnifier {
                 Self::push_pairs(tasks, left, &left_arguments, right, &right_arguments);
                 Ok(true)
             }
-            (TypeKind::OpaqueResult(left), TypeKind::OpaqueResult(right)) => Ok(left == right),
+            (
+                TypeKind::OpaqueResult {
+                    identity: left_identity,
+                    arguments: left_arguments,
+                },
+                TypeKind::OpaqueResult {
+                    identity: right_identity,
+                    arguments: right_arguments,
+                },
+            ) if left_identity == right_identity
+                && left_arguments.len() == right_arguments.len() =>
+            {
+                Self::push_pairs(tasks, left, &left_arguments, right, &right_arguments);
+                Ok(true)
+            }
             (
                 TypeKind::Generated {
                     identity: left_identity,
@@ -1748,7 +1793,26 @@ impl ScopedTypeUnifier {
                         right_arguments,
                     );
                 }
-                (TypeKind::OpaqueResult(left), TypeKind::OpaqueResult(right)) if left == right => {}
+                (
+                    TypeKind::OpaqueResult {
+                        identity: left_identity,
+                        arguments: left_arguments,
+                    },
+                    TypeKind::OpaqueResult {
+                        identity: right_identity,
+                        arguments: right_arguments,
+                    },
+                ) if left_identity == right_identity
+                    && left_arguments.len() == right_arguments.len() =>
+                {
+                    Self::extend_compatibility_pairs(
+                        &mut pending,
+                        left,
+                        left_arguments,
+                        right,
+                        right_arguments,
+                    );
+                }
                 (
                     TypeKind::Generated {
                         identity: left_identity,
@@ -1815,7 +1879,8 @@ impl ScopedTypeUnifier {
             | TypeKind::Tuple(arguments)
             | TypeKind::Union(arguments)
             | TypeKind::Intrinsic { arguments, .. }
-            | TypeKind::Generated { arguments, .. } => {
+            | TypeKind::Generated { arguments, .. }
+            | TypeKind::OpaqueResult { arguments, .. } => {
                 pending.extend(arguments.iter().map(|ty| pattern.child(*ty)));
             }
             TypeKind::Function(function) => {
@@ -1839,8 +1904,7 @@ impl ScopedTypeUnifier {
             TypeKind::Error
             | TypeKind::Scalar(_)
             | TypeKind::GenericParameter(_)
-            | TypeKind::Inference(_)
-            | TypeKind::OpaqueResult(_) => {}
+            | TypeKind::Inference(_) => {}
         }
     }
 }
@@ -1880,10 +1944,7 @@ impl TypeSubstitution {
                         interner.kind(substituted)?;
                         memo.insert(current, substituted);
                     }
-                    TypeKind::Error
-                    | TypeKind::Scalar(_)
-                    | TypeKind::Inference(_)
-                    | TypeKind::OpaqueResult(_) => {
+                    TypeKind::Error | TypeKind::Scalar(_) | TypeKind::Inference(_) => {
                         memo.insert(current, current);
                     }
                     _ => {
@@ -1930,7 +1991,10 @@ impl TypeSubstitution {
                     constructor,
                     arguments,
                 } => interner.intrinsic(constructor, arguments.into_iter().map(get).collect())?,
-                TypeKind::OpaqueResult(_) => current,
+                TypeKind::OpaqueResult {
+                    identity,
+                    arguments,
+                } => interner.opaque_result(identity, arguments.into_iter().map(get).collect())?,
                 TypeKind::Generated {
                     identity,
                     arguments,
@@ -2137,7 +2201,20 @@ impl InferenceContext {
                 }
                 (TypeKind::GenericParameter(left), TypeKind::GenericParameter(right))
                     if left == right => {}
-                (TypeKind::OpaqueResult(left), TypeKind::OpaqueResult(right)) if left == right => {}
+                (
+                    TypeKind::OpaqueResult {
+                        identity: left_identity,
+                        arguments: left_arguments,
+                    },
+                    TypeKind::OpaqueResult {
+                        identity: right_identity,
+                        arguments: right_arguments,
+                    },
+                ) if left_identity == right_identity
+                    && left_arguments.len() == right_arguments.len() =>
+                {
+                    pending.extend(left_arguments.into_iter().zip(right_arguments));
+                }
                 (
                     TypeKind::Generated {
                         identity: left_identity,
@@ -2209,7 +2286,8 @@ impl InferenceContext {
                 | TypeKind::Tuple(arguments)
                 | TypeKind::Union(arguments)
                 | TypeKind::Intrinsic { arguments, .. }
-                | TypeKind::Generated { arguments, .. } => {
+                | TypeKind::Generated { arguments, .. }
+                | TypeKind::OpaqueResult { arguments, .. } => {
                     pending.extend(arguments.iter().copied());
                 }
                 TypeKind::Function(function) => {
@@ -2223,10 +2301,7 @@ impl InferenceContext {
                     pending.push(*error);
                 }
                 TypeKind::Cursor { collection, .. } => pending.push(*collection),
-                TypeKind::Error
-                | TypeKind::Scalar(_)
-                | TypeKind::GenericParameter(_)
-                | TypeKind::OpaqueResult(_) => {}
+                TypeKind::Error | TypeKind::Scalar(_) | TypeKind::GenericParameter(_) => {}
             }
         }
         Ok(false)
@@ -2284,10 +2359,7 @@ impl InferenceContext {
                     TypeKind::Inference(inference) => {
                         return Err(InferenceError::Unsolved(*inference));
                     }
-                    TypeKind::Error
-                    | TypeKind::Scalar(_)
-                    | TypeKind::GenericParameter(_)
-                    | TypeKind::OpaqueResult(_) => {
+                    TypeKind::Error | TypeKind::Scalar(_) | TypeKind::GenericParameter(_) => {
                         memo.insert(original, original);
                     }
                     _ => {
@@ -2330,7 +2402,8 @@ fn push_type_children(kind: &TypeKind, pending: &mut Vec<(TypeId, bool)>) {
         | TypeKind::Tuple(arguments)
         | TypeKind::Union(arguments)
         | TypeKind::Intrinsic { arguments, .. }
-        | TypeKind::Generated { arguments, .. } => {
+        | TypeKind::Generated { arguments, .. }
+        | TypeKind::OpaqueResult { arguments, .. } => {
             for argument in arguments.iter().rev() {
                 push(*argument);
             }
@@ -2353,8 +2426,7 @@ fn push_type_children(kind: &TypeKind, pending: &mut Vec<(TypeId, bool)>) {
         TypeKind::Error
         | TypeKind::Scalar(_)
         | TypeKind::GenericParameter(_)
-        | TypeKind::Inference(_)
-        | TypeKind::OpaqueResult(_) => {}
+        | TypeKind::Inference(_) => {}
     }
 }
 
@@ -2396,7 +2468,10 @@ fn rebuild_resolved_kind(
         } => interner.intrinsic(constructor, arguments.into_iter().map(get).collect())?,
         TypeKind::GenericParameter(position) => interner.generic_parameter(position)?,
         TypeKind::Inference(inference) => return Err(InferenceError::Unsolved(inference)),
-        TypeKind::OpaqueResult(identity) => interner.opaque_result(identity)?,
+        TypeKind::OpaqueResult {
+            identity,
+            arguments,
+        } => interner.opaque_result(identity, arguments.into_iter().map(get).collect())?,
         TypeKind::Generated {
             identity,
             arguments,
@@ -2696,6 +2771,44 @@ mod tests {
             interner.nominal(symbol(Namespace::Value, "makeUser"), vec![]),
             Err(TypeError::InvalidNominalNamespace(Namespace::Value))
         ));
+    }
+
+    #[test]
+    fn opaque_result_families_use_declaration_identity_and_invariant_arguments() {
+        let mut interner = TypeInterner::default();
+        let int = interner.scalar(ScalarType::Int);
+        let string = interner.scalar(ScalarType::String);
+        let identity = symbol(Namespace::Value, "hide");
+        let integer = interner.opaque_result(identity.clone(), vec![int]).unwrap();
+        let same = interner.opaque_result(identity.clone(), vec![int]).unwrap();
+        let text = interner
+            .opaque_result(identity.clone(), vec![string])
+            .unwrap();
+        let other = interner
+            .opaque_result(symbol(Namespace::Value, "other"), vec![int])
+            .unwrap();
+
+        assert_eq!(integer, same);
+        assert_ne!(integer, text);
+        assert_ne!(integer, other);
+        assert_eq!(
+            interner.canonical(integer).unwrap(),
+            "@9:pkg:app@1::models::value::hide#result[Int]"
+        );
+        assert_eq!(
+            interner.assignability(integer, same).unwrap(),
+            Some(Assignability::Exact)
+        );
+        assert_eq!(interner.assignability(integer, text).unwrap(), None);
+
+        let parameter = interner.generic_parameter(0).unwrap();
+        let template = interner.opaque_result(identity, vec![parameter]).unwrap();
+        assert_eq!(
+            TypeSubstitution::new(vec![string])
+                .apply(&mut interner, template)
+                .unwrap(),
+            text
+        );
     }
 
     #[test]

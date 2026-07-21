@@ -17,8 +17,11 @@ canonical type interner are also implemented. Source type expressions now lower
 to semantic declarations and callable signatures, including aliases, generic
 bounds, normalized unions, and recursive-productivity checks. The typed HIR now
 checks the bootstrap core, including bounded and unbounded generic bodies,
-invariant call inference, explicit specialization, and closed `Discard`
-constraints. Trait declarations now retain a contextual `Self`, required and
+invariant call inference, explicit specialization, and the six closed
+capabilities `Copy`, `Discard`, `Equatable`, `Key`, `Send`, and `Share`. Their
+proof is structural and coinductive over recursive nominal types; generic and
+opaque values expose only the bounds available to their caller. Trait
+declarations now retain a contextual `Self`, required and
 associated methods, default bodies, and the intrinsic `Self: Send` condition of
 async receivers. Defaults are checked once under the trait's binders and may
 call other methods of that same trait without opening global method lookup.
@@ -32,7 +35,8 @@ the unique `Iterator[T]` element for each target with `E1113`. Generic
 implementation bounds then pass the normative size-change termination analysis:
 canonical query matrices are saturated inside trait SCCs, non-decreasing
 idempotent cycles produce `E1112`, and all analysis work is explicitly bounded.
-Constraint selection and static dispatch remain later M4 work. The same HIR covers
+Constraint selection and static dispatch select one coherent implementation
+without a runtime witness or vtable. The same HIR covers
 constants, bindings, functions, inherent methods, blocks, conditionals, loops,
 scalar operators, calls, `Option`,
 `Result`, `fail`, `?`, every pattern form, and exhaustive guarded `match`, with
@@ -43,7 +47,9 @@ HIR. Reachability is explicit: `Never` propagates through structured control
 flow, infinite loops distinguish reachable breaks by loop identity, and
 unreachable statements or operands produce `W1006` without warning cascades.
 Explicit `_ = value`, tuple discard leaves, and fixed discard parameters enforce
-the structural `Discard` contract; terminal `Join` values produce `E1105` even
+the structural `Discard` contract; equality, membership, collection formation,
+map lookup, and async receiver implementations enforce their corresponding
+closed capabilities. Terminal `Join` values fail every closed capability even
 through generic nominal containers.
 
 `CompilationOutput` now retains an immutable semantic snapshot after name

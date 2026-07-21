@@ -546,7 +546,8 @@ fn push_type_children(kind: &TypeKind, pending: &mut Vec<TypeId>) {
         | TypeKind::Tuple(arguments)
         | TypeKind::Union(arguments)
         | TypeKind::Intrinsic { arguments, .. }
-        | TypeKind::Generated { arguments, .. } => {
+        | TypeKind::Generated { arguments, .. }
+        | TypeKind::OpaqueResult { arguments, .. } => {
             pending.extend(arguments.iter().copied());
         }
         TypeKind::Function(function) => {
@@ -563,8 +564,7 @@ fn push_type_children(kind: &TypeKind, pending: &mut Vec<TypeId>) {
         TypeKind::Error
         | TypeKind::Scalar(_)
         | TypeKind::GenericParameter(_)
-        | TypeKind::Inference(_)
-        | TypeKind::OpaqueResult(_) => {}
+        | TypeKind::Inference(_) => {}
     }
 }
 

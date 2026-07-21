@@ -1,5 +1,5 @@
-use std::cell::Cell;
-use std::collections::{BTreeSet, VecDeque};
+use std::cell::{Cell, OnceCell};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 
@@ -79,6 +79,7 @@ pub fn verify_bytecode_with_limits(
         program,
         limits,
         dataflow_steps: Cell::new(0),
+        capabilities: OnceCell::new(),
     }
     .verify()
 }
@@ -87,12 +88,418 @@ struct Verifier<'a> {
     program: &'a BytecodeProgram,
     limits: BytecodeVerificationLimits,
     dataflow_steps: Cell<u64>,
+    capabilities: OnceCell<CapabilityAnalysis>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum ClosedCapability {
+    Copy,
+    Discard,
+    Equatable,
+    Key,
+    Send,
+    Share,
+}
+
+impl ClosedCapability {
+    const ALL: [Self; 6] = [
+        Self::Copy,
+        Self::Discard,
+        Self::Equatable,
+        Self::Key,
+        Self::Send,
+        Self::Share,
+    ];
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapabilityRequirement {
+    possible: bool,
+    parameters: BTreeSet<(u32, ClosedCapability)>,
+}
+
+impl Default for CapabilityRequirement {
+    fn default() -> Self {
+        Self {
+            possible: true,
+            parameters: BTreeSet::new(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct CapabilityNode {
+    possible: bool,
+    dependencies: Vec<(BytecodeTypeId, ClosedCapability)>,
+}
+
+#[derive(Debug)]
+struct CapabilityAnalysis {
+    summaries: BTreeMap<(BytecodeNominalId, ClosedCapability), CapabilityRequirement>,
+}
+
+impl CapabilityAnalysis {
+    fn new(program: &BytecodeProgram) -> Result<Self, BytecodeVerificationError> {
+        let mut summaries = program
+            .nominals
+            .iter()
+            .enumerate()
+            .flat_map(|(index, _)| {
+                let nominal = BytecodeNominalId::new(index as u32);
+                ClosedCapability::ALL.into_iter().map(move |capability| {
+                    ((nominal, capability), CapabilityRequirement::default())
+                })
+            })
+            .collect::<BTreeMap<_, _>>();
+        loop {
+            let mut changes = Vec::new();
+            for (index, nominal) in program.nominals.iter().enumerate() {
+                let nominal_id = BytecodeNominalId::new(index as u32);
+                let roots = nominal_capability_roots(&nominal.shape);
+                for capability in ClosedCapability::ALL {
+                    let next = capability_requirement(program, &roots, capability, &summaries)?;
+                    if summaries[&(nominal_id, capability)] != next {
+                        changes.push(((nominal_id, capability), next));
+                    }
+                }
+            }
+            if changes.is_empty() {
+                break;
+            }
+            for (key, requirement) in changes {
+                summaries.insert(key, requirement);
+            }
+        }
+        Ok(Self { summaries })
+    }
+
+    fn status(
+        &self,
+        program: &BytecodeProgram,
+        root: BytecodeTypeId,
+        capability: ClosedCapability,
+    ) -> Result<bool, BytecodeVerificationError> {
+        let mut nodes = BTreeMap::new();
+        let mut pending = vec![(root, capability)];
+        while let Some(key @ (ty, capability)) = pending.pop() {
+            if nodes.contains_key(&key) {
+                continue;
+            }
+            let mut node = self.node(program, ty, capability)?;
+            node.dependencies.sort_unstable();
+            node.dependencies.dedup();
+            pending.extend(node.dependencies.iter().copied());
+            nodes.insert(key, node);
+        }
+        let mut statuses = nodes
+            .iter()
+            .map(|(key, node)| (*key, node.possible))
+            .collect::<BTreeMap<_, _>>();
+        loop {
+            let mut changed = false;
+            for (key, node) in &nodes {
+                let next = node.possible
+                    && node
+                        .dependencies
+                        .iter()
+                        .all(|dependency| statuses[dependency]);
+                let current = statuses
+                    .get_mut(key)
+                    .expect("every capability node has a status");
+                if *current != next {
+                    *current = next;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        Ok(statuses[&(root, capability)])
+    }
+
+    fn node(
+        &self,
+        program: &BytecodeProgram,
+        ty: BytecodeTypeId,
+        capability: ClosedCapability,
+    ) -> Result<CapabilityNode, BytecodeVerificationError> {
+        let kind = &program
+            .ty(ty)
+            .ok_or_else(|| {
+                BytecodeVerificationError::new(
+                    "capability graph",
+                    format!("references unknown type#{}", ty.index()),
+                )
+            })?
+            .kind;
+        let node = match kind {
+            BytecodeTypeKind::Scalar(scalar) => {
+                fixed_capability(scalar_capability(*scalar, capability))
+            }
+            BytecodeTypeKind::Function(_) => fixed_capability(function_capability(capability)),
+            BytecodeTypeKind::Tuple(items) | BytecodeTypeKind::Union(items) => {
+                same_capability(items, capability)
+            }
+            BytecodeTypeKind::Option(item) => dependent_capability(vec![(*item, capability)]),
+            BytecodeTypeKind::Result { success, error } => {
+                dependent_capability(vec![(*success, capability), (*error, capability)])
+            }
+            BytecodeTypeKind::Intrinsic {
+                constructor,
+                arguments,
+            } => intrinsic_capability(*constructor, arguments, capability),
+            BytecodeTypeKind::Nominal {
+                nominal, arguments, ..
+            } => {
+                let Some(nominal) = nominal else {
+                    return Ok(fixed_capability(false));
+                };
+                let requirement = &self.summaries[&(*nominal, capability)];
+                let mut dependencies = Vec::with_capacity(requirement.parameters.len());
+                for (position, required) in &requirement.parameters {
+                    let Some(argument) = arguments.get(*position as usize) else {
+                        return Ok(fixed_capability(false));
+                    };
+                    dependencies.push((*argument, *required));
+                }
+                CapabilityNode {
+                    possible: requirement.possible,
+                    dependencies,
+                }
+            }
+            BytecodeTypeKind::GenericParameter(_) => fixed_capability(true),
+            BytecodeTypeKind::OpaqueResult { witness, .. } => {
+                dependent_capability(vec![(*witness, capability)])
+            }
+            BytecodeTypeKind::Generated { .. } | BytecodeTypeKind::Cursor { .. } => {
+                fixed_capability(false)
+            }
+        };
+        Ok(node)
+    }
+}
+
+fn capability_requirement(
+    program: &BytecodeProgram,
+    roots: &[BytecodeTypeId],
+    capability: ClosedCapability,
+    summaries: &BTreeMap<(BytecodeNominalId, ClosedCapability), CapabilityRequirement>,
+) -> Result<CapabilityRequirement, BytecodeVerificationError> {
+    let mut requirement = CapabilityRequirement::default();
+    let mut pending = roots
+        .iter()
+        .copied()
+        .map(|ty| (ty, capability))
+        .collect::<Vec<_>>();
+    let mut visited = BTreeSet::new();
+    while let Some(key @ (ty, capability)) = pending.pop() {
+        if !visited.insert(key) {
+            continue;
+        }
+        let kind = &program
+            .ty(ty)
+            .ok_or_else(|| {
+                BytecodeVerificationError::new(
+                    "capability graph",
+                    format!("references unknown type#{}", ty.index()),
+                )
+            })?
+            .kind;
+        match kind {
+            BytecodeTypeKind::Scalar(scalar) => {
+                requirement.possible &= scalar_capability(*scalar, capability);
+            }
+            BytecodeTypeKind::Function(_) => {
+                requirement.possible &= function_capability(capability);
+            }
+            BytecodeTypeKind::Tuple(items) | BytecodeTypeKind::Union(items) => {
+                pending.extend(items.iter().copied().map(|item| (item, capability)));
+            }
+            BytecodeTypeKind::Option(item) => pending.push((*item, capability)),
+            BytecodeTypeKind::Result { success, error } => {
+                pending.push((*success, capability));
+                pending.push((*error, capability));
+            }
+            BytecodeTypeKind::Intrinsic {
+                constructor,
+                arguments,
+            } => {
+                let node = intrinsic_capability(*constructor, arguments, capability);
+                requirement.possible &= node.possible;
+                pending.extend(node.dependencies);
+            }
+            BytecodeTypeKind::Nominal {
+                nominal, arguments, ..
+            } => {
+                let Some(nominal) = nominal else {
+                    requirement.possible = false;
+                    continue;
+                };
+                let summary = &summaries[&(*nominal, capability)];
+                requirement.possible &= summary.possible;
+                for (position, required) in &summary.parameters {
+                    if let Some(argument) = arguments.get(*position as usize) {
+                        pending.push((*argument, *required));
+                    } else {
+                        requirement.possible = false;
+                    }
+                }
+            }
+            BytecodeTypeKind::GenericParameter(position) => {
+                requirement.parameters.insert((*position, capability));
+            }
+            BytecodeTypeKind::OpaqueResult { witness, .. } => {
+                pending.push((*witness, capability));
+            }
+            BytecodeTypeKind::Generated { .. } | BytecodeTypeKind::Cursor { .. } => {
+                requirement.possible = false;
+            }
+        }
+    }
+    Ok(requirement)
+}
+
+fn nominal_capability_roots(shape: &BytecodeNominalShape) -> Vec<BytecodeTypeId> {
+    match shape {
+        BytecodeNominalShape::Newtype { underlying } => vec![*underlying],
+        BytecodeNominalShape::Record { fields } => fields.iter().map(|field| field.ty).collect(),
+        BytecodeNominalShape::Enum { variants } => variants
+            .iter()
+            .flat_map(|variant| match &variant.payload {
+                BytecodeVariantPayload::Unit => Vec::new(),
+                BytecodeVariantPayload::Tuple(items) => items.clone(),
+                BytecodeVariantPayload::Record(fields) => {
+                    fields.iter().map(|field| field.ty).collect()
+                }
+            })
+            .collect(),
+    }
+}
+
+fn fixed_capability(possible: bool) -> CapabilityNode {
+    CapabilityNode {
+        possible,
+        dependencies: Vec::new(),
+    }
+}
+
+fn dependent_capability(dependencies: Vec<(BytecodeTypeId, ClosedCapability)>) -> CapabilityNode {
+    CapabilityNode {
+        possible: true,
+        dependencies,
+    }
+}
+
+fn same_capability(arguments: &[BytecodeTypeId], capability: ClosedCapability) -> CapabilityNode {
+    dependent_capability(
+        arguments
+            .iter()
+            .copied()
+            .map(|argument| (argument, capability))
+            .collect(),
+    )
+}
+
+fn scalar_capability(scalar: BytecodeScalarType, capability: ClosedCapability) -> bool {
+    capability != ClosedCapability::Key
+        || !matches!(
+            scalar,
+            BytecodeScalarType::Float | BytecodeScalarType::Float32
+        )
+}
+
+fn function_capability(capability: ClosedCapability) -> bool {
+    matches!(
+        capability,
+        ClosedCapability::Copy
+            | ClosedCapability::Discard
+            | ClosedCapability::Send
+            | ClosedCapability::Share
+    )
+}
+
+fn intrinsic_capability(
+    constructor: BytecodeIntrinsicType,
+    arguments: &[BytecodeTypeId],
+    capability: ClosedCapability,
+) -> CapabilityNode {
+    match constructor {
+        BytecodeIntrinsicType::Array => {
+            if capability == ClosedCapability::Key {
+                fixed_capability(false)
+            } else {
+                same_capability(arguments, capability)
+            }
+        }
+        BytecodeIntrinsicType::Map => match capability {
+            ClosedCapability::Key => fixed_capability(false),
+            ClosedCapability::Copy => dependent_capability(vec![
+                (arguments[0], ClosedCapability::Key),
+                (arguments[1], ClosedCapability::Copy),
+            ]),
+            ClosedCapability::Discard
+            | ClosedCapability::Equatable
+            | ClosedCapability::Send
+            | ClosedCapability::Share => same_capability(arguments, capability),
+        },
+        BytecodeIntrinsicType::Set => match capability {
+            ClosedCapability::Key => fixed_capability(false),
+            ClosedCapability::Copy => {
+                dependent_capability(vec![(arguments[0], ClosedCapability::Key)])
+            }
+            ClosedCapability::Discard
+            | ClosedCapability::Equatable
+            | ClosedCapability::Send
+            | ClosedCapability::Share => same_capability(arguments, capability),
+        },
+        BytecodeIntrinsicType::Range => {
+            if matches!(
+                capability,
+                ClosedCapability::Equatable | ClosedCapability::Key
+            ) {
+                fixed_capability(false)
+            } else {
+                same_capability(arguments, capability)
+            }
+        }
+        BytecodeIntrinsicType::Ref => match capability {
+            ClosedCapability::Copy
+            | ClosedCapability::Discard
+            | ClosedCapability::Equatable
+            | ClosedCapability::Key => fixed_capability(true),
+            ClosedCapability::Send | ClosedCapability::Share => dependent_capability(vec![
+                (arguments[0], ClosedCapability::Send),
+                (arguments[0], ClosedCapability::Share),
+            ]),
+        },
+        BytecodeIntrinsicType::Pointer => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Copy | ClosedCapability::Discard
+        )),
+        BytecodeIntrinsicType::Join => fixed_capability(false),
+        BytecodeIntrinsicType::Command | BytecodeIntrinsicType::Pipeline => {
+            fixed_capability(matches!(
+                capability,
+                ClosedCapability::Copy
+                    | ClosedCapability::Discard
+                    | ClosedCapability::Send
+                    | ClosedCapability::Share
+            ))
+        }
+        BytecodeIntrinsicType::NumericConversionError => fixed_capability(true),
+    }
 }
 
 impl Verifier<'_> {
     fn verify(&self) -> Result<(), BytecodeVerificationError> {
         self.verify_types()?;
+        self.verify_opaque_types()?;
         self.verify_nominals()?;
+        self.capabilities
+            .set(CapabilityAnalysis::new(self.program)?)
+            .expect("capability analysis is initialized once");
+        self.verify_type_formations()?;
         self.verify_callables()?;
         self.verify_constants()?;
         self.verify_function_implementations()?;
@@ -100,6 +507,181 @@ impl Verifier<'_> {
             self.verify_function(BytecodeFunctionId::new(index as u32), function)?;
         }
         Ok(())
+    }
+
+    fn capability(
+        &self,
+        ty: BytecodeTypeId,
+        capability: ClosedCapability,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        self.capabilities
+            .get()
+            .expect("capabilities are initialized after type verification")
+            .status(self.program, ty, capability)
+            .map_err(|error| BytecodeVerificationError::new(context, error.message))
+    }
+
+    fn verify_type_formations(&self) -> Result<(), BytecodeVerificationError> {
+        for (index, ty) in self.program.types.iter().enumerate() {
+            let BytecodeTypeKind::Intrinsic {
+                constructor,
+                arguments,
+            } = &ty.kind
+            else {
+                continue;
+            };
+            let requirement = match constructor {
+                BytecodeIntrinsicType::Map => {
+                    Some((arguments[0], ClosedCapability::Key, "Map key"))
+                }
+                BytecodeIntrinsicType::Set => {
+                    Some((arguments[0], ClosedCapability::Key, "Set key"))
+                }
+                BytecodeIntrinsicType::Ref => {
+                    Some((arguments[0], ClosedCapability::Discard, "Ref target"))
+                }
+                BytecodeIntrinsicType::Array
+                | BytecodeIntrinsicType::Range
+                | BytecodeIntrinsicType::Pointer
+                | BytecodeIntrinsicType::Join
+                | BytecodeIntrinsicType::Command
+                | BytecodeIntrinsicType::Pipeline
+                | BytecodeIntrinsicType::NumericConversionError => None,
+            };
+            if let Some((required, capability, label)) = requirement {
+                let context = format!("type#{index}");
+                if !self.capability(required, capability, &context)? {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        format!("{label} does not satisfy its closed capability contract"),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_opaque_types(&self) -> Result<(), BytecodeVerificationError> {
+        let mut families = BTreeSet::new();
+        let mut opaque = Vec::new();
+        let mut adjacency = vec![Vec::new(); self.program.types.len()];
+        for (index, ty) in self.program.types.iter().enumerate() {
+            let BytecodeTypeKind::OpaqueResult {
+                identity,
+                arguments,
+                witness,
+            } = &ty.kind
+            else {
+                continue;
+            };
+            let context = format!("type#{index}");
+            if !families.insert((identity.as_str(), arguments.as_slice())) {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "opaque result family and arguments are duplicated",
+                ));
+            }
+            for root in arguments.iter().chain([witness]) {
+                if self.type_contains_generic_parameter(*root, &context)? {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "executable opaque result retains a generic parameter",
+                    ));
+                }
+            }
+            if self.is_scalar(*witness, BytecodeScalarType::Never) {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "opaque result witness is Never",
+                ));
+            }
+            let id = BytecodeTypeId::new(index as u32);
+            opaque.push(id);
+            adjacency[index] = self.opaque_dependencies(*witness, &context)?;
+        }
+
+        let mut state = vec![0_u8; self.program.types.len()];
+        for start in opaque {
+            if state[start.index() as usize] != 0 {
+                continue;
+            }
+            let mut pending = vec![(start, false)];
+            while let Some((current, expanded)) = pending.pop() {
+                let index = current.index() as usize;
+                if expanded {
+                    state[index] = 2;
+                    continue;
+                }
+                match state[index] {
+                    2 => continue,
+                    1 => {
+                        return Err(BytecodeVerificationError::new(
+                            format!("type#{}", start.index()),
+                            "opaque result representations form a cycle",
+                        ));
+                    }
+                    _ => {}
+                }
+                state[index] = 1;
+                pending.push((current, true));
+                for dependency in adjacency[index].iter().rev() {
+                    let dependency_index = dependency.index() as usize;
+                    if state[dependency_index] == 1 {
+                        return Err(BytecodeVerificationError::new(
+                            format!("type#{}", start.index()),
+                            "opaque result representations form a cycle",
+                        ));
+                    }
+                    if state[dependency_index] == 0 {
+                        pending.push((*dependency, false));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn type_contains_generic_parameter(
+        &self,
+        root: BytecodeTypeId,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        let mut pending = vec![root];
+        let mut visited = BTreeSet::new();
+        while let Some(ty) = pending.pop() {
+            if !visited.insert(ty) {
+                continue;
+            }
+            let kind = &self.ty(ty, context)?.kind;
+            if matches!(kind, BytecodeTypeKind::GenericParameter(_)) {
+                return Ok(true);
+            }
+            pending.extend(bytecode_type_children(kind));
+        }
+        Ok(false)
+    }
+
+    fn opaque_dependencies(
+        &self,
+        witness: BytecodeTypeId,
+        context: &str,
+    ) -> Result<Vec<BytecodeTypeId>, BytecodeVerificationError> {
+        let mut dependencies = BTreeSet::new();
+        let mut visited = BTreeSet::new();
+        let mut pending = vec![witness];
+        while let Some(ty) = pending.pop() {
+            if !visited.insert(ty) {
+                continue;
+            }
+            let kind = &self.ty(ty, context)?.kind;
+            if matches!(kind, BytecodeTypeKind::OpaqueResult { .. }) {
+                dependencies.insert(ty);
+            } else {
+                pending.extend(bytecode_type_children(kind));
+            }
+        }
+        Ok(dependencies.into_iter().collect())
     }
 
     fn verify_types(&self) -> Result<(), BytecodeVerificationError> {
@@ -192,13 +774,19 @@ impl Verifier<'_> {
                     }
                     self.verify_type_ids(arguments, &context)?;
                 }
-                BytecodeTypeKind::OpaqueResult(identity) => {
+                BytecodeTypeKind::OpaqueResult {
+                    identity,
+                    arguments,
+                    witness,
+                } => {
                     if identity.is_empty() {
                         return Err(BytecodeVerificationError::new(
                             &context,
                             "opaque result identity is empty",
                         ));
                     }
+                    self.verify_type_ids(arguments, &context)?;
+                    self.ty(*witness, &context)?;
                 }
                 BytecodeTypeKind::Generated {
                     identity,
@@ -407,7 +995,7 @@ impl Verifier<'_> {
                 let callable = self.callable(*callable, context)?;
                 self.verify_type_ids(arguments, context)?;
                 if arguments.len() != callable.generic_arity as usize
-                    || !self.type_matches_substitution(
+                    || !self.representation_matches_substitution(
                         callable.function_type,
                         value.ty,
                         arguments,
@@ -668,19 +1256,63 @@ impl Verifier<'_> {
         arguments: &[BytecodeTypeId],
         context: &str,
     ) -> Result<bool, BytecodeVerificationError> {
+        self.type_matches_substitution_with_representation(
+            template, actual, arguments, false, context,
+        )
+    }
+
+    fn representation_matches_substitution(
+        &self,
+        template: BytecodeTypeId,
+        actual: BytecodeTypeId,
+        arguments: &[BytecodeTypeId],
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        self.type_matches_substitution_with_representation(
+            template, actual, arguments, true, context,
+        )
+    }
+
+    fn type_matches_substitution_with_representation(
+        &self,
+        template: BytecodeTypeId,
+        actual: BytecodeTypeId,
+        arguments: &[BytecodeTypeId],
+        reveal_opaque: bool,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
         let mut pending = vec![(template, actual)];
+        let mut visited = BTreeSet::new();
         while let Some((template, actual)) = pending.pop() {
             if template == actual {
                 continue;
             }
+            if !visited.insert((template, actual)) {
+                return Ok(false);
+            }
             let template_kind = &self.ty(template, context)?.kind;
             if let BytecodeTypeKind::GenericParameter(position) = template_kind {
-                if arguments.get(*position as usize) != Some(&actual) {
+                let Some(substituted) = arguments.get(*position as usize).copied() else {
+                    return Ok(false);
+                };
+                if reveal_opaque {
+                    pending.push((substituted, actual));
+                } else if substituted != actual {
                     return Ok(false);
                 }
                 continue;
             }
             let actual_kind = &self.ty(actual, context)?.kind;
+            if reveal_opaque {
+                if let BytecodeTypeKind::OpaqueResult { witness, .. } = template_kind {
+                    pending.push((*witness, actual));
+                    continue;
+                }
+                if let BytecodeTypeKind::OpaqueResult { witness, .. } = actual_kind {
+                    pending.push((template, *witness));
+                    continue;
+                }
+            }
             match (template_kind, actual_kind) {
                 (BytecodeTypeKind::Scalar(left), BytecodeTypeKind::Scalar(right))
                     if left == right => {}
@@ -749,8 +1381,23 @@ impl Verifier<'_> {
                     }
                     pending.push((left.outcome, right.outcome));
                 }
-                (BytecodeTypeKind::OpaqueResult(left), BytecodeTypeKind::OpaqueResult(right))
-                    if left == right => {}
+                (
+                    BytecodeTypeKind::OpaqueResult {
+                        identity: left_identity,
+                        arguments: left,
+                        witness: left_witness,
+                    },
+                    BytecodeTypeKind::OpaqueResult {
+                        identity: right_identity,
+                        arguments: right,
+                        witness: right_witness,
+                    },
+                ) if left_identity == right_identity
+                    && left.len() == right.len()
+                    && left_witness == right_witness =>
+                {
+                    pending.extend(left.iter().copied().zip(right.iter().copied()));
+                }
                 (
                     BytecodeTypeKind::Generated {
                         identity: left_identity,
@@ -1171,7 +1818,7 @@ impl Verifier<'_> {
                     self.function_type(function, *argument, context)?;
                 }
                 if arguments.len() != callable.generic_arity as usize
-                    || !self.type_matches_substitution(
+                    || !self.representation_matches_substitution(
                         callable.function_type,
                         operand.ty,
                         arguments,
@@ -1584,7 +2231,7 @@ impl Verifier<'_> {
             | BytecodeBinaryOperator::Greater
             | BytecodeBinaryOperator::GreaterEqual => left_scalar.is_some_and(is_relational),
             BytecodeBinaryOperator::Equal | BytecodeBinaryOperator::NotEqual => {
-                left_scalar.is_some_and(|scalar| scalar != BytecodeScalarType::Never)
+                self.capability(left, ClosedCapability::Equatable, context)?
             }
             BytecodeBinaryOperator::LogicalAnd | BytecodeBinaryOperator::LogicalOr => {
                 left_scalar == Some(BytecodeScalarType::Bool)
@@ -1662,6 +2309,9 @@ impl Verifier<'_> {
         if self.is_scalar(actual, BytecodeScalarType::Never) {
             return Ok(Some(BytecodeCoercion::Diverging));
         }
+        if self.opaque_coercion_matches(actual, expected, context)? {
+            return Ok(Some(BytecodeCoercion::Opaque));
+        }
         if let BytecodeTypeKind::Union(expected_members) = &self.ty(expected, context)?.kind {
             let actual_members = match &self.ty(actual, context)?.kind {
                 BytecodeTypeKind::Union(members) => members.as_slice(),
@@ -1683,6 +2333,41 @@ impl Verifier<'_> {
             return Ok(Some(BytecodeCoercion::OptionLift));
         }
         Ok(None)
+    }
+
+    fn opaque_coercion_matches(
+        &self,
+        actual: BytecodeTypeId,
+        expected: BytecodeTypeId,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        if matches!(
+            &self.ty(expected, context)?.kind,
+            BytecodeTypeKind::OpaqueResult { witness, .. } if *witness == actual
+        ) {
+            return Ok(true);
+        }
+        let (
+            BytecodeTypeKind::Result {
+                success: actual_success,
+                error: actual_error,
+            },
+            BytecodeTypeKind::Result {
+                success: expected_success,
+                error: expected_error,
+            },
+        ) = (
+            &self.ty(actual, context)?.kind,
+            &self.ty(expected, context)?.kind,
+        )
+        else {
+            return Ok(false);
+        };
+        Ok(actual_error == expected_error
+            && matches!(
+                &self.ty(*expected_success, context)?.kind,
+                BytecodeTypeKind::OpaqueResult { witness, .. } if witness == actual_success
+            ))
     }
 
     fn verify_numeric_conversion(
@@ -1753,6 +2438,18 @@ impl Verifier<'_> {
         if item != expected || !self.is_scalar(result, BytecodeScalarType::Bool) {
             return Err(rvalue_error(context));
         }
+        let required = match kind {
+            BytecodeContainmentKind::Array => Some(ClosedCapability::Equatable),
+            BytecodeContainmentKind::MapKey | BytecodeContainmentKind::Set => {
+                Some(ClosedCapability::Key)
+            }
+            BytecodeContainmentKind::Range | BytecodeContainmentKind::StringChar => None,
+        };
+        if let Some(capability) = required
+            && !self.capability(expected, capability, context)?
+        {
+            return Err(rvalue_error(context));
+        }
         Ok(())
     }
 
@@ -1780,6 +2477,9 @@ impl Verifier<'_> {
                 if access == BytecodeIndexAccess::MapEntry {
                     Ok(value)
                 } else {
+                    if !self.capability(value, ClosedCapability::Copy, context)? {
+                        return Err(projection_error(context));
+                    }
                     self.find_type(
                         |kind| matches!(kind, BytecodeTypeKind::Option(item) if *item == value),
                         context,
@@ -2864,6 +3564,28 @@ fn scalar_kind(ty: &BytecodeType) -> Option<BytecodeScalarType> {
     match ty.kind {
         BytecodeTypeKind::Scalar(scalar) => Some(scalar),
         _ => None,
+    }
+}
+
+fn bytecode_type_children(kind: &BytecodeTypeKind) -> Vec<BytecodeTypeId> {
+    match kind {
+        BytecodeTypeKind::Nominal { arguments, .. }
+        | BytecodeTypeKind::Tuple(arguments)
+        | BytecodeTypeKind::Union(arguments)
+        | BytecodeTypeKind::Intrinsic { arguments, .. }
+        | BytecodeTypeKind::Generated { arguments, .. }
+        | BytecodeTypeKind::OpaqueResult { arguments, .. } => arguments.clone(),
+        BytecodeTypeKind::Function(function) => function
+            .parameters
+            .iter()
+            .map(|parameter| parameter.ty)
+            .chain(function.variadic)
+            .chain([function.outcome])
+            .collect(),
+        BytecodeTypeKind::Option(item) => vec![*item],
+        BytecodeTypeKind::Result { success, error } => vec![*success, *error],
+        BytecodeTypeKind::Cursor { collection, .. } => vec![*collection],
+        BytecodeTypeKind::Scalar(_) | BytecodeTypeKind::GenericParameter(_) => Vec::new(),
     }
 }
 

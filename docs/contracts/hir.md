@@ -1,9 +1,8 @@
 # Semantic and typed HIR contract
 
-**Status:** bootstrap declarations, trait declarations/defaults, explicit
-implementation contracts and orphan rules, typed expressions, generic
-specialization and `Discard` constraints, patterns, assignment, discard,
-structured control flow, calls, semantic occurrences, and verified MIR
+**Status:** bootstrap declarations, typed expressions, generic specialization,
+static trait selection, declaration-owned opaque results, patterns, assignment,
+discard, structured control flow, calls, semantic occurrences, and verified MIR
 admission implemented
 
 ## Boundary
@@ -26,7 +25,8 @@ The output owns:
   method contract;
 - receiver and parameter modes, including the body-visible `Array[T]` type of
   a variadic parameter;
-- declaration-stable identities for opaque results;
+- declaration-stable opaque-result identities, normalized public bounds, family
+  arguments, and one compiler-private witness per checked declaration;
 - a source occurrence map from complete written type expressions to their
   lowered `TypeId`;
 - typed constant initializers, their normalized compile-time values, and
@@ -44,13 +44,13 @@ The output owns:
 The checker deliberately leaves its completion flag false when it encounters a
 surface whose semantics belongs to an unfinished phase. It checks bounded and
 unbounded generic function bodies, invariant call inference, explicit
-specialization, trait default bodies, same-trait receiver calls, and the closed
-structural `Discard` constraint. Exact implementation bodies are checked as
-ordinary callables after their contract is admitted. Proof of other intrinsic
-capabilities, user/external trait constraints, calls selected through an
-implementation, closures, string interpolation through `Display`, `defer`, ownership
-availability, and trait-provided iteration remain explicit later boundaries
-rather than receiving provisional semantics.
+specialization, static source/prelude trait selection, declaration-owned opaque
+results, trait default bodies, exact implementation bodies, trait-provided
+iteration, and the closed structural capabilities `Copy`, `Discard`,
+`Equatable`, `Key`, `Send`, and `Share`. Concrete external implementations,
+closures and their callable capabilities, string interpolation through
+`Display`, `defer`, ownership availability, and executable async bodies remain
+explicit later boundaries rather than receiving provisional semantics.
 
 ## Typed expression invariants
 
@@ -84,7 +84,8 @@ The implemented bootstrap subset includes:
 - prefix and closed scalar binary operators, discrete ranges, membership,
   direct and inherent calls, named and variadic arguments, and parameter modes;
 - inferred or explicit generic function specialization, including closed
-  `Discard` obligations and forwarding through an enclosing generic binder;
+  intrinsic-capability obligations and forwarding through an enclosing generic
+  binder;
 - `some`, `ok`, `err`, implicit callable-success lifting, `fail`, and postfix
   `?` over both `Option` and `Result`;
 - exact error propagation, injection into a union, and closed union-subset
@@ -97,8 +98,13 @@ The implemented bootstrap subset includes:
   record `with` updates; nominal fields, tuple slots, array indices and slices;
   and map lookup/entry projections with instantiated types and value/place
   categories;
+- opaque success results on free, inherent, and associated functions, including
+  generic families, an optional exterior error channel, exact witness inference,
+  published trait use, and explicit representation-sealing coercions;
 - map literals carrying an explicit dynamic-duplicate policy derived from the
   value type's closed `Discard` status;
+- formation checks requiring `Map[K, V]` and `Set[K]` keys to satisfy `Key` and
+  `Ref[T]` targets to satisfy `Discard`, in declarations and body-local types;
 - dedicated runtime `panic`, variadic `assert`, and provisional typed
   `std.console.print` operations rather than unresolved ordinary calls;
 - a nonempty source representation of every `assert` condition, retained for
@@ -112,8 +118,9 @@ The implemented bootstrap subset includes:
   and
 - precise `Never` propagation through blocks, contextual coercions, calls,
   `if`, `match`, and loops, including mandatory `W1006` diagnostics; and
-- explicit discard with a closed structural `Discard` proof for the implemented
-  type subset.
+- explicit discard, structural equality, collection membership, map lookup, and
+  async receiver implementations checked against the common closed-capability
+  proof.
 
 A fallible callable is checked against two related expectations: its logical
 success type and its complete `Result` type. A success expression receives one
@@ -121,10 +128,13 @@ explicit `ResultOk` node. An expression already having the complete result type
 is retained unchanged, preventing double wrapping. Error propagation stores its
 exact widening class for MIR.
 
-Unsupported nominal iterator sources are deferred until trait resolution;
-intrinsically invalid sources such as an integer receive `E1206`. This avoids
-rejecting a future-valid `Iterator[T]` implementation while keeping the
-bootstrap boundary observable through the completion flag.
+Iteration over `Array`, `Map`, `Set`, `Range`, and `String` records the closed
+intrinsic protocol and its exact element type. Every other source must satisfy
+one visible `Iterator[T]` assumption or the unique admitted `Iterator[T]`
+implementation for its target. The functional target-to-element rule derives
+`T`, and HIR stores a `Trait` iteration protocol containing both that element
+and the exact `fn(mut Self): T?` type. A source with neither protocol receives
+`E1206`; it is no longer accepted through an incomplete bootstrap path.
 
 Call arguments remain in source evaluation order while each HIR argument stores
 its resolved receiver, fixed-parameter, variadic-element, or variadic-spread
@@ -161,10 +171,9 @@ Each default body is checked once with rigid trait parameters and contextual
 same trait; it does not search unrelated traits or concrete implementations.
 Both inferred calls such as `self.choose(value)` and explicit calls such as
 `self.choose[Int](value)` produce a complete `SpecializedFunction` argument
-vector. This is declaration checking, not dispatch. Implementation validation
-has separate contract and program-wide coherence admission passes. Qualified
-trait calls, constraint-visible methods, and selection of a concrete
-implementation remain separate operations.
+vector. This declaration-time lookup remains distinct from the static dispatch
+performed for an instantiated call. Implementation validation has separate
+contract and program-wide coherence admission passes.
 
 Implementation declarations are indexed by stable logical source identity
 (`SourceId`, module path, logical path, then start byte), never by request-local
@@ -243,11 +252,82 @@ The admission verifier independently reconstructs each expected signature and
 method-generic bound set from the source or prelude trait. It also rechecks
 orphan ownership, deterministic IDs, generic prefixes, required/default
 coverage, table/callable correspondence, receiver metadata, and the propagated
-`Self: Send` requirement. The structural proof that a concrete target actually
-satisfies `Send` belongs to CAP-001; the obligation is retained now rather than
-silently discarded. The verifier also independently reruns ordinary and
+`Self: Send` requirement. The common capability engine proves that every
+concrete implementation target satisfies `Send`; the same implicit bound is
+available while checking a generic caller and when an opaque result publishes
+such a trait. The verifier independently repeats that proof and also reruns ordinary and
 `Iterator[T]` coherence and size-change termination over the admitted table.
-TRAIT-005 owns selection, qualified calls, and static dispatch.
+
+## Static trait selection and calls
+
+Method syntax never scans the program-wide implementation table by name.
+Lookup first prefers an inherent method, then the current trait's own members
+while checking a default, and finally methods supplied by exact trait
+assumptions visible on the receiver type. Two visible constraints providing the
+same name produce `E1004` and require a qualified call. Source traits can be
+qualified through their resolved module path; `Display.display(value)` and
+`Iterator[T].next(mut value)` are the corresponding prelude forms.
+
+Every qualified call constructs one canonical trait query after closing trait,
+hidden `Self`, and method-local arguments. Constraint calls reuse their already
+canonical assumption. A query succeeds from an exact visible assumption or by
+selecting the unique coherent implementation and recursively proving its
+substituted header bounds. Missing evidence produces `E1105`; re-entering an
+admitted query or observing two candidates is an internal invariant failure,
+because coherence and size-change termination have already been proved.
+
+HIR retains source-trait calls as complete specialized member operands and
+uses `PreludeTraitFunction` for the language-owned `Display.display` and
+`Iterator.next` contracts. Neither form contains a runtime witness, vtable, or
+type pack. The admission verifier checks canonical complete arguments and the
+exact closed function type. A `for` using `Iterator[T]` retains the same
+contract in its `Trait` iteration protocol, so MIR never repeats lookup or
+infers the yielded element.
+
+## Opaque static results
+
+An admitted `impl Bound` annotation belongs to exactly one free, inherent, or
+associated function declaration. It is not a general type expression: using it
+in a parameter, field, alias, function-value type, closure, trait member, or
+trait implementation member is rejected as `E0004`. An async declaration may
+retain the same opaque contract even though executable async bodies belong to
+M7.
+
+The type interner represents the result as one nominal family keyed by the
+callable's stable `SymbolIdentity` plus its invariant generic arguments. The
+ordinary outcome is that opaque type; a written `! E` wraps it as
+`Result[Opaque, E]` without hiding the error channel. Two calls at the same
+specialization therefore share one identity, while distinct concrete generic
+arguments remain distinct opaque types.
+
+While checking the declaring body, HIR uses one body-local inference variable
+for the concrete success witness. Every reachable normal `return` and final
+success expression must equate exactly with that witness after aliases. No
+option lift, union widening, function coercion, or other implicit conversion is
+allowed to choose a common representation. `Never` paths and fallible `err`
+paths do not contribute a witness, and at least one reachable normal success
+path must do so. Contextual empty `Array`, `Map`, and `Set` literals may infer
+their element types through this same single constraint system. An unsolved,
+recursive, divergent-only, error-only, or inconsistent body produces `E1117`.
+
+After inference, the checker proves every normalized published bound against
+the concrete witness under the declaration's own generic assumptions. The
+closed implication lattice and structural engine apply to all six intrinsic
+capabilities; source traits, `Display`, and `Iterator[T]` use the ordinary
+static selection proof. A published source trait with an async receiver also
+implies `Send`. The contract itself must publish or imply `Discard`. Callers
+retain only the opaque
+identity, generic arguments, exterior error, and published bounds: the witness
+does not participate in ordinary name or inherent-method lookup.
+
+Every successful exit contains an explicit `Assignability::Opaque` coercion
+from the witness to the declared opaque success. This is a compile-time seal,
+not an ordinary assignability rule. The admission verifier independently checks
+declaration identity, family arguments, normalized duplicate-free bounds, the
+single finite witness, exact seals, reachable success, and absence of direct or
+mutual opaque representation cycles. It then re-proves all published bounds
+without trusting the expression checker's result. Public HIR access exposes the
+contract but keeps the witness accessor crate-private.
 
 ## Generic constraints
 
@@ -258,18 +338,27 @@ local generic or inference variable cannot escape as an apparently closed
 obligation. Each attempted proof consumes the request's trait-obligation
 budget.
 
-`Discard` is the first executable constraint because its closed structural
-proof already exists. A concrete argument must satisfy that proof; a generic
-argument satisfies it only when its enclosing binder has `Discard`, `Copy`, or
-`Key`, whose contracts imply discardability. Missing forwarded bounds and
+All six intrinsic constraints use one closed structural proof. A concrete
+argument must satisfy the requested capability; a rigid generic argument must
+publish a bound that directly or transitively implies it. `Copy` implies
+`Discard`, while `Key` implies `Copy`, `Equatable`, and therefore `Discard`.
+There are no other intrinsic implications. Missing forwarded bounds and
 terminal `Join` values produce `E1105` for explicit calls, inferred calls, and
 specialized function values alike.
 
-Other intrinsic capability bounds and source/external trait bounds remain
-normalized in HIR and consume the same budget, but mark the semantic output
-incomplete when an instantiation needs proof. CAP-001 and TRAIT-005 own those
-proof rules. The driver therefore cannot run or report a
-complete check for such an instantiation by silently assuming the bound.
+Source traits and the open prelude traits `Display` and `Iterator[T]` use the
+static proof and selection rules above. An exact enclosing bound is sufficient
+for a rigid generic parameter; concrete types require an admitted
+implementation, including all recursively substituted header bounds. External
+trait assumptions can likewise be forwarded, but no concrete external
+implementation is fabricated locally. A source trait containing an async
+receiver method implies `Self: Send`; that implication is available to generic
+callers and opaque contracts and is required of every concrete implementation
+target.
+
+`Call`, `CallMut`, and `CallOnce` are not part of this structural engine. They
+remain deferred until closure bodies and capture modes can determine them; the
+driver never treats a deferred callable capability as satisfied.
 
 Range HIR distinguishes exclusive and inclusive ends and accepts only identical
 integer or `Char` endpoint types. Membership HIR records whether it observes an
@@ -373,40 +462,62 @@ terminal transfers remains an ownership/MIR responsibility: the retained place
 tree is the input to that later proof or runtime check. Likewise, a discard leaf
 inside a multiple assignment is represented at its exact tuple position.
 
-## Explicit discard
+## Closed intrinsic capabilities
+
+One engine derives `Copy`, `Discard`, `Equatable`, `Key`, `Send`, and `Share`.
+Its source-level matrix is:
+
+| Type | Closed capability conditions |
+| --- | --- |
+| Scalars, `Unit`, `Never` | All six, except `Float` and `Float32` are not `Key` |
+| `fn(...)` | `Copy`, `Discard`, `Send`, and `Share`; not `Equatable` or `Key` |
+| Tuple, union, `Option`, `Result`, nominal value | Componentwise for the requested capability |
+| `Array[T]` | Componentwise except that an array is never `Key` |
+| `Map[K, V]` | `Copy` when `K: Key` and `V: Copy`; `Discard`, `Equatable`, `Send`, and `Share` componentwise; never `Key` |
+| `Set[K]` | `Copy` when `K: Key`; other non-`Key` capabilities componentwise; never `Key` |
+| `Range[T]` | Componentwise `Copy`, `Discard`, `Send`, and `Share`; not `Equatable` or `Key` |
+| `Ref[T]` | Always `Copy`, `Discard`, `Equatable`, and `Key` once well formed; `Send` and `Share` both require `T: Send + Share` |
+| `Pointer[T]` | `Copy` and `Discard` only |
+| `Join[T, E]` | None of the six |
+| `Command`, `Pipeline` | `Copy`, `Discard`, `Send`, and `Share` |
+| `NumericConversionError` | All six |
+
+Nominal summaries are symbolic formulas over their generic parameter positions.
+They are solved coinductively with a deterministic worklist before concrete
+arguments are inspected. This handles mutual recursion and recursive argument
+transformations without expanding an infinite family of type instances. An
+opaque result exposes only capabilities published or implied by its bounds; its
+private witness cannot leak extra facts to callers. Generated closure
+environments and cursors remain `Deferred` until their owning tasks publish
+their concrete contracts. A source-less nominal is likewise deferred.
+
+The checker stores `Satisfied`, `Unsatisfied`, or `Deferred` for all six columns
+of every interned type in an arena aligned with the type interner. The HIR
+admission verifier reconstructs the summaries, recomputes the complete table,
+and independently rechecks every operation that consumes it. MIR receives the
+verified decision; the bytecode verifier derives the capabilities needed by
+closed executable operations again from its own type and nominal catalogs.
+
+Type formation requires `K: Key` for every `Map[K, V]` and `Set[K]`, and
+`T: Discard` for every `Ref[T]`, including declaration signatures, nominal
+fields, generic definitions, and inferred body-local types. Equality requires
+identical `Equatable` operand types. Array membership requires an `Equatable`
+element; map and set membership require a `Key`; map lookup additionally
+requires `V: Copy`. Dynamic duplicate replacement in map literals remains
+available only when the displaced value is `Discard`.
 
 A standalone `_ = expression` is `HirStatement::Discard`, not an assignment to
 a fabricated location. A `_` inside multiple assignment remains a discard leaf
 because it participates in tuple destructuring. Both forms evaluate their value
 in the ordinary written order and require `Discard`; a non-`Unit` expression
-statement without either form receives `E1303`.
+statement without either form receives `E1303`. A fixed discard parameter passed
+by value uses the same proof; `ref`, `mut`, and `var` parameters retain only
+their borrow contract. In particular, a hosted fallible `main` admits its error
+type only when its `Discard` status is `Satisfied`.
 
-The bootstrap checker derives `Discard` structurally for scalars, functions,
-tuples, options, results, unions, intrinsic collections, newtypes, records, and
-enums. `Join[T, E]` is terminal and therefore makes every containing value fail
-the proof. `Ref`, `Pointer`, `Command`, `Pipeline`, and the intrinsic numeric
-conversion error are directly discardable under their well-formedness
-contracts.
-
-Nominal summaries are symbolic formulas over their generic parameter positions.
-They are solved coinductively with a deterministic worklist before concrete
-arguments are inspected. This handles mutual recursion and recursive argument
-transformations without expanding an infinite family of type instances. A
-fixed discard parameter passed by value uses the same proof; `ref`, `mut`, and
-`var` discard parameters retain only their borrow contract. Generic bounds
-`Discard`, `Copy`, and `Key` prove the requirement, while an unbounded generic
-parameter produces `E1105`.
-
-The resulting status for every interned type is stored in an arena aligned with
-the type interner. Later target validation consumes this semantic fact rather
-than duplicating the structural algorithm; in particular, a hosted fallible
-`main` admits its error type only when the status is `Satisfied`.
-
-Opaque results, generated closure environments, cursors, and source-less
-nominals remain deferred until their published capability contracts exist.
-General move tracking, implicit scope-end obligations, and terminal operations
-remain the ownership phase's responsibility; the checker does not infer them
-from successful explicit discard.
+General move tracking, implicit scope-end obligations, callable capabilities,
+and terminal operations remain their owning phases' responsibility; successful
+closed-capability proof does not fabricate ownership availability or cleanup.
 
 ## Declaration ordering
 
@@ -556,10 +667,21 @@ implicit-result rejection, direct and nested `Join`, generic nominal
 substitution, recursive and argument-transforming declarations, 512 nominal
 layers, multiple-assignment leaves, borrow-only discard parameters, generic
 bounds, constraint forwarding, obligation budgets, and public-driver `E1105`
-propagation. Dedicated admission tests mutate
+propagation. Capability regressions cover the complete intrinsic matrix,
+implication forwarding, recursive nominal equality and keys, opaque bounds,
+async-trait `Self: Send`, collection and reference formation, equality,
+membership, map lookup, and order-insensitive map/set runtime equality.
+Dedicated admission tests mutate
 otherwise valid HIR to prove rejection of incomplete/recovery state,
 noncanonical types, non-topological edges, misaligned flow metadata, missing
 local types, invalid value categories, incomplete trait tables, shifted generic
 arities, inconsistent default-body or `Self: Send` metadata, broken
 implementation IDs, incomplete implementation contracts, forged method keys,
-and signatures not derivable from their trait.
+signatures not derivable from their trait, corrupted capability rows, and
+capability-invalid operations.
+Opaque-result regressions additionally cover forbidden syntax positions,
+free/inherent/associated identity, generic family specialization, fallible
+success and error channels, contextual empty containers, strict witness
+equality, unreachable and error-only paths, closed `Discard` derivation,
+source/prelude and intrinsic bounds, private representation, async contract retention,
+representation cycles, and HIR mutations of bounds and seals.

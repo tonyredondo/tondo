@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::diagnostics::{Diagnostic, DiagnosticCode, PrimaryLocation, Related, Severity};
 use crate::package::{DeclarationPath, ModuleId, Name, Namespace, PackageGraph, SymbolIdentity};
 use crate::resolve::{
-    LocalId, LocalKind, ResolvedEntity, ResolvedName, ResolvedProgram, SymbolId, SymbolKind,
+    LocalId, LocalKind, MemberKind, ResolvedEntity, ResolvedName, ResolvedProgram, SymbolId,
+    SymbolKind,
 };
 use crate::source::{FileId, SourceDatabase, Span, TextRange};
 use crate::syntax::ast::Expression as AstExpression;
@@ -13,12 +14,13 @@ use crate::types::{
     TypeInterner, TypeKind, TypeSubstitution,
 };
 
+use super::capabilities::bounds_imply;
 use super::termination::{TraitTerminationEdge, TraitTerminationError, analyze_trait_termination};
 use super::{
-    HirCallableId, HirCallableSignature, HirConstant, HirError, HirField, HirGenericParameter,
-    HirImplementation, HirImplementationId, HirImplementationMethod,
+    HirCallableId, HirCallableSignature, HirCapability, HirConstant, HirError, HirField,
+    HirGenericParameter, HirImplementation, HirImplementationId, HirImplementationMethod,
     HirImplementationMethodContract, HirImplementationMethodId, HirNominalDefinition,
-    HirNominalShape, HirOutput, HirParameter, HirPreludeTraitMethod, HirProgram,
+    HirNominalShape, HirOpaqueResult, HirOutput, HirParameter, HirPreludeTraitMethod, HirProgram,
     HirTraitConstructor, HirTraitDefinition, HirTraitIdentity, HirTraitMethod, HirTraitMethodKey,
     HirTraitReference, HirTypeDeclaration, HirTypeDeclarationKind, HirVariant, HirVariantPayload,
 };
@@ -84,7 +86,7 @@ pub fn lower_types<'a>(
             patterns: Vec::new(),
             bodies: BTreeMap::new(),
             local_types: lowerer.generic_types,
-            discard_statuses: Vec::new(),
+            capability_statuses: Vec::new(),
             expression_check_complete: false,
         },
         diagnostics: lowerer.diagnostics,
@@ -122,7 +124,7 @@ struct ExpectedTraitMethod {
 #[derive(Debug, Clone)]
 enum ExpectedTraitMethodSignature {
     Source {
-        callable: HirCallableSignature,
+        callable: HirCallableId,
         fixed_arity: u32,
     },
     Concrete {
@@ -1344,7 +1346,8 @@ impl<'a> TypeLowerer<'a> {
                 | TypeKind::Tuple(arguments)
                 | TypeKind::Union(arguments)
                 | TypeKind::Intrinsic { arguments, .. }
-                | TypeKind::Generated { arguments, .. } => {
+                | TypeKind::Generated { arguments, .. }
+                | TypeKind::OpaqueResult { arguments, .. } => {
                     pending.extend(arguments.iter().copied());
                 }
                 TypeKind::Function(function) => {
@@ -1358,10 +1361,7 @@ impl<'a> TypeLowerer<'a> {
                     pending.push(*error);
                 }
                 TypeKind::Cursor { collection, .. } => pending.push(*collection),
-                TypeKind::Scalar(_)
-                | TypeKind::GenericParameter(_)
-                | TypeKind::Inference(_)
-                | TypeKind::OpaqueResult(_) => {}
+                TypeKind::Scalar(_) | TypeKind::GenericParameter(_) | TypeKind::Inference(_) => {}
             }
         }
         Ok(false)
@@ -2257,7 +2257,8 @@ impl<'a> TypeLowerer<'a> {
                 | TypeKind::Tuple(arguments)
                 | TypeKind::Union(arguments)
                 | TypeKind::Intrinsic { arguments, .. }
-                | TypeKind::Generated { arguments, .. } => {
+                | TypeKind::Generated { arguments, .. }
+                | TypeKind::OpaqueResult { arguments, .. } => {
                     pending.extend(arguments.iter().copied());
                 }
                 TypeKind::Function(function) => {
@@ -2271,10 +2272,7 @@ impl<'a> TypeLowerer<'a> {
                     pending.push(*error);
                 }
                 TypeKind::Cursor { collection, .. } => pending.push(*collection),
-                TypeKind::Error
-                | TypeKind::Scalar(_)
-                | TypeKind::Inference(_)
-                | TypeKind::OpaqueResult(_) => {}
+                TypeKind::Error | TypeKind::Scalar(_) | TypeKind::Inference(_) => {}
             }
         }
         Ok(())
@@ -2298,7 +2296,7 @@ impl<'a> TypeLowerer<'a> {
             HirTraitConstructor::Prelude(_) => false,
         };
         let owns_target = match self.interner.kind(implementation.target)? {
-            TypeKind::Nominal { identity, .. } | TypeKind::OpaqueResult(identity) => {
+            TypeKind::Nominal { identity, .. } | TypeKind::OpaqueResult { identity, .. } => {
                 identity_belongs_to(&implementation.module, identity)
             }
             TypeKind::Error
@@ -2392,11 +2390,11 @@ impl<'a> TypeLowerer<'a> {
                 .resolved
                 .member(method.member)
                 .expect("trait HIR methods retain resolved members");
-            let Some(callable) = self
+            let callable = HirCallableId::Member(method.member);
+            let Some(_) = self
                 .callables
                 .iter()
-                .find(|callable| callable.id == HirCallableId::Member(method.member))
-                .cloned()
+                .find(|candidate| candidate.id == callable)
             else {
                 self.emit(
                     implementation.span.file(),
@@ -2518,9 +2516,15 @@ impl<'a> TypeLowerer<'a> {
         };
         let (function_type, has_receiver, generic_bounds) = match &expected.signature {
             ExpectedTraitMethodSignature::Source {
-                callable: source,
+                callable: source_id,
                 fixed_arity,
             } => {
+                let source = self
+                    .callables
+                    .iter()
+                    .find(|candidate| candidate.id == *source_id)
+                    .cloned()
+                    .expect("an expected trait method retains its callable signature");
                 let Some(expected_local_arity) = source.generic_arity.checked_sub(*fixed_arity)
                 else {
                     return Ok(None);
@@ -2813,7 +2817,7 @@ impl<'a> TypeLowerer<'a> {
             }
         }
 
-        let outcome = if let Some(annotation) = callable
+        let (outcome, opaque_result) = if let Some(annotation) = callable
             .child_nodes()
             .find(|child| child.kind() == SyntaxKind::OutcomeAnnotation)
         {
@@ -2821,17 +2825,19 @@ impl<'a> TypeLowerer<'a> {
                 .child_nodes()
                 .find(|child| child.kind() == SyntaxKind::TypeExpr)
             {
-                self.lower_type_expr(file, ty, &environment)?
+                (self.lower_type_expr(file, ty, &environment)?, None)
             } else if let Some(opaque) = annotation
                 .child_nodes()
                 .find(|child| child.kind() == SyntaxKind::OpaqueOutcome)
             {
-                self.lower_opaque_outcome(file, opaque, id, &environment)?
+                let (outcome, opaque_result) =
+                    self.lower_opaque_outcome(file, opaque, id, &environment)?;
+                (outcome, opaque_result)
             } else {
-                self.interner.error()
+                (self.interner.error(), None)
             }
         } else {
-            self.interner.scalar(ScalarType::Unit)
+            (self.interner.scalar(ScalarType::Unit), None)
         };
         let signature_has_recovery = self.types_have_recovery(
             function_parameters
@@ -2862,6 +2868,7 @@ impl<'a> TypeLowerer<'a> {
             generic_arity,
             outcome,
             function_type,
+            opaque_result,
             body_source: body
                 .map(|body| self.sources.span(file, body.range()))
                 .transpose()?,
@@ -2878,7 +2885,7 @@ impl<'a> TypeLowerer<'a> {
         opaque: SyntaxNodeRef<'a>,
         callable: HirCallableId,
         environment: &TypeEnvironment,
-    ) -> Result<TypeId, HirError> {
+    ) -> Result<(TypeId, Option<HirOpaqueResult>), HirError> {
         let bounds = if let Some(bound) = opaque
             .child_nodes()
             .find(|child| child.kind() == SyntaxKind::GenericBound)
@@ -2887,18 +2894,13 @@ impl<'a> TypeLowerer<'a> {
         } else {
             Vec::new()
         };
-        let discard = bounds.iter().any(|bound| match bound.constructor() {
-            HirTraitConstructor::Prelude(name) => {
-                matches!(name.as_str(), "Discard" | "Copy")
-            }
-            HirTraitConstructor::Symbol(_) | HirTraitConstructor::External(_) => false,
-        });
+        let discard = bounds_imply(&bounds, HirCapability::Discard);
         if !discard {
             self.emit(
                 file,
                 opaque.range(),
                 "E1117",
-                "an opaque result must prove `Discard` directly or through `Copy`",
+                "an opaque result must prove `Discard` directly or through `Copy` or `Key`",
                 None,
                 None,
             )?;
@@ -2913,9 +2915,12 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 None,
             )?;
-            return Ok(self.interner.error());
+            return Ok((self.interner.error(), None));
         };
-        let success = self.interner.opaque_result(identity)?;
+        let arguments = (0..environment.next_position)
+            .map(|position| self.interner.generic_parameter(position))
+            .collect::<Result<Vec<_>, _>>()?;
+        let success = self.interner.opaque_result(identity.clone(), arguments)?;
         let error_operand = opaque.child_nodes().find(|child| {
             matches!(
                 child.kind(),
@@ -2925,12 +2930,36 @@ impl<'a> TypeLowerer<'a> {
         if let Some(error) = error_operand {
             let error = self.lower_type_operand(file, error, environment)?;
             if self.type_has_recovery(error)? {
-                Ok(self.interner.error())
+                Ok((
+                    self.interner.error(),
+                    Some(HirOpaqueResult {
+                        identity,
+                        span: self.sources.span(file, opaque.range())?,
+                        bounds,
+                        witness: None,
+                    }),
+                ))
             } else {
-                Ok(self.interner.result(success, error)?)
+                Ok((
+                    self.interner.result(success, error)?,
+                    Some(HirOpaqueResult {
+                        identity,
+                        span: self.sources.span(file, opaque.range())?,
+                        bounds,
+                        witness: None,
+                    }),
+                ))
             }
         } else {
-            Ok(success)
+            Ok((
+                success,
+                Some(HirOpaqueResult {
+                    identity,
+                    span: self.sources.span(file, opaque.range())?,
+                    bounds,
+                    witness: None,
+                }),
+            ))
         }
     }
 
@@ -2948,6 +2977,12 @@ impl<'a> TypeLowerer<'a> {
                 let Some(member) = self.resolved.member(member) else {
                     return Ok(None);
                 };
+                if !matches!(
+                    member.kind(),
+                    MemberKind::InherentMethod | MemberKind::AssociatedFunction
+                ) {
+                    return Ok(None);
+                }
                 let crate::resolve::MemberOwner::Type(owner) = member.owner() else {
                     return Ok(None);
                 };
@@ -3142,15 +3177,16 @@ impl<'a> TypeLowerer<'a> {
                     pending.push(*success);
                     pending.push(*error);
                 }
-                TypeKind::Intrinsic { arguments, .. } | TypeKind::Generated { arguments, .. } => {
+                TypeKind::Intrinsic { arguments, .. }
+                | TypeKind::Generated { arguments, .. }
+                | TypeKind::OpaqueResult { arguments, .. } => {
                     pending.extend(arguments.iter().copied());
                 }
                 TypeKind::Cursor { collection, .. } => pending.push(*collection),
                 TypeKind::Error
                 | TypeKind::Scalar(_)
                 | TypeKind::GenericParameter(_)
-                | TypeKind::Inference(_)
-                | TypeKind::OpaqueResult(_) => {}
+                | TypeKind::Inference(_) => {}
             }
         }
         Ok(())
@@ -3186,7 +3222,7 @@ impl<'a> TypeLowerer<'a> {
                     }
                     TypeKind::Function(_)
                     | TypeKind::Option(_)
-                    | TypeKind::OpaqueResult(_)
+                    | TypeKind::OpaqueResult { .. }
                     | TypeKind::Generated { .. }
                     | TypeKind::Cursor { .. } => values.push(true),
                     TypeKind::Result { success, error } => {
@@ -4657,8 +4693,36 @@ mod tests {
         let valid = callables.next().unwrap();
         assert!(matches!(
             output.program().interner().kind(valid.outcome()).unwrap(),
-            TypeKind::OpaqueResult(_)
+            TypeKind::OpaqueResult { .. }
         ));
+    }
+
+    #[test]
+    fn async_functions_retain_the_same_opaque_success_contract() {
+        let (_, _, output) = lower("async fn delayed(): impl Discard ! String { 1 }\n");
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        let callable = output.program().callables().next().unwrap();
+        assert!(callable.opaque_result().is_some());
+        let TypeKind::Result { success, error } = output
+            .program()
+            .interner()
+            .kind(callable.outcome())
+            .unwrap()
+        else {
+            panic!("fallible async opaque outcome must retain its outer Result")
+        };
+        assert!(matches!(
+            output.program().interner().kind(*success).unwrap(),
+            TypeKind::OpaqueResult { .. }
+        ));
+        assert_eq!(
+            *error,
+            output.program().interner().scalar(ScalarType::String)
+        );
     }
 
     #[test]

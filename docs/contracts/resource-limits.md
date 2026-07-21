@@ -56,9 +56,12 @@ matrix-work budget and use an explicit worklist rather than the process stack.
 Every generic-bound proof attempt consumes the trait-obligation budget. The
 same configured ceiling independently bounds size-change termination work:
 matrix cells, structural-subterm traversal, matrix composition, idempotence
-checks, and diagnostic-witness expansion. The currently closed `Discard` proof
-completes in HIR; obligations owned by later capability or trait phases remain
-incomplete rather than being guessed.
+checks, and diagnostic-witness expansion. The common proof for `Copy`,
+`Discard`, `Equatable`, `Key`, `Send`, and `Share` computes finite symbolic
+summaries over the already bounded interned type graph and does not recursively
+instantiate nominal families. Each generic
+bound request still consumes the trait-obligation budget. Callable capabilities
+owned by the closure phases remain incomplete rather than being guessed.
 
 MIR and bytecode construction bound every request-local table before growth;
 their initialization, lifetime, and tag-refinement analyses share independent

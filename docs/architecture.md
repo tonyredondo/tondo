@@ -141,9 +141,10 @@ recursive productivity. Expression checking then materializes typed constants,
 bootstrap callable bodies, nominal constructors and updates, closed operators,
 calls with declaration-bound arguments, and explicit generic specializations
 with resolved identities, value categories, and contextual coercions. Generic
-specializations close invariant inference and prove the structural `Discard`
-constraint before leaving HIR; other capability and trait obligations remain
-explicit incomplete boundaries until their owning M4 phases. Trait declarations
+specializations close invariant inference and prove every closed intrinsic
+constraint (`Copy`, `Discard`, `Equatable`, `Key`, `Send`, and `Share`) before
+leaving HIR. Open source/prelude trait obligations use coherent static
+selection; callable capabilities remain owned by the closure phases. Trait declarations
 carry a sorted method table, contextual `Self`, default-body and async-receiver
 requirements. Default bodies are checked once with rigid trait binders; calls to
 another receiver method of the same trait resolve locally and both inferred and
@@ -160,9 +161,10 @@ termination turns every open-trait header bound into a canonical query edge,
 constructs structural `<`/`=`/`?` matrices, and saturates them inside trait-name
 SCCs. Every idempotent self matrix must decrease on its diagonal; otherwise HIR
 emits `E1112` with a deterministic cycle witness. Closed structural capabilities
-create no edges, all analysis uses an explicit work budget, and the admission
-verifier independently reconstructs the proof before MIR. Constraint selection
-and trait dispatch remain separate later phases. Pattern checking is part of the
+create no trait-selection edges, all analysis uses an explicit work budget, and
+the admission verifier independently reconstructs the proof before MIR. Static
+constraint selection and trait dispatch produce direct specialized callables.
+Pattern checking is part of the
 same typed-HIR boundary and records typed pattern arenas, guarded match arms,
 irrefutability, reachability, and exhaustiveness without deferring decisions to MIR. Assignment
 checking resolves target projections before the RHS and records compound
@@ -171,7 +173,8 @@ order explicitly. Structured control-flow checking records normal completion
 separately from contextual types, assigns loop identities, propagates `Never`,
 and diagnoses unreachable evaluation boundaries with a top-down HIR worklist.
 Explicit discard is distinct from assignment and carries a structural
-`Discard` proof; symbolic nominal summaries avoid recursive type expansion.
+`Discard` proof. The same coinductive symbolic nominal summaries derive all six
+closed capabilities without recursively expanding nominal type families.
 Constants are then evaluated from typed HIR by a closed, non-executing
 worklist. Dependency SCCs and their topological order use stable symbol
 identities; normalized values remain in HIR for later MIR/bytecode lowering,
@@ -214,9 +217,12 @@ same explicit evaluation order retained for assignments and calls. MIR may
 lower these facts into edges; it must not reinterpret source reachability.
 
 Standalone discard and discard leaves are also explicit. MIR receives a
-completed capability decision for the supported concrete type subset and never
-turns `_` into a hidden write. Full ownership availability and terminal cleanup
-remain later analyses.
+six-column capability decision for every interned type and never turns `_` into
+a hidden write. Type formation rejects `Map[K, V]` and `Set[K]` without `K: Key`
+and `Ref[T]` without `T: Discard`; equality, membership, map lookup, opaque
+bounds, and async receiver implementations consume the same proof. Full
+ownership availability, callable capabilities, and terminal cleanup remain
+later analyses.
 
 Type IDs are request-local interned handles; only canonical recursive type
 strings are observable. Alias expansion, union normalization, nominal identity,
@@ -241,6 +247,8 @@ Before bytecode lowering, the MIR verifier proves:
 - Payload projections are dominated by a compatible discriminant branch.
 - Calls preserve the selected callable, receiver mode, specialization, and
   argument association.
+- Capability-sensitive equality, membership, and map lookup agree with the
+  independently verified HIR capability table.
 - No unresolved inference, symbol, or contextual syntax node remains.
 
 The current M3 lowering covers the complete error-free bootstrap HIR surface.
@@ -261,7 +269,10 @@ read and write typed places over slots; terminators preserve ordinary, cleanup,
 unwind, iterator, discriminant, and return edges. Lowering is deterministic and
 the VM-owned verifier independently rechecks indices, instantiated layouts,
 calls, initialization, storage lifetime, tag refinement, and edge shape before
-returning a program to execution.
+returning a program to execution. It independently derives the closed
+capabilities needed by type formation, equality, membership, and map lookup
+from the concrete bytecode type graph and nominal layout templates, rather than
+trusting a compiler-produced boolean.
 
 Before those tables are allocated, a bounded deterministic worklist
 monomorphizes every generic callable reached from non-generic roots, constants,

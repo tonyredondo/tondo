@@ -96,7 +96,11 @@ pub enum BytecodeTypeKind {
         arguments: Vec<BytecodeTypeId>,
     },
     GenericParameter(u32),
-    OpaqueResult(String),
+    OpaqueResult {
+        identity: String,
+        arguments: Vec<BytecodeTypeId>,
+        witness: BytecodeTypeId,
+    },
     Generated {
         identity: String,
         arguments: Vec<BytecodeTypeId>,
@@ -510,6 +514,7 @@ pub enum BytecodeAggregateKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BytecodeCoercion {
     Exact,
+    Opaque,
     UnionInjection,
     UnionWidening,
     OptionLift,

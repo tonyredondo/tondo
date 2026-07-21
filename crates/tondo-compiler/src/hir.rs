@@ -4,7 +4,7 @@
 //! value categories, and explicit contextual coercions. Ownership dataflow,
 //! control-flow cleanup, and runtime layout remain later MIR/runtime concerns.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
@@ -13,10 +13,11 @@ use crate::package::{ModuleId, Name, PackageGraphError, SymbolIdentity};
 use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::{FileId, SourceError, Span, TextRange};
 use crate::types::{
-    Assignability, FunctionParameter, FunctionType, NumericConversion, ParameterMode, ScalarType,
-    TypeError, TypeId, TypeInterner,
+    Assignability, FunctionParameter, FunctionType, InferenceError, NumericConversion,
+    ParameterMode, ScalarType, TypeError, TypeId, TypeInterner, TypeKind, TypeSubstitution,
 };
 
+mod capabilities;
 mod check;
 mod const_eval;
 mod lower;
@@ -43,6 +44,7 @@ pub enum HirError {
     Package(PackageGraphError),
     Source(SourceError),
     Type(TypeError),
+    Inference(InferenceError),
 }
 
 impl fmt::Display for HirError {
@@ -75,6 +77,7 @@ impl fmt::Display for HirError {
             Self::Package(error) => error.fmt(formatter),
             Self::Source(error) => error.fmt(formatter),
             Self::Type(error) => error.fmt(formatter),
+            Self::Inference(error) => error.fmt(formatter),
         }
     }
 }
@@ -108,6 +111,12 @@ impl From<SourceError> for HirError {
 impl From<TypeError> for HirError {
     fn from(error: TypeError) -> Self {
         Self::Type(error)
+    }
+}
+
+impl From<InferenceError> for HirError {
+    fn from(error: InferenceError) -> Self {
+        Self::Inference(error)
     }
 }
 
@@ -146,7 +155,7 @@ pub struct HirProgram {
     patterns: Vec<HirPattern>,
     bodies: BTreeMap<HirCallableId, HirBody>,
     local_types: BTreeMap<LocalId, TypeId>,
-    discard_statuses: Vec<HirDiscardStatus>,
+    capability_statuses: Vec<[HirCapabilityStatus; HirCapability::COUNT]>,
     expression_check_complete: bool,
 }
 
@@ -177,6 +186,158 @@ impl HirProgram {
 
     pub fn callable(&self, id: HirCallableId) -> Option<&HirCallableSignature> {
         self.callables.iter().find(|callable| callable.id == id)
+    }
+
+    pub fn opaque_result(&self, identity: &SymbolIdentity) -> Option<&HirOpaqueResult> {
+        self.callables
+            .iter()
+            .filter_map(|callable| callable.opaque_result.as_ref())
+            .find(|opaque| opaque.identity == *identity)
+    }
+
+    pub(crate) fn opaque_witness_for(
+        &self,
+        interner: &mut TypeInterner,
+        ty: TypeId,
+    ) -> Result<Option<TypeId>, TypeError> {
+        let TypeKind::OpaqueResult {
+            identity,
+            arguments,
+        } = interner.kind(ty)?.clone()
+        else {
+            return Ok(None);
+        };
+        let Some(witness) = self
+            .opaque_result(&identity)
+            .and_then(HirOpaqueResult::witness)
+        else {
+            return Ok(None);
+        };
+        TypeSubstitution::new(arguments)
+            .apply(interner, witness)
+            .map(Some)
+    }
+
+    pub(crate) fn opaque_coercion_matches(
+        &self,
+        interner: &mut TypeInterner,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> Result<bool, TypeError> {
+        if self.opaque_witness_for(interner, expected)? == Some(actual) {
+            return Ok(true);
+        }
+        let actual_kind = interner.kind(actual)?.clone();
+        let expected_kind = interner.kind(expected)?.clone();
+        let (
+            TypeKind::Result {
+                success: actual_success,
+                error: actual_error,
+            },
+            TypeKind::Result {
+                success: expected_success,
+                error: expected_error,
+            },
+        ) = (actual_kind, expected_kind)
+        else {
+            return Ok(false);
+        };
+        Ok(actual_error == expected_error
+            && self.opaque_witness_for(interner, expected_success)? == Some(actual_success))
+    }
+
+    pub(crate) fn opaque_representation_for(
+        &self,
+        interner: &mut TypeInterner,
+        root: TypeId,
+    ) -> Result<TypeId, TypeError> {
+        interner.kind(root)?;
+        let mut memo = BTreeMap::<TypeId, TypeId>::new();
+        let mut active = BTreeSet::new();
+        let mut pending = vec![(root, false)];
+        while let Some((original, expanded)) = pending.pop() {
+            if memo.contains_key(&original) {
+                continue;
+            }
+            if !expanded && !active.insert(original) {
+                return Err(TypeError::CyclicOpaqueRepresentation);
+            }
+            let kind = interner.kind(original)?.clone();
+            if !expanded {
+                match &kind {
+                    TypeKind::Error
+                    | TypeKind::Scalar(_)
+                    | TypeKind::GenericParameter(_)
+                    | TypeKind::Inference(_) => {
+                        active.remove(&original);
+                        memo.insert(original, original);
+                    }
+                    TypeKind::OpaqueResult { .. } => {
+                        let witness = self
+                            .opaque_witness_for(interner, original)?
+                            .ok_or(TypeError::CyclicOpaqueRepresentation)?;
+                        pending.push((original, true));
+                        pending.push((witness, false));
+                    }
+                    _ => {
+                        pending.push((original, true));
+                        push_opaque_representation_children(&kind, &mut pending);
+                    }
+                }
+                continue;
+            }
+
+            let get = |ty: TypeId| {
+                memo.get(&ty)
+                    .copied()
+                    .expect("representation children are rebuilt before their parent")
+            };
+            let represented = match kind {
+                TypeKind::OpaqueResult { .. } => {
+                    let witness = self
+                        .opaque_witness_for(interner, original)?
+                        .ok_or(TypeError::CyclicOpaqueRepresentation)?;
+                    get(witness)
+                }
+                TypeKind::Nominal {
+                    identity,
+                    arguments,
+                } => interner.nominal(identity, arguments.into_iter().map(get).collect())?,
+                TypeKind::Tuple(items) => interner.tuple(items.into_iter().map(get).collect())?,
+                TypeKind::Function(function) => interner.function(FunctionType::new(
+                    function.is_async(),
+                    function.is_unsafe(),
+                    function
+                        .parameters()
+                        .iter()
+                        .map(|parameter| {
+                            FunctionParameter::new(parameter.mode(), get(parameter.ty()))
+                        })
+                        .collect(),
+                    function.variadic().map(get),
+                    get(function.outcome()),
+                ))?,
+                TypeKind::Option(item) => interner.option(get(item))?,
+                TypeKind::Result { success, error } => interner.result(get(success), get(error))?,
+                TypeKind::Union(members) => interner.union(members.into_iter().map(get))?,
+                TypeKind::Intrinsic {
+                    constructor,
+                    arguments,
+                } => interner.intrinsic(constructor, arguments.into_iter().map(get).collect())?,
+                TypeKind::Generated {
+                    identity,
+                    arguments,
+                } => interner.generated(identity, arguments.into_iter().map(get).collect())?,
+                TypeKind::Cursor { mode, collection } => interner.cursor(mode, get(collection))?,
+                TypeKind::Error
+                | TypeKind::Scalar(_)
+                | TypeKind::GenericParameter(_)
+                | TypeKind::Inference(_) => original,
+            };
+            active.remove(&original);
+            memo.insert(original, represented);
+        }
+        Ok(memo[&root])
     }
 
     pub fn implementations(&self) -> impl ExactSizeIterator<Item = &HirImplementation> {
@@ -331,8 +492,18 @@ impl HirProgram {
         self.local_types.get(&local).copied()
     }
 
-    pub fn discard_status(&self, ty: TypeId) -> Option<HirDiscardStatus> {
-        self.discard_statuses.get(ty.index() as usize).copied()
+    pub fn capability_status(
+        &self,
+        ty: TypeId,
+        capability: HirCapability,
+    ) -> Option<HirCapabilityStatus> {
+        self.capability_statuses
+            .get(ty.index() as usize)
+            .map(|statuses| statuses[capability.index()])
+    }
+
+    pub fn discard_status(&self, ty: TypeId) -> Option<HirCapabilityStatus> {
+        self.capability_status(ty, HirCapability::Discard)
     }
 
     pub fn expression_check_complete(&self) -> bool {
@@ -340,11 +511,98 @@ impl HirProgram {
     }
 }
 
+fn push_opaque_representation_children(kind: &TypeKind, pending: &mut Vec<(TypeId, bool)>) {
+    let mut push = |ty| pending.push((ty, false));
+    match kind {
+        TypeKind::Nominal { arguments, .. }
+        | TypeKind::Tuple(arguments)
+        | TypeKind::Union(arguments)
+        | TypeKind::Intrinsic { arguments, .. }
+        | TypeKind::Generated { arguments, .. } => {
+            for argument in arguments.iter().rev() {
+                push(*argument);
+            }
+        }
+        TypeKind::Function(function) => {
+            push(function.outcome());
+            if let Some(variadic) = function.variadic() {
+                push(variadic);
+            }
+            for parameter in function.parameters().iter().rev() {
+                push(parameter.ty());
+            }
+        }
+        TypeKind::Option(item) => push(*item),
+        TypeKind::Result { success, error } => {
+            push(*error);
+            push(*success);
+        }
+        TypeKind::Cursor { collection, .. } => push(*collection),
+        TypeKind::Error
+        | TypeKind::Scalar(_)
+        | TypeKind::GenericParameter(_)
+        | TypeKind::Inference(_)
+        | TypeKind::OpaqueResult { .. } => {}
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum HirDiscardStatus {
+pub enum HirCapabilityStatus {
     Satisfied,
     Deferred,
     Unsatisfied,
+}
+
+pub type HirDiscardStatus = HirCapabilityStatus;
+
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum HirCapability {
+    Copy,
+    Discard,
+    Equatable,
+    Key,
+    Send,
+    Share,
+}
+
+impl HirCapability {
+    pub const ALL: [Self; 6] = [
+        Self::Copy,
+        Self::Discard,
+        Self::Equatable,
+        Self::Key,
+        Self::Send,
+        Self::Share,
+    ];
+    pub const COUNT: usize = Self::ALL.len();
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Copy => "Copy",
+            Self::Discard => "Discard",
+            Self::Equatable => "Equatable",
+            Self::Key => "Key",
+            Self::Send => "Send",
+            Self::Share => "Share",
+        }
+    }
+
+    const fn index(self) -> usize {
+        self as usize
+    }
+
+    pub(crate) fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "Copy" => Self::Copy,
+            "Discard" => Self::Discard,
+            "Equatable" => Self::Equatable,
+            "Key" => Self::Key,
+            "Send" => Self::Send,
+            "Share" => Self::Share,
+            _ => return None,
+        })
+    }
 }
 
 fn range_contains_offset(range: TextRange, offset: u32) -> bool {
@@ -920,6 +1178,7 @@ pub struct HirCallableSignature {
     generic_arity: u32,
     outcome: TypeId,
     function_type: TypeId,
+    opaque_result: Option<HirOpaqueResult>,
     body_source: Option<Span>,
 }
 
@@ -952,8 +1211,40 @@ impl HirCallableSignature {
         self.function_type
     }
 
+    pub fn opaque_result(&self) -> Option<&HirOpaqueResult> {
+        self.opaque_result.as_ref()
+    }
+
     pub fn body_source(&self) -> Option<Span> {
         self.body_source
+    }
+}
+
+/// The source-visible contract and compiler-private representation of one
+/// declaration-owned opaque result family.
+#[derive(Debug, Clone)]
+pub struct HirOpaqueResult {
+    identity: SymbolIdentity,
+    span: Span,
+    bounds: Vec<HirTraitReference>,
+    witness: Option<TypeId>,
+}
+
+impl HirOpaqueResult {
+    pub fn identity(&self) -> &SymbolIdentity {
+        &self.identity
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    pub fn bounds(&self) -> &[HirTraitReference] {
+        &self.bounds
+    }
+
+    pub(crate) fn witness(&self) -> Option<TypeId> {
+        self.witness
     }
 }
 

@@ -1,6 +1,7 @@
 # Typed HIR to MIR contract
 
-**Status:** M3 typed CFG lowering and verification implemented
+**Status:** M3 typed CFG plus M4 static-trait and opaque-result lowering and
+verification implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -33,6 +34,12 @@ An admitted program guarantees:
   the same type;
 - callable IDs are unique and deterministically ordered, and every source body
   has one checked root;
+- every prelude trait operand has complete canonical arguments and the exact
+  `Display.display` or `Iterator.next` function type;
+- every iterator loop records either a valid intrinsic source or one exact
+  `Iterator[T]` contract whose element matches its binding pattern;
+- every opaque result has one verified declaration contract and finite witness,
+  and every representation seal relates that exact witness to its opaque family;
 - loop IDs are unique, transfers and break summaries target existing loops,
   and direct transfers are marked as diverging; and
 - member occurrences, annotations, local types, pattern fields, aggregate
@@ -46,7 +53,7 @@ They remain queryable but can never be lowered or executed.
 | Phase | Facts proved or represented |
 |---|---|
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
-| Typed HIR | Static types, contextual conversions, value/place category, pattern coverage, source evaluation order, and source-level control targets |
+| Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, value/place category, pattern coverage, source evaluation order, and source-level control targets |
 | MIR construction (M3) | Typed locals and temporaries, explicit CFG, places, calls, branch targets, normal/abnormal edge shape, and spans |
 | Ownership MIR (M5) | `Copy` versus `Move`, availability, loans and regions, confirmed transfers, cleanup actions, and dynamic overlap checks |
 | Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
@@ -72,9 +79,10 @@ temporaries before a place uses them. This preserves the HIR rule that an
 assignment resolves every destination once before evaluating its RHS.
 
 Operands distinguish constants, copy reads, and move reads. During M3 the
-bootstrap subset can classify only values whose capability is already closed;
-M5 completes the classification before admitting affine programs. A backend
-must not decide between copy and move from runtime representation.
+bootstrap subset has the complete closed `Copy` decision for every HIR type;
+M5 consumes that decision together with availability and loan state before
+admitting affine programs. A backend must not decide between copy and move from
+runtime representation alone.
 
 Branches use block IDs, not nested expression nodes. `Never`, `return`, `fail`,
 `break`, `continue`, propagation, and panic paths end in terminators without an
@@ -96,7 +104,26 @@ uses an access validation before reading its previous value and validates the
 fully computed replacement again before storing it. Static callees remain
 callable operands instead of being erased into ordinary temporaries, preserving
 the selected declaration, receiver mode, generic specialization, and variadic
-argument association.
+argument association. Source-trait calls retain their specialized trait member;
+`Display.display` and `Iterator.next` use a dedicated prelude operand with their
+complete type arguments. These operands carry no vtable or runtime witness and
+are resolved to direct implementation callables during monomorphization.
+
+An opaque success exit remains an explicit coercion rvalue whose kind is
+`Assignability::Opaque`. MIR preserves both operand and destination types, so a
+later phase never needs to rediscover the hidden representation. The coercion
+has no runtime transformation: its purpose is to keep the declaration-owned
+seal auditable across the typed CFG. For a fallible function the ordinary
+`Result` construction and propagation remain outside that success seal, so the
+visible error channel is unchanged.
+
+Intrinsic `for` sources use the existing iterator-state rvalue and
+`IteratorNext` terminator. A user `Iterator[T]` source is evaluated once into a
+state local; each header invokes the typed `Iterator.next` operand with its
+mutable receiver, branches on the returned `T?`, projects the dominated
+`Option` payload, and then binds the irrefutable loop pattern. The MIR shape
+therefore exposes every evaluation and edge without treating a user iterator
+as a VM intrinsic.
 
 Map construction is an `Invoke` carrying the HIR-selected duplicate policy, so
 `P0009` has an ordinary unwind edge and last-write-wins is never an implicit VM
@@ -136,8 +163,15 @@ The structural verifier introduced in M3 proves at minimum:
 - place projections are legal for their base type;
 - call arity, modes, argument types, and outcome agree with the selected
   callable;
+- prelude trait operands have their complete arity and exact closed signature,
+  including the single receiver parameter expected by a call;
+- an opaque coercion is used only from the declaration's exact concrete witness
+  to the matching opaque family, while no other coercion kind may forge that
+  relation;
 - aggregate, conversion, iterator, index, slice, range, membership, and tag
   operations have the exact instantiated input and result types;
+- equality, collection membership, and map lookup satisfy the `Equatable`,
+  `Key`, or `Copy` requirement recorded and independently verified in HIR;
 - a variant, union, option, or result payload is read only on an edge dominated
   by the corresponding discriminant test, and writes invalidate refinements;
 - cleanup edges enter cleanup blocks and cleanup blocks cannot return to an
@@ -168,6 +202,6 @@ normative implementation-limit diagnostic `T0002`. Deep source nesting has
 already been converted into topological arenas; MIR traversal uses worklists
 rather than the Rust process stack.
 
-`Operation::Run` performs this complete lowering and verification today. Until
-bytecode and VM execution are connected, a successfully verified graph reaches
-the deliberate `T0001` phase marker; malformed MIR never reaches that marker.
+`Operation::Run` performs this complete lowering and verification before
+bytecode construction. Bytecode admission and VM execution repeat their own
+independent structural gates; malformed MIR never reaches either boundary.

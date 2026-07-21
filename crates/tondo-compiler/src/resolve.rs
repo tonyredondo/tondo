@@ -1749,6 +1749,24 @@ mod tests {
     }
 
     #[test]
+    fn opaque_public_apis_expose_bounds_and_errors_but_not_the_witness_body() {
+        let (sources, output) = resolve_sources(
+            &[(
+                "main",
+                "main.to",
+                "type Secret = Int\n\
+                 trait Hidden {}\n\
+                 pub trait Visible {}\n\
+                 pub fn valid(): impl Visible + Discard { Secret(1) }\n\
+                 pub fn invalidBound(): impl Hidden + Discard { Secret(1) }\n\
+                 pub fn invalidError(): impl Visible + Discard ! Secret { Secret(1) }\n",
+            )],
+            &["main"],
+        );
+        assert_eq!(codes(&sources, output), ["E1503", "E1503"]);
+    }
+
+    #[test]
     fn inaccessible_imported_type_uses_e1501_instead_of_public_api_duplicate() {
         let (sources, output) = resolve_sources(
             &[

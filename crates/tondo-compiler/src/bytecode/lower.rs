@@ -65,13 +65,13 @@ pub fn lower_to_bytecode(
         BytecodeError::construction("MIR admission", format!("input MIR is invalid: {error}"))
     })?;
 
-    let monomorphization = monomorphize(resolved, hir, mir, limits.max_generic_instantiations)?;
+    let mut monomorphization = monomorphize(resolved, hir, mir, limits.max_generic_instantiations)?;
     let nominal_ids = nominal_ids(hir, limits.max_nominals)?;
     let callable_ids = callable_ids(&monomorphization.callables, limits.max_callables)?;
     let function_ids = function_ids(&monomorphization.functions, limits.max_functions)?;
     let constant_ids = constant_ids(hir, limits.max_constants)?;
     let mut catalog = TypeCatalog::build(
-        &monomorphization.interner,
+        &mut monomorphization.interner,
         hir,
         &monomorphization.type_maps,
         limits.max_types,
@@ -441,6 +441,11 @@ fn resolve_prelude_trait_dispatch(
                 ),
             )
         })?;
+    let query = TraitQuery::from_parts(
+        query.constructor().clone(),
+        query.arguments().to_vec(),
+        concrete_trait_target(hir, interner, query.target())?,
+    );
     let selection = select_implementation(interner, hir.implementations(), &query)
         .map_err(prelude_trait_dispatch_selection_error)?
         .ok_or_else(|| {
@@ -504,6 +509,20 @@ fn prelude_trait_dispatch_selection_error(error: TraitSelectionError) -> Bytecod
     }
 }
 
+fn concrete_trait_target(
+    hir: &HirProgram,
+    interner: &mut TypeInterner,
+    target: TypeId,
+) -> Result<TypeId, BytecodeError> {
+    hir.opaque_representation_for(interner, target)
+        .map_err(|error| {
+            BytecodeError::construction(
+                "trait dispatch",
+                format!("cannot reveal opaque Self representation: {error}"),
+            )
+        })
+}
+
 fn verify_prelude_dispatch_signature(
     hir: &HirProgram,
     interner: &mut TypeInterner,
@@ -537,7 +556,17 @@ fn verify_prelude_dispatch_signature(
         .map_err(|error| {
             monomorphization_type_error(error, Some(span), "prelude trait target signature")
         })?;
-    if source_type != target_type {
+    let source_representation = hir
+        .opaque_representation_for(interner, source_type)
+        .map_err(|error| {
+            monomorphization_type_error(error, Some(span), "prelude trait source representation")
+        })?;
+    let target_representation = hir
+        .opaque_representation_for(interner, target_type)
+        .map_err(|error| {
+            monomorphization_type_error(error, Some(span), "prelude trait target representation")
+        })?;
+    if source_representation != target_representation {
         return Err(BytecodeError::construction(
             "trait dispatch",
             format!(
@@ -608,7 +637,7 @@ fn resolve_source_trait_dispatch(
     let query = TraitQuery::from_parts(
         HirTraitConstructor::Symbol(owner),
         reference.arguments[..trait_arity].to_vec(),
-        reference.arguments[trait_arity],
+        concrete_trait_target(hir, interner, reference.arguments[trait_arity])?,
     );
     let selection = select_implementation(interner, hir.implementations(), &query)
         .map_err(|error| trait_dispatch_selection_error(error, member_declaration.span()))?
@@ -713,7 +742,17 @@ fn verify_dispatch_signature(
         .map_err(|error| {
             monomorphization_type_error(error, Some(span), "trait dispatch target signature")
         })?;
-    if source_type != target_type {
+    let source_representation = hir
+        .opaque_representation_for(interner, source_type)
+        .map_err(|error| {
+            monomorphization_type_error(error, Some(span), "trait source representation")
+        })?;
+    let target_representation = hir
+        .opaque_representation_for(interner, target_type)
+        .map_err(|error| {
+            monomorphization_type_error(error, Some(span), "trait target representation")
+        })?;
+    if source_representation != target_representation {
         return Err(BytecodeError::construction(
             "trait dispatch",
             format!(
@@ -895,11 +934,12 @@ fn constant_ids(
 struct TypeCatalog {
     ids: BTreeMap<TypeId, bc::BytecodeTypeId>,
     types: Vec<bc::BytecodeType>,
+    opaque_witnesses: BTreeMap<TypeId, TypeId>,
 }
 
 impl TypeCatalog {
     fn build(
-        interner: &TypeInterner,
+        interner: &mut TypeInterner,
         hir: &HirProgram,
         type_maps: &BTreeMap<CallableInstance, BTreeMap<TypeId, TypeId>>,
         limit: u32,
@@ -909,15 +949,35 @@ impl TypeCatalog {
         for map in type_maps.values() {
             seeds.extend(map.values().copied());
         }
+        let mut opaque_witnesses = BTreeMap::new();
         let mut queue = seeds.iter().copied().collect::<VecDeque<_>>();
         while let Some(ty) = queue.pop_front() {
             let kind = interner
                 .kind(ty)
-                .map_err(|error| BytecodeError::construction("type catalog", error.to_string()))?;
-            for child in type_children(kind) {
+                .map_err(|error| BytecodeError::construction("type catalog", error.to_string()))?
+                .clone();
+            for child in type_children(&kind) {
                 if seeds.insert(child) {
                     ensure_count(seeds.len(), limit, None, "type table")?;
                     queue.push_back(child);
+                }
+            }
+            if matches!(kind, TypeKind::OpaqueResult { .. }) {
+                let witness = hir
+                    .opaque_witness_for(interner, ty)
+                    .map_err(|error| {
+                        BytecodeError::construction("type catalog", error.to_string())
+                    })?
+                    .ok_or_else(|| {
+                        BytecodeError::construction(
+                            "type catalog",
+                            "opaque type has no concrete witness",
+                        )
+                    })?;
+                opaque_witnesses.insert(ty, witness);
+                if seeds.insert(witness) {
+                    ensure_count(seeds.len(), limit, None, "type table")?;
+                    queue.push_back(witness);
                 }
             }
         }
@@ -930,6 +990,7 @@ impl TypeCatalog {
         let mut catalog = Self {
             ids,
             types: Vec::with_capacity(seeds.len()),
+            opaque_witnesses,
         };
         for ty in seeds {
             catalog.types.push(catalog.lower_type(interner, ty)?);
@@ -990,9 +1051,19 @@ impl TypeCatalog {
             TypeKind::GenericParameter(position) => {
                 bc::BytecodeTypeKind::GenericParameter(*position)
             }
-            TypeKind::OpaqueResult(identity) => {
-                bc::BytecodeTypeKind::OpaqueResult(identity.canonical_name())
-            }
+            TypeKind::OpaqueResult {
+                identity,
+                arguments,
+            } => bc::BytecodeTypeKind::OpaqueResult {
+                identity: identity.canonical_name(),
+                arguments: self.map_types(arguments)?,
+                witness: self.id(*self.opaque_witnesses.get(&ty).ok_or_else(|| {
+                    BytecodeError::construction(
+                        "type catalog",
+                        "opaque type is missing its witness mapping",
+                    )
+                })?)?,
+            },
             TypeKind::Generated { arguments, .. } => bc::BytecodeTypeKind::Generated {
                 identity: name.clone(),
                 arguments: self.map_types(arguments)?,
@@ -1212,7 +1283,8 @@ fn type_children(kind: &TypeKind) -> Vec<TypeId> {
         | TypeKind::Tuple(arguments)
         | TypeKind::Union(arguments)
         | TypeKind::Intrinsic { arguments, .. }
-        | TypeKind::Generated { arguments, .. } => arguments.clone(),
+        | TypeKind::Generated { arguments, .. }
+        | TypeKind::OpaqueResult { arguments, .. } => arguments.clone(),
         TypeKind::Function(function) => function
             .parameters()
             .iter()
@@ -1226,8 +1298,7 @@ fn type_children(kind: &TypeKind) -> Vec<TypeId> {
         TypeKind::Error
         | TypeKind::Scalar(_)
         | TypeKind::GenericParameter(_)
-        | TypeKind::Inference(_)
-        | TypeKind::OpaqueResult(_) => Vec::new(),
+        | TypeKind::Inference(_) => Vec::new(),
     }
 }
 
@@ -2759,6 +2830,7 @@ fn parameter_mode(value: ParameterMode) -> bc::BytecodeParameterMode {
 fn coercion(value: Assignability) -> bc::BytecodeCoercion {
     match value {
         Assignability::Exact => bc::BytecodeCoercion::Exact,
+        Assignability::Opaque => bc::BytecodeCoercion::Opaque,
         Assignability::UnionInjection => bc::BytecodeCoercion::UnionInjection,
         Assignability::UnionWidening => bc::BytecodeCoercion::UnionWidening,
         Assignability::OptionLift => bc::BytecodeCoercion::OptionLift,
@@ -3834,6 +3906,124 @@ mod tests {
     }
 
     #[test]
+    fn structural_equality_executes_for_every_closed_aggregate_shape() {
+        let value = execute_function(
+            "type User = { id: Int, name: String }\n\
+             type Node = { value: Int, next: Node? }\n\
+             fn compare(): Bool {\n\
+                 let left = User { id: 1, name: \"Tony\" }\n\
+                 let right = User { id: 1, name: \"Tony\" }\n\
+                 let firstNode = Node { value: 1, next: none }\n\
+                 let secondNode = Node { value: 1, next: none }\n\
+                 let firstMap = [\"one\": 1, \"two\": 2]\n\
+                 let secondMap = [\"two\": 2, \"one\": 1]\n\
+                 let firstSet = Set[\"one\", \"two\"]\n\
+                 let secondSet = Set[\"two\", \"one\"]\n\
+                 left == right\n\
+                     and some(left) == some(right)\n\
+                     and firstNode == secondNode\n\
+                     and [1, 2] == [1, 2]\n\
+                     and [1, 2] != [2, 1]\n\
+                     and firstMap == secondMap\n\
+                     and firstSet == secondSet\n\
+             }\n",
+            "compare",
+        );
+        assert_eq!(value, RuntimeValue::Bool(true));
+    }
+
+    #[test]
+    fn bytecode_verifier_rederives_closed_capability_contracts() {
+        let mut malformed = lowered("fn types(float: Float, integer: Int) {}\n");
+        let float = malformed
+            .types
+            .iter()
+            .position(|ty| {
+                matches!(
+                    ty.kind,
+                    bc::BytecodeTypeKind::Scalar(bc::BytecodeScalarType::Float)
+                )
+            })
+            .map(|index| bc::BytecodeTypeId::new(index as u32))
+            .unwrap();
+        let integer = malformed
+            .types
+            .iter()
+            .position(|ty| {
+                matches!(
+                    ty.kind,
+                    bc::BytecodeTypeKind::Scalar(bc::BytecodeScalarType::Int)
+                )
+            })
+            .map(|index| bc::BytecodeTypeId::new(index as u32))
+            .unwrap();
+        malformed.types.push(bc::BytecodeType {
+            name: "malicious::Map[Float, Int]".into(),
+            kind: bc::BytecodeTypeKind::Intrinsic {
+                constructor: bc::BytecodeIntrinsicType::Map,
+                arguments: vec![float, integer],
+            },
+        });
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(error.message().contains("Map key"));
+
+        let mut operation = lowered(
+            "fn compare(\n\
+                 left: fn(Int): Int,\n\
+                 right: fn(Int): Int,\n\
+             ): Bool {\n\
+                 _ = left\n\
+                 _ = right\n\
+                 1 == 1\n\
+             }\n",
+        );
+        let function = function_id(&operation, "compare");
+        let function = &mut operation.functions[function.index() as usize];
+        let left_slot = function.parameters[0];
+        let right_slot = function.parameters[1];
+        let function_type = function.slots[left_slot.index() as usize].ty;
+        let binary = function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instructions)
+            .find_map(|instruction| {
+                let bc::BytecodeInstructionKind::Store { value, .. } = &mut instruction.kind else {
+                    return None;
+                };
+                matches!(
+                    value.kind,
+                    bc::BytecodeRvalueKind::Binary {
+                        operator: bc::BytecodeBinaryOperator::Equal,
+                        ..
+                    }
+                )
+                .then_some(value)
+            })
+            .expect("comparison lowers to a binary rvalue");
+        let bc::BytecodeRvalueKind::Binary { left, right, .. } = &mut binary.kind else {
+            unreachable!()
+        };
+        *left = bc::BytecodeOperand {
+            ty: function_type,
+            kind: bc::BytecodeOperandKind::Copy(bc::BytecodePlace {
+                slot: left_slot,
+                ty: function_type,
+                projections: Vec::new(),
+            }),
+        };
+        *right = bc::BytecodeOperand {
+            ty: function_type,
+            kind: bc::BytecodeOperandKind::Copy(bc::BytecodePlace {
+                slot: right_slot,
+                ty: function_type,
+                projections: Vec::new(),
+            }),
+        };
+        let error = bc::verify_bytecode(&operation).unwrap_err();
+        assert!(error.message().contains("rvalue"));
+    }
+
+    #[test]
     fn runtime_arithmetic_and_bounds_fail_with_normative_panic_classes() {
         for (source, expected) in [
             (
@@ -4168,5 +4358,268 @@ mod tests {
         condition_repr.clear();
         let error = execute(&program, entry, &mut host).unwrap_err();
         assert!(matches!(error, VmError::InvalidBytecode(_)));
+    }
+
+    #[test]
+    fn opaque_results_execute_as_zero_cost_sealed_witnesses() {
+        let source = "fn hidden(): impl Discard { 42 }\n";
+        assert_eq!(
+            execute_function(source, "hidden"),
+            RuntimeValue::Integer(42)
+        );
+        let program = lowered(source);
+        assert!(
+            program
+                .types
+                .iter()
+                .any(|ty| matches!(ty.kind, bc::BytecodeTypeKind::OpaqueResult { .. }))
+        );
+        assert!(program.functions.iter().any(|function| {
+            function.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instruction| {
+                    matches!(
+                        instruction.kind,
+                        bc::BytecodeInstructionKind::Store {
+                            value: bc::BytecodeRvalue {
+                                kind: bc::BytecodeRvalueKind::Coerce {
+                                    kind: bc::BytecodeCoercion::Opaque,
+                                    ..
+                                },
+                                ..
+                            },
+                            ..
+                        }
+                    )
+                })
+            })
+        }));
+        let tooling = bc::disassemble(&program);
+        assert!(tooling.contains("OpaqueResult"));
+        assert!(!tooling.contains("witness:"));
+    }
+
+    #[test]
+    fn bytecode_verifier_rejects_mutated_opaque_metadata_and_seals() {
+        let source = "fn hidden(): impl Discard { 42 }\n\
+                      fn text(): String { \"available type\" }\n";
+        let program = lowered(source);
+        bc::verify_bytecode(&program).unwrap();
+        let opaque = program
+            .types
+            .iter()
+            .position(|ty| matches!(ty.kind, bc::BytecodeTypeKind::OpaqueResult { .. }))
+            .unwrap();
+        let string = program
+            .types
+            .iter()
+            .position(|ty| {
+                matches!(
+                    ty.kind,
+                    bc::BytecodeTypeKind::Scalar(bc::BytecodeScalarType::String)
+                )
+            })
+            .map(|index| bc::BytecodeTypeId::new(index as u32))
+            .unwrap();
+
+        let mut wrong_witness = program.clone();
+        let bc::BytecodeTypeKind::OpaqueResult { witness, .. } =
+            &mut wrong_witness.types[opaque].kind
+        else {
+            unreachable!()
+        };
+        *witness = string;
+        let error = bc::verify_bytecode(&wrong_witness).unwrap_err();
+        assert!(
+            error.message().contains("coercion")
+                || error.message().contains("opaque")
+                || error.message().contains("rvalue"),
+            "{error:?}"
+        );
+
+        let mut cyclic = program.clone();
+        let bc::BytecodeTypeKind::OpaqueResult { witness, .. } = &mut cyclic.types[opaque].kind
+        else {
+            unreachable!()
+        };
+        *witness = bc::BytecodeTypeId::new(opaque as u32);
+        let error = bc::verify_bytecode(&cyclic).unwrap_err();
+        assert!(error.message().contains("form a cycle"));
+
+        let mut generic = program.clone();
+        let generic_id = bc::BytecodeTypeId::new(generic.types.len() as u32);
+        generic.types.push(bc::BytecodeType {
+            name: "$malicious".into(),
+            kind: bc::BytecodeTypeKind::GenericParameter(0),
+        });
+        let bc::BytecodeTypeKind::OpaqueResult { arguments, .. } = &mut generic.types[opaque].kind
+        else {
+            unreachable!()
+        };
+        arguments.push(generic_id);
+        let error = bc::verify_bytecode(&generic).unwrap_err();
+        assert!(error.message().contains("retains a generic parameter"));
+
+        let mut duplicate = program.clone();
+        let mut duplicated = duplicate.types[opaque].clone();
+        duplicated.name.push_str("#duplicate");
+        duplicate.types.push(duplicated);
+        let error = bc::verify_bytecode(&duplicate).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("family and arguments are duplicated")
+        );
+
+        let mut wrong_seal = program;
+        let seal = wrong_seal
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .flat_map(|block| &mut block.instructions)
+            .find_map(|instruction| {
+                let bc::BytecodeInstructionKind::Store { value, .. } = &mut instruction.kind else {
+                    return None;
+                };
+                matches!(
+                    &value.kind,
+                    bc::BytecodeRvalueKind::Coerce {
+                        kind: bc::BytecodeCoercion::Opaque,
+                        ..
+                    }
+                )
+                .then_some(value)
+            })
+            .expect("opaque return lowers to a bytecode seal");
+        let bc::BytecodeRvalueKind::Coerce { kind, .. } = &mut seal.kind else {
+            unreachable!()
+        };
+        *kind = bc::BytecodeCoercion::OptionLift;
+        let error = bc::verify_bytecode(&wrong_seal).unwrap_err();
+        assert!(error.message().contains("rvalue") || error.message().contains("coercion"));
+    }
+
+    #[test]
+    fn fallible_opaque_results_preserve_both_channels_through_an_outer_opaque() {
+        let source = "fn choose(flag: Bool): impl Discard ! String {\n\
+                          if flag { ok(42) } else { err(\"bad\") }\n\
+                      }\n\
+                      fn success(): impl Discard ! String { choose(true) }\n\
+                      fn failure(): impl Discard ! String { choose(false) }\n";
+        assert_eq!(
+            execute_function(source, "success"),
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(42)))
+        );
+        assert_eq!(
+            execute_function(source, "failure"),
+            RuntimeValue::ResultErr(Box::new(RuntimeValue::String("bad".into())))
+        );
+    }
+
+    #[test]
+    fn generic_opaque_families_monomorphize_distinct_concrete_representations() {
+        let source = "fn hide[T: Discard](value: T): impl Discard { value }\n\
+                      fn number(): impl Discard { hide(42) }\n\
+                      fn text(): impl Discard { hide(\"ready\") }\n";
+        assert_eq!(
+            execute_function(source, "number"),
+            RuntimeValue::Integer(42)
+        );
+        assert_eq!(
+            execute_function(source, "text"),
+            RuntimeValue::String("ready".into())
+        );
+
+        let program = lowered(source);
+        let hidden = program
+            .types
+            .iter()
+            .filter_map(|ty| {
+                let bc::BytecodeTypeKind::OpaqueResult {
+                    identity,
+                    arguments,
+                    witness,
+                } = &ty.kind
+                else {
+                    return None;
+                };
+                identity
+                    .ends_with("::value::hide")
+                    .then_some((arguments, *witness))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(hidden.len(), 2);
+        assert!(hidden.iter().all(|(arguments, witness)| {
+            arguments.as_slice() == [*witness]
+                && !matches!(
+                    program.types[witness.index() as usize].kind,
+                    bc::BytecodeTypeKind::GenericParameter(_)
+                )
+        }));
+    }
+
+    #[test]
+    fn opaque_published_traits_dispatch_statically_through_generic_consumers() {
+        let source = "trait Value {\n\
+                          fn value(value: Self): Int\n\
+                      }\n\
+                      type Boxed = { number: Int }\n\
+                      impl Value for Boxed {\n\
+                          fn value(value: Self): Int { value.number }\n\
+                      }\n\
+                      fn hidden(): impl Value + Discard { Boxed { number: 42 } }\n\
+                      fn generic[T: Value](value: T): Int { Value.value[T](value) }\n\
+                      fn forwarded(): Int { generic(hidden()) }\n";
+        assert_eq!(
+            execute_function(source, "forwarded"),
+            RuntimeValue::Integer(42)
+        );
+        let program = lowered(source);
+        assert!(
+            program
+                .callables
+                .iter()
+                .all(|callable| callable.generic_arity == 0)
+        );
+        assert!(!bc::disassemble(&program).contains("vtable"));
+    }
+
+    #[test]
+    fn opaque_prelude_bounds_dispatch_to_concrete_display_and_iterator_impls() {
+        let source = "type Label = { text: String }\n\
+                      type Cursor = { done: Bool }\n\
+                      impl Display for Label {\n\
+                          fn display(self): String { self.text }\n\
+                      }\n\
+                      impl Iterator[Int] for Cursor {\n\
+                          fn next(mut self): Int? { none }\n\
+                      }\n\
+                      fn hiddenLabel(): impl Display + Discard {\n\
+                          Label { text: \"ready\" }\n\
+                      }\n\
+                      fn hiddenCursor(): impl Iterator[Int] + Discard {\n\
+                          Cursor { done: false }\n\
+                      }\n\
+                      fn render[T: Display](value: T): String { value.display() }\n\
+                      fn consume[I: Discard + Iterator[Int]](cursor: I) {\n\
+                          for value in cursor {\n\
+                              _ = value\n\
+                          }\n\
+                      }\n\
+                      fn use() {\n\
+                          _ = render(hiddenLabel())\n\
+                          consume(hiddenCursor())\n\
+                      }\n";
+        let program = lowered(source);
+        let implementations = program
+            .callables
+            .iter()
+            .filter(|callable| callable.name.starts_with("implementation#"))
+            .count();
+        assert_eq!(implementations, 2);
+        assert!(program.callables.iter().all(|callable| {
+            !callable.name.contains("::type::Display::display")
+                && !callable.name.contains("::type::Iterator::next")
+        }));
+        assert!(!bc::disassemble(&program).contains("vtable"));
     }
 }

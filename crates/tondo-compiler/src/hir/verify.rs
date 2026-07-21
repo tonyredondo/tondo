@@ -9,14 +9,16 @@ use crate::types::{
     TypeInterner, TypeKind, TypeSubstitution,
 };
 
+use super::capabilities::{CapabilityAnalysis, CapabilityAssumptions, bounds_imply};
 use super::termination::{TraitTerminationEdge, analyze_trait_termination};
 use super::{
-    HirAssignmentTarget, HirAssignmentTargetKind, HirCallableId, HirConstantValue,
-    HirConstantValueKind, HirConstantVariantValue, HirExpression, HirExpressionId,
-    HirExpressionKind, HirFlow, HirForKind, HirGenericParameter, HirIterationProtocol, HirPattern,
-    HirPatternId, HirPatternKind, HirProgram, HirStatement, HirTraitConstructor, HirTraitIdentity,
+    HirAssignmentTarget, HirAssignmentTargetKind, HirBinaryOperator, HirCallableId, HirCapability,
+    HirCapabilityStatus, HirConstantValue, HirConstantValueKind, HirConstantVariantValue,
+    HirContainmentKind, HirExpression, HirExpressionId, HirExpressionKind, HirFlow, HirForKind,
+    HirGenericParameter, HirIndexAccess, HirIterationProtocol, HirPattern, HirPatternId,
+    HirPatternKind, HirProgram, HirStatement, HirTraitConstructor, HirTraitIdentity,
     HirTraitMethodKey, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
-    HirVariantValue,
+    HirVariantValue, TraitQuery, TraitSelectionError, select_implementation,
 };
 
 /// Reports a compiler defect at the boundary between typed HIR and MIR.
@@ -75,6 +77,16 @@ struct Verifier<'a> {
     program: &'a HirProgram,
 }
 
+struct OpaqueTraitProof {
+    interner: TypeInterner,
+    assumptions: BTreeSet<TraitQuery>,
+    capability_analysis: CapabilityAnalysis,
+    capability_assumptions: CapabilityAssumptions,
+    active: BTreeSet<TraitQuery>,
+    memo: BTreeMap<TraitQuery, bool>,
+    context: String,
+}
+
 impl Verifier<'_> {
     fn verify(&self) -> Result<(), HirInvariantError> {
         if !self.program.expression_check_complete {
@@ -96,27 +108,516 @@ impl Verifier<'_> {
                 ),
             ));
         }
-        if self.program.discard_statuses.len() != self.program.interner.len() {
+        if self.program.capability_statuses.len() != self.program.interner.len() {
             return Err(HirInvariantError::new(
                 "type capabilities",
                 format!(
-                    "{} types and {} Discard statuses are not aligned",
+                    "{} types and {} capability rows are not aligned",
                     self.program.interner.len(),
-                    self.program.discard_statuses.len()
+                    self.program.capability_statuses.len()
                 ),
             ));
         }
+        self.verify_capability_statuses()?;
 
         self.verify_declarations()?;
         self.verify_implementations()?;
         self.verify_constants()?;
         self.verify_callables()?;
+        self.verify_capability_contracts()?;
         self.verify_annotations_and_locals()?;
         self.verify_member_references()?;
         self.verify_patterns()?;
         let loops = self.collect_loops()?;
         self.verify_expressions(&loops)?;
         self.verify_bodies()?;
+        Ok(())
+    }
+
+    fn verify_capability_statuses(&self) -> Result<(), HirInvariantError> {
+        let analysis = CapabilityAnalysis::new(self.program, self.resolved)
+            .map_err(|error| HirInvariantError::new("type capabilities", error.to_string()))?;
+        let assumptions = CapabilityAssumptions::default();
+        for ty in self.program.interner.ids() {
+            for capability in HirCapability::ALL {
+                let expected = analysis
+                    .status(self.program, ty, capability, &assumptions)
+                    .map_err(|error| {
+                        HirInvariantError::new("type capabilities", error.to_string())
+                    })?;
+                let actual = self
+                    .program
+                    .capability_status(ty, capability)
+                    .ok_or_else(|| {
+                        HirInvariantError::new(
+                            "type capabilities",
+                            "capability table omitted an interned type",
+                        )
+                    })?;
+                if actual != expected {
+                    return Err(HirInvariantError::new(
+                        "type capabilities",
+                        format!(
+                            "{} status for {} is {:?}, expected {:?}",
+                            capability.as_str(),
+                            ty,
+                            actual,
+                            expected
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_capability_contracts(&self) -> Result<(), HirInvariantError> {
+        let analysis = CapabilityAnalysis::new(self.program, self.resolved)
+            .map_err(|error| HirInvariantError::new("capability contracts", error.to_string()))?;
+
+        for declaration in self.program.declarations.values() {
+            let context = format!("type declaration symbol#{}", declaration.symbol.index());
+            let assumptions =
+                CapabilityAssumptions::from_generics(self.program, &declaration.parameters);
+            let mut roots = declaration
+                .parameters
+                .iter()
+                .flat_map(generic_bound_type_roots)
+                .collect::<Vec<_>>();
+            match &declaration.kind {
+                HirTypeDeclarationKind::Alias { target } => roots.push(*target),
+                HirTypeDeclarationKind::Nominal(definition) => {
+                    roots.extend(nominal_type_roots(&definition.shape));
+                }
+                HirTypeDeclarationKind::Trait(definition) => roots.push(definition.self_type),
+            }
+            self.verify_type_formations(&analysis, roots, &assumptions, &context)?;
+        }
+
+        for callable in &self.program.callables {
+            let context = format!("callable {:?}", callable.id);
+            let assumptions =
+                CapabilityAssumptions::from_generics(self.program, &callable.generics);
+            let mut roots = vec![callable.function_type];
+            roots.extend(callable.generics.iter().flat_map(generic_bound_type_roots));
+            self.verify_type_formations(&analysis, roots, &assumptions, &context)?;
+        }
+
+        let default_assumptions = CapabilityAssumptions::default();
+        for constant in self.program.constants.values() {
+            if let Some(ty) = constant.declared_type {
+                self.verify_type_formations(
+                    &analysis,
+                    [ty],
+                    &default_assumptions,
+                    &format!("constant symbol#{}", constant.symbol.index()),
+                )?;
+            }
+        }
+
+        for implementation in &self.program.implementations {
+            let context = format!("implementation#{}", implementation.id.index());
+            let assumptions =
+                CapabilityAssumptions::from_generics(self.program, &implementation.parameters);
+            let mut roots = vec![implementation.target];
+            roots.extend(implementation.trait_reference.arguments.iter().copied());
+            roots.extend(
+                implementation
+                    .parameters
+                    .iter()
+                    .flat_map(generic_bound_type_roots),
+            );
+            self.verify_type_formations(&analysis, roots, &assumptions, &context)?;
+            if implementation.requires_self_send {
+                self.verify_capability_requirement(
+                    &analysis,
+                    implementation.target,
+                    HirCapability::Send,
+                    &assumptions,
+                    &context,
+                    "async trait receiver",
+                )?;
+            }
+        }
+
+        for (symbol, constant) in &self.program.constants {
+            let Some(root) = constant.value else {
+                continue;
+            };
+            self.verify_expression_capability_tree(
+                root,
+                &analysis,
+                &default_assumptions,
+                &format!("constant symbol#{}", symbol.index()),
+            )?;
+        }
+        for (callable, body) in &self.program.bodies {
+            let signature = self.program.callable(*callable).ok_or_else(|| {
+                HirInvariantError::new(
+                    "capability contracts",
+                    "body has no callable capability context",
+                )
+            })?;
+            let assumptions =
+                CapabilityAssumptions::from_generics(self.program, &signature.generics);
+            self.verify_expression_capability_tree(
+                body.root,
+                &analysis,
+                &assumptions,
+                &format!("callable {callable:?}"),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn verify_type_formations(
+        &self,
+        analysis: &CapabilityAnalysis,
+        roots: impl IntoIterator<Item = TypeId>,
+        assumptions: &CapabilityAssumptions,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        let mut pending = roots.into_iter().collect::<Vec<_>>();
+        let mut visited = BTreeSet::new();
+        while let Some(ty) = pending.pop() {
+            if !visited.insert(ty) {
+                continue;
+            }
+            match self.program.interner.kind(ty).map_err(|error| {
+                HirInvariantError::new(context, format!("invalid formation type: {error}"))
+            })? {
+                TypeKind::Function(function) => {
+                    pending.extend(function.parameters().iter().map(|parameter| parameter.ty()));
+                    pending.extend(function.variadic());
+                    pending.push(function.outcome());
+                }
+                TypeKind::Nominal { arguments, .. }
+                | TypeKind::Tuple(arguments)
+                | TypeKind::Union(arguments)
+                | TypeKind::Generated { arguments, .. }
+                | TypeKind::OpaqueResult { arguments, .. } => {
+                    pending.extend(arguments.iter().copied());
+                }
+                TypeKind::Option(item) => pending.push(*item),
+                TypeKind::Result { success, error } => {
+                    pending.push(*success);
+                    pending.push(*error);
+                }
+                TypeKind::Intrinsic {
+                    constructor,
+                    arguments,
+                } => {
+                    let requirement = match constructor {
+                        IntrinsicType::Map => {
+                            Some((arguments[0], HirCapability::Key, "Map key formation"))
+                        }
+                        IntrinsicType::Set => {
+                            Some((arguments[0], HirCapability::Key, "Set key formation"))
+                        }
+                        IntrinsicType::Ref => {
+                            Some((arguments[0], HirCapability::Discard, "Ref target formation"))
+                        }
+                        IntrinsicType::Array
+                        | IntrinsicType::Range
+                        | IntrinsicType::Pointer
+                        | IntrinsicType::Join
+                        | IntrinsicType::Command
+                        | IntrinsicType::Pipeline
+                        | IntrinsicType::NumericConversionError => None,
+                    };
+                    if let Some((required, capability, reason)) = requirement {
+                        self.verify_capability_requirement(
+                            analysis,
+                            required,
+                            capability,
+                            assumptions,
+                            context,
+                            reason,
+                        )?;
+                    }
+                    pending.extend(arguments.iter().copied());
+                }
+                TypeKind::Cursor { collection, .. } => pending.push(*collection),
+                TypeKind::Error
+                | TypeKind::Scalar(_)
+                | TypeKind::GenericParameter(_)
+                | TypeKind::Inference(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_capability_requirement(
+        &self,
+        analysis: &CapabilityAnalysis,
+        ty: TypeId,
+        capability: HirCapability,
+        assumptions: &CapabilityAssumptions,
+        context: &str,
+        reason: &str,
+    ) -> Result<(), HirInvariantError> {
+        let status = analysis
+            .status(self.program, ty, capability, assumptions)
+            .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
+        if status != HirCapabilityStatus::Satisfied {
+            return Err(HirInvariantError::new(
+                context,
+                format!(
+                    "{} requires {} for type {}, found {status:?}",
+                    reason,
+                    capability.as_str(),
+                    ty
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_expression_capability_tree(
+        &self,
+        root: HirExpressionId,
+        analysis: &CapabilityAnalysis,
+        assumptions: &CapabilityAssumptions,
+        owner: &str,
+    ) -> Result<(), HirInvariantError> {
+        let mut pending = vec![root];
+        let mut visited = BTreeSet::new();
+        while let Some(id) = pending.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let expression = self.program.expression(id).ok_or_else(|| {
+                HirInvariantError::new(owner, format!("unknown expression#{}", id.index()))
+            })?;
+            let context = format!("{owner} expression#{}", id.index());
+            self.verify_expression_capability_contracts(
+                expression,
+                analysis,
+                assumptions,
+                &context,
+            )?;
+            pending.extend(expression_children(expression));
+        }
+        Ok(())
+    }
+
+    fn verify_expression_capability_contracts(
+        &self,
+        expression: &HirExpression,
+        analysis: &CapabilityAnalysis,
+        assumptions: &CapabilityAssumptions,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        self.verify_type_formations(analysis, [expression.ty], assumptions, context)?;
+        match &expression.kind {
+            HirExpressionKind::SpecializedFunction {
+                callable,
+                arguments,
+            } => {
+                self.verify_type_formations(
+                    analysis,
+                    arguments.iter().copied(),
+                    assumptions,
+                    context,
+                )?;
+                let signature = self.program.callable(*callable).ok_or_else(|| {
+                    HirInvariantError::new(context, "specialization has no callable contract")
+                })?;
+                for parameter in &signature.generics {
+                    let Some(argument) = arguments.get(parameter.position as usize).copied() else {
+                        continue;
+                    };
+                    for bound in &parameter.bounds {
+                        let HirTraitConstructor::Prelude(name) = &bound.constructor else {
+                            continue;
+                        };
+                        if let Some(capability) = HirCapability::from_name(name.as_str()) {
+                            self.verify_capability_requirement(
+                                analysis,
+                                argument,
+                                capability,
+                                assumptions,
+                                context,
+                                "generic specialization",
+                            )?;
+                        }
+                    }
+                }
+            }
+            HirExpressionKind::PreludeTraitFunction { arguments, .. } => {
+                self.verify_type_formations(
+                    analysis,
+                    arguments.iter().copied(),
+                    assumptions,
+                    context,
+                )?;
+            }
+            HirExpressionKind::Binary {
+                operator: HirBinaryOperator::Equal | HirBinaryOperator::NotEqual,
+                left,
+                ..
+            } => {
+                let ty = self.expression(*left, context)?.ty;
+                self.verify_capability_requirement(
+                    analysis,
+                    ty,
+                    HirCapability::Equatable,
+                    assumptions,
+                    context,
+                    "equality",
+                )?;
+            }
+            HirExpressionKind::Contains {
+                kind, container, ..
+            } => {
+                let container = self.expression(*container, context)?;
+                let requirement = match (kind, self.program.interner.kind(container.ty)) {
+                    (
+                        HirContainmentKind::Array,
+                        Ok(TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Array,
+                            arguments,
+                        }),
+                    ) => Some((arguments[0], HirCapability::Equatable)),
+                    (
+                        HirContainmentKind::MapKey,
+                        Ok(TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Map,
+                            arguments,
+                        }),
+                    )
+                    | (
+                        HirContainmentKind::Set,
+                        Ok(TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Set,
+                            arguments,
+                        }),
+                    ) => Some((arguments[0], HirCapability::Key)),
+                    (HirContainmentKind::Range | HirContainmentKind::StringChar, Ok(_)) => None,
+                    _ => {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "membership kind does not match its container type",
+                        ));
+                    }
+                };
+                if let Some((ty, capability)) = requirement {
+                    self.verify_capability_requirement(
+                        analysis,
+                        ty,
+                        capability,
+                        assumptions,
+                        context,
+                        "membership",
+                    )?;
+                }
+            }
+            HirExpressionKind::Index {
+                base,
+                access: HirIndexAccess::MapLookup,
+                ..
+            } => {
+                let base = self.expression(*base, context)?;
+                let Ok(TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Map,
+                    arguments,
+                }) = self.program.interner.kind(base.ty)
+                else {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "map lookup has a non-map base",
+                    ));
+                };
+                self.verify_capability_requirement(
+                    analysis,
+                    arguments[1],
+                    HirCapability::Copy,
+                    assumptions,
+                    context,
+                    "map lookup",
+                )?;
+            }
+            HirExpressionKind::Block { statements, .. } => {
+                for statement in statements {
+                    self.verify_statement_capability_contracts(
+                        statement,
+                        analysis,
+                        assumptions,
+                        context,
+                    )?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    fn verify_statement_capability_contracts(
+        &self,
+        statement: &HirStatement,
+        analysis: &CapabilityAnalysis,
+        assumptions: &CapabilityAssumptions,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        match statement {
+            HirStatement::Binding {
+                declared_type: Some(ty),
+                ..
+            } => self.verify_type_formations(analysis, [*ty], assumptions, context)?,
+            HirStatement::Expression { value, .. } | HirStatement::Discard { value, .. } => {
+                let ty = self.expression(*value, context)?.ty;
+                self.verify_capability_requirement(
+                    analysis,
+                    ty,
+                    HirCapability::Discard,
+                    assumptions,
+                    context,
+                    "discarded statement value",
+                )?;
+            }
+            HirStatement::Assignment { target, .. } => {
+                let mut pending = vec![target];
+                while let Some(target) = pending.pop() {
+                    self.verify_type_formations(analysis, [target.ty], assumptions, context)?;
+                    match &target.kind {
+                        HirAssignmentTargetKind::Discard => {
+                            self.verify_capability_requirement(
+                                analysis,
+                                target.ty,
+                                HirCapability::Discard,
+                                assumptions,
+                                context,
+                                "discard assignment target",
+                            )?;
+                        }
+                        HirAssignmentTargetKind::Tuple(items) => pending.extend(items),
+                        HirAssignmentTargetKind::Place { .. } => {}
+                    }
+                }
+            }
+            HirStatement::For {
+                kind:
+                    HirForKind::Iterate {
+                        protocol:
+                            HirIterationProtocol::Trait {
+                                element,
+                                function_type,
+                            },
+                        ..
+                    },
+                ..
+            } => self.verify_type_formations(
+                analysis,
+                [*element, *function_type],
+                assumptions,
+                context,
+            )?,
+            HirStatement::Binding {
+                declared_type: None,
+                ..
+            }
+            | HirStatement::For { .. } => {}
+        }
         Ok(())
     }
 
@@ -1058,7 +1559,8 @@ impl Verifier<'_> {
                 | TypeKind::Tuple(arguments)
                 | TypeKind::Union(arguments)
                 | TypeKind::Intrinsic { arguments, .. }
-                | TypeKind::Generated { arguments, .. } => {
+                | TypeKind::Generated { arguments, .. }
+                | TypeKind::OpaqueResult { arguments, .. } => {
                     pending.extend(arguments.iter().copied());
                 }
                 TypeKind::Function(function) => {
@@ -1072,10 +1574,7 @@ impl Verifier<'_> {
                     pending.push(*error);
                 }
                 TypeKind::Cursor { collection, .. } => pending.push(*collection),
-                TypeKind::Error
-                | TypeKind::Scalar(_)
-                | TypeKind::Inference(_)
-                | TypeKind::OpaqueResult(_) => {}
+                TypeKind::Error | TypeKind::Scalar(_) | TypeKind::Inference(_) => {}
             }
         }
         Ok(())
@@ -1098,7 +1597,7 @@ impl Verifier<'_> {
             HirTraitConstructor::Prelude(_) => false,
         };
         let owns_target = match self.program.interner.kind(implementation.target) {
-            Ok(TypeKind::Nominal { identity, .. } | TypeKind::OpaqueResult(identity)) => {
+            Ok(TypeKind::Nominal { identity, .. } | TypeKind::OpaqueResult { identity, .. }) => {
                 identity_belongs_to(&implementation.module, identity)
             }
             _ => false,
@@ -1240,6 +1739,7 @@ impl Verifier<'_> {
 
     fn verify_callables(&self) -> Result<(), HirInvariantError> {
         let mut ids = BTreeSet::new();
+        let mut opaque_ids = BTreeSet::new();
         let mut previous = None;
         for callable in &self.program.callables {
             let context = callable_context(callable.id);
@@ -1258,6 +1758,7 @@ impl Verifier<'_> {
             self.verify_generics(&callable.generics, callable.generic_arity, hidden, &context)?;
             self.verify_type(callable.outcome, format!("{context} outcome"))?;
             self.verify_type(callable.function_type, format!("{context} function type"))?;
+            self.verify_opaque_result(callable, &mut opaque_ids, &context)?;
             for (index, parameter) in callable.parameters.iter().enumerate() {
                 self.verify_type(parameter.ty, format!("{context} parameter {index}"))?;
                 if let Some(element) = parameter.variadic_element {
@@ -1281,6 +1782,365 @@ impl Verifier<'_> {
             }
         }
         Ok(())
+    }
+
+    fn verify_opaque_result(
+        &self,
+        callable: &super::HirCallableSignature,
+        identities: &mut BTreeSet<crate::package::SymbolIdentity>,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        let success = match self
+            .program
+            .interner
+            .kind(callable.outcome)
+            .map_err(|error| {
+                HirInvariantError::new(context, format!("invalid callable outcome: {error}"))
+            })? {
+            TypeKind::Result { success, .. } => *success,
+            _ => callable.outcome,
+        };
+        let Some(opaque) = callable.opaque_result.as_ref() else {
+            if matches!(
+                self.program.interner.kind(success),
+                Ok(TypeKind::OpaqueResult { .. })
+            ) {
+                return Err(HirInvariantError::new(
+                    context,
+                    "opaque outcome has no declaration-owned contract",
+                ));
+            }
+            return Ok(());
+        };
+
+        match callable.id {
+            HirCallableId::Symbol(_) => {}
+            HirCallableId::Member(member)
+                if self.resolved.member(member).is_some_and(|member| {
+                    matches!(
+                        member.kind(),
+                        MemberKind::InherentMethod | MemberKind::AssociatedFunction
+                    )
+                }) => {}
+            HirCallableId::Member(_) | HirCallableId::Implementation(_) => {
+                return Err(HirInvariantError::new(
+                    context,
+                    "trait or implementation method owns an opaque result",
+                ));
+            }
+        }
+        let TypeKind::OpaqueResult {
+            identity,
+            arguments,
+        } = self.program.interner.kind(success).map_err(|error| {
+            HirInvariantError::new(context, format!("invalid opaque success type: {error}"))
+        })?
+        else {
+            return Err(HirInvariantError::new(
+                context,
+                "opaque metadata does not correspond to the top-level success type",
+            ));
+        };
+        if identity != &opaque.identity || !identities.insert(identity.clone()) {
+            return Err(HirInvariantError::new(
+                context,
+                "opaque identity is mismatched or duplicated",
+            ));
+        }
+        if arguments.len() != callable.generic_arity as usize
+            || !arguments.iter().enumerate().all(|(position, argument)| {
+                matches!(
+                    self.program.interner.kind(*argument),
+                    Ok(TypeKind::GenericParameter(actual)) if *actual == position as u32
+                )
+            })
+        {
+            return Err(HirInvariantError::new(
+                context,
+                "opaque family does not preserve the callable generic arguments",
+            ));
+        }
+        if opaque.bounds.is_empty() || !bounds_imply(&opaque.bounds, HirCapability::Discard) {
+            return Err(HirInvariantError::new(
+                context,
+                "opaque bounds do not prove Discard",
+            ));
+        }
+        let mut unique_bounds = BTreeSet::new();
+        for bound in &opaque.bounds {
+            if !unique_bounds.insert((bound.constructor.clone(), bound.arguments.clone())) {
+                return Err(HirInvariantError::new(
+                    context,
+                    "opaque bounds contain a duplicate normalized contract",
+                ));
+            }
+            if let HirTraitConstructor::Symbol(symbol) = bound.constructor {
+                self.verify_symbol(symbol, &[SymbolKind::Trait], context)?;
+            }
+            for argument in &bound.arguments {
+                self.verify_type(*argument, format!("{context} opaque bound"))?;
+            }
+        }
+        let witness = opaque.witness.ok_or_else(|| {
+            HirInvariantError::new(context, "opaque result has no concrete witness")
+        })?;
+        self.verify_type(witness, format!("{context} opaque witness"))?;
+        if matches!(
+            self.program.interner.kind(witness),
+            Ok(TypeKind::Error | TypeKind::Scalar(ScalarType::Never) | TypeKind::Inference(_))
+        ) {
+            return Err(HirInvariantError::new(
+                context,
+                "opaque witness is recovery, unresolved, or Never",
+            ));
+        }
+        let mut positions = BTreeSet::new();
+        self.collect_generic_positions(witness, &mut positions)?;
+        if positions
+            .iter()
+            .any(|position| *position >= callable.generic_arity)
+        {
+            return Err(HirInvariantError::new(
+                context,
+                "opaque witness escapes an undeclared generic parameter",
+            ));
+        }
+        self.verify_opaque_witness_bounds(callable, opaque, witness, context)?;
+        Ok(())
+    }
+
+    fn verify_opaque_witness_bounds(
+        &self,
+        callable: &super::HirCallableSignature,
+        opaque: &super::HirOpaqueResult,
+        witness: TypeId,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        let mut interner = self.program.interner.clone();
+        let mut assumptions = BTreeSet::new();
+        for parameter in &callable.generics {
+            let target = interner
+                .generic_parameter(parameter.position)
+                .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
+            assumptions.extend(
+                parameter
+                    .bounds
+                    .iter()
+                    .map(|bound| TraitQuery::new(bound, target)),
+            );
+        }
+        let capability_analysis =
+            CapabilityAnalysis::new(self.program, self.resolved).map_err(|error| {
+                HirInvariantError::new(context, format!("invalid capability graph: {error}"))
+            })?;
+        let capability_assumptions =
+            CapabilityAssumptions::from_generics(self.program, &callable.generics);
+        let mut proof = OpaqueTraitProof {
+            interner,
+            assumptions,
+            capability_analysis,
+            capability_assumptions,
+            active: BTreeSet::new(),
+            memo: BTreeMap::new(),
+            context: context.to_owned(),
+        };
+        for bound in &opaque.bounds {
+            let query =
+                TraitQuery::from_parts(bound.constructor.clone(), bound.arguments.clone(), witness);
+            if !self.prove_opaque_trait_query(&query, &mut proof)? {
+                return Err(HirInvariantError::new(
+                    context,
+                    "opaque witness does not satisfy every published bound",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn prove_opaque_trait_query(
+        &self,
+        query: &TraitQuery,
+        proof: &mut OpaqueTraitProof,
+    ) -> Result<bool, HirInvariantError> {
+        if let Some(proven) = proof.memo.get(query).copied() {
+            return Ok(proven);
+        }
+        if proof.assumptions.contains(query) {
+            proof.memo.insert(query.clone(), true);
+            return Ok(true);
+        }
+        if let HirTraitConstructor::Prelude(name) = query.constructor()
+            && let Some(capability) = HirCapability::from_name(name.as_str())
+        {
+            let proven = proof
+                .capability_analysis
+                .status(
+                    self.program,
+                    query.target(),
+                    capability,
+                    &proof.capability_assumptions,
+                )
+                .map_err(|error| {
+                    HirInvariantError::new(proof.context.clone(), error.to_string())
+                })?
+                == super::HirCapabilityStatus::Satisfied;
+            proof.memo.insert(query.clone(), proven);
+            return Ok(proven);
+        }
+        if let Some(proven) =
+            self.opaque_published_query_proof(&mut proof.interner, query, &proof.context)?
+        {
+            proof.memo.insert(query.clone(), proven);
+            return Ok(proven);
+        }
+        if let HirTraitConstructor::Prelude(name) = query.constructor() {
+            match name.as_str() {
+                "Call" | "CallMut" | "CallOnce" => {
+                    proof.memo.insert(query.clone(), false);
+                    return Ok(false);
+                }
+                "Display" | "Iterator" => {}
+                _ => {
+                    proof.memo.insert(query.clone(), false);
+                    return Ok(false);
+                }
+            }
+        }
+        if !proof.active.insert(query.clone()) {
+            return Err(HirInvariantError::new(
+                &proof.context,
+                "opaque bound proof re-entered an admitted trait query",
+            ));
+        }
+        let selection =
+            select_implementation(&proof.interner, &self.program.implementations, query).map_err(
+                |error| match error {
+                    TraitSelectionError::Ambiguous => HirInvariantError::new(
+                        &proof.context,
+                        "opaque bound proof found ambiguous admitted implementations",
+                    ),
+                    TraitSelectionError::Type(error) => {
+                        HirInvariantError::new(&proof.context, error.to_string())
+                    }
+                },
+            )?;
+        let Some(selection) = selection else {
+            proof.active.remove(query);
+            proof.memo.insert(query.clone(), false);
+            return Ok(false);
+        };
+        let implementation = self
+            .program
+            .implementation(selection.implementation())
+            .ok_or_else(|| {
+                HirInvariantError::new(
+                    &proof.context,
+                    "opaque bound selection references an absent implementation",
+                )
+            })?;
+        let substitution = TypeSubstitution::new(selection.arguments().to_vec());
+        let mut proven = true;
+        for parameter in implementation.parameters() {
+            let target = selection
+                .arguments()
+                .get(parameter.position() as usize)
+                .copied()
+                .ok_or_else(|| {
+                    HirInvariantError::new(
+                        &proof.context,
+                        "opaque bound selection omitted an implementation binder",
+                    )
+                })?;
+            for bound in parameter.bounds() {
+                let arguments = bound
+                    .arguments()
+                    .iter()
+                    .map(|argument| {
+                        substitution
+                            .apply(&mut proof.interner, *argument)
+                            .map_err(|error| {
+                                HirInvariantError::new(proof.context.clone(), error.to_string())
+                            })
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let obligation =
+                    TraitQuery::from_parts(bound.constructor().clone(), arguments, target);
+                proven &= self.prove_opaque_trait_query(&obligation, proof)?;
+            }
+        }
+        proof.active.remove(query);
+        proof.memo.insert(query.clone(), proven);
+        Ok(proven)
+    }
+
+    fn opaque_published_query_proof(
+        &self,
+        interner: &mut TypeInterner,
+        query: &TraitQuery,
+        context: &str,
+    ) -> Result<Option<bool>, HirInvariantError> {
+        let TypeKind::OpaqueResult {
+            identity,
+            arguments,
+        } = interner
+            .kind(query.target())
+            .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+            .clone()
+        else {
+            return Ok(None);
+        };
+        let opaque = self.program.opaque_result(&identity).ok_or_else(|| {
+            HirInvariantError::new(context, "opaque query has no declaration-owned contract")
+        })?;
+        let substitution = TypeSubstitution::new(arguments);
+        let published = opaque
+            .bounds
+            .iter()
+            .map(|bound| {
+                let arguments = bound
+                    .arguments
+                    .iter()
+                    .map(|argument| {
+                        substitution
+                            .apply(interner, *argument)
+                            .map_err(|error| HirInvariantError::new(context, error.to_string()))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(TraitQuery::from_parts(
+                    bound.constructor.clone(),
+                    arguments,
+                    query.target(),
+                ))
+            })
+            .collect::<Result<Vec<_>, HirInvariantError>>()?;
+        if published.contains(query) {
+            return Ok(Some(true));
+        }
+        let HirTraitConstructor::Prelude(required) = query.constructor() else {
+            return Ok(Some(false));
+        };
+        let has = |name: &str, arguments: &[TypeId]| {
+            published.iter().any(|bound| {
+                matches!(
+                    bound.constructor(),
+                    HirTraitConstructor::Prelude(candidate) if candidate.as_str() == name
+                ) && bound.arguments() == arguments
+            })
+        };
+        let discard = has("Discard", &[]) || has("Copy", &[]) || has("Key", &[]);
+        let proven = match required.as_str() {
+            "Discard" => discard,
+            "Copy" => has("Copy", &[]) || has("Key", &[]),
+            "Equatable" => has("Equatable", &[]) || has("Key", &[]),
+            "CallMut" => has("CallMut", query.arguments()) || has("Call", query.arguments()),
+            "CallOnce" => {
+                has("CallOnce", query.arguments())
+                    || (discard
+                        && (has("CallMut", query.arguments()) || has("Call", query.arguments())))
+            }
+            _ => false,
+        };
+        Ok(Some(proven))
     }
 
     fn verify_generics(
@@ -1791,6 +2651,27 @@ impl Verifier<'_> {
                     self.verify_statement(statement, context)?;
                 }
             }
+            HirExpressionKind::Coerce { kind, value } => {
+                let actual = self.expression(*value, context)?.ty;
+                let valid = if *kind == crate::types::Assignability::Opaque {
+                    let mut interner = self.program.interner.clone();
+                    self.program
+                        .opaque_coercion_matches(&mut interner, actual, expression.ty)
+                        .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                } else {
+                    self.program
+                        .interner
+                        .assignability(actual, expression.ty)
+                        .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                        == Some(*kind)
+                };
+                if !valid || *kind == crate::types::Assignability::Exact {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "coercion does not match its closed semantic relation",
+                    ));
+                }
+            }
             HirExpressionKind::Recovery
             | HirExpressionKind::Literal(_)
             | HirExpressionKind::InterpolatedString { .. }
@@ -1817,8 +2698,7 @@ impl Verifier<'_> {
             | HirExpressionKind::Return { .. }
             | HirExpressionKind::Fail { .. }
             | HirExpressionKind::Break { .. }
-            | HirExpressionKind::Continue { .. }
-            | HirExpressionKind::Coerce { .. } => {}
+            | HirExpressionKind::Continue { .. } => {}
         }
         Ok(())
     }
@@ -2376,6 +3256,29 @@ fn category_name(category: HirValueCategory) -> &'static str {
     }
 }
 
+fn generic_bound_type_roots(parameter: &HirGenericParameter) -> Vec<TypeId> {
+    parameter
+        .bounds
+        .iter()
+        .flat_map(|bound| bound.arguments.iter().copied())
+        .collect()
+}
+
+fn nominal_type_roots(shape: &super::HirNominalShape) -> Vec<TypeId> {
+    match shape {
+        super::HirNominalShape::Newtype { underlying } => vec![*underlying],
+        super::HirNominalShape::Record { fields } => fields.iter().map(|field| field.ty).collect(),
+        super::HirNominalShape::Enum { variants } => variants
+            .iter()
+            .flat_map(|variant| match &variant.payload {
+                HirVariantPayload::Unit => Vec::new(),
+                HirVariantPayload::Tuple(items) => items.clone(),
+                HirVariantPayload::Record(fields) => fields.iter().map(|field| field.ty).collect(),
+            })
+            .collect(),
+    }
+}
+
 fn same_generic_parameter(left: &HirGenericParameter, right: &HirGenericParameter) -> bool {
     left.local == right.local
         && left.position == right.position
@@ -2500,6 +3403,74 @@ mod tests {
     fn complete_checked_hir_satisfies_the_mir_entry_contract() {
         let (resolved, program) = checked_program();
         verify_typed_hir(&resolved, &program).unwrap();
+    }
+
+    #[test]
+    fn opaque_contracts_and_seals_are_reproved_before_mir() {
+        const SOURCE: &str = "trait Visible {}\n\
+             trait Hidden {}\n\
+             type Item = { marker: Unit }\n\
+             impl Visible for Item {}\n\
+             fn reveal(): impl Visible + Discard { Item { marker: () } }\n";
+
+        let trait_symbol = |resolved: &ResolvedProgram, name: &str| {
+            resolved
+                .symbols()
+                .find(|symbol| symbol.name().as_str() == name)
+                .unwrap()
+                .id()
+        };
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut wrong_bound) = checked_program_from(SOURCE);
+        let visible = trait_symbol(&resolved, "Visible");
+        let hidden = trait_symbol(&resolved, "Hidden");
+        let opaque = wrong_bound
+            .callables
+            .iter_mut()
+            .find_map(|callable| callable.opaque_result.as_mut())
+            .unwrap();
+        opaque
+            .bounds
+            .iter_mut()
+            .find(|bound| bound.constructor == HirTraitConstructor::Symbol(visible))
+            .unwrap()
+            .constructor = HirTraitConstructor::Symbol(hidden);
+        let error = verify_typed_hir(&resolved, &wrong_bound).unwrap_err();
+        assert!(error.message().contains("published bound"));
+
+        let (resolved, mut duplicate_bound) = checked_program_from(SOURCE);
+        let opaque = duplicate_bound
+            .callables
+            .iter_mut()
+            .find_map(|callable| callable.opaque_result.as_mut())
+            .unwrap();
+        opaque.bounds.push(opaque.bounds[0].clone());
+        let error = verify_typed_hir(&resolved, &duplicate_bound).unwrap_err();
+        assert!(error.message().contains("duplicate normalized contract"));
+
+        let (resolved, mut wrong_seal) = checked_program_from(SOURCE);
+        let expression = wrong_seal
+            .expressions
+            .iter_mut()
+            .find(|expression| {
+                matches!(
+                    expression.kind,
+                    HirExpressionKind::Coerce {
+                        kind: crate::types::Assignability::Opaque,
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let HirExpressionKind::Coerce { kind, .. } = &mut expression.kind else {
+            unreachable!()
+        };
+        *kind = crate::types::Assignability::OptionLift;
+        let error = verify_typed_hir(&resolved, &wrong_seal).unwrap_err();
+        assert!(error.message().contains("closed semantic relation"));
     }
 
     #[test]
@@ -2849,10 +3820,67 @@ mod tests {
         assert!(error.message().contains("not aligned"));
 
         let (resolved, mut program) = checked_program();
-        program.discard_statuses.pop();
+        program.capability_statuses.pop();
         let error = verify_typed_hir(&resolved, &program).unwrap_err();
         assert_eq!(error.context(), "type capabilities");
-        assert!(error.message().contains("Discard statuses"));
+        assert!(error.message().contains("capability rows"));
+
+        let (resolved, mut program) = checked_program();
+        let integer = program.interner.scalar(ScalarType::Int);
+        program.capability_statuses[integer.index() as usize][HirCapability::Key.index()] =
+            HirCapabilityStatus::Unsatisfied;
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert_eq!(error.context(), "type capabilities");
+        assert!(error.message().contains("Key status"));
+    }
+
+    #[test]
+    fn capability_consumers_are_reproved_from_typed_hir() {
+        let (resolved, mut program) = checked_program_from(
+            "fn equal(left: Pointer[Int], right: Pointer[Int]): Bool {\n\
+                 _ = left\n\
+                 _ = right\n\
+                 1 == 1\n\
+             }\n",
+        );
+        let pointers = program
+            .expressions
+            .iter()
+            .enumerate()
+            .filter_map(|(index, expression)| {
+                matches!(
+                    program.interner.kind(expression.ty),
+                    Ok(TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Pointer,
+                        ..
+                    })
+                )
+                .then_some(HirExpressionId(index as u32))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(pointers.len(), 2);
+        let binary = program
+            .expressions
+            .iter_mut()
+            .find(|expression| {
+                matches!(
+                    expression.kind,
+                    HirExpressionKind::Binary {
+                        operator: HirBinaryOperator::Equal,
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let HirExpressionKind::Binary { left, right, .. } = &mut binary.kind else {
+            unreachable!()
+        };
+        *left = pointers[0];
+        *right = pointers[1];
+
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert!(error.context().contains("expression#"));
+        assert!(error.message().contains("equality requires Equatable"));
     }
 
     #[test]

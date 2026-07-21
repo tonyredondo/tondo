@@ -8,7 +8,13 @@ pub fn disassemble(program: &BytecodeProgram) -> String {
     let mut output = String::new();
     writeln!(output, "; Tondo bootstrap bytecode (tooling only)").unwrap();
     for (index, ty) in program.types.iter().enumerate() {
-        writeln!(output, "type t{index} = {} ; {:?}", ty.name, ty.kind).unwrap();
+        writeln!(
+            output,
+            "type t{index} = {} ; {}",
+            ty.name,
+            type_kind_text(&ty.kind)
+        )
+        .unwrap();
     }
     for (index, nominal) in program.nominals.iter().enumerate() {
         writeln!(
@@ -86,6 +92,17 @@ pub fn disassemble(program: &BytecodeProgram) -> String {
         writeln!(output, "}}").unwrap();
     }
     output
+}
+
+fn type_kind_text(kind: &BytecodeTypeKind) -> String {
+    match kind {
+        BytecodeTypeKind::OpaqueResult {
+            identity,
+            arguments,
+            ..
+        } => format!("OpaqueResult {{ identity: {identity:?}, arguments: {arguments:?} }}"),
+        kind => format!("{kind:?}"),
+    }
 }
 
 fn instruction_text(instruction: &BytecodeInstructionKind) -> String {
