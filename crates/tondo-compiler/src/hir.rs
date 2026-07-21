@@ -13,7 +13,8 @@ use crate::package::{ModuleId, Name, PackageGraphError, SymbolIdentity};
 use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::{FileId, SourceError, Span, TextRange};
 use crate::types::{
-    Assignability, NumericConversion, ParameterMode, ScalarType, TypeError, TypeId, TypeInterner,
+    Assignability, FunctionParameter, FunctionType, NumericConversion, ParameterMode, ScalarType,
+    TypeError, TypeId, TypeInterner,
 };
 
 mod check;
@@ -717,6 +718,71 @@ impl HirImplementationMethodId {
 pub enum HirPreludeTraitMethod {
     Display,
     IteratorNext,
+}
+
+impl HirPreludeTraitMethod {
+    pub(crate) fn trait_name(self) -> &'static str {
+        match self {
+            Self::Display => "Display",
+            Self::IteratorNext => "Iterator",
+        }
+    }
+
+    pub(crate) fn method_name(self) -> &'static str {
+        match self {
+            Self::Display => "display",
+            Self::IteratorNext => "next",
+        }
+    }
+
+    pub(crate) fn generic_arity(self) -> u32 {
+        match self {
+            Self::Display => 1,
+            Self::IteratorNext => 2,
+        }
+    }
+
+    pub(crate) fn query(self, arguments: &[TypeId]) -> Option<TraitQuery> {
+        let (trait_arguments, target) = match (self, arguments) {
+            (Self::Display, [target]) => (Vec::new(), *target),
+            (Self::IteratorNext, [element, target]) => (vec![*element], *target),
+            (Self::Display, _) | (Self::IteratorNext, _) => return None,
+        };
+        Some(TraitQuery::from_parts(
+            HirTraitConstructor::Prelude(
+                Name::new(self.trait_name()).expect("prelude trait names are valid"),
+            ),
+            trait_arguments,
+            target,
+        ))
+    }
+
+    pub(crate) fn function_type(
+        self,
+        interner: &mut TypeInterner,
+        arguments: &[TypeId],
+    ) -> Result<Option<TypeId>, TypeError> {
+        let (mode, receiver, outcome) = match (self, arguments) {
+            (Self::Display, [target]) => (
+                ParameterMode::Ref,
+                *target,
+                interner.scalar(ScalarType::String),
+            ),
+            (Self::IteratorNext, [element, target]) => {
+                (ParameterMode::Mut, *target, interner.option(*element)?)
+            }
+            (Self::Display, _) | (Self::IteratorNext, _) => return Ok(None),
+        };
+        interner
+            .function(FunctionType::new(
+                false,
+                false,
+                vec![FunctionParameter::new(mode, receiver)],
+                None,
+                outcome,
+            ))
+            .map(Some)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1467,6 +1533,16 @@ pub enum HirForKind {
     Iterate {
         pattern: HirPatternId,
         source: HirExpressionId,
+        protocol: HirIterationProtocol,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HirIterationProtocol {
+    Intrinsic,
+    Trait {
+        element: TypeId,
+        function_type: TypeId,
     },
 }
 

@@ -5,8 +5,9 @@ use tondo_vm::bytecode as bc;
 use super::{BytecodeError, BytecodeLoweringLimits};
 use crate::hir::{
     HirCallableId, HirConstantValue, HirConstantValueKind, HirConstantVariantValue,
-    HirNominalShape, HirProgram, HirTraitConstructor, HirTraitMethodKey, HirTypeDeclarationKind,
-    HirVariantPayload, TraitQuery, TraitSelectionError, select_implementation,
+    HirNominalShape, HirPreludeTraitMethod, HirProgram, HirTraitConstructor, HirTraitMethodKey,
+    HirTypeDeclarationKind, HirVariantPayload, TraitQuery, TraitSelectionError,
+    select_implementation,
 };
 use crate::mir::{
     MirAggregateKind, MirBasicBlock, MirBlockKind, MirCallArgument, MirConstant, MirFunction,
@@ -27,12 +28,31 @@ struct CallableInstance {
     arguments: Vec<TypeId>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PreludeTraitInstance {
+    method: HirPreludeTraitMethod,
+    arguments: Vec<TypeId>,
+}
+
+#[derive(Debug, Clone)]
+enum FunctionReference {
+    Callable {
+        callable: HirCallableId,
+        arguments: Vec<TypeId>,
+    },
+    PreludeTrait {
+        method: HirPreludeTraitMethod,
+        arguments: Vec<TypeId>,
+    },
+}
+
 struct Monomorphization {
     interner: TypeInterner,
     callables: Vec<CallableInstance>,
     functions: Vec<CallableInstance>,
     type_maps: BTreeMap<CallableInstance, BTreeMap<TypeId, TypeId>>,
     dispatches: BTreeMap<CallableInstance, CallableInstance>,
+    prelude_dispatches: BTreeMap<PreludeTraitInstance, CallableInstance>,
 }
 
 pub fn lower_to_bytecode(
@@ -86,6 +106,7 @@ pub fn lower_to_bytecode(
             nominal_ids: &nominal_ids,
             callable_ids: &callable_ids,
             dispatches: &monomorphization.dispatches,
+            prelude_dispatches: &monomorphization.prelude_dispatches,
             constant_ids: &constant_ids,
         };
         monomorphization
@@ -144,6 +165,7 @@ fn monomorphize(
     let mut functions = BTreeSet::new();
     let mut pending = BTreeSet::new();
     let mut dispatches = BTreeMap::new();
+    let mut prelude_dispatches = BTreeMap::new();
     let mut generic_count = 0usize;
 
     for callable in hir
@@ -201,12 +223,16 @@ fn monomorphize(
         let substitution = TypeSubstitution::new(instance.arguments.clone());
         let mut references = Vec::new();
         collect_function_references(function, &mut references);
-        for (callable, templates) in references {
+        for reference in references {
+            let templates = match &reference {
+                FunctionReference::Callable { arguments, .. }
+                | FunctionReference::PreludeTrait { arguments, .. } => arguments,
+            };
             let arguments = templates
                 .into_iter()
                 .map(|template| {
                     substitution
-                        .apply(&mut interner, template)
+                        .apply(&mut interner, *template)
                         .map_err(|error| {
                             monomorphization_type_error(
                                 error,
@@ -216,22 +242,36 @@ fn monomorphize(
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            register_reference(
-                resolved,
-                hir,
-                mir,
-                &mut interner,
-                CallableInstance {
-                    callable,
-                    arguments,
-                },
-                generic_limit,
-                &mut generic_count,
-                &mut callables,
-                &mut functions,
-                &mut pending,
-                &mut dispatches,
-            )?;
+            match reference {
+                FunctionReference::Callable { callable, .. } => register_reference(
+                    resolved,
+                    hir,
+                    mir,
+                    &mut interner,
+                    CallableInstance {
+                        callable,
+                        arguments,
+                    },
+                    generic_limit,
+                    &mut generic_count,
+                    &mut callables,
+                    &mut functions,
+                    &mut pending,
+                    &mut dispatches,
+                )?,
+                FunctionReference::PreludeTrait { method, .. } => register_prelude_reference(
+                    hir,
+                    mir,
+                    &mut interner,
+                    PreludeTraitInstance { method, arguments },
+                    generic_limit,
+                    &mut generic_count,
+                    &mut callables,
+                    &mut functions,
+                    &mut pending,
+                    &mut prelude_dispatches,
+                )?,
+            }
         }
     }
 
@@ -289,6 +329,7 @@ fn monomorphize(
         functions,
         type_maps,
         dispatches,
+        prelude_dispatches,
     })
 }
 
@@ -349,6 +390,174 @@ fn register_reference(
         functions,
         pending,
     )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn register_prelude_reference(
+    hir: &HirProgram,
+    mir: &MirProgram,
+    interner: &mut TypeInterner,
+    reference: PreludeTraitInstance,
+    generic_limit: u32,
+    generic_count: &mut usize,
+    callables: &mut BTreeSet<CallableInstance>,
+    functions: &mut BTreeSet<CallableInstance>,
+    pending: &mut BTreeSet<CallableInstance>,
+    dispatches: &mut BTreeMap<PreludeTraitInstance, CallableInstance>,
+) -> Result<(), BytecodeError> {
+    let target = resolve_prelude_trait_dispatch(hir, interner, &reference)?;
+    if let Some(existing) = dispatches.get(&reference) {
+        if existing != &target {
+            return Err(BytecodeError::construction(
+                "trait dispatch",
+                format!(
+                    "{reference:?} resolved inconsistently to {existing:?} and {target:?}"
+                ),
+            ));
+        }
+    } else {
+        dispatches.insert(reference, target.clone());
+    }
+    register_instance(
+        hir,
+        mir,
+        interner,
+        target,
+        generic_limit,
+        generic_count,
+        callables,
+        functions,
+        pending,
+    )
+}
+
+fn resolve_prelude_trait_dispatch(
+    hir: &HirProgram,
+    interner: &mut TypeInterner,
+    reference: &PreludeTraitInstance,
+) -> Result<CallableInstance, BytecodeError> {
+    let query = reference.method.query(&reference.arguments).ok_or_else(|| {
+        BytecodeError::construction(
+            "trait dispatch",
+            format!(
+                "prelude method {:?} has {} type arguments instead of {}",
+                reference.method,
+                reference.arguments.len(),
+                reference.method.generic_arity()
+            ),
+        )
+    })?;
+    let selection = select_implementation(interner, hir.implementations(), &query)
+        .map_err(|error| prelude_trait_dispatch_selection_error(error))?
+        .ok_or_else(|| {
+            BytecodeError::construction(
+                "trait dispatch",
+                format!(
+                    "prelude method {}.{} has no implementation for its concrete query",
+                    reference.method.trait_name(),
+                    reference.method.method_name()
+                ),
+            )
+        })?;
+    let implementation = hir
+        .implementation(selection.implementation())
+        .ok_or_else(|| {
+            BytecodeError::construction(
+                "trait dispatch",
+                format!(
+                    "selected implementation#{} is not indexed",
+                    selection.implementation().index()
+                ),
+            )
+        })?;
+    let key = HirTraitMethodKey::Prelude(reference.method);
+    let method = implementation
+        .methods()
+        .iter()
+        .find(|method| {
+            method
+                .contract()
+                .is_some_and(|contract| contract.method() == key)
+        })
+        .ok_or_else(|| {
+            BytecodeError::construction(
+                "trait dispatch",
+                format!(
+                    "implementation#{} does not provide prelude method {}.{}",
+                    implementation.id().index(),
+                    reference.method.trait_name(),
+                    reference.method.method_name()
+                ),
+            )
+        })?;
+    let target = CallableInstance {
+        callable: HirCallableId::Implementation(method.id()),
+        arguments: selection.arguments().to_vec(),
+    };
+    verify_prelude_dispatch_signature(hir, interner, reference, &target, method.span())?;
+    Ok(target)
+}
+
+fn prelude_trait_dispatch_selection_error(error: TraitSelectionError) -> BytecodeError {
+    match error {
+        TraitSelectionError::Type(error) => {
+            monomorphization_type_error(error, None, "prelude trait dispatch")
+        }
+        TraitSelectionError::Ambiguous => BytecodeError::construction(
+            "trait dispatch",
+            "a coherent prelude trait query selected more than one implementation",
+        ),
+    }
+}
+
+fn verify_prelude_dispatch_signature(
+    hir: &HirProgram,
+    interner: &mut TypeInterner,
+    source: &PreludeTraitInstance,
+    target: &CallableInstance,
+    span: Span,
+) -> Result<(), BytecodeError> {
+    let source_type = source
+        .method
+        .function_type(interner, &source.arguments)
+        .map_err(|error| {
+            monomorphization_type_error(error, Some(span), "prelude trait source signature")
+        })?
+        .ok_or_else(|| {
+            BytecodeError::construction(
+                "trait dispatch",
+                "prelude trait source has an invalid specialization arity",
+            )
+        })?;
+    let target_signature = hir.callable(target.callable).ok_or_else(|| {
+        BytecodeError::construction("trait dispatch", format!("{target:?} has no HIR signature"))
+    })?;
+    if target.arguments.len() != target_signature.generic_arity() as usize {
+        return Err(BytecodeError::construction(
+            "trait dispatch",
+            "prelude trait target specialization has the wrong generic arity",
+        ));
+    }
+    let target_type = TypeSubstitution::new(target.arguments.clone())
+        .apply(interner, target_signature.function_type())
+        .map_err(|error| {
+            monomorphization_type_error(error, Some(span), "prelude trait target signature")
+        })?;
+    if source_type != target_type {
+        return Err(BytecodeError::construction(
+            "trait dispatch",
+            format!(
+                "selected prelude target has type `{}` instead of `{}`",
+                interner
+                    .canonical(target_type)
+                    .unwrap_or_else(|_| target_type.to_string()),
+                interner
+                    .canonical(source_type)
+                    .unwrap_or_else(|_| source_type.to_string())
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn resolve_source_trait_dispatch(
@@ -1057,7 +1266,10 @@ fn collect_operand_types(operand: &MirOperand, types: &mut BTreeSet<TypeId>) {
         MirOperandKind::Copy(place) | MirOperandKind::Move(place) => {
             collect_place_types(place, types);
         }
-        MirOperandKind::Function { arguments, .. } => types.extend(arguments.iter().copied()),
+        MirOperandKind::Function { arguments, .. }
+        | MirOperandKind::PreludeTraitFunction { arguments, .. } => {
+            types.extend(arguments.iter().copied());
+        }
         MirOperandKind::Constant(_) => {}
     }
 }
@@ -1203,7 +1415,7 @@ fn collect_terminator_types(terminator: &MirTerminator, types: &mut BTreeSet<Typ
 
 fn collect_function_references(
     function: &MirFunction,
-    references: &mut Vec<(HirCallableId, Vec<TypeId>)>,
+    references: &mut Vec<FunctionReference>,
 ) {
     for block in function.blocks() {
         for statement in block.statements() {
@@ -1217,20 +1429,29 @@ fn collect_function_references(
 
 fn collect_operand_function_references(
     operand: &MirOperand,
-    references: &mut Vec<(HirCallableId, Vec<TypeId>)>,
+    references: &mut Vec<FunctionReference>,
 ) {
-    if let MirOperandKind::Function {
-        callable,
-        arguments,
-    } = operand.kind()
-    {
-        references.push((*callable, arguments.clone()));
+    match operand.kind() {
+        MirOperandKind::Function {
+            callable,
+            arguments,
+        } => references.push(FunctionReference::Callable {
+            callable: *callable,
+            arguments: arguments.clone(),
+        }),
+        MirOperandKind::PreludeTraitFunction { method, arguments } => {
+            references.push(FunctionReference::PreludeTrait {
+                method: *method,
+                arguments: arguments.clone(),
+            });
+        }
+        MirOperandKind::Constant(_) | MirOperandKind::Copy(_) | MirOperandKind::Move(_) => {}
     }
 }
 
 fn collect_rvalue_function_references(
     value: &MirRvalue,
-    references: &mut Vec<(HirCallableId, Vec<TypeId>)>,
+    references: &mut Vec<FunctionReference>,
 ) {
     match value.kind() {
         MirRvalueKind::Use(value)
@@ -1271,7 +1492,7 @@ fn collect_rvalue_function_references(
 
 fn collect_operation_function_references(
     operation: &MirOperation,
-    references: &mut Vec<(HirCallableId, Vec<TypeId>)>,
+    references: &mut Vec<FunctionReference>,
 ) {
     match operation.kind() {
         MirOperationKind::CheckedPrefix { operand, .. }
@@ -1329,7 +1550,7 @@ fn collect_operation_function_references(
 
 fn collect_terminator_function_references(
     terminator: &MirTerminator,
-    references: &mut Vec<(HirCallableId, Vec<TypeId>)>,
+    references: &mut Vec<FunctionReference>,
 ) {
     match terminator.kind() {
         MirTerminatorKind::Goto { .. }
@@ -1740,6 +1961,7 @@ struct FunctionLoweringContext<'a> {
     nominal_ids: &'a BTreeMap<SymbolId, bc::BytecodeNominalId>,
     callable_ids: &'a BTreeMap<CallableInstance, bc::BytecodeCallableId>,
     dispatches: &'a BTreeMap<CallableInstance, CallableInstance>,
+    prelude_dispatches: &'a BTreeMap<PreludeTraitInstance, CallableInstance>,
     constant_ids: &'a BTreeMap<SymbolId, bc::BytecodeConstantId>,
 }
 
@@ -1824,6 +2046,7 @@ fn lower_function(
                 context.nominal_ids,
                 context.callable_ids,
                 context.dispatches,
+                context.prelude_dispatches,
                 context.constant_ids,
                 type_map,
             )
@@ -1894,6 +2117,7 @@ fn lower_block(
     nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
     callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
     dispatches: &BTreeMap<CallableInstance, CallableInstance>,
+    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
     constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeBlock, BytecodeError> {
@@ -1913,6 +2137,7 @@ fn lower_block(
                     nominal_ids,
                     callable_ids,
                     dispatches,
+                    prelude_dispatches,
                     constant_ids,
                     type_map,
                 )
@@ -1924,6 +2149,7 @@ fn lower_block(
             catalog,
             callable_ids,
             dispatches,
+            prelude_dispatches,
             constant_ids,
             type_map,
         )?,
@@ -1937,6 +2163,7 @@ fn lower_statement(
     nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
     callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
     dispatches: &BTreeMap<CallableInstance, CallableInstance>,
+    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
     constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeInstruction, BytecodeError> {
@@ -1955,6 +2182,7 @@ fn lower_statement(
                 nominal_ids,
                 callable_ids,
                 dispatches,
+                prelude_dispatches,
                 constant_ids,
                 type_map,
             )?,
@@ -1972,6 +2200,7 @@ fn lower_terminator(
     catalog: &TypeCatalog,
     callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
     dispatches: &BTreeMap<CallableInstance, CallableInstance>,
+    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
     constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeTerminator, BytecodeError> {
@@ -1989,6 +2218,7 @@ fn lower_terminator(
                 catalog,
                 callable_ids,
                 dispatches,
+                prelude_dispatches,
                 constant_ids,
                 type_map,
             )?,
@@ -2005,6 +2235,7 @@ fn lower_terminator(
                 catalog,
                 callable_ids,
                 dispatches,
+                prelude_dispatches,
                 constant_ids,
                 type_map,
             )?,
@@ -2025,6 +2256,7 @@ fn lower_terminator(
                 catalog,
                 callable_ids,
                 dispatches,
+                prelude_dispatches,
                 constant_ids,
                 type_map,
             )?,
@@ -2070,6 +2302,7 @@ fn lower_terminator(
                                 catalog,
                                 callable_ids,
                                 dispatches,
+                                prelude_dispatches,
                                 constant_ids,
                                 type_map,
                             )
@@ -2164,6 +2397,7 @@ fn lower_operand(
     catalog: &TypeCatalog,
     callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
     dispatches: &BTreeMap<CallableInstance, CallableInstance>,
+    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
     constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeOperand, BytecodeError> {
@@ -2194,6 +2428,25 @@ fn lower_operand(
             },
             arguments: Vec::new(),
         },
+        MirOperandKind::PreludeTraitFunction { method, arguments } => {
+            let source = PreludeTraitInstance {
+                method: *method,
+                arguments: arguments
+                    .iter()
+                    .map(|argument| mapped_type(*argument, type_map))
+                    .collect::<Result<_, _>>()?,
+            };
+            let target = prelude_dispatches.get(&source).ok_or_else(|| {
+                BytecodeError::construction(
+                    "trait dispatch",
+                    format!("prelude trait reference {source:?} has no selected target"),
+                )
+            })?;
+            bc::BytecodeOperandKind::Function {
+                callable: map_callable_instance(target, callable_ids)?,
+                arguments: Vec::new(),
+            }
+        }
     };
     Ok(bc::BytecodeOperand {
         ty: mapped_catalog_id(operand.ty(), type_map, catalog)?,
@@ -2229,6 +2482,7 @@ fn lower_rvalue(
     nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
     callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
     dispatches: &BTreeMap<CallableInstance, CallableInstance>,
+    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
     constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeRvalue, BytecodeError> {
@@ -2238,6 +2492,7 @@ fn lower_rvalue(
             catalog,
             callable_ids,
             dispatches,
+            prelude_dispatches,
             constant_ids,
             type_map,
         )
@@ -2346,6 +2601,7 @@ fn lower_operation(
     catalog: &TypeCatalog,
     callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
     dispatches: &BTreeMap<CallableInstance, CallableInstance>,
+    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
     constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeOperation, BytecodeError> {
@@ -2355,6 +2611,7 @@ fn lower_operation(
             catalog,
             callable_ids,
             dispatches,
+            prelude_dispatches,
             constant_ids,
             type_map,
         )
@@ -2416,6 +2673,7 @@ fn lower_operation(
                         catalog,
                         callable_ids,
                         dispatches,
+                        prelude_dispatches,
                         constant_ids,
                         type_map,
                     )
@@ -2468,6 +2726,7 @@ fn lower_call_argument(
     catalog: &TypeCatalog,
     callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
     dispatches: &BTreeMap<CallableInstance, CallableInstance>,
+    prelude_dispatches: &BTreeMap<PreludeTraitInstance, CallableInstance>,
     constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeCallArgument, BytecodeError> {
@@ -2493,6 +2752,7 @@ fn lower_call_argument(
             catalog,
             callable_ids,
             dispatches,
+            prelude_dispatches,
             constant_ids,
             type_map,
         )?,
@@ -3139,6 +3399,158 @@ mod tests {
                       }\n\
                       fn use(): Int { Value.value[Box[Leaf]]() }\n";
         assert_eq!(execute_function(source, "use"), RuntimeValue::Integer(42));
+    }
+
+    #[test]
+    fn prelude_trait_calls_lower_to_selected_static_implementations() {
+        let source = "type Label = { text: String }\n\
+                      type Cursor = { value: Int }\n\
+                      impl Display for Label {\n\
+                          fn display(self): String { self.text }\n\
+                      }\n\
+                      impl Iterator[Int] for Cursor {\n\
+                          fn next(mut self): Int? { none }\n\
+                      }\n\
+                      fn render[T: Display](value: T): String { value.display() }\n\
+                      fn use_display(value: Label): String {\n\
+                          let generic = render(value)\n\
+                          _ = generic\n\
+                          Display.display(value)\n\
+                      }\n\
+                      fn use_iterator(cursor: var Cursor): Int? {\n\
+                          Iterator[Int].next(mut cursor)\n\
+                      }\n";
+        let program = lowered(source);
+        let implementation_ids = program
+            .callables
+            .iter()
+            .enumerate()
+            .filter_map(|(index, callable)| {
+                callable
+                    .name
+                    .starts_with("implementation#")
+                    .then(|| bc::BytecodeCallableId::new(index as u32))
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(implementation_ids.len(), 2);
+
+        let called = program
+            .functions
+            .iter()
+            .flat_map(|function| &function.blocks)
+            .filter_map(|block| {
+                let bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Call { callee, .. },
+                            ..
+                        },
+                    ..
+                } = &block.terminator.kind
+                else {
+                    return None;
+                };
+                let bc::BytecodeOperandKind::Function { callable, .. } = &callee.kind else {
+                    return None;
+                };
+                Some(*callable)
+            })
+            .collect::<BTreeSet<_>>();
+        assert!(implementation_ids.is_subset(&called));
+        assert!(program.callables.iter().all(|callable| {
+            !callable.name.contains("::type::Display::display")
+                && !callable.name.contains("::type::Iterator::next")
+        }));
+    }
+
+    #[test]
+    fn generic_prelude_implementation_bounds_dispatch_transitively() {
+        let source = "type Label = { text: String }\n\
+                      type Wrapper[T] = { value: T }\n\
+                      impl Display for Label {\n\
+                          fn display(self): String { self.text }\n\
+                      }\n\
+                      impl[T: Display] Display for Wrapper[T] {\n\
+                          fn display(self): String { self.value.display() }\n\
+                      }\n\
+                      fn use(value: Wrapper[Label]): String { Display.display(value) }\n";
+        let program = lowered(source);
+        let implementations = program
+            .callables
+            .iter()
+            .filter(|callable| callable.name.starts_with("implementation#"))
+            .map(|callable| callable.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(implementations.len(), 2, "{implementations:#?}");
+        assert!(
+            implementations
+                .iter()
+                .any(|name| name.contains("method#0[") && name.ends_with("::Label]")),
+            "{implementations:#?}"
+        );
+    }
+
+    #[test]
+    fn user_iterator_for_loops_lower_through_static_next_dispatch() {
+        let source = "type Cursor = { value: Int }\n\
+                      impl Iterator[Int] for Cursor {\n\
+                          fn next(mut self): Int? { none }\n\
+                      }\n\
+                      fn consume[I: Discard + Iterator[Int]](cursor: I) {\n\
+                          for value in cursor {\n\
+                              _ = value\n\
+                          }\n\
+                      }\n\
+                      fn use(cursor: Cursor) { consume(cursor) }\n";
+        let program = lowered(source);
+        let implementation = program
+            .callables
+            .iter()
+            .enumerate()
+            .find_map(|(index, callable)| {
+                (callable.name == "implementation#0.method#0")
+                    .then(|| bc::BytecodeCallableId::new(index as u32))
+            })
+            .expect("Iterator.next implementation is monomorphized");
+        let mut called_next = false;
+        let mut branches_on_option = false;
+        for function in &program.functions {
+            for block in &function.blocks {
+                assert!(
+                    !matches!(
+                        block.terminator.kind,
+                        bc::BytecodeTerminatorKind::IteratorNext { .. }
+                    ),
+                    "a user Iterator must not use the intrinsic iterator terminator"
+                );
+                if matches!(
+                    block.terminator.kind,
+                    bc::BytecodeTerminatorKind::BranchTag { .. }
+                ) {
+                    branches_on_option = true;
+                }
+                let bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Call { callee, .. },
+                            ..
+                        },
+                    ..
+                } = &block.terminator.kind
+                else {
+                    continue;
+                };
+                if matches!(
+                    &callee.kind,
+                    bc::BytecodeOperandKind::Function { callable, .. }
+                        if *callable == implementation
+                ) {
+                    called_next = true;
+                }
+            }
+        }
+        assert!(called_next);
+        assert!(branches_on_option);
     }
 
     #[test]

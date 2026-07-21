@@ -106,6 +106,7 @@ pub(super) fn evaluate(
                         pending.push(Work::Enter(*left));
                     }
                     HirExpressionKind::Local(_)
+                    | HirExpressionKind::PreludeTraitFunction { .. }
                     | HirExpressionKind::Receiver
                     | HirExpressionKind::InterpolatedString { .. }
                     | HirExpressionKind::Block { .. }
@@ -273,6 +274,7 @@ fn constant_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
         | HirExpressionKind::Constant(_)
         | HirExpressionKind::Function(_)
         | HirExpressionKind::SpecializedFunction { .. }
+        | HirExpressionKind::PreludeTraitFunction { .. }
         | HirExpressionKind::Receiver
         | HirExpressionKind::Block { .. }
         | HirExpressionKind::Call { .. }
@@ -552,6 +554,7 @@ fn evaluate_composite(
         | HirExpressionKind::Constant(_)
         | HirExpressionKind::Function(_)
         | HirExpressionKind::SpecializedFunction { .. }
+        | HirExpressionKind::PreludeTraitFunction { .. }
         | HirExpressionKind::Receiver
         | HirExpressionKind::Block { .. }
         | HirExpressionKind::Call { .. }

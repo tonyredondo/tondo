@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use crate::hir::{
     HirAssignmentOperator, HirAssignmentTarget, HirAssignmentTargetKind, HirBinaryOperator,
     HirBootstrapHostFunction, HirCallableId, HirCallableSignature, HirExpression, HirExpressionId,
-    HirExpressionKind, HirForKind, HirLiteral, HirLoopId, HirNominalShape, HirPatternId,
-    HirPatternKind, HirProgram, HirStatement, HirValueCategory, HirVariantPayload, HirVariantValue,
-    verify_typed_hir,
+    HirExpressionKind, HirForKind, HirIterationProtocol, HirLiteral, HirLoopId, HirNominalShape,
+    HirPatternId, HirPatternKind, HirPreludeTraitMethod, HirProgram, HirStatement,
+    HirValueCategory, HirVariantPayload, HirVariantValue, verify_typed_hir,
 };
 use crate::resolve::{LocalId, ResolvedProgram};
 use crate::source::Span;
@@ -16,7 +16,7 @@ use super::{
     MirBootstrapHostFunction, MirCallArgument, MirConstant, MirError, MirFunction, MirLocal,
     MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation, MirOperationKind, MirPlace,
     MirProgram, MirProjection, MirProjectionKind, MirRvalue, MirRvalueKind, MirStatement,
-    MirStatementKind, MirTerminator, MirTerminatorKind, MirVerificationLimits,
+    MirStatementKind, MirTag, MirTerminator, MirTerminatorKind, MirVerificationLimits,
     verify_mir_with_limits,
 };
 
@@ -293,6 +293,21 @@ impl<'a> FunctionBuilder<'a> {
                         ty: expression.ty(),
                         kind: MirOperandKind::Function {
                             callable: *callable,
+                            arguments: arguments.clone(),
+                        },
+                    },
+                )?;
+                Ok(Some(block))
+            }
+            HirExpressionKind::PreludeTraitFunction { method, arguments } => {
+                self.assign_operand(
+                    block,
+                    span,
+                    destination,
+                    MirOperand {
+                        ty: expression.ty(),
+                        kind: MirOperandKind::PreludeTraitFunction {
+                            method: *method,
                             arguments: arguments.clone(),
                         },
                     },
@@ -1366,9 +1381,28 @@ impl<'a> FunctionBuilder<'a> {
             HirForKind::Conditional { condition } => {
                 self.lower_conditional_for(span, id, *condition, body, block)
             }
-            HirForKind::Iterate { pattern, source } => {
-                self.lower_iterating_for(span, id, *pattern, *source, body, block)
-            }
+            HirForKind::Iterate {
+                pattern,
+                source,
+                protocol,
+            } => match protocol {
+                HirIterationProtocol::Intrinsic => {
+                    self.lower_intrinsic_iterating_for(span, id, *pattern, *source, body, block)
+                }
+                HirIterationProtocol::Trait {
+                    element,
+                    function_type,
+                } => self.lower_trait_iterating_for(
+                    span,
+                    id,
+                    *pattern,
+                    *source,
+                    *element,
+                    *function_type,
+                    body,
+                    block,
+                ),
+            },
         }
     }
 
@@ -1449,7 +1483,7 @@ impl<'a> FunctionBuilder<'a> {
         Ok(Some(exit))
     }
 
-    fn lower_iterating_for(
+    fn lower_intrinsic_iterating_for(
         &mut self,
         span: Span,
         id: HirLoopId,
@@ -1461,7 +1495,8 @@ impl<'a> FunctionBuilder<'a> {
         let Some((block, source)) = self.lower_value(source, block)? else {
             return Ok(None);
         };
-        let state = self.allocate_temporary(source.ty, span, block)?;
+        let source_type = source.ty;
+        let state = self.allocate_temporary(source_type, span, block)?;
         self.assign(
             block,
             span,
@@ -1487,6 +1522,120 @@ impl<'a> FunctionBuilder<'a> {
                 unwind: self.unwind,
             },
         )?;
+        self.finish_iterating_for(
+            span,
+            id,
+            pattern,
+            self.copy_local(item),
+            body,
+            header,
+            body_start,
+            exit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn lower_trait_iterating_for(
+        &mut self,
+        span: Span,
+        id: HirLoopId,
+        pattern: HirPatternId,
+        source: HirExpressionId,
+        element: TypeId,
+        function_type: TypeId,
+        body: HirExpressionId,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
+        let Some((block, source)) = self.lower_value(source, block)? else {
+            return Ok(None);
+        };
+        let source_type = source.ty;
+        let state = self.allocate_temporary(source_type, span, block)?;
+        self.assign_operand(block, span, self.local_place(state), source)?;
+
+        let outcome = match self
+            .hir
+            .interner()
+            .kind(function_type)
+            .map_err(|error| MirError::Construction {
+                span,
+                message: format!("Iterator.next has an invalid function type: {error}"),
+            })?
+        {
+            TypeKind::Function(function) => function.outcome(),
+            _ => {
+                return Err(MirError::Construction {
+                    span,
+                    message: "Iterator.next protocol has a non-function type".into(),
+                });
+            }
+        };
+        let next = self.allocate_temporary(outcome, span, block)?;
+        let header = self.allocate_block(MirBlockKind::Normal)?;
+        let inspect = self.allocate_block(MirBlockKind::Normal)?;
+        let body_start = self.allocate_block(MirBlockKind::Normal)?;
+        let exit = self.allocate_block(MirBlockKind::Normal)?;
+        self.terminate(block, span, MirTerminatorKind::Goto { target: header })?;
+        self.terminate(
+            header,
+            span,
+            MirTerminatorKind::Invoke {
+                operation: MirOperation {
+                    ty: outcome,
+                    kind: MirOperationKind::Call {
+                        callee: MirOperand {
+                            ty: function_type,
+                            kind: MirOperandKind::PreludeTraitFunction {
+                                method: HirPreludeTraitMethod::IteratorNext,
+                                arguments: vec![element, source_type],
+                            },
+                        },
+                        arguments: vec![MirCallArgument {
+                            mode: crate::types::ParameterMode::Mut,
+                            target: crate::hir::HirCallArgumentTarget::Receiver,
+                            value: self.copy_local(state),
+                        }],
+                    },
+                },
+                destination: Some(self.local_place(next)),
+                target: Some(inspect),
+                unwind: self.unwind,
+            },
+        )?;
+        self.terminate(
+            inspect,
+            span,
+            MirTerminatorKind::SwitchTag {
+                value: self.copy_local(next),
+                cases: vec![(MirTag::OptionSome, body_start)],
+                otherwise: exit,
+            },
+        )?;
+        let item = self.project_operand(
+            &self.copy_local(next),
+            MirProjection {
+                ty: element,
+                kind: MirProjectionKind::OptionValue,
+            },
+            span,
+        )?;
+        self.finish_iterating_for(
+            span, id, pattern, item, body, header, body_start, exit,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn finish_iterating_for(
+        &mut self,
+        span: Span,
+        id: HirLoopId,
+        pattern: HirPatternId,
+        item: MirOperand,
+        body: HirExpressionId,
+        header: MirBlockId,
+        body_start: MirBlockId,
+        exit: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
         self.loops.insert(
             id,
             LoopTargets {
@@ -1494,7 +1643,7 @@ impl<'a> FunctionBuilder<'a> {
                 continue_target: header,
             },
         );
-        let Some(body_start) = self.bind_irrefutable(pattern, self.copy_local(item), body_start)?
+        let Some(body_start) = self.bind_irrefutable(pattern, item, body_start)?
         else {
             return Err(MirError::Construction {
                 span,
@@ -1754,6 +1903,13 @@ impl<'a> FunctionBuilder<'a> {
                 ty: expression.ty(),
                 kind: MirOperandKind::Function {
                     callable: *callable,
+                    arguments: arguments.clone(),
+                },
+            }),
+            HirExpressionKind::PreludeTraitFunction { method, arguments } => Some(MirOperand {
+                ty: expression.ty(),
+                kind: MirOperandKind::PreludeTraitFunction {
+                    method: *method,
                     arguments: arguments.clone(),
                 },
             }),
@@ -3847,6 +4003,45 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.message().contains("dataflow budget"));
+    }
+
+    #[test]
+    fn mir_verifier_rejects_invalid_prelude_trait_function_operands() {
+        let source = "type Label = { text: String }\n\
+                      impl Display for Label {\n\
+                          fn display(self): String { self.text }\n\
+                      }\n\
+                      fn render(value: Label): String { Display.display(value) }\n";
+        let (resolved, hir) = checked(source);
+        let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let render = mir
+            .functions
+            .get_mut(&function_id(&resolved, "render"))
+            .unwrap();
+        let callee = render
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::Invoke {
+                    operation:
+                        MirOperation {
+                            kind: MirOperationKind::Call { callee, .. },
+                            ..
+                        },
+                    ..
+                } => Some(callee),
+                _ => None,
+            })
+            .expect("qualified Display call lowers to a MIR call");
+        let MirOperandKind::PreludeTraitFunction { arguments, .. } = &mut callee.kind else {
+            panic!("qualified Display call retains its prelude trait identity")
+        };
+        arguments.push(hir.interner().scalar(ScalarType::Unit));
+
+        let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
+        assert!(error.message().contains("specialization arity"));
     }
 
     #[test]

@@ -13,10 +13,9 @@ use super::termination::{TraitTerminationEdge, analyze_trait_termination};
 use super::{
     HirAssignmentTarget, HirAssignmentTargetKind, HirCallableId, HirConstantValue,
     HirConstantValueKind, HirConstantVariantValue, HirExpression, HirExpressionId,
-    HirExpressionKind, HirFlow, HirForKind, HirGenericParameter, HirPattern, HirPatternId,
-    HirPatternKind, HirProgram, HirStatement, HirTraitConstructor, HirTraitIdentity,
-    HirTraitMethodKey, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
-    HirVariantValue,
+    HirExpressionKind, HirFlow, HirForKind, HirGenericParameter, HirIterationProtocol, HirPattern,
+    HirPatternId, HirPatternKind, HirProgram, HirStatement, HirTraitConstructor, HirTraitIdentity,
+    HirTraitMethodKey, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue,
 };
 
 /// Reports a compiler defect at the boundary between typed HIR and MIR.
@@ -1629,6 +1628,51 @@ impl Verifier<'_> {
                     self.verify_type(*argument, format!("{context} specialization argument"))?;
                 }
             }
+            HirExpressionKind::PreludeTraitFunction { method, arguments } => {
+                let generic_arity = method.generic_arity() as usize;
+                if !arguments.is_empty() && arguments.len() != generic_arity {
+                    return Err(HirInvariantError::new(
+                        context,
+                        format!(
+                            "prelude trait specialization has {} arguments for {generic_arity} generic parameters",
+                            arguments.len()
+                        ),
+                    ));
+                }
+                for argument in arguments {
+                    self.verify_type(
+                        *argument,
+                        format!("{context} prelude trait specialization argument"),
+                    )?;
+                }
+                let mut interner = self.program.interner.clone();
+                let complete_arguments = if arguments.is_empty() {
+                    (0..method.generic_arity())
+                        .map(|position| {
+                            interner.generic_parameter(position).map_err(|error| {
+                                HirInvariantError::new(context, error.to_string())
+                            })
+                        })
+                        .collect::<Result<Vec<_>, _>>()?
+                } else {
+                    arguments.clone()
+                };
+                let expected = method
+                    .function_type(&mut interner, &complete_arguments)
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                    .ok_or_else(|| {
+                        HirInvariantError::new(
+                            context,
+                            "prelude trait function has an invalid specialization arity",
+                        )
+                    })?;
+                if expression.ty != expected {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "prelude trait function type differs from its closed contract",
+                    ));
+                }
+            }
             HirExpressionKind::Newtype { constructor, .. } => {
                 self.verify_symbol(*constructor, &[SymbolKind::Type], context)?
             }
@@ -1741,6 +1785,11 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            HirExpressionKind::Block { statements, .. } => {
+                for statement in statements {
+                    self.verify_statement(statement, context)?;
+                }
+            }
             HirExpressionKind::Recovery
             | HirExpressionKind::Literal(_)
             | HirExpressionKind::InterpolatedString { .. }
@@ -1750,7 +1799,6 @@ impl Verifier<'_> {
             | HirExpressionKind::Map { .. }
             | HirExpressionKind::Set(_)
             | HirExpressionKind::NumericConversion { .. }
-            | HirExpressionKind::Block { .. }
             | HirExpressionKind::Prefix { .. }
             | HirExpressionKind::Binary { .. }
             | HirExpressionKind::Range { .. }
@@ -1770,6 +1818,90 @@ impl Verifier<'_> {
             | HirExpressionKind::Break { .. }
             | HirExpressionKind::Continue { .. }
             | HirExpressionKind::Coerce { .. } => {}
+        }
+        Ok(())
+    }
+
+    fn verify_statement(
+        &self,
+        statement: &HirStatement,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        let HirStatement::For {
+            kind:
+                HirForKind::Iterate {
+                    pattern,
+                    source,
+                    protocol,
+                },
+            ..
+        } = statement
+        else {
+            return Ok(());
+        };
+        let source = self.expression(*source, context)?;
+        let pattern = self.program.pattern(*pattern).ok_or_else(|| {
+            HirInvariantError::new(
+                context,
+                format!("iterator references unknown pattern#{}", pattern.index()),
+            )
+        })?;
+        let expected_element = match protocol {
+            HirIterationProtocol::Intrinsic => match self.program.interner.kind(source.ty) {
+                Ok(TypeKind::Intrinsic {
+                    constructor:
+                        IntrinsicType::Array | IntrinsicType::Set | IntrinsicType::Range,
+                    arguments,
+                }) => Some(arguments[0]),
+                Ok(TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Map,
+                    arguments,
+                }) => {
+                    let mut interner = self.program.interner.clone();
+                    Some(
+                        interner
+                            .tuple(arguments.clone())
+                            .map_err(|error| HirInvariantError::new(context, error.to_string()))?,
+                    )
+                }
+                Ok(TypeKind::Scalar(ScalarType::String)) => {
+                    Some(self.program.interner.scalar(ScalarType::Char))
+                }
+                Ok(TypeKind::Error) => None,
+                Ok(_) | Err(_) => {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "intrinsic iterator protocol has a non-intrinsic source",
+                    ));
+                }
+            },
+            HirIterationProtocol::Trait {
+                element,
+                function_type,
+            } => {
+                self.verify_type(*element, format!("{context} iterator element"))?;
+                self.verify_type(*function_type, format!("{context} iterator function"))?;
+                let mut interner = self.program.interner.clone();
+                let expected = super::HirPreludeTraitMethod::IteratorNext
+                    .function_type(&mut interner, &[*element, source.ty])
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                    .expect("Iterator.next receives its element and Self types");
+                if expected != *function_type {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "trait iterator protocol does not match the closed Iterator.next contract",
+                    ));
+                }
+                Some(*element)
+            }
+        };
+        if let Some(expected_element) = expected_element
+            && pattern.ty != expected_element
+        {
+            return Err(HirInvariantError::new(
+                context,
+                "iterator pattern type differs from its element type",
+            ));
         }
         Ok(())
     }
@@ -2071,6 +2203,7 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
         | HirExpressionKind::Constant(_)
         | HirExpressionKind::Function(_)
         | HirExpressionKind::SpecializedFunction { .. }
+        | HirExpressionKind::PreludeTraitFunction { .. }
         | HirExpressionKind::Receiver
         | HirExpressionKind::Break { .. }
         | HirExpressionKind::Continue { .. } => {}
@@ -2519,6 +2652,103 @@ mod tests {
             error.message().contains("required trait method")
                 || error.message().contains("one-to-one correspondence")
         );
+    }
+
+    #[test]
+    fn prelude_trait_function_specializations_are_verified_before_mir() {
+        const SOURCE: &str = "type Label = { text: String }\n\
+             impl Display for Label {\n\
+                 fn display(self): String { self.text }\n\
+             }\n\
+             fn render(value: Label): String { Display.display(value) }\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut wrong_arity) = checked_program_from(SOURCE);
+        let unit = wrong_arity.interner.scalar(ScalarType::Unit);
+        let expression = wrong_arity
+            .expressions
+            .iter_mut()
+            .find(|expression| {
+                matches!(
+                    expression.kind,
+                    HirExpressionKind::PreludeTraitFunction {
+                        ref arguments,
+                        ..
+                    } if !arguments.is_empty()
+                )
+            })
+            .expect("qualified Display call has a specialized prelude callee");
+        let HirExpressionKind::PreludeTraitFunction { arguments, .. } = &mut expression.kind else {
+            unreachable!()
+        };
+        arguments.push(unit);
+        let error = verify_typed_hir(&resolved, &wrong_arity).unwrap_err();
+        assert!(error.message().contains("specialization"));
+
+        let (resolved, mut wrong_type) = checked_program_from(SOURCE);
+        let unit = wrong_type.interner.scalar(ScalarType::Unit);
+        let expression = wrong_type
+            .expressions
+            .iter_mut()
+            .find(|expression| {
+                matches!(
+                    expression.kind,
+                    HirExpressionKind::PreludeTraitFunction {
+                        ref arguments,
+                        ..
+                    } if !arguments.is_empty()
+                )
+            })
+            .expect("qualified Display call has a specialized prelude callee");
+        expression.ty = unit;
+        let error = verify_typed_hir(&resolved, &wrong_type).unwrap_err();
+        assert!(error.message().contains("closed contract"));
+    }
+
+    #[test]
+    fn iterator_loop_protocols_are_verified_before_mir() {
+        const SOURCE: &str = "type Cursor = { value: Int }\n\
+             impl Iterator[Int] for Cursor {\n\
+                 fn next(mut self): Int? { none }\n\
+             }\n\
+             fn consume(cursor: Cursor) {\n\
+                 for value in cursor {\n\
+                     _ = value\n\
+                 }\n\
+             }\n";
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut invalid) = checked_program_from(SOURCE);
+        let unit = invalid.interner.scalar(ScalarType::Unit);
+        let protocol = invalid
+            .expressions
+            .iter_mut()
+            .find_map(|expression| {
+                let HirExpressionKind::Block { statements, .. } = &mut expression.kind else {
+                    return None;
+                };
+                statements.iter_mut().find_map(|statement| {
+                    let HirStatement::For {
+                        kind:
+                            HirForKind::Iterate {
+                                protocol: HirIterationProtocol::Trait { function_type, .. },
+                                ..
+                            },
+                        ..
+                    } = statement
+                    else {
+                        return None;
+                    };
+                    Some(function_type)
+                })
+            })
+            .expect("user iterator loop retains a trait protocol");
+        *protocol = unit;
+        let error = verify_typed_hir(&resolved, &invalid).unwrap_err();
+        assert!(error.message().contains("Iterator.next contract"));
     }
 
     #[test]

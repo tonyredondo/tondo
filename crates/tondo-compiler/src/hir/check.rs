@@ -11,9 +11,8 @@ use crate::source::{FileId, SourceDatabase, Span, TextRange};
 use crate::syntax::ast::{Expression as AstExpression, Pattern as AstPattern};
 use crate::syntax::{Parsed, SyntaxElement, SyntaxKind, SyntaxNodeRef, SyntaxTokenRef, TokenKind};
 use crate::types::{
-    Assignability, FunctionParameter, FunctionType, InferenceContext, InferenceError,
-    IntrinsicType, NumericConversion, ParameterMode, ScalarType, TypeId, TypeKind,
-    TypeSubstitution, numeric_conversion,
+    Assignability, InferenceContext, InferenceError, IntrinsicType, NumericConversion,
+    ParameterMode, ScalarType, TypeId, TypeKind, TypeSubstitution, numeric_conversion,
 };
 
 use super::const_eval::{
@@ -24,11 +23,12 @@ use super::{
     HirBinaryOperator, HirBody, HirBootstrapHostFunction, HirCallArgument, HirCallArgumentTarget,
     HirCallableId, HirCallableSignature, HirContainmentKind, HirError, HirExpression,
     HirExpressionId, HirExpressionKind, HirField, HirFlow, HirForKind, HirIndexAccess, HirLiteral,
-    HirLoopId, HirMapEntry, HirMatchArm, HirMemberReference, HirNominalShape, HirPattern,
-    HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod,
-    HirProgram, HirRangeKind, HirRecordFieldValue, HirStatement, HirTraitConstructor,
-    HirTraitMethodKey, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
-    HirVariantValue, HirWriteKind, TraitQuery, TraitSelectionError, select_implementation,
+    HirIterationProtocol, HirLoopId, HirMapEntry, HirMatchArm, HirMemberReference,
+    HirNominalShape, HirPattern, HirPatternField, HirPatternId, HirPatternKind,
+    HirPrefixOperator, HirPreludeTraitMethod, HirProgram, HirRangeKind, HirRecordFieldValue,
+    HirStatement, HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory,
+    HirVariantPayload, HirVariantValue, HirWriteKind, TraitQuery, TraitSelectionError,
+    select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -422,6 +422,12 @@ enum TraitProofStatus {
     Satisfied,
     Deferred,
     Unsatisfied,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TraitRequirementOrigin {
+    Direct,
+    GenericBound,
 }
 
 struct DiscardNode {
@@ -1053,6 +1059,7 @@ impl<'a> ExpressionChecker<'a> {
                 | HirExpressionKind::Constant(_)
                 | HirExpressionKind::Function(_)
                 | HirExpressionKind::SpecializedFunction { .. }
+                | HirExpressionKind::PreludeTraitFunction { .. }
                 | HirExpressionKind::Receiver
                 | HirExpressionKind::Break { .. }
                 | HirExpressionKind::Continue { .. } => {}
@@ -6238,6 +6245,7 @@ impl<'a> ExpressionChecker<'a> {
                     span,
                     TraitQuery::from_parts(bound.constructor().clone(), bound_arguments, argument),
                     context,
+                    TraitRequirementOrigin::GenericBound,
                 )?;
             }
         }
@@ -6249,6 +6257,7 @@ impl<'a> ExpressionChecker<'a> {
         span: Span,
         query: TraitQuery,
         context: &BodyContext,
+        origin: TraitRequirementOrigin,
     ) -> Result<bool, HirError> {
         let mut active = BTreeSet::new();
         let mut memo = BTreeMap::new();
@@ -6264,7 +6273,14 @@ impl<'a> ExpressionChecker<'a> {
                 self.emit(
                     span,
                     "E1105",
-                    format!("type `{actual}` does not satisfy required trait `{requirement}`"),
+                    match origin {
+                        TraitRequirementOrigin::Direct => {
+                            format!("type `{actual}` does not satisfy required trait `{requirement}`")
+                        }
+                        TraitRequirementOrigin::GenericBound => {
+                            format!("type `{actual}` does not satisfy generic bound `{requirement}`")
+                        }
+                    },
                     Vec::new(),
                     Some((requirement, actual)),
                 )?;
@@ -7300,25 +7316,56 @@ impl<'a> ExpressionChecker<'a> {
                 let source = self.check_expression(file, source_node, None, context)?;
                 let source_type = self.expression_type(source);
                 let element = self.iteration_element_type(source_type)?;
-                let element = if let Some(element) = element {
-                    element
-                } else if self.iteration_requires_trait_resolution(source_type)? {
-                    self.complete = false;
-                    self.program.interner.error()
+                let (element, protocol) = if let Some(element) = element {
+                    (element, HirIterationProtocol::Intrinsic)
+                } else if let Some(query) = self.iterator_trait_query(
+                    source_type,
+                    self.sources.span(file, source_node.range())?,
+                    context,
+                )? {
+                    let element = query.arguments()[0];
+                    if self.require_trait_query(
+                        self.sources.span(file, source_node.range())?,
+                        query,
+                        context,
+                        TraitRequirementOrigin::Direct,
+                    )? {
+                        let function_type = HirPreludeTraitMethod::IteratorNext
+                            .function_type(
+                                &mut self.program.interner,
+                                &[element, source_type],
+                            )?
+                            .expect("Iterator.next has one trait argument and Self");
+                        (
+                            element,
+                            HirIterationProtocol::Trait {
+                                element,
+                                function_type,
+                            },
+                        )
+                    } else {
+                        (
+                            self.program.interner.error(),
+                            HirIterationProtocol::Intrinsic,
+                        )
+                    }
                 } else {
                     if source_type != self.program.interner.error() {
                         self.emit(
                             self.sources.span(file, source_node.range())?,
                             "E1206",
                             format!(
-                                "`{}` is not an intrinsic iterable source",
+                                "`{}` is not iterable and has no `Iterator[T]` implementation",
                                 self.program.interner.canonical(source_type)?
                             ),
                             Vec::new(),
                             None,
                         )?;
                     }
-                    self.program.interner.error()
+                    (
+                        self.program.interner.error(),
+                        HirIterationProtocol::Intrinsic,
+                    )
                 };
                 let pattern = self.check_binding_pattern(
                     file,
@@ -7327,7 +7374,11 @@ impl<'a> ExpressionChecker<'a> {
                     &mut body_context,
                     PatternContext::For,
                 )?;
-                HirForKind::Iterate { pattern, source }
+                HirForKind::Iterate {
+                    pattern,
+                    source,
+                    protocol,
+                }
             }
             (Some(_), None) => {
                 self.complete = false;
@@ -7370,15 +7421,97 @@ impl<'a> ExpressionChecker<'a> {
         Ok(element)
     }
 
-    fn iteration_requires_trait_resolution(&self, source: TypeId) -> Result<bool, HirError> {
-        Ok(matches!(
-            self.program.interner.kind(source)?,
-            TypeKind::Nominal { .. }
-                | TypeKind::GenericParameter(_)
-                | TypeKind::OpaqueResult(_)
-                | TypeKind::Generated { .. }
-                | TypeKind::Cursor { .. }
-        ))
+    fn iterator_trait_query(
+        &mut self,
+        source: TypeId,
+        span: Span,
+        context: &BodyContext,
+    ) -> Result<Option<TraitQuery>, HirError> {
+        let mut assumptions = context
+            .trait_assumptions
+            .iter()
+            .filter(|query| {
+                query.target() == source
+                    && matches!(
+                        query.constructor(),
+                        HirTraitConstructor::Prelude(name) if name.as_str() == "Iterator"
+                    )
+            })
+            .cloned();
+        let assumption = assumptions.next();
+        if let Some(other) = assumptions.next() {
+            let expected = assumption
+                .as_ref()
+                .and_then(|query| query.arguments().first())
+                .copied()
+                .map(|ty| self.program.interner.canonical(ty))
+                .transpose()?
+                .unwrap_or_else(|| "<missing>".into());
+            let actual = other
+                .arguments()
+                .first()
+                .copied()
+                .map(|ty| self.program.interner.canonical(ty))
+                .transpose()?
+                .unwrap_or_else(|| "<missing>".into());
+            self.emit(
+                span,
+                "E1113",
+                "visible `Iterator` constraints disagree on the element type",
+                Vec::new(),
+                Some((expected, actual)),
+            )?;
+            return Ok(assumption);
+        }
+        if assumption.is_some() {
+            return Ok(assumption);
+        }
+
+        let candidates = self
+            .program
+            .implementations
+            .iter()
+            .filter_map(|implementation| {
+                let HirTraitConstructor::Prelude(name) =
+                    &implementation.trait_reference.constructor
+                else {
+                    return None;
+                };
+                (implementation.contract_complete
+                    && name.as_str() == "Iterator"
+                    && implementation.trait_reference.arguments.len() == 1)
+                    .then_some((
+                        implementation.id,
+                        implementation.parameters.len(),
+                        implementation.target,
+                        implementation.trait_reference.arguments[0],
+                    ))
+            })
+            .collect::<Vec<_>>();
+        let mut selected = None;
+        for (implementation, arity, target, element) in candidates {
+            let Some(arguments) = self.program.interner.first_order_pattern_substitution(
+                &[target],
+                &[source],
+                u32::try_from(arity)
+                    .map_err(|_| crate::types::TypeError::ResourceLimit { limit: u32::MAX })?,
+            )?
+            else {
+                continue;
+            };
+            let element = TypeSubstitution::new(arguments)
+                .apply(&mut self.program.interner, element)?;
+            let query = HirPreludeTraitMethod::IteratorNext
+                .query(&[element, source])
+                .expect("Iterator queries contain the element and Self");
+            if selected.replace((implementation, query)).is_some() {
+                return Err(HirError::TraitSelectionInvariant {
+                    message: "coherent Iterator table selected more than one target header"
+                        .into(),
+                });
+            }
+        }
+        Ok(selected.map(|(_, query)| query))
     }
 
     fn check_if(
@@ -9576,6 +9709,7 @@ impl<'a> ExpressionChecker<'a> {
             self.sources.span(file, member_token.range())?,
             query,
             context,
+            TraitRequirementOrigin::Direct,
         )?;
         Ok(Some(call))
     }
@@ -10295,30 +10429,13 @@ impl<'a> ExpressionChecker<'a> {
         &mut self,
         method: HirPreludeTraitMethod,
     ) -> Result<(u32, TypeId), HirError> {
-        let (generic_arity, mode, receiver, outcome) = match method {
-            HirPreludeTraitMethod::Display => (
-                1,
-                ParameterMode::Ref,
-                self.program.interner.generic_parameter(0)?,
-                self.program.interner.scalar(ScalarType::String),
-            ),
-            HirPreludeTraitMethod::IteratorNext => {
-                let element = self.program.interner.generic_parameter(0)?;
-                (
-                    2,
-                    ParameterMode::Mut,
-                    self.program.interner.generic_parameter(1)?,
-                    self.program.interner.option(element)?,
-                )
-            }
-        };
-        let function_type = self.program.interner.function(FunctionType::new(
-            false,
-            false,
-            vec![FunctionParameter::new(mode, receiver)],
-            None,
-            outcome,
-        ))?;
+        let generic_arity = method.generic_arity();
+        let arguments = (0..generic_arity)
+            .map(|position| self.program.interner.generic_parameter(position))
+            .collect::<Result<Vec<_>, _>>()?;
+        let function_type = method
+            .function_type(&mut self.program.interner, &arguments)?
+            .expect("prelude method templates use their declared generic arity");
         Ok((generic_arity, function_type))
     }
 
@@ -10327,27 +10444,14 @@ impl<'a> ExpressionChecker<'a> {
         method: HirPreludeTraitMethod,
         arguments: &[TypeId],
     ) -> Result<TraitQuery, HirError> {
-        let (name, trait_arguments, target) = match (method, arguments) {
-            (HirPreludeTraitMethod::Display, [target]) => ("Display", Vec::new(), *target),
-            (HirPreludeTraitMethod::IteratorNext, [element, target]) => {
-                ("Iterator", vec![*element], *target)
-            }
-            (HirPreludeTraitMethod::Display, _) | (HirPreludeTraitMethod::IteratorNext, _) => {
-                return Err(HirError::TraitSelectionInvariant {
-                    message: format!(
-                        "prelude method {method:?} has {} complete type arguments",
-                        arguments.len()
-                    ),
-                });
-            }
-        };
-        Ok(TraitQuery::from_parts(
-            HirTraitConstructor::Prelude(
-                Name::new(name).expect("prelude trait names are valid names"),
-            ),
-            trait_arguments,
-            target,
-        ))
+        method
+            .query(arguments)
+            .ok_or_else(|| HirError::TraitSelectionInvariant {
+                message: format!(
+                    "prelude method {method:?} has {} complete type arguments",
+                    arguments.len()
+                ),
+            })
     }
 
     fn check_call(
@@ -10383,18 +10487,19 @@ impl<'a> ExpressionChecker<'a> {
                 return self.recovery_expression(file, range);
             }
         };
-        let generic_template = match self
+        let callee_kind = self
             .program
             .expression(callee)
             .expect("allocated callee expressions remain indexed")
             .kind()
-        {
-            HirExpressionKind::Function(id) => self.callable(*id).and_then(|callable| {
+            .clone();
+        let generic_template = match callee_kind {
+            HirExpressionKind::Function(id) => self.callable(id).and_then(|callable| {
                 (callable.generic_arity != 0).then_some((
-                    GenericCallTarget::Callable(*id),
+                    GenericCallTarget::Callable(id),
                     callable.generic_arity,
                     callable.function_type,
-                    self.trait_body_context(*id)
+                    self.trait_body_context(id)
                         .zip(context.trait_body)
                         .filter(|(callee, body)| callee.owner == body.owner)
                         .map_or(0, |(_, body)| body.fixed_arity),
@@ -10404,9 +10509,9 @@ impl<'a> ExpressionChecker<'a> {
                 if arguments.is_empty() =>
             {
                 let (generic_arity, function_type) =
-                    self.prelude_trait_function_template(*method)?;
+                    self.prelude_trait_function_template(method)?;
                 Some((
-                    GenericCallTarget::PreludeTrait(*method),
+                    GenericCallTarget::PreludeTrait(method),
                     generic_arity,
                     function_type,
                     0,
@@ -10837,6 +10942,7 @@ impl<'a> ExpressionChecker<'a> {
                         self.sources.span(file, suffix.range())?,
                         query,
                         context,
+                        TraitRequirementOrigin::Direct,
                     )?;
                     HirExpressionKind::PreludeTraitFunction {
                         method,
@@ -11389,6 +11495,7 @@ impl<'a> ExpressionChecker<'a> {
             | HirExpressionKind::Constant(_)
             | HirExpressionKind::Function(_)
             | HirExpressionKind::SpecializedFunction { .. }
+            | HirExpressionKind::PreludeTraitFunction { .. }
             | HirExpressionKind::Receiver => FlowSummary::completes(),
             HirExpressionKind::Tuple(items)
             | HirExpressionKind::Array(items)
@@ -12967,6 +13074,134 @@ mod tests {
         ]);
         assert!(output.diagnostics().is_empty(), "{:#?}", output.diagnostics());
         assert!(output.is_complete());
+    }
+
+    #[test]
+    fn prelude_traits_support_qualified_and_constraint_method_calls() {
+        let (_, _, output) = check(
+            "type Label = { text: String }\n\
+             type Cursor = { value: Int }\n\
+             impl Display for Label {\n\
+                 fn display(self): String { self.text }\n\
+             }\n\
+             impl Iterator[Int] for Cursor {\n\
+                 fn next(mut self): Int? { none }\n\
+             }\n\
+             fn qualified_display(value: Label): String { Display.display(value) }\n\
+             fn constrained_display[T: Display](value: T): String { value.display() }\n\
+             fn qualified_next(cursor: var Cursor): Int? {\n\
+                 Iterator[Int].next(mut cursor)\n\
+             }\n\
+             fn constrained_next[I: Iterator[Int]](cursor: var I): Int? { cursor.next() }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let specializations = output
+            .program()
+            .expressions()
+            .filter_map(|expression| {
+                let HirExpressionKind::PreludeTraitFunction { method, arguments } =
+                    expression.kind()
+                else {
+                    return None;
+                };
+                (!arguments.is_empty()).then(|| {
+                    (
+                        *method,
+                        arguments
+                            .iter()
+                            .map(|argument| {
+                                output.program().interner().canonical(*argument).unwrap()
+                            })
+                            .collect::<Vec<_>>(),
+                    )
+                })
+            })
+            .collect::<BTreeSet<_>>();
+        assert!(specializations.iter().any(|(method, arguments)| {
+            *method == HirPreludeTraitMethod::Display
+                && arguments.len() == 1
+                && arguments[0].ends_with("::Label")
+        }));
+        assert!(specializations.contains(&(
+            HirPreludeTraitMethod::Display,
+            vec!["$0".into()]
+        )));
+        assert!(specializations.iter().any(|(method, arguments)| {
+            *method == HirPreludeTraitMethod::IteratorNext
+                && arguments.len() == 2
+                && arguments[0] == "Int"
+                && arguments[1].ends_with("::Cursor")
+        }));
+        assert!(specializations.contains(&(
+            HirPreludeTraitMethod::IteratorNext,
+            vec!["Int".into(), "$0".into()]
+        )));
+    }
+
+    #[test]
+    fn prelude_trait_calls_require_proof_and_disambiguate_by_qualification() {
+        let (_, _, missing) = check(
+            "type Label = { text: String }\n\
+             fn render(value: Label): String { Display.display(value) }\n",
+        );
+        assert_eq!(codes(&missing), ["E1105"]);
+
+        let (_, _, ambiguous) = check(
+            "trait CustomDisplay {\n\
+                 fn display(self): String\n\
+             }\n\
+             fn render[T: Display + CustomDisplay](value: T): String { value.display() }\n",
+        );
+        assert_eq!(codes(&ambiguous), ["E1004"]);
+
+        let (_, _, qualified) = check(
+            "trait CustomDisplay {\n\
+                 fn display(self): String\n\
+             }\n\
+             fn render[T: Display + CustomDisplay](value: T): String {\n\
+                 Display.display(value)\n\
+             }\n",
+        );
+        assert!(
+            qualified.diagnostics().is_empty(),
+            "{:#?}",
+            qualified.diagnostics()
+        );
+        assert!(qualified.is_complete());
+    }
+
+    #[test]
+    fn qualified_prelude_trait_calls_enforce_trait_and_method_generic_arity() {
+        let source = "type Cursor = { value: Int }\n\
+                      impl Iterator[Int] for Cursor {\n\
+                          fn next(mut self): Int? { none }\n\
+                      }\n";
+        let (_, _, missing_trait_argument) = check(&format!(
+            "{source}fn invalid(cursor: var Cursor): Int? {{ Iterator.next(mut cursor) }}\n"
+        ));
+        assert_eq!(codes(&missing_trait_argument), ["E1104"]);
+
+        let (_, _, extra_method_argument) = check(&format!(
+            "{source}fn invalid(cursor: var Cursor): Int? {{\n\
+                 Iterator[Int].next[String](mut cursor)\n\
+             }}\n"
+        ));
+        assert_eq!(codes(&extra_method_argument), ["E1104"]);
+
+        let (_, _, extra_display_argument) = check(
+            "type Label = { text: String }\n\
+             impl Display for Label {\n\
+                 fn display(self): String { self.text }\n\
+             }\n\
+             fn invalid(value: Label): String { Display[Int].display(value) }\n",
+        );
+        assert_eq!(codes(&extra_display_argument), ["E1104"]);
     }
 
     #[test]
@@ -14904,14 +15139,71 @@ mod tests {
         );
         assert_eq!(codes(&source), ["E1206"]);
 
-        let (_, _, deferred) = check(
+        let (_, _, missing_iterator) = check(
             "type Cursor = { value: Int }\n\
              fn inspect(cursor: Cursor) {\n\
                  for value in cursor { () }\n\
              }\n",
         );
-        assert!(deferred.diagnostics().is_empty());
-        assert!(!deferred.is_complete());
+        assert_eq!(codes(&missing_iterator), ["E1206"]);
+
+        let (_, _, iterators) = check(
+            "type Cursor = { value: Int }\n\
+             impl Iterator[Int] for Cursor {\n\
+                 fn next(mut self): Int? { none }\n\
+             }\n\
+             fn concrete(cursor: Cursor) {\n\
+                 for value in cursor {\n\
+                     _ = value\n\
+                 }\n\
+             }\n\
+             fn generic[T: Discard, I: Discard + Iterator[T]](cursor: I) {\n\
+                 for value in cursor {\n\
+                     _ = value\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            iterators.diagnostics().is_empty(),
+            "{:#?}",
+            iterators.diagnostics()
+        );
+        assert!(iterators.is_complete());
+        let trait_loops = iterators
+            .program()
+            .expressions()
+            .filter_map(|expression| {
+                let HirExpressionKind::Block { statements, .. } = expression.kind() else {
+                    return None;
+                };
+                statements.iter().find_map(|statement| {
+                    let HirStatement::For {
+                        kind:
+                            HirForKind::Iterate {
+                                protocol:
+                                    HirIterationProtocol::Trait {
+                                        element,
+                                        function_type,
+                                    },
+                                ..
+                            },
+                        ..
+                    } = statement
+                    else {
+                        return None;
+                    };
+                    Some((*element, *function_type))
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(trait_loops.len(), 2);
+        assert!(trait_loops.iter().all(|(element, function_type)| {
+            *element != iterators.program().interner().error()
+                && matches!(
+                    iterators.program().interner().kind(*function_type),
+                    Ok(TypeKind::Function(_))
+                )
+        }));
 
         let (_, _, transfer) = check("fn invalid() {\n    break\n}\n");
         assert_eq!(codes(&transfer), ["E1205"]);

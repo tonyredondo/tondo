@@ -1117,6 +1117,33 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            MirOperandKind::PreludeTraitFunction { method, arguments } => {
+                if arguments.len() != method.generic_arity() as usize {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "prelude trait function operand specialization arity is invalid",
+                    ));
+                }
+                for argument in arguments {
+                    self.verify_type(*argument, context)?;
+                }
+                let mut interner = self.hir.interner().clone();
+                let expected = method
+                    .function_type(&mut interner, arguments)
+                    .map_err(|error| MirInvariantError::new(context, error.to_string()))?
+                    .ok_or_else(|| {
+                        MirInvariantError::new(
+                            context,
+                            "prelude trait function operand has an invalid specialization",
+                        )
+                    })?;
+                if expected != operand.ty {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "prelude trait function operand type does not match its closed contract",
+                    ));
+                }
+            }
         }
         Ok(())
     }
@@ -2128,7 +2155,23 @@ impl Verifier<'_> {
         };
         let mut fixed = Vec::new();
         let mut receiver = None;
-        if let Some(callable) = callable {
+        if matches!(
+            callee.kind,
+            MirOperandKind::PreludeTraitFunction { .. }
+        ) {
+            if function.variadic().is_some() || function.parameters().len() != 1 {
+                return Err(MirInvariantError::new(
+                    context,
+                    "prelude trait callable does not have exactly one fixed receiver",
+                ));
+            }
+            let parameter = &function.parameters()[0];
+            receiver = Some((
+                crate::hir::HirCallArgumentTarget::Receiver,
+                parameter.mode(),
+                parameter.ty(),
+            ));
+        } else if let Some(callable) = callable {
             let mut concrete = function.parameters().iter();
             for (source_index, parameter) in callable.parameters().iter().enumerate() {
                 if parameter.variadic_element().is_some() {
@@ -3024,7 +3067,9 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
         } => {
             let place = match &value.kind {
                 MirOperandKind::Copy(place) | MirOperandKind::Move(place) => Some(place.clone()),
-                MirOperandKind::Constant(_) | MirOperandKind::Function { .. } => None,
+                MirOperandKind::Constant(_)
+                | MirOperandKind::Function { .. }
+                | MirOperandKind::PreludeTraitFunction { .. } => None,
             };
             cases
                 .iter()
