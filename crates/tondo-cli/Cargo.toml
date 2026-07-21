@@ -1,0 +1,17 @@
+[package]
+name = "tondo-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+tondo-compiler = { path = "../tondo-compiler" }
+tondo-vm = { path = "../tondo-vm" }
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "tondo"
+path = "src/main.rs"

@@ -1,0 +1,3254 @@
+use std::cell::Cell;
+use std::collections::{BTreeSet, VecDeque};
+use std::error::Error;
+use std::fmt;
+
+use crate::hir::{
+    HirBinaryOperator, HirCallableId, HirContainmentKind, HirIndexAccess, HirNominalShape,
+    HirPrefixOperator, HirProgram, HirTypeDeclarationKind, HirVariantPayload,
+};
+use crate::resolve::{MemberKind, MemberOwner, ResolvedProgram, SymbolId};
+use crate::types::{
+    Assignability, IntrinsicType, NumericConversion, ScalarType, TypeId, TypeKind,
+    numeric_conversion,
+};
+
+use super::{
+    MirAggregateKind, MirBasicBlock, MirBlockId, MirBlockKind, MirFunction, MirLocalId,
+    MirLocalKind, MirOperand, MirOperandKind, MirOperation, MirOperationKind, MirPlace, MirProgram,
+    MirProjection, MirProjectionKind, MirRvalue, MirRvalueKind, MirStatementKind, MirTag,
+    MirTerminatorKind,
+};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirInvariantError {
+    context: String,
+    message: String,
+    resource_limit: bool,
+}
+
+impl MirInvariantError {
+    fn new(context: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            context: context.into(),
+            message: message.into(),
+            resource_limit: false,
+        }
+    }
+
+    fn resource_limit(context: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            context: context.into(),
+            message: message.into(),
+            resource_limit: true,
+        }
+    }
+
+    pub fn context(&self) -> &str {
+        &self.context
+    }
+
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    pub fn is_resource_limit(&self) -> bool {
+        self.resource_limit
+    }
+}
+
+impl fmt::Display for MirInvariantError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "MIR invariant failed for {}: {}",
+            self.context, self.message
+        )
+    }
+}
+
+impl Error for MirInvariantError {}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MirVerificationLimits {
+    pub max_dataflow_steps: u64,
+}
+
+impl Default for MirVerificationLimits {
+    fn default() -> Self {
+        Self {
+            max_dataflow_steps: 32_000_000,
+        }
+    }
+}
+
+pub fn verify_mir(
+    resolved: &ResolvedProgram,
+    hir: &HirProgram,
+    program: &MirProgram,
+) -> Result<(), MirInvariantError> {
+    verify_mir_with_limits(resolved, hir, program, MirVerificationLimits::default())
+}
+
+pub fn verify_mir_with_limits(
+    resolved: &ResolvedProgram,
+    hir: &HirProgram,
+    program: &MirProgram,
+    limits: MirVerificationLimits,
+) -> Result<(), MirInvariantError> {
+    let expected = hir
+        .callables()
+        .filter(|callable| hir.body(callable.id()).is_some())
+        .map(|callable| callable.id())
+        .collect::<BTreeSet<_>>();
+    let actual = program.functions.keys().copied().collect::<BTreeSet<_>>();
+    if actual != expected {
+        return Err(MirInvariantError::new(
+            "MIR program",
+            "function set does not exactly match the typed HIR bodies",
+        ));
+    }
+    let verifier = Verifier {
+        resolved,
+        hir,
+        limits,
+        dataflow_steps: Cell::new(0),
+    };
+    for (key, function) in &program.functions {
+        if *key != function.id {
+            return Err(MirInvariantError::new(
+                function_context(*key),
+                format!(
+                    "map key differs from stored {}",
+                    function_context(function.id)
+                ),
+            ));
+        }
+        verifier.verify_function(function)?;
+    }
+    Ok(())
+}
+
+struct Verifier<'a> {
+    resolved: &'a ResolvedProgram,
+    hir: &'a HirProgram,
+    limits: MirVerificationLimits,
+    dataflow_steps: Cell<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocalEvent {
+    Read(MirLocalId),
+    Write(MirLocalId),
+    StorageLive(MirLocalId),
+    StorageDead(MirLocalId),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LocalState {
+    live: bool,
+    initialized: bool,
+}
+
+#[derive(Debug, Clone)]
+struct SuccessorEdge {
+    target: MirBlockId,
+    defines: Option<MirLocalId>,
+    refinement: Option<TagFact>,
+    writes: Option<MirPlace>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TagFact {
+    place: MirPlace,
+    tag: MirTag,
+}
+
+#[derive(Debug, Clone)]
+enum TagEvent {
+    Require(TagFact),
+    Write(MirPlace),
+}
+
+impl Verifier<'_> {
+    fn verify_function(&self, function: &MirFunction) -> Result<(), MirInvariantError> {
+        let context = function_context(function.id);
+        self.verify_span(function, function.span, &context)?;
+        let signature = self.hir.callable(function.id).ok_or_else(|| {
+            MirInvariantError::new(&context, "function has no typed HIR callable")
+        })?;
+        if signature.outcome() != function.outcome {
+            return Err(MirInvariantError::new(
+                &context,
+                format!(
+                    "outcome is {}, typed HIR requires {}",
+                    function.outcome,
+                    signature.outcome()
+                ),
+            ));
+        }
+        self.verify_type(function.outcome, &context)?;
+        if function.locals.is_empty() {
+            return Err(MirInvariantError::new(&context, "local table is empty"));
+        }
+        let return_local = self.local(function, function.return_local, &context)?;
+        if return_local.kind != MirLocalKind::Return || return_local.ty != function.outcome {
+            return Err(MirInvariantError::new(
+                &context,
+                "return local kind or type does not match the function outcome",
+            ));
+        }
+        if function.parameters.len() != signature.parameters().len() {
+            return Err(MirInvariantError::new(
+                &context,
+                format!(
+                    "{} MIR parameters for {} typed HIR parameters",
+                    function.parameters.len(),
+                    signature.parameters().len()
+                ),
+            ));
+        }
+        let mut parameter_locals = BTreeSet::new();
+        for (index, (local_id, parameter)) in function
+            .parameters
+            .iter()
+            .zip(signature.parameters())
+            .enumerate()
+        {
+            if !parameter_locals.insert(*local_id) {
+                return Err(MirInvariantError::new(
+                    &context,
+                    format!("parameter local#{} is repeated", local_id.index()),
+                ));
+            }
+            let local = self.local(function, *local_id, &context)?;
+            if local.ty != parameter.ty()
+                || local.kind
+                    != (MirLocalKind::Parameter {
+                        index: index as u32,
+                        source: parameter.local(),
+                    })
+            {
+                return Err(MirInvariantError::new(
+                    &context,
+                    format!("parameter {index} local metadata does not match typed HIR"),
+                ));
+            }
+        }
+        let mut user_locals = BTreeSet::new();
+        let mut return_count = 0_usize;
+        for (index, local) in function.locals.iter().enumerate() {
+            self.verify_type(local.ty, &format!("{context} local#{index}"))?;
+            self.verify_span(function, local.span, &format!("{context} local#{index}"))?;
+            match local.kind {
+                MirLocalKind::Return => return_count += 1,
+                MirLocalKind::Parameter { .. } => {
+                    if !parameter_locals.contains(&MirLocalId(index as u32)) {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            format!("local#{index} is an unlisted parameter"),
+                        ));
+                    }
+                }
+                MirLocalKind::User(source) => {
+                    let expected = self.hir.local_type(source).ok_or_else(|| {
+                        MirInvariantError::new(
+                            &context,
+                            format!("user local#{index} references an untyped HIR local"),
+                        )
+                    })?;
+                    if local.ty != expected
+                        || self.resolved.local(source).is_none()
+                        || !user_locals.insert(source)
+                    {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            format!(
+                                "user local#{index} has inconsistent or duplicate source identity"
+                            ),
+                        ));
+                    }
+                }
+                MirLocalKind::Temporary => {}
+            }
+        }
+        if return_count != 1 {
+            return Err(MirInvariantError::new(
+                &context,
+                format!("function has {return_count} return locals instead of one"),
+            ));
+        }
+        if function.blocks.is_empty() {
+            return Err(MirInvariantError::new(
+                &context,
+                "basic-block table is empty",
+            ));
+        }
+        let entry = self.block(function, function.entry, &context)?;
+        if function.entry == function.unwind {
+            return Err(MirInvariantError::new(
+                &context,
+                "entry and unwind blocks are identical",
+            ));
+        }
+        if entry.kind != MirBlockKind::Normal {
+            return Err(MirInvariantError::new(
+                &context,
+                "entry block is cleanup code",
+            ));
+        }
+        let unwind = self.block(function, function.unwind, &context)?;
+        if unwind.kind != MirBlockKind::Cleanup
+            || !matches!(unwind.terminator.kind, MirTerminatorKind::ResumePanic)
+        {
+            return Err(MirInvariantError::new(
+                &context,
+                "unwind entry is not a cleanup block ending in ResumePanic",
+            ));
+        }
+        for (index, block) in function.blocks.iter().enumerate() {
+            self.verify_block(function, MirBlockId(index as u32), block)?;
+        }
+        self.verify_control_and_dataflow(function)?;
+        Ok(())
+    }
+
+    fn verify_block(
+        &self,
+        function: &MirFunction,
+        id: MirBlockId,
+        block: &MirBasicBlock,
+    ) -> Result<(), MirInvariantError> {
+        let context = format!("{} block#{}", function_context(function.id), id.index());
+        for statement in &block.statements {
+            self.verify_span(function, statement.span, &context)?;
+            match &statement.kind {
+                MirStatementKind::StorageLive(local) | MirStatementKind::StorageDead(local) => {
+                    self.local(function, *local, &context)?;
+                    if matches!(
+                        function.locals[local.0 as usize].kind,
+                        MirLocalKind::Return | MirLocalKind::Parameter { .. }
+                    ) {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "return and parameter locals have function-wide storage",
+                        ));
+                    }
+                }
+                MirStatementKind::Assign { destination, value } => {
+                    self.verify_place(function, destination, &context)?;
+                    self.verify_rvalue(function, value, &context)?;
+                    if destination.ty != value.ty {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            format!(
+                                "assignment writes {} into destination {}",
+                                value.ty, destination.ty
+                            ),
+                        ));
+                    }
+                }
+            }
+        }
+        self.verify_span(function, block.terminator.span, &context)?;
+        match &block.terminator.kind {
+            MirTerminatorKind::Goto { target } => {
+                let target_block = self.block(function, *target, &context)?;
+                if target_block.kind != block.kind {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "Goto crosses the ordinary/cleanup boundary",
+                    ));
+                }
+            }
+            MirTerminatorKind::SwitchBool {
+                condition,
+                if_true,
+                if_false,
+            } => {
+                if block.kind != MirBlockKind::Normal {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "cleanup block performs an ordinary boolean branch",
+                    ));
+                }
+                self.verify_operand(function, condition, &context)?;
+                if condition.ty != self.hir.interner().scalar(ScalarType::Bool) {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "SwitchBool condition is not Bool",
+                    ));
+                }
+                self.normal_block(function, *if_true, &context)?;
+                self.normal_block(function, *if_false, &context)?;
+            }
+            MirTerminatorKind::SwitchTag {
+                value,
+                cases,
+                otherwise,
+            } => {
+                if block.kind != MirBlockKind::Normal {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "cleanup block performs an ordinary tag branch",
+                    ));
+                }
+                self.verify_operand(function, value, &context)?;
+                if !matches!(
+                    value.kind,
+                    MirOperandKind::Copy(_) | MirOperandKind::Move(_)
+                ) {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "SwitchTag value is not materialized in a place",
+                    ));
+                }
+                if cases.is_empty() {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "SwitchTag has no explicit cases",
+                    ));
+                }
+                let mut tags = BTreeSet::new();
+                for (tag, target) in cases {
+                    if !tags.insert(tag) {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            format!("switch tag {tag:?} is duplicated"),
+                        ));
+                    }
+                    self.verify_tag(value.ty, tag, &context)?;
+                    self.normal_block(function, *target, &context)?;
+                }
+                self.normal_block(function, *otherwise, &context)?;
+            }
+            MirTerminatorKind::Invoke {
+                operation,
+                destination,
+                target,
+                unwind,
+            } => {
+                if block.kind != MirBlockKind::Normal {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "cleanup block invokes an ordinary fallible operation",
+                    ));
+                }
+                self.verify_operation(function, operation, &context)?;
+                let never = self.hir.interner().scalar(ScalarType::Never);
+                match (destination, target) {
+                    (Some(destination), Some(target)) => {
+                        self.verify_place(function, destination, &context)?;
+                        if destination.ty != operation.ty || operation.ty == never {
+                            return Err(MirInvariantError::new(
+                                &context,
+                                "invoke destination does not match its normal result",
+                            ));
+                        }
+                        self.normal_block(function, *target, &context)?;
+                    }
+                    (None, None) if operation.ty == never => {}
+                    _ => {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "invoke must have both destination and target, or neither for Never",
+                        ));
+                    }
+                }
+                let unwind_block = self.block(function, *unwind, &context)?;
+                if unwind_block.kind != MirBlockKind::Cleanup {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "invoke unwind edge does not enter cleanup code",
+                    ));
+                }
+            }
+            MirTerminatorKind::IteratorNext {
+                state,
+                destination,
+                has_value,
+                exhausted,
+                unwind,
+            } => {
+                if block.kind != MirBlockKind::Normal {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "cleanup block advances an iterator",
+                    ));
+                }
+                self.verify_place(function, state, &context)?;
+                self.verify_place(function, destination, &context)?;
+                self.verify_iterator(state.ty, destination.ty, &context)?;
+                self.normal_block(function, *has_value, &context)?;
+                self.normal_block(function, *exhausted, &context)?;
+                if self.block(function, *unwind, &context)?.kind != MirBlockKind::Cleanup {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "iterator unwind edge does not enter cleanup code",
+                    ));
+                }
+            }
+            MirTerminatorKind::ValidatePlaces {
+                places,
+                target,
+                unwind,
+            } => {
+                if block.kind != MirBlockKind::Normal || places.is_empty() {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "place validation must be a non-empty ordinary operation",
+                    ));
+                }
+                let mut unique = Vec::new();
+                for place in places {
+                    self.verify_place(function, place, &context)?;
+                    if unique.contains(&place) {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "place validation repeats the same destination",
+                        ));
+                    }
+                    unique.push(place);
+                }
+                self.normal_block(function, *target, &context)?;
+                if self.block(function, *unwind, &context)?.kind != MirBlockKind::Cleanup {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "place-validation unwind edge does not enter cleanup code",
+                    ));
+                }
+            }
+            MirTerminatorKind::Return => {
+                if block.kind != MirBlockKind::Normal {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "cleanup block returns normally",
+                    ));
+                }
+                if function.outcome == self.hir.interner().scalar(ScalarType::Never) {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "Never function has a normal return",
+                    ));
+                }
+            }
+            MirTerminatorKind::ResumePanic => {
+                if block.kind != MirBlockKind::Cleanup {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "ordinary block resumes panic unwinding",
+                    ));
+                }
+            }
+            MirTerminatorKind::Unreachable => {}
+        }
+        Ok(())
+    }
+
+    fn verify_rvalue(
+        &self,
+        function: &MirFunction,
+        value: &MirRvalue,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        self.verify_type(value.ty, context)?;
+        match &value.kind {
+            MirRvalueKind::Use(operand) => {
+                self.verify_operand(function, operand, context)?;
+                if operand.ty != value.ty {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "Use rvalue changes its operand type",
+                    ));
+                }
+            }
+            MirRvalueKind::Prefix { operator, operand } => {
+                self.verify_operand(function, operand, context)?;
+                self.verify_prefix(*operator, operand.ty, value.ty, context)?;
+                if self.prefix_requires_checked(*operator, operand.ty) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "potentially panicking prefix operation is not an Invoke",
+                    ));
+                }
+            }
+            MirRvalueKind::Binary {
+                operator,
+                left,
+                right,
+            } => {
+                self.verify_operand(function, left, context)?;
+                self.verify_operand(function, right, context)?;
+                self.verify_binary(*operator, left.ty, right.ty, value.ty, context)?;
+                if self.binary_requires_checked(*operator, left.ty, right.ty) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "potentially panicking binary operation is not an Invoke",
+                    ));
+                }
+            }
+            MirRvalueKind::Aggregate { shape, values } => {
+                for operand in values {
+                    self.verify_operand(function, operand, context)?;
+                }
+                self.verify_aggregate(shape, values, value.ty, context)?;
+            }
+            MirRvalueKind::RecordUpdate { base, fields } => {
+                self.verify_operand(function, base, context)?;
+                if base.ty != value.ty {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "record update changes the nominal base type",
+                    ));
+                }
+                let mut seen = BTreeSet::new();
+                for (member, operand) in fields {
+                    if self.resolved.member(*member).is_none() || !seen.insert(*member) {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "record update contains an unknown or duplicate field",
+                        ));
+                    }
+                    self.verify_operand(function, operand, context)?;
+                    if !self.nominal_field_matches(value.ty, *member, operand.ty, context)? {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "record update value does not match its instantiated field type",
+                        ));
+                    }
+                }
+            }
+            MirRvalueKind::Coerce {
+                kind,
+                value: operand,
+            } => {
+                self.verify_operand(function, operand, context)?;
+                let actual = self
+                    .hir
+                    .interner()
+                    .assignability(operand.ty, value.ty)
+                    .map_err(|error| {
+                        MirInvariantError::new(
+                            context,
+                            format!("cannot validate MIR coercion: {error}"),
+                        )
+                    })?;
+                if actual != Some(*kind) || *kind == Assignability::Exact {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "coercion kind does not match the closed assignability relation",
+                    ));
+                }
+            }
+            MirRvalueKind::NumericConversion {
+                target,
+                conversion,
+                value: operand,
+            } => {
+                self.verify_operand(function, operand, context)?;
+                self.verify_numeric_conversion(
+                    operand.ty,
+                    *target,
+                    *conversion,
+                    value.ty,
+                    context,
+                )?;
+            }
+            MirRvalueKind::Range { start, end, .. } => {
+                self.verify_operand(function, start, context)?;
+                self.verify_operand(function, end, context)?;
+                let element = self.intrinsic_arguments(value.ty, IntrinsicType::Range, context)?;
+                if start.ty != end.ty || element != [start.ty] {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "range bounds or result element type are inconsistent",
+                    ));
+                }
+            }
+            MirRvalueKind::Contains {
+                kind,
+                item,
+                container,
+            } => {
+                self.verify_operand(function, item, context)?;
+                self.verify_operand(function, container, context)?;
+                self.verify_contains(*kind, item.ty, container.ty, value.ty, context)?;
+            }
+            MirRvalueKind::Length(operand) => {
+                self.verify_operand(function, operand, context)?;
+                if value.ty != self.hir.interner().scalar(ScalarType::Int)
+                    || !self.is_array(operand.ty)
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "length requires Array and produces Int",
+                    ));
+                }
+            }
+            MirRvalueKind::IteratorState { source } => {
+                self.verify_operand(function, source, context)?;
+                if source.ty != value.ty || self.iterated_item_type(source.ty).is_none() {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "iterator state does not preserve an iterable source type",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_operation(
+        &self,
+        function: &MirFunction,
+        operation: &MirOperation,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        self.verify_type(operation.ty, context)?;
+        match &operation.kind {
+            MirOperationKind::CheckedPrefix { operator, operand } => {
+                self.verify_operand(function, operand, context)?;
+                self.verify_prefix(*operator, operand.ty, operation.ty, context)?;
+                if !self.prefix_requires_checked(*operator, operand.ty) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "non-panicking prefix operation is encoded as Invoke",
+                    ));
+                }
+            }
+            MirOperationKind::CheckedBinary {
+                operator,
+                left,
+                right,
+            } => {
+                self.verify_operand(function, left, context)?;
+                self.verify_operand(function, right, context)?;
+                self.verify_binary(*operator, left.ty, right.ty, operation.ty, context)?;
+                if !self.binary_requires_checked(*operator, left.ty, right.ty) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "non-panicking binary operation is encoded as Invoke",
+                    ));
+                }
+            }
+            MirOperationKind::BuildMap(entries) => {
+                let arguments =
+                    self.intrinsic_arguments(operation.ty, IntrinsicType::Map, context)?;
+                for (key, value) in entries {
+                    self.verify_operand(function, key, context)?;
+                    self.verify_operand(function, value, context)?;
+                    if key.ty != arguments[0] || value.ty != arguments[1] {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "map entry does not match the map key/value types",
+                        ));
+                    }
+                }
+            }
+            MirOperationKind::Index {
+                base,
+                index,
+                access,
+            } => {
+                self.verify_operand(function, base, context)?;
+                self.verify_operand(function, index, context)?;
+                self.verify_index_result(base.ty, index.ty, *access, operation.ty, context)?;
+            }
+            MirOperationKind::Slice {
+                base,
+                start,
+                end,
+                step,
+            } => {
+                self.verify_operand(function, base, context)?;
+                for operand in start.iter().chain(end).chain(step) {
+                    self.verify_operand(function, operand, context)?;
+                    if operand.ty != self.hir.interner().scalar(ScalarType::Int) {
+                        return Err(MirInvariantError::new(context, "slice bound is not Int"));
+                    }
+                }
+                if operation.ty != base.ty || !self.is_array(base.ty) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "slice operation must preserve its Array type",
+                    ));
+                }
+            }
+            MirOperationKind::Call { callee, arguments } => {
+                self.verify_operand(function, callee, context)?;
+                for argument in arguments {
+                    if argument.target == crate::hir::HirCallArgumentTarget::Invalid {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "call operation retains an invalid argument association",
+                        ));
+                    }
+                    self.verify_operand(function, &argument.value, context)?;
+                }
+                self.verify_call(callee, arguments, operation.ty, context)?;
+            }
+            MirOperationKind::ExplicitPanic { message } => {
+                self.verify_operand(function, message, context)?;
+                if message.ty != self.hir.interner().scalar(ScalarType::String)
+                    || operation.ty != self.hir.interner().scalar(ScalarType::Never)
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "panic requires a String message and has outcome Never",
+                    ));
+                }
+            }
+            MirOperationKind::Assert {
+                condition,
+                message_parts,
+            } => {
+                self.verify_operand(function, condition, context)?;
+                if condition.ty != self.hir.interner().scalar(ScalarType::Bool) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "assert operation condition is not Bool",
+                    ));
+                }
+                let string_type = self.hir.interner().scalar(ScalarType::String);
+                for part in message_parts {
+                    self.verify_operand(function, part.value(), context)?;
+                    if part.is_spread() {
+                        let arguments = self.intrinsic_arguments(
+                            part.value().ty,
+                            IntrinsicType::Array,
+                            context,
+                        )?;
+                        if arguments != [string_type] {
+                            return Err(MirInvariantError::new(
+                                context,
+                                "spread assert message part is not Array[String]",
+                            ));
+                        }
+                    } else if part.value().ty != string_type {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "assert message part is not String",
+                        ));
+                    }
+                }
+                if operation.ty != self.hir.interner().scalar(ScalarType::Unit) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "assert operation does not produce Unit",
+                    ));
+                }
+            }
+            MirOperationKind::BootstrapHostCall {
+                function: host_function,
+                arguments,
+            } => {
+                for argument in arguments {
+                    self.verify_operand(function, argument, context)?;
+                }
+                if !matches!(host_function, super::MirBootstrapHostFunction::ConsolePrint)
+                    || arguments.len() != 1
+                    || arguments[0].ty != self.hir.interner().scalar(ScalarType::String)
+                    || operation.ty != self.hir.interner().scalar(ScalarType::Unit)
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "bootstrap console print requires one String and produces Unit",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_aggregate(
+        &self,
+        shape: &MirAggregateKind,
+        values: &[MirOperand],
+        ty: TypeId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        match shape {
+            MirAggregateKind::Tuple => {
+                let TypeKind::Tuple(items) = self.kind(ty, context)? else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "tuple aggregate has a non-tuple type",
+                    ));
+                };
+                self.verify_operand_types(values, items, context)?;
+            }
+            MirAggregateKind::Array => {
+                let arguments = self.intrinsic_arguments(ty, IntrinsicType::Array, context)?;
+                if values.iter().any(|value| value.ty != arguments[0]) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "array aggregate contains a value of the wrong element type",
+                    ));
+                }
+            }
+            MirAggregateKind::Set => {
+                let arguments = self.intrinsic_arguments(ty, IntrinsicType::Set, context)?;
+                if values.iter().any(|value| value.ty != arguments[0]) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "set aggregate contains a value of the wrong element type",
+                    ));
+                }
+            }
+            MirAggregateKind::Newtype { owner } => {
+                let (actual_owner, arguments, nominal) = self.nominal_instance(ty, context)?;
+                let HirNominalShape::Newtype { underlying } = nominal.shape() else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "newtype aggregate owner does not declare a newtype",
+                    ));
+                };
+                if actual_owner != *owner
+                    || values.len() != 1
+                    || !self.type_matches_substitution(
+                        *underlying,
+                        values[0].ty,
+                        arguments,
+                        context,
+                    )?
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "newtype aggregate owner or payload type is inconsistent",
+                    ));
+                }
+            }
+            MirAggregateKind::Record { owner, fields } => {
+                let (actual_owner, arguments, nominal) = self.nominal_instance(ty, context)?;
+                let HirNominalShape::Record { fields: declared } = nominal.shape() else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "record aggregate owner does not declare a record",
+                    ));
+                };
+                let mut seen = BTreeSet::new();
+                if actual_owner != *owner
+                    || fields.len() != declared.len()
+                    || fields.len() != values.len()
+                    || fields.iter().any(|field| !seen.insert(*field))
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "record aggregate owner, arity, or field set is inconsistent",
+                    ));
+                }
+                for ((member, value), declared) in fields.iter().zip(values).zip(declared.iter()) {
+                    if *member != declared.member()
+                        || !self.type_matches_substitution(
+                            declared.ty(),
+                            value.ty,
+                            arguments,
+                            context,
+                        )?
+                    {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "record aggregate field order or type is inconsistent",
+                        ));
+                    }
+                }
+            }
+            MirAggregateKind::Variant { variant, fields } => {
+                let (owner, arguments, nominal) = self.nominal_instance(ty, context)?;
+                let HirNominalShape::Enum { variants } = nominal.shape() else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "variant aggregate has a non-enum type",
+                    ));
+                };
+                let declaration = variants
+                    .iter()
+                    .find(|candidate| candidate.member() == *variant)
+                    .ok_or_else(|| {
+                        MirInvariantError::new(context, "variant does not belong to its enum type")
+                    })?;
+                self.verify_variant_payload(
+                    owner,
+                    *variant,
+                    declaration.payload(),
+                    fields,
+                    values,
+                    arguments,
+                    context,
+                )?;
+            }
+            MirAggregateKind::OptionNone => {
+                if !values.is_empty() || !matches!(self.kind(ty, context)?, TypeKind::Option(_)) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "none aggregate shape or arity is inconsistent",
+                    ));
+                }
+            }
+            MirAggregateKind::OptionSome => {
+                let TypeKind::Option(item) = self.kind(ty, context)? else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "some aggregate has a non-option type",
+                    ));
+                };
+                self.verify_operand_types(values, &[*item], context)?;
+            }
+            MirAggregateKind::ResultOk => {
+                let TypeKind::Result { success, .. } = self.kind(ty, context)? else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "ok aggregate has a non-result type",
+                    ));
+                };
+                self.verify_operand_types(values, &[*success], context)?;
+            }
+            MirAggregateKind::ResultErr => {
+                let TypeKind::Result { error, .. } = self.kind(ty, context)? else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "err aggregate has a non-result type",
+                    ));
+                };
+                self.verify_operand_types(values, &[*error], context)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_operand(
+        &self,
+        function: &MirFunction,
+        operand: &MirOperand,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        self.verify_type(operand.ty, context)?;
+        match &operand.kind {
+            MirOperandKind::Constant(super::MirConstant::Named(symbol)) => {
+                let constant = self.hir.constant(*symbol).ok_or_else(|| {
+                    MirInvariantError::new(
+                        context,
+                        format!(
+                            "operand references unknown constant symbol#{}",
+                            symbol.index()
+                        ),
+                    )
+                })?;
+                if constant.ty() != Some(operand.ty) || constant.evaluated().is_none() {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "named constant operand lacks a matching normalized value",
+                    ));
+                }
+            }
+            MirOperandKind::Constant(constant) => {
+                self.verify_constant(constant, operand.ty, context)?;
+            }
+            MirOperandKind::Copy(place) | MirOperandKind::Move(place) => {
+                self.verify_place(function, place, context)?;
+                if place.ty != operand.ty {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "place operand changes its place type",
+                    ));
+                }
+            }
+            MirOperandKind::Function {
+                callable,
+                arguments,
+            } => {
+                let signature = self.hir.callable(*callable).ok_or_else(|| {
+                    MirInvariantError::new(context, "function operand has no HIR signature")
+                })?;
+                if arguments.len() != signature.generics().len() {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "function operand specialization arity is invalid",
+                    ));
+                }
+                for argument in arguments {
+                    self.verify_type(*argument, context)?;
+                }
+                if !self.type_matches_substitution(
+                    signature.function_type(),
+                    operand.ty,
+                    arguments,
+                    context,
+                )? {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "function operand type does not match its specialization",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_place(
+        &self,
+        function: &MirFunction,
+        place: &MirPlace,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let local = self.local(function, place.local, context)?;
+        self.verify_type(place.ty, context)?;
+        let mut current = local.ty;
+        for projection in &place.projections {
+            self.verify_type(projection.ty, context)?;
+            let expected = self.projection_result(function, current, projection, context)?;
+            if expected != projection.ty {
+                return Err(MirInvariantError::new(
+                    context,
+                    format!(
+                        "projection declares {}, but its base shape produces {expected}",
+                        projection.ty
+                    ),
+                ));
+            }
+            current = projection.ty;
+        }
+        if current != place.ty {
+            return Err(MirInvariantError::new(
+                context,
+                format!(
+                    "place projection ends in {current}, but place declares {}",
+                    place.ty
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn kind<'a>(&'a self, ty: TypeId, context: &str) -> Result<&'a TypeKind, MirInvariantError> {
+        self.hir.interner().kind(ty).map_err(|error| {
+            MirInvariantError::new(context, format!("type {ty} is not interned: {error}"))
+        })
+    }
+
+    fn intrinsic_arguments<'a>(
+        &'a self,
+        ty: TypeId,
+        constructor: IntrinsicType,
+        context: &str,
+    ) -> Result<&'a [TypeId], MirInvariantError> {
+        let TypeKind::Intrinsic {
+            constructor: actual,
+            arguments,
+        } = self.kind(ty, context)?
+        else {
+            return Err(MirInvariantError::new(
+                context,
+                format!("expected {constructor}, found non-intrinsic {ty}"),
+            ));
+        };
+        if *actual != constructor {
+            return Err(MirInvariantError::new(
+                context,
+                format!("expected {constructor}, found {actual}"),
+            ));
+        }
+        Ok(arguments)
+    }
+
+    fn nominal_instance<'a>(
+        &'a self,
+        ty: TypeId,
+        context: &str,
+    ) -> Result<(SymbolId, &'a [TypeId], &'a crate::hir::HirNominalDefinition), MirInvariantError>
+    {
+        let TypeKind::Nominal {
+            identity,
+            arguments,
+        } = self.kind(ty, context)?
+        else {
+            return Err(MirInvariantError::new(
+                context,
+                format!("{ty} is not a nominal type"),
+            ));
+        };
+        let symbol = self
+            .resolved
+            .symbols()
+            .find(|symbol| symbol.identity() == identity)
+            .map(|symbol| symbol.id())
+            .ok_or_else(|| {
+                MirInvariantError::new(context, "nominal type identity is not resolved")
+            })?;
+        let declaration = self.hir.declaration(symbol).ok_or_else(|| {
+            MirInvariantError::new(context, "nominal type has no typed HIR declaration")
+        })?;
+        let HirTypeDeclarationKind::Nominal(nominal) = declaration.kind() else {
+            return Err(MirInvariantError::new(
+                context,
+                "nominal TypeId points to a non-nominal HIR declaration",
+            ));
+        };
+        if arguments.len() != declaration.parameters().len() {
+            return Err(MirInvariantError::new(
+                context,
+                "nominal instance has the wrong generic arity",
+            ));
+        }
+        Ok((symbol, arguments, nominal))
+    }
+
+    fn type_matches_substitution(
+        &self,
+        template: TypeId,
+        actual: TypeId,
+        arguments: &[TypeId],
+        context: &str,
+    ) -> Result<bool, MirInvariantError> {
+        let mut pending = vec![(template, actual)];
+        while let Some((template, actual)) = pending.pop() {
+            if template == actual {
+                continue;
+            }
+            let template_kind = self.kind(template, context)?;
+            if let TypeKind::GenericParameter(position) = template_kind {
+                if arguments.get(*position as usize) != Some(&actual) {
+                    return Ok(false);
+                }
+                continue;
+            }
+            let actual_kind = self.kind(actual, context)?;
+            match (template_kind, actual_kind) {
+                (TypeKind::Scalar(left), TypeKind::Scalar(right)) if left == right => {}
+                (
+                    TypeKind::Nominal {
+                        identity: left_identity,
+                        arguments: left,
+                    },
+                    TypeKind::Nominal {
+                        identity: right_identity,
+                        arguments: right,
+                    },
+                ) if left_identity == right_identity && left.len() == right.len() => {
+                    pending.extend(left.iter().copied().zip(right.iter().copied()));
+                }
+                (TypeKind::Tuple(left), TypeKind::Tuple(right))
+                | (TypeKind::Union(left), TypeKind::Union(right))
+                    if left.len() == right.len() =>
+                {
+                    pending.extend(left.iter().copied().zip(right.iter().copied()));
+                }
+                (TypeKind::Option(left), TypeKind::Option(right)) => {
+                    pending.push((*left, *right));
+                }
+                (
+                    TypeKind::Result {
+                        success: left_success,
+                        error: left_error,
+                    },
+                    TypeKind::Result {
+                        success: right_success,
+                        error: right_error,
+                    },
+                ) => {
+                    pending.push((*left_success, *right_success));
+                    pending.push((*left_error, *right_error));
+                }
+                (
+                    TypeKind::Intrinsic {
+                        constructor: left_constructor,
+                        arguments: left,
+                    },
+                    TypeKind::Intrinsic {
+                        constructor: right_constructor,
+                        arguments: right,
+                    },
+                ) if left_constructor == right_constructor && left.len() == right.len() => {
+                    pending.extend(left.iter().copied().zip(right.iter().copied()));
+                }
+                (TypeKind::Function(left), TypeKind::Function(right))
+                    if left.is_async() == right.is_async()
+                        && left.is_unsafe() == right.is_unsafe()
+                        && left.parameters().len() == right.parameters().len()
+                        && left.variadic().is_some() == right.variadic().is_some() =>
+                {
+                    for (left, right) in left.parameters().iter().zip(right.parameters()) {
+                        if left.mode() != right.mode() {
+                            return Ok(false);
+                        }
+                        pending.push((left.ty(), right.ty()));
+                    }
+                    if let (Some(left), Some(right)) = (left.variadic(), right.variadic()) {
+                        pending.push((left, right));
+                    }
+                    pending.push((left.outcome(), right.outcome()));
+                }
+                (TypeKind::OpaqueResult(left), TypeKind::OpaqueResult(right)) if left == right => {}
+                (
+                    TypeKind::Generated {
+                        identity: left_identity,
+                        arguments: left,
+                    },
+                    TypeKind::Generated {
+                        identity: right_identity,
+                        arguments: right,
+                    },
+                ) if left_identity == right_identity && left.len() == right.len() => {
+                    pending.extend(left.iter().copied().zip(right.iter().copied()));
+                }
+                (
+                    TypeKind::Cursor {
+                        mode: left_mode,
+                        collection: left,
+                    },
+                    TypeKind::Cursor {
+                        mode: right_mode,
+                        collection: right,
+                    },
+                ) if left_mode == right_mode => pending.push((*left, *right)),
+                _ => return Ok(false),
+            }
+        }
+        Ok(true)
+    }
+
+    fn nominal_field_matches(
+        &self,
+        ty: TypeId,
+        member: crate::resolve::MemberId,
+        actual: TypeId,
+        context: &str,
+    ) -> Result<bool, MirInvariantError> {
+        let (owner, arguments, nominal) = self.nominal_instance(ty, context)?;
+        let declaration = self
+            .resolved
+            .member(member)
+            .ok_or_else(|| MirInvariantError::new(context, "field references an unknown member"))?;
+        if declaration.owner() != MemberOwner::Type(owner) || !declaration.kind().is_field() {
+            return Ok(false);
+        }
+        let template = match nominal.shape() {
+            HirNominalShape::Newtype { underlying }
+                if declaration.kind() == MemberKind::NewtypeValue =>
+            {
+                *underlying
+            }
+            HirNominalShape::Record { fields } => fields
+                .iter()
+                .find(|field| field.member() == member)
+                .map(|field| field.ty())
+                .ok_or_else(|| {
+                    MirInvariantError::new(context, "field is absent from its nominal HIR shape")
+                })?,
+            _ => return Ok(false),
+        };
+        self.type_matches_substitution(template, actual, arguments, context)
+    }
+
+    fn verify_prefix(
+        &self,
+        operator: HirPrefixOperator,
+        operand: TypeId,
+        result: TypeId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let TypeKind::Scalar(scalar) = self.kind(operand, context)? else {
+            return Err(MirInvariantError::new(
+                context,
+                "prefix operator has a non-scalar operand",
+            ));
+        };
+        let valid = match operator {
+            HirPrefixOperator::LogicalNot => *scalar == ScalarType::Bool,
+            HirPrefixOperator::Negate => is_signed_integer(*scalar) || is_float(*scalar),
+            HirPrefixOperator::BitwiseNot => is_integer(*scalar) || *scalar == ScalarType::Byte,
+        };
+        let expected = if operator == HirPrefixOperator::LogicalNot {
+            self.hir.interner().scalar(ScalarType::Bool)
+        } else {
+            operand
+        };
+        if !valid || result != expected {
+            return Err(MirInvariantError::new(
+                context,
+                "prefix operand or result type is invalid",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_binary(
+        &self,
+        operator: HirBinaryOperator,
+        left: TypeId,
+        right: TypeId,
+        result: TypeId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        if !self.binary_result_matches(operator, left, right, result, context)? {
+            return Err(MirInvariantError::new(
+                context,
+                "binary operand or result type is invalid",
+            ));
+        }
+        Ok(())
+    }
+
+    fn binary_result_matches(
+        &self,
+        operator: HirBinaryOperator,
+        left: TypeId,
+        right: TypeId,
+        result: TypeId,
+        context: &str,
+    ) -> Result<bool, MirInvariantError> {
+        let arithmetic = matches!(
+            operator,
+            HirBinaryOperator::Add
+                | HirBinaryOperator::Subtract
+                | HirBinaryOperator::Multiply
+                | HirBinaryOperator::Divide
+                | HirBinaryOperator::Remainder
+        );
+        let left_array = self.array_element(left);
+        let right_array = self.array_element(right);
+        if arithmetic && (left_array.is_some() || right_array.is_some()) {
+            let Some(result_element) = self.array_element(result) else {
+                return Ok(false);
+            };
+            return self.binary_result_matches(
+                operator,
+                left_array.unwrap_or(left),
+                right_array.unwrap_or(right),
+                result_element,
+                context,
+            );
+        }
+        let left_scalar = match self.kind(left, context)? {
+            TypeKind::Scalar(scalar) => Some(*scalar),
+            _ => None,
+        };
+        let right_scalar = match self.kind(right, context)? {
+            TypeKind::Scalar(scalar) => Some(*scalar),
+            _ => None,
+        };
+        if left != right
+            && !matches!(
+                operator,
+                HirBinaryOperator::ShiftLeft | HirBinaryOperator::ShiftRight
+            )
+        {
+            return Ok(false);
+        }
+        let valid = match operator {
+            HirBinaryOperator::Multiply
+            | HirBinaryOperator::Divide
+            | HirBinaryOperator::Add
+            | HirBinaryOperator::Subtract => left_scalar.is_some_and(is_arithmetic),
+            HirBinaryOperator::Remainder => left_scalar.is_some_and(is_integer),
+            HirBinaryOperator::ShiftLeft | HirBinaryOperator::ShiftRight => {
+                left_scalar.is_some_and(|scalar| is_integer(scalar) || scalar == ScalarType::Byte)
+                    && right_scalar.is_some_and(is_integer)
+            }
+            HirBinaryOperator::BitwiseAnd
+            | HirBinaryOperator::BitwiseXor
+            | HirBinaryOperator::BitwiseOr => {
+                left_scalar.is_some_and(|scalar| is_integer(scalar) || scalar == ScalarType::Byte)
+            }
+            HirBinaryOperator::Less
+            | HirBinaryOperator::LessEqual
+            | HirBinaryOperator::Greater
+            | HirBinaryOperator::GreaterEqual => left_scalar.is_some_and(is_relational),
+            HirBinaryOperator::Equal | HirBinaryOperator::NotEqual => {
+                left_scalar.is_some_and(|scalar| scalar != ScalarType::Never)
+            }
+            HirBinaryOperator::LogicalAnd | HirBinaryOperator::LogicalOr => {
+                left_scalar == Some(ScalarType::Bool)
+            }
+        };
+        if !valid {
+            return Ok(false);
+        }
+        let expected = if matches!(
+            operator,
+            HirBinaryOperator::Less
+                | HirBinaryOperator::LessEqual
+                | HirBinaryOperator::Greater
+                | HirBinaryOperator::GreaterEqual
+                | HirBinaryOperator::Equal
+                | HirBinaryOperator::NotEqual
+                | HirBinaryOperator::LogicalAnd
+                | HirBinaryOperator::LogicalOr
+        ) {
+            self.hir.interner().scalar(ScalarType::Bool)
+        } else {
+            left
+        };
+        Ok(result == expected)
+    }
+
+    fn prefix_requires_checked(&self, operator: HirPrefixOperator, operand: TypeId) -> bool {
+        operator == HirPrefixOperator::Negate
+            && matches!(
+                self.hir.interner().kind(operand),
+                Ok(TypeKind::Scalar(
+                    ScalarType::Int | ScalarType::Int8 | ScalarType::Int16 | ScalarType::Int32
+                ))
+            )
+    }
+
+    fn binary_requires_checked(
+        &self,
+        operator: HirBinaryOperator,
+        left: TypeId,
+        _right: TypeId,
+    ) -> bool {
+        matches!(
+            operator,
+            HirBinaryOperator::Multiply
+                | HirBinaryOperator::Divide
+                | HirBinaryOperator::Remainder
+                | HirBinaryOperator::Add
+                | HirBinaryOperator::Subtract
+                | HirBinaryOperator::ShiftLeft
+                | HirBinaryOperator::ShiftRight
+        ) && !matches!(
+            self.hir.interner().kind(left),
+            Ok(TypeKind::Scalar(ScalarType::Float | ScalarType::Float32))
+        )
+    }
+
+    fn verify_numeric_conversion(
+        &self,
+        source: TypeId,
+        target: ScalarType,
+        conversion: NumericConversion,
+        result: TypeId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let TypeKind::Scalar(source_scalar) = self.kind(source, context)? else {
+            return Err(MirInvariantError::new(
+                context,
+                "numeric conversion source is not scalar",
+            ));
+        };
+        if numeric_conversion(*source_scalar, target) != Some(conversion) {
+            return Err(MirInvariantError::new(
+                context,
+                "numeric conversion class does not match the closed conversion table",
+            ));
+        }
+        let target_type = self.hir.interner().scalar(target);
+        let valid_result = if conversion == NumericConversion::Checked {
+            matches!(
+                self.kind(result, context)?,
+                TypeKind::Result { success, error }
+                    if *success == target_type
+                        && matches!(
+                            self.hir.interner().kind(*error),
+                            Ok(TypeKind::Intrinsic {
+                                constructor: IntrinsicType::NumericConversionError,
+                                arguments,
+                            }) if arguments.is_empty()
+                        )
+            )
+        } else {
+            result == target_type
+        };
+        if !valid_result {
+            return Err(MirInvariantError::new(
+                context,
+                "numeric conversion result type is inconsistent",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_contains(
+        &self,
+        kind: HirContainmentKind,
+        item: TypeId,
+        container: TypeId,
+        result: TypeId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let expected = match kind {
+            HirContainmentKind::Array => {
+                self.intrinsic_arguments(container, IntrinsicType::Array, context)?[0]
+            }
+            HirContainmentKind::MapKey => {
+                self.intrinsic_arguments(container, IntrinsicType::Map, context)?[0]
+            }
+            HirContainmentKind::Set => {
+                self.intrinsic_arguments(container, IntrinsicType::Set, context)?[0]
+            }
+            HirContainmentKind::Range => {
+                self.intrinsic_arguments(container, IntrinsicType::Range, context)?[0]
+            }
+            HirContainmentKind::StringChar => {
+                if container != self.hir.interner().scalar(ScalarType::String) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "StringChar containment has a non-String container",
+                    ));
+                }
+                self.hir.interner().scalar(ScalarType::Char)
+            }
+        };
+        if item != expected || result != self.hir.interner().scalar(ScalarType::Bool) {
+            return Err(MirInvariantError::new(
+                context,
+                "containment item or result type is inconsistent",
+            ));
+        }
+        Ok(())
+    }
+
+    fn projection_result(
+        &self,
+        function: &MirFunction,
+        current: TypeId,
+        projection: &MirProjection,
+        context: &str,
+    ) -> Result<TypeId, MirInvariantError> {
+        let declared = projection.ty;
+        match &projection.kind {
+            MirProjectionKind::Field(member) => {
+                if !self.nominal_field_matches(current, *member, declared, context)? {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "field projection does not belong to its nominal base or has wrong type",
+                    ));
+                }
+                Ok(declared)
+            }
+            MirProjectionKind::TupleField(index) => {
+                let TypeKind::Tuple(items) = self.kind(current, context)? else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "tuple projection has a non-tuple base",
+                    ));
+                };
+                items.get(*index as usize).copied().ok_or_else(|| {
+                    MirInvariantError::new(context, "tuple projection index is out of range")
+                })
+            }
+            MirProjectionKind::NewtypeValue => {
+                let (_, arguments, nominal) = self.nominal_instance(current, context)?;
+                let HirNominalShape::Newtype { underlying } = nominal.shape() else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "newtype projection has a non-newtype base",
+                    ));
+                };
+                if !self.type_matches_substitution(*underlying, declared, arguments, context)? {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "newtype projection has the wrong instantiated payload type",
+                    ));
+                }
+                Ok(declared)
+            }
+            MirProjectionKind::VariantTuple { variant, index } => {
+                let (owner, arguments, nominal) = self.nominal_instance(current, context)?;
+                let HirNominalShape::Enum { variants } = nominal.shape() else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "variant tuple projection has a non-enum base",
+                    ));
+                };
+                self.verify_variant_owner(owner, *variant, context)?;
+                let payload = variants
+                    .iter()
+                    .find(|candidate| candidate.member() == *variant)
+                    .map(|variant| variant.payload())
+                    .ok_or_else(|| {
+                        MirInvariantError::new(context, "variant is absent from its enum HIR shape")
+                    })?;
+                let HirVariantPayload::Tuple(items) = payload else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "tuple payload projection targets a non-tuple variant",
+                    ));
+                };
+                let template = items.get(*index as usize).copied().ok_or_else(|| {
+                    MirInvariantError::new(context, "variant tuple index is out of range")
+                })?;
+                if !self.type_matches_substitution(template, declared, arguments, context)? {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "variant tuple projection payload type is inconsistent",
+                    ));
+                }
+                Ok(declared)
+            }
+            MirProjectionKind::VariantField { variant, field } => {
+                let (owner, arguments, nominal) = self.nominal_instance(current, context)?;
+                let HirNominalShape::Enum { variants } = nominal.shape() else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "variant field projection has a non-enum base",
+                    ));
+                };
+                self.verify_variant_owner(owner, *variant, context)?;
+                let payload = variants
+                    .iter()
+                    .find(|candidate| candidate.member() == *variant)
+                    .map(|variant| variant.payload())
+                    .ok_or_else(|| {
+                        MirInvariantError::new(context, "variant is absent from its enum HIR shape")
+                    })?;
+                let HirVariantPayload::Record(fields) = payload else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "record payload projection targets a non-record variant",
+                    ));
+                };
+                let declaration = self.resolved.member(*field).ok_or_else(|| {
+                    MirInvariantError::new(context, "variant field is not resolved")
+                })?;
+                if declaration.owner() != MemberOwner::Variant(*variant)
+                    || declaration.kind() != MemberKind::VariantField
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "variant field has the wrong owner or member kind",
+                    ));
+                }
+                let template = fields
+                    .iter()
+                    .find(|candidate| candidate.member() == *field)
+                    .map(|field| field.ty())
+                    .ok_or_else(|| {
+                        MirInvariantError::new(context, "field is absent from the variant payload")
+                    })?;
+                if !self.type_matches_substitution(template, declared, arguments, context)? {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "variant field projection payload type is inconsistent",
+                    ));
+                }
+                Ok(declared)
+            }
+            MirProjectionKind::OptionValue => {
+                let TypeKind::Option(item) = self.kind(current, context)? else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "option payload projection has a non-option base",
+                    ));
+                };
+                Ok(*item)
+            }
+            MirProjectionKind::ResultOkValue => {
+                let TypeKind::Result { success, .. } = self.kind(current, context)? else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "ok payload projection has a non-result base",
+                    ));
+                };
+                Ok(*success)
+            }
+            MirProjectionKind::ResultErrValue => {
+                let TypeKind::Result { error, .. } = self.kind(current, context)? else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "err payload projection has a non-result base",
+                    ));
+                };
+                Ok(*error)
+            }
+            MirProjectionKind::UnionValue(member) => {
+                self.verify_type(*member, context)?;
+                let TypeKind::Union(members) = self.kind(current, context)? else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "union payload projection has a non-union base",
+                    ));
+                };
+                if !members.contains(member) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "union projection member is absent from the union",
+                    ));
+                }
+                Ok(*member)
+            }
+            MirProjectionKind::ArrayPatternIndex(_) => {
+                Ok(self.intrinsic_arguments(current, IntrinsicType::Array, context)?[0])
+            }
+            MirProjectionKind::ArrayPatternRest { start, suffix } => {
+                let _ = self.intrinsic_arguments(current, IntrinsicType::Array, context)?;
+                start.checked_add(*suffix).ok_or_else(|| {
+                    MirInvariantError::new(context, "array rest projection offsets overflow")
+                })?;
+                Ok(current)
+            }
+            MirProjectionKind::Index { index, access } => {
+                let index_type = self.local(function, *index, context)?.ty;
+                self.verify_index_result(current, index_type, *access, declared, context)?;
+                Ok(declared)
+            }
+            MirProjectionKind::Slice { start, end, step } => {
+                let _ = self.intrinsic_arguments(current, IntrinsicType::Array, context)?;
+                for local in start.iter().chain(end).chain(step) {
+                    if self.local(function, *local, context)?.ty
+                        != self.hir.interner().scalar(ScalarType::Int)
+                    {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "slice projection bound local is not Int",
+                        ));
+                    }
+                }
+                Ok(current)
+            }
+        }
+    }
+
+    fn verify_index_result(
+        &self,
+        base: TypeId,
+        index: TypeId,
+        access: HirIndexAccess,
+        result: TypeId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let valid = match access {
+            HirIndexAccess::Array => {
+                let arguments = self.intrinsic_arguments(base, IntrinsicType::Array, context)?;
+                index == self.hir.interner().scalar(ScalarType::Int) && result == arguments[0]
+            }
+            HirIndexAccess::MapLookup | HirIndexAccess::MapEntry => {
+                let arguments = self.intrinsic_arguments(base, IntrinsicType::Map, context)?;
+                if index != arguments[0] {
+                    false
+                } else if access == HirIndexAccess::MapEntry {
+                    result == arguments[1]
+                } else {
+                    matches!(self.kind(result, context)?, TypeKind::Option(item) if *item == arguments[1])
+                }
+            }
+        };
+        if !valid {
+            return Err(MirInvariantError::new(
+                context,
+                "index base, key, access kind, or result type is inconsistent",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_variant_owner(
+        &self,
+        owner: SymbolId,
+        variant: crate::resolve::MemberId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let declaration = self.resolved.member(variant).ok_or_else(|| {
+            MirInvariantError::new(context, "variant references an unknown member")
+        })?;
+        if declaration.owner() != MemberOwner::Type(owner)
+            || declaration.kind() != MemberKind::EnumVariant
+        {
+            return Err(MirInvariantError::new(
+                context,
+                "variant has the wrong enum owner or member kind",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_operand_types(
+        &self,
+        values: &[MirOperand],
+        expected: &[TypeId],
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        if values.len() != expected.len()
+            || values
+                .iter()
+                .zip(expected)
+                .any(|(value, expected)| value.ty != *expected)
+        {
+            return Err(MirInvariantError::new(
+                context,
+                "aggregate operand arity or type is inconsistent",
+            ));
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn verify_variant_payload(
+        &self,
+        owner: SymbolId,
+        variant: crate::resolve::MemberId,
+        payload: &HirVariantPayload,
+        fields: &[Option<crate::resolve::MemberId>],
+        values: &[MirOperand],
+        arguments: &[TypeId],
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        self.verify_variant_owner(owner, variant, context)?;
+        match payload {
+            HirVariantPayload::Unit if fields.is_empty() && values.is_empty() => Ok(()),
+            HirVariantPayload::Tuple(types)
+                if types.len() == values.len()
+                    && fields.len() == values.len()
+                    && fields.iter().all(Option::is_none) =>
+            {
+                for (template, value) in types.iter().zip(values) {
+                    if !self.type_matches_substitution(*template, value.ty, arguments, context)? {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "variant tuple payload type is inconsistent",
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            HirVariantPayload::Record(declared)
+                if declared.len() == values.len() && fields.len() == values.len() =>
+            {
+                for ((field, value), declaration) in fields.iter().zip(values).zip(declared.iter())
+                {
+                    if *field != Some(declaration.member())
+                        || self
+                            .resolved
+                            .member(declaration.member())
+                            .is_none_or(|member| {
+                                member.owner() != MemberOwner::Variant(variant)
+                                    || member.kind() != MemberKind::VariantField
+                            })
+                        || !self.type_matches_substitution(
+                            declaration.ty(),
+                            value.ty,
+                            arguments,
+                            context,
+                        )?
+                    {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "variant record field identity or type is inconsistent",
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            _ => Err(MirInvariantError::new(
+                context,
+                "variant payload shape or arity is inconsistent",
+            )),
+        }
+    }
+
+    fn verify_constant(
+        &self,
+        constant: &super::MirConstant,
+        ty: TypeId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let valid = match constant {
+            super::MirConstant::Unit => ty == self.hir.interner().scalar(ScalarType::Unit),
+            super::MirConstant::Bool(_) => ty == self.hir.interner().scalar(ScalarType::Bool),
+            super::MirConstant::Integer(_) => {
+                matches!(self.kind(ty, context)?, TypeKind::Scalar(scalar) if is_integer(*scalar))
+            }
+            super::MirConstant::Float(_) => {
+                matches!(self.kind(ty, context)?, TypeKind::Scalar(scalar) if is_float(*scalar))
+            }
+            super::MirConstant::Char(_) => ty == self.hir.interner().scalar(ScalarType::Char),
+            super::MirConstant::String(_) => ty == self.hir.interner().scalar(ScalarType::String),
+            super::MirConstant::Named(_) => {
+                return Err(MirInvariantError::new(
+                    context,
+                    "named constant reached literal constant validation",
+                ));
+            }
+        };
+        if !valid {
+            return Err(MirInvariantError::new(
+                context,
+                "literal constant payload does not match its type",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_tag(
+        &self,
+        value: TypeId,
+        tag: &MirTag,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let valid = match (self.kind(value, context)?, tag) {
+            (TypeKind::Option(_), MirTag::OptionNone | MirTag::OptionSome) => true,
+            (TypeKind::Result { .. }, MirTag::ResultOk | MirTag::ResultErr) => true,
+            (TypeKind::Union(members), MirTag::Union(member)) => {
+                self.verify_type(*member, context)?;
+                members.contains(member)
+            }
+            (TypeKind::Nominal { .. }, MirTag::Variant(variant)) => {
+                let (owner, _, nominal) = self.nominal_instance(value, context)?;
+                matches!(
+                    nominal.shape(),
+                    HirNominalShape::Enum { variants }
+                        if variants.iter().any(|candidate| candidate.member() == *variant)
+                            && self.verify_variant_owner(owner, *variant, context).is_ok()
+                )
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(MirInvariantError::new(
+                context,
+                "switch tag is incompatible with its value type",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_iterator(
+        &self,
+        state: TypeId,
+        destination: TypeId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let valid = match self.kind(state, context)? {
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Array | IntrinsicType::Set | IntrinsicType::Range,
+                arguments,
+            } => destination == arguments[0],
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Map,
+                arguments,
+            } => matches!(
+                self.kind(destination, context)?,
+                TypeKind::Tuple(items) if items == arguments
+            ),
+            TypeKind::Scalar(ScalarType::String) => {
+                destination == self.hir.interner().scalar(ScalarType::Char)
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(MirInvariantError::new(
+                context,
+                "iterator state and yielded destination types are inconsistent",
+            ));
+        }
+        Ok(())
+    }
+
+    fn iterated_item_type(&self, source: TypeId) -> Option<TypeId> {
+        match self.hir.interner().kind(source).ok()? {
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Array | IntrinsicType::Set | IntrinsicType::Range,
+                arguments,
+            } => Some(arguments[0]),
+            TypeKind::Scalar(ScalarType::String) => {
+                Some(self.hir.interner().scalar(ScalarType::Char))
+            }
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Map,
+                ..
+            } => Some(source),
+            _ => None,
+        }
+    }
+
+    fn array_element(&self, ty: TypeId) -> Option<TypeId> {
+        match self.hir.interner().kind(ty).ok()? {
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Array,
+                arguments,
+            } => Some(arguments[0]),
+            _ => None,
+        }
+    }
+
+    fn is_array(&self, ty: TypeId) -> bool {
+        self.array_element(ty).is_some()
+    }
+
+    fn verify_call(
+        &self,
+        callee: &MirOperand,
+        arguments: &[super::MirCallArgument],
+        outcome: TypeId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let TypeKind::Function(function) = self.kind(callee.ty, context)? else {
+            return Err(MirInvariantError::new(
+                context,
+                "call operation callee is not a function",
+            ));
+        };
+        if function.outcome() != outcome {
+            return Err(MirInvariantError::new(
+                context,
+                "call operation outcome differs from its function type",
+            ));
+        }
+
+        let callable = match &callee.kind {
+            MirOperandKind::Function { callable, .. } => self.hir.callable(*callable),
+            _ => None,
+        };
+        let mut fixed = Vec::new();
+        let mut receiver = None;
+        if let Some(callable) = callable {
+            let mut concrete = function.parameters().iter();
+            for (source_index, parameter) in callable.parameters().iter().enumerate() {
+                if parameter.variadic_element().is_some() {
+                    continue;
+                }
+                let concrete = concrete.next().ok_or_else(|| {
+                    MirInvariantError::new(
+                        context,
+                        "callable HIR has more fixed parameters than its function type",
+                    )
+                })?;
+                let association = if parameter.is_receiver() {
+                    crate::hir::HirCallArgumentTarget::Receiver
+                } else {
+                    crate::hir::HirCallArgumentTarget::Fixed(source_index as u32)
+                };
+                let item = (association, concrete.mode(), concrete.ty());
+                if parameter.is_receiver() {
+                    if receiver.replace(item).is_some() {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "callable has more than one receiver parameter",
+                        ));
+                    }
+                } else {
+                    fixed.push(item);
+                }
+            }
+            if concrete.next().is_some() {
+                return Err(MirInvariantError::new(
+                    context,
+                    "function type has excess fixed parameters",
+                ));
+            }
+        } else {
+            fixed.extend(
+                function
+                    .parameters()
+                    .iter()
+                    .enumerate()
+                    .map(|(index, parameter)| {
+                        (
+                            crate::hir::HirCallArgumentTarget::Fixed(index as u32),
+                            parameter.mode(),
+                            parameter.ty(),
+                        )
+                    }),
+            );
+        }
+
+        let mut provided = Vec::new();
+        let mut spread = false;
+        for (position, argument) in arguments.iter().enumerate() {
+            let expected = match argument.target {
+                crate::hir::HirCallArgumentTarget::Receiver => receiver,
+                crate::hir::HirCallArgumentTarget::Fixed(index) => fixed
+                    .iter()
+                    .find(|(target, _, _)| {
+                        *target == crate::hir::HirCallArgumentTarget::Fixed(index)
+                    })
+                    .copied(),
+                crate::hir::HirCallArgumentTarget::VariadicElement => function
+                    .variadic()
+                    .map(|ty| (argument.target, crate::types::ParameterMode::Value, ty)),
+                crate::hir::HirCallArgumentTarget::VariadicSpread => {
+                    if spread || position + 1 != arguments.len() {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "variadic spread is repeated or is not the final argument",
+                        ));
+                    }
+                    spread = true;
+                    let element = function.variadic().ok_or_else(|| {
+                        MirInvariantError::new(
+                            context,
+                            "variadic spread targets a non-variadic function",
+                        )
+                    })?;
+                    let valid = matches!(
+                        self.kind(argument.value.ty, context)?,
+                        TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Array,
+                            arguments,
+                        } if arguments == &[element]
+                    );
+                    if !valid || argument.mode != crate::types::ParameterMode::Value {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "variadic spread must pass Array[element] by value",
+                        ));
+                    }
+                    continue;
+                }
+                crate::hir::HirCallArgumentTarget::Invalid => None,
+            }
+            .ok_or_else(|| {
+                MirInvariantError::new(
+                    context,
+                    format!(
+                        "call argument association {:?} has no parameter",
+                        argument.target
+                    ),
+                )
+            })?;
+            if matches!(
+                argument.target,
+                crate::hir::HirCallArgumentTarget::Receiver
+                    | crate::hir::HirCallArgumentTarget::Fixed(_)
+            ) && provided.contains(&argument.target)
+            {
+                return Err(MirInvariantError::new(
+                    context,
+                    "fixed call parameter is provided more than once",
+                ));
+            }
+            if matches!(
+                argument.target,
+                crate::hir::HirCallArgumentTarget::Receiver
+                    | crate::hir::HirCallArgumentTarget::Fixed(_)
+            ) {
+                provided.push(argument.target);
+            }
+            if argument.mode != expected.1 || argument.value.ty != expected.2 {
+                return Err(MirInvariantError::new(
+                    context,
+                    "call argument mode or type differs from its parameter",
+                ));
+            }
+        }
+        let expected_fixed = fixed.len() + usize::from(receiver.is_some());
+        if provided.len() != expected_fixed {
+            return Err(MirInvariantError::new(
+                context,
+                "call omits one or more fixed parameters",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_span(
+        &self,
+        function: &MirFunction,
+        span: crate::source::Span,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        if span.file() != function.span.file() {
+            return Err(MirInvariantError::new(
+                context,
+                "source span belongs to a different file than its MIR function",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_control_and_dataflow(&self, function: &MirFunction) -> Result<(), MirInvariantError> {
+        let context = function_context(function.id);
+        let events = function
+            .blocks
+            .iter()
+            .map(|block| self.local_events(function, block))
+            .collect::<Vec<_>>();
+        let successors = function
+            .blocks
+            .iter()
+            .map(|block| successor_edges(&block.terminator.kind))
+            .collect::<Vec<_>>();
+        let mut predecessors =
+            vec![Vec::<(MirBlockId, Option<MirLocalId>)>::new(); function.blocks.len()];
+        for (source, edges) in successors.iter().enumerate() {
+            for edge in edges {
+                predecessors[edge.target.0 as usize]
+                    .push((MirBlockId(source as u32), edge.defines));
+            }
+        }
+        if !predecessors[function.entry.0 as usize].is_empty() {
+            return Err(MirInvariantError::new(
+                &context,
+                "entry block has an incoming control-flow edge",
+            ));
+        }
+
+        let mut reachable = vec![false; function.blocks.len()];
+        let mut queue = VecDeque::from([function.entry]);
+        reachable[function.entry.0 as usize] = true;
+        while let Some(block) = queue.pop_front() {
+            for edge in &successors[block.0 as usize] {
+                let index = edge.target.0 as usize;
+                if !reachable[index] {
+                    reachable[index] = true;
+                    queue.push_back(edge.target);
+                }
+            }
+        }
+        for (index, block) in function.blocks.iter().enumerate() {
+            if reachable[index] || MirBlockId(index as u32) == function.unwind {
+                continue;
+            }
+            if !block.statements.is_empty()
+                || !matches!(block.terminator.kind, MirTerminatorKind::Unreachable)
+            {
+                return Err(MirInvariantError::new(
+                    &context,
+                    format!("block#{index} is unreachable but contains executable MIR"),
+                ));
+            }
+        }
+
+        let managed = events
+            .iter()
+            .flatten()
+            .filter_map(|event| match event {
+                LocalEvent::StorageLive(local) | LocalEvent::StorageDead(local) => Some(*local),
+                LocalEvent::Read(_) | LocalEvent::Write(_) => None,
+            })
+            .collect::<BTreeSet<_>>();
+        let mut relevant = events
+            .iter()
+            .flatten()
+            .map(|event| match event {
+                LocalEvent::Read(local)
+                | LocalEvent::Write(local)
+                | LocalEvent::StorageLive(local)
+                | LocalEvent::StorageDead(local) => *local,
+            })
+            .collect::<BTreeSet<_>>();
+        relevant.insert(function.return_local);
+        for edges in &successors {
+            relevant.extend(edges.iter().filter_map(|edge| edge.defines));
+        }
+        for local in relevant {
+            self.verify_local_flow(
+                function,
+                local,
+                &events,
+                &successors,
+                &predecessors,
+                &reachable,
+                managed.contains(&local),
+                &context,
+            )?;
+        }
+        self.verify_tag_refinements(function, &successors, &reachable, &context)?;
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn verify_local_flow(
+        &self,
+        function: &MirFunction,
+        local: MirLocalId,
+        events: &[Vec<LocalEvent>],
+        successors: &[Vec<SuccessorEdge>],
+        predecessors: &[Vec<(MirBlockId, Option<MirLocalId>)>],
+        reachable: &[bool],
+        managed_storage: bool,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let local_kind = self.local(function, local, context)?.kind;
+        if managed_storage
+            && matches!(
+                local_kind,
+                MirLocalKind::Return | MirLocalKind::Parameter { .. }
+            )
+        {
+            return Err(MirInvariantError::new(
+                context,
+                format!(
+                    "local#{} has function-wide storage but uses StorageLive/StorageDead",
+                    local.index()
+                ),
+            ));
+        }
+        let initial = LocalState {
+            live: !managed_storage,
+            initialized: matches!(local_kind, MirLocalKind::Parameter { .. }),
+        };
+        let top = LocalState {
+            live: true,
+            initialized: true,
+        };
+        let mut incoming = vec![top; function.blocks.len()];
+        incoming[function.entry.0 as usize] = initial;
+        let mut queue = (0..function.blocks.len())
+            .filter(|index| reachable[*index] && *index != function.entry.0 as usize)
+            .map(|index| MirBlockId(index as u32))
+            .collect::<VecDeque<_>>();
+        let mut queued = reachable.to_vec();
+        queued[function.entry.0 as usize] = false;
+        while let Some(block) = queue.pop_front() {
+            queued[block.0 as usize] = false;
+            self.consume_dataflow_step(context)?;
+            let mut state = top;
+            let mut found = false;
+            for (predecessor, defines) in &predecessors[block.0 as usize] {
+                if !reachable[predecessor.0 as usize] {
+                    continue;
+                }
+                let mut edge_state = transfer_local(
+                    incoming[predecessor.0 as usize],
+                    &events[predecessor.0 as usize],
+                    local,
+                );
+                if *defines == Some(local) && edge_state.live {
+                    edge_state.initialized = true;
+                }
+                state.live &= edge_state.live;
+                state.initialized &= edge_state.initialized;
+                found = true;
+            }
+            if !found {
+                continue;
+            }
+            let index = block.0 as usize;
+            if incoming[index] != state {
+                incoming[index] = state;
+                for edge in &successors[index] {
+                    let next = edge.target.0 as usize;
+                    if reachable[next] && edge.target != function.entry && !queued[next] {
+                        queued[next] = true;
+                        queue.push_back(edge.target);
+                    }
+                }
+            }
+        }
+
+        for (block_index, block_events) in events.iter().enumerate() {
+            if !reachable[block_index] {
+                continue;
+            }
+            let mut state = incoming[block_index];
+            for event in block_events {
+                match *event {
+                    LocalEvent::Read(event_local) if event_local == local => {
+                        if !state.live || !state.initialized {
+                            return Err(MirInvariantError::new(
+                                format!("{context} block#{block_index}"),
+                                format!(
+                                    "reads local#{} before a dominating live definition",
+                                    local.index()
+                                ),
+                            ));
+                        }
+                    }
+                    LocalEvent::Write(event_local) if event_local == local => {
+                        if !state.live {
+                            return Err(MirInvariantError::new(
+                                format!("{context} block#{block_index}"),
+                                format!(
+                                    "writes local#{} outside its storage lifetime",
+                                    local.index()
+                                ),
+                            ));
+                        }
+                        state.initialized = true;
+                    }
+                    LocalEvent::StorageLive(event_local) if event_local == local => {
+                        state.live = true;
+                        state.initialized = false;
+                    }
+                    LocalEvent::StorageDead(event_local) if event_local == local => {
+                        if !state.live {
+                            return Err(MirInvariantError::new(
+                                format!("{context} block#{block_index}"),
+                                format!("ends dead storage for local#{}", local.index()),
+                            ));
+                        }
+                        state.live = false;
+                        state.initialized = false;
+                    }
+                    LocalEvent::Read(_)
+                    | LocalEvent::Write(_)
+                    | LocalEvent::StorageLive(_)
+                    | LocalEvent::StorageDead(_) => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_tag_refinements(
+        &self,
+        function: &MirFunction,
+        successors: &[Vec<SuccessorEdge>],
+        reachable: &[bool],
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let events = function
+            .blocks
+            .iter()
+            .map(|block| tag_events(function, block))
+            .collect::<Vec<_>>();
+        let mut facts = Vec::<TagFact>::new();
+        for fact in events.iter().flatten().filter_map(|event| match event {
+            TagEvent::Require(fact) => Some(fact),
+            TagEvent::Write(_) => None,
+        }) {
+            if !facts.contains(fact) {
+                facts.push(fact.clone());
+            }
+        }
+        if facts.is_empty() {
+            return Ok(());
+        }
+        let mut predecessors =
+            vec![Vec::<(MirBlockId, SuccessorEdge)>::new(); function.blocks.len()];
+        for (source, edges) in successors.iter().enumerate() {
+            for edge in edges {
+                predecessors[edge.target.0 as usize]
+                    .push((MirBlockId(source as u32), edge.clone()));
+            }
+        }
+        for fact in facts {
+            let mut incoming = vec![true; function.blocks.len()];
+            incoming[function.entry.0 as usize] = false;
+            let mut queue = (0..function.blocks.len())
+                .filter(|index| reachable[*index] && *index != function.entry.0 as usize)
+                .map(|index| MirBlockId(index as u32))
+                .collect::<VecDeque<_>>();
+            let mut queued = reachable.to_vec();
+            queued[function.entry.0 as usize] = false;
+            while let Some(block) = queue.pop_front() {
+                queued[block.0 as usize] = false;
+                self.consume_dataflow_step(context)?;
+                let mut state = true;
+                let mut found = false;
+                for (predecessor, edge) in &predecessors[block.0 as usize] {
+                    if !reachable[predecessor.0 as usize] {
+                        continue;
+                    }
+                    let mut edge_state = transfer_tag(
+                        incoming[predecessor.0 as usize],
+                        &events[predecessor.0 as usize],
+                        &fact,
+                    );
+                    if edge
+                        .writes
+                        .as_ref()
+                        .is_some_and(|write| places_may_overlap(write, &fact.place))
+                    {
+                        edge_state = false;
+                    }
+                    if edge.refinement.as_ref() == Some(&fact) {
+                        edge_state = true;
+                    }
+                    state &= edge_state;
+                    found = true;
+                }
+                if !found {
+                    continue;
+                }
+                let index = block.0 as usize;
+                if incoming[index] != state {
+                    incoming[index] = state;
+                    for edge in &successors[index] {
+                        let next = edge.target.0 as usize;
+                        if reachable[next] && edge.target != function.entry && !queued[next] {
+                            queued[next] = true;
+                            queue.push_back(edge.target);
+                        }
+                    }
+                }
+            }
+            for (block_index, block_events) in events.iter().enumerate() {
+                if !reachable[block_index] {
+                    continue;
+                }
+                let mut state = incoming[block_index];
+                for event in block_events {
+                    match event {
+                        TagEvent::Require(required) if required == &fact => {
+                            if !state {
+                                return Err(MirInvariantError::new(
+                                    format!("{context} block#{block_index}"),
+                                    format!(
+                                        "projects {:?} without a dominating matching SwitchTag",
+                                        fact.tag
+                                    ),
+                                ));
+                            }
+                        }
+                        TagEvent::Write(write) if places_may_overlap(write, &fact.place) => {
+                            state = false;
+                        }
+                        TagEvent::Require(_) | TagEvent::Write(_) => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn consume_dataflow_step(&self, context: &str) -> Result<(), MirInvariantError> {
+        let next = self.dataflow_steps.get().saturating_add(1);
+        if next > self.limits.max_dataflow_steps {
+            return Err(MirInvariantError::resource_limit(
+                context,
+                format!(
+                    "MIR verification exceeded its {}-step dataflow budget",
+                    self.limits.max_dataflow_steps
+                ),
+            ));
+        }
+        self.dataflow_steps.set(next);
+        Ok(())
+    }
+
+    fn local_events(&self, function: &MirFunction, block: &MirBasicBlock) -> Vec<LocalEvent> {
+        let mut events = Vec::new();
+        for statement in &block.statements {
+            match &statement.kind {
+                MirStatementKind::StorageLive(local) => {
+                    events.push(LocalEvent::StorageLive(*local));
+                }
+                MirStatementKind::StorageDead(local) => {
+                    events.push(LocalEvent::StorageDead(*local));
+                }
+                MirStatementKind::Assign { destination, value } => {
+                    push_rvalue_events(value, &mut events);
+                    push_destination_events(destination, &mut events);
+                }
+            }
+        }
+        match &block.terminator.kind {
+            MirTerminatorKind::Goto { .. }
+            | MirTerminatorKind::ResumePanic
+            | MirTerminatorKind::Unreachable => {}
+            MirTerminatorKind::SwitchBool { condition, .. } => {
+                push_operand_events(condition, &mut events);
+            }
+            MirTerminatorKind::SwitchTag { value, .. } => {
+                push_operand_events(value, &mut events);
+            }
+            MirTerminatorKind::Invoke {
+                operation,
+                destination,
+                ..
+            } => {
+                push_operation_events(operation, &mut events);
+                if let Some(destination) = destination {
+                    push_destination_reads(destination, &mut events);
+                }
+            }
+            MirTerminatorKind::IteratorNext {
+                state, destination, ..
+            } => {
+                push_place_events(state, true, &mut events);
+                push_destination_reads(destination, &mut events);
+            }
+            MirTerminatorKind::ValidatePlaces { places, .. } => {
+                for place in places {
+                    push_destination_reads(place, &mut events);
+                }
+            }
+            MirTerminatorKind::Return => events.push(LocalEvent::Read(function.return_local)),
+        }
+        events
+    }
+
+    fn verify_type(
+        &self,
+        ty: crate::types::TypeId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        self.hir
+            .interner()
+            .canonical(ty)
+            .map(|_| ())
+            .map_err(|error| {
+                MirInvariantError::new(context, format!("type {ty} is not canonical: {error}"))
+            })
+    }
+
+    fn local<'a>(
+        &self,
+        function: &'a MirFunction,
+        id: MirLocalId,
+        context: &str,
+    ) -> Result<&'a super::MirLocal, MirInvariantError> {
+        function.locals.get(id.0 as usize).ok_or_else(|| {
+            MirInvariantError::new(
+                context,
+                format!("references unknown MIR local#{}", id.index()),
+            )
+        })
+    }
+
+    fn block<'a>(
+        &self,
+        function: &'a MirFunction,
+        id: MirBlockId,
+        context: &str,
+    ) -> Result<&'a MirBasicBlock, MirInvariantError> {
+        function.blocks.get(id.0 as usize).ok_or_else(|| {
+            MirInvariantError::new(
+                context,
+                format!("references unknown MIR block#{}", id.index()),
+            )
+        })
+    }
+
+    fn normal_block(
+        &self,
+        function: &MirFunction,
+        id: MirBlockId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        if self.block(function, id, context)?.kind != MirBlockKind::Normal {
+            return Err(MirInvariantError::new(
+                context,
+                format!("ordinary edge enters cleanup block#{}", id.index()),
+            ));
+        }
+        Ok(())
+    }
+}
+
+fn function_context(id: HirCallableId) -> String {
+    match id {
+        HirCallableId::Symbol(symbol) => format!("MIR function symbol#{}", symbol.index()),
+        HirCallableId::Member(member) => format!("MIR function member#{}", member.index()),
+        HirCallableId::Implementation(span) => format!(
+            "MIR function implementation in {} at bytes {}..{}",
+            span.file(),
+            span.range().start(),
+            span.range().end()
+        ),
+    }
+}
+
+fn tag_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<TagEvent> {
+    let mut events = Vec::new();
+    for statement in &block.statements {
+        match &statement.kind {
+            MirStatementKind::StorageLive(_) | MirStatementKind::StorageDead(_) => {}
+            MirStatementKind::Assign { destination, value } => {
+                push_tag_rvalue(function, value, &mut events);
+                push_tag_place(function, destination, true, &mut events);
+            }
+        }
+    }
+    match &block.terminator.kind {
+        MirTerminatorKind::Goto { .. }
+        | MirTerminatorKind::Return
+        | MirTerminatorKind::ResumePanic
+        | MirTerminatorKind::Unreachable => {}
+        MirTerminatorKind::SwitchBool { condition, .. } => {
+            push_tag_operand(function, condition, &mut events);
+        }
+        MirTerminatorKind::SwitchTag { value, .. } => {
+            push_tag_operand(function, value, &mut events);
+        }
+        MirTerminatorKind::Invoke {
+            operation,
+            destination,
+            ..
+        } => {
+            push_tag_operation(function, operation, &mut events);
+            if let Some(destination) = destination {
+                push_tag_place(function, destination, false, &mut events);
+            }
+        }
+        MirTerminatorKind::IteratorNext {
+            state, destination, ..
+        } => {
+            push_tag_place(function, state, false, &mut events);
+            push_tag_place(function, destination, false, &mut events);
+        }
+        MirTerminatorKind::ValidatePlaces { places, .. } => {
+            for place in places {
+                push_tag_place(function, place, false, &mut events);
+            }
+        }
+    }
+    events
+}
+
+fn push_tag_rvalue(function: &MirFunction, value: &MirRvalue, events: &mut Vec<TagEvent>) {
+    match &value.kind {
+        MirRvalueKind::Use(operand)
+        | MirRvalueKind::Prefix { operand, .. }
+        | MirRvalueKind::Coerce { value: operand, .. }
+        | MirRvalueKind::NumericConversion { value: operand, .. }
+        | MirRvalueKind::Length(operand)
+        | MirRvalueKind::IteratorState { source: operand } => {
+            push_tag_operand(function, operand, events);
+        }
+        MirRvalueKind::Binary { left, right, .. } => {
+            push_tag_operand(function, left, events);
+            push_tag_operand(function, right, events);
+        }
+        MirRvalueKind::Aggregate { values, .. } => {
+            for value in values {
+                push_tag_operand(function, value, events);
+            }
+        }
+        MirRvalueKind::RecordUpdate { base, fields } => {
+            push_tag_operand(function, base, events);
+            for (_, value) in fields {
+                push_tag_operand(function, value, events);
+            }
+        }
+        MirRvalueKind::Range { start, end, .. } => {
+            push_tag_operand(function, start, events);
+            push_tag_operand(function, end, events);
+        }
+        MirRvalueKind::Contains {
+            item, container, ..
+        } => {
+            push_tag_operand(function, item, events);
+            push_tag_operand(function, container, events);
+        }
+    }
+}
+
+fn push_tag_operation(
+    function: &MirFunction,
+    operation: &MirOperation,
+    events: &mut Vec<TagEvent>,
+) {
+    match &operation.kind {
+        MirOperationKind::CheckedPrefix { operand, .. } => {
+            push_tag_operand(function, operand, events);
+        }
+        MirOperationKind::CheckedBinary { left, right, .. } => {
+            push_tag_operand(function, left, events);
+            push_tag_operand(function, right, events);
+        }
+        MirOperationKind::BuildMap(entries) => {
+            for (key, value) in entries {
+                push_tag_operand(function, key, events);
+                push_tag_operand(function, value, events);
+            }
+        }
+        MirOperationKind::Index { base, index, .. } => {
+            push_tag_operand(function, base, events);
+            push_tag_operand(function, index, events);
+        }
+        MirOperationKind::Slice {
+            base,
+            start,
+            end,
+            step,
+        } => {
+            push_tag_operand(function, base, events);
+            for value in start.iter().chain(end).chain(step) {
+                push_tag_operand(function, value, events);
+            }
+        }
+        MirOperationKind::Call { callee, arguments } => {
+            push_tag_operand(function, callee, events);
+            for argument in arguments {
+                push_tag_operand(function, &argument.value, events);
+            }
+        }
+        MirOperationKind::ExplicitPanic { message } => {
+            push_tag_operand(function, message, events);
+        }
+        MirOperationKind::Assert {
+            condition,
+            message_parts,
+        } => {
+            push_tag_operand(function, condition, events);
+            for part in message_parts {
+                push_tag_operand(function, part.value(), events);
+            }
+        }
+        MirOperationKind::BootstrapHostCall { arguments, .. } => {
+            for argument in arguments {
+                push_tag_operand(function, argument, events);
+            }
+        }
+    }
+}
+
+fn push_tag_operand(function: &MirFunction, operand: &MirOperand, events: &mut Vec<TagEvent>) {
+    if let MirOperandKind::Copy(place) | MirOperandKind::Move(place) = &operand.kind {
+        push_tag_place(function, place, false, events);
+    }
+}
+
+fn push_tag_place(
+    function: &MirFunction,
+    place: &MirPlace,
+    write: bool,
+    events: &mut Vec<TagEvent>,
+) {
+    let root_type = function.locals[place.local.0 as usize].ty;
+    for (index, projection) in place.projections.iter().enumerate() {
+        let tag = match &projection.kind {
+            MirProjectionKind::OptionValue => Some(MirTag::OptionSome),
+            MirProjectionKind::ResultOkValue => Some(MirTag::ResultOk),
+            MirProjectionKind::ResultErrValue => Some(MirTag::ResultErr),
+            MirProjectionKind::VariantTuple { variant, .. }
+            | MirProjectionKind::VariantField { variant, .. } => Some(MirTag::Variant(*variant)),
+            MirProjectionKind::UnionValue(member) => Some(MirTag::Union(*member)),
+            MirProjectionKind::Field(_)
+            | MirProjectionKind::TupleField(_)
+            | MirProjectionKind::NewtypeValue
+            | MirProjectionKind::ArrayPatternIndex(_)
+            | MirProjectionKind::ArrayPatternRest { .. }
+            | MirProjectionKind::Index { .. }
+            | MirProjectionKind::Slice { .. } => None,
+        };
+        if let Some(tag) = tag {
+            let base = MirPlace {
+                local: place.local,
+                ty: if index == 0 {
+                    root_type
+                } else {
+                    place.projections[index - 1].ty
+                },
+                projections: place.projections[..index].to_vec(),
+            };
+            events.push(TagEvent::Require(TagFact { place: base, tag }));
+        }
+    }
+    if write {
+        events.push(TagEvent::Write(place.clone()));
+    }
+}
+
+fn transfer_tag(state: bool, events: &[TagEvent], fact: &TagFact) -> bool {
+    let mut state = state;
+    for event in events {
+        if let TagEvent::Write(write) = event
+            && places_may_overlap(write, &fact.place)
+        {
+            state = false;
+        }
+    }
+    state
+}
+
+fn places_may_overlap(left: &MirPlace, right: &MirPlace) -> bool {
+    if left.local != right.local {
+        return false;
+    }
+    for (left, right) in left.projections.iter().zip(&right.projections) {
+        if left == right {
+            continue;
+        }
+        return match (&left.kind, &right.kind) {
+            (MirProjectionKind::Field(left), MirProjectionKind::Field(right)) => left == right,
+            (MirProjectionKind::TupleField(left), MirProjectionKind::TupleField(right)) => {
+                left == right
+            }
+            (
+                MirProjectionKind::ArrayPatternIndex(left),
+                MirProjectionKind::ArrayPatternIndex(right),
+            ) => left == right,
+            (
+                MirProjectionKind::VariantTuple { variant: left, .. }
+                | MirProjectionKind::VariantField { variant: left, .. },
+                MirProjectionKind::VariantTuple { variant: right, .. }
+                | MirProjectionKind::VariantField { variant: right, .. },
+            ) => left == right,
+            _ => true,
+        };
+    }
+    true
+}
+
+fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
+    let edge = |target| SuccessorEdge {
+        target,
+        defines: None,
+        refinement: None,
+        writes: None,
+    };
+    match terminator {
+        MirTerminatorKind::Goto { target } => vec![edge(*target)],
+        MirTerminatorKind::SwitchBool {
+            if_true, if_false, ..
+        } => vec![edge(*if_true), edge(*if_false)],
+        MirTerminatorKind::SwitchTag {
+            value,
+            cases,
+            otherwise,
+        } => {
+            let place = match &value.kind {
+                MirOperandKind::Copy(place) | MirOperandKind::Move(place) => Some(place.clone()),
+                MirOperandKind::Constant(_) | MirOperandKind::Function { .. } => None,
+            };
+            cases
+                .iter()
+                .map(|(tag, target)| SuccessorEdge {
+                    target: *target,
+                    defines: None,
+                    refinement: place.clone().map(|place| TagFact { place, tag: *tag }),
+                    writes: None,
+                })
+                .chain(std::iter::once(SuccessorEdge {
+                    target: *otherwise,
+                    defines: None,
+                    refinement: (cases.len() == 1)
+                        .then(|| complementary_tag(cases[0].0))
+                        .flatten()
+                        .and_then(|tag| place.clone().map(|place| TagFact { place, tag })),
+                    writes: None,
+                }))
+                .collect()
+        }
+        MirTerminatorKind::Invoke {
+            destination,
+            target,
+            unwind,
+            ..
+        } => target
+            .iter()
+            .map(|target| SuccessorEdge {
+                target: *target,
+                defines: destination
+                    .as_ref()
+                    .filter(|place| place.projections.is_empty())
+                    .map(|place| place.local),
+                refinement: None,
+                writes: destination.clone(),
+            })
+            .chain(std::iter::once(edge(*unwind)))
+            .collect(),
+        MirTerminatorKind::IteratorNext {
+            destination,
+            has_value,
+            exhausted,
+            unwind,
+            ..
+        } => vec![
+            SuccessorEdge {
+                target: *has_value,
+                defines: destination
+                    .projections
+                    .is_empty()
+                    .then_some(destination.local),
+                refinement: None,
+                writes: Some(destination.clone()),
+            },
+            edge(*exhausted),
+            edge(*unwind),
+        ],
+        MirTerminatorKind::ValidatePlaces { target, unwind, .. } => {
+            vec![edge(*target), edge(*unwind)]
+        }
+        MirTerminatorKind::Return
+        | MirTerminatorKind::ResumePanic
+        | MirTerminatorKind::Unreachable => Vec::new(),
+    }
+}
+
+fn complementary_tag(tag: MirTag) -> Option<MirTag> {
+    match tag {
+        MirTag::OptionNone => Some(MirTag::OptionSome),
+        MirTag::OptionSome => Some(MirTag::OptionNone),
+        MirTag::ResultOk => Some(MirTag::ResultErr),
+        MirTag::ResultErr => Some(MirTag::ResultOk),
+        MirTag::Variant(_) | MirTag::Union(_) => None,
+    }
+}
+
+fn transfer_local(state: LocalState, events: &[LocalEvent], local: MirLocalId) -> LocalState {
+    let mut state = state;
+    for event in events {
+        match *event {
+            LocalEvent::Write(event_local) if event_local == local => {
+                if state.live {
+                    state.initialized = true;
+                }
+            }
+            LocalEvent::StorageLive(event_local) if event_local == local => {
+                state.live = true;
+                state.initialized = false;
+            }
+            LocalEvent::StorageDead(event_local) if event_local == local => {
+                state.live = false;
+                state.initialized = false;
+            }
+            LocalEvent::Read(_)
+            | LocalEvent::Write(_)
+            | LocalEvent::StorageLive(_)
+            | LocalEvent::StorageDead(_) => {}
+        }
+    }
+    state
+}
+
+fn push_rvalue_events(value: &MirRvalue, events: &mut Vec<LocalEvent>) {
+    match &value.kind {
+        MirRvalueKind::Use(operand)
+        | MirRvalueKind::Prefix { operand, .. }
+        | MirRvalueKind::Coerce { value: operand, .. }
+        | MirRvalueKind::NumericConversion { value: operand, .. }
+        | MirRvalueKind::Length(operand)
+        | MirRvalueKind::IteratorState { source: operand } => {
+            push_operand_events(operand, events);
+        }
+        MirRvalueKind::Binary { left, right, .. } => {
+            push_operand_events(left, events);
+            push_operand_events(right, events);
+        }
+        MirRvalueKind::Aggregate { values, .. } => {
+            for value in values {
+                push_operand_events(value, events);
+            }
+        }
+        MirRvalueKind::RecordUpdate { base, fields } => {
+            push_operand_events(base, events);
+            for (_, value) in fields {
+                push_operand_events(value, events);
+            }
+        }
+        MirRvalueKind::Range { start, end, .. } => {
+            push_operand_events(start, events);
+            push_operand_events(end, events);
+        }
+        MirRvalueKind::Contains {
+            item, container, ..
+        } => {
+            push_operand_events(item, events);
+            push_operand_events(container, events);
+        }
+    }
+}
+
+fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>) {
+    match &operation.kind {
+        MirOperationKind::CheckedPrefix { operand, .. } => push_operand_events(operand, events),
+        MirOperationKind::CheckedBinary { left, right, .. } => {
+            push_operand_events(left, events);
+            push_operand_events(right, events);
+        }
+        MirOperationKind::BuildMap(entries) => {
+            for (key, value) in entries {
+                push_operand_events(key, events);
+                push_operand_events(value, events);
+            }
+        }
+        MirOperationKind::Index { base, index, .. } => {
+            push_operand_events(base, events);
+            push_operand_events(index, events);
+        }
+        MirOperationKind::Slice {
+            base,
+            start,
+            end,
+            step,
+        } => {
+            push_operand_events(base, events);
+            for value in start.iter().chain(end).chain(step) {
+                push_operand_events(value, events);
+            }
+        }
+        MirOperationKind::Call { callee, arguments } => {
+            push_operand_events(callee, events);
+            for argument in arguments {
+                push_operand_events(&argument.value, events);
+            }
+        }
+        MirOperationKind::ExplicitPanic { message } => push_operand_events(message, events),
+        MirOperationKind::Assert {
+            condition,
+            message_parts,
+        } => {
+            push_operand_events(condition, events);
+            for part in message_parts {
+                push_operand_events(part.value(), events);
+            }
+        }
+        MirOperationKind::BootstrapHostCall { arguments, .. } => {
+            for argument in arguments {
+                push_operand_events(argument, events);
+            }
+        }
+    }
+}
+
+fn push_operand_events(operand: &MirOperand, events: &mut Vec<LocalEvent>) {
+    if let MirOperandKind::Copy(place) | MirOperandKind::Move(place) = &operand.kind {
+        push_place_events(place, true, events);
+    }
+}
+
+fn push_destination_events(place: &MirPlace, events: &mut Vec<LocalEvent>) {
+    push_destination_reads(place, events);
+    if place.projections.is_empty() {
+        events.push(LocalEvent::Write(place.local));
+    }
+}
+
+fn push_destination_reads(place: &MirPlace, events: &mut Vec<LocalEvent>) {
+    push_place_events(place, false, events);
+}
+
+fn push_place_events(place: &MirPlace, read_root: bool, events: &mut Vec<LocalEvent>) {
+    if read_root || !place.projections.is_empty() {
+        events.push(LocalEvent::Read(place.local));
+    }
+    for projection in &place.projections {
+        match &projection.kind {
+            MirProjectionKind::Index { index, .. } => events.push(LocalEvent::Read(*index)),
+            MirProjectionKind::Slice { start, end, step } => {
+                events.extend(
+                    start
+                        .iter()
+                        .chain(end)
+                        .chain(step)
+                        .copied()
+                        .map(LocalEvent::Read),
+                );
+            }
+            MirProjectionKind::Field(_)
+            | MirProjectionKind::TupleField(_)
+            | MirProjectionKind::NewtypeValue
+            | MirProjectionKind::VariantTuple { .. }
+            | MirProjectionKind::VariantField { .. }
+            | MirProjectionKind::OptionValue
+            | MirProjectionKind::ResultOkValue
+            | MirProjectionKind::ResultErrValue
+            | MirProjectionKind::UnionValue(_)
+            | MirProjectionKind::ArrayPatternIndex(_)
+            | MirProjectionKind::ArrayPatternRest { .. } => {}
+        }
+    }
+}
+
+fn is_integer(scalar: ScalarType) -> bool {
+    matches!(
+        scalar,
+        ScalarType::Int
+            | ScalarType::Int8
+            | ScalarType::Int16
+            | ScalarType::Int32
+            | ScalarType::UInt8
+            | ScalarType::UInt16
+            | ScalarType::UInt32
+            | ScalarType::UInt64
+    )
+}
+
+fn is_signed_integer(scalar: ScalarType) -> bool {
+    matches!(
+        scalar,
+        ScalarType::Int | ScalarType::Int8 | ScalarType::Int16 | ScalarType::Int32
+    )
+}
+
+fn is_float(scalar: ScalarType) -> bool {
+    matches!(scalar, ScalarType::Float | ScalarType::Float32)
+}
+
+fn is_arithmetic(scalar: ScalarType) -> bool {
+    is_integer(scalar) || is_float(scalar)
+}
+
+fn is_relational(scalar: ScalarType) -> bool {
+    is_arithmetic(scalar)
+        || matches!(
+            scalar,
+            ScalarType::Byte | ScalarType::Char | ScalarType::String
+        )
+}

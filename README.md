@@ -1,0 +1,69 @@
+# Tondo
+
+Bootstrap workspace for the Tondo compiler.
+
+The workspace is organized into three boundaries:
+
+- `tondo-cli` owns the command-line entry point.
+- `tondo-compiler` owns the lossless frontend and compilation pipeline.
+- `tondo-vm` owns the verified bytecode contract and its runtime boundary.
+
+The CLI recognizes `fmt`, `check`, and `run`. Source validation, Unicode 16
+lexing, the lossless CST, recoverable parsing, the typed AST facade, and the
+canonical formatter are implemented. Syntax diagnostics run before formatting
+or semantic work. The closed package graph, deterministic name/member
+resolution, visibility checks, public-API validation, and foundational
+canonical type interner are also implemented. Source type expressions now lower
+to semantic declarations and callable signatures, including aliases, generic
+bounds, normalized unions, and recursive-productivity checks. The typed HIR now
+checks the non-generic bootstrap core: constants, bindings, functions, inherent
+methods, blocks, conditionals, loops, scalar operators, calls, `Option`,
+`Result`, `fail`, `?`, every pattern form, and exhaustive guarded `match`, with
+explicit coercions and structured diagnostics. Field and tuple-slot access,
+array indexing/slicing, map lookup, array arithmetic, and simple, compound, and
+multiple assignment are also typed with their evaluation order retained in
+HIR. Reachability is explicit: `Never` propagates through structured control
+flow, infinite loops distinguish reachable breaks by loop identity, and
+unreachable statements or operands produce `W1006` without warning cascades.
+Explicit `_ = value`, tuple discard leaves, and fixed discard parameters enforce
+the structural `Discard` contract; terminal `Join` values produce `E1105` even
+through generic nominal containers.
+
+`CompilationOutput` now retains an immutable semantic snapshot after name
+resolution. Embedding tools can query contextual expression types, resolved
+entities and references, callable signatures, enum/union members, and closed
+call error sets; partial snapshots state exactly which semantic phase completed.
+Record construction/update, method dispatch, closed generic-call inference,
+range/membership checking, and compile-time constant evaluation are implemented
+for the bootstrap subset. `tondo check` now succeeds when that entire subset is
+understood. Complete HIR lowers through a verified typed MIR and then to
+verified in-memory slot bytecode with source maps; `tondo run` reaches the
+explicit `T0001` marker only after those phases succeed. VM execution and
+ownership analysis remain under construction, so the workspace does not yet
+claim full Tondo support.
+
+## Project documentation
+
+- `docs/architecture.md` describes the compiler pipeline and phase invariants.
+- `docs/adr/` records accepted architectural decisions.
+- `docs/contracts/` records bootstrap interfaces that later milestones build on.
+- `docs/contracts/formatter.md` records the implemented formatting boundary.
+- `docs/contracts/package-graph.md` records the closed M2 build input.
+- `docs/contracts/resolution.md` records name, scope, member, and visibility
+  resolution.
+- `docs/contracts/hir.md` records declaration lowering and the typed-HIR subset.
+- `docs/contracts/mir.md` records typed CFG lowering, unwind edges, and MIR
+  admission invariants.
+- `docs/contracts/bytecode.md` records the in-memory slot format, source maps,
+  verifier, and tooling-only disassembler.
+- `docs/contracts/semantic-queries.md` records the request-owned tooling
+  snapshot and CHECK-009 query boundary.
+- `docs/contracts/types.md` records the canonical semantic type representation.
+
+## Local validation
+
+~~~text
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+~~~

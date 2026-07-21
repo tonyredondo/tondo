@@ -1,0 +1,3 @@
+fn chained(value: Int): Bool {
+    0 < value < 10
+}

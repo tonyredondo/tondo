@@ -1,0 +1,20 @@
+[package]
+name = "tondo-compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tondo-vm = { path = "../tondo-vm" }
+unicode-ident.workspace = true
+unicode-normalization.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/lib.rs"
