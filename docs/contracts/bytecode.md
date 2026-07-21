@@ -1,8 +1,8 @@
 # Typed slot bytecode contract
 
 **Status:** BC-001 through BC-005, GEN-002 monomorphization, TRAIT-005 static
-dispatch, TRAIT-006 opaque results, CAP-001 closed capabilities, and the M3 VM
-admission path implemented
+dispatch, TRAIT-006 opaque results, CAP-001 closed capabilities, CALL-001
+uniform named function values, and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -62,6 +62,11 @@ bytecode table. It roots every non-generic callable and every specialized
 function value reachable from an evaluated constant, then transitively scans
 the reached MIR templates for static function operands. Nested type arguments
 are substituted with the enclosing instance before their callee is queued.
+When a constant retains a qualified source-trait associated function, the same
+static selection used for a reached MIR operand chooses its override or default;
+the normalized constant stores only that concrete callable ID. Composite
+constants are traversed recursively, so nesting cannot hide an executable
+function root.
 Trait defaults retain a hidden generic `Self` position, even on otherwise
 non-generic traits, so declaring a default never makes it an executable root.
 Static dispatch must select and specialize that template before it can enter the
@@ -138,6 +143,13 @@ Ordinary instructions perform storage lifetime changes or one typed store from
 a pure rvalue. Rvalues cover loads, copies/moves, constants, pure arithmetic,
 construction, record update, coercion, total conversion, range, membership,
 length, and iterator-state creation.
+
+A call operation accepts either a direct concrete function operand or a
+copy/move of a place containing the same structural function type. The latter
+is the uniform indirect-call path used by parameters, locals, fields, and named
+constants. Both forms use the same positional argument descriptors and the
+verifier requires exact modes, arity, variadic shape, outcome, and function
+type before execution.
 
 `BytecodeCoercion::Opaque` is a verified runtime no-op: execution forwards the
 already materialized value unchanged. Its distinct opcode preserves the proof

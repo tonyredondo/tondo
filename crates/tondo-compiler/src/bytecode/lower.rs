@@ -93,6 +93,7 @@ pub fn lower_to_bytecode(
         &catalog,
         &nominal_ids,
         &callable_ids,
+        &monomorphization.dispatches,
         &constant_ids,
     )?;
     let functions = {
@@ -1834,6 +1835,7 @@ fn lower_constants(
     catalog: &TypeCatalog,
     nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
     callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
+    dispatches: &BTreeMap<CallableInstance, CallableInstance>,
     constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
 ) -> Result<Vec<bc::BytecodeNamedConstant>, BytecodeError> {
     let mut output = vec![None; constant_ids.len()];
@@ -1851,7 +1853,7 @@ fn lower_constants(
             .unwrap_or_else(|| format!("constant#{}", symbol.index()));
         output[id.index() as usize] = Some(bc::BytecodeNamedConstant {
             name,
-            value: lower_constant_value(value, catalog, nominal_ids, callable_ids)?,
+            value: lower_constant_value(value, catalog, nominal_ids, callable_ids, dispatches)?,
         });
     }
     output
@@ -1869,6 +1871,7 @@ fn lower_constant_value(
     catalog: &TypeCatalog,
     nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
     callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
+    dispatches: &BTreeMap<CallableInstance, CallableInstance>,
 ) -> Result<bc::BytecodeConstantValue, BytecodeError> {
     let ty = catalog.id(value.ty())?;
     let kind = match value.kind() {
@@ -1882,34 +1885,41 @@ fn lower_constant_value(
             callable,
             arguments,
         } => bc::BytecodeConstantValueKind::Function {
-            callable: map_callable_instance(
-                &CallableInstance {
+            callable: {
+                let source = CallableInstance {
                     callable: *callable,
                     arguments: arguments.clone(),
-                },
-                callable_ids,
-            )?,
+                };
+                let target = dispatches.get(&source).unwrap_or(&source);
+                map_callable_instance(target, callable_ids)?
+            },
             arguments: Vec::new(),
         },
         HirConstantValueKind::Tuple(values) => bc::BytecodeConstantValueKind::Tuple(
-            lower_constant_values(values, catalog, nominal_ids, callable_ids)?,
+            lower_constant_values(values, catalog, nominal_ids, callable_ids, dispatches)?,
         ),
         HirConstantValueKind::Array(values) => bc::BytecodeConstantValueKind::Array(
-            lower_constant_values(values, catalog, nominal_ids, callable_ids)?,
+            lower_constant_values(values, catalog, nominal_ids, callable_ids, dispatches)?,
         ),
         HirConstantValueKind::Map(entries) => bc::BytecodeConstantValueKind::Map(
             entries
                 .iter()
                 .map(|(key, value)| {
                     Ok((
-                        lower_constant_value(key, catalog, nominal_ids, callable_ids)?,
-                        lower_constant_value(value, catalog, nominal_ids, callable_ids)?,
+                        lower_constant_value(key, catalog, nominal_ids, callable_ids, dispatches)?,
+                        lower_constant_value(
+                            value,
+                            catalog,
+                            nominal_ids,
+                            callable_ids,
+                            dispatches,
+                        )?,
                     ))
                 })
                 .collect::<Result<_, BytecodeError>>()?,
         ),
         HirConstantValueKind::Set(values) => bc::BytecodeConstantValueKind::Set(
-            lower_constant_values(values, catalog, nominal_ids, callable_ids)?,
+            lower_constant_values(values, catalog, nominal_ids, callable_ids, dispatches)?,
         ),
         HirConstantValueKind::Newtype { constructor, value } => {
             bc::BytecodeConstantValueKind::Newtype {
@@ -1919,6 +1929,7 @@ fn lower_constant_value(
                     catalog,
                     nominal_ids,
                     callable_ids,
+                    dispatches,
                 )?),
             }
         }
@@ -1929,7 +1940,13 @@ fn lower_constant_value(
                 .map(|field| {
                     Ok((
                         field.member().index(),
-                        lower_constant_value(field.value(), catalog, nominal_ids, callable_ids)?,
+                        lower_constant_value(
+                            field.value(),
+                            catalog,
+                            nominal_ids,
+                            callable_ids,
+                            dispatches,
+                        )?,
                     ))
                 })
                 .collect::<Result<_, BytecodeError>>()?,
@@ -1937,7 +1954,13 @@ fn lower_constant_value(
         HirConstantValueKind::Variant { variant, payload } => {
             bc::BytecodeConstantValueKind::Variant {
                 variant: variant.index(),
-                payload: lower_constant_variant(payload, catalog, nominal_ids, callable_ids)?,
+                payload: lower_constant_variant(
+                    payload,
+                    catalog,
+                    nominal_ids,
+                    callable_ids,
+                    dispatches,
+                )?,
             }
         }
         HirConstantValueKind::OptionNone => bc::BytecodeConstantValueKind::OptionNone,
@@ -1947,10 +1970,11 @@ fn lower_constant_value(
                 catalog,
                 nominal_ids,
                 callable_ids,
+                dispatches,
             )?))
         }
         HirConstantValueKind::ResultOk(value) => bc::BytecodeConstantValueKind::ResultOk(Box::new(
-            lower_constant_value(value, catalog, nominal_ids, callable_ids)?,
+            lower_constant_value(value, catalog, nominal_ids, callable_ids, dispatches)?,
         )),
         HirConstantValueKind::ResultErr(value) => {
             bc::BytecodeConstantValueKind::ResultErr(Box::new(lower_constant_value(
@@ -1958,6 +1982,7 @@ fn lower_constant_value(
                 catalog,
                 nominal_ids,
                 callable_ids,
+                dispatches,
             )?))
         }
         HirConstantValueKind::Range { kind, start, end } => bc::BytecodeConstantValueKind::Range {
@@ -1967,16 +1992,18 @@ fn lower_constant_value(
                 catalog,
                 nominal_ids,
                 callable_ids,
+                dispatches,
             )?),
             end: Box::new(lower_constant_value(
                 end,
                 catalog,
                 nominal_ids,
                 callable_ids,
+                dispatches,
             )?),
         },
         HirConstantValueKind::Converted(value) => {
-            lower_constant_value(value, catalog, nominal_ids, callable_ids)?.kind
+            lower_constant_value(value, catalog, nominal_ids, callable_ids, dispatches)?.kind
         }
     };
     Ok(bc::BytecodeConstantValue { ty, kind })
@@ -1987,10 +2014,11 @@ fn lower_constant_values(
     catalog: &TypeCatalog,
     nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
     callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
+    dispatches: &BTreeMap<CallableInstance, CallableInstance>,
 ) -> Result<Vec<bc::BytecodeConstantValue>, BytecodeError> {
     values
         .iter()
-        .map(|value| lower_constant_value(value, catalog, nominal_ids, callable_ids))
+        .map(|value| lower_constant_value(value, catalog, nominal_ids, callable_ids, dispatches))
         .collect()
 }
 
@@ -1999,11 +2027,12 @@ fn lower_constant_variant(
     catalog: &TypeCatalog,
     nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
     callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
+    dispatches: &BTreeMap<CallableInstance, CallableInstance>,
 ) -> Result<bc::BytecodeConstantVariantValue, BytecodeError> {
     Ok(match payload {
         HirConstantVariantValue::Unit => bc::BytecodeConstantVariantValue::Unit,
         HirConstantVariantValue::Tuple(values) => bc::BytecodeConstantVariantValue::Tuple(
-            lower_constant_values(values, catalog, nominal_ids, callable_ids)?,
+            lower_constant_values(values, catalog, nominal_ids, callable_ids, dispatches)?,
         ),
         HirConstantVariantValue::Record(fields) => bc::BytecodeConstantVariantValue::Record(
             fields
@@ -2011,7 +2040,13 @@ fn lower_constant_variant(
                 .map(|field| {
                     Ok((
                         field.member().index(),
-                        lower_constant_value(field.value(), catalog, nominal_ids, callable_ids)?,
+                        lower_constant_value(
+                            field.value(),
+                            catalog,
+                            nominal_ids,
+                            callable_ids,
+                            dispatches,
+                        )?,
                     ))
                 })
                 .collect::<Result<_, BytecodeError>>()?,
@@ -3572,6 +3607,64 @@ mod tests {
             )
         });
         assert!(function_constant.is_some());
+    }
+
+    #[test]
+    fn uniform_named_function_values_execute_through_every_supported_origin() {
+        let source = "trait Factory {\n\
+                          fn create(): Self\n\
+                          fn offset(): Int { 2 }\n\
+                      }\n\
+                      type Item = { value: Int }\n\
+                      impl Factory for Item {\n\
+                          fn create(): Item { Item { value: 20 } }\n\
+                      }\n\
+                      type Box[T] = { value: T }\n\
+                      fn Box[T].wrap(value: T): Box[T] { Box { value } }\n\
+                      fn identity[T: Copy](value: T): T { value }\n\
+                      const Identity: fn(Int): Int = identity\n\
+                      const Wrap: fn(Int): Box[Int] = Box.wrap\n\
+                      const Make: fn(): Item = Factory.create[Item]\n\
+                      const Offset: fn(): Int = Factory.offset[Item]\n\
+                      fn apply(operation: fn(Int): Int, value: Int): Int { operation(value) }\n\
+                      fn use(): Int {\n\
+                          let wrap: fn(Int): Box[Int] = Box.wrap\n\
+                          let make: fn(): Item = Factory.create[Item]\n\
+                          apply(\n\
+                              identity,\n\
+                              Identity(\n\
+                                  Wrap(wrap(make().value + Make().value + Offset()).value).value,\n\
+                              ),\n\
+                          )\n\
+                      }\n";
+
+        assert_eq!(execute_function(source, "use"), RuntimeValue::Integer(42));
+        let program = lowered(source);
+        assert!(program.constants.iter().any(|constant| matches!(
+            constant.value.kind,
+            bc::BytecodeConstantValueKind::Function { .. }
+        )));
+        assert!(program.functions.iter().any(|function| {
+            function.blocks.iter().any(|block| {
+                matches!(
+                    block.terminator.kind,
+                    bc::BytecodeTerminatorKind::Invoke {
+                        operation: bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Call {
+                                callee: bc::BytecodeOperand {
+                                    kind: bc::BytecodeOperandKind::Copy(_)
+                                        | bc::BytecodeOperandKind::Move(_),
+                                    ..
+                                },
+                                ..
+                            },
+                            ..
+                        },
+                        ..
+                    }
+                )
+            })
+        }));
     }
 
     #[test]

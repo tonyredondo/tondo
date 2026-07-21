@@ -1,11 +1,10 @@
 # Tondo: tracker de implementación
 
 **Estado:** activo  
-**Versión del tracker:** 0.29
+**Versión del tracker:** 0.30
 **Última actualización:** 2026-07-21  
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
-**Objetivo inmediato:** implementar funciones como valores y su coerción exacta
-a `fn(...)` (CALL-001).
+**Objetivo inmediato:** implementar closures y captura por valor (CALL-002).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -984,7 +983,7 @@ dinámicos ni dispatch oculto.
 - [x] **CAP-001 — Implementar las capacidades intrínsecas `Copy`, `Discard`,
   `Equatable`, `Key`, `Send` y `Share` como contratos cerrados.**
 
-- [ ] **CALL-001 — Implementar funciones como valores y coerción exacta a
+- [x] **CALL-001 — Implementar funciones como valores y coerción exacta a
   `fn(...)`.**
 
 - [ ] **CALL-002 — Implementar closures y captura por valor.**
@@ -995,8 +994,8 @@ dinámicos ni dispatch oculto.
 - [ ] **CALL-004 — Implementar closures sync, async y unsafe en la
   representación semántica, aunque sus runtimes se activen después.**
 
-Evidencia observada el 2026-07-21 para GEN-001, GEN-002, TRAIT-001 a TRAIT-006
-y CAP-001:
+Evidencia observada el 2026-07-21 para GEN-001, GEN-002, TRAIT-001 a TRAIT-006,
+CAP-001 y CALL-001:
 
 - Los bodies genéricos bounded y unbounded se comprueban una sola vez con
   parámetros rígidos. Las llamadas explícitas e inferidas cierran todas las
@@ -1125,7 +1124,25 @@ y CAP-001:
   MIR comprueba que sus operaciones coinciden y el verifier VM deriva otra vez
   las capacidades desde el catálogo bytecode cerrado. La igualdad runtime de
   maps y sets ignora el orden de inserción.
-- El gate acumulado pasa 398 tests, `git diff --check`, formatter check, build
+- Las funciones libres y operaciones asociadas sin receptor producen un valor
+  uniforme con firma exacta. Una función genérica se especializa explícitamente
+  o desde un único contexto `fn(...)`; parámetros abiertos, ambiguos, bounds no
+  satisfechos o diferencias de modo, variádico, `async`, `unsafe` y error se
+  rechazan antes de MIR.
+- Los valores asociados infieren o fijan los argumentos del owner y del método.
+  Las operaciones asociadas de traits exigen `Self` explícito y prueba estática;
+  los receiver methods nunca crean bound methods. Módulos y privacidad conservan
+  las mismas reglas que una llamada por nombre, y las llamadas indirectas sólo
+  admiten argumentos posicionales.
+- El verifier HIR rechaza funciones genéricas abiertas, aridad incompleta y una
+  firma especializada forjada. MIR conserva operandos estáticos o lecturas de
+  valores con el mismo tipo estructural, y bytecode vuelve a verificar la
+  llamada indirecta exacta.
+- La monomorfización enraíza valores de función dentro de constantes y aplica
+  también ahí el dispatch estático de traits. La VM ejecuta funciones libres,
+  asociadas, de trait, locales, parámetros y constantes sin vtable ni type pack
+  runtime.
+- El gate acumulado pasa 406 tests, `git diff --check`, formatter check, build
   de todos los targets, Clippy con warnings denegados y Rustdoc con warnings
   denegados.
 
@@ -1767,13 +1784,25 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es CALL-001: completar funciones como valores y su
-coerción exacta al tipo uniforme `fn(...)`, incluidas sus fronteras HIR, MIR,
-bytecode y VM.
+La siguiente acción activa es CALL-002: implementar closures y captura por
+valor sobre el tipo concreto anónimo definido por la especificación.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.30 — 2026-07-21
+
+- Se completa CALL-001 con valores uniformes para funciones libres y operaciones
+  asociadas sin receptor, especialización genérica explícita o contextual
+  exacta y rechazo de bound methods implícitos.
+- HIR, MIR y bytecode verifican firma, aridad y especialización; llamadas a
+  valores pierden etiquetas y mantienen modos, variádico, efectos y outcomes.
+- La monomorfización selecciona también las operaciones de trait conservadas en
+  constantes y la VM ejecuta todos los orígenes admitidos mediante el mismo
+  contrato indirecto.
+- El gate acumulado queda en 406 tests, formatter check, build de todos los
+  targets, Clippy y Rustdoc sin warnings; la cola avanza a CALL-002.
 
 ### 0.29 — 2026-07-21
 

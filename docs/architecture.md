@@ -143,8 +143,11 @@ calls with declaration-bound arguments, and explicit generic specializations
 with resolved identities, value categories, and contextual coercions. Generic
 specializations close invariant inference and prove every closed intrinsic
 constraint (`Copy`, `Discard`, `Equatable`, `Key`, `Send`, and `Share`) before
-leaving HIR. Open source/prelude trait obligations use coherent static
-selection; callable capabilities remain owned by the closure phases. Trait declarations
+leaving HIR. Named free and receiver-free associated functions may cross that
+boundary as uniform values only after their exact `fn(...)` type and complete
+specialization are known; receiver methods never become implicit bound values.
+Open source/prelude trait obligations use coherent static selection; callable
+capabilities remain owned by the closure phases. Trait declarations
 carry a sorted method table, contextual `Self`, default-body and async-receiver
 requirements. Default bodies are checked once with rigid trait binders; calls to
 another receiver method of the same trait resolve locally and both inferred and
@@ -280,6 +283,9 @@ or another concrete instance. Equal callable/argument pairs share one body;
 same-instance recursion terminates by deduplication and type-expanding recursion
 terminates at the request limit. Executable callable signatures and function
 bodies contain only concrete types and direct calls carry no runtime type pack.
+Uniform function values stored in locals, aggregates, or constants use the same
+verified indirect-call operation; source-trait values are statically selected
+before entering the constant or operand catalog.
 Generic nominal declarations remain compact layout templates checked with their
 concrete arguments by the verifier.
 

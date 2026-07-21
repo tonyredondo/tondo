@@ -1,9 +1,9 @@
 # Semantic and typed HIR contract
 
 **Status:** bootstrap declarations, typed expressions, generic specialization,
-static trait selection, declaration-owned opaque results, patterns, assignment,
-discard, structured control flow, calls, semantic occurrences, and verified MIR
-admission implemented
+uniform named function values, static trait selection, declaration-owned opaque
+results, patterns, assignment, discard, structured control flow, calls,
+semantic occurrences, and verified MIR admission implemented
 
 ## Boundary
 
@@ -39,7 +39,8 @@ The output owns:
   becomes type-directed; and
 - explicit HIR nodes for option/union coercions, `Result` construction,
   propagation, control transfers, `match` arms, every pattern form, field/index
-  projections, assignment targets, and standalone explicit discard.
+  projections, assignment targets, standalone explicit discard, and exact
+  named-function specializations.
 
 The checker deliberately leaves its completion flag false when it encounters a
 surface whose semantics belongs to an unfinished phase. It checks bounded and
@@ -86,6 +87,9 @@ The implemented bootstrap subset includes:
 - inferred or explicit generic function specialization, including closed
   intrinsic-capability obligations and forwarding through an enclosing generic
   binder;
+- first-class free and receiver-free associated functions with one exact
+  uniform `fn(...)` type, including contextual generic specialization and
+  qualified source-trait associated operations;
 - `some`, `ok`, `err`, implicit callable-success lifting, `fail`, and postfix
   `?` over both `Option` and `Result`;
 - exact error propagation, injection into a union, and closed union-subset
@@ -149,6 +153,44 @@ arguments; owner arguments and the trait's hidden `Self` position remain fixed
 or are inferred from the receiver. The preliminary bracket remains
 contextually resolved until the checker classifies it as an index or a
 specialization.
+
+## Uniform named function values
+
+A named free function or associated operation without `self` becomes a value
+with its structural function type. Parameter names are erased, while parameter
+modes, variadic shape, `async`, `unsafe`, success, and error types remain part
+of that type. A receiver method is never converted into a bound function:
+`value.method` and `Type.method` without an immediate receiver call are rejected
+and a later closure must bind the receiver explicitly.
+
+`Function` represents only a non-generic named callable. A generic callable
+must become `SpecializedFunction` before a complete HIR program is admitted.
+Explicit syntax such as `identity[Int]` supplies the complete argument vector.
+Otherwise the checker creates one invariant inference problem from the complete
+expected function type, requires every callable binder to have one solution,
+proves all substituted bounds, and writes the resulting monomorphic type and
+argument vector into the original expression node. An enclosing rigid generic
+binder may be that solution; no inference variable or independently polymorphic
+function value may escape.
+
+The same contextual rule applies in local and constant initializers, returns,
+arguments, aggregate elements, record fields, and record shorthand. Calls
+through a local, parameter, field, or constant of function type use positional
+indices only. A direct call whose callee is still resolved by name retains
+source parameter labels and performs ordinary generic call inference instead.
+
+Associated function values may infer their nominal owner arguments from the
+expected function type or fix owner and method-local arguments explicitly.
+Qualified source-trait associated values require the written trait arguments,
+explicit `Self`, and method-local arguments, and prove the complete trait query
+before publishing the value. Their HIR operand still names the source trait
+member; static implementation selection remains the monomorphization boundary.
+
+`verify_typed_hir` rejects a generic `Function`, a specialization with
+incomplete arity, and any `SpecializedFunction` whose expression type differs
+from the exact substitution of its callable signature. The capability verifier
+also rechecks closed generic bounds. MIR therefore receives neither an open
+function value nor a type assertion that needs contextual reinterpretation.
 
 ## Trait declarations, defaults, and implementations
 

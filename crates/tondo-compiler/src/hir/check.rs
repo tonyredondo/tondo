@@ -365,6 +365,26 @@ struct ExplicitGenericArguments {
     arguments: BTreeMap<u32, TypeId>,
 }
 
+struct NamedFunctionValueRequest {
+    file: FileId,
+    range: TextRange,
+    diagnostic_span: Span,
+    value: HirExpressionId,
+    callable: HirCallableId,
+    fixed: BTreeMap<u32, TypeId>,
+    expected: Option<ExpressionExpectation>,
+}
+
+struct TraitFunctionValueRequest<'a> {
+    file: FileId,
+    node: SyntaxNodeRef<'a>,
+    member_token: SyntaxTokenRef<'a>,
+    owner: SymbolId,
+    trait_bracket: Option<SyntaxNodeRef<'a>>,
+    method_bracket: Option<SyntaxNodeRef<'a>>,
+    expected: Option<ExpressionExpectation>,
+}
+
 #[derive(Clone, Copy)]
 enum GenericCallTarget {
     Callable(HirCallableId),
@@ -2519,10 +2539,467 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
+        if let Some(function) =
+            self.check_associated_function_value(file, node, expected, context)?
+        {
+            return Ok(function);
+        }
         if let Some(variant) = self.check_unit_variant_path(file, node, expected)? {
             return Ok(variant);
         }
-        self.check_value_path(file, node, context, None)
+        let value = self.check_value_path(file, node, context, None)?;
+        self.close_contextual_function_value(file, node.range(), value, expected, context)
+    }
+
+    fn check_associated_function_value(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'_>,
+        expected: Option<ExpressionExpectation>,
+        context: &BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        if node.kind() != SyntaxKind::PathExpr {
+            return Ok(None);
+        }
+        let identifiers = node
+            .child_tokens()
+            .filter(|token| token.kind() == TokenKind::Identifier)
+            .collect::<Vec<_>>();
+        let Some((resolved_index, mut resolved)) =
+            identifiers.iter().enumerate().find_map(|(index, token)| {
+                let reference = self.resolved.reference(file, token.range())?;
+                let resolved = match reference.entity() {
+                    ResolvedEntity::Name(name) => name.clone(),
+                    ResolvedEntity::ContextualCandidates { type_name, .. } => type_name.clone(),
+                    ResolvedEntity::Module(_) => return None,
+                };
+                let names_type = match &resolved {
+                    ResolvedName::Symbol(symbol) => {
+                        self.resolved.symbol(*symbol).is_some_and(|symbol| {
+                            matches!(
+                                symbol.kind(),
+                                SymbolKind::Type
+                                    | SymbolKind::Alias
+                                    | SymbolKind::Enum
+                                    | SymbolKind::Trait
+                                    | SymbolKind::NewtypeConstructor
+                            )
+                        })
+                    }
+                    ResolvedName::ContextualSelf => true,
+                    ResolvedName::Prelude { namespace, .. }
+                    | ResolvedName::External { namespace, .. } => *namespace == Namespace::Type,
+                    ResolvedName::Local(_) | ResolvedName::Receiver => false,
+                };
+                names_type.then_some((index, resolved))
+            })
+        else {
+            return Ok(None);
+        };
+        if resolved_index + 2 != identifiers.len() {
+            return Ok(None);
+        }
+        if let ResolvedName::Symbol(symbol) = resolved
+            && self
+                .resolved
+                .symbol(symbol)
+                .is_some_and(|symbol| symbol.kind() == SymbolKind::NewtypeConstructor)
+        {
+            let constructor = self
+                .resolved
+                .symbol(symbol)
+                .expect("resolved constructor references retain their symbol");
+            if let Some(ty) = self.resolved.symbols().find(|candidate| {
+                candidate.kind() == SymbolKind::Type
+                    && candidate.name() == constructor.name()
+                    && candidate.identity().source_id() == constructor.identity().source_id()
+                    && candidate.identity().module() == constructor.identity().module()
+            }) {
+                resolved = ResolvedName::Symbol(ty.id());
+            }
+        }
+
+        let member_token = *identifiers
+            .last()
+            .expect("an associated function path has a final member");
+        let mut owner_brackets = Vec::new();
+        let mut member_brackets = Vec::new();
+        for bracket in node
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::BracketPostfix)
+        {
+            if bracket.range().end() <= member_token.range().start() {
+                owner_brackets.push(bracket);
+            } else {
+                member_brackets.push(bracket);
+            }
+        }
+        if owner_brackets.len() > 1 || member_brackets.len() > 1 {
+            self.emit(
+                self.sources.span(file, node.range())?,
+                "E1104",
+                "an associated function value has at most one owner list and one function list",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range()).map(Some);
+        }
+
+        if let ResolvedName::Symbol(owner) = resolved
+            && self
+                .resolved
+                .symbol(owner)
+                .is_some_and(|symbol| symbol.kind() == SymbolKind::Trait)
+        {
+            return self.check_trait_associated_function_value(
+                TraitFunctionValueRequest {
+                    file,
+                    node,
+                    member_token,
+                    owner,
+                    trait_bracket: owner_brackets.first().copied(),
+                    method_bracket: member_brackets.first().copied(),
+                    expected,
+                },
+                context,
+            );
+        }
+
+        let explicit_owner_arguments = if let Some(bracket) = owner_brackets.first().copied() {
+            let Some(arguments) =
+                self.expression_generic_arguments(file, bracket, Some(context))?
+            else {
+                return self.recovery_expression(file, node.range()).map(Some);
+            };
+            Some(arguments)
+        } else {
+            None
+        };
+        let (owner, contextual_owner_arguments) = match resolved {
+            ResolvedName::ContextualSelf => {
+                let Some(self_type) = context.contextual_self else {
+                    return Ok(None);
+                };
+                let Some((owner, arguments, _)) = self.nominal_instance(self_type)? else {
+                    return Ok(None);
+                };
+                (owner, Some(arguments))
+            }
+            ResolvedName::Symbol(symbol) => {
+                let Some(symbol_info) = self.resolved.symbol(symbol) else {
+                    return Ok(None);
+                };
+                if !matches!(
+                    symbol_info.kind(),
+                    SymbolKind::Type | SymbolKind::Alias | SymbolKind::Enum
+                ) {
+                    return Ok(None);
+                }
+                if let Some(arguments) = &explicit_owner_arguments {
+                    if arguments.len() != symbol_info.generic_arity() as usize {
+                        self.emit(
+                            self.sources.span(file, node.range())?,
+                            "E1104",
+                            format!(
+                                "associated function owner expects {} type arguments, found {}",
+                                symbol_info.generic_arity(),
+                                arguments.len()
+                            ),
+                            Vec::new(),
+                            None,
+                        )?;
+                        return self.recovery_expression(file, node.range()).map(Some);
+                    }
+                    let Some(instance) = self.instantiate_pattern_type(
+                        file,
+                        node.range(),
+                        &ResolvedName::Symbol(symbol),
+                        arguments.clone(),
+                    )?
+                    else {
+                        return Ok(None);
+                    };
+                    let Some((owner, arguments, _)) = self.nominal_instance(instance)? else {
+                        return Ok(None);
+                    };
+                    (owner, Some(arguments))
+                } else {
+                    (symbol, None)
+                }
+            }
+            ResolvedName::Prelude { .. }
+            | ResolvedName::External { .. }
+            | ResolvedName::Local(_)
+            | ResolvedName::Receiver => return Ok(None),
+        };
+        let Some(member) = self.callable_member(
+            file,
+            owner,
+            member_token,
+            &[MemberKind::AssociatedFunction, MemberKind::InherentMethod],
+        )?
+        else {
+            return Ok(None);
+        };
+        let member_declaration = self
+            .resolved
+            .member(member)
+            .expect("associated member lookup returns an indexed member");
+        if member_declaration.kind() == MemberKind::InherentMethod {
+            self.emit(
+                self.sources.span(file, member_token.range())?,
+                "E1102",
+                "a receiver method is not a function value; use an explicit closure",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range()).map(Some);
+        }
+        if !self.callable_member_is_visible(
+            file,
+            member,
+            self.sources.span(file, member_token.range())?,
+        )? {
+            return self.recovery_expression(file, node.range()).map(Some);
+        }
+        let callable_id = HirCallableId::Member(member);
+        let Some(callable) = self.callable(callable_id).cloned() else {
+            self.complete = false;
+            return self.recovery_expression(file, node.range()).map(Some);
+        };
+        let method_arity = member_declaration.generic_arity();
+        let owner_arity = callable
+            .generic_arity
+            .checked_sub(method_arity)
+            .expect("associated callable arity includes its owner binders");
+        let mut fixed = BTreeMap::new();
+        if let Some(arguments) = explicit_owner_arguments.or(contextual_owner_arguments) {
+            if arguments.len() != owner_arity as usize {
+                self.emit(
+                    self.sources.span(file, node.range())?,
+                    "E1104",
+                    format!(
+                        "associated function owner expects {owner_arity} type arguments, found {}",
+                        arguments.len()
+                    ),
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, node.range()).map(Some);
+            }
+            for (position, argument) in arguments.into_iter().enumerate() {
+                fixed.insert(
+                    u32::try_from(position).expect("owner arity fits in u32"),
+                    argument,
+                );
+            }
+        }
+        if let Some(bracket) = member_brackets.first().copied() {
+            let Some(arguments) =
+                self.expression_generic_arguments(file, bracket, Some(context))?
+            else {
+                return self.recovery_expression(file, node.range()).map(Some);
+            };
+            if arguments.len() != method_arity as usize {
+                self.emit(
+                    self.sources.span(file, bracket.range())?,
+                    "E1104",
+                    format!(
+                        "associated function expects {method_arity} function type arguments, found {}",
+                        arguments.len()
+                    ),
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, node.range()).map(Some);
+            }
+            for (index, argument) in arguments.into_iter().enumerate() {
+                let position = owner_arity
+                    .checked_add(u32::try_from(index).expect("method arity fits in u32"))
+                    .expect("associated function generic position fits in u32");
+                fixed.insert(position, argument);
+            }
+        }
+        self.record_member_reference(self.sources.span(file, member_token.range())?, member);
+        let value = self.allocate_expression(HirExpression {
+            span: self.sources.span(file, node.range())?,
+            ty: callable.function_type,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Function(callable_id),
+        })?;
+        if callable.generic_arity == 0 {
+            return Ok(Some(value));
+        }
+        self.close_named_function_value(
+            NamedFunctionValueRequest {
+                file,
+                range: node.range(),
+                diagnostic_span: self.sources.span(file, node.range())?,
+                value,
+                callable: callable_id,
+                fixed,
+                expected,
+            },
+            context,
+        )
+        .map(Some)
+    }
+
+    fn check_trait_associated_function_value(
+        &mut self,
+        request: TraitFunctionValueRequest<'_>,
+        context: &BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let TraitFunctionValueRequest {
+            file,
+            node,
+            member_token,
+            owner,
+            trait_bracket,
+            method_bracket,
+            expected,
+        } = request;
+        let Some(member) = self.callable_member(
+            file,
+            owner,
+            member_token,
+            &[MemberKind::TraitMethod, MemberKind::TraitAssociatedFunction],
+        )?
+        else {
+            return Ok(None);
+        };
+        let member_declaration = self
+            .resolved
+            .member(member)
+            .expect("trait member lookup returns an indexed member");
+        if member_declaration.kind() == MemberKind::TraitMethod {
+            self.emit(
+                self.sources.span(file, member_token.range())?,
+                "E1102",
+                "a trait receiver method is not a function value; use an explicit closure",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range()).map(Some);
+        }
+        let declaration = self
+            .program
+            .declaration(owner)
+            .expect("resolved source traits have HIR declarations");
+        let trait_arity = u32::try_from(declaration.parameters().len())
+            .map_err(|_| crate::types::TypeError::ResourceLimit { limit: u32::MAX })?;
+        let trait_arguments = if let Some(bracket) = trait_bracket {
+            let Some(arguments) =
+                self.expression_generic_arguments(file, bracket, Some(context))?
+            else {
+                return self.recovery_expression(file, node.range()).map(Some);
+            };
+            arguments
+        } else {
+            Vec::new()
+        };
+        if trait_arguments.len() != trait_arity as usize {
+            self.emit(
+                self.sources.span(file, node.range())?,
+                "E1104",
+                format!(
+                    "qualified trait expects {trait_arity} type arguments, found {}",
+                    trait_arguments.len()
+                ),
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range()).map(Some);
+        }
+        let method_arity = member_declaration.generic_arity();
+        let method_arguments = if let Some(bracket) = method_bracket {
+            let Some(arguments) =
+                self.expression_generic_arguments(file, bracket, Some(context))?
+            else {
+                return self.recovery_expression(file, node.range()).map(Some);
+            };
+            arguments
+        } else {
+            Vec::new()
+        };
+        let required = method_arity
+            .checked_add(1)
+            .expect("trait method arity fits in u32");
+        if method_arguments.len() != required as usize {
+            self.emit(
+                self.sources.span(file, member_token.range())?,
+                "E1104",
+                format!(
+                    "qualified associated trait function expects Self plus {method_arity} function type arguments, found {}",
+                    method_arguments.len()
+                ),
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range()).map(Some);
+        }
+        let target = method_arguments[0];
+        self.require_trait_query(
+            self.sources.span(file, member_token.range())?,
+            TraitQuery::from_parts(
+                HirTraitConstructor::Symbol(owner),
+                trait_arguments.clone(),
+                target,
+            ),
+            context,
+            TraitRequirementOrigin::Direct,
+        )?;
+        if !self.callable_member_is_visible(
+            file,
+            member,
+            self.sources.span(file, member_token.range())?,
+        )? {
+            return self.recovery_expression(file, node.range()).map(Some);
+        }
+        let callable_id = HirCallableId::Member(member);
+        let Some(callable) = self.callable(callable_id).cloned() else {
+            self.complete = false;
+            return self.recovery_expression(file, node.range()).map(Some);
+        };
+        let arguments = trait_arguments
+            .into_iter()
+            .chain(method_arguments)
+            .collect::<Vec<_>>();
+        if arguments.len() != callable.generic_arity as usize {
+            return Err(HirError::TraitSelectionInvariant {
+                message: "qualified trait function value has an invalid complete arity".into(),
+            });
+        }
+        let fixed = arguments
+            .into_iter()
+            .enumerate()
+            .map(|(position, argument)| {
+                (
+                    u32::try_from(position).expect("trait callable arity fits in u32"),
+                    argument,
+                )
+            })
+            .collect();
+        self.record_member_reference(self.sources.span(file, member_token.range())?, member);
+        let value = self.allocate_expression(HirExpression {
+            span: self.sources.span(file, node.range())?,
+            ty: callable.function_type,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Function(callable_id),
+        })?;
+        self.close_named_function_value(
+            NamedFunctionValueRequest {
+                file,
+                range: node.range(),
+                diagnostic_span: self.sources.span(file, node.range())?,
+                value,
+                callable: callable_id,
+                fixed,
+                expected,
+            },
+            context,
+        )
+        .map(Some)
     }
 
     fn check_value_path(
@@ -2663,6 +3140,7 @@ impl<'a> ExpressionChecker<'a> {
                                 file,
                                 node.range(),
                                 suffix,
+                                value,
                                 callable,
                                 context,
                             )?
@@ -2688,6 +3166,7 @@ impl<'a> ExpressionChecker<'a> {
         file: FileId,
         range: TextRange,
         bracket: SyntaxNodeRef<'_>,
+        value: HirExpressionId,
         id: HirCallableId,
         context: &BodyContext,
     ) -> Result<HirExpressionId, HirError> {
@@ -2723,23 +3202,189 @@ impl<'a> ExpressionChecker<'a> {
             )?;
             return self.recovery_expression(file, range);
         }
-        self.validate_generic_bounds(
-            self.sources.span(file, bracket.range())?,
-            &callable,
-            &arguments,
-            context,
-        )?;
-        let function_type = TypeSubstitution::new(arguments.clone())
-            .apply(&mut self.program.interner, callable.function_type)?;
-        self.allocate_expression(HirExpression {
-            span: self.sources.span(file, range)?,
-            ty: function_type,
-            category: HirValueCategory::Value,
-            kind: HirExpressionKind::SpecializedFunction {
+        let fixed = arguments
+            .into_iter()
+            .enumerate()
+            .map(|(position, argument)| {
+                (
+                    u32::try_from(position).expect("generic arity fits in u32"),
+                    argument,
+                )
+            })
+            .collect();
+        self.close_named_function_value(
+            NamedFunctionValueRequest {
+                file,
+                range,
+                diagnostic_span: self.sources.span(file, bracket.range())?,
+                value,
                 callable: id,
-                arguments,
+                fixed,
+                expected: None,
             },
-        })
+            context,
+        )
+    }
+
+    fn close_contextual_function_value(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        value: HirExpressionId,
+        expected: Option<ExpressionExpectation>,
+        context: &BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        let HirExpressionKind::Function(callable) = self.program.expressions[value.0 as usize].kind
+        else {
+            return Ok(value);
+        };
+        let Some(signature) = self.callable(callable) else {
+            self.complete = false;
+            return self.recovery_expression(file, range);
+        };
+        if signature.generic_arity == 0 {
+            return Ok(value);
+        }
+        self.close_named_function_value(
+            NamedFunctionValueRequest {
+                file,
+                range,
+                diagnostic_span: self.sources.span(file, range)?,
+                value,
+                callable,
+                fixed: BTreeMap::new(),
+                expected,
+            },
+            context,
+        )
+    }
+
+    fn close_named_function_value(
+        &mut self,
+        request: NamedFunctionValueRequest,
+        context: &BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        let NamedFunctionValueRequest {
+            file,
+            range,
+            diagnostic_span,
+            value,
+            callable,
+            fixed,
+            expected,
+        } = request;
+        let Some(signature) = self.callable(callable).cloned() else {
+            self.complete = false;
+            return self.recovery_expression(file, range);
+        };
+        if fixed
+            .keys()
+            .any(|position| *position >= signature.generic_arity)
+        {
+            return Err(HirError::TraitSelectionInvariant {
+                message: "function-value specialization fixes an out-of-range binder".into(),
+            });
+        }
+
+        let mut solver = InferenceContext::new();
+        let arguments = (0..signature.generic_arity)
+            .map(|position| {
+                fixed.get(&position).copied().map_or_else(
+                    || {
+                        solver
+                            .fresh(&mut self.program.interner)
+                            .map_err(HirError::from)
+                    },
+                    Ok,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let has_open_argument = fixed.len() != signature.generic_arity as usize;
+        if has_open_argument {
+            let Some(expected) = expected.map(ExpressionExpectation::contextual_type) else {
+                self.emit(
+                    diagnostic_span,
+                    "E1101",
+                    "generic function value requires explicit type arguments or one exact function type context",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range);
+            };
+            if !matches!(self.program.interner.kind(expected)?, TypeKind::Function(_)) {
+                let expected_name = self.program.interner.canonical(expected)?;
+                let actual_name = self.program.interner.canonical(signature.function_type)?;
+                self.emit(
+                    diagnostic_span,
+                    "E1102",
+                    format!("expected `{expected_name}`, found `{actual_name}`"),
+                    Vec::new(),
+                    Some((expected_name, actual_name)),
+                )?;
+                return self.recovery_expression(file, range);
+            }
+            let inferred = TypeSubstitution::new(arguments.clone())
+                .apply(&mut self.program.interner, signature.function_type)?;
+            if let Err(error) = solver.equate(&self.program.interner, inferred, expected) {
+                match error {
+                    InferenceError::Type(error) => return Err(error.into()),
+                    InferenceError::Mismatch { .. }
+                    | InferenceError::RecursiveSolution { .. }
+                    | InferenceError::Unsolved(_) => {
+                        let expected_name = self.program.interner.canonical(expected)?;
+                        let actual_name =
+                            self.program.interner.canonical(signature.function_type)?;
+                        self.emit(
+                            diagnostic_span,
+                            "E1102",
+                            format!(
+                                "named function `{actual_name}` cannot specialize to exact type `{expected_name}`"
+                            ),
+                            Vec::new(),
+                            Some((expected_name, actual_name)),
+                        )?;
+                        return self.recovery_expression(file, range);
+                    }
+                }
+            }
+        }
+
+        let arguments = match solver.finish(&mut self.program.interner, arguments) {
+            Ok(arguments) => arguments,
+            Err(InferenceError::Type(error)) => return Err(error.into()),
+            Err(InferenceError::Unsolved(_)) => {
+                self.emit(
+                    diagnostic_span,
+                    "E1101",
+                    "function type context does not determine every generic argument uniquely",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range);
+            }
+            Err(InferenceError::Mismatch { .. } | InferenceError::RecursiveSolution { .. }) => {
+                self.emit(
+                    diagnostic_span,
+                    "E1102",
+                    "function type context cannot produce one exact specialization",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range);
+            }
+        };
+        self.validate_generic_bounds(diagnostic_span, &signature, &arguments, context)?;
+        let function_type = TypeSubstitution::new(arguments.clone())
+            .apply(&mut self.program.interner, signature.function_type)?;
+        let expression = &mut self.program.expressions[value.0 as usize];
+        expression.span = self.sources.span(file, range)?;
+        expression.ty = function_type;
+        expression.category = HirValueCategory::Value;
+        expression.kind = HirExpressionKind::SpecializedFunction {
+            callable,
+            arguments,
+        };
+        Ok(value)
     }
 
     fn check_receiver(
@@ -4097,6 +4742,14 @@ impl<'a> ExpressionChecker<'a> {
             category,
             kind,
         })?;
+        let value = self.close_contextual_function_value(
+            file,
+            token.range(),
+            value,
+            Some(ExpressionExpectation::Direct(expected)),
+            context,
+        )?;
+        let ty = self.expression_type(value);
         if ty == self.program.interner.error() {
             return Ok(value);
         }
@@ -9327,7 +9980,13 @@ impl<'a> ExpressionChecker<'a> {
                 return Ok(constructor);
             }
         }
-        let base = self.check_expression(file, base_node, None, context)?;
+        let base = if suffix.kind() == SyntaxKind::CallSuffix
+            && base_node.kind() == SyntaxKind::PathExpr
+        {
+            self.check_value_path(file, base_node, context, None)?
+        } else {
+            self.check_expression(file, base_node, None, context)?
+        };
         match suffix.kind() {
             SyntaxKind::CallSuffix => self.check_call(
                 CallSite {
@@ -10718,6 +11377,42 @@ impl<'a> ExpressionChecker<'a> {
             }))
     }
 
+    fn callable_member_is_visible(
+        &mut self,
+        file: FileId,
+        member: MemberId,
+        use_span: Span,
+    ) -> Result<bool, HirError> {
+        let declaration = self
+            .resolved
+            .member(member)
+            .expect("callable member lookup returns an indexed member");
+        if declaration.visibility() != Visibility::Private {
+            return Ok(true);
+        }
+        let MemberOwner::Type(owner) = declaration.owner() else {
+            unreachable!("callable members have nominal or trait owners");
+        };
+        let owner = self
+            .resolved
+            .symbol(owner)
+            .expect("callable member owners remain indexed");
+        let source = self.sources.get(file)?;
+        if owner.identity().source_id() == source.source_id()
+            && owner.identity().module() == source.module()
+        {
+            return Ok(true);
+        }
+        self.emit(
+            use_span,
+            "E1501",
+            "this function is private to its declaring module",
+            vec![("the private function is declared here", declaration.span())],
+            None,
+        )?;
+        Ok(false)
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn finish_resolved_member_call(
         &mut self,
@@ -11214,7 +11909,6 @@ impl<'a> ExpressionChecker<'a> {
             suffix,
             expected,
         } = site;
-        let mut callee = callee;
         let callee_type = self.expression_type(callee);
         let mut function = match self.program.interner.kind(callee_type)?.clone() {
             TypeKind::Function(function) => function,
@@ -11695,13 +12389,10 @@ impl<'a> ExpressionChecker<'a> {
                     }
                 }
             };
-            let callee_span = self.program.expressions[callee.0 as usize].span;
-            callee = self.allocate_expression(HirExpression {
-                span: callee_span,
-                ty: final_type,
-                category: HirValueCategory::Value,
-                kind: callee_kind,
-            })?;
+            let callee_expression = &mut self.program.expressions[callee.0 as usize];
+            callee_expression.ty = final_type;
+            callee_expression.category = HirValueCategory::Value;
+            callee_expression.kind = callee_kind;
             let full_shape = self.call_shape(callee, &final_function, false);
             for argument in &mut arguments {
                 let final_expected = match argument.target {
@@ -15801,6 +16492,194 @@ mod tests {
              }\n",
         );
         assert_eq!(codes(&output), ["E1102"]);
+    }
+
+    #[test]
+    fn named_function_values_specialize_from_every_exact_context() {
+        let (_, _, output) = check(
+            "type Handler = { identity: fn(Int): Int }\n\
+             fn identity[T: Copy](value: T): T { value }\n\
+             fn apply(operation: fn(Int): Int, value: Int): Int { operation(value) }\n\
+             const IntIdentity: fn(Int): Int = identity\n\
+             fn make(): fn(String): String { identity }\n\
+             fn forward[T: Copy](): fn(T): T { identity }\n\
+             fn use(): Int {\n\
+                 let local: fn(Int): Int = identity\n\
+                 let handler = Handler { identity }\n\
+                 apply(identity, local(handler.identity(IntIdentity(40))))\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let specializations = output
+            .program()
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::SpecializedFunction { arguments, .. } => Some(
+                    arguments
+                        .iter()
+                        .map(|argument| output.program().interner().canonical(*argument).unwrap())
+                        .collect::<Vec<_>>(),
+                ),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            specializations
+                .iter()
+                .filter(|item| item.as_slice() == ["Int"])
+                .count()
+                >= 4
+        );
+        assert!(
+            specializations
+                .iter()
+                .any(|item| item.as_slice() == ["String"])
+        );
+        assert!(specializations.iter().any(|item| item.as_slice() == ["$0"]));
+    }
+
+    #[test]
+    fn generic_function_values_reject_missing_ambiguous_or_inexact_context() {
+        for (source, expected) in [
+            (
+                "fn identity[T](value: T): T { value }\nfn invalid() {\n    let value = identity\n}\n",
+                "E1101",
+            ),
+            (
+                "fn first[T, U](value: T): T { value }\nfn invalid(): fn(Int): Int { first }\n",
+                "E1101",
+            ),
+            (
+                "fn identity[T](value: T): T { value }\nfn invalid(): fn(Int): String { identity }\n",
+                "E1102",
+            ),
+            (
+                "fn requireKey[T: Key](_: T) {}\nfn invalid(): fn(Float): Unit {\n    requireKey\n}\n",
+                "E1105",
+            ),
+        ] {
+            let (_, _, output) = check(source);
+            assert_eq!(
+                codes(&output),
+                [expected],
+                "{source}\n{:#?}",
+                output.diagnostics()
+            );
+        }
+
+        for source in [
+            "fn inspect(value: ref Int): Int { value }\nfn invalid(): fn(Int): Int { inspect }\n",
+            "fn collect(prefix: String, values: ...String): Int { 0 }\nfn invalid(): fn(String, String): Int { collect }\n",
+            "unsafe fn inspect[T](value: T): T { value }\nfn invalid(): fn(Int): Int { inspect }\n",
+            "async fn inspect[T](value: T): T { value }\nfn invalid(): fn(Int): Int { inspect }\n",
+            "fn inspect[T](value: T): T ! String { value }\nfn invalid(): fn(Int): Int { inspect }\n",
+        ] {
+            let (_, _, output) = check(source);
+            assert_eq!(codes(&output), ["E1102"], "{source}");
+        }
+    }
+
+    #[test]
+    fn associated_functions_are_values_but_receiver_methods_are_not() {
+        let (_, _, output) = check(
+            "type Box[T] = { value: T }\n\
+             fn Box[T].wrap(value: T): Box[T] { Box { value } }\n\
+             fn Box[T].convert[U](value: U): U { value }\n\
+             fn Box[T].read(self): T { self.value }\n\
+             fn use(): Int {\n\
+                 let inferred_owner: fn(Int): Box[Int] = Box.wrap\n\
+                 let fixed_owner = Box[Int].wrap\n\
+                 let inferred_method: fn(String): String = Box[Int].convert\n\
+                 let fixed_method = Box[Int].convert[String]\n\
+                 inferred_owner(1).value + fixed_owner(2).value\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        for source in [
+            "type Counter = { value: Int }\nfn Counter.read(self): Int { self.value }\nfn invalid(): fn(ref Counter): Int { Counter.read }\n",
+            "type Counter = { value: Int }\nfn Counter.read(self): Int { self.value }\nfn invalid(counter: Counter) {\n    let method = counter.read\n}\n",
+        ] {
+            let (_, _, invalid) = check(source);
+            assert_eq!(codes(&invalid), ["E1102"], "{source}");
+        }
+    }
+
+    #[test]
+    fn imported_named_function_values_preserve_member_visibility() {
+        let api = "pub type Box[T] = { value: T }\n\
+                   pub fn Box[T].wrap(value: T): Box[T] { Box { value } }\n\
+                   fn Box[T].hidden(value: T): Box[T] { Box { value } }\n\
+                   pub fn identity[T](value: T): T { value }\n";
+        let valid = check_modules(&[
+            ("api", "api.to", api),
+            (
+                "main",
+                "main.to",
+                "import app.api\n\
+                 fn wrap(): fn(Int): api.Box[Int] { api.Box.wrap }\n\
+                 fn identity(): fn(Int): Int { api.identity }\n",
+            ),
+        ]);
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        let invalid = check_modules(&[
+            ("api", "api.to", api),
+            (
+                "main",
+                "main.to",
+                "import app.api\n\
+                 fn invalid(): fn(Int): api.Box[Int] { api.Box.hidden }\n",
+            ),
+        ]);
+        assert_eq!(codes(&invalid), ["E1501"]);
+    }
+
+    #[test]
+    fn qualified_trait_associated_functions_can_be_uniform_values() {
+        let (_, _, output) = check(
+            "trait Factory {\n\
+                 fn create(): Self\n\
+             }\n\
+             type Item = { value: Int }\n\
+             impl Factory for Item {\n\
+                 fn create(): Item { Item { value: 42 } }\n\
+             }\n\
+             fn make(): fn(): Item { Factory.create[Item] }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+    }
+
+    #[test]
+    fn calls_through_uniform_function_values_are_positional_only() {
+        let (_, _, valid) = check(
+            "fn add(left: Int, right: Int): Int { left + right }\n\
+             fn use(operation: fn(Int, Int): Int): Int { operation(1, 2) }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+
+        let (_, _, invalid) = check(
+            "fn add(left: Int, right: Int): Int { left + right }\n\
+             fn use(operation: fn(Int, Int): Int): Int { operation(left: 1, right: 2) }\n",
+        );
+        assert_eq!(codes(&invalid), ["E1102", "E1102"]);
     }
 
     #[test]

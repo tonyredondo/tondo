@@ -20,8 +20,14 @@ checks the bootstrap core, including bounded and unbounded generic bodies,
 invariant call inference, explicit specialization, and the six closed
 capabilities `Copy`, `Discard`, `Equatable`, `Key`, `Send`, and `Share`. Their
 proof is structural and coinductive over recursive nominal types; generic and
-opaque values expose only the bounds available to their caller. Trait
-declarations now retain a contextual `Self`, required and
+opaque values expose only the bounds available to their caller. Named free
+functions and associated operations without a receiver are first-class uniform
+values. Generic functions specialize explicitly or from one exact expected
+`fn(...)` type, while receiver methods remain unbound and calls through stored
+values are positional. The HIR, MIR, bytecode verifier, monomorphizer, and VM
+all preserve that exact contract, including statically selected source-trait
+function values retained by constants. Trait declarations now retain a
+contextual `Self`, required and
 associated methods, default bodies, and the intrinsic `Self: Send` condition of
 async receivers. Defaults are checked once under the trait's binders and may
 call other methods of that same trait without opening global method lookup.

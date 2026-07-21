@@ -2463,6 +2463,12 @@ impl Verifier<'_> {
             }
             HirExpressionKind::Function(callable) => {
                 let signature = self.verify_callable_id(*callable, context)?;
+                if signature.generic_arity != 0 {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "generic named function escaped without one complete specialization",
+                    ));
+                }
                 if expression.ty != signature.function_type {
                     return Err(HirInvariantError::new(
                         context,
@@ -2487,6 +2493,16 @@ impl Verifier<'_> {
                 }
                 for argument in arguments {
                     self.verify_type(*argument, format!("{context} specialization argument"))?;
+                }
+                let mut interner = self.program.interner.clone();
+                let expected = TypeSubstitution::new(arguments.clone())
+                    .apply(&mut interner, signature.function_type)
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
+                if expression.ty != expected {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "specialized function value type differs from its exact substituted signature",
+                    ));
                 }
             }
             HirExpressionKind::PreludeTraitFunction { method, arguments } => {
@@ -3676,6 +3692,56 @@ mod tests {
         expression.ty = unit;
         let error = verify_typed_hir(&resolved, &wrong_type).unwrap_err();
         assert!(error.message().contains("closed contract"));
+    }
+
+    #[test]
+    fn named_function_values_are_closed_and_exact_before_mir() {
+        const SOURCE: &str = "fn identity[T](value: T): T { value }\n\
+             fn handler(): fn(Int): Int { identity[Int] }\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut open) = checked_program_from(SOURCE);
+        let expression = open
+            .expressions
+            .iter_mut()
+            .find(|expression| {
+                matches!(
+                    expression.kind,
+                    HirExpressionKind::SpecializedFunction { .. }
+                )
+            })
+            .expect("the generic function value is explicitly specialized");
+        let HirExpressionKind::SpecializedFunction { callable, .. } = expression.kind else {
+            unreachable!()
+        };
+        expression.kind = HirExpressionKind::Function(callable);
+        let error = verify_typed_hir(&resolved, &open).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("escaped without one complete specialization")
+        );
+
+        let (resolved, mut inexact) = checked_program_from(SOURCE);
+        let string = inexact.interner.scalar(ScalarType::String);
+        let expression = inexact
+            .expressions
+            .iter_mut()
+            .find(|expression| {
+                matches!(
+                    expression.kind,
+                    HirExpressionKind::SpecializedFunction { .. }
+                )
+            })
+            .expect("the generic function value is explicitly specialized");
+        let HirExpressionKind::SpecializedFunction { arguments, .. } = &mut expression.kind else {
+            unreachable!()
+        };
+        arguments[0] = string;
+        let error = verify_typed_hir(&resolved, &inexact).unwrap_err();
+        assert!(error.message().contains("exact substituted signature"));
     }
 
     #[test]

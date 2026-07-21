@@ -13,11 +13,14 @@ and bytecode lowering. One instance is identified by the pair of its resolved
 callable ID and its complete canonical type-argument vector.
 
 The request-local worklist starts with every non-generic callable and every
-generic function value retained by a closed constant. It then follows static
-function operands in each reached MIR template, applies the enclosing
-substitution to nested specializations, and inserts unseen instances in stable
-order. Reaching the same recursive instance is a no-op. Recursion that keeps
-constructing a different type is stopped by the generic-instantiation budget.
+generic function value retained anywhere inside a closed constant. It then
+follows static function operands in each reached MIR template, applies the
+enclosing substitution to nested specializations, and inserts unseen instances
+in stable order. A source-trait associated function retained by a constant is
+resolved to the same concrete override or default as an operand reached from
+MIR, and the constant stores only that selected callable. Reaching the same
+recursive instance is a no-op. Recursion that keeps constructing a different
+type is stopped by the generic-instantiation budget.
 
 Every reached MIR type is substituted through the request's cloned interner
 before bytecode construction. Executable bytecode callables consequently have

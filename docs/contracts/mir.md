@@ -1,7 +1,7 @@
 # Typed HIR to MIR contract
 
-**Status:** M3 typed CFG plus M4 static-trait and opaque-result lowering and
-verification implemented
+**Status:** M3 typed CFG plus M4 uniform function values, static-trait and
+opaque-result lowering and verification implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -36,6 +36,9 @@ An admitted program guarantees:
   has one checked root;
 - every prelude trait operand has complete canonical arguments and the exact
   `Display.display` or `Iterator.next` function type;
+- every ordinary named-function operand is either intrinsically non-generic or
+  carries one complete specialization whose exact substituted signature is its
+  operand type;
 - every iterator loop records either a valid intrinsic source or one exact
   `Iterator[T]` contract whose element matches its binding pattern;
 - every opaque result has one verified declaration contract and finite witness,
@@ -109,6 +112,14 @@ argument association. Source-trait calls retain their specialized trait member;
 complete type arguments. These operands carry no vtable or runtime witness and
 are resolved to direct implementation callables during monomorphization.
 
+Storing or passing a function value uses the ordinary typed local, constant, or
+aggregate path. A later call through that place is therefore genuinely indirect
+in MIR, but its callee still has one exact structural function type. Its
+arguments are indexed positionally and preserve modes and variadic association;
+no parameter label survives in the function type. The MIR verifier checks the
+same call contract whether the callee is a static function operand or a value
+read from a place.
+
 An opaque success exit remains an explicit coercion rvalue whose kind is
 `Assignability::Opaque`. MIR preserves both operand and destination types, so a
 later phase never needs to rediscover the hidden representation. The coercion
@@ -163,6 +174,9 @@ The structural verifier introduced in M3 proves at minimum:
 - place projections are legal for their base type;
 - call arity, modes, argument types, and outcome agree with the selected
   callable;
+- every static function operand has complete specialization arity and its exact
+  substituted type, while an indirect callee has that same concrete structural
+  function type;
 - prelude trait operands have their complete arity and exact closed signature,
   including the single receiver parameter expected by a call;
 - an opaque coercion is used only from the declaration's exact concrete witness
