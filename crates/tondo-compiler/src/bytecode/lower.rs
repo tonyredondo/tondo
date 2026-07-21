@@ -1304,11 +1304,10 @@ fn callable_name(resolved: &ResolvedProgram, id: HirCallableId) -> String {
                 format!("{owner}.{}", declaration.name())
             })
             .unwrap_or_else(|| format!("member#{}", member.index())),
-        HirCallableId::Implementation(span) => format!(
-            "implementation@{}:{}..{}",
-            span.file().index(),
-            span.range().start(),
-            span.range().end()
+        HirCallableId::Implementation(method) => format!(
+            "implementation#{}.method#{}",
+            method.implementation().index(),
+            method.index()
         ),
     }
 }

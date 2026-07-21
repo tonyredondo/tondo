@@ -2,15 +2,19 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
+use crate::package::{ModuleId, SymbolIdentity};
 use crate::resolve::{LocalKind, MemberKind, MemberOwner, ResolvedProgram, SymbolKind};
-use crate::types::{IntrinsicType, ScalarType, TypeId, TypeKind};
+use crate::types::{
+    FunctionParameter, FunctionType, IntrinsicType, ParameterMode, ScalarType, TypeId,
+    TypeInterner, TypeKind, TypeSubstitution,
+};
 
 use super::{
     HirAssignmentTarget, HirAssignmentTargetKind, HirCallableId, HirConstantValue,
     HirConstantValueKind, HirConstantVariantValue, HirExpression, HirExpressionId,
     HirExpressionKind, HirFlow, HirForKind, HirGenericParameter, HirPattern, HirPatternId,
-    HirPatternKind, HirProgram, HirStatement, HirTypeDeclarationKind, HirValueCategory,
-    HirVariantPayload, HirVariantValue,
+    HirPatternKind, HirProgram, HirStatement, HirTraitConstructor, HirTraitMethodKey,
+    HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue,
 };
 
 /// Reports a compiler defect at the boundary between typed HIR and MIR.
@@ -102,6 +106,7 @@ impl Verifier<'_> {
         }
 
         self.verify_declarations()?;
+        self.verify_implementations()?;
         self.verify_constants()?;
         self.verify_callables()?;
         self.verify_annotations_and_locals()?;
@@ -352,6 +357,555 @@ impl Verifier<'_> {
             }
         }
         Ok(())
+    }
+
+    fn verify_implementations(&self) -> Result<(), HirInvariantError> {
+        let mut table_callables = BTreeSet::new();
+        let mut contract_interner = self.program.interner.clone();
+        for (index, implementation) in self.program.implementations.iter().enumerate() {
+            let index = u32::try_from(index).map_err(|_| {
+                HirInvariantError::new("implementation table", "implementation ID exceeds u32")
+            })?;
+            let context = format!("implementation#{index}");
+            if implementation.id.index() != index {
+                return Err(HirInvariantError::new(
+                    &context,
+                    format!(
+                        "table position {index} contains implementation#{}",
+                        implementation.id.index()
+                    ),
+                ));
+            }
+            if !implementation.contract_complete {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "implementation contract is incomplete",
+                ));
+            }
+            let expected_module = self
+                .resolved
+                .modules()
+                .find(|module| module.files().contains(&implementation.span.file()))
+                .map(crate::resolve::ResolvedModule::id)
+                .ok_or_else(|| {
+                    HirInvariantError::new(&context, "implementation file has no resolved module")
+                })?;
+            if expected_module != &implementation.module {
+                return Err(HirInvariantError::new(
+                    &context,
+                    format!(
+                        "stored module {} differs from resolved module {expected_module}",
+                        implementation.module
+                    ),
+                ));
+            }
+            let outer_arity = u32::try_from(implementation.parameters.len()).map_err(|_| {
+                HirInvariantError::new(&context, "implementation generic arity exceeds u32")
+            })?;
+            self.verify_generics(&implementation.parameters, outer_arity, None, &context)?;
+            self.verify_type(implementation.target, format!("{context} target"))?;
+            for argument in &implementation.trait_reference.arguments {
+                self.verify_type(*argument, format!("{context} trait argument"))?;
+            }
+
+            let source_trait = match &implementation.trait_reference.constructor {
+                HirTraitConstructor::Symbol(symbol) => {
+                    self.verify_symbol(*symbol, &[SymbolKind::Trait], &context)?;
+                    let declaration = self.program.declaration(*symbol).ok_or_else(|| {
+                        HirInvariantError::new(&context, "source trait has no HIR declaration")
+                    })?;
+                    if implementation.trait_reference.arguments.len()
+                        != declaration.parameters.len()
+                    {
+                        return Err(HirInvariantError::new(
+                            &context,
+                            "trait argument arity does not match its declaration",
+                        ));
+                    }
+                    Some(*symbol)
+                }
+                HirTraitConstructor::Prelude(name) => {
+                    let expected = match name.as_str() {
+                        "Display" => 0,
+                        "Iterator" => 1,
+                        _ => {
+                            return Err(HirInvariantError::new(
+                                &context,
+                                format!("closed or unknown prelude trait `{name}` was admitted"),
+                            ));
+                        }
+                    };
+                    if implementation.trait_reference.arguments.len() != expected {
+                        return Err(HirInvariantError::new(
+                            &context,
+                            "prelude trait argument arity is inconsistent",
+                        ));
+                    }
+                    None
+                }
+                HirTraitConstructor::External(_) => {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        "external trait contract was admitted without an interface",
+                    ));
+                }
+            };
+
+            let mut header_positions = BTreeSet::new();
+            self.collect_generic_positions(implementation.target, &mut header_positions)?;
+            for argument in &implementation.trait_reference.arguments {
+                self.collect_generic_positions(*argument, &mut header_positions)?;
+            }
+            if let Some(parameter) = implementation
+                .parameters
+                .iter()
+                .find(|parameter| !header_positions.contains(&parameter.position))
+            {
+                return Err(HirInvariantError::new(
+                    &context,
+                    format!(
+                        "generic local#{} does not occur in the coherence header",
+                        parameter.local.index()
+                    ),
+                ));
+            }
+            self.verify_orphan_rule(implementation, &context)?;
+
+            let mut provided = BTreeSet::new();
+            for (method_index, method) in implementation.methods.iter().enumerate() {
+                let method_index = u32::try_from(method_index).map_err(|_| {
+                    HirInvariantError::new(&context, "implementation method ID exceeds u32")
+                })?;
+                let method_context = format!("{context} method#{method_index}");
+                if method.id.implementation() != implementation.id
+                    || method.id.index() != method_index
+                {
+                    return Err(HirInvariantError::new(
+                        &method_context,
+                        "method ID does not match its implementation table position",
+                    ));
+                }
+                if !table_callables.insert(HirCallableId::Implementation(method.id)) {
+                    return Err(HirInvariantError::new(
+                        &method_context,
+                        "implementation callable ID is duplicated",
+                    ));
+                }
+                let contract = method.contract.as_ref().ok_or_else(|| {
+                    HirInvariantError::new(&method_context, "method has no matched trait contract")
+                })?;
+                if !provided.insert(contract.method) {
+                    return Err(HirInvariantError::new(
+                        &method_context,
+                        "trait method contract is implemented more than once",
+                    ));
+                }
+                let callable = self
+                    .program
+                    .callable(HirCallableId::Implementation(method.id))
+                    .ok_or_else(|| {
+                        HirInvariantError::new(
+                            &method_context,
+                            "implementation method has no callable signature",
+                        )
+                    })?;
+                if callable.body_source.is_none() {
+                    return Err(HirInvariantError::new(
+                        &method_context,
+                        "implementation method has no source body",
+                    ));
+                }
+                if callable.generics.len() < implementation.parameters.len()
+                    || !callable
+                        .generics
+                        .iter()
+                        .zip(&implementation.parameters)
+                        .all(|(actual, expected)| same_generic_parameter(actual, expected))
+                {
+                    return Err(HirInvariantError::new(
+                        &method_context,
+                        "callable does not preserve the implementation generic prefix",
+                    ));
+                }
+                if callable.function_type != contract.function_type {
+                    return Err(HirInvariantError::new(
+                        &method_context,
+                        "callable signature differs from its instantiated trait contract",
+                    ));
+                }
+                self.verify_type(
+                    contract.function_type,
+                    format!("{method_context} contract signature"),
+                )?;
+                let has_receiver = callable
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.receiver);
+                if has_receiver != contract.has_receiver {
+                    return Err(HirInvariantError::new(
+                        &method_context,
+                        "receiver classification differs from the trait contract",
+                    ));
+                }
+                let actual_bounds = callable
+                    .generics
+                    .iter()
+                    .filter(|parameter| parameter.position >= outer_arity)
+                    .map(|parameter| parameter.bounds.clone())
+                    .collect::<Vec<_>>();
+                if !same_generic_bound_groups(&actual_bounds, &contract.generic_bounds) {
+                    return Err(HirInvariantError::new(
+                        &method_context,
+                        "method generic bounds differ from the trait contract",
+                    ));
+                }
+                self.verify_implementation_method_key(
+                    implementation,
+                    source_trait,
+                    method,
+                    contract,
+                    &mut contract_interner,
+                    &method_context,
+                )?;
+            }
+
+            let expected_send = if let Some(symbol) = source_trait {
+                let declaration = self.program.declaration(symbol).expect("checked above");
+                let HirTypeDeclarationKind::Trait(definition) = &declaration.kind else {
+                    unreachable!("source trait kind was checked")
+                };
+                for expected in &definition.methods {
+                    let key = HirTraitMethodKey::Source(expected.member);
+                    if !expected.has_default && !provided.contains(&key) {
+                        return Err(HirInvariantError::new(
+                            &context,
+                            format!(
+                                "required trait method member#{} is missing",
+                                expected.member.index()
+                            ),
+                        ));
+                    }
+                }
+                definition
+                    .methods
+                    .iter()
+                    .any(|method| method.requires_self_send)
+            } else {
+                let required = match &implementation.trait_reference.constructor {
+                    HirTraitConstructor::Prelude(name) if name.as_str() == "Display" => {
+                        HirTraitMethodKey::Prelude(super::HirPreludeTraitMethod::Display)
+                    }
+                    HirTraitConstructor::Prelude(name) if name.as_str() == "Iterator" => {
+                        HirTraitMethodKey::Prelude(super::HirPreludeTraitMethod::IteratorNext)
+                    }
+                    _ => unreachable!("only open prelude traits reach this branch"),
+                };
+                if !provided.contains(&required) {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        "required prelude trait method is missing",
+                    ));
+                }
+                false
+            };
+            if implementation.requires_self_send != expected_send {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "implementation has an inconsistent Self: Send requirement",
+                ));
+            }
+        }
+
+        let callable_ids = self
+            .program
+            .callables
+            .iter()
+            .filter_map(|callable| match callable.id {
+                HirCallableId::Implementation(_) => Some(callable.id),
+                HirCallableId::Symbol(_) | HirCallableId::Member(_) => None,
+            })
+            .collect::<BTreeSet<_>>();
+        if callable_ids != table_callables {
+            return Err(HirInvariantError::new(
+                "implementation table",
+                "implementation methods and callable signatures are not in one-to-one correspondence",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_implementation_method_key(
+        &self,
+        implementation: &super::HirImplementation,
+        source_trait: Option<crate::resolve::SymbolId>,
+        method: &super::HirImplementationMethod,
+        contract: &super::HirImplementationMethodContract,
+        contract_interner: &mut TypeInterner,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        match (contract.method, source_trait) {
+            (HirTraitMethodKey::Source(member), Some(owner)) => {
+                let declaration = self.verify_member(
+                    member,
+                    &[MemberKind::TraitMethod, MemberKind::TraitAssociatedFunction],
+                    context,
+                )?;
+                if declaration.owner() != MemberOwner::Type(owner)
+                    || declaration.name().as_str() != method.name.as_str()
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "source method key does not belong to the implemented trait and name",
+                    ));
+                }
+                let trait_declaration = self.program.declaration(owner).expect("checked above");
+                let HirTypeDeclarationKind::Trait(definition) = &trait_declaration.kind else {
+                    unreachable!("source trait kind was checked")
+                };
+                let expected = definition
+                    .methods
+                    .iter()
+                    .find(|expected| expected.member == member)
+                    .ok_or_else(|| {
+                        HirInvariantError::new(context, "method key is absent from the trait table")
+                    })?;
+                if contract.has_default != expected.has_default
+                    || contract.requires_self_send != expected.requires_self_send
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "default or Self: Send metadata differs from the trait method",
+                    ));
+                }
+                let source_callable = self
+                    .program
+                    .callable(HirCallableId::Member(member))
+                    .ok_or_else(|| {
+                        HirInvariantError::new(context, "trait method has no callable signature")
+                    })?;
+                let fixed_arity = u32::try_from(trait_declaration.parameters.len())
+                    .ok()
+                    .and_then(|arity| arity.checked_add(1))
+                    .ok_or_else(|| {
+                        HirInvariantError::new(context, "trait fixed arity exceeds u32")
+                    })?;
+                let local_arity = u32::try_from(contract.generic_bounds.len()).map_err(|_| {
+                    HirInvariantError::new(context, "method generic arity exceeds u32")
+                })?;
+                let expected_arity = fixed_arity.checked_add(local_arity).ok_or_else(|| {
+                    HirInvariantError::new(context, "method generic arity overflows u32")
+                })?;
+                if source_callable.generic_arity != expected_arity {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "stored contract has the wrong method-generic arity",
+                    ));
+                }
+                let outer_arity = u32::try_from(implementation.parameters.len()).map_err(|_| {
+                    HirInvariantError::new(context, "implementation generic arity exceeds u32")
+                })?;
+                let mut arguments = implementation.trait_reference.arguments.clone();
+                arguments.push(implementation.target);
+                let local_end = outer_arity.checked_add(local_arity).ok_or_else(|| {
+                    HirInvariantError::new(context, "implementation method arity overflows u32")
+                })?;
+                for position in outer_arity..local_end {
+                    arguments.push(
+                        contract_interner
+                            .generic_parameter(position)
+                            .map_err(|error| HirInvariantError::new(context, error.to_string()))?,
+                    );
+                }
+                let substitution = TypeSubstitution::new(arguments);
+                let expected_function = substitution
+                    .apply(contract_interner, source_callable.function_type)
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
+                if expected_function != contract.function_type {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "instantiated signature was not derived from the source trait method",
+                    ));
+                }
+                let expected_bounds = source_callable
+                    .generics
+                    .iter()
+                    .filter(|parameter| parameter.position >= fixed_arity)
+                    .map(|parameter| {
+                        parameter
+                            .bounds
+                            .iter()
+                            .map(|bound| {
+                                Ok(super::HirTraitReference {
+                                    constructor: bound.constructor.clone(),
+                                    arguments: bound
+                                        .arguments
+                                        .iter()
+                                        .map(|argument| {
+                                            substitution
+                                                .apply(contract_interner, *argument)
+                                                .map_err(|error| {
+                                                    HirInvariantError::new(
+                                                        context,
+                                                        error.to_string(),
+                                                    )
+                                                })
+                                        })
+                                        .collect::<Result<Vec<_>, HirInvariantError>>()?,
+                                })
+                            })
+                            .collect::<Result<Vec<_>, HirInvariantError>>()
+                    })
+                    .collect::<Result<Vec<_>, HirInvariantError>>()?;
+                if !same_generic_bound_groups(&expected_bounds, &contract.generic_bounds) {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "instantiated generic bounds were not derived from the source trait method",
+                    ));
+                }
+                if source_callable
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.receiver)
+                    != contract.has_receiver
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "receiver metadata was not derived from the source trait method",
+                    ));
+                }
+            }
+            (HirTraitMethodKey::Prelude(method_key), None) => {
+                let (trait_name, method_name) = match method_key {
+                    super::HirPreludeTraitMethod::Display => ("Display", "display"),
+                    super::HirPreludeTraitMethod::IteratorNext => ("Iterator", "next"),
+                };
+                if !matches!(
+                    &implementation.trait_reference.constructor,
+                    HirTraitConstructor::Prelude(name) if name.as_str() == trait_name
+                ) || method.name.as_str() != method_name
+                    || contract.has_default
+                    || contract.requires_self_send
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "prelude method metadata does not match its contract",
+                    ));
+                }
+                let (mode, outcome) = match method_key {
+                    super::HirPreludeTraitMethod::Display => (
+                        ParameterMode::Ref,
+                        contract_interner.scalar(ScalarType::String),
+                    ),
+                    super::HirPreludeTraitMethod::IteratorNext => (
+                        ParameterMode::Mut,
+                        contract_interner
+                            .option(implementation.trait_reference.arguments[0])
+                            .map_err(|error| HirInvariantError::new(context, error.to_string()))?,
+                    ),
+                };
+                let expected_function = contract_interner
+                    .function(FunctionType::new(
+                        false,
+                        false,
+                        vec![FunctionParameter::new(mode, implementation.target)],
+                        None,
+                        outcome,
+                    ))
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
+                if expected_function != contract.function_type
+                    || !contract.has_receiver
+                    || !contract.generic_bounds.is_empty()
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "prelude method signature was not derived from its closed contract",
+                    ));
+                }
+            }
+            (HirTraitMethodKey::Source(_), None) | (HirTraitMethodKey::Prelude(_), Some(_)) => {
+                return Err(HirInvariantError::new(
+                    context,
+                    "method key kind does not match the implemented trait",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn collect_generic_positions(
+        &self,
+        root: TypeId,
+        positions: &mut BTreeSet<u32>,
+    ) -> Result<(), HirInvariantError> {
+        let mut pending = vec![root];
+        let mut visited = BTreeSet::new();
+        while let Some(ty) = pending.pop() {
+            if !visited.insert(ty) {
+                continue;
+            }
+            match self.program.interner.kind(ty).map_err(|error| {
+                HirInvariantError::new("implementation header", error.to_string())
+            })? {
+                TypeKind::GenericParameter(position) => {
+                    positions.insert(*position);
+                }
+                TypeKind::Nominal { arguments, .. }
+                | TypeKind::Tuple(arguments)
+                | TypeKind::Union(arguments)
+                | TypeKind::Intrinsic { arguments, .. }
+                | TypeKind::Generated { arguments, .. } => {
+                    pending.extend(arguments.iter().copied());
+                }
+                TypeKind::Function(function) => {
+                    pending.extend(function.parameters().iter().map(|parameter| parameter.ty()));
+                    pending.extend(function.variadic());
+                    pending.push(function.outcome());
+                }
+                TypeKind::Option(item) => pending.push(*item),
+                TypeKind::Result { success, error } => {
+                    pending.push(*success);
+                    pending.push(*error);
+                }
+                TypeKind::Cursor { collection, .. } => pending.push(*collection),
+                TypeKind::Error
+                | TypeKind::Scalar(_)
+                | TypeKind::Inference(_)
+                | TypeKind::OpaqueResult(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_orphan_rule(
+        &self,
+        implementation: &super::HirImplementation,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        let owns_trait = match &implementation.trait_reference.constructor {
+            HirTraitConstructor::Symbol(symbol) => {
+                self.resolved.symbol(*symbol).is_some_and(|symbol| {
+                    identity_belongs_to(&implementation.module, symbol.identity())
+                })
+            }
+            HirTraitConstructor::External(identity) => {
+                identity_belongs_to(&implementation.module, identity)
+            }
+            HirTraitConstructor::Prelude(_) => false,
+        };
+        let owns_target = match self.program.interner.kind(implementation.target) {
+            Ok(TypeKind::Nominal { identity, .. } | TypeKind::OpaqueResult(identity)) => {
+                identity_belongs_to(&implementation.module, identity)
+            }
+            _ => false,
+        };
+        if owns_trait || owns_target {
+            Ok(())
+        } else {
+            Err(HirInvariantError::new(
+                context,
+                "orphan implementation was admitted",
+            ))
+        }
     }
 
     fn verify_constants(&self) -> Result<(), HirInvariantError> {
@@ -1213,7 +1767,20 @@ impl Verifier<'_> {
                 }
                 Ok(())
             }
-            HirCallableId::Implementation(_) => Ok(()),
+            HirCallableId::Implementation(method) => self
+                .program
+                .implementation_method(method)
+                .map(|_| ())
+                .ok_or_else(|| {
+                    HirInvariantError::new(
+                        context,
+                        format!(
+                            "references unknown implementation#{}.method#{}",
+                            method.implementation().index(),
+                            method.index()
+                        ),
+                    )
+                }),
         }
     }
 
@@ -1480,15 +2047,33 @@ fn same_generic_parameter(left: &HirGenericParameter, right: &HirGenericParamete
         })
 }
 
+fn same_generic_bound_groups(
+    left: &[Vec<super::HirTraitReference>],
+    right: &[Vec<super::HirTraitReference>],
+) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.len() == right.len()
+                && left.iter().all(|left| {
+                    right.iter().any(|right| {
+                        left.constructor == right.constructor && left.arguments == right.arguments
+                    })
+                })
+        })
+}
+
+fn identity_belongs_to(module: &ModuleId, identity: &SymbolIdentity) -> bool {
+    identity.package() == module.package() && identity.module() == module.path()
+}
+
 fn callable_context(callable: HirCallableId) -> String {
     match callable {
         HirCallableId::Symbol(symbol) => format!("callable symbol#{}", symbol.index()),
         HirCallableId::Member(member) => format!("callable member#{}", member.index()),
-        HirCallableId::Implementation(span) => format!(
-            "callable implementation in {} at bytes {}..{}",
-            span.file(),
-            span.range().start(),
-            span.range().end()
+        HirCallableId::Implementation(method) => format!(
+            "callable implementation#{}.method#{}",
+            method.implementation().index(),
+            method.index()
         ),
     }
 }
@@ -1668,6 +2253,66 @@ mod tests {
             .generic_arity = 2;
         let error = verify_typed_hir(&resolved, &wrong_arity).unwrap_err();
         assert!(error.message().contains("generic arity"));
+    }
+
+    #[test]
+    fn implementation_contract_metadata_is_verified_before_mir() {
+        const SOURCE: &str = "trait Contract {\n\
+             fn required(self): Int\n\
+             fn defaulted(self): Bool { true }\n\
+         }\n\
+         type Item = Int\n\
+         impl Contract for Item {\n\
+             fn required(self): Int { 1 }\n\
+         }\n\
+         fn main() {}\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut incomplete) = checked_program_from(SOURCE);
+        incomplete.implementations[0].contract_complete = false;
+        let error = verify_typed_hir(&resolved, &incomplete).unwrap_err();
+        assert!(error.message().contains("contract is incomplete"));
+
+        let (resolved, mut wrong_id) = checked_program_from(SOURCE);
+        wrong_id.implementations[0].methods[0].id.index = 1;
+        let error = verify_typed_hir(&resolved, &wrong_id).unwrap_err();
+        assert!(error.message().contains("table position"));
+
+        let (resolved, mut wrong_signature) = checked_program_from(SOURCE);
+        let wrong = wrong_signature.interner.scalar(ScalarType::Unit);
+        let method_id = wrong_signature.implementations[0].methods[0].id;
+        wrong_signature.implementations[0].methods[0]
+            .contract
+            .as_mut()
+            .unwrap()
+            .function_type = wrong;
+        wrong_signature
+            .callables
+            .iter_mut()
+            .find(|callable| callable.id == HirCallableId::Implementation(method_id))
+            .unwrap()
+            .function_type = wrong;
+        let error = verify_typed_hir(&resolved, &wrong_signature).unwrap_err();
+        assert!(error.message().contains("not derived"));
+
+        let (resolved, mut wrong_key) = checked_program_from(SOURCE);
+        wrong_key.implementations[0].methods[0]
+            .contract
+            .as_mut()
+            .unwrap()
+            .method = HirTraitMethodKey::Prelude(crate::hir::HirPreludeTraitMethod::Display);
+        let error = verify_typed_hir(&resolved, &wrong_key).unwrap_err();
+        assert!(error.message().contains("method key kind"));
+
+        let (resolved, mut missing) = checked_program_from(SOURCE);
+        missing.implementations[0].methods.clear();
+        let error = verify_typed_hir(&resolved, &missing).unwrap_err();
+        assert!(
+            error.message().contains("required trait method")
+                || error.message().contains("one-to-one correspondence")
+        );
     }
 
     #[test]

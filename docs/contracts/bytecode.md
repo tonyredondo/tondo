@@ -57,8 +57,11 @@ the reached MIR templates for static function operands. Nested type arguments
 are substituted with the enclosing instance before their callee is queued.
 Trait defaults retain a hidden generic `Self` position, even on otherwise
 non-generic traits, so declaring a default never makes it an executable root.
-A later `impl`/dispatch phase must select and specialize that template before it
-can enter the worklist.
+Static dispatch must select and specialize that template before it can enter the
+worklist. A concrete non-generic implementation method already has an ordinary
+checked HIR/MIR body and may enter the bootstrap worklist under its stable
+`implementation#N.method#M` identity; generic implementation methods remain
+templates until dispatch supplies their header arguments.
 
 Instances are deduplicated by callable identity plus the complete concrete
 argument vector. Direct recursion with the same vector therefore terminates.

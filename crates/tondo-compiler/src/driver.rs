@@ -2164,6 +2164,65 @@ mod tests {
     }
 
     #[test]
+    fn exact_implementations_cross_the_public_pipeline_and_reject_drift() {
+        let valid = execute(operation_request(
+            Operation::Run,
+            b"trait Value {\n\
+                  fn value(self): Int\n\
+                  fn valid(self): Bool { true }\n\
+              }\n\
+              type Item = Int\n\
+              impl Value for Item {\n\
+                  fn value(self): Int { 7 }\n\
+              }\n\
+              fn main() {\n\
+                  assert(true)\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            valid.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            valid.diagnostics().diagnostics()
+        );
+        assert_eq!(valid.exit_code(), 0);
+
+        let missing = execute(operation_request(
+            Operation::Check,
+            b"trait Value {\n\
+                  fn value(self): Int\n\
+              }\n\
+              type Item = Int\n\
+              impl Value for Item {\n\
+              }\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(missing.status(), CompilationStatus::Rejected);
+        assert_eq!(missing.diagnostics().diagnostics()[0].code(), "E1114");
+
+        let invalid_body = execute(operation_request(
+            Operation::Check,
+            b"trait Value {\n\
+                  fn value(self): Int\n\
+              }\n\
+              type Item = Int\n\
+              impl Value for Item {\n\
+                  fn value(self): Int { \"wrong\" }\n\
+              }\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(invalid_body.status(), CompilationStatus::Rejected);
+        assert_eq!(invalid_body.diagnostics().diagnostics()[0].code(), "E1102");
+    }
+
+    #[test]
     fn generic_constraint_obligations_execute_and_obey_the_request_budget() {
         let source = b"fn consume[T: Discard](value: T) {\n\
                            _ = value\n\

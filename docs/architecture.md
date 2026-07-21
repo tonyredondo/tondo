@@ -147,8 +147,13 @@ explicit incomplete boundaries until their owning M4 phases. Trait declarations
 carry a sorted method table, contextual `Self`, default-body and async-receiver
 requirements. Default bodies are checked once with rigid trait binders; calls to
 another receiver method of the same trait resolve locally and both inferred and
-explicit method generics preserve the enclosing trait arguments. `impl`,
-coherence, and trait dispatch remain separate later phases. Pattern checking is
+explicit method generics preserve the enclosing trait arguments. Implementations
+carry IDs derived from logical source order, their complete trait/target header,
+generic binders, source-ordered methods, and the instantiated contract of each
+method. HIR enforces determinable binders, module-based orphan rules, exact
+signatures and bounds, required/default membership, and the closed/open prelude
+protocol split before checking implementation bodies. Overlap, termination,
+constraint selection, and trait dispatch remain separate later phases. Pattern checking is
 part of the same typed-HIR
 boundary and records typed pattern arenas, guarded match arms, irrefutability,
 reachability, and exhaustiveness without deferring decisions to MIR. Assignment
@@ -177,7 +182,10 @@ source-less external identities, is recorded in
 Complete error-free HIR passes an internal admission verifier before either a
 successful check or MIR lowering. It rejects recovery/inference types, dangling
 or cyclic arena edges, unresolved semantic IDs, invalid value categories, and
-misaligned flow metadata as compiler defects. Partial HIR remains available to
+misaligned flow metadata as compiler defects. It also re-derives implementation
+signatures from their source or prelude trait, proves table/callable
+correspondence and orphan ownership, and rejects incomplete contracts as compiler
+defects. Partial HIR remains available to
 semantic tooling but is never executable. The phase ownership of moves, loans,
 cleanup, and suspension is fixed by ADR-016 and `docs/contracts/mir.md`.
 

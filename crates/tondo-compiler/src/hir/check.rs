@@ -873,7 +873,15 @@ impl<'a> ExpressionChecker<'a> {
                         | MemberKind::TraitAssociatedFunction
                 )
             }),
-            HirCallableId::Implementation(_) => false,
+            HirCallableId::Implementation(method) => {
+                self.program
+                    .implementation(method.implementation())
+                    .is_some_and(|implementation| implementation.contract_complete())
+                    && self
+                        .program
+                        .implementation_method(method)
+                        .is_some_and(|method| method.contract().is_some())
+            }
         }
     }
 
@@ -11823,6 +11831,57 @@ mod tests {
              }\n",
         );
         assert_eq!(codes(&missing), ["E1102"]);
+    }
+
+    #[test]
+    fn implementation_bodies_are_checked_after_exact_contract_matching() {
+        let (_, _, valid) = check(
+            "trait Contract {\n\
+                 fn required(self): Int\n\
+                 fn defaulted(self): Bool { true }\n\
+             }\n\
+             type Item = Int\n\
+             impl Contract for Item {\n\
+                 fn required(self): Int { 1 }\n\
+             }\n\
+             fn main() {}\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+        let implementation = valid.program().implementations().next().unwrap();
+        assert!(implementation.contract_complete());
+        let method = implementation.methods().first().unwrap();
+        assert!(
+            valid
+                .program()
+                .body(HirCallableId::Implementation(method.id()))
+                .is_some()
+        );
+        assert_eq!(implementation.methods().len(), 1);
+
+        let (_, _, invalid) = check(
+            "trait Contract {\n\
+                 fn required(self): Int\n\
+             }\n\
+             type Item = Int\n\
+             impl Contract for Item {\n\
+                 fn required(self): Int { \"wrong\" }\n\
+             }\n",
+        );
+        assert_eq!(codes(&invalid), ["E1102"]);
+        let method = invalid
+            .program()
+            .implementations()
+            .next()
+            .unwrap()
+            .methods()[0]
+            .id();
+        assert!(
+            invalid
+                .program()
+                .body(HirCallableId::Implementation(method))
+                .is_some()
+        );
     }
 
     #[test]

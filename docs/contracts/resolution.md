@@ -70,6 +70,9 @@ An associated function may share a field name because one is type-qualified and
 the other is instance-qualified. Inherent method owners must be a nominal type
 or enum defined by the current module; violations produce `E1504`. Duplicate
 method declarations inside one `impl` are rejected before contract checking.
+Resolution deliberately does not install implementation methods into an open
+member namespace and does not decide trait satisfaction. Typed HIR owns the
+coherence header, orphan rule, exact contract match, and implementation body.
 
 ## Lexical scopes
 

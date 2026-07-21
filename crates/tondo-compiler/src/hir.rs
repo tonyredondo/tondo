@@ -9,7 +9,7 @@ use std::error::Error;
 use std::fmt;
 
 use crate::diagnostics::{Diagnostic, DiagnosticError};
-use crate::package::{Name, PackageGraphError, SymbolIdentity};
+use crate::package::{ModuleId, Name, PackageGraphError, SymbolIdentity};
 use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::{FileId, SourceError, Span, TextRange};
 use crate::types::{
@@ -125,6 +125,7 @@ pub struct HirProgram {
     declarations: BTreeMap<SymbolId, HirTypeDeclaration>,
     constants: BTreeMap<SymbolId, HirConstant>,
     callables: Vec<HirCallableSignature>,
+    implementations: Vec<HirImplementation>,
     annotations: BTreeMap<(FileId, u32, u32), TypeId>,
     expressions: Vec<HirExpression>,
     expression_flows: Vec<HirFlow>,
@@ -164,6 +165,26 @@ impl HirProgram {
 
     pub fn callable(&self, id: HirCallableId) -> Option<&HirCallableSignature> {
         self.callables.iter().find(|callable| callable.id == id)
+    }
+
+    pub fn implementations(&self) -> impl ExactSizeIterator<Item = &HirImplementation> {
+        self.implementations.iter()
+    }
+
+    pub fn implementation(&self, id: HirImplementationId) -> Option<&HirImplementation> {
+        self.implementations
+            .get(id.0 as usize)
+            .filter(|implementation| implementation.id == id)
+    }
+
+    pub fn implementation_method(
+        &self,
+        id: HirImplementationMethodId,
+    ) -> Option<&HirImplementationMethod> {
+        self.implementation(id.implementation)?
+            .methods
+            .get(id.index as usize)
+            .filter(|method| method.id == id)
     }
 
     pub fn type_at(&self, file: FileId, range: TextRange) -> Option<TypeId> {
@@ -622,11 +643,161 @@ impl HirTraitReference {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HirImplementationId(u32);
+
+impl HirImplementationId {
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HirImplementationMethodId {
+    implementation: HirImplementationId,
+    index: u32,
+}
+
+impl HirImplementationMethodId {
+    pub fn implementation(self) -> HirImplementationId {
+        self.implementation
+    }
+
+    pub fn index(self) -> u32 {
+        self.index
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum HirPreludeTraitMethod {
+    Display,
+    IteratorNext,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum HirTraitMethodKey {
+    Source(MemberId),
+    Prelude(HirPreludeTraitMethod),
+}
+
+#[derive(Debug, Clone)]
+pub struct HirImplementationMethodContract {
+    method: HirTraitMethodKey,
+    has_default: bool,
+    requires_self_send: bool,
+    function_type: TypeId,
+    has_receiver: bool,
+    generic_bounds: Vec<Vec<HirTraitReference>>,
+}
+
+impl HirImplementationMethodContract {
+    pub fn method(&self) -> HirTraitMethodKey {
+        self.method
+    }
+
+    pub fn has_default(&self) -> bool {
+        self.has_default
+    }
+
+    pub fn requires_self_send(&self) -> bool {
+        self.requires_self_send
+    }
+
+    pub fn function_type(&self) -> TypeId {
+        self.function_type
+    }
+
+    pub fn has_receiver(&self) -> bool {
+        self.has_receiver
+    }
+
+    pub fn generic_bounds(&self) -> &[Vec<HirTraitReference>] {
+        &self.generic_bounds
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HirImplementationMethod {
+    id: HirImplementationMethodId,
+    span: Span,
+    name: Name,
+    contract: Option<HirImplementationMethodContract>,
+}
+
+impl HirImplementationMethod {
+    pub fn id(&self) -> HirImplementationMethodId {
+        self.id
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    pub fn name(&self) -> &Name {
+        &self.name
+    }
+
+    pub fn contract(&self) -> Option<&HirImplementationMethodContract> {
+        self.contract.as_ref()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HirImplementation {
+    id: HirImplementationId,
+    span: Span,
+    module: ModuleId,
+    parameters: Vec<HirGenericParameter>,
+    trait_reference: HirTraitReference,
+    target: TypeId,
+    methods: Vec<HirImplementationMethod>,
+    contract_complete: bool,
+    requires_self_send: bool,
+}
+
+impl HirImplementation {
+    pub fn id(&self) -> HirImplementationId {
+        self.id
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    pub fn module(&self) -> &ModuleId {
+        &self.module
+    }
+
+    pub fn parameters(&self) -> &[HirGenericParameter] {
+        &self.parameters
+    }
+
+    pub fn trait_reference(&self) -> &HirTraitReference {
+        &self.trait_reference
+    }
+
+    pub fn target(&self) -> TypeId {
+        self.target
+    }
+
+    pub fn methods(&self) -> &[HirImplementationMethod] {
+        &self.methods
+    }
+
+    pub fn contract_complete(&self) -> bool {
+        self.contract_complete
+    }
+
+    pub fn requires_self_send(&self) -> bool {
+        self.requires_self_send
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HirCallableId {
     Symbol(SymbolId),
     Member(MemberId),
-    Implementation(Span),
+    Implementation(HirImplementationMethodId),
 }
 
 #[derive(Debug, Clone)]

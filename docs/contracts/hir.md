@@ -1,9 +1,10 @@
 # Semantic and typed HIR contract
 
-**Status:** bootstrap declarations, trait declarations and defaults, typed
-expressions, generic specialization and `Discard` constraints, patterns,
-assignment, discard, structured control flow, calls, semantic occurrences, and
-verified MIR admission implemented
+**Status:** bootstrap declarations, trait declarations/defaults, explicit
+implementation contracts and orphan rules, typed expressions, generic
+specialization and `Discard` constraints, patterns, assignment, discard,
+structured control flow, calls, semantic occurrences, and verified MIR
+admission implemented
 
 ## Boundary
 
@@ -20,6 +21,9 @@ The output owns:
 - normalized generic binders and trait bounds;
 - callable signatures for functions, methods, trait members, and `impl`
   members;
+- a deterministic implementation table containing each normalized trait/target
+  header, header binders, module owner, source-ordered method, and instantiated
+  method contract;
 - receiver and parameter modes, including the body-visible `Array[T]` type of
   a variadic parameter;
 - declaration-stable identities for opaque results;
@@ -41,9 +45,10 @@ The checker deliberately leaves its completion flag false when it encounters a
 surface whose semantics belongs to an unfinished phase. It checks bounded and
 unbounded generic function bodies, invariant call inference, explicit
 specialization, trait default bodies, same-trait receiver calls, and the closed
-structural `Discard` constraint. Proof of other intrinsic capabilities,
-user/external trait constraints, `impl` bodies, closures, string interpolation
-through `Display`, `defer`, ownership
+structural `Discard` constraint. Exact implementation bodies are checked as
+ordinary callables after their contract is admitted. Proof of other intrinsic
+capabilities, user/external trait constraints, calls selected through an
+implementation, closures, string interpolation through `Display`, `defer`, ownership
 availability, and trait-provided iteration remain explicit later boundaries
 rather than receiving provisional semantics.
 
@@ -70,6 +75,9 @@ The implemented bootstrap subset includes:
 - empty and generic traits with required receiver methods, associated
   operations, default bodies, contextual `Self`, and the intrinsic `Self: Send`
   marker on async receiver methods;
+- generic and concrete `impl` declarations with normalized coherence headers,
+  module-based orphan checks, exact source/prelude contracts, omitted or
+  replaced defaults, and checked implementation bodies;
 - scalar, string, tuple and `none` literals with bidirectional expected types;
 - blocks, `if`, all three `for` forms, `break`, `continue`, and `return`;
 - intrinsic iteration for `Array`, `Map`, `Set`, `Range`, and `String`;
@@ -132,7 +140,7 @@ or are inferred from the receiver. The preliminary bracket remains
 contextually resolved until the checker classifies it as an index or a
 specialization.
 
-## Trait declarations and default bodies
+## Trait declarations, defaults, and implementations
 
 A trait declaration owns one contextual `Self` type immediately after its
 written generic parameters. That hidden position participates in the complete
@@ -153,9 +161,50 @@ Each default body is checked once with rigid trait parameters and contextual
 same trait; it does not search unrelated traits or concrete implementations.
 Both inferred calls such as `self.choose(value)` and explicit calls such as
 `self.choose[Int](value)` produce a complete `SpecializedFunction` argument
-vector. This is declaration checking, not dispatch: `impl` validation,
-coherence, qualified trait calls, constraint-visible methods, and selection of
-a concrete implementation remain TRAIT-002 through TRAIT-005.
+vector. This is declaration checking, not dispatch. Implementation validation
+is a separate contract-admission pass; overlap, qualified trait calls,
+constraint-visible methods, and selection of a concrete implementation remain
+separate operations.
+
+Implementation declarations are indexed by stable logical source identity
+(`SourceId`, module path, logical path, then start byte), never by request-local
+`FileId`. Each method receives a source-ordinal ID under that implementation.
+The table retains the declaring module, normalized target, complete trait
+reference, header binders, method names and spans, and an optional instantiated
+contract while recovering. An error-free implementation must have a contract
+for every stored method and a complete-contract flag.
+
+Contract admission performs these checks before any body is typechecked:
+
+- every header binder occurs in the normalized target or complete trait
+  arguments; occurrence only in a bound produces `E1114`;
+- the current module owns either the trait or the outer nominal constructor of
+  the target after alias expansion; structural targets acquire no ownership;
+- every required method appears exactly once, a default may be omitted or
+  replaced, and no extra method is accepted;
+- after substituting trait arguments, contextual `Self`, and method-local
+  binders, function type, receiver classification, generic arity, unordered
+  bound sets, parameter modes and positions, variadic element, `async`,
+  `unsafe`, success, and error are exact; and
+- `Display` and `Iterator[T]` synthesize their language-owned contracts, while
+  `Copy`, `Discard`, `Equatable`, `Key`, `Send`, `Share`, `Call`, `CallMut`, and
+  `CallOnce` reject manual implementations.
+
+Parameter and generic-binder spellings are intentionally absent from this
+comparison. `Display` requires `fn display(self): String`; `Iterator[T]`
+requires `fn next(mut self): T?`. A trait default remains a generic template;
+omitting it does not create an implementation callable. A replacement is an
+ordinary implementation body and is checked once under the implementation
+binders.
+
+The admission verifier independently reconstructs each expected signature and
+method-generic bound set from the source or prelude trait. It also rechecks
+orphan ownership, deterministic IDs, generic prefixes, required/default
+coverage, table/callable correspondence, receiver metadata, and the propagated
+`Self: Send` requirement. The structural proof that a concrete target actually
+satisfies `Send` belongs to CAP-001; the obligation is retained now rather than
+silently discarded. TRAIT-003 through TRAIT-005 own overlap, termination,
+selection, qualified calls, and static dispatch.
 
 ## Generic constraints
 
@@ -175,7 +224,7 @@ specialized function values alike.
 
 Other intrinsic capability bounds and source/external trait bounds remain
 normalized in HIR and consume the same budget, but mark the semantic output
-incomplete when an instantiation needs proof. CAP-001 and TRAIT-002 through
+incomplete when an instantiation needs proof. CAP-001 and TRAIT-003 through
 TRAIT-005 own those proof rules. The driver therefore cannot run or report a
 complete check for such an instantiation by silently assuming the bound.
 
@@ -323,7 +372,11 @@ It first indexes every resolved declaration, then analyzes transparent alias
 dependencies, declares all generic binders, and only afterwards lowers bounds
 and declaration bodies. `Self` is therefore available in trait, inherent, and
 `impl` generic bounds without depending on the order in which syntax happened
-to be visited.
+to be visited. All trait signatures are materialized before implementations are
+matched, including when the trait lives in a later logical file. Implementation
+IDs then follow stable logical-source order and method IDs follow source order
+inside their owner, so changing source insertion order cannot change a callable
+identity.
 
 Request-local `SymbolId`, `MemberId`, `LocalId`, and `TypeId` values are not
 observable identities. Public comparisons and diagnostics use complete symbol
@@ -354,10 +407,12 @@ with invented meaning.
 
 For a source-less dependency module, resolution can currently provide only an
 external symbol identity. Such a type remains an opaque nominal application and
-such a bound remains an external trait reference. Generic arity and declaration
-kind for compiled dependencies will become checkable when the versioned module
-interface of M9 exists; source modules present in the request are always checked
-against their real declaration now.
+such a bound remains an external trait reference. A source-less external trait
+cannot yet admit an `impl`: exact checking produces `E1114` instead of guessing
+its methods. Generic arity, declaration kind, and contract data for compiled
+dependencies will become checkable when the versioned module interface of M9
+exists; source modules present in the request are always checked against their
+real declaration now.
 
 ## Recovery
 
@@ -438,7 +493,11 @@ explicit and inferred generic specialization, inference conflicts, and unsolved
 variables. Trait tests cover empty and generic declarations, contextual `Self`,
 required and associated operations, defaults under bounds, inferred and
 explicit same-trait calls, async receiver requirements, invalid bodies, and
-unknown members. Construction tests cover every nominal shape, contextual generic
+unknown members. Implementation tests cover deterministic IDs, generic header
+occurrence, local-trait structural targets, cross-module orphan rejection,
+source and prelude contracts, closed protocols, method generics and bound sets,
+required/default/extra membership, signature drift, checked bodies, and the
+public MIR/bytecode/VM path. Construction tests cover every nominal shape, contextual generic
 instances, `with`, numeric conversions, ranges, membership, and cross-module
 visibility without leaking omitted private field names. Driver
 tests prove that semantic diagnostics and all HIR resource limits are observable
@@ -455,4 +514,6 @@ propagation. Dedicated admission tests mutate
 otherwise valid HIR to prove rejection of incomplete/recovery state,
 noncanonical types, non-topological edges, misaligned flow metadata, missing
 local types, invalid value categories, incomplete trait tables, shifted generic
-arities, and inconsistent default-body or `Self: Send` metadata.
+arities, inconsistent default-body or `Self: Send` metadata, broken
+implementation IDs, incomplete implementation contracts, forged method keys,
+and signatures not derivable from their trait.

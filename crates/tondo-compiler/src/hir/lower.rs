@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode, PrimaryLocation, Related, Severity};
-use crate::package::{DeclarationPath, Name, Namespace, PackageGraph, SymbolIdentity};
+use crate::package::{DeclarationPath, ModuleId, Name, Namespace, PackageGraph, SymbolIdentity};
 use crate::resolve::{
     LocalId, LocalKind, ResolvedEntity, ResolvedName, ResolvedProgram, SymbolId, SymbolKind,
 };
@@ -15,9 +15,11 @@ use crate::types::{
 
 use super::{
     HirCallableId, HirCallableSignature, HirConstant, HirError, HirField, HirGenericParameter,
-    HirNominalDefinition, HirNominalShape, HirOutput, HirParameter, HirProgram,
-    HirTraitConstructor, HirTraitDefinition, HirTraitMethod, HirTraitReference, HirTypeDeclaration,
-    HirTypeDeclarationKind, HirVariant, HirVariantPayload,
+    HirImplementation, HirImplementationId, HirImplementationMethod,
+    HirImplementationMethodContract, HirImplementationMethodId, HirNominalDefinition,
+    HirNominalShape, HirOutput, HirParameter, HirPreludeTraitMethod, HirProgram,
+    HirTraitConstructor, HirTraitDefinition, HirTraitMethod, HirTraitMethodKey, HirTraitReference,
+    HirTypeDeclaration, HirTypeDeclarationKind, HirVariant, HirVariantPayload,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,10 +53,13 @@ pub fn lower_types<'a>(
         declarations: BTreeMap::new(),
         constants: BTreeMap::new(),
         callables: Vec::new(),
+        implementation_sites: Vec::new(),
+        implementations: Vec::new(),
         annotations: BTreeMap::new(),
         generic_types: BTreeMap::new(),
     };
     lowerer.index_declarations()?;
+    lowerer.index_implementations()?;
     lowerer.analyze_aliases()?;
     lowerer.lower_aliases()?;
     lowerer.lower_declarations()?;
@@ -67,6 +72,7 @@ pub fn lower_types<'a>(
             declarations: lowerer.declarations,
             constants: lowerer.constants,
             callables: lowerer.callables,
+            implementations: lowerer.implementations,
             annotations: lowerer.annotations,
             expressions: Vec::new(),
             expression_flows: Vec::new(),
@@ -86,6 +92,34 @@ pub fn lower_types<'a>(
 struct DeclarationSite<'a> {
     file: FileId,
     node: SyntaxNodeRef<'a>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ImplementationSite<'a> {
+    file: FileId,
+    node: SyntaxNodeRef<'a>,
+}
+
+#[derive(Debug, Clone)]
+struct ExpectedTraitMethod {
+    name: Name,
+    key: HirTraitMethodKey,
+    declaration_span: Option<Span>,
+    has_default: bool,
+    requires_self_send: bool,
+    signature: ExpectedTraitMethodSignature,
+}
+
+#[derive(Debug, Clone)]
+enum ExpectedTraitMethodSignature {
+    Source {
+        callable: HirCallableSignature,
+        fixed_arity: u32,
+    },
+    Concrete {
+        function_type: TypeId,
+        has_receiver: bool,
+    },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -122,6 +156,8 @@ struct TypeLowerer<'a> {
     declarations: BTreeMap<SymbolId, HirTypeDeclaration>,
     constants: BTreeMap<SymbolId, HirConstant>,
     callables: Vec<HirCallableSignature>,
+    implementation_sites: Vec<ImplementationSite<'a>>,
+    implementations: Vec<HirImplementation>,
     annotations: BTreeMap<(FileId, u32, u32), TypeId>,
     generic_types: BTreeMap<LocalId, TypeId>,
 }
@@ -174,6 +210,32 @@ impl<'a> TypeLowerer<'a> {
                 self.sites.insert(symbol, DeclarationSite { file, node });
             }
         }
+        Ok(())
+    }
+
+    fn index_implementations(&mut self) -> Result<(), HirError> {
+        for (file, parsed) in &self.parsed {
+            self.implementation_sites.extend(
+                parsed
+                    .cst()
+                    .root_node()
+                    .child_nodes()
+                    .filter(|node| node.kind() == SyntaxKind::ImplDecl)
+                    .map(|node| ImplementationSite { file: *file, node }),
+            );
+        }
+        self.implementation_sites.sort_by_key(|site| {
+            let source = self
+                .sources
+                .get(site.file)
+                .expect("parsed implementation files remain in the source database");
+            (
+                source.source_id().clone(),
+                source.module().clone(),
+                source.path().clone(),
+                site.node.range().start(),
+            )
+        });
         Ok(())
     }
 
@@ -1534,12 +1596,18 @@ impl<'a> TypeLowerer<'a> {
                     SyntaxKind::ConstDecl => self.lower_constant_declaration(file, node)?,
                     SyntaxKind::FunctionDecl => self.lower_function_declaration(file, node)?,
                     SyntaxKind::TraitDecl => self.lower_trait_declaration(file, node)?,
-                    SyntaxKind::ImplDecl => self.lower_implementation(file, node)?,
+                    SyntaxKind::ImplDecl => {}
                     SyntaxKind::TypeDecl | SyntaxKind::AliasDecl | SyntaxKind::EnumDecl => {}
                     SyntaxKind::ImportDecl => {}
                     _ => self.lower_annotation_tree(file, node, &TypeEnvironment::default())?,
                 }
             }
+        }
+        let sites = self.implementation_sites.clone();
+        for (index, site) in sites.into_iter().enumerate() {
+            let index = u32::try_from(index)
+                .map_err(|_| crate::types::TypeError::ResourceLimit { limit: u32::MAX })?;
+            self.lower_implementation(HirImplementationId(index), site.file, site.node)?;
         }
         Ok(())
     }
@@ -1738,6 +1806,7 @@ impl<'a> TypeLowerer<'a> {
 
     fn lower_implementation(
         &mut self,
+        id: HirImplementationId,
         file: FileId,
         declaration: SyntaxNodeRef<'a>,
     ) -> Result<(), HirError> {
@@ -1748,30 +1817,45 @@ impl<'a> TypeLowerer<'a> {
         let mut environment = TypeEnvironment::default();
         let (generic_declarations, mut outer_parameters) =
             self.declare_generics(file, &groups, &mut environment)?;
-        if let Some(target) = declaration
+        let target = if let Some(target) = declaration
             .child_nodes()
             .find(|child| child.kind() == SyntaxKind::TypeExpr)
         {
-            environment.contextual_self = Some(self.lower_type_expr(file, target, &environment)?);
-        }
-        if let Some(trait_path) = declaration
+            self.lower_type_expr(file, target, &environment)?
+        } else {
+            self.interner.error()
+        };
+        environment.contextual_self = Some(target);
+        let trait_reference = if let Some(trait_path) = declaration
             .child_nodes()
             .find(|child| child.kind() == SyntaxKind::TypePath)
         {
-            let _ = self.lower_trait_path(file, trait_path, &environment)?;
-        }
+            self.lower_trait_path(file, trait_path, &environment)?
+        } else {
+            HirTraitReference {
+                constructor: HirTraitConstructor::Prelude(Name::new("Display").unwrap()),
+                arguments: Vec::new(),
+            }
+        };
         self.finish_generic_bounds(
             file,
             &generic_declarations,
             &mut outer_parameters,
             &environment,
         )?;
+        let mut methods = Vec::new();
         for method in declaration
             .child_nodes()
             .filter(|child| child.kind() == SyntaxKind::ImplementationMethod)
         {
             let Some(method_name) = first_identifier(method) else {
                 continue;
+            };
+            let method_index = u32::try_from(methods.len())
+                .map_err(|_| crate::types::TypeError::ResourceLimit { limit: u32::MAX })?;
+            let method_id = HirImplementationMethodId {
+                implementation: id,
+                index: method_index,
             };
             let method_groups = method
                 .child_nodes()
@@ -1784,12 +1868,592 @@ impl<'a> TypeLowerer<'a> {
                 file,
                 method,
                 method_name.range(),
-                HirCallableId::Implementation(self.sources.span(file, method_name.range())?),
+                HirCallableId::Implementation(method_id),
                 method_environment,
                 generics,
             )?;
+            methods.push(HirImplementationMethod {
+                id: method_id,
+                span: self.sources.span(file, method_name.range())?,
+                name: Name::new(
+                    method_name
+                        .token()
+                        .normalized_identifier()
+                        .expect("implementation method names are identifiers"),
+                )
+                .expect("resolved implementation method names are valid"),
+                contract: None,
+            });
+        }
+        let mut implementation = HirImplementation {
+            id,
+            span: self.sources.span(file, declaration.range())?,
+            module: self.packages.module_for_file(self.sources, file)?,
+            parameters: outer_parameters,
+            trait_reference,
+            target,
+            methods,
+            contract_complete: false,
+            requires_self_send: false,
+        };
+        self.validate_implementation_contract(&mut implementation)?;
+        self.implementations.push(implementation);
+        Ok(())
+    }
+
+    fn validate_implementation_contract(
+        &mut self,
+        implementation: &mut HirImplementation,
+    ) -> Result<(), HirError> {
+        let diagnostics_before = self.diagnostics.len();
+        self.validate_implementation_binders(implementation)?;
+        self.validate_orphan_rule(implementation)?;
+        let Some(expected_methods) = self.expected_trait_methods(implementation)? else {
+            return Ok(());
+        };
+        implementation.requires_self_send = expected_methods
+            .iter()
+            .any(|method| method.requires_self_send);
+
+        let by_name = expected_methods
+            .iter()
+            .cloned()
+            .map(|method| (method.name.clone(), method))
+            .collect::<BTreeMap<_, _>>();
+        let mut provided = BTreeSet::new();
+        for method_index in 0..implementation.methods.len() {
+            let name = implementation.methods[method_index].name.clone();
+            let span = implementation.methods[method_index].span;
+            let Some(expected) = by_name.get(&name) else {
+                self.emit(
+                    span.file(),
+                    span.range(),
+                    "E1114",
+                    format!("implementation declares extra method `{name}`"),
+                    None,
+                    None,
+                )?;
+                continue;
+            };
+            if !provided.insert(name.clone()) {
+                self.emit(
+                    span.file(),
+                    span.range(),
+                    "E1114",
+                    format!("implementation provides method `{name}` more than once"),
+                    expected
+                        .declaration_span
+                        .map(|declaration| vec![("trait method declared here", declaration)]),
+                    None,
+                )?;
+                continue;
+            }
+            let method_id = implementation.methods[method_index].id;
+            let callable = self
+                .callables
+                .iter()
+                .find(|callable| callable.id == HirCallableId::Implementation(method_id))
+                .cloned()
+                .expect("implementation methods are lowered before contract matching");
+            let contract =
+                self.instantiate_method_contract(implementation, &callable, expected, span)?;
+            implementation.methods[method_index].contract = contract;
+        }
+
+        for expected in expected_methods {
+            if !expected.has_default && !provided.contains(&expected.name) {
+                self.emit(
+                    implementation.span.file(),
+                    implementation.span.range(),
+                    "E1114",
+                    format!(
+                        "implementation is missing required method `{}`",
+                        expected.name
+                    ),
+                    expected
+                        .declaration_span
+                        .map(|declaration| vec![("required trait method", declaration)]),
+                    None,
+                )?;
+            }
+        }
+        implementation.contract_complete = self.diagnostics.len() == diagnostics_before
+            && implementation
+                .methods
+                .iter()
+                .all(|method| method.contract.is_some());
+        Ok(())
+    }
+
+    fn validate_implementation_binders(
+        &mut self,
+        implementation: &HirImplementation,
+    ) -> Result<(), HirError> {
+        let mut positions = BTreeSet::new();
+        self.collect_generic_positions(implementation.target, &mut positions)?;
+        for argument in &implementation.trait_reference.arguments {
+            self.collect_generic_positions(*argument, &mut positions)?;
+        }
+        for parameter in &implementation.parameters {
+            if positions.contains(&parameter.position) {
+                continue;
+            }
+            let span = self
+                .resolved
+                .local(parameter.local)
+                .expect("implementation generic parameters have resolved binders")
+                .span();
+            self.emit(
+                span.file(),
+                span.range(),
+                "E1114",
+                "implementation binder does not appear in its trait or normalized target",
+                None,
+                None,
+            )?;
         }
         Ok(())
+    }
+
+    fn collect_generic_positions(
+        &self,
+        root: TypeId,
+        positions: &mut BTreeSet<u32>,
+    ) -> Result<(), HirError> {
+        let mut pending = vec![root];
+        let mut visited = BTreeSet::new();
+        while let Some(ty) = pending.pop() {
+            if !visited.insert(ty) {
+                continue;
+            }
+            match self.interner.kind(ty)? {
+                TypeKind::GenericParameter(position) => {
+                    positions.insert(*position);
+                }
+                TypeKind::Nominal { arguments, .. }
+                | TypeKind::Tuple(arguments)
+                | TypeKind::Union(arguments)
+                | TypeKind::Intrinsic { arguments, .. }
+                | TypeKind::Generated { arguments, .. } => {
+                    pending.extend(arguments.iter().copied());
+                }
+                TypeKind::Function(function) => {
+                    pending.extend(function.parameters().iter().map(FunctionParameter::ty));
+                    pending.extend(function.variadic());
+                    pending.push(function.outcome());
+                }
+                TypeKind::Option(item) => pending.push(*item),
+                TypeKind::Result { success, error } => {
+                    pending.push(*success);
+                    pending.push(*error);
+                }
+                TypeKind::Cursor { collection, .. } => pending.push(*collection),
+                TypeKind::Error
+                | TypeKind::Scalar(_)
+                | TypeKind::Inference(_)
+                | TypeKind::OpaqueResult(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_orphan_rule(&mut self, implementation: &HirImplementation) -> Result<(), HirError> {
+        if self.type_has_recovery(implementation.target)?
+            || self.types_have_recovery(implementation.trait_reference.arguments.iter().copied())?
+        {
+            return Ok(());
+        }
+        let owns_trait = match &implementation.trait_reference.constructor {
+            HirTraitConstructor::Symbol(symbol) => {
+                self.resolved.symbol(*symbol).is_some_and(|symbol| {
+                    identity_belongs_to(&implementation.module, symbol.identity())
+                })
+            }
+            HirTraitConstructor::External(identity) => {
+                identity_belongs_to(&implementation.module, identity)
+            }
+            HirTraitConstructor::Prelude(_) => false,
+        };
+        let owns_target = match self.interner.kind(implementation.target)? {
+            TypeKind::Nominal { identity, .. } | TypeKind::OpaqueResult(identity) => {
+                identity_belongs_to(&implementation.module, identity)
+            }
+            TypeKind::Error
+            | TypeKind::Scalar(_)
+            | TypeKind::Tuple(_)
+            | TypeKind::Function(_)
+            | TypeKind::Option(_)
+            | TypeKind::Result { .. }
+            | TypeKind::Union(_)
+            | TypeKind::Intrinsic { .. }
+            | TypeKind::GenericParameter(_)
+            | TypeKind::Inference(_)
+            | TypeKind::Generated { .. }
+            | TypeKind::Cursor { .. } => false,
+        };
+        if owns_trait || owns_target {
+            return Ok(());
+        }
+        let related = match implementation.trait_reference.constructor {
+            HirTraitConstructor::Symbol(symbol) => self
+                .resolved
+                .symbol(symbol)
+                .map(|symbol| vec![("trait declared in another module", symbol.span())]),
+            HirTraitConstructor::Prelude(_) | HirTraitConstructor::External(_) => None,
+        };
+        self.emit(
+            implementation.span.file(),
+            implementation.span.range(),
+            "E1114",
+            "orphan implementation: this module owns neither the trait nor the target's outer nominal constructor",
+            related,
+            None,
+        )
+    }
+
+    fn expected_trait_methods(
+        &mut self,
+        implementation: &HirImplementation,
+    ) -> Result<Option<Vec<ExpectedTraitMethod>>, HirError> {
+        match &implementation.trait_reference.constructor {
+            HirTraitConstructor::Symbol(symbol) => {
+                self.expected_source_trait_methods(*symbol, implementation)
+            }
+            HirTraitConstructor::External(identity) => {
+                if let Some(symbol) = self
+                    .resolved
+                    .symbols()
+                    .find(|symbol| symbol.identity() == identity)
+                    .map(|symbol| symbol.id())
+                {
+                    self.expected_source_trait_methods(symbol, implementation)
+                } else {
+                    self.emit(
+                        implementation.span.file(),
+                        implementation.span.range(),
+                        "E1114",
+                        "cannot validate an implementation without the imported trait contract",
+                        None,
+                        None,
+                    )?;
+                    Ok(None)
+                }
+            }
+            HirTraitConstructor::Prelude(name) => {
+                self.expected_prelude_trait_methods(name.clone(), implementation)
+            }
+        }
+    }
+
+    fn expected_source_trait_methods(
+        &mut self,
+        symbol: SymbolId,
+        implementation: &HirImplementation,
+    ) -> Result<Option<Vec<ExpectedTraitMethod>>, HirError> {
+        let Some(declaration) = self.declarations.get(&symbol) else {
+            return Ok(None);
+        };
+        let HirTypeDeclarationKind::Trait(definition) = &declaration.kind else {
+            return Ok(None);
+        };
+        if implementation.trait_reference.arguments.len() != declaration.parameters.len() {
+            return Ok(None);
+        }
+        let fixed_arity = u32::try_from(declaration.parameters.len())
+            .map_err(|_| crate::types::TypeError::ResourceLimit { limit: u32::MAX })?
+            .checked_add(1)
+            .ok_or(crate::types::TypeError::ResourceLimit { limit: u32::MAX })?;
+        let mut methods = Vec::with_capacity(definition.methods.len());
+        for method in &definition.methods {
+            let member = self
+                .resolved
+                .member(method.member)
+                .expect("trait HIR methods retain resolved members");
+            let Some(callable) = self
+                .callables
+                .iter()
+                .find(|callable| callable.id == HirCallableId::Member(method.member))
+                .cloned()
+            else {
+                self.emit(
+                    implementation.span.file(),
+                    implementation.span.range(),
+                    "E1114",
+                    format!(
+                        "trait method `{}` has no available signature",
+                        member.name()
+                    ),
+                    Some(vec![("trait method declared here", member.span())]),
+                    None,
+                )?;
+                return Ok(None);
+            };
+            methods.push(ExpectedTraitMethod {
+                name: Name::new(member.name().as_str())
+                    .expect("resolved member names are valid names"),
+                key: HirTraitMethodKey::Source(method.member),
+                declaration_span: Some(member.span()),
+                has_default: method.has_default,
+                requires_self_send: method.requires_self_send,
+                signature: ExpectedTraitMethodSignature::Source {
+                    callable,
+                    fixed_arity,
+                },
+            });
+        }
+        Ok(Some(methods))
+    }
+
+    fn expected_prelude_trait_methods(
+        &mut self,
+        name: Name,
+        implementation: &HirImplementation,
+    ) -> Result<Option<Vec<ExpectedTraitMethod>>, HirError> {
+        let expected_arity = match name.as_str() {
+            "Display" => 0,
+            "Iterator" => 1,
+            _ => implementation.trait_reference.arguments.len(),
+        };
+        if implementation.trait_reference.arguments.len() != expected_arity {
+            return Ok(None);
+        }
+        let (method_name, key, mode, outcome) = match name.as_str() {
+            "Display" => (
+                "display",
+                HirPreludeTraitMethod::Display,
+                ParameterMode::Ref,
+                self.interner.scalar(ScalarType::String),
+            ),
+            "Iterator" => (
+                "next",
+                HirPreludeTraitMethod::IteratorNext,
+                ParameterMode::Mut,
+                self.interner.option(
+                    implementation
+                        .trait_reference
+                        .arguments
+                        .first()
+                        .copied()
+                        .unwrap_or_else(|| self.interner.error()),
+                )?,
+            ),
+            "Copy" | "Discard" | "Equatable" | "Key" | "Send" | "Share" | "Call" | "CallMut"
+            | "CallOnce" => {
+                self.emit(
+                    implementation.span.file(),
+                    implementation.span.range(),
+                    "E1114",
+                    format!("`{name}` is a closed protocol and cannot be implemented manually"),
+                    None,
+                    None,
+                )?;
+                return Ok(None);
+            }
+            _ => return Ok(None),
+        };
+        let function_type = self.interner.function(FunctionType::new(
+            false,
+            false,
+            vec![FunctionParameter::new(mode, implementation.target)],
+            None,
+            outcome,
+        ))?;
+        Ok(Some(vec![ExpectedTraitMethod {
+            name: Name::new(method_name).expect("prelude method names are valid"),
+            key: HirTraitMethodKey::Prelude(key),
+            declaration_span: None,
+            has_default: false,
+            requires_self_send: false,
+            signature: ExpectedTraitMethodSignature::Concrete {
+                function_type,
+                has_receiver: true,
+            },
+        }]))
+    }
+
+    fn instantiate_method_contract(
+        &mut self,
+        implementation: &HirImplementation,
+        callable: &HirCallableSignature,
+        expected: &ExpectedTraitMethod,
+        span: Span,
+    ) -> Result<Option<HirImplementationMethodContract>, HirError> {
+        let outer_arity = u32::try_from(implementation.parameters.len())
+            .map_err(|_| crate::types::TypeError::ResourceLimit { limit: u32::MAX })?;
+        let Some(actual_local_arity) = callable.generic_arity.checked_sub(outer_arity) else {
+            self.emit(
+                span.file(),
+                span.range(),
+                "E1114",
+                format!("method `{}` has an invalid generic prefix", expected.name),
+                expected
+                    .declaration_span
+                    .map(|declaration| vec![("trait method declared here", declaration)]),
+                None,
+            )?;
+            return Ok(None);
+        };
+        let (function_type, has_receiver, generic_bounds) = match &expected.signature {
+            ExpectedTraitMethodSignature::Source {
+                callable: source,
+                fixed_arity,
+            } => {
+                let Some(expected_local_arity) = source.generic_arity.checked_sub(*fixed_arity)
+                else {
+                    return Ok(None);
+                };
+                if actual_local_arity != expected_local_arity {
+                    self.emit(
+                        span.file(),
+                        span.range(),
+                        "E1114",
+                        format!(
+                            "method `{}` declares the wrong number of generic parameters",
+                            expected.name
+                        ),
+                        expected
+                            .declaration_span
+                            .map(|declaration| vec![("trait method declared here", declaration)]),
+                        Some((
+                            expected_local_arity.to_string(),
+                            actual_local_arity.to_string(),
+                        )),
+                    )?;
+                    return Ok(None);
+                }
+                let mut arguments = implementation.trait_reference.arguments.clone();
+                arguments.push(implementation.target);
+                let local_end = outer_arity
+                    .checked_add(actual_local_arity)
+                    .ok_or(crate::types::TypeError::ResourceLimit { limit: u32::MAX })?;
+                for position in outer_arity..local_end {
+                    arguments.push(self.interner.generic_parameter(position)?);
+                }
+                let substitution = TypeSubstitution::new(arguments);
+                let function_type = substitution.apply(&mut self.interner, source.function_type)?;
+                let mut generic_bounds = Vec::new();
+                for parameter in source
+                    .generics
+                    .iter()
+                    .filter(|parameter| parameter.position >= *fixed_arity)
+                {
+                    generic_bounds.push(
+                        parameter
+                            .bounds
+                            .iter()
+                            .map(|bound| {
+                                Ok(HirTraitReference {
+                                    constructor: bound.constructor.clone(),
+                                    arguments: bound
+                                        .arguments
+                                        .iter()
+                                        .map(|argument| {
+                                            substitution.apply(&mut self.interner, *argument)
+                                        })
+                                        .collect::<Result<Vec<_>, crate::types::TypeError>>()?,
+                                })
+                            })
+                            .collect::<Result<Vec<_>, crate::types::TypeError>>()?,
+                    );
+                }
+                (
+                    function_type,
+                    source.parameters.iter().any(|parameter| parameter.receiver),
+                    generic_bounds,
+                )
+            }
+            ExpectedTraitMethodSignature::Concrete {
+                function_type,
+                has_receiver,
+            } => {
+                if actual_local_arity != 0 {
+                    self.emit(
+                        span.file(),
+                        span.range(),
+                        "E1114",
+                        format!(
+                            "method `{}` declares the wrong number of generic parameters",
+                            expected.name
+                        ),
+                        None,
+                        Some(("0".to_owned(), actual_local_arity.to_string())),
+                    )?;
+                    return Ok(None);
+                }
+                (*function_type, *has_receiver, Vec::new())
+            }
+        };
+        let contract = HirImplementationMethodContract {
+            method: expected.key,
+            has_default: expected.has_default,
+            requires_self_send: expected.requires_self_send,
+            function_type,
+            has_receiver,
+            generic_bounds,
+        };
+        let related = expected
+            .declaration_span
+            .map(|declaration| vec![("trait method declared here", declaration)]);
+        if callable.function_type != contract.function_type {
+            let expected_actual = self
+                .interner
+                .canonical(contract.function_type)
+                .ok()
+                .zip(self.interner.canonical(callable.function_type).ok());
+            self.emit(
+                span.file(),
+                span.range(),
+                "E1114",
+                format!(
+                    "method `{}` does not match the trait signature",
+                    expected.name
+                ),
+                related.clone(),
+                expected_actual,
+            )?;
+        }
+        let actual_has_receiver = callable
+            .parameters
+            .iter()
+            .any(|parameter| parameter.receiver);
+        if actual_has_receiver != contract.has_receiver {
+            self.emit(
+                span.file(),
+                span.range(),
+                "E1114",
+                format!(
+                    "method `{}` must {}a receiver",
+                    expected.name,
+                    if contract.has_receiver {
+                        "have "
+                    } else {
+                        "not have "
+                    }
+                ),
+                related.clone(),
+                None,
+            )?;
+        }
+        let actual_generic_bounds = callable
+            .generics
+            .iter()
+            .filter(|parameter| parameter.position >= outer_arity)
+            .map(|parameter| parameter.bounds.clone())
+            .collect::<Vec<_>>();
+        if !same_generic_bound_groups(&actual_generic_bounds, &contract.generic_bounds) {
+            self.emit(
+                span.file(),
+                span.range(),
+                "E1114",
+                format!(
+                    "method `{}` generic bounds do not match the trait contract",
+                    expected.name
+                ),
+                related,
+                None,
+            )?;
+        }
+        Ok(Some(contract))
     }
 
     fn lower_callable(
@@ -2530,6 +3194,25 @@ fn prelude_trait_arity(name: &str) -> Option<usize> {
     })
 }
 
+fn identity_belongs_to(module: &ModuleId, identity: &SymbolIdentity) -> bool {
+    identity.package() == module.package() && identity.module() == module.path()
+}
+
+fn same_generic_bound_groups(
+    left: &[Vec<HirTraitReference>],
+    right: &[Vec<HirTraitReference>],
+) -> bool {
+    left.len() == right.len()
+        && left.iter().zip(right).all(|(left, right)| {
+            left.len() == right.len()
+                && left.iter().all(|left| {
+                    right.iter().any(|right| {
+                        left.constructor == right.constructor && left.arguments == right.arguments
+                    })
+                })
+        })
+}
+
 fn generic_group_arguments(
     file: FileId,
     groups: &[SyntaxNodeRef<'_>],
@@ -2636,7 +3319,7 @@ fn strongly_connected_components(
 mod tests {
     use std::sync::Arc;
 
-    use crate::package::PackageGraph;
+    use crate::package::{Edition, PackageAlias, PackageGraph, PackageId, PackageNode};
     use crate::resolve::{MemberKind, ResolvedProgram, resolve};
     use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
     use crate::syntax::{LexMode, ParseLimits, ParseMode, lex, parse};
@@ -2684,6 +3367,82 @@ mod tests {
         )
         .unwrap();
         (sources, resolved, output)
+    }
+
+    fn lower_modules(inputs: &[(&str, &str, &str)]) -> HirOutput {
+        let mut sources = SourceDatabase::new();
+        let mut parsed = Vec::new();
+        for (module, path, source) in inputs {
+            let file = sources
+                .add(SourceInput::virtual_file(
+                    SourceId::new("source:hir-modules").unwrap(),
+                    ModulePath::new(module).unwrap(),
+                    LogicalPath::new(path).unwrap(),
+                    Arc::<[u8]>::from(source.as_bytes()),
+                ))
+                .unwrap();
+            let lexed = lex(&sources, file, LexMode::Module).unwrap();
+            assert!(lexed.diagnostics().is_empty(), "{source}");
+            let syntax = parse(
+                &sources,
+                file,
+                lexed,
+                ParseMode::Module,
+                ParseLimits::default(),
+            )
+            .unwrap();
+            assert!(syntax.diagnostics().is_empty(), "{source}");
+            parsed.push((file, syntax));
+        }
+        let app = PackageId::new("pkg:hir-modules").unwrap();
+        let standard = PackageId::new("pkg:std").unwrap();
+        let graph = PackageGraph::new(
+            app.clone(),
+            standard.clone(),
+            [
+                PackageNode::new(
+                    app,
+                    SourceId::new("source:hir-modules").unwrap(),
+                    PackageAlias::new("app").unwrap(),
+                    Edition::V0_1,
+                    inputs
+                        .iter()
+                        .map(|(module, _, _)| ModulePath::new(module).unwrap()),
+                    [],
+                )
+                .unwrap(),
+                PackageNode::new(
+                    standard,
+                    SourceId::new("source:std").unwrap(),
+                    PackageAlias::new("tondoStd").unwrap(),
+                    Edition::V0_1,
+                    [],
+                    [],
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        let resolution = resolve(
+            &graph,
+            &sources,
+            parsed.iter().map(|(file, parsed)| (*file, parsed)),
+            100,
+        )
+        .unwrap();
+        let (resolved, diagnostics) = resolution.into_parts();
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+        lower_types(
+            &graph,
+            &sources,
+            parsed.iter().map(|(file, parsed)| (*file, parsed)),
+            &resolved,
+            TypeLoweringLimits {
+                max_type_nodes: 100_000,
+                max_diagnostics: 100,
+            },
+        )
+        .unwrap()
     }
 
     fn symbol(resolved: &ResolvedProgram, name: &str) -> SymbolId {
@@ -2771,6 +3530,20 @@ mod tests {
                     .interner()
                     .canonical(callable.function_type())
                     .unwrap()
+            }))
+            .chain(program.implementations().map(|implementation| {
+                let source = sources.get(implementation.span().file()).unwrap();
+                format!(
+                    "impl#{}:{}:{}",
+                    implementation.id().index(),
+                    source.path(),
+                    implementation
+                        .methods()
+                        .iter()
+                        .map(|method| method.id().index().to_string())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                )
             }))
             .collect::<Vec<_>>();
         types.sort();
@@ -2878,6 +3651,25 @@ mod tests {
              fn invalid(first: Array[Int, String], second: Summary) {}\n",
         );
         assert_eq!(codes(&output), ["E1104", "E1110"]);
+
+        let (_, _, implementation) = lower(
+            "trait Generic[T] {\n\
+                 fn use(self, value: T)\n\
+             }\n\
+             type Value = Int\n\
+             impl Generic for Value {\n\
+                 fn use(self, value: Int) {}\n\
+             }\n",
+        );
+        assert_eq!(codes(&implementation), ["E1104"]);
+        assert!(
+            !implementation
+                .program()
+                .implementations()
+                .next()
+                .unwrap()
+                .contract_complete()
+        );
     }
 
     #[test]
@@ -2984,7 +3776,9 @@ mod tests {
     #[test]
     fn self_is_available_before_trait_inherent_and_impl_bounds_are_lowered() {
         let (_, _, output) = lower(
-            "trait Marker {}\n\
+            "trait Marker {\n\
+                 fn marker(self)\n\
+             }\n\
              trait Convert[T: Iterator[Self]] {\n\
                  fn convert[U](self, value: U): T\n\
              }\n\
@@ -3113,6 +3907,265 @@ mod tests {
                 .unwrap(),
             "$0"
         );
+    }
+
+    #[test]
+    fn implementations_materialize_exact_source_and_prelude_contracts() {
+        let (_, resolved, output) = lower(
+            "trait Codec[T] {\n\
+                 fn encode[U: Display](self, value: U): T\n\
+                 fn fallback(self): Bool { true }\n\
+                 fn create(value: T): Self\n\
+             }\n\
+             type Box[T] = { value: T }\n\
+             impl[T] Codec[T] for Box[T] {\n\
+                 fn encode[U: Display](self, value: U): T { panic(\"todo\") }\n\
+                 fn fallback(self): Bool { false }\n\
+                 fn create(value: T): Self { panic(\"todo\") }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        let implementation = output.program().implementations().next().unwrap();
+        assert_eq!(implementation.id().index(), 0);
+        assert!(implementation.contract_complete());
+        assert!(!implementation.requires_self_send());
+        assert_eq!(implementation.parameters().len(), 1);
+        assert_eq!(implementation.trait_reference().arguments().len(), 1);
+        assert_eq!(implementation.methods().len(), 3);
+        for (index, method) in implementation.methods().iter().enumerate() {
+            assert_eq!(method.id().implementation(), implementation.id());
+            assert_eq!(method.id().index(), index as u32);
+            let contract = method.contract().unwrap();
+            let callable = output
+                .program()
+                .callable(HirCallableId::Implementation(method.id()))
+                .unwrap();
+            assert_eq!(callable.function_type(), contract.function_type());
+            assert!(callable.body_source().is_some());
+        }
+        let encode = implementation
+            .methods()
+            .iter()
+            .find(|method| method.name().as_str() == "encode")
+            .unwrap();
+        assert_eq!(encode.contract().unwrap().generic_bounds().len(), 1);
+        assert_eq!(encode.contract().unwrap().generic_bounds()[0].len(), 1);
+        let fallback = implementation
+            .methods()
+            .iter()
+            .find(|method| method.name().as_str() == "fallback")
+            .unwrap();
+        assert!(fallback.contract().unwrap().has_default());
+        let codec = symbol(&resolved, "Codec");
+        assert!(implementation.methods().iter().all(|method| {
+            let HirTraitMethodKey::Source(member) = method.contract().unwrap().method() else {
+                return false;
+            };
+            resolved.member(member).unwrap().owner() == crate::resolve::MemberOwner::Type(codec)
+        }));
+
+        let (_, _, prelude) = lower(
+            "type Label = String\n\
+             type Counter = Int\n\
+             impl Display for Label {\n\
+                 fn display(self): String { \"label\" }\n\
+             }\n\
+             impl Iterator[Int] for Counter {\n\
+                 fn next(mut self): Int? { none }\n\
+             }\n",
+        );
+        assert!(
+            prelude.diagnostics().is_empty(),
+            "{:#?}",
+            prelude.diagnostics()
+        );
+        let implementations = prelude.program().implementations().collect::<Vec<_>>();
+        assert_eq!(implementations.len(), 2);
+        assert_eq!(
+            implementations[0].methods()[0].contract().unwrap().method(),
+            HirTraitMethodKey::Prelude(HirPreludeTraitMethod::Display)
+        );
+        assert_eq!(
+            implementations[1].methods()[0].contract().unwrap().method(),
+            HirTraitMethodKey::Prelude(HirPreludeTraitMethod::IteratorNext)
+        );
+    }
+
+    #[test]
+    fn implementations_accept_omitted_defaults_and_reject_contract_drift() {
+        let (_, _, omitted) = lower(
+            "trait Contract {\n\
+                 fn required(self): Int\n\
+                 fn defaulted(self): Bool { true }\n\
+             }\n\
+             type Item = Int\n\
+             impl Contract for Item {\n\
+                 fn required(self): Int { 1 }\n\
+             }\n",
+        );
+        assert!(
+            omitted.diagnostics().is_empty(),
+            "{:#?}",
+            omitted.diagnostics()
+        );
+        assert!(
+            omitted
+                .program()
+                .implementations()
+                .next()
+                .unwrap()
+                .contract_complete()
+        );
+
+        for source in [
+            "trait Contract {\n\
+                 fn required(self): Int\n\
+             }\n\
+             type Item = Int\n\
+             impl Contract for Item {\n\
+             }\n",
+            "trait Contract {}\n\
+             type Item = Int\n\
+             impl Contract for Item {\n\
+                 fn extra(self) {}\n\
+             }\n",
+            "trait Contract {\n\
+                 fn run(self): Int\n\
+             }\n\
+             type Item = Int\n\
+             impl Contract for Item {\n\
+                 fn run(value: Item): String { \"bad\" }\n\
+             }\n",
+            "trait Contract {\n\
+                 fn map[U: Display](self, value: U): U\n\
+             }\n\
+             type Item = Int\n\
+             impl Contract for Item {\n\
+                 fn map[U: Discard](self, value: U): U { value }\n\
+             }\n",
+            "trait Contract {\n\
+                 async fn run(self): Int\n\
+             }\n\
+             type Item = Int\n\
+             impl Contract for Item {\n\
+                 fn run(self): Int { 1 }\n\
+             }\n",
+        ] {
+            let (_, _, invalid) = lower(source);
+            assert!(
+                !invalid.diagnostics().is_empty()
+                    && invalid
+                        .diagnostics()
+                        .iter()
+                        .all(|diagnostic| diagnostic.code().as_str() == "E1114"),
+                "{source}\n{:#?}",
+                invalid.diagnostics()
+            );
+            assert!(
+                !invalid
+                    .program()
+                    .implementations()
+                    .next()
+                    .unwrap()
+                    .contract_complete()
+            );
+        }
+    }
+
+    #[test]
+    fn implementation_binders_closed_protocols_and_orphan_rules_are_enforced() {
+        let (_, _, unused) = lower(
+            "type Value = Int\n\
+             impl[T: Discard] Display for Value {\n\
+                 fn display(self): String { \"value\" }\n\
+             }\n",
+        );
+        assert_eq!(codes(&unused), ["E1114"]);
+        assert!(unused.diagnostics()[0].message().contains("binder"));
+
+        let (_, _, closed) = lower(
+            "type Value = Int\n\
+             impl Copy for Value {\n\
+                 fn copy(self): Value { self }\n\
+             }\n",
+        );
+        assert_eq!(codes(&closed), ["E1114"]);
+        assert!(
+            closed.diagnostics()[0]
+                .message()
+                .contains("closed protocol")
+        );
+
+        let (_, _, owned_trait) = lower(
+            "trait Local {\n\
+                 fn inspect(self)\n\
+             }\n\
+             impl Local for Array[Int] {\n\
+                 fn inspect(self) {}\n\
+             }\n",
+        );
+        assert!(
+            owned_trait.diagnostics().is_empty(),
+            "{:#?}",
+            owned_trait.diagnostics()
+        );
+
+        let modules = lower_modules(&[
+            (
+                "api",
+                "api.to",
+                "pub trait ForeignTrait {\n\
+                     fn apply(self)\n\
+                 }\n\
+                 pub type ForeignType = Int\n",
+            ),
+            (
+                "main",
+                "main.to",
+                "import app.api\n\
+                 type LocalType = Int\n\
+                 impl api.ForeignTrait for LocalType {\n\
+                     fn apply(self) {}\n\
+                 }\n\
+                 impl api.ForeignTrait for api.ForeignType {\n\
+                     fn apply(self) {}\n\
+                 }\n",
+            ),
+        ]);
+        assert_eq!(codes(&modules), ["E1114"]);
+        assert!(modules.diagnostics()[0].message().contains("orphan"));
+        let implementations = modules.program().implementations().collect::<Vec<_>>();
+        assert_eq!(implementations.len(), 2);
+        assert!(implementations[0].contract_complete());
+        assert!(!implementations[1].contract_complete());
+    }
+
+    #[test]
+    fn implementation_ids_follow_logical_source_order() {
+        let contract = "trait Show {\n\
+                            fn show(self): String\n\
+                        }\n\
+                        type Alpha = Int\n\
+                        type Zeta = Int\n";
+        let alpha = "impl Show for Alpha {\n    fn show(self): String { \"a\" }\n}\n";
+        let zeta = "impl Show for Zeta {\n    fn show(self): String { \"z\" }\n}\n";
+        let forward = lowering_snapshot(&[
+            ("contract.to", contract),
+            ("z_impl.to", zeta),
+            ("a_impl.to", alpha),
+        ]);
+        let reverse = lowering_snapshot(&[
+            ("a_impl.to", alpha),
+            ("z_impl.to", zeta),
+            ("contract.to", contract),
+        ]);
+        assert_eq!(forward, reverse);
+        assert!(forward.0.iter().any(|item| item == "impl#0:a_impl.to:0"));
+        assert!(forward.0.iter().any(|item| item == "impl#1:z_impl.to:0"));
     }
 
     #[test]

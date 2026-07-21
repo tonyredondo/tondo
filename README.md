@@ -21,8 +21,13 @@ invariant call inference, explicit specialization, and closed `Discard`
 constraints. Trait declarations now retain a contextual `Self`, required and
 associated methods, default bodies, and the intrinsic `Self: Send` condition of
 async receivers. Defaults are checked once under the trait's binders and may
-call other methods of that same trait without opening global method lookup;
-`impl`, coherence, and trait dispatch remain later M4 work. The same HIR covers
+call other methods of that same trait without opening global method lookup.
+Explicit implementations now have deterministic HIR identities, normalized
+coherence headers, exact source/prelude method contracts, orphan checks, and
+checked bodies. Defaults may be omitted or replaced; missing, extra, or
+signature-drifting methods and manual implementations of closed protocols are
+rejected with `E1114`. Overlap, termination of trait obligations, and static
+dispatch remain later M4 work. The same HIR covers
 constants, bindings, functions, inherent methods, blocks, conditionals, loops,
 scalar operators, calls, `Option`,
 `Result`, `fail`, `?`, every pattern form, and exhaustive guarded `match`, with

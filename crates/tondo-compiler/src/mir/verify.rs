@@ -2756,11 +2756,10 @@ fn function_context(id: HirCallableId) -> String {
     match id {
         HirCallableId::Symbol(symbol) => format!("MIR function symbol#{}", symbol.index()),
         HirCallableId::Member(member) => format!("MIR function member#{}", member.index()),
-        HirCallableId::Implementation(span) => format!(
-            "MIR function implementation in {} at bytes {}..{}",
-            span.file(),
-            span.range().start(),
-            span.range().end()
+        HirCallableId::Implementation(method) => format!(
+            "MIR function implementation#{}.method#{}",
+            method.implementation().index(),
+            method.index()
         ),
     }
 }
