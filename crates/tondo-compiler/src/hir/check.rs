@@ -245,8 +245,16 @@ struct BodyContext {
     receiver: Option<TypeId>,
     receiver_permission: PlacePermission,
     callable: Option<CallableContext>,
+    trait_body: Option<TraitBodyContext>,
     discard_statuses: BTreeMap<u32, DiscardStatus>,
     loops: Vec<HirLoopId>,
+}
+
+#[derive(Clone, Copy)]
+struct TraitBodyContext {
+    owner: SymbolId,
+    self_type: TypeId,
+    fixed_arity: u32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -340,7 +348,7 @@ enum ConstantDiagnosticKind {
 
 struct GenericCallInference {
     callable: HirCallableId,
-    variables: Vec<TypeId>,
+    arguments: Vec<TypeId>,
     solver: InferenceContext,
     contradiction: bool,
 }
@@ -679,8 +687,11 @@ impl<'a> ExpressionChecker<'a> {
                 self.complete = false;
                 continue;
             };
-            let mut context = BodyContext::default();
-            context.discard_statuses = callable_discard_statuses(&callable);
+            let mut context = BodyContext {
+                discard_statuses: callable_discard_statuses(&callable),
+                ..BodyContext::default()
+            };
+            context.trait_body = self.trait_body_context(callable.id);
             let (success, error) = match self.program.interner.kind(callable.outcome)? {
                 TypeKind::Result { success, error } => (*success, Some(*error)),
                 _ => (callable.outcome, None),
@@ -851,11 +862,42 @@ impl<'a> ExpressionChecker<'a> {
             HirCallableId::Member(member) => self.resolved.member(member).is_some_and(|member| {
                 matches!(
                     member.kind(),
-                    MemberKind::InherentMethod | MemberKind::AssociatedFunction
+                    MemberKind::InherentMethod
+                        | MemberKind::AssociatedFunction
+                        | MemberKind::TraitMethod
+                        | MemberKind::TraitAssociatedFunction
                 )
             }),
             HirCallableId::Implementation(_) => false,
         }
+    }
+
+    fn trait_body_context(&self, callable: HirCallableId) -> Option<TraitBodyContext> {
+        let HirCallableId::Member(member) = callable else {
+            return None;
+        };
+        let member = self.resolved.member(member)?;
+        if !matches!(
+            member.kind(),
+            MemberKind::TraitMethod | MemberKind::TraitAssociatedFunction
+        ) {
+            return None;
+        }
+        let MemberOwner::Type(owner) = member.owner() else {
+            return None;
+        };
+        let declaration = self.program.declaration(owner)?;
+        let HirTypeDeclarationKind::Trait(definition) = declaration.kind() else {
+            return None;
+        };
+        let fixed_arity = u32::try_from(declaration.parameters().len())
+            .ok()?
+            .checked_add(1)?;
+        Some(TraitBodyContext {
+            owner,
+            self_type: definition.self_type(),
+            fixed_arity,
+        })
     }
 
     fn check_reachability_warnings(&mut self) -> Result<(), HirError> {
@@ -1888,7 +1930,7 @@ impl<'a> ExpressionChecker<'a> {
             self.complete = false;
             return self.recovery_expression(file, range);
         };
-        if callable.generics.is_empty() {
+        if callable.generic_arity == 0 {
             self.emit(
                 self.sources.span(file, bracket.range())?,
                 "E1104",
@@ -1901,13 +1943,13 @@ impl<'a> ExpressionChecker<'a> {
         let Some(arguments) = self.expression_generic_arguments(file, bracket)? else {
             return self.recovery_expression(file, range);
         };
-        if arguments.len() != callable.generics.len() {
+        if arguments.len() != callable.generic_arity as usize {
             self.emit(
                 self.sources.span(file, bracket.range())?,
                 "E1104",
                 format!(
                     "generic function value expects {} type arguments, found {}",
-                    callable.generics.len(),
+                    callable.generic_arity,
                     arguments.len()
                 ),
                 Vec::new(),
@@ -3399,11 +3441,7 @@ impl<'a> ExpressionChecker<'a> {
         };
         let value_type = self.expression_type(value);
         let target = if operator == HirAssignmentOperator::Assign {
-            self.finalize_assignment_target(
-                &checked_target,
-                value_type,
-                &context.discard_statuses,
-            )?
+            self.finalize_assignment_target(&checked_target, value_type, &context.discard_statuses)?
         } else {
             self.finalize_compound_assignment_target(
                 file,
@@ -3594,12 +3632,7 @@ impl<'a> ExpressionChecker<'a> {
                 })
             }
             CheckedAssignmentTargetKind::Discard => {
-                self.require_discard_with_generics(
-                    target.span,
-                    actual,
-                    generic_statuses,
-                    "`_ =`",
-                )?;
+                self.require_discard_with_generics(target.span, actual, generic_statuses, "`_ =`")?;
                 Ok(HirAssignmentTarget {
                     span: target.span,
                     ty: actual,
@@ -3628,8 +3661,7 @@ impl<'a> ExpressionChecker<'a> {
                 let mut items = Vec::with_capacity(targets.len());
                 let mut types = Vec::with_capacity(targets.len());
                 for (target, actual) in targets.iter().zip(actual_items) {
-                    let item =
-                        self.finalize_assignment_target(target, actual, generic_statuses)?;
+                    let item = self.finalize_assignment_target(target, actual, generic_statuses)?;
                     types.push(item.ty);
                     items.push(item);
                 }
@@ -5868,7 +5900,7 @@ impl<'a> ExpressionChecker<'a> {
                 let template = match declaration.kind() {
                     HirTypeDeclarationKind::Alias { target } => *target,
                     HirTypeDeclarationKind::Nominal(definition) => definition.self_type(),
-                    HirTypeDeclarationKind::Trait => return Ok(None),
+                    HirTypeDeclarationKind::Trait(_) => return Ok(None),
                 };
                 Ok(Some(
                     TypeSubstitution::new(arguments).apply(&mut self.program.interner, template)?,
@@ -5906,6 +5938,15 @@ impl<'a> ExpressionChecker<'a> {
                     }
                 };
                 Ok(Some(ty))
+            }
+            ResolvedName::Local(local)
+                if arguments.is_empty()
+                    && self
+                        .resolved
+                        .local(*local)
+                        .is_some_and(|local| local.kind() == LocalKind::GenericParameter) =>
+            {
+                Ok(self.program.local_type(*local))
             }
             ResolvedName::External { .. }
             | ResolvedName::Local(_)
@@ -5946,7 +5987,7 @@ impl<'a> ExpressionChecker<'a> {
                                     | HirNominalShape::Enum { .. }
                             ))
                     }
-                    HirTypeDeclarationKind::Trait => Ok(false),
+                    HirTypeDeclarationKind::Trait(_) => Ok(false),
                 }
             }
             ResolvedName::Prelude { name, .. } => {
@@ -6029,6 +6070,74 @@ impl<'a> ExpressionChecker<'a> {
                     .map_err(HirError::from)
             })
             .collect()
+    }
+
+    fn validate_generic_bounds(
+        &mut self,
+        span: Span,
+        callable: &HirCallableSignature,
+        arguments: &[TypeId],
+        generic_discard_statuses: &BTreeMap<u32, DiscardStatus>,
+    ) -> Result<(), HirError> {
+        for parameter in &callable.generics {
+            let Some(argument) = arguments.get(parameter.position as usize).copied() else {
+                return Err(crate::types::TypeError::MissingGenericArgument {
+                    position: parameter.position,
+                    arity: arguments.len(),
+                }
+                .into());
+            };
+            for bound in &parameter.bounds {
+                if self.trait_obligations_remaining == 0 {
+                    return Err(HirError::TraitObligationLimit {
+                        file: span.file(),
+                        offset: span.range().start(),
+                    });
+                }
+                self.trait_obligations_remaining -= 1;
+
+                // Instantiate every bound argument now even when its resolver belongs to a
+                // later phase. This keeps the obligation closed and prevents inference or a
+                // callable-local generic parameter from escaping the call boundary.
+                let _arguments = self.instantiate_types(arguments, bound.arguments())?;
+                match bound.constructor() {
+                    HirTraitConstructor::Prelude(name) if name.as_str() == "Discard" => {
+                        self.require_discard_with_generics(
+                            span,
+                            argument,
+                            generic_discard_statuses,
+                            "generic bound `Discard`",
+                        )?;
+                    }
+                    HirTraitConstructor::Prelude(name)
+                        if matches!(
+                            name.as_str(),
+                            "Copy"
+                                | "Equatable"
+                                | "Key"
+                                | "Send"
+                                | "Share"
+                                | "Call"
+                                | "CallMut"
+                                | "CallOnce"
+                                | "Iterator"
+                                | "Display"
+                        ) =>
+                    {
+                        // The obligation is represented and budgeted here. Its proof is
+                        // supplied by CAP-001 or trait resolution rather than guessed.
+                        self.complete = false;
+                    }
+                    HirTraitConstructor::Symbol(_) | HirTraitConstructor::External(_) => {
+                        self.complete = false;
+                    }
+                    HirTraitConstructor::Prelude(_) => {
+                        self.complete = false;
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     fn discard_status_with_generics(
@@ -6358,10 +6467,6 @@ impl<'a> ExpressionChecker<'a> {
             | TypeKind::Cursor { .. } => deferred(),
         };
         Ok(node)
-    }
-
-    fn require_discard(&mut self, span: Span, ty: TypeId) -> Result<(), HirError> {
-        self.require_discard_with_generics(span, ty, &BTreeMap::new(), "`_ =`")
     }
 
     fn require_discard_with_generics(
@@ -8610,7 +8715,7 @@ impl<'a> ExpressionChecker<'a> {
             self.complete = false;
             return Ok(Some(self.recovery_expression(file, range)?));
         };
-        if callable.generics.is_empty() {
+        if callable.generic_arity == 0 {
             self.emit(
                 self.sources.span(file, brackets[0].range())?,
                 "E1104",
@@ -8623,13 +8728,13 @@ impl<'a> ExpressionChecker<'a> {
         let Some(arguments) = self.expression_generic_arguments(file, brackets[0])? else {
             return Ok(Some(self.recovery_expression(file, range)?));
         };
-        if arguments.len() != callable.generics.len() {
+        if arguments.len() != callable.generic_arity as usize {
             self.emit(
                 self.sources.span(file, brackets[0].range())?,
                 "E1104",
                 format!(
                     "generic call expects {} type arguments, found {}",
-                    callable.generics.len(),
+                    callable.generic_arity,
                     arguments.len()
                 ),
                 Vec::new(),
@@ -8822,6 +8927,26 @@ impl<'a> ExpressionChecker<'a> {
         if let Some((owner, _, _)) = self.nominal_instance(receiver_type)?
             && let Some(member) =
                 self.callable_member(file, owner, member_token, &[MemberKind::InherentMethod])?
+        {
+            return self.finish_resolved_member_call(
+                file,
+                range,
+                member_token,
+                member,
+                suffix,
+                Some(receiver),
+                expected,
+                context,
+            );
+        }
+        if let Some(trait_body) = context.trait_body
+            && receiver_type == trait_body.self_type
+            && let Some(member) = self.callable_member(
+                file,
+                trait_body.owner,
+                member_token,
+                &[MemberKind::TraitMethod],
+            )?
         {
             return self.finish_resolved_member_call(
                 file,
@@ -9320,20 +9445,32 @@ impl<'a> ExpressionChecker<'a> {
         {
             HirExpressionKind::Function(id) => self
                 .callable(*id)
-                .filter(|callable| !callable.generics.is_empty())
+                .filter(|callable| callable.generic_arity != 0)
                 .cloned(),
             _ => None,
         };
         let mut inference = if let Some(callable) = generic_callable {
-            let variables = (0..callable.generics.len())
-                .map(|_| {
-                    self.program
-                        .interner
-                        .fresh_inference()
-                        .map_err(HirError::from)
+            let fixed_arity = self
+                .trait_body_context(callable.id)
+                .zip(context.trait_body)
+                .filter(|(callee, body)| callee.owner == body.owner)
+                .map_or(0, |(_, body)| body.fixed_arity);
+            let arguments = (0..callable.generic_arity)
+                .map(|position| {
+                    if position < fixed_arity {
+                        self.program
+                            .interner
+                            .generic_parameter(position)
+                            .map_err(HirError::from)
+                    } else {
+                        self.program
+                            .interner
+                            .fresh_inference()
+                            .map_err(HirError::from)
+                    }
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let inferred_type = TypeSubstitution::new(variables.clone())
+            let inferred_type = TypeSubstitution::new(arguments.clone())
                 .apply(&mut self.program.interner, callable.function_type)?;
             function = match self.program.interner.kind(inferred_type)?.clone() {
                 TypeKind::Function(function) => function,
@@ -9341,7 +9478,7 @@ impl<'a> ExpressionChecker<'a> {
             };
             let mut inference = GenericCallInference {
                 callable: callable.id,
-                variables,
+                arguments,
                 solver: InferenceContext::new(),
                 contradiction: false,
             };
@@ -9682,7 +9819,7 @@ impl<'a> ExpressionChecker<'a> {
             generic.contradiction |= association_error;
             let type_arguments = match generic.solver.finish(
                 &mut self.program.interner,
-                generic.variables.iter().copied(),
+                generic.arguments.iter().copied(),
             ) {
                 Ok(arguments) => arguments,
                 Err(InferenceError::Type(error)) => return Err(error.into()),
@@ -10747,9 +10884,7 @@ fn binary_operator(token: TokenKind) -> Option<HirBinaryOperator> {
     })
 }
 
-fn callable_discard_statuses(
-    callable: &HirCallableSignature,
-) -> BTreeMap<u32, DiscardStatus> {
+fn callable_discard_statuses(callable: &HirCallableSignature) -> BTreeMap<u32, DiscardStatus> {
     callable
         .generics
         .iter()
@@ -12071,7 +12206,7 @@ mod tests {
             "{:#?}",
             bounded.diagnostics()
         );
-        assert!(!bounded.is_complete());
+        assert!(bounded.is_complete());
 
         let (_, _, unbounded) = check("fn invalid[T](_: Array[T]) {}\n");
         assert_eq!(codes(&unbounded), ["E1105"]);
@@ -12619,6 +12754,22 @@ mod tests {
     }
 
     #[test]
+    fn explicit_specializations_can_reference_the_enclosing_generic_parameters() {
+        let (_, _, output) = check(
+            "fn identity[T](value: T): T { value }\n\
+             fn forward[T](value: T): T { identity[T](value) }\n\
+             fn optional[T](value: T): T? { identity[T?](some(value)) }\n\
+             fn nested[T](value: T): Array[T] { identity[Array[T]]([value]) }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+    }
+
+    #[test]
     fn generic_calls_infer_from_arguments_results_options_and_variadics() {
         let (_, _, output) = check(
             "fn identity[T](value: T): T { value }\n\
@@ -12702,6 +12853,62 @@ mod tests {
         );
         assert_eq!(codes(&invalid_body), ["E1102"]);
         assert!(invalid_body.is_complete());
+    }
+
+    #[test]
+    fn discard_constraints_are_proved_for_explicit_inferred_and_forwarded_calls() {
+        let (_, _, valid) = check(
+            "fn consume[T: Discard](value: T) {\n\
+                 _ = value\n\
+             }\n\
+             fn forward[T: Discard](value: T) {\n\
+                 consume(value)\n\
+             }\n\
+             fn main() {\n\
+                 consume(1)\n\
+                 consume[String](\"ready\")\n\
+                 forward(true)\n\
+                 let sink: fn(Int): Unit = consume[Int]\n\
+                 sink(2)\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        let (_, _, concrete_failure) = check(
+            "fn consume[T: Discard](value: T) {\n\
+                 _ = value\n\
+             }\n\
+             fn invalid(task: Join[Int, Never]) {\n\
+                 consume(task)\n\
+             }\n",
+        );
+        assert_eq!(codes(&concrete_failure), ["E1105"]);
+        assert!(
+            concrete_failure.diagnostics()[0]
+                .message()
+                .contains("generic bound `Discard`")
+        );
+
+        let (_, _, missing_forwarded_bound) = check(
+            "fn consume[T: Discard](value: T) {\n\
+                 _ = value\n\
+             }\n\
+             fn invalid[T](value: T) {\n\
+                 consume(value)\n\
+             }\n",
+        );
+        assert_eq!(codes(&missing_forwarded_bound), ["E1105"]);
+
+        let (_, _, function_value_failure) = check(
+            "fn consume[T: Discard](value: T) {\n\
+                 _ = value\n\
+             }\n\
+             fn invalid(): fn(Join[Int, Never]): Unit {\n\
+                 consume[Join[Int, Never]]\n\
+             }\n",
+        );
+        assert_eq!(codes(&function_value_failure), ["E1105"]);
     }
 
     #[test]

@@ -1,8 +1,8 @@
 # Semantic and typed HIR contract
 
-**Status:** bootstrap declarations, typed expressions, patterns, assignment,
-discard, structured control flow, calls, semantic occurrences, and verified MIR
-admission implemented
+**Status:** bootstrap declarations, typed expressions, generic specialization
+and `Discard` constraints, patterns, assignment, discard, structured control
+flow, calls, semantic occurrences, and verified MIR admission implemented
 
 ## Boundary
 
@@ -37,12 +37,13 @@ The output owns:
   projections, assignment targets, and standalone explicit discard.
 
 The checker deliberately leaves its completion flag false when it encounters a
-surface whose semantics belongs to an unfinished phase. It checks unbounded
-generic bodies and their invariant call inference, but does not yet claim
-bounded generic, trait or `impl` bodies; constraint proof, closures, string
-interpolation through `Display`, `defer`, ownership capabilities, or
-trait-provided iteration. Those remain explicit later boundaries rather than
-receiving provisional semantics.
+surface whose semantics belongs to an unfinished phase. It checks bounded and
+unbounded generic function bodies, invariant call inference, explicit
+specialization, and the closed structural `Discard` constraint. Proof of other
+intrinsic capabilities, user/external trait constraints, trait or `impl`
+bodies, closures, string interpolation through `Display`, `defer`, ownership
+availability, and trait-provided iteration remain explicit later boundaries
+rather than receiving provisional semantics.
 
 ## Typed expression invariants
 
@@ -69,8 +70,8 @@ The implemented bootstrap subset includes:
 - intrinsic iteration for `Array`, `Map`, `Set`, `Range`, and `String`;
 - prefix and closed scalar binary operators, discrete ranges, membership,
   direct and inherent calls, named and variadic arguments, and parameter modes;
-- inferred or explicit generic function specialization when no unresolved
-  bound proof is required;
+- inferred or explicit generic function specialization, including closed
+  `Discard` obligations and forwarding through an enclosing generic binder;
 - `some`, `ok`, `err`, implicit callable-success lifting, `fail`, and postfix
   `?` over both `Option` and `Result`;
 - exact error propagation, injection into a union, and closed union-subset
@@ -116,9 +117,34 @@ Call arguments remain in source evaluation order while each HIR argument stores
 its resolved receiver, fixed-parameter, variadic-element, or variadic-spread
 target. Dot calls and qualified inherent calls therefore share one explicit
 receiver representation without rewriting or reevaluating source expressions.
-Unbounded generic calls use a request-local invariant solver, close every
-inference variable before publishing HIR, and materialize a
-`SpecializedFunction`; no inference variable crosses the expression boundary.
+Generic calls use a request-local invariant solver, close every inference
+variable before publishing HIR, and materialize a `SpecializedFunction`; no
+inference variable crosses the expression boundary. Explicit type arguments
+may refer to the enclosing binder through composite spellings such as `T?` or
+`Array[T]`; the preliminary bracket remains contextually resolved until the
+checker classifies it as an index or a specialization.
+
+## Generic constraints
+
+Every specialization validates the selected callable's bounds after inference
+or explicit type parsing and before publishing the specialized function node.
+Bound argument types are fully substituted at that boundary, so a callable-
+local generic or inference variable cannot escape as an apparently closed
+obligation. Each attempted proof consumes the request's trait-obligation
+budget.
+
+`Discard` is the first executable constraint because its closed structural
+proof already exists. A concrete argument must satisfy that proof; a generic
+argument satisfies it only when its enclosing binder has `Discard`, `Copy`, or
+`Key`, whose contracts imply discardability. Missing forwarded bounds and
+terminal `Join` values produce `E1105` for explicit calls, inferred calls, and
+specialized function values alike.
+
+Other intrinsic capability bounds and source/external trait bounds remain
+normalized in HIR and consume the same budget, but mark the semantic output
+incomplete when an instantiation needs proof. CAP-001 and TRAIT-001 through
+TRAIT-005 own those proof rules. The driver therefore cannot run or report a
+complete check for such an instantiation by silently assuming the bound.
 
 Range HIR distinguishes exclusive and inclusive ends and accepts only identical
 integer or `Char` endpoint types. Membership HIR records whether it observes an
@@ -311,8 +337,8 @@ silently converted into source diagnostics.
 HIR semantic errors preempt the driver's `T0001` marker. A complete module-mode
 `Operation::Check` succeeds and retains warnings in its report; script and
 fragment checks, or an incomplete semantic surface, advance to `T0001` until
-their later milestones are implemented. Exhausting the
-type-node, combined typed-expression/pattern-node, pattern-analysis-work, or
+their later milestones are implemented. Exhausting the type-node, combined
+typed-expression/pattern-node, pattern-analysis-work, trait-obligation, or
 diagnostic budget becomes `T0002`, using the same public driver as ordinary
 `tondo check` requests.
 
@@ -388,7 +414,8 @@ retention across the public driver boundary. Discard tests cover dedicated HIR,
 implicit-result rejection, direct and nested `Join`, generic nominal
 substitution, recursive and argument-transforming declarations, 512 nominal
 layers, multiple-assignment leaves, borrow-only discard parameters, generic
-bounds, and public-driver `E1105` propagation. Dedicated admission tests mutate
+bounds, constraint forwarding, obligation budgets, and public-driver `E1105`
+propagation. Dedicated admission tests mutate
 otherwise valid HIR to prove rejection of incomplete/recovery state,
 noncanonical types, non-topological edges, misaligned flow metadata, missing
 local types, and invalid value categories.

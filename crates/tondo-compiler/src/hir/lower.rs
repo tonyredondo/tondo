@@ -16,8 +16,8 @@ use crate::types::{
 use super::{
     HirCallableId, HirCallableSignature, HirConstant, HirError, HirField, HirGenericParameter,
     HirNominalDefinition, HirNominalShape, HirOutput, HirParameter, HirProgram,
-    HirTraitConstructor, HirTraitReference, HirTypeDeclaration, HirTypeDeclarationKind, HirVariant,
-    HirVariantPayload,
+    HirTraitConstructor, HirTraitDefinition, HirTraitMethod, HirTraitReference, HirTypeDeclaration,
+    HirTypeDeclarationKind, HirVariant, HirVariantPayload,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -52,6 +52,7 @@ pub fn lower_types<'a>(
         constants: BTreeMap::new(),
         callables: Vec::new(),
         annotations: BTreeMap::new(),
+        generic_types: BTreeMap::new(),
     };
     lowerer.index_declarations()?;
     lowerer.analyze_aliases()?;
@@ -73,7 +74,7 @@ pub fn lower_types<'a>(
             member_references: Vec::new(),
             patterns: Vec::new(),
             bodies: BTreeMap::new(),
-            local_types: BTreeMap::new(),
+            local_types: lowerer.generic_types,
             discard_statuses: Vec::new(),
             expression_check_complete: false,
         },
@@ -122,6 +123,7 @@ struct TypeLowerer<'a> {
     constants: BTreeMap<SymbolId, HirConstant>,
     callables: Vec<HirCallableSignature>,
     annotations: BTreeMap<(FileId, u32, u32), TypeId>,
+    generic_types: BTreeMap<LocalId, TypeId>,
 }
 
 impl<'a> TypeLowerer<'a> {
@@ -435,6 +437,7 @@ impl<'a> TypeLowerer<'a> {
             )?;
             let ty = self.interner.generic_parameter(position)?;
             environment.generics.insert(local.id(), ty);
+            self.generic_types.insert(local.id(), ty);
             parameters.push(HirGenericParameter {
                 local: local.id(),
                 position,
@@ -1389,7 +1392,33 @@ impl<'a> TypeLowerer<'a> {
                         shape: HirNominalShape::Enum { variants },
                     })
                 }
-                SymbolKind::Trait => HirTypeDeclarationKind::Trait,
+                SymbolKind::Trait => {
+                    let self_type = environment
+                        .contextual_self
+                        .expect("trait environments always declare contextual Self");
+                    let mut methods = site
+                        .node
+                        .child_nodes()
+                        .filter(|child| child.kind() == SyntaxKind::TraitMethod)
+                        .filter_map(|method| {
+                            let name = first_identifier(method)?;
+                            let member = self.resolved.member_at(site.file, name.range())?;
+                            Some(HirTraitMethod {
+                                member: member.id(),
+                                has_default: method
+                                    .child_nodes()
+                                    .any(|child| child.kind() == SyntaxKind::Block),
+                                requires_self_send: has_direct_token(method, TokenKind::Async)
+                                    && callable_has_receiver(method),
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    methods.sort_by_key(HirTraitMethod::member);
+                    HirTypeDeclarationKind::Trait(HirTraitDefinition {
+                        self_type,
+                        methods,
+                    })
+                }
                 SymbolKind::Constant | SymbolKind::Function | SymbolKind::NewtypeConstructor => {
                     continue;
                 }
@@ -1775,6 +1804,7 @@ impl<'a> TypeLowerer<'a> {
         environment: TypeEnvironment,
         generics: Vec<HirGenericParameter>,
     ) -> Result<(), HirError> {
+        let generic_arity = environment.next_position;
         let is_async = has_direct_token(callable, TokenKind::Async);
         let is_unsafe = has_direct_token(callable, TokenKind::Unsafe);
         let mut parameters = Vec::new();
@@ -1945,6 +1975,7 @@ impl<'a> TypeLowerer<'a> {
             span: self.sources.span(file, name_range)?,
             parameters,
             generics,
+            generic_arity,
             outcome,
             function_type,
             body_source: body
@@ -2455,6 +2486,17 @@ fn has_direct_token(node: SyntaxNodeRef<'_>, kind: TokenKind) -> bool {
     node.child_tokens().any(|token| token.kind() == kind)
 }
 
+fn callable_has_receiver(node: SyntaxNodeRef<'_>) -> bool {
+    node.child_nodes()
+        .find(|child| child.kind() == SyntaxKind::ParameterList)
+        .is_some_and(|parameters| {
+            parameters.child_nodes().any(|parameter| {
+                parameter.kind() == SyntaxKind::Parameter
+                    && has_direct_token(parameter, TokenKind::SelfKw)
+            })
+        })
+}
+
 fn parameter_mode(node: SyntaxNodeRef<'_>) -> ParameterMode {
     if has_direct_token(node, TokenKind::Ref) {
         ParameterMode::Ref
@@ -2720,7 +2762,7 @@ mod tests {
                 let ty = match declaration.kind() {
                     HirTypeDeclarationKind::Alias { target } => *target,
                     HirTypeDeclarationKind::Nominal(nominal) => nominal.self_type(),
-                    HirTypeDeclarationKind::Trait => return Some(format!("{identity}=trait")),
+                    HirTypeDeclarationKind::Trait(_) => return Some(format!("{identity}=trait")),
                 };
                 Some(format!(
                     "{identity}={}",

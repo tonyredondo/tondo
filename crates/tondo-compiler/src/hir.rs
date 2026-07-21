@@ -476,7 +476,44 @@ impl HirTypeDeclaration {
 pub enum HirTypeDeclarationKind {
     Alias { target: TypeId },
     Nominal(HirNominalDefinition),
-    Trait,
+    Trait(HirTraitDefinition),
+}
+
+#[derive(Debug, Clone)]
+pub struct HirTraitDefinition {
+    self_type: TypeId,
+    methods: Vec<HirTraitMethod>,
+}
+
+impl HirTraitDefinition {
+    pub fn self_type(&self) -> TypeId {
+        self.self_type
+    }
+
+    pub fn methods(&self) -> &[HirTraitMethod] {
+        &self.methods
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HirTraitMethod {
+    member: MemberId,
+    has_default: bool,
+    requires_self_send: bool,
+}
+
+impl HirTraitMethod {
+    pub fn member(&self) -> MemberId {
+        self.member
+    }
+
+    pub fn has_default(&self) -> bool {
+        self.has_default
+    }
+
+    pub fn requires_self_send(&self) -> bool {
+        self.requires_self_send
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -598,6 +635,7 @@ pub struct HirCallableSignature {
     span: Span,
     parameters: Vec<HirParameter>,
     generics: Vec<HirGenericParameter>,
+    generic_arity: u32,
     outcome: TypeId,
     function_type: TypeId,
     body_source: Option<Span>,
@@ -618,6 +656,10 @@ impl HirCallableSignature {
 
     pub fn generics(&self) -> &[HirGenericParameter] {
         &self.generics
+    }
+
+    pub fn generic_arity(&self) -> u32 {
+        self.generic_arity
     }
 
     pub fn outcome(&self) -> TypeId {

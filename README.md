@@ -16,8 +16,9 @@ resolution, visibility checks, public-API validation, and foundational
 canonical type interner are also implemented. Source type expressions now lower
 to semantic declarations and callable signatures, including aliases, generic
 bounds, normalized unions, and recursive-productivity checks. The typed HIR now
-checks the bootstrap core, including unbounded generic bodies and invariant
-call inference: constants, bindings, functions, inherent methods, blocks,
+checks the bootstrap core, including bounded and unbounded generic bodies,
+invariant call inference, explicit specialization, and closed `Discard`
+constraints: constants, bindings, functions, inherent methods, blocks,
 conditionals, loops, scalar operators, calls, `Option`,
 `Result`, `fail`, `?`, every pattern form, and exhaustive guarded `match`, with
 explicit coercions and structured diagnostics. Field and tuple-slot access,
@@ -38,8 +39,11 @@ Record construction/update, method dispatch, closed generic-call inference,
 range/membership checking, and compile-time constant evaluation are implemented
 for the bootstrap subset. `tondo check` now succeeds when that entire subset is
 understood. Complete HIR lowers through a verified typed MIR and then to
-verified in-memory slot bytecode with source maps. `tondo run` executes a
-synchronous explicit `main` in an iterative VM with checked operations,
+verified in-memory slot bytecode with source maps. Reached generic functions
+are monomorphized deterministically; equal concrete substitutions share one
+body, direct bytecode calls carry no runtime type pack, and expanding recursion
+is stopped by an explicit request limit. `tondo run` executes a synchronous
+explicit `main` in an iterative VM with checked operations,
 normative panics, precise generational mark-and-sweep collection, defensive
 limits, and a provisional capability-gated `std.console.print` host shim. Async
 entry points, implicit script bodies, ownership analysis, and later language

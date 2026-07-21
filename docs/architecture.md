@@ -140,8 +140,11 @@ materializes nominal declarations and callable signatures, and validates
 recursive productivity. Expression checking then materializes typed constants,
 bootstrap callable bodies, nominal constructors and updates, closed operators,
 calls with declaration-bound arguments, and explicit generic specializations
-with resolved identities, value categories, and contextual coercions. Pattern
-checking is part of the same typed-HIR
+with resolved identities, value categories, and contextual coercions. Generic
+specializations close invariant inference and prove the structural `Discard`
+constraint before leaving HIR; other capability and trait obligations remain
+explicit incomplete boundaries until their owning M4 phases. Pattern checking
+is part of the same typed-HIR
 boundary and records typed pattern arenas, guarded match arms, irrefutability,
 reachability, and exhaustiveness without deferring decisions to MIR. Assignment
 checking resolves target projections before the RHS and records compound
@@ -238,6 +241,15 @@ unwind, iterator, discriminant, and return edges. Lowering is deterministic and
 the VM-owned verifier independently rechecks indices, instantiated layouts,
 calls, initialization, storage lifetime, tag refinement, and edge shape before
 returning a program to execution.
+
+Before those tables are allocated, a bounded deterministic worklist
+monomorphizes every generic callable reached from non-generic roots, constants,
+or another concrete instance. Equal callable/argument pairs share one body;
+same-instance recursion terminates by deduplication and type-expanding recursion
+terminates at the request limit. Executable callable signatures and function
+bodies contain only concrete types and direct calls carry no runtime type pack.
+Generic nominal declarations remain compact layout templates checked with their
+concrete arguments by the verifier.
 
 The bootstrap bytecode exists in memory and is not a stable artifact or ABI.
 Its disassembler is tooling text only and there is deliberately no loader.

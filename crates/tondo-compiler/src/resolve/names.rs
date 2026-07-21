@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use crate::diagnostics::{Diagnostic, DiagnosticCode, PrimaryLocation, Related, Severity};
 use crate::package::{ModuleId, Name, Namespace, PackageGraph};
 use crate::source::{FileId, SourceDatabase, Span, TextRange};
+use crate::syntax::ast::Expression as AstExpression;
 use crate::syntax::{Parsed, SyntaxKind, SyntaxNodeRef, SyntaxTokenRef, TokenKind};
 
 use super::{
@@ -507,15 +508,45 @@ impl NameResolver<'_> {
         for item in bracket.child_nodes() {
             if item.kind() == SyntaxKind::BracketItem {
                 let children = item.child_nodes().collect::<Vec<_>>();
-                if children.len() == 1 && children[0].kind() == SyntaxKind::PathExpr {
-                    self.resolve_either_path(children[0])?;
-                    self.walk_path_arguments(children[0])?;
+                if children.len() == 1 && is_contextual_type_expression(children[0]) {
+                    self.resolve_contextual_type_expression(children[0])?;
                 } else {
                     self.walk(item, Some(SyntaxKind::BracketPostfix))?;
                 }
             } else {
                 self.walk(item, Some(SyntaxKind::BracketPostfix))?;
             }
+        }
+        Ok(())
+    }
+
+    fn resolve_contextual_type_expression(
+        &mut self,
+        expression: SyntaxNodeRef<'_>,
+    ) -> Result<(), ResolveError> {
+        match expression.kind() {
+            SyntaxKind::PathExpr => {
+                self.resolve_either_path(expression)?;
+                self.walk_path_arguments(expression)?;
+            }
+            SyntaxKind::PostfixExpr => {
+                for child in expression.child_nodes() {
+                    if AstExpression::cast(child).is_some() {
+                        self.resolve_contextual_type_expression(child)?;
+                    } else if child.kind() == SyntaxKind::BracketPostfix {
+                        self.resolve_preliminary_bracket(child)?;
+                    }
+                }
+            }
+            SyntaxKind::TupleExpr | SyntaxKind::GroupExpr | SyntaxKind::BinaryExpr => {
+                for child in expression
+                    .child_nodes()
+                    .filter(|child| AstExpression::cast(*child).is_some())
+                {
+                    self.resolve_contextual_type_expression(child)?;
+                }
+            }
+            _ => unreachable!("contextual type-expression shapes are checked before resolution"),
         }
         Ok(())
     }
@@ -1193,6 +1224,54 @@ fn is_pattern(kind: SyntaxKind) -> bool {
             | SyntaxKind::BorrowBindingPattern
             | SyntaxKind::BindingPattern
     )
+}
+
+fn is_contextual_type_expression(node: SyntaxNodeRef<'_>) -> bool {
+    match node.kind() {
+        SyntaxKind::PathExpr => true,
+        SyntaxKind::PostfixExpr => {
+            let expressions = node
+                .child_nodes()
+                .filter(|child| AstExpression::cast(*child).is_some())
+                .collect::<Vec<_>>();
+            let suffixes = node
+                .child_nodes()
+                .filter(|child| AstExpression::cast(*child).is_none())
+                .collect::<Vec<_>>();
+            expressions.len() == 1
+                && is_contextual_type_expression(expressions[0])
+                && !suffixes.is_empty()
+                && suffixes.iter().all(|suffix| {
+                    matches!(
+                        suffix.kind(),
+                        SyntaxKind::BracketPostfix | SyntaxKind::PropagateSuffix
+                    )
+                })
+        }
+        SyntaxKind::TupleExpr => node
+            .child_nodes()
+            .filter(|child| AstExpression::cast(*child).is_some())
+            .all(is_contextual_type_expression),
+        SyntaxKind::GroupExpr => {
+            let expressions = node
+                .child_nodes()
+                .filter(|child| AstExpression::cast(*child).is_some())
+                .collect::<Vec<_>>();
+            expressions.len() == 1 && is_contextual_type_expression(expressions[0])
+        }
+        SyntaxKind::BinaryExpr
+            if node
+                .child_tokens()
+                .any(|token| token.kind() == TokenKind::Pipe) =>
+        {
+            let expressions = node
+                .child_nodes()
+                .filter(|child| AstExpression::cast(*child).is_some())
+                .collect::<Vec<_>>();
+            expressions.len() >= 2 && expressions.into_iter().all(is_contextual_type_expression)
+        }
+        _ => false,
+    }
 }
 
 fn collect_pattern_bindings<'a>(pattern: SyntaxNodeRef<'a>, output: &mut Vec<SyntaxTokenRef<'a>>) {

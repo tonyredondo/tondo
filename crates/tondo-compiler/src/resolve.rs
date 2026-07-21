@@ -1862,4 +1862,17 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(locals, [0, 0, 1]);
     }
+
+    #[test]
+    fn generic_arguments_inside_expression_specializations_use_the_callable_binder() {
+        let (_sources, output) = resolve_sources(
+            &[(
+                "main",
+                "main.to",
+                "fn identity[T](value: T): T {\n    value\n}\nfn forward[T](value: T): T {\n    identity[T](value)\n}\nfn wrap[T](value: T): T? {\n    identity[T?](some(value))\n}\nfn nest[T](value: T): Array[T] {\n    identity[Array[T]]([value])\n}\n",
+            )],
+            &["main"],
+        );
+        assert!(output.diagnostics().is_empty());
+    }
 }

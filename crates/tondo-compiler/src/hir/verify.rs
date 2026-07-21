@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
-use crate::resolve::{LocalKind, MemberKind, ResolvedProgram, SymbolKind};
+use crate::resolve::{LocalKind, MemberKind, MemberOwner, ResolvedProgram, SymbolKind};
 use crate::types::{IntrinsicType, ScalarType, TypeId, TypeKind};
 
 use super::{
@@ -133,10 +133,17 @@ impl Verifier<'_> {
                     super::HirNominalShape::Newtype { .. }
                     | super::HirNominalShape::Record { .. } => &[SymbolKind::Type][..],
                 },
-                HirTypeDeclarationKind::Trait => &[SymbolKind::Trait][..],
+                HirTypeDeclarationKind::Trait(_) => &[SymbolKind::Trait][..],
             };
             self.verify_symbol(declaration.symbol, expected, &context)?;
-            self.verify_generics(&declaration.parameters, &context)?;
+            self.verify_generics(
+                &declaration.parameters,
+                u32::try_from(declaration.parameters.len()).map_err(|_| {
+                    HirInvariantError::new(&context, "generic arity exceeds u32")
+                })?,
+                None,
+                &context,
+            )?;
             match &declaration.kind {
                 HirTypeDeclarationKind::Alias { target } => {
                     self.verify_type(*target, format!("{context} alias target"))?;
@@ -175,7 +182,85 @@ impl Verifier<'_> {
                         }
                     }
                 }
-                HirTypeDeclarationKind::Trait => {}
+                HirTypeDeclarationKind::Trait(trait_definition) => {
+                    self.verify_type(
+                        trait_definition.self_type,
+                        format!("{context} contextual Self"),
+                    )?;
+                    let expected_self = u32::try_from(declaration.parameters.len())
+                        .map_err(|_| {
+                            HirInvariantError::new(&context, "trait generic arity exceeds u32")
+                        })?;
+                    if !matches!(
+                        self.program.interner.kind(trait_definition.self_type),
+                        Ok(TypeKind::GenericParameter(position)) if *position == expected_self
+                    ) {
+                        return Err(HirInvariantError::new(
+                            &context,
+                            "trait contextual Self does not follow its declared parameters",
+                        ));
+                    }
+                    let mut previous = None;
+                    for method in &trait_definition.methods {
+                        if previous.is_some_and(|previous| previous >= method.member) {
+                            return Err(HirInvariantError::new(
+                                &context,
+                                "trait methods are not in strict member-ID order",
+                            ));
+                        }
+                        previous = Some(method.member);
+                        let member = self.verify_member(
+                            method.member,
+                            &[MemberKind::TraitMethod, MemberKind::TraitAssociatedFunction],
+                            &context,
+                        )?;
+                        if member.owner() != MemberOwner::Type(declaration.symbol) {
+                            return Err(HirInvariantError::new(
+                                &context,
+                                format!(
+                                    "trait method member#{} belongs to another owner",
+                                    method.member.index()
+                                ),
+                            ));
+                        }
+                        let callable = self
+                            .program
+                            .callable(HirCallableId::Member(method.member))
+                            .ok_or_else(|| {
+                                HirInvariantError::new(
+                                    &context,
+                                    format!(
+                                        "trait method member#{} has no callable signature",
+                                        method.member.index()
+                                    ),
+                                )
+                            })?;
+                        if method.has_default != callable.body_source.is_some() {
+                            return Err(HirInvariantError::new(
+                                &context,
+                                format!(
+                                    "trait method member#{} default-body flag is inconsistent",
+                                    method.member.index()
+                                ),
+                            ));
+                        }
+                        let function = match self.program.interner.kind(callable.function_type) {
+                            Ok(TypeKind::Function(function)) => function,
+                            _ => continue,
+                        };
+                        let requires_self_send = function.is_async()
+                            && callable.parameters.iter().any(|parameter| parameter.receiver);
+                        if method.requires_self_send != requires_self_send {
+                            return Err(HirInvariantError::new(
+                                &context,
+                                format!(
+                                    "trait method member#{} has an inconsistent Self: Send requirement",
+                                    method.member.index()
+                                ),
+                            ));
+                        }
+                    }
+                }
             }
         }
         Ok(())
@@ -347,7 +432,13 @@ impl Verifier<'_> {
             }
             previous = Some(callable.id);
             self.verify_resolved_callable_id(callable.id, &context)?;
-            self.verify_generics(&callable.generics, &context)?;
+            let hidden = self.trait_self_position(callable.id);
+            self.verify_generics(
+                &callable.generics,
+                callable.generic_arity,
+                hidden,
+                &context,
+            )?;
             self.verify_type(callable.outcome, format!("{context} outcome"))?;
             self.verify_type(callable.function_type, format!("{context} function type"))?;
             for (index, parameter) in callable.parameters.iter().enumerate() {
@@ -378,14 +469,38 @@ impl Verifier<'_> {
     fn verify_generics(
         &self,
         generics: &[HirGenericParameter],
+        generic_arity: u32,
+        hidden_position: Option<u32>,
         context: &str,
     ) -> Result<(), HirInvariantError> {
-        for (index, generic) in generics.iter().enumerate() {
-            if generic.position != index as u32 {
+        if hidden_position.is_some_and(|position| position >= generic_arity) {
+            return Err(HirInvariantError::new(
+                context,
+                "hidden generic position is outside the callable arity",
+            ));
+        }
+        let expected_len = usize::try_from(generic_arity)
+            .ok()
+            .and_then(|arity| arity.checked_sub(usize::from(hidden_position.is_some())))
+            .ok_or_else(|| HirInvariantError::new(context, "invalid generic arity"))?;
+        if generics.len() != expected_len {
+            return Err(HirInvariantError::new(
+                context,
+                format!(
+                    "generic parameter count {} does not match arity {generic_arity}",
+                    generics.len()
+                ),
+            ));
+        }
+        let expected_positions = (0..generic_arity)
+            .filter(|position| Some(*position) != hidden_position)
+            .collect::<Vec<_>>();
+        for (generic, expected) in generics.iter().zip(expected_positions) {
+            if generic.position != expected {
                 return Err(HirInvariantError::new(
                     context,
                     format!(
-                        "generic local#{} has position {}, expected {index}",
+                        "generic local#{} has position {}, expected {expected}",
                         generic.local.index(),
                         generic.position
                     ),
@@ -408,6 +523,24 @@ impl Verifier<'_> {
             }
         }
         Ok(())
+    }
+
+    fn trait_self_position(&self, callable: HirCallableId) -> Option<u32> {
+        let HirCallableId::Member(member) = callable else {
+            return None;
+        };
+        let member = self.resolved.member(member)?;
+        if !matches!(
+            member.kind(),
+            MemberKind::TraitMethod | MemberKind::TraitAssociatedFunction
+        ) {
+            return None;
+        }
+        let MemberOwner::Type(owner) = member.owner() else {
+            return None;
+        };
+        let declaration = self.program.declaration(owner)?;
+        u32::try_from(declaration.parameters.len()).ok()
     }
 
     fn verify_annotations_and_locals(&self) -> Result<(), HirInvariantError> {
@@ -665,13 +798,13 @@ impl Verifier<'_> {
                 arguments,
             } => {
                 let signature = self.verify_callable_id(*callable, context)?;
-                if arguments.len() != signature.generics.len() {
+                if arguments.len() != signature.generic_arity as usize {
                     return Err(HirInvariantError::new(
                         context,
                         format!(
                             "specialization has {} arguments for {} generic parameters",
                             arguments.len(),
-                            signature.generics.len()
+                            signature.generic_arity
                         ),
                     ));
                 }

@@ -105,6 +105,14 @@ when each matches. Typed lowering must classify the bracket and either select
 the matching candidate or emit `E1004`; it must not perform a fresh fallback
 lookup.
 
+The same contextual treatment applies recursively to source shapes that can be
+types but are parsed with expression productions inside a preliminary bracket:
+options such as `T?`, nested applications such as `Array[T]`, tuples, groups,
+and structural unions. This lets an explicit specialization inside a generic
+body refer to its type binder without making ordinary `values[index]`
+resolution type-directed. Once HIR classifies the outer bracket, every selected
+type name still comes from the reference recorded here.
+
 `Self` resolves as a contextual type only inside traits, implementations, and
 inherent methods. The value `self` resolves only when the current callable
 actually declares a receiver. These are explicit resolved entities, not hidden

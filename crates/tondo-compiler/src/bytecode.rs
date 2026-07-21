@@ -20,6 +20,7 @@ pub struct BytecodeLoweringLimits {
     pub max_blocks_per_function: u32,
     pub max_instructions_per_function: u32,
     pub max_spans_per_function: u32,
+    pub max_generic_instantiations: u32,
     pub max_verification_steps: u64,
 }
 
@@ -35,6 +36,7 @@ impl Default for BytecodeLoweringLimits {
             max_blocks_per_function: 1_000_000,
             max_instructions_per_function: 4_000_000,
             max_spans_per_function: 4_000_000,
+            max_generic_instantiations: 1_000_000,
             max_verification_steps: 32_000_000,
         }
     }

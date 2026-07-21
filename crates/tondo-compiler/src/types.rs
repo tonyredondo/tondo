@@ -402,7 +402,7 @@ impl fmt::Display for TypeError {
 
 impl Error for TypeError {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TypeInterner {
     limit: u32,
     kinds: Vec<TypeKind>,

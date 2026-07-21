@@ -1,6 +1,7 @@
 # Typed slot bytecode contract
 
-**Status:** BC-001 through BC-005 and the M3 VM admission path implemented
+**Status:** BC-001 through BC-005, GEN-002 monomorphization, and the M3 VM
+admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -38,11 +39,42 @@ therefore substitute generic arguments from metadata; an instruction cannot
 declare a forged field result type and make it valid merely by being
 self-consistent.
 
-Callable metadata retains receiver position, parameter modes, variadic element
-type, generic arity, outcome, and function type. Static function operands name
-that callable plus explicit type arguments. Indirect calls retain a structural
-function type. Named constants are already evaluated and normalized; execution
-never invokes arbitrary code to initialize them.
+The VM data model can retain receiver position, parameter modes, variadic
+element type, generic arity, outcome, and function type. Compiler-produced
+executable callable entries are concrete instances: their generic arity is zero
+and their signature types have already been substituted. Static function
+operands name that concrete callable and carry an empty type-argument vector.
+Indirect calls retain a structural concrete function type. Named constants are
+already evaluated and normalized; execution never invokes arbitrary code to
+initialize them.
+
+## Monomorphization boundary
+
+`lower_to_bytecode` discovers concrete callable instances before allocating any
+bytecode table. It roots every non-generic callable and every specialized
+function value reachable from an evaluated constant, then transitively scans
+the reached MIR templates for static function operands. Nested type arguments
+are substituted with the enclosing instance before their callee is queued.
+
+Instances are deduplicated by callable identity plus the complete concrete
+argument vector. Direct recursion with the same vector therefore terminates.
+Type-expanding recursion creates distinct instances and stops with `T0002` when
+the request's generic-instantiation budget is exhausted. The same failure rule
+applies if substitution exhausts the interned specialized-type budget. No
+partial program crosses the verifier boundary.
+
+For each reached function, lowering builds a complete template-to-concrete map
+covering its signature, locals, places, projections, operands, rvalues,
+operations, discriminant tags, and outcome. A missing mapping or a surviving
+generic/inference node is an internal construction error. Unreferenced generic
+functions have no bytecode body. Equal specializations reached from several
+calls or constants share one callable and one function entry.
+
+Generic nominal metadata deliberately remains a layout template, rather than
+being duplicated per use. This is the only generic structure required by
+compiler-produced executable bytecode: the verifier substitutes concrete
+nominal arguments while validating fields and variants. Executable function
+type-use tables themselves are concrete.
 
 ## Function tables and slots
 
@@ -121,10 +153,11 @@ code.
 
 ## Determinism, limits, and tooling
 
-Catalogs follow stable HIR/MIR order; type-use sets and span tables are sorted.
-No observable ordering depends on hash iteration. Construction bounds types,
-nominals, callables, constants, functions, per-function slots, blocks,
-instructions, and spans. Driver exhaustion becomes `T0002`.
+Catalogs follow stable HIR/MIR order; instance sets, type-use sets, and span
+tables are sorted. No observable ordering depends on hash iteration.
+Construction bounds generic instances, specialized and catalog types, nominals,
+callables, constants, functions, per-function slots, blocks, instructions, and
+spans. Driver exhaustion becomes `T0002`.
 
 `disassemble` renders deterministic human-readable text for tests and debugging
 and labels itself tooling-only. There is no bytecode serializer or loader in

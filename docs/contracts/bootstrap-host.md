@@ -1,6 +1,6 @@
 # Bootstrap standard-library host boundary
 
-**Status:** implemented M3 provisional boundary  
+**Status:** implemented M3 provisional boundary
 **Language baseline:** Tondo 0.1-draft.8
 
 This contract exists only to make the first VM backend observable without

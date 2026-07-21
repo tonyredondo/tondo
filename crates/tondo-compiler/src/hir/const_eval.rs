@@ -65,7 +65,7 @@ pub(super) fn evaluate(
                         let signature = program
                             .callable(*callable)
                             .ok_or(ConstantEvaluationError::Unavailable)?;
-                        if !signature.generics().is_empty() {
+                        if signature.generic_arity() != 0 {
                             return Err(ConstantEvaluationError::Nonconstant {
                                 span: expression.span(),
                                 reason: "a generic function value must be fully specialized",

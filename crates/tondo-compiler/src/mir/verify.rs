@@ -1096,7 +1096,7 @@ impl Verifier<'_> {
                 let signature = self.hir.callable(*callable).ok_or_else(|| {
                     MirInvariantError::new(context, "function operand has no HIR signature")
                 })?;
-                if arguments.len() != signature.generics().len() {
+                if arguments.len() != signature.generic_arity() as usize {
                     return Err(MirInvariantError::new(
                         context,
                         "function operand specialization arity is invalid",

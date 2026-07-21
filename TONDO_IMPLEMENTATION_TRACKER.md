@@ -1,12 +1,12 @@
 # Tondo: tracker de implementación
 
 **Estado:** activo  
-**Versión del tracker:** 0.21
+**Versión del tracker:** 0.22
 **Última actualización:** 2026-07-21  
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
-**Objetivo inmediato:** completar parámetros genéricos, constraints e
-instanciación monomorfizada como primera parte de M4, preservando los límites y
-la ruta de bytecode verificado alcanzada en G2.
+**Objetivo inmediato:** implementar declaraciones de trait y métodos por
+defecto (TRAIT-001) sobre la frontera monomorfizada ya cerrada, sin introducir
+dispatch dinámico ni lookup global de métodos.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -250,8 +250,8 @@ necesaria; la fragmentación del workspace no.
 | **M0 — Fundación** | Repo reproducible, CLI y arquitectura | Completado |
 | **M1 — Fuente, parser y formatter** | Gate G0 | Completado |
 | **M2 — Semántica bootstrap** | Gate G1 | Completado |
-| **M3 — MIR, bytecode y VM** | Gate G2: primer compilador | En curso |
-| **M4 — Genéricos, traits y closures** | Sistema estático completo | Pendiente |
+| **M3 — MIR, bytecode y VM** | Gate G2: primer compilador | Completado |
+| **M4 — Genéricos, traits y closures** | Sistema estático completo | En curso |
 | **M5 — Ownership, préstamos y memoria** | Modelo de valores completo | Pendiente |
 | **M6 — Colecciones, números y texto** | Gate G3: alpha utilizable | Pendiente |
 | **M7 — Async y concurrencia estructurada** | Tasks conformes | Pendiente |
@@ -260,9 +260,10 @@ necesaria; la fragmentación del workspace no.
 | **M10 — Conformidad y release** | Gate G5: Tondo 0.1 | Pendiente |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 
-Estado observado de M0:
+Estado observado del workspace:
 
-- Repositorio local: `/tmp/tondo`, branch `main`, todavía sin commits.
+- Repositorio local: `/tmp/tondo`, branch `main`, con upstream en
+  `github.com/tonyredondo/tondo`.
 - Workspace: `tondo-cli`, `tondo-compiler` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada aún no está fijada.
@@ -964,7 +965,7 @@ dinámicos ni dispatch oculto.
 - [x] **GEN-001 — Implementar parámetros genéricos invariantes e inferencia de
   argumentos desde argumentos y tipo esperado.**
 
-- [ ] **GEN-002 — Implementar constraints e instanciación monomorfizada.**
+- [x] **GEN-002 — Implementar constraints e instanciación monomorfizada.**
 
 - [ ] **TRAIT-001 — Implementar declaración de trait y métodos por defecto.**
 
@@ -994,6 +995,35 @@ dinámicos ni dispatch oculto.
 
 - [ ] **CALL-004 — Implementar closures sync, async y unsafe en la
   representación semántica, aunque sus runtimes se activen después.**
+
+Evidencia observada el 2026-07-21 para GEN-001 y GEN-002:
+
+- Los bodies genéricos bounded y unbounded se comprueban una sola vez con
+  parámetros rígidos. Las llamadas explícitas e inferidas cierran todas las
+  variables invariantes y pueden reenviar el binder exterior en tipos
+  compuestos como `T?` y `Array[T]`.
+- Cada especialización valida sus bounds antes de publicar HIR. `Discard` usa
+  ya la prueba estructural cerrada y rechaza `Join`, bounds no reenviados y
+  function values inválidos con `E1105`; los demás traits permanecen
+  representados y presupuestados, pero incompletos hasta CAP-001 y TRAIT-001 a
+  TRAIT-005.
+- La monomorfización se ejecuta entre MIR verificado y bytecode. Parte de todos
+  los callables no genéricos y de function values constantes, sigue referencias
+  transitivas, sustituye todos los tipos de firma y body y deduplica por
+  callable más vector concreto de argumentos.
+- El bytecode ejecutable publica callables de aridad genérica cero y calls sin
+  type pack runtime. Las plantillas nominales genéricas permanecen únicas para
+  que el verifier compruebe fields y variants con argumentos concretos.
+- Recursión con la misma sustitución converge por deduplicación. Recursión que
+  expande tipos termina en `T0002`; los límites cero, el presupuesto de
+  obligaciones y el de nodos de tipo especializados tienen fallos controlados.
+- Las regresiones ejecutan en la VM identidades, forwarding explícito,
+  constantes función, records y fields genéricos, indexación de arrays y
+  discriminantes de `Option`, con instancias `Int` y `String` separadas y orden
+  determinista.
+- El gate acumulado pasa 318 tests, `git diff --check`, formatter check, build
+  de todos los targets, Clippy con warnings denegados y Rustdoc con warnings
+  denegados.
 
 ### Gate de salida de M4
 
@@ -1633,13 +1663,26 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es cerrar GEN-001 y GEN-002: completar la inferencia
-genérica ya iniciada, fijar constraints ejecutables e introducir
-monomorfización limitada antes del dispatch de traits.
+La siguiente acción activa es TRAIT-001: materializar declaraciones de trait y
+métodos por defecto sobre el HIR ya genérico, antes de implementar `impl`,
+coherencia y dispatch estático.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.22 — 2026-07-21
+
+- Se completan GEN-001 y GEN-002 con bodies genéricos comprobados, inferencia
+  invariante, especialización explícita contextual y constraints `Discard`
+  ejecutables.
+- Un worklist determinista monomorfiza desde roots no genéricos y constantes,
+  sustituye toda la superficie MIR, deduplica recursión estable y limita la
+  expansión de instancias y tipos con `T0002`.
+- El bytecode ejecutable queda completamente concreto sin type packs runtime;
+  las plantillas nominales permanecen compactas y verificadas por layout.
+- El gate acumulado queda en 318 tests, formatter check, build de todos los
+  targets, Clippy y Rustdoc sin warnings; la cola avanza a TRAIT-001.
 
 ### 0.21 — 2026-07-21
 

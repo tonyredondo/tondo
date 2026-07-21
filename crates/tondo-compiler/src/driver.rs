@@ -782,6 +782,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                             .limits
                             .max_bytecode_instructions_per_function,
                         max_spans_per_function: request.limits.max_bytecode_spans_per_function,
+                        max_generic_instantiations: request.limits.max_generic_instantiations,
                         max_verification_steps: request.limits.max_bytecode_verification_steps,
                     },
                 ) {
@@ -2122,6 +2123,72 @@ mod tests {
         );
         assert_eq!(output.exit_code(), 0);
         assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
+    fn generic_constraint_obligations_execute_and_obey_the_request_budget() {
+        let source = b"fn consume[T: Discard](value: T) {\n\
+                           _ = value\n\
+                       }\n\
+                       fn main() {\n\
+                           consume(42)\n\
+                       }\n";
+        let output = execute(operation_request(
+            Operation::Run,
+            source,
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics().diagnostics()
+        );
+        assert_eq!(output.exit_code(), 0);
+
+        let limited = execute(operation_request(
+            Operation::Check,
+            source,
+            SourceForm::Module,
+            ResourceLimits {
+                max_trait_obligations: 0,
+                ..ResourceLimits::default()
+            },
+        ))
+        .unwrap();
+        assert_eq!(limited.status(), CompilationStatus::Rejected);
+        assert_eq!(limited.diagnostics().diagnostics()[0].code(), "T0002");
+        assert!(
+            limited.diagnostics().diagnostics()[0]
+                .message()
+                .contains("trait obligation")
+        );
+
+        let expanding = execute(operation_request(
+            Operation::Run,
+            b"fn expand[T: Discard](value: T) {\n\
+                  let wrapped = some(value)\n\
+                  expand(wrapped)\n\
+              }\n\
+              fn main() {\n\
+                  expand(1)\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits {
+                max_generic_instantiations: 3,
+                ..ResourceLimits::default()
+            },
+        ))
+        .unwrap();
+        assert_eq!(expanding.status(), CompilationStatus::Rejected);
+        assert_eq!(expanding.diagnostics().diagnostics()[0].code(), "T0002");
+        assert!(
+            expanding.diagnostics().diagnostics()[0]
+                .message()
+                .contains("generic instantiations")
+        );
     }
 
     #[test]
