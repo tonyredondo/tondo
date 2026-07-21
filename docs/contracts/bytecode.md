@@ -55,6 +55,10 @@ bytecode table. It roots every non-generic callable and every specialized
 function value reachable from an evaluated constant, then transitively scans
 the reached MIR templates for static function operands. Nested type arguments
 are substituted with the enclosing instance before their callee is queued.
+Trait defaults retain a hidden generic `Self` position, even on otherwise
+non-generic traits, so declaring a default never makes it an executable root.
+A later `impl`/dispatch phase must select and specialize that template before it
+can enter the worklist.
 
 Instances are deduplicated by callable identity plus the complete concrete
 argument vector. Direct recursion with the same vector therefore terminates.

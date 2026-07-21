@@ -346,6 +346,11 @@ enum ConstantDiagnosticKind {
     Comparison(HirExpressionId, HirExpressionId),
 }
 
+struct ExplicitGenericArguments {
+    first_position: u32,
+    arguments: Vec<TypeId>,
+}
+
 struct GenericCallInference {
     callable: HirCallableId,
     arguments: Vec<TypeId>,
@@ -8182,6 +8187,7 @@ impl<'a> ExpressionChecker<'a> {
                 },
                 base,
                 None,
+                None,
                 context,
             ),
             SyntaxKind::PropagateSuffix => {
@@ -8768,6 +8774,7 @@ impl<'a> ExpressionChecker<'a> {
             },
             callee,
             None,
+            None,
             context,
         )?))
     }
@@ -8782,6 +8789,24 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<Option<HirExpressionId>, HirError> {
+        let explicit_bracket = (base_node.kind() == SyntaxKind::PostfixExpr)
+            .then(|| {
+                base_node
+                    .child_nodes()
+                    .find(|child| child.kind() == SyntaxKind::BracketPostfix)
+            })
+            .flatten();
+        let base_node = if explicit_bracket.is_some() {
+            let Some(inner) = base_node
+                .child_nodes()
+                .find(|child| AstExpression::cast(*child).is_some())
+            else {
+                return Ok(None);
+            };
+            inner
+        } else {
+            base_node
+        };
         if base_node.kind() == SyntaxKind::PathExpr {
             let tokens = base_node
                 .child_tokens()
@@ -8851,6 +8876,7 @@ impl<'a> ExpressionChecker<'a> {
                             member,
                             suffix,
                             None,
+                            explicit_bracket,
                             expected,
                             context,
                         )
@@ -8859,18 +8885,17 @@ impl<'a> ExpressionChecker<'a> {
 
                 let receiver =
                     self.check_value_path(file, base_node, context, Some(member_token.range()))?;
-                return self
-                    .finish_value_member_call(
-                        file,
-                        range,
-                        base_node.range(),
-                        receiver,
-                        member_token,
-                        suffix,
-                        expected,
-                        context,
-                    )
-                    .map(Some);
+                return self.finish_value_member_call(
+                    file,
+                    range,
+                    base_node.range(),
+                    receiver,
+                    member_token,
+                    suffix,
+                    explicit_bracket,
+                    expected,
+                    context,
+                );
             }
         }
 
@@ -8892,18 +8917,17 @@ impl<'a> ExpressionChecker<'a> {
                 return Ok(Some(self.recovery_expression(file, range)?));
             };
             let receiver = self.check_expression(file, receiver_node, None, context)?;
-            return self
-                .finish_value_member_call(
-                    file,
-                    range,
-                    base_node.range(),
-                    receiver,
-                    member_token,
-                    suffix,
-                    expected,
-                    context,
-                )
-                .map(Some);
+            return self.finish_value_member_call(
+                file,
+                range,
+                base_node.range(),
+                receiver,
+                member_token,
+                suffix,
+                explicit_bracket,
+                expected,
+                context,
+            );
         }
         Ok(None)
     }
@@ -8917,27 +8941,31 @@ impl<'a> ExpressionChecker<'a> {
         receiver: HirExpressionId,
         member_token: SyntaxTokenRef<'_>,
         suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
-    ) -> Result<HirExpressionId, HirError> {
+    ) -> Result<Option<HirExpressionId>, HirError> {
         let receiver_type = self.expression_type(receiver);
         if receiver_type == self.program.interner.error() {
-            return self.recovery_expression(file, range);
+            return self.recovery_expression(file, range).map(Some);
         }
         if let Some((owner, _, _)) = self.nominal_instance(receiver_type)?
             && let Some(member) =
                 self.callable_member(file, owner, member_token, &[MemberKind::InherentMethod])?
         {
-            return self.finish_resolved_member_call(
-                file,
-                range,
-                member_token,
-                member,
-                suffix,
-                Some(receiver),
-                expected,
-                context,
-            );
+            return self
+                .finish_resolved_member_call(
+                    file,
+                    range,
+                    member_token,
+                    member,
+                    suffix,
+                    Some(receiver),
+                    explicit_bracket,
+                    expected,
+                    context,
+                )
+                .map(Some);
         }
         if let Some(trait_body) = context.trait_body
             && receiver_type == trait_body.self_type
@@ -8948,16 +8976,22 @@ impl<'a> ExpressionChecker<'a> {
                 &[MemberKind::TraitMethod],
             )?
         {
-            return self.finish_resolved_member_call(
-                file,
-                range,
-                member_token,
-                member,
-                suffix,
-                Some(receiver),
-                expected,
-                context,
-            );
+            return self
+                .finish_resolved_member_call(
+                    file,
+                    range,
+                    member_token,
+                    member,
+                    suffix,
+                    Some(receiver),
+                    explicit_bracket,
+                    expected,
+                    context,
+                )
+                .map(Some);
+        }
+        if explicit_bracket.is_some() {
+            return Ok(None);
         }
         let field = self.project_member_expression(file, member_range, receiver, member_token)?;
         self.check_call(
@@ -8969,8 +9003,10 @@ impl<'a> ExpressionChecker<'a> {
             },
             field,
             None,
+            None,
             context,
         )
+        .map(Some)
     }
 
     fn callable_member(
@@ -9009,6 +9045,7 @@ impl<'a> ExpressionChecker<'a> {
         member: MemberId,
         suffix: SyntaxNodeRef<'_>,
         receiver: Option<HirExpressionId>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
@@ -9038,10 +9075,48 @@ impl<'a> ExpressionChecker<'a> {
                 return self.recovery_expression(file, range);
             }
         }
+        let member_generic_arity = declaration.generic_arity();
         let id = HirCallableId::Member(member);
         let Some(callable) = self.callable(id).cloned() else {
             self.complete = false;
             return self.recovery_expression(file, range);
+        };
+        let explicit_generics = if let Some(bracket) = explicit_bracket {
+            if member_generic_arity == 0 {
+                self.emit(
+                    self.sources.span(file, bracket.range())?,
+                    "E1104",
+                    "this member does not declare method-local generic parameters",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range);
+            }
+            let Some(arguments) = self.expression_generic_arguments(file, bracket)? else {
+                return self.recovery_expression(file, range);
+            };
+            if arguments.len() != member_generic_arity as usize {
+                self.emit(
+                    self.sources.span(file, bracket.range())?,
+                    "E1104",
+                    format!(
+                        "generic member expects {member_generic_arity} explicit type arguments, found {}",
+                        arguments.len()
+                    ),
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range);
+            }
+            Some(ExplicitGenericArguments {
+                first_position: callable
+                    .generic_arity
+                    .checked_sub(member_generic_arity)
+                    .expect("member-local generic arity is part of the callable arity"),
+                arguments,
+            })
+        } else {
+            None
         };
         self.record_member_reference(self.sources.span(file, token.range())?, member);
         let callee = self.allocate_expression(HirExpression {
@@ -9059,6 +9134,7 @@ impl<'a> ExpressionChecker<'a> {
             },
             callee,
             receiver,
+            explicit_generics,
             context,
         )
     }
@@ -9410,6 +9486,7 @@ impl<'a> ExpressionChecker<'a> {
         site: CallSite<'_>,
         callee: HirExpressionId,
         bound_receiver: Option<HirExpressionId>,
+        explicit_generics: Option<ExplicitGenericArguments>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
         let CallSite {
@@ -9457,7 +9534,16 @@ impl<'a> ExpressionChecker<'a> {
                 .map_or(0, |(_, body)| body.fixed_arity);
             let arguments = (0..callable.generic_arity)
                 .map(|position| {
-                    if position < fixed_arity {
+                    let explicit = explicit_generics.as_ref().and_then(|explicit| {
+                        position
+                            .checked_sub(explicit.first_position)
+                            .and_then(|index| usize::try_from(index).ok())
+                            .and_then(|index| explicit.arguments.get(index))
+                            .copied()
+                    });
+                    if let Some(explicit) = explicit {
+                        Ok(explicit)
+                    } else if position < fixed_arity {
                         self.program
                             .interner
                             .generic_parameter(position)
@@ -11584,6 +11670,159 @@ mod tests {
                 .expressions()
                 .all(|expression| { expression.ty() != output.program().interner().error() })
         );
+    }
+
+    #[test]
+    fn trait_defaults_are_checked_once_against_contextual_self() {
+        let (_, resolved, output) = check(
+            "trait Flow[T: Discard] {\n\
+                 fn length(self): Int\n\
+                 fn choose[U](self, value: U): U { value }\n\
+                 fn isEmpty(self): Bool { self.length() == 0 }\n\
+                 fn copied[U](self, value: U): U { self.choose(value) }\n\
+                 fn explicit(self): Int { self.choose[Int](1) }\n\
+                 fn discard(self, value: T) {\n\
+                     _ = value\n\
+                 }\n\
+                 fn preserve(value: Self): Self { value }\n\
+                 fn answer(): Int { 42 }\n\
+             }\n\
+             fn main() {}\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let flow = resolved
+            .symbols()
+            .find(|symbol| symbol.name().as_str() == "Flow")
+            .unwrap();
+        let members = resolved
+            .members()
+            .filter(|member| member.owner() == MemberOwner::Type(flow.id()))
+            .map(|member| (member.name().as_str(), member.id()))
+            .collect::<BTreeMap<_, _>>();
+        assert!(
+            output
+                .program()
+                .body(HirCallableId::Member(members["length"]))
+                .is_none()
+        );
+        for name in [
+            "choose", "isEmpty", "copied", "explicit", "discard", "preserve", "answer",
+        ] {
+            assert!(
+                output
+                    .program()
+                    .body(HirCallableId::Member(members[name]))
+                    .is_some(),
+                "default body for {name} was not checked"
+            );
+        }
+
+        let referenced = output
+            .program()
+            .member_references()
+            .map(|reference| resolved.member(reference.member()).unwrap().name().as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(referenced.contains("length"));
+        assert!(referenced.contains("choose"));
+
+        let choose_specializations = output
+            .program()
+            .expressions()
+            .filter_map(|expression| {
+                let HirExpressionKind::SpecializedFunction {
+                    callable: HirCallableId::Member(member),
+                    arguments,
+                } = expression.kind()
+                else {
+                    return None;
+                };
+                (*member == members["choose"]).then(|| {
+                    arguments
+                        .iter()
+                        .map(|argument| output.program().interner().canonical(*argument).unwrap())
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect::<Vec<_>>();
+        assert!(choose_specializations.contains(&vec!["$0".into(), "$1".into(), "$2".into()]));
+        assert!(choose_specializations.contains(&vec!["$0".into(), "$1".into(), "Int".into()]));
+    }
+
+    #[test]
+    fn explicit_generic_member_calls_pin_only_method_local_arguments() {
+        let (_, resolved, output) = check(
+            "type Box[T] = { value: T }\n\
+             fn Box[T].convert[U](self, value: U): U { value }\n\
+             fn use(value: Box[Int]): String { value.convert[String](\"ok\") }\n\
+             fn apply(callbacks: Array[fn(Int): Int]): Int { callbacks[0](1) }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        let convert = resolved
+            .members()
+            .find(|member| member.name().as_str() == "convert")
+            .unwrap()
+            .id();
+        let arguments = output.program().expressions().find_map(|expression| {
+            let HirExpressionKind::SpecializedFunction {
+                callable: HirCallableId::Member(member),
+                arguments,
+            } = expression.kind()
+            else {
+                return None;
+            };
+            (*member == convert).then_some(arguments)
+        });
+        assert_eq!(
+            arguments
+                .expect("convert call is specialized")
+                .iter()
+                .map(|argument| output.program().interner().canonical(*argument).unwrap())
+                .collect::<Vec<_>>(),
+            ["Int", "String"]
+        );
+
+        let (_, _, nongeneric) = check(
+            "trait Invalid {\n\
+                 fn plain(self): Int { 1 }\n\
+                 fn bad(self): Int { self.plain[Int]() }\n\
+             }\n",
+        );
+        assert_eq!(codes(&nongeneric), ["E1104"]);
+
+        let (_, _, wrong_arity) = check(
+            "trait Invalid {\n\
+                 fn choose[U](self, value: U): U { value }\n\
+                 fn bad(self): Int { self.choose[Int, String](1) }\n\
+             }\n",
+        );
+        assert_eq!(codes(&wrong_arity), ["E1104"]);
+    }
+
+    #[test]
+    fn trait_default_bodies_report_type_and_unknown_member_errors() {
+        let (_, _, mismatch) = check(
+            "trait Invalid {\n\
+                 fn value(self): Int { \"wrong\" }\n\
+             }\n",
+        );
+        assert_eq!(codes(&mismatch), ["E1102"]);
+
+        let (_, _, missing) = check(
+            "trait Invalid {\n\
+                 fn value(self): Int { self.missing() }\n\
+             }\n",
+        );
+        assert_eq!(codes(&missing), ["E1102"]);
     }
 
     #[test]

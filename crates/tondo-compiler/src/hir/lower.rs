@@ -1414,10 +1414,7 @@ impl<'a> TypeLowerer<'a> {
                         })
                         .collect::<Vec<_>>();
                     methods.sort_by_key(HirTraitMethod::member);
-                    HirTypeDeclarationKind::Trait(HirTraitDefinition {
-                        self_type,
-                        methods,
-                    })
+                    HirTypeDeclarationKind::Trait(HirTraitDefinition { self_type, methods })
                 }
                 SymbolKind::Constant | SymbolKind::Function | SymbolKind::NewtypeConstructor => {
                     continue;
@@ -2640,7 +2637,7 @@ mod tests {
     use std::sync::Arc;
 
     use crate::package::PackageGraph;
-    use crate::resolve::{ResolvedProgram, resolve};
+    use crate::resolve::{MemberKind, ResolvedProgram, resolve};
     use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
     use crate::syntax::{LexMode, ParseLimits, ParseMode, lex, parse};
 
@@ -3014,6 +3011,107 @@ mod tests {
                 .map(HirGenericParameter::position)
                 .collect::<Vec<_>>(),
             [0, 2]
+        );
+    }
+
+    #[test]
+    fn traits_materialize_contextual_self_defaults_and_async_requirements() {
+        let (_, resolved, output) = lower(
+            "trait Catalog[T: Discard] {\n\
+                 fn required(self, other: ref Self): T\n\
+                 fn create[U](value: U): Self\n\
+                 fn defaulted[U](self, value: U): U { value }\n\
+                 async fn poll(self): Bool { true }\n\
+                 async fn version(): Int { 1 }\n\
+             }\n\
+             trait Empty {}\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+
+        let catalog = output
+            .program()
+            .declaration(symbol(&resolved, "Catalog"))
+            .unwrap();
+        let HirTypeDeclarationKind::Trait(definition) = catalog.kind() else {
+            panic!("Catalog must lower as a trait")
+        };
+        assert_eq!(
+            output
+                .program()
+                .interner()
+                .canonical(definition.self_type())
+                .unwrap(),
+            "$1"
+        );
+        assert!(
+            definition
+                .methods()
+                .windows(2)
+                .all(|methods| methods[0].member() < methods[1].member())
+        );
+
+        let methods = definition
+            .methods()
+            .iter()
+            .map(|method| {
+                let member = resolved.member(method.member()).unwrap();
+                (
+                    member.name().as_str(),
+                    member.kind(),
+                    method.has_default(),
+                    method.requires_self_send(),
+                    output
+                        .program()
+                        .callable(HirCallableId::Member(method.member()))
+                        .unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        let method = |name: &str| methods.iter().find(|method| method.0 == name).unwrap();
+
+        assert_eq!(method("required").1, MemberKind::TraitMethod);
+        assert!(!method("required").2);
+        assert!(!method("required").3);
+        assert_eq!(method("required").4.generic_arity(), 2);
+        assert_eq!(method("create").1, MemberKind::TraitAssociatedFunction);
+        assert!(!method("create").2);
+        assert_eq!(method("create").4.generic_arity(), 3);
+        assert_eq!(method("defaulted").1, MemberKind::TraitMethod);
+        assert!(method("defaulted").2);
+        assert_eq!(method("defaulted").4.generic_arity(), 3);
+        assert_eq!(
+            method("defaulted")
+                .4
+                .generics()
+                .iter()
+                .map(HirGenericParameter::position)
+                .collect::<Vec<_>>(),
+            [0, 2]
+        );
+        assert!(method("poll").2);
+        assert!(method("poll").3);
+        assert!(method("version").2);
+        assert!(!method("version").3);
+
+        let empty = output
+            .program()
+            .declaration(symbol(&resolved, "Empty"))
+            .unwrap();
+        let HirTypeDeclarationKind::Trait(empty) = empty.kind() else {
+            panic!("Empty must lower as a trait")
+        };
+        assert!(empty.methods().is_empty());
+        assert_eq!(
+            output
+                .program()
+                .interner()
+                .canonical(empty.self_type())
+                .unwrap(),
+            "$0"
         );
     }
 

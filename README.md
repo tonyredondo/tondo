@@ -18,8 +18,13 @@ to semantic declarations and callable signatures, including aliases, generic
 bounds, normalized unions, and recursive-productivity checks. The typed HIR now
 checks the bootstrap core, including bounded and unbounded generic bodies,
 invariant call inference, explicit specialization, and closed `Discard`
-constraints: constants, bindings, functions, inherent methods, blocks,
-conditionals, loops, scalar operators, calls, `Option`,
+constraints. Trait declarations now retain a contextual `Self`, required and
+associated methods, default bodies, and the intrinsic `Self: Send` condition of
+async receivers. Defaults are checked once under the trait's binders and may
+call other methods of that same trait without opening global method lookup;
+`impl`, coherence, and trait dispatch remain later M4 work. The same HIR covers
+constants, bindings, functions, inherent methods, blocks, conditionals, loops,
+scalar operators, calls, `Option`,
 `Result`, `fail`, `?`, every pattern form, and exhaustive guarded `match`, with
 explicit coercions and structured diagnostics. Field and tuple-slot access,
 array indexing/slicing, map lookup, array arithmetic, and simple, compound, and
@@ -35,7 +40,7 @@ through generic nominal containers.
 resolution. Embedding tools can query contextual expression types, resolved
 entities and references, callable signatures, enum/union members, and closed
 call error sets; partial snapshots state exactly which semantic phase completed.
-Record construction/update, method dispatch, closed generic-call inference,
+Record construction/update, inherent method dispatch, closed generic-call inference,
 range/membership checking, and compile-time constant evaluation are implemented
 for the bootstrap subset. `tondo check` now succeeds when that entire subset is
 understood. Complete HIR lowers through a verified typed MIR and then to

@@ -2126,6 +2126,44 @@ mod tests {
     }
 
     #[test]
+    fn trait_defaults_cross_the_public_pipeline_without_becoming_runtime_roots() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"trait Empty[T: Discard] {\n\
+                  fn length(self): Int\n\
+                  fn isEmpty(self): Bool { self.length() == 0 }\n\
+                  fn identity[U](self, value: U): U { value }\n\
+              }\n\
+              fn main() {\n\
+                  assert(true)\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics().diagnostics()
+        );
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+
+        let invalid = execute(operation_request(
+            Operation::Check,
+            b"trait Invalid {\n\
+                  fn value(self): Int { \"wrong\" }\n\
+              }\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(invalid.status(), CompilationStatus::Rejected);
+        assert_eq!(invalid.diagnostics().diagnostics()[0].code(), "E1102");
+    }
+
+    #[test]
     fn generic_constraint_obligations_execute_and_obey_the_request_budget() {
         let source = b"fn consume[T: Discard](value: T) {\n\
                            _ = value\n\

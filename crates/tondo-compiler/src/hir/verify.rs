@@ -138,9 +138,8 @@ impl Verifier<'_> {
             self.verify_symbol(declaration.symbol, expected, &context)?;
             self.verify_generics(
                 &declaration.parameters,
-                u32::try_from(declaration.parameters.len()).map_err(|_| {
-                    HirInvariantError::new(&context, "generic arity exceeds u32")
-                })?,
+                u32::try_from(declaration.parameters.len())
+                    .map_err(|_| HirInvariantError::new(&context, "generic arity exceeds u32"))?,
                 None,
                 &context,
             )?;
@@ -187,8 +186,8 @@ impl Verifier<'_> {
                         trait_definition.self_type,
                         format!("{context} contextual Self"),
                     )?;
-                    let expected_self = u32::try_from(declaration.parameters.len())
-                        .map_err(|_| {
+                    let expected_self =
+                        u32::try_from(declaration.parameters.len()).map_err(|_| {
                             HirInvariantError::new(&context, "trait generic arity exceeds u32")
                         })?;
                     if !matches!(
@@ -201,6 +200,7 @@ impl Verifier<'_> {
                         ));
                     }
                     let mut previous = None;
+                    let mut actual_methods = BTreeSet::new();
                     for method in &trait_definition.methods {
                         if previous.is_some_and(|previous| previous >= method.member) {
                             return Err(HirInvariantError::new(
@@ -209,6 +209,7 @@ impl Verifier<'_> {
                             ));
                         }
                         previous = Some(method.member);
+                        actual_methods.insert(method.member);
                         let member = self.verify_member(
                             method.member,
                             &[MemberKind::TraitMethod, MemberKind::TraitAssociatedFunction],
@@ -235,6 +236,38 @@ impl Verifier<'_> {
                                     ),
                                 )
                             })?;
+                        let expected_arity = expected_self
+                            .checked_add(1)
+                            .and_then(|arity| arity.checked_add(member.generic_arity()))
+                            .ok_or_else(|| {
+                                HirInvariantError::new(
+                                    &context,
+                                    "trait method generic arity exceeds u32",
+                                )
+                            })?;
+                        if callable.generic_arity != expected_arity {
+                            return Err(HirInvariantError::new(
+                                &context,
+                                format!(
+                                    "trait method member#{} has generic arity {}, expected {expected_arity}",
+                                    method.member.index(),
+                                    callable.generic_arity
+                                ),
+                            ));
+                        }
+                        if callable.generics.len() < declaration.parameters.len()
+                            || !callable.generics.iter().zip(&declaration.parameters).all(
+                                |(method, declaration)| same_generic_parameter(method, declaration),
+                            )
+                        {
+                            return Err(HirInvariantError::new(
+                                &context,
+                                format!(
+                                    "trait method member#{} does not preserve the trait generic prefix",
+                                    method.member.index()
+                                ),
+                            ));
+                        }
                         if method.has_default != callable.body_source.is_some() {
                             return Err(HirInvariantError::new(
                                 &context,
@@ -248,8 +281,20 @@ impl Verifier<'_> {
                             Ok(TypeKind::Function(function)) => function,
                             _ => continue,
                         };
-                        let requires_self_send = function.is_async()
-                            && callable.parameters.iter().any(|parameter| parameter.receiver);
+                        let has_receiver = callable
+                            .parameters
+                            .iter()
+                            .any(|parameter| parameter.receiver);
+                        if matches!(member.kind(), MemberKind::TraitMethod) != has_receiver {
+                            return Err(HirInvariantError::new(
+                                &context,
+                                format!(
+                                    "trait method member#{} has a receiver classification mismatch",
+                                    method.member.index()
+                                ),
+                            ));
+                        }
+                        let requires_self_send = function.is_async() && has_receiver;
                         if method.requires_self_send != requires_self_send {
                             return Err(HirInvariantError::new(
                                 &context,
@@ -259,6 +304,24 @@ impl Verifier<'_> {
                                 ),
                             ));
                         }
+                    }
+                    let expected_methods = self
+                        .resolved
+                        .members()
+                        .filter(|member| {
+                            member.owner() == MemberOwner::Type(declaration.symbol)
+                                && matches!(
+                                    member.kind(),
+                                    MemberKind::TraitMethod | MemberKind::TraitAssociatedFunction
+                                )
+                        })
+                        .map(crate::resolve::Member::id)
+                        .collect::<BTreeSet<_>>();
+                    if actual_methods != expected_methods {
+                        return Err(HirInvariantError::new(
+                            &context,
+                            "trait method table does not match the resolved declaration",
+                        ));
                     }
                 }
             }
@@ -433,12 +496,7 @@ impl Verifier<'_> {
             previous = Some(callable.id);
             self.verify_resolved_callable_id(callable.id, &context)?;
             let hidden = self.trait_self_position(callable.id);
-            self.verify_generics(
-                &callable.generics,
-                callable.generic_arity,
-                hidden,
-                &context,
-            )?;
+            self.verify_generics(&callable.generics, callable.generic_arity, hidden, &context)?;
             self.verify_type(callable.outcome, format!("{context} outcome"))?;
             self.verify_type(callable.function_type, format!("{context} function type"))?;
             for (index, parameter) in callable.parameters.iter().enumerate() {
@@ -1097,7 +1155,7 @@ impl Verifier<'_> {
         member: crate::resolve::MemberId,
         expected: &[MemberKind],
         context: &str,
-    ) -> Result<(), HirInvariantError> {
+    ) -> Result<&crate::resolve::Member, HirInvariantError> {
         let declaration = self.resolved.member(member).ok_or_else(|| {
             HirInvariantError::new(
                 context,
@@ -1115,7 +1173,7 @@ impl Verifier<'_> {
                 ),
             ));
         }
-        Ok(())
+        Ok(declaration)
     }
 
     fn verify_local(
@@ -1413,6 +1471,15 @@ fn category_name(category: HirValueCategory) -> &'static str {
     }
 }
 
+fn same_generic_parameter(left: &HirGenericParameter, right: &HirGenericParameter) -> bool {
+    left.local == right.local
+        && left.position == right.position
+        && left.bounds.len() == right.bounds.len()
+        && left.bounds.iter().zip(&right.bounds).all(|(left, right)| {
+            left.constructor == right.constructor && left.arguments == right.arguments
+        })
+}
+
 fn callable_context(callable: HirCallableId) -> String {
     match callable {
         HirCallableId::Symbol(symbol) => format!("callable symbol#{}", symbol.index()),
@@ -1442,7 +1509,12 @@ mod tests {
     use super::*;
 
     fn checked_program() -> (ResolvedProgram, HirProgram) {
-        let source = "fn main() {\n    let value = 1\n    assert(value == 1)\n    _ = value\n}\n";
+        checked_program_from(
+            "fn main() {\n    let value = 1\n    assert(value == 1)\n    _ = value\n}\n",
+        )
+    }
+
+    fn checked_program_from(source: &str) -> (ResolvedProgram, HirProgram) {
         let mut sources = SourceDatabase::new();
         let file = sources
             .add(SourceInput::virtual_file(
@@ -1504,6 +1576,98 @@ mod tests {
     fn complete_checked_hir_satisfies_the_mir_entry_contract() {
         let (resolved, program) = checked_program();
         verify_typed_hir(&resolved, &program).unwrap();
+    }
+
+    #[test]
+    fn trait_contract_metadata_is_verified_before_mir() {
+        const SOURCE: &str = "trait Contract[T: Discard] {\n\
+             async fn send(self)\n\
+             fn required(self): T\n\
+             fn defaulted[U](self, value: U): U { value }\n\
+         }\n\
+         fn main() {}\n";
+
+        fn trait_owner(resolved: &ResolvedProgram) -> crate::resolve::SymbolId {
+            resolved
+                .symbols()
+                .find(|symbol| symbol.name().as_str() == "Contract")
+                .unwrap()
+                .id()
+        }
+
+        fn method(
+            resolved: &ResolvedProgram,
+            owner: crate::resolve::SymbolId,
+            name: &str,
+        ) -> crate::resolve::MemberId {
+            resolved
+                .members()
+                .find(|member| {
+                    member.owner() == MemberOwner::Type(owner) && member.name().as_str() == name
+                })
+                .unwrap()
+                .id()
+        }
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut missing) = checked_program_from(SOURCE);
+        let owner = trait_owner(&resolved);
+        let HirTypeDeclarationKind::Trait(definition) =
+            &mut missing.declarations.get_mut(&owner).unwrap().kind
+        else {
+            panic!("Contract must remain a trait")
+        };
+        definition.methods.pop();
+        let error = verify_typed_hir(&resolved, &missing).unwrap_err();
+        assert!(error.message().contains("method table"));
+
+        let (resolved, mut wrong_default) = checked_program_from(SOURCE);
+        let owner = trait_owner(&resolved);
+        let defaulted = method(&resolved, owner, "defaulted");
+        let HirTypeDeclarationKind::Trait(definition) =
+            &mut wrong_default.declarations.get_mut(&owner).unwrap().kind
+        else {
+            panic!("Contract must remain a trait")
+        };
+        definition
+            .methods
+            .iter_mut()
+            .find(|entry| entry.member == defaulted)
+            .unwrap()
+            .has_default = false;
+        let error = verify_typed_hir(&resolved, &wrong_default).unwrap_err();
+        assert!(error.message().contains("default-body flag"));
+
+        let (resolved, mut wrong_send) = checked_program_from(SOURCE);
+        let owner = trait_owner(&resolved);
+        let send = method(&resolved, owner, "send");
+        let HirTypeDeclarationKind::Trait(definition) =
+            &mut wrong_send.declarations.get_mut(&owner).unwrap().kind
+        else {
+            panic!("Contract must remain a trait")
+        };
+        definition
+            .methods
+            .iter_mut()
+            .find(|entry| entry.member == send)
+            .unwrap()
+            .requires_self_send = false;
+        let error = verify_typed_hir(&resolved, &wrong_send).unwrap_err();
+        assert!(error.message().contains("Self: Send"));
+
+        let (resolved, mut wrong_arity) = checked_program_from(SOURCE);
+        let owner = trait_owner(&resolved);
+        let defaulted = method(&resolved, owner, "defaulted");
+        wrong_arity
+            .callables
+            .iter_mut()
+            .find(|callable| callable.id == HirCallableId::Member(defaulted))
+            .unwrap()
+            .generic_arity = 2;
+        let error = verify_typed_hir(&resolved, &wrong_arity).unwrap_err();
+        assert!(error.message().contains("generic arity"));
     }
 
     #[test]

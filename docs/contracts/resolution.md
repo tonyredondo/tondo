@@ -113,6 +113,12 @@ body refer to its type binder without making ordinary `values[index]`
 resolution type-directed. Once HIR classifies the outer bracket, every selected
 type name still comes from the reference recorded here.
 
+The same rule covers `value.method[T](...)`. Resolution records `T` without
+deciding whether the bracket is indexing; HIR may classify it as an explicit
+member specialization only after resolving `method` to a callable member. It
+then applies the written arguments to the method-local suffix of the callable
+binder, leaving owner parameters and contextual `Self` to receiver inference.
+
 `Self` resolves as a contextual type only inside traits, implementations, and
 inherent methods. The value `self` resolves only when the current callable
 actually declares a receiver. These are explicit resolved entities, not hidden

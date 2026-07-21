@@ -143,8 +143,13 @@ calls with declaration-bound arguments, and explicit generic specializations
 with resolved identities, value categories, and contextual coercions. Generic
 specializations close invariant inference and prove the structural `Discard`
 constraint before leaving HIR; other capability and trait obligations remain
-explicit incomplete boundaries until their owning M4 phases. Pattern checking
-is part of the same typed-HIR
+explicit incomplete boundaries until their owning M4 phases. Trait declarations
+carry a sorted method table, contextual `Self`, default-body and async-receiver
+requirements. Default bodies are checked once with rigid trait binders; calls to
+another receiver method of the same trait resolve locally and both inferred and
+explicit method generics preserve the enclosing trait arguments. `impl`,
+coherence, and trait dispatch remain separate later phases. Pattern checking is
+part of the same typed-HIR
 boundary and records typed pattern arenas, guarded match arms, irrefutability,
 reachability, and exhaustiveness without deferring decisions to MIR. Assignment
 checking resolves target projections before the RHS and records compound

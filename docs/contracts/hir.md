@@ -1,8 +1,9 @@
 # Semantic and typed HIR contract
 
-**Status:** bootstrap declarations, typed expressions, generic specialization
-and `Discard` constraints, patterns, assignment, discard, structured control
-flow, calls, semantic occurrences, and verified MIR admission implemented
+**Status:** bootstrap declarations, trait declarations and defaults, typed
+expressions, generic specialization and `Discard` constraints, patterns,
+assignment, discard, structured control flow, calls, semantic occurrences, and
+verified MIR admission implemented
 
 ## Boundary
 
@@ -39,9 +40,10 @@ The output owns:
 The checker deliberately leaves its completion flag false when it encounters a
 surface whose semantics belongs to an unfinished phase. It checks bounded and
 unbounded generic function bodies, invariant call inference, explicit
-specialization, and the closed structural `Discard` constraint. Proof of other
-intrinsic capabilities, user/external trait constraints, trait or `impl`
-bodies, closures, string interpolation through `Display`, `defer`, ownership
+specialization, trait default bodies, same-trait receiver calls, and the closed
+structural `Discard` constraint. Proof of other intrinsic capabilities,
+user/external trait constraints, `impl` bodies, closures, string interpolation
+through `Display`, `defer`, ownership
 availability, and trait-provided iteration remain explicit later boundaries
 rather than receiving provisional semantics.
 
@@ -64,7 +66,10 @@ but they are never MIR input. The complete phase split is recorded in
 The implemented bootstrap subset includes:
 
 - constants ordered by their dependency graph, simple `let`/`var` bindings,
-  functions, and non-generic inherent methods;
+  functions, and inherent methods;
+- empty and generic traits with required receiver methods, associated
+  operations, default bodies, contextual `Self`, and the intrinsic `Self: Send`
+  marker on async receiver methods;
 - scalar, string, tuple and `none` literals with bidirectional expected types;
 - blocks, `if`, all three `for` forms, `break`, `continue`, and `return`;
 - intrinsic iteration for `Array`, `Map`, `Set`, `Range`, and `String`;
@@ -121,8 +126,36 @@ Generic calls use a request-local invariant solver, close every inference
 variable before publishing HIR, and materialize a `SpecializedFunction`; no
 inference variable crosses the expression boundary. Explicit type arguments
 may refer to the enclosing binder through composite spellings such as `T?` or
-`Array[T]`; the preliminary bracket remains contextually resolved until the
-checker classifies it as an index or a specialization.
+`Array[T]`. An explicit member specialization supplies only method-local
+arguments; owner arguments and the trait's hidden `Self` position remain fixed
+or are inferred from the receiver. The preliminary bracket remains
+contextually resolved until the checker classifies it as an index or a
+specialization.
+
+## Trait declarations and default bodies
+
+A trait declaration owns one contextual `Self` type immediately after its
+written generic parameters. That hidden position participates in the complete
+callable arity but is not exposed as a source binder. Method-local generics
+follow it, so a trait `Catalog[T]` with `fn choose[U]` has the complete positions
+`T = $0`, `Self = $1`, and `U = $2`.
+
+HIR stores every trait member in strict `MemberId` order together with whether
+it has a default body and whether an async receiver imposes `Self: Send`.
+Required methods have a signature but no checked body. Associated operations
+without `self` use the same representation and may themselves have defaults.
+The admission verifier requires the table to match resolution exactly, checks
+owner and receiver classification, preserves the trait-generic prefix, and
+rejects inconsistent arity, default-body, or async requirement metadata.
+
+Each default body is checked once with rigid trait parameters and contextual
+`Self`. A receiver call may select only another receiver method declared by the
+same trait; it does not search unrelated traits or concrete implementations.
+Both inferred calls such as `self.choose(value)` and explicit calls such as
+`self.choose[Int](value)` produce a complete `SpecializedFunction` argument
+vector. This is declaration checking, not dispatch: `impl` validation,
+coherence, qualified trait calls, constraint-visible methods, and selection of
+a concrete implementation remain TRAIT-002 through TRAIT-005.
 
 ## Generic constraints
 
@@ -142,7 +175,7 @@ specialized function values alike.
 
 Other intrinsic capability bounds and source/external trait bounds remain
 normalized in HIR and consume the same budget, but mark the semantic output
-incomplete when an instantiation needs proof. CAP-001 and TRAIT-001 through
+incomplete when an instantiation needs proof. CAP-001 and TRAIT-002 through
 TRAIT-005 own those proof rules. The driver therefore cannot run or report a
 complete check for such an instantiation by silently assuming the bound.
 
@@ -402,7 +435,10 @@ normalized static overlap, fields, tuple slots, arrays, slices, maps,
 mutability modes, and target-before-RHS ordering. Call tests cover named
 association, both variadic spread forms, receiver lowering, method permissions,
 explicit and inferred generic specialization, inference conflicts, and unsolved
-variables. Construction tests cover every nominal shape, contextual generic
+variables. Trait tests cover empty and generic declarations, contextual `Self`,
+required and associated operations, defaults under bounds, inferred and
+explicit same-trait calls, async receiver requirements, invalid bodies, and
+unknown members. Construction tests cover every nominal shape, contextual generic
 instances, `with`, numeric conversions, ranges, membership, and cross-module
 visibility without leaking omitted private field names. Driver
 tests prove that semantic diagnostics and all HIR resource limits are observable
@@ -418,4 +454,5 @@ bounds, constraint forwarding, obligation budgets, and public-driver `E1105`
 propagation. Dedicated admission tests mutate
 otherwise valid HIR to prove rejection of incomplete/recovery state,
 noncanonical types, non-topological edges, misaligned flow metadata, missing
-local types, and invalid value categories.
+local types, invalid value categories, incomplete trait tables, shifted generic
+arities, and inconsistent default-body or `Self: Send` metadata.

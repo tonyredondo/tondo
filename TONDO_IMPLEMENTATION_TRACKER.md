@@ -1,12 +1,12 @@
 # Tondo: tracker de implementación
 
 **Estado:** activo  
-**Versión del tracker:** 0.22
+**Versión del tracker:** 0.23
 **Última actualización:** 2026-07-21  
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
-**Objetivo inmediato:** implementar declaraciones de trait y métodos por
-defecto (TRAIT-001) sobre la frontera monomorfizada ya cerrada, sin introducir
-dispatch dinámico ni lookup global de métodos.
+**Objetivo inmediato:** implementar `impl`, orphan rules y coincidencia exacta
+del contrato (TRAIT-002) sobre declaraciones y defaults ya comprobados, sin
+activar todavía selección ni dispatch de traits.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -267,8 +267,8 @@ Estado observado del workspace:
 - Workspace: `tondo-cli`, `tondo-compiler` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada aún no está fijada.
-- Última validación: 2026-07-20, con formatter check, Clippy sin warnings,
-  20 tests, Rustdoc sin warnings, metadatos locked y smoke tests de la CLI
+- Última validación: 2026-07-21, con formatter check, Clippy sin warnings,
+  324 tests, Rustdoc sin warnings, metadatos locked y smoke tests de la CLI
   correctos.
 
 ### 4.1 Ruta crítica
@@ -967,7 +967,7 @@ dinámicos ni dispatch oculto.
 
 - [x] **GEN-002 — Implementar constraints e instanciación monomorfizada.**
 
-- [ ] **TRAIT-001 — Implementar declaración de trait y métodos por defecto.**
+- [x] **TRAIT-001 — Implementar declaración de trait y métodos por defecto.**
 
 - [ ] **TRAIT-002 — Implementar `impl`, orphan rules y coincidencia exacta del
   contrato.**
@@ -996,7 +996,7 @@ dinámicos ni dispatch oculto.
 - [ ] **CALL-004 — Implementar closures sync, async y unsafe en la
   representación semántica, aunque sus runtimes se activen después.**
 
-Evidencia observada el 2026-07-21 para GEN-001 y GEN-002:
+Evidencia observada el 2026-07-21 para GEN-001, GEN-002 y TRAIT-001:
 
 - Los bodies genéricos bounded y unbounded se comprueban una sola vez con
   parámetros rígidos. Las llamadas explícitas e inferidas cierran todas las
@@ -1005,8 +1005,8 @@ Evidencia observada el 2026-07-21 para GEN-001 y GEN-002:
 - Cada especialización valida sus bounds antes de publicar HIR. `Discard` usa
   ya la prueba estructural cerrada y rechaza `Join`, bounds no reenviados y
   function values inválidos con `E1105`; los demás traits permanecen
-  representados y presupuestados, pero incompletos hasta CAP-001 y TRAIT-001 a
-  TRAIT-005.
+  representados y presupuestados, pero sus pruebas dependen de CAP-001 y
+  TRAIT-002 a TRAIT-005.
 - La monomorfización se ejecuta entre MIR verificado y bytecode. Parte de todos
   los callables no genéricos y de function values constantes, sigue referencias
   transitivas, sustituye todos los tipos de firma y body y deduplica por
@@ -1021,7 +1021,18 @@ Evidencia observada el 2026-07-21 para GEN-001 y GEN-002:
   constantes función, records y fields genéricos, indexación de arrays y
   discriminantes de `Option`, con instancias `Int` y `String` separadas y orden
   determinista.
-- El gate acumulado pasa 318 tests, `git diff --check`, formatter check, build
+- Cada trait publica una tabla determinista de métodos requeridos, asociados y
+  defaults. `Self` ocupa una posición genérica oculta después de los binders del
+  trait y un receptor async registra la obligación intrínseca `Self: Send`.
+- Los defaults se comprueban una sola vez con parámetros rígidos y pueden
+  llamar métodos del mismo trait sin lookup global. Las especializaciones de
+  método inferidas o explícitas conservan el prefijo del trait y `Self`; los
+  corchetes de un index siguen recorriendo su ruta ordinaria.
+- El verifier exige correspondencia exacta entre resolución y tabla HIR,
+  clasificación de receptor, aridad completa, prefijo genérico, presencia de
+  body y requisito async. Los defaults mantienen `Self` genérico y no se
+  convierten accidentalmente en roots de bytecode antes de TRAIT-005.
+- El gate acumulado pasa 324 tests, `git diff --check`, formatter check, build
   de todos los targets, Clippy con warnings denegados y Rustdoc con warnings
   denegados.
 
@@ -1663,13 +1674,27 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es TRAIT-001: materializar declaraciones de trait y
-métodos por defecto sobre el HIR ya genérico, antes de implementar `impl`,
-coherencia y dispatch estático.
+La siguiente acción activa es TRAIT-002: materializar `impl`, aplicar orphan
+rules y exigir coincidencia exacta con el contrato antes de implementar
+overlap, terminación de constraints o dispatch estático.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.23 — 2026-07-21
+
+- Se completa TRAIT-001 con tablas HIR deterministas, `Self` contextual oculto,
+  métodos requeridos/asociados, defaults y el requisito `Self: Send` de
+  receptores async.
+- Los defaults se comprueban bajo los binders del trait y resuelven únicamente
+  llamadas al mismo contrato; especializaciones explícitas de método fijan solo
+  sus argumentos locales sin confundirlas con indexación.
+- El admission verifier cierra aridad, ownership de miembros, clasificación de
+  receptor y coherencia del body; los defaults no usados permanecen fuera de
+  los roots monomorfizados.
+- El gate acumulado queda en 324 tests, formatter check, build de todos los
+  targets, Clippy y Rustdoc sin warnings; la cola avanza a TRAIT-002.
 
 ### 0.22 — 2026-07-21
 
