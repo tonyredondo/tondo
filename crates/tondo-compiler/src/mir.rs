@@ -71,7 +71,7 @@ impl From<MirInvariantError> for MirError {
 
 #[derive(Debug)]
 pub struct MirProgram {
-    functions: BTreeMap<HirCallableId, MirFunction>,
+    functions: BTreeMap<MirFunctionId, MirFunction>,
 }
 
 impl MirProgram {
@@ -80,13 +80,23 @@ impl MirProgram {
     }
 
     pub fn function(&self, id: HirCallableId) -> Option<&MirFunction> {
-        self.functions.get(&id)
+        self.functions.get(&MirFunctionId::Callable(id))
     }
+
+    pub fn closure_function(&self, id: HirClosureId) -> Option<&MirFunction> {
+        self.functions.get(&MirFunctionId::Closure(id))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MirFunctionId {
+    Callable(HirCallableId),
+    Closure(HirClosureId),
 }
 
 #[derive(Debug)]
 pub struct MirFunction {
-    id: HirCallableId,
+    id: MirFunctionId,
     span: Span,
     outcome: TypeId,
     locals: Vec<MirLocal>,
@@ -98,7 +108,7 @@ pub struct MirFunction {
 }
 
 impl MirFunction {
-    pub fn id(&self) -> HirCallableId {
+    pub fn id(&self) -> MirFunctionId {
         self.id
     }
 
@@ -282,6 +292,10 @@ impl MirProjection {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MirProjectionKind {
+    ClosureCapture {
+        closure: HirClosureId,
+        index: u32,
+    },
     Field(MemberId),
     TupleField(u32),
     NewtypeValue,
@@ -334,6 +348,7 @@ pub enum MirOperandKind {
     Constant(MirConstant),
     Copy(MirPlace),
     Move(MirPlace),
+    Borrow(MirPlace),
     Function {
         callable: HirCallableId,
         arguments: Vec<TypeId>,
@@ -423,6 +438,7 @@ pub enum MirAggregateKind {
     Set,
     Closure {
         closure: HirClosureId,
+        arguments: Vec<TypeId>,
     },
     Newtype {
         owner: SymbolId,
@@ -486,6 +502,8 @@ pub enum MirOperationKind {
     Call {
         callee: MirOperand,
         arguments: Vec<MirCallArgument>,
+        signature: TypeId,
+        protocol: crate::hir::HirCallProtocol,
     },
     ExplicitPanic {
         message: MirOperand,

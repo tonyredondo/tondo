@@ -23,14 +23,15 @@ use super::const_eval::{
 use super::{
     HirAssertMessagePart, HirAssignmentOperator, HirAssignmentTarget, HirAssignmentTargetKind,
     HirBinaryOperator, HirBody, HirBootstrapHostFunction, HirCallArgument, HirCallArgumentTarget,
-    HirCallableId, HirCallableSignature, HirCapability, HirCapabilityStatus, HirClosure,
-    HirClosureCapture, HirClosureId, HirContainmentKind, HirError, HirExpression, HirExpressionId,
-    HirExpressionKind, HirField, HirFlow, HirForKind, HirIndexAccess, HirIterationProtocol,
-    HirLiteral, HirLoopId, HirMapEntry, HirMatchArm, HirMemberReference, HirNominalShape,
-    HirParameter, HirPattern, HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator,
-    HirPreludeTraitMethod, HirProgram, HirRangeKind, HirRecordFieldValue, HirStatement,
-    HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
-    HirVariantValue, HirWriteKind, TraitQuery, TraitSelectionError, select_implementation,
+    HirCallProtocol, HirCallableId, HirCallableSignature, HirCapability, HirCapabilityStatus,
+    HirClosure, HirClosureCapture, HirClosureId, HirClosureProtocols, HirContainmentKind, HirError,
+    HirExpression, HirExpressionId, HirExpressionKind, HirField, HirFlow, HirForKind,
+    HirIndexAccess, HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry, HirMatchArm,
+    HirMemberReference, HirNominalShape, HirParameter, HirPattern, HirPatternField, HirPatternId,
+    HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod, HirProgram, HirRangeKind,
+    HirRecordFieldValue, HirStatement, HirTraitConstructor, HirTypeDeclarationKind,
+    HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind, TraitQuery,
+    TraitSelectionError, select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -353,6 +354,12 @@ struct CallShape {
     outcome: TypeId,
 }
 
+struct CallableProtocolContract {
+    signature: TypeId,
+    function: FunctionType,
+    protocols: HirClosureProtocols,
+}
+
 #[derive(Clone, Copy)]
 struct CallSite<'a> {
     file: FileId,
@@ -549,6 +556,7 @@ struct ExpressionChecker<'a> {
 
 impl<'a> ExpressionChecker<'a> {
     fn check_capability_contracts(&mut self) -> Result<(), HirError> {
+        self.check_call_bound_formations()?;
         let declarations = self
             .program
             .declarations
@@ -640,6 +648,71 @@ impl<'a> ExpressionChecker<'a> {
                     &assumptions,
                     "an implementation of a trait with an async receiver method",
                 )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn check_call_bound_formations(&mut self) -> Result<(), HirError> {
+        let mut contracts = Vec::new();
+        for declaration in self.program.declarations.values() {
+            for parameter in &declaration.parameters {
+                contracts.push((declaration.span, parameter.bounds.clone()));
+            }
+        }
+        for callable in &self.program.callables {
+            for parameter in &callable.generics {
+                contracts.push((callable.span, parameter.bounds.clone()));
+            }
+            if let Some(opaque) = &callable.opaque_result {
+                contracts.push((opaque.span, opaque.bounds.clone()));
+            }
+        }
+        for implementation in &self.program.implementations {
+            for parameter in &implementation.parameters {
+                contracts.push((implementation.span, parameter.bounds.clone()));
+            }
+        }
+
+        for (span, bounds) in contracts {
+            let mut signature = None;
+            for bound in bounds {
+                let HirTraitConstructor::Prelude(name) = &bound.constructor else {
+                    continue;
+                };
+                if call_protocol_from_name(name.as_str()).is_none() {
+                    continue;
+                }
+                let valid = matches!(
+                    bound.arguments.as_slice(),
+                    [candidate]
+                        if matches!(
+                            self.program.interner.kind(*candidate)?,
+                            TypeKind::Function(_)
+                        )
+                );
+                if !valid {
+                    self.emit(
+                        span,
+                        "E1115",
+                        format!("`{name}` requires one complete function signature"),
+                        Vec::new(),
+                        None,
+                    )?;
+                    continue;
+                }
+                let candidate = bound.arguments[0];
+                if signature.is_some_and(|previous| previous != candidate) {
+                    self.emit(
+                        span,
+                        "E1115",
+                        "call protocol bounds on one type must use one exact signature",
+                        Vec::new(),
+                        None,
+                    )?;
+                } else {
+                    signature = Some(candidate);
+                }
             }
         }
         Ok(())
@@ -1771,7 +1844,9 @@ impl<'a> ExpressionChecker<'a> {
                     &mut pending,
                     warnings,
                 ),
-                HirExpressionKind::Call { callee, arguments } => self.queue_reachable_sequence(
+                HirExpressionKind::Call {
+                    callee, arguments, ..
+                } => self.queue_reachable_sequence(
                     std::iter::once(*callee).chain(arguments.iter().map(HirCallArgument::value)),
                     &mut pending,
                     warnings,
@@ -1908,13 +1983,14 @@ impl<'a> ExpressionChecker<'a> {
         {
             return Ok(value);
         }
-        if self.concrete_closure_requires_call_protocol(actual, expectation.contextual_type())? {
-            // CALL-003 proves the call protocol and publishes the coercion to
-            // the uniform function representation. Retain the fully checked
-            // concrete closure, but do not diagnose that unfinished boundary
-            // as an ordinary type mismatch.
-            self.complete = false;
-            return self.recovery_expression(file, node.range());
+        if let Some(coerced) = self.coerce_concrete_closure_to_function(
+            self.sources.span(file, node.range())?,
+            value,
+            actual,
+            expectation.contextual_type(),
+            context,
+        )? {
+            return Ok(coerced);
         }
         if let ExpressionExpectation::CallableOutcome { full, success } = expectation {
             if actual == full {
@@ -2448,6 +2524,12 @@ impl<'a> ExpressionChecker<'a> {
             .program
             .interner
             .generated(identity.clone(), context.generic_arguments.clone())?;
+        let generic_arity =
+            u32::try_from(context.generic_arguments.len()).map_err(|_| HirError::NodeLimit {
+                file,
+                offset: node.range().start(),
+            })?;
+        let protocols = self.derive_closure_protocols(body_root, &captures);
         let id = HirClosureId(u32::try_from(self.program.closures.len()).map_err(|_| {
             HirError::NodeLimit {
                 file,
@@ -2459,7 +2541,9 @@ impl<'a> ExpressionChecker<'a> {
             identity,
             span,
             ty: closure_type,
+            generic_arity,
             function_type,
+            protocols,
             generics: context.generics.clone(),
             parameters,
             captures,
@@ -2474,6 +2558,147 @@ impl<'a> ExpressionChecker<'a> {
             category: HirValueCategory::Value,
             kind: HirExpressionKind::Closure(id),
         })
+    }
+
+    fn derive_closure_protocols(
+        &self,
+        body: HirExpressionId,
+        captures: &[HirClosureCapture],
+    ) -> HirClosureProtocols {
+        let captures = captures
+            .iter()
+            .map(HirClosureCapture::local)
+            .collect::<BTreeSet<_>>();
+        let writes_capture = self.closure_body_writes_capture(body, &captures);
+
+        // CALL-002 admits only Copy captures. Therefore no body operation can
+        // move a value out of the environment yet, and Discard is available
+        // for the closed implication CallMut + Discard => CallOnce. M5 will
+        // extend this analysis with availability-aware moves.
+        HirClosureProtocols::new(!writes_capture, true, true)
+    }
+
+    fn closure_body_writes_capture(
+        &self,
+        root: HirExpressionId,
+        captures: &BTreeSet<LocalId>,
+    ) -> bool {
+        let mut pending = vec![root];
+        let mut visited = BTreeSet::new();
+        while let Some(id) = pending.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let expression = &self.program.expressions[id.0 as usize];
+            match &expression.kind {
+                HirExpressionKind::Block { statements, tail } => {
+                    let mut reachable = true;
+                    for statement in statements {
+                        if !reachable {
+                            break;
+                        }
+                        if let HirStatement::Assignment { target, .. } = statement
+                            && self.assignment_target_roots_capture(target, captures)
+                        {
+                            return true;
+                        }
+                        self.queue_protocol_statement(statement, &mut pending);
+                        reachable = self.statement_summary(statement).flow.may_complete();
+                    }
+                    if reachable {
+                        pending.extend(tail);
+                    }
+                }
+                HirExpressionKind::Call {
+                    callee,
+                    arguments,
+                    protocol,
+                    ..
+                } => {
+                    if *protocol == HirCallProtocol::CallMut
+                        && self
+                            .expression_root_local(*callee)
+                            .is_some_and(|local| captures.contains(&local))
+                    {
+                        return true;
+                    }
+                    if arguments.iter().any(|argument| {
+                        matches!(argument.mode(), ParameterMode::Mut | ParameterMode::Var)
+                            && self
+                                .expression_root_local(argument.value())
+                                .is_some_and(|local| captures.contains(&local))
+                    }) {
+                        return true;
+                    }
+                    pending.push(*callee);
+                    pending.extend(arguments.iter().map(HirCallArgument::value));
+                }
+                HirExpressionKind::Closure(_) => {
+                    // Constructing a nested closure evaluates its captures but
+                    // never executes that closure's separately rooted body.
+                }
+                kind => pending.extend(closure_protocol_expression_children(kind)),
+            }
+        }
+        false
+    }
+
+    fn queue_protocol_statement(
+        &self,
+        statement: &HirStatement,
+        pending: &mut Vec<HirExpressionId>,
+    ) {
+        match statement {
+            HirStatement::Binding { value, .. }
+            | HirStatement::Expression { value, .. }
+            | HirStatement::Discard { value, .. } => pending.push(*value),
+            HirStatement::Assignment { target, value, .. } => {
+                collect_assignment_target_expressions(target, pending);
+                pending.push(*value);
+            }
+            HirStatement::For { kind, body, .. } => {
+                match kind {
+                    HirForKind::Infinite => {}
+                    HirForKind::Conditional { condition } => pending.push(*condition),
+                    HirForKind::Iterate { source, .. } => pending.push(*source),
+                }
+                pending.push(*body);
+            }
+        }
+    }
+
+    fn assignment_target_roots_capture(
+        &self,
+        root: &HirAssignmentTarget,
+        captures: &BTreeSet<LocalId>,
+    ) -> bool {
+        let mut pending = vec![root];
+        while let Some(target) = pending.pop() {
+            match target.kind() {
+                HirAssignmentTargetKind::Place { place, .. } => {
+                    if self
+                        .expression_root_local(*place)
+                        .is_some_and(|local| captures.contains(&local))
+                    {
+                        return true;
+                    }
+                }
+                HirAssignmentTargetKind::Discard => {}
+                HirAssignmentTargetKind::Tuple(items) => pending.extend(items),
+            }
+        }
+        false
+    }
+
+    fn expression_root_local(&self, id: HirExpressionId) -> Option<LocalId> {
+        match self.program.expressions[id.0 as usize].kind() {
+            HirExpressionKind::Local(local) => Some(*local),
+            HirExpressionKind::Field { base, .. }
+            | HirExpressionKind::TupleField { base, .. }
+            | HirExpressionKind::Index { base, .. }
+            | HirExpressionKind::Slice { base, .. } => self.expression_root_local(*base),
+            _ => None,
+        }
     }
 
     fn collect_closure_captures(
@@ -8341,6 +8566,102 @@ impl<'a> ExpressionChecker<'a> {
         }))
     }
 
+    fn contextual_call_trait_status(
+        &mut self,
+        query: &TraitQuery,
+        context: &BodyContext,
+    ) -> Result<Option<TraitProofStatus>, HirError> {
+        let HirTraitConstructor::Prelude(required) = query.constructor() else {
+            return Ok(None);
+        };
+        let Some(required) = call_protocol_from_name(required.as_str()) else {
+            return Ok(None);
+        };
+        let [signature] = query.arguments() else {
+            return Ok(Some(TraitProofStatus::Unsatisfied));
+        };
+        if !matches!(
+            self.program.interner.kind(*signature)?,
+            TypeKind::Function(_)
+        ) {
+            return Ok(Some(TraitProofStatus::Unsatisfied));
+        }
+        let available = context
+            .trait_assumptions
+            .iter()
+            .filter(|assumption| assumption.target() == query.target())
+            .filter_map(|assumption| {
+                let HirTraitConstructor::Prelude(name) = assumption.constructor() else {
+                    return None;
+                };
+                let protocol = call_protocol_from_name(name.as_str())?;
+                (assumption.arguments() == [*signature]).then_some(protocol)
+            })
+            .collect::<BTreeSet<_>>();
+        if available.is_empty() {
+            return Ok(None);
+        }
+        let has = |protocol| available.contains(&protocol);
+        let discard = self.capability_status_with_generics(
+            query.target(),
+            HirCapability::Discard,
+            &context.capability_assumptions,
+        )? == HirCapabilityStatus::Satisfied;
+        let satisfied = match required {
+            HirCallProtocol::Call => has(HirCallProtocol::Call),
+            HirCallProtocol::CallMut => has(HirCallProtocol::Call) || has(HirCallProtocol::CallMut),
+            HirCallProtocol::CallOnce => {
+                has(HirCallProtocol::CallOnce)
+                    || (discard && (has(HirCallProtocol::Call) || has(HirCallProtocol::CallMut)))
+            }
+        };
+        Ok(Some(if satisfied {
+            TraitProofStatus::Satisfied
+        } else {
+            TraitProofStatus::Unsatisfied
+        }))
+    }
+
+    fn concrete_call_trait_status(
+        &mut self,
+        query: &TraitQuery,
+    ) -> Result<Option<TraitProofStatus>, HirError> {
+        let HirTraitConstructor::Prelude(name) = query.constructor() else {
+            return Ok(None);
+        };
+        let Some(protocol) = call_protocol_from_name(name.as_str()) else {
+            return Ok(None);
+        };
+        let [required_signature] = query.arguments() else {
+            return Ok(Some(TraitProofStatus::Unsatisfied));
+        };
+        match self.program.interner.kind(query.target())?.clone() {
+            TypeKind::Function(_) => Ok(Some(if *required_signature == query.target() {
+                TraitProofStatus::Satisfied
+            } else {
+                TraitProofStatus::Unsatisfied
+            })),
+            TypeKind::Generated {
+                identity,
+                arguments,
+            } => {
+                let Some(closure) = self.program.closure_by_identity(&identity).cloned() else {
+                    return Ok(None);
+                };
+                let signature = TypeSubstitution::new(arguments)
+                    .apply(&mut self.program.interner, closure.function_type())?;
+                Ok(Some(
+                    if signature == *required_signature && closure.protocols().supports(protocol) {
+                        TraitProofStatus::Satisfied
+                    } else {
+                        TraitProofStatus::Unsatisfied
+                    },
+                ))
+            }
+            _ => Ok(None),
+        }
+    }
+
     fn prove_trait_query(
         &mut self,
         span: Span,
@@ -8365,6 +8686,11 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(TraitProofStatus::Satisfied);
         }
 
+        if let Some(status) = self.contextual_call_trait_status(query, context)? {
+            memo.insert(query.clone(), status);
+            return Ok(status);
+        }
+
         if let HirTraitConstructor::Prelude(name) = query.constructor()
             && let Some(capability) = HirCapability::from_name(name.as_str())
         {
@@ -8377,6 +8703,11 @@ impl<'a> ExpressionChecker<'a> {
                 HirCapabilityStatus::Deferred => TraitProofStatus::Deferred,
                 HirCapabilityStatus::Unsatisfied => TraitProofStatus::Unsatisfied,
             };
+            memo.insert(query.clone(), status);
+            return Ok(status);
+        }
+
+        if let Some(status) = self.concrete_call_trait_status(query)? {
             memo.insert(query.clone(), status);
             return Ok(status);
         }
@@ -9876,18 +10207,68 @@ impl<'a> ExpressionChecker<'a> {
         }
     }
 
-    fn concrete_closure_requires_call_protocol(
-        &self,
+    fn coerce_concrete_closure_to_function(
+        &mut self,
+        span: Span,
+        value: HirExpressionId,
         actual: TypeId,
         expected: TypeId,
-    ) -> Result<bool, HirError> {
+        context: &BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
         if !matches!(self.program.interner.kind(expected)?, TypeKind::Function(_)) {
-            return Ok(false);
+            return Ok(None);
         }
-        let TypeKind::Generated { identity, .. } = self.program.interner.kind(actual)? else {
-            return Ok(false);
+        let TypeKind::Generated {
+            identity,
+            arguments,
+        } = self.program.interner.kind(actual)?.clone()
+        else {
+            return Ok(None);
         };
-        Ok(self.program.closure_by_identity(identity).is_some())
+        let Some(closure) = self.program.closure_by_identity(&identity).cloned() else {
+            return Ok(None);
+        };
+        let signature = TypeSubstitution::new(arguments)
+            .apply(&mut self.program.interner, closure.function_type())?;
+        let mut missing = Vec::new();
+        if signature != expected {
+            missing.push("an exact call signature");
+        }
+        if !closure.protocols().supports(HirCallProtocol::Call) {
+            missing.push("Call");
+        }
+        for (capability, name) in [
+            (HirCapability::Copy, "Copy"),
+            (HirCapability::Send, "Send"),
+            (HirCapability::Share, "Share"),
+        ] {
+            if self.capability_status_with_generics(
+                actual,
+                capability,
+                &context.capability_assumptions,
+            )? != HirCapabilityStatus::Satisfied
+            {
+                missing.push(name);
+            }
+        }
+        if missing.is_empty() {
+            return self
+                .coerce_with(value, expected, Assignability::CallableErasure)
+                .map(Some);
+        }
+        self.emit(
+            span,
+            "E1108",
+            format!(
+                "closure cannot convert to `{}` because it lacks {}",
+                self.program.interner.canonical(expected)?,
+                missing.join(" + ")
+            ),
+            Vec::new(),
+            None,
+        )?;
+        self.recovery_expression(span.file(), span.range())
+            .map(Some)
     }
 
     fn type_contains_closure_inference(&self, root: TypeId) -> Result<bool, HirError> {
@@ -12672,6 +13053,173 @@ impl<'a> ExpressionChecker<'a> {
             })
     }
 
+    fn callable_protocol_contract(
+        &mut self,
+        span: Span,
+        callee_type: TypeId,
+        context: &BodyContext,
+    ) -> Result<Option<CallableProtocolContract>, HirError> {
+        match self.program.interner.kind(callee_type)?.clone() {
+            TypeKind::Function(function) => {
+                return Ok(Some(CallableProtocolContract {
+                    signature: callee_type,
+                    function,
+                    protocols: HirClosureProtocols::new(true, true, true),
+                }));
+            }
+            TypeKind::Generated {
+                identity,
+                arguments,
+            } => {
+                if let Some(closure) = self.program.closure_by_identity(&identity).cloned() {
+                    let signature = TypeSubstitution::new(arguments)
+                        .apply(&mut self.program.interner, closure.function_type())?;
+                    let TypeKind::Function(function) =
+                        self.program.interner.kind(signature)?.clone()
+                    else {
+                        return Err(HirError::TraitSelectionInvariant {
+                            message: format!(
+                                "closure#{} has a non-function call signature",
+                                closure.id().index()
+                            ),
+                        });
+                    };
+                    return Ok(Some(CallableProtocolContract {
+                        signature,
+                        function,
+                        protocols: closure.protocols(),
+                    }));
+                }
+            }
+            TypeKind::Error => return Ok(None),
+            _ => {}
+        }
+
+        let mut visible = context.trait_assumptions.clone();
+        visible.extend(self.opaque_trait_queries(callee_type)?);
+        let mut contracts = Vec::new();
+        for query in visible {
+            if query.target() != callee_type {
+                continue;
+            }
+            let HirTraitConstructor::Prelude(name) = query.constructor() else {
+                continue;
+            };
+            let Some(protocol) = call_protocol_from_name(name.as_str()) else {
+                continue;
+            };
+            let [signature] = query.arguments() else {
+                continue;
+            };
+            if !matches!(
+                self.program.interner.kind(*signature)?,
+                TypeKind::Function(_)
+            ) {
+                continue;
+            }
+            contracts.push((*signature, protocol));
+        }
+        if contracts.is_empty() {
+            return Ok(None);
+        }
+        contracts.sort_unstable();
+        contracts.dedup();
+        let signatures = contracts
+            .iter()
+            .map(|(signature, _)| *signature)
+            .collect::<BTreeSet<_>>();
+        if signatures.len() != 1 {
+            let signatures = signatures
+                .iter()
+                .map(|signature| self.program.interner.canonical(*signature))
+                .collect::<Result<Vec<_>, _>>()?;
+            self.emit(
+                span,
+                "E1115",
+                format!(
+                    "visible call constraints disagree on the callable signature: {}",
+                    signatures.join(", ")
+                ),
+                Vec::new(),
+                None,
+            )?;
+        }
+        let signature = *signatures
+            .iter()
+            .next()
+            .expect("one visible call signature remains");
+        let direct = |required| {
+            contracts
+                .iter()
+                .any(|(candidate, protocol)| *candidate == signature && *protocol == required)
+        };
+        let call = direct(HirCallProtocol::Call);
+        let call_mut = call || direct(HirCallProtocol::CallMut);
+        let discard = self.capability_status_with_generics(
+            callee_type,
+            HirCapability::Discard,
+            &context.capability_assumptions,
+        )? == HirCapabilityStatus::Satisfied;
+        let call_once = direct(HirCallProtocol::CallOnce) || (discard && call_mut);
+        let TypeKind::Function(function) = self.program.interner.kind(signature)?.clone() else {
+            unreachable!("visible call signatures were filtered to function types")
+        };
+        Ok(Some(CallableProtocolContract {
+            signature,
+            function,
+            protocols: HirClosureProtocols::new(call, call_mut, call_once),
+        }))
+    }
+
+    fn select_call_protocol(
+        &mut self,
+        span: Span,
+        callee: HirExpressionId,
+        callee_type: TypeId,
+        protocols: HirClosureProtocols,
+        context: &BodyContext,
+    ) -> Result<Option<HirCallProtocol>, HirError> {
+        if protocols.supports(HirCallProtocol::Call) {
+            return Ok(Some(HirCallProtocol::Call));
+        }
+        let permission = self.expression_place_permission(callee, context);
+        if protocols.supports(HirCallProtocol::CallMut)
+            && matches!(
+                permission,
+                PlacePermission::MutRoot | PlacePermission::Replace
+            )
+        {
+            return Ok(Some(HirCallProtocol::CallMut));
+        }
+        if protocols.supports(HirCallProtocol::CallOnce) {
+            match self.capability_status_with_generics(
+                callee_type,
+                HirCapability::Copy,
+                &context.capability_assumptions,
+            )? {
+                HirCapabilityStatus::Satisfied => {
+                    return Ok(Some(HirCallProtocol::CallOnce));
+                }
+                HirCapabilityStatus::Deferred | HirCapabilityStatus::Unsatisfied => {
+                    // M5 introduces affine availability and the consuming MIR
+                    // operand. Until then only the semantically exact Copy
+                    // subset can execute a CallOnce without losing ownership
+                    // information.
+                    self.complete = false;
+                    return Ok(None);
+                }
+            }
+        }
+        self.emit(
+            span,
+            "E1407",
+            "the callable has no call protocol permitted by this callee place",
+            Vec::new(),
+            None,
+        )?;
+        Ok(None)
+    }
+
     fn check_call(
         &mut self,
         site: CallSite<'_>,
@@ -12687,12 +13235,12 @@ impl<'a> ExpressionChecker<'a> {
             expected,
         } = site;
         let callee_type = self.expression_type(callee);
-        let mut function = match self.program.interner.kind(callee_type)?.clone() {
-            TypeKind::Function(function) => function,
-            TypeKind::Error => return self.recovery_expression(file, range),
-            _ => {
+        let call_span = self.sources.span(file, suffix.range())?;
+        let Some(contract) = self.callable_protocol_contract(call_span, callee_type, context)?
+        else {
+            if callee_type != self.program.interner.error() {
                 self.emit(
-                    self.sources.span(file, suffix.range())?,
+                    call_span,
                     "E1102",
                     format!(
                         "value of type `{}` is not callable",
@@ -12701,9 +13249,16 @@ impl<'a> ExpressionChecker<'a> {
                     Vec::new(),
                     None,
                 )?;
-                return self.recovery_expression(file, range);
             }
+            return self.recovery_expression(file, range);
         };
+        let Some(protocol) =
+            self.select_call_protocol(call_span, callee, callee_type, contract.protocols, context)?
+        else {
+            return self.recovery_expression(file, range);
+        };
+        let mut signature = contract.signature;
+        let mut function = contract.function;
         let callee_kind = self
             .program
             .expression(callee)
@@ -13131,6 +13686,7 @@ impl<'a> ExpressionChecker<'a> {
             };
             let final_type = TypeSubstitution::new(type_arguments.clone())
                 .apply(&mut self.program.interner, generic.function_type)?;
+            signature = final_type;
             let final_function = match self.program.interner.kind(final_type)?.clone() {
                 TypeKind::Function(function) => function,
                 _ => unreachable!("callable signatures always lower to function types"),
@@ -13231,7 +13787,12 @@ impl<'a> ExpressionChecker<'a> {
             span: self.sources.span(file, range)?,
             ty: shape.outcome,
             category: HirValueCategory::Value,
-            kind: HirExpressionKind::Call { callee, arguments },
+            kind: HirExpressionKind::Call {
+                callee,
+                arguments,
+                signature,
+                protocol,
+            },
         })
     }
 
@@ -13799,7 +14360,9 @@ impl<'a> ExpressionChecker<'a> {
                     .chain(end.iter().copied())
                     .chain(step.iter().copied()),
             ),
-            HirExpressionKind::Call { callee, arguments } => {
+            HirExpressionKind::Call {
+                callee, arguments, ..
+            } => {
                 let mut summary = self.expression_sequence(
                     std::iter::once(*callee).chain(arguments.iter().map(HirCallArgument::value)),
                 );
@@ -14213,6 +14776,128 @@ fn normalize_pattern_head(pattern: &PatternShape) -> PatternShape {
             arguments: Vec::new(),
         }
     }
+}
+
+fn closure_protocol_expression_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
+    let mut children = Vec::new();
+    match kind {
+        HirExpressionKind::Recovery
+        | HirExpressionKind::Literal(_)
+        | HirExpressionKind::Local(_)
+        | HirExpressionKind::Constant(_)
+        | HirExpressionKind::Function(_)
+        | HirExpressionKind::SpecializedFunction { .. }
+        | HirExpressionKind::PreludeTraitFunction { .. }
+        | HirExpressionKind::Closure(_)
+        | HirExpressionKind::Receiver
+        | HirExpressionKind::Break { .. }
+        | HirExpressionKind::Continue { .. }
+        | HirExpressionKind::Block { .. }
+        | HirExpressionKind::Call { .. } => {}
+        HirExpressionKind::InterpolatedString { values, .. }
+        | HirExpressionKind::Tuple(values)
+        | HirExpressionKind::Array(values)
+        | HirExpressionKind::Set(values) => children.extend(values),
+        HirExpressionKind::Map { entries, .. } => {
+            for entry in entries {
+                children.push(entry.key());
+                children.push(entry.value());
+            }
+        }
+        HirExpressionKind::Newtype { value, .. }
+        | HirExpressionKind::NumericConversion { value, .. }
+        | HirExpressionKind::OptionSome { value }
+        | HirExpressionKind::ResultOk { value }
+        | HirExpressionKind::PropagateOption { value }
+        | HirExpressionKind::PropagateResult { value, .. }
+        | HirExpressionKind::Coerce { value, .. } => children.push(*value),
+        HirExpressionKind::ResultErr { error } | HirExpressionKind::Fail { error } => {
+            children.push(*error);
+        }
+        HirExpressionKind::Record { fields, .. } => {
+            children.extend(fields.iter().map(HirRecordFieldValue::value));
+        }
+        HirExpressionKind::Variant { payload, .. } => match payload {
+            HirVariantValue::Unit => {}
+            HirVariantValue::Tuple(values) => children.extend(values),
+            HirVariantValue::Record(fields) => {
+                children.extend(fields.iter().map(HirRecordFieldValue::value));
+            }
+        },
+        HirExpressionKind::RecordUpdate { base, fields } => {
+            children.push(*base);
+            children.extend(fields.iter().map(HirRecordFieldValue::value));
+        }
+        HirExpressionKind::Prefix { operand, .. }
+        | HirExpressionKind::Field { base: operand, .. }
+        | HirExpressionKind::TupleField { base: operand, .. } => children.push(*operand),
+        HirExpressionKind::Binary { left, right, .. }
+        | HirExpressionKind::Range {
+            start: left,
+            end: right,
+            ..
+        }
+        | HirExpressionKind::Contains {
+            item: left,
+            container: right,
+            ..
+        } => {
+            children.push(*left);
+            children.push(*right);
+        }
+        HirExpressionKind::Index { base, index, .. } => {
+            children.push(*base);
+            children.push(*index);
+        }
+        HirExpressionKind::Slice {
+            base,
+            start,
+            end,
+            step,
+        } => {
+            children.push(*base);
+            children.extend(start);
+            children.extend(end);
+            children.extend(step);
+        }
+        HirExpressionKind::PreludePanic { message } => children.push(*message),
+        HirExpressionKind::PreludeAssert {
+            condition,
+            message_parts,
+            ..
+        } => {
+            children.push(*condition);
+            children.extend(message_parts.iter().map(|part| part.value()));
+        }
+        HirExpressionKind::BootstrapHostCall { arguments, .. } => children.extend(arguments),
+        HirExpressionKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            children.push(*condition);
+            children.push(*then_branch);
+            children.extend(else_branch);
+        }
+        HirExpressionKind::Match { scrutinee, arms } => {
+            children.push(*scrutinee);
+            for arm in arms {
+                children.extend(arm.guard());
+                children.push(arm.body());
+            }
+        }
+        HirExpressionKind::Return { value } => children.extend(value),
+    }
+    children
+}
+
+fn call_protocol_from_name(name: &str) -> Option<HirCallProtocol> {
+    Some(match name {
+        "Call" => HirCallProtocol::Call,
+        "CallMut" => HirCallProtocol::CallMut,
+        "CallOnce" => HirCallProtocol::CallOnce,
+        _ => return None,
+    })
 }
 
 fn binary_operator(token: TokenKind) -> Option<HirBinaryOperator> {
@@ -15318,7 +16003,7 @@ mod tests {
     }
 
     #[test]
-    fn contextual_closure_signatures_wait_for_call_protocol_derivation() {
+    fn contextual_closure_signatures_coerce_after_call_protocol_derivation() {
         let (_, _, output) = check(
             "fn build() {\n\
                  let operation: fn(Int): Int = (value) { value + 1 }\n\
@@ -15330,7 +16015,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
         let closure = output
             .program()
             .closures()
@@ -15344,6 +16029,168 @@ mod tests {
                 .unwrap(),
             "fn(Int): Int"
         );
+        assert_eq!(
+            closure.protocols(),
+            HirClosureProtocols::new(true, true, true)
+        );
+        assert!(output.program().expressions().any(|expression| matches!(
+            expression.kind(),
+            HirExpressionKind::Coerce {
+                kind: Assignability::CallableErasure,
+                ..
+            }
+        )));
+    }
+
+    #[test]
+    fn closure_protocols_are_derived_from_capture_writes() {
+        let (_, _, output) = check(
+            "fn build(offset: Int) {\n\
+                 let pure = (value: Int): Int { value + offset }\n\
+                 var count = 0\n\
+                 let stateful = (): Int {\n\
+                     count += 1\n\
+                     count\n\
+                 }\n\
+                 _ = pure\n\
+                 _ = stateful\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let closures = output.program().closures().collect::<Vec<_>>();
+        assert_eq!(closures.len(), 2);
+        assert_eq!(
+            closures[0].protocols(),
+            HirClosureProtocols::new(true, true, true)
+        );
+        assert_eq!(
+            closures[1].protocols(),
+            HirClosureProtocols::new(false, true, true)
+        );
+    }
+
+    #[test]
+    fn ordinary_closure_calls_choose_the_first_permitted_protocol() {
+        let (_, _, output) = check(
+            "fn execute(offset: Int): (Int, Int, Int) {\n\
+                 let pure = (value: Int): Int { value + offset }\n\
+                 var count = 0\n\
+                 var stateful = (): Int {\n\
+                     count += 1\n\
+                     count\n\
+                 }\n\
+                 let copied = stateful\n\
+                 (pure(3), stateful(), copied())\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let mut protocols = output
+            .program()
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::Call { protocol, .. } => Some(*protocol),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        protocols.sort_unstable();
+        assert_eq!(
+            protocols,
+            [
+                HirCallProtocol::Call,
+                HirCallProtocol::CallMut,
+                HirCallProtocol::CallOnce,
+            ]
+        );
+    }
+
+    #[test]
+    fn generic_call_bounds_expose_only_their_closed_protocols() {
+        let (_, _, output) = check(
+            "fn shared[F: Call[fn(Int): Int]](operation: F, value: Int): Int {\n\
+                 operation(value)\n\
+             }\n\
+             fn exclusive[F: CallMut[fn(): Int]](operation: mut F): Int {\n\
+                 operation()\n\
+             }\n\
+             fn consuming[F: Copy + CallOnce[fn(Int): Int]](\n\
+                 operation: F,\n\
+                 value: Int,\n\
+             ): Int {\n\
+                 operation(value)\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let mut protocols = output
+            .program()
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::Call { protocol, .. } => Some(*protocol),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        protocols.sort_unstable();
+        assert_eq!(
+            protocols,
+            [
+                HirCallProtocol::Call,
+                HirCallProtocol::CallMut,
+                HirCallProtocol::CallOnce,
+            ]
+        );
+
+        let (_, _, inaccessible) = check(
+            "fn invalid[F: CallMut[fn(): Int]](operation: F): Int {\n\
+                 operation()\n\
+             }\n",
+        );
+        assert_eq!(codes(&inaccessible), ["E1407"]);
+
+        let (_, _, malformed) = check("fn invalid[F: Call[Int]](operation: F) {}\n");
+        assert_eq!(codes(&malformed), ["E1115"]);
+    }
+
+    #[test]
+    fn opaque_call_bounds_preserve_signature_and_protocol() {
+        let (_, _, output) = check(
+            "fn make(offset: Int): impl Call[fn(Int): Int] + Discard {\n\
+                 (value: Int): Int { value + offset }\n\
+             }\n\
+             fn execute(): Int {\n\
+                 let operation = make(2)\n\
+                 operation(3)\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        assert!(output.program().expressions().any(|expression| matches!(
+            expression.kind(),
+            HirExpressionKind::Call {
+                protocol: HirCallProtocol::Call,
+                ..
+            }
+        ) && matches!(
+            output.program().interner().kind(expression.ty()),
+            Ok(TypeKind::Scalar(ScalarType::Int))
+        )));
     }
 
     fn assignment_target_contains_coercion(

@@ -154,6 +154,7 @@ pub enum ParameterMode {
 pub enum Assignability {
     Exact,
     Opaque,
+    CallableErasure,
     UnionInjection,
     UnionWidening,
     OptionLift,

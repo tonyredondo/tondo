@@ -131,6 +131,7 @@ impl Verifier<'_> {
         self.verify_patterns()?;
         let loops = self.collect_loops()?;
         self.verify_expressions(&loops)?;
+        self.verify_call_protocol_contracts()?;
         self.verify_bodies()?;
         Ok(())
     }
@@ -480,6 +481,26 @@ impl Verifier<'_> {
                     assumptions,
                     context,
                 )?;
+            }
+            HirExpressionKind::Coerce {
+                kind: crate::types::Assignability::CallableErasure,
+                value,
+            } => {
+                let actual = self.expression(*value, context)?.ty;
+                for capability in [
+                    HirCapability::Copy,
+                    HirCapability::Send,
+                    HirCapability::Share,
+                ] {
+                    self.verify_capability_requirement(
+                        analysis,
+                        actual,
+                        capability,
+                        assumptions,
+                        context,
+                        "closure-to-function coercion",
+                    )?;
+                }
             }
             HirExpressionKind::Binary {
                 operator: HirBinaryOperator::Equal | HirBinaryOperator::NotEqual,
@@ -1892,6 +1913,12 @@ impl Verifier<'_> {
             let generic_arity = u32::try_from(arguments.len()).map_err(|_| {
                 HirInvariantError::new(&context, "closure generic arity exceeds u32")
             })?;
+            if closure.generic_arity != generic_arity {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "closure generic arity differs from its generated type arguments",
+                ));
+            }
             let inherited_positions = closure
                 .generics
                 .iter()
@@ -2037,8 +2064,163 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            let capture_locals = closure
+                .captures
+                .iter()
+                .map(|capture| capture.local)
+                .collect::<BTreeSet<_>>();
+            let expected_protocols =
+                self.derive_closure_protocols(closure.body.root, &capture_locals, &context)?;
+            if closure.protocols != expected_protocols {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "closure call protocols do not match independent body analysis",
+                ));
+            }
         }
         Ok(())
+    }
+
+    fn derive_closure_protocols(
+        &self,
+        root: HirExpressionId,
+        captures: &BTreeSet<crate::resolve::LocalId>,
+        context: &str,
+    ) -> Result<super::HirClosureProtocols, HirInvariantError> {
+        let writes_capture = self.closure_body_writes_capture(root, captures, context)?;
+        Ok(super::HirClosureProtocols::new(!writes_capture, true, true))
+    }
+
+    fn closure_body_writes_capture(
+        &self,
+        root: HirExpressionId,
+        captures: &BTreeSet<crate::resolve::LocalId>,
+        context: &str,
+    ) -> Result<bool, HirInvariantError> {
+        let mut pending = vec![root];
+        let mut visited = BTreeSet::new();
+        while let Some(id) = pending.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let expression = self.expression(id, context)?;
+            match &expression.kind {
+                HirExpressionKind::Block { statements, tail } => {
+                    let mut reachable = true;
+                    for statement in statements {
+                        if !reachable {
+                            break;
+                        }
+                        if let HirStatement::Assignment { target, .. } = statement
+                            && self.assignment_target_roots_capture(target, captures, context)?
+                        {
+                            return Ok(true);
+                        }
+                        statement_children(statement, &mut pending);
+                        reachable = self.statement_may_complete(statement);
+                    }
+                    if reachable {
+                        pending.extend(tail);
+                    }
+                }
+                HirExpressionKind::Call {
+                    callee,
+                    arguments,
+                    protocol,
+                    ..
+                } => {
+                    if *protocol == super::HirCallProtocol::CallMut
+                        && self
+                            .expression_root_local(*callee, context)?
+                            .is_some_and(|local| captures.contains(&local))
+                    {
+                        return Ok(true);
+                    }
+                    for argument in arguments {
+                        if matches!(argument.mode, ParameterMode::Mut | ParameterMode::Var)
+                            && self
+                                .expression_root_local(argument.value, context)?
+                                .is_some_and(|local| captures.contains(&local))
+                        {
+                            return Ok(true);
+                        }
+                    }
+                    pending.push(*callee);
+                    pending.extend(arguments.iter().map(|argument| argument.value));
+                }
+                HirExpressionKind::Closure(_) => {}
+                _ => pending.extend(expression_children(expression)),
+            }
+        }
+        Ok(false)
+    }
+
+    fn assignment_target_roots_capture(
+        &self,
+        root: &HirAssignmentTarget,
+        captures: &BTreeSet<crate::resolve::LocalId>,
+        context: &str,
+    ) -> Result<bool, HirInvariantError> {
+        let mut pending = vec![root];
+        while let Some(target) = pending.pop() {
+            match &target.kind {
+                HirAssignmentTargetKind::Place { place, .. } => {
+                    if self
+                        .expression_root_local(*place, context)?
+                        .is_some_and(|local| captures.contains(&local))
+                    {
+                        return Ok(true);
+                    }
+                }
+                HirAssignmentTargetKind::Discard => {}
+                HirAssignmentTargetKind::Tuple(items) => pending.extend(items),
+            }
+        }
+        Ok(false)
+    }
+
+    fn expression_root_local(
+        &self,
+        id: HirExpressionId,
+        context: &str,
+    ) -> Result<Option<crate::resolve::LocalId>, HirInvariantError> {
+        Ok(match &self.expression(id, context)?.kind {
+            HirExpressionKind::Local(local) => Some(*local),
+            HirExpressionKind::Field { base, .. }
+            | HirExpressionKind::TupleField { base, .. }
+            | HirExpressionKind::Index { base, .. }
+            | HirExpressionKind::Slice { base, .. } => {
+                self.expression_root_local(*base, context)?
+            }
+            _ => None,
+        })
+    }
+
+    fn statement_may_complete(&self, statement: &HirStatement) -> bool {
+        let flow = |id: HirExpressionId| self.program.expression_flows[id.0 as usize];
+        match statement {
+            HirStatement::Binding { value, .. }
+            | HirStatement::Expression { value, .. }
+            | HirStatement::Discard { value, .. } => flow(*value).may_complete(),
+            HirStatement::Assignment { target, value, .. } => {
+                let mut expressions = Vec::new();
+                assignment_target_children(target, &mut expressions);
+                expressions.push(*value);
+                expressions
+                    .into_iter()
+                    .all(|expression| flow(expression).may_complete())
+            }
+            HirStatement::For { id, kind, body, .. } => {
+                let header_completes = match kind {
+                    HirForKind::Infinite => true,
+                    HirForKind::Conditional { condition } => flow(*condition).may_complete(),
+                    HirForKind::Iterate { source, .. } => flow(*source).may_complete(),
+                };
+                header_completes
+                    && (!matches!(kind, HirForKind::Infinite)
+                        || self.program.expression_breaks[body.0 as usize].contains(id))
+            }
+        }
     }
 
     fn local_is_loan(&self, local: crate::resolve::LocalId) -> bool {
@@ -2174,6 +2356,7 @@ impl Verifier<'_> {
             ));
         }
         let mut unique_bounds = BTreeSet::new();
+        let mut call_signature = None;
         for bound in &opaque.bounds {
             if !unique_bounds.insert((bound.constructor.clone(), bound.arguments.clone())) {
                 return Err(HirInvariantError::new(
@@ -2186,6 +2369,27 @@ impl Verifier<'_> {
             }
             for argument in &bound.arguments {
                 self.verify_type(*argument, format!("{context} opaque bound"))?;
+            }
+            if let HirTraitConstructor::Prelude(name) = &bound.constructor
+                && matches!(name.as_str(), "Call" | "CallMut" | "CallOnce")
+            {
+                let [signature] = bound.arguments.as_slice() else {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "opaque call bound does not contain one signature",
+                    ));
+                };
+                if !matches!(
+                    self.program.interner.kind(*signature),
+                    Ok(TypeKind::Function(_))
+                ) || call_signature.is_some_and(|previous| previous != *signature)
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "opaque call bounds do not use one exact function signature",
+                    ));
+                }
+                call_signature = Some(*signature);
             }
         }
         let witness = opaque.witness.ok_or_else(|| {
@@ -2294,6 +2498,10 @@ impl Verifier<'_> {
             proof.memo.insert(query.clone(), proven);
             return Ok(proven);
         }
+        if let Some(proven) = self.closed_call_query_proof(query, proof)? {
+            proof.memo.insert(query.clone(), proven);
+            return Ok(proven);
+        }
         if let Some(proven) =
             self.opaque_published_query_proof(&mut proof.interner, query, &proof.context)?
         {
@@ -2378,6 +2586,95 @@ impl Verifier<'_> {
         proof.active.remove(query);
         proof.memo.insert(query.clone(), proven);
         Ok(proven)
+    }
+
+    fn closed_call_query_proof(
+        &self,
+        query: &TraitQuery,
+        proof: &mut OpaqueTraitProof,
+    ) -> Result<Option<bool>, HirInvariantError> {
+        let HirTraitConstructor::Prelude(name) = query.constructor() else {
+            return Ok(None);
+        };
+        let required = match name.as_str() {
+            "Call" => super::HirCallProtocol::Call,
+            "CallMut" => super::HirCallProtocol::CallMut,
+            "CallOnce" => super::HirCallProtocol::CallOnce,
+            _ => return Ok(None),
+        };
+        let [signature] = query.arguments() else {
+            return Ok(Some(false));
+        };
+        if !matches!(proof.interner.kind(*signature), Ok(TypeKind::Function(_))) {
+            return Ok(Some(false));
+        }
+        match proof
+            .interner
+            .kind(query.target())
+            .map_err(|error| HirInvariantError::new(&proof.context, error.to_string()))?
+        {
+            TypeKind::Function(_) => return Ok(Some(*signature == query.target())),
+            TypeKind::Generated {
+                identity,
+                arguments,
+            } => {
+                if let Some(closure) = self.program.closure_by_identity(identity) {
+                    let actual = TypeSubstitution::new(arguments.clone())
+                        .apply(&mut proof.interner, closure.function_type)
+                        .map_err(|error| {
+                            HirInvariantError::new(&proof.context, error.to_string())
+                        })?;
+                    return Ok(Some(
+                        actual == *signature && closure.protocols.supports(required),
+                    ));
+                }
+            }
+            _ => {}
+        }
+
+        let available = proof
+            .assumptions
+            .iter()
+            .filter(|assumption| assumption.target() == query.target())
+            .filter_map(|assumption| {
+                let HirTraitConstructor::Prelude(name) = assumption.constructor() else {
+                    return None;
+                };
+                let protocol = match name.as_str() {
+                    "Call" => super::HirCallProtocol::Call,
+                    "CallMut" => super::HirCallProtocol::CallMut,
+                    "CallOnce" => super::HirCallProtocol::CallOnce,
+                    _ => return None,
+                };
+                (assumption.arguments() == [*signature]).then_some(protocol)
+            })
+            .collect::<BTreeSet<_>>();
+        if available.is_empty() {
+            return Ok(None);
+        }
+        let has = |protocol| available.contains(&protocol);
+        let discard = proof
+            .capability_analysis
+            .status(
+                self.program,
+                query.target(),
+                HirCapability::Discard,
+                &proof.capability_assumptions,
+            )
+            .map_err(|error| HirInvariantError::new(&proof.context, error.to_string()))?
+            == super::HirCapabilityStatus::Satisfied;
+        Ok(Some(match required {
+            super::HirCallProtocol::Call => has(super::HirCallProtocol::Call),
+            super::HirCallProtocol::CallMut => {
+                has(super::HirCallProtocol::Call) || has(super::HirCallProtocol::CallMut)
+            }
+            super::HirCallProtocol::CallOnce => {
+                has(super::HirCallProtocol::CallOnce)
+                    || (discard
+                        && (has(super::HirCallProtocol::Call)
+                            || has(super::HirCallProtocol::CallMut)))
+            }
+        }))
     }
 
     fn opaque_published_query_proof(
@@ -2497,12 +2794,34 @@ impl Verifier<'_> {
                     format!("local#{} is not a generic parameter", generic.local.index()),
                 ));
             }
+            let mut call_signature = None;
             for bound in &generic.bounds {
                 if let super::HirTraitConstructor::Symbol(symbol) = bound.constructor {
                     self.verify_symbol(symbol, &[SymbolKind::Trait], context)?;
                 }
                 for argument in &bound.arguments {
                     self.verify_type(*argument, format!("{context} generic bound"))?;
+                }
+                if let HirTraitConstructor::Prelude(name) = &bound.constructor
+                    && matches!(name.as_str(), "Call" | "CallMut" | "CallOnce")
+                {
+                    let [signature] = bound.arguments.as_slice() else {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "call bound does not contain one signature",
+                        ));
+                    };
+                    if !matches!(
+                        self.program.interner.kind(*signature),
+                        Ok(TypeKind::Function(_))
+                    ) || call_signature.is_some_and(|previous| previous != *signature)
+                    {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "call bounds do not use one exact function signature",
+                        ));
+                    }
+                    call_signature = Some(*signature);
                 }
             }
         }
@@ -2893,15 +3212,62 @@ impl Verifier<'_> {
                     context,
                 )?;
             }
-            HirExpressionKind::Call { callee, arguments } => {
+            HirExpressionKind::Call {
+                callee,
+                arguments,
+                signature,
+                protocol,
+            } => {
                 let callee = self.expression(*callee, context)?;
-                if !matches!(
-                    self.program.interner.kind(callee.ty),
-                    Ok(crate::types::TypeKind::Function(_))
-                ) {
+                let TypeKind::Function(function) = self
+                    .program
+                    .interner
+                    .kind(*signature)
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                else {
                     return Err(HirInvariantError::new(
                         context,
-                        "call callee does not have a function type",
+                        "call metadata does not carry a function signature",
+                    ));
+                };
+                if expression.ty != function.outcome() {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "call result differs from its recorded signature outcome",
+                    ));
+                }
+                let concrete_valid = match self
+                    .program
+                    .interner
+                    .kind(callee.ty)
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                {
+                    TypeKind::Function(_) => {
+                        callee.ty == *signature && *protocol == super::HirCallProtocol::Call
+                    }
+                    TypeKind::Generated {
+                        identity,
+                        arguments: generic_arguments,
+                    } => {
+                        if let Some(closure) = self.program.closure_by_identity(identity) {
+                            let mut interner = self.program.interner.clone();
+                            let actual = TypeSubstitution::new(generic_arguments.clone())
+                                .apply(&mut interner, closure.function_type)
+                                .map_err(|error| {
+                                    HirInvariantError::new(context, error.to_string())
+                                })?;
+                            actual == *signature && closure.protocols.supports(*protocol)
+                        } else {
+                            false
+                        }
+                    }
+                    TypeKind::GenericParameter(_) | TypeKind::OpaqueResult { .. } => true,
+                    _ => false,
+                };
+                if !concrete_valid {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "call signature or protocol is not provided by its callee type",
                     ));
                 }
                 for argument in arguments {
@@ -2909,6 +3275,43 @@ impl Verifier<'_> {
                         return Err(HirInvariantError::new(
                             context,
                             "call retains an invalid argument association",
+                        ));
+                    }
+                    let (expected_mode, expected_type) = match argument.target {
+                        super::HirCallArgumentTarget::Receiver => function
+                            .parameters()
+                            .first()
+                            .map(|parameter| (parameter.mode(), parameter.ty())),
+                        super::HirCallArgumentTarget::Fixed(index) => function
+                            .parameters()
+                            .get(index as usize)
+                            .map(|parameter| (parameter.mode(), parameter.ty())),
+                        super::HirCallArgumentTarget::VariadicElement => {
+                            function.variadic().map(|ty| (ParameterMode::Value, ty))
+                        }
+                        super::HirCallArgumentTarget::VariadicSpread => function
+                            .variadic()
+                            .map(|element| {
+                                let mut interner = self.program.interner.clone();
+                                interner
+                                    .intrinsic(IntrinsicType::Array, vec![element])
+                                    .map(|ty| (ParameterMode::Value, ty))
+                            })
+                            .transpose()
+                            .map_err(|error| HirInvariantError::new(context, error.to_string()))?,
+                        super::HirCallArgumentTarget::Invalid => None,
+                    }
+                    .ok_or_else(|| {
+                        HirInvariantError::new(
+                            context,
+                            "call argument target is absent from its recorded signature",
+                        )
+                    })?;
+                    let value = self.expression(argument.value, context)?;
+                    if argument.mode != expected_mode || value.ty != expected_type {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "call argument mode or type differs from its signature slot",
                         ));
                     }
                 }
@@ -2987,17 +3390,23 @@ impl Verifier<'_> {
             }
             HirExpressionKind::Coerce { kind, value } => {
                 let actual = self.expression(*value, context)?.ty;
-                let valid = if *kind == crate::types::Assignability::Opaque {
-                    let mut interner = self.program.interner.clone();
-                    self.program
-                        .opaque_coercion_matches(&mut interner, actual, expression.ty)
-                        .map_err(|error| HirInvariantError::new(context, error.to_string()))?
-                } else {
-                    self.program
-                        .interner
-                        .assignability(actual, expression.ty)
-                        .map_err(|error| HirInvariantError::new(context, error.to_string()))?
-                        == Some(*kind)
+                let valid = match kind {
+                    crate::types::Assignability::Opaque => {
+                        let mut interner = self.program.interner.clone();
+                        self.program
+                            .opaque_coercion_matches(&mut interner, actual, expression.ty)
+                            .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                    }
+                    crate::types::Assignability::CallableErasure => {
+                        self.callable_erasure_matches(actual, expression.ty, context)?
+                    }
+                    _ => {
+                        self.program
+                            .interner
+                            .assignability(actual, expression.ty)
+                            .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                            == Some(*kind)
+                    }
                 };
                 if !valid || *kind == crate::types::Assignability::Exact {
                     return Err(HirInvariantError::new(
@@ -3035,6 +3444,39 @@ impl Verifier<'_> {
             | HirExpressionKind::Continue { .. } => {}
         }
         Ok(())
+    }
+
+    fn callable_erasure_matches(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+        context: &str,
+    ) -> Result<bool, HirInvariantError> {
+        if !matches!(
+            self.program.interner.kind(expected),
+            Ok(TypeKind::Function(_))
+        ) {
+            return Ok(false);
+        }
+        let TypeKind::Generated {
+            identity,
+            arguments,
+        } = self
+            .program
+            .interner
+            .kind(actual)
+            .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+        else {
+            return Ok(false);
+        };
+        let Some(closure) = self.program.closure_by_identity(identity) else {
+            return Ok(false);
+        };
+        let mut interner = self.program.interner.clone();
+        let signature = TypeSubstitution::new(arguments.clone())
+            .apply(&mut interner, closure.function_type)
+            .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
+        Ok(signature == expected && closure.protocols.supports(super::HirCallProtocol::Call))
     }
 
     fn verify_statement(
@@ -3216,6 +3658,283 @@ impl Verifier<'_> {
             self.expression(body.root, &context)?;
         }
         Ok(())
+    }
+
+    fn verify_call_protocol_contracts(&self) -> Result<(), HirInvariantError> {
+        let analysis = CapabilityAnalysis::new(self.program, self.resolved).map_err(|error| {
+            HirInvariantError::new(
+                "call protocols",
+                format!("invalid capability graph: {error}"),
+            )
+        })?;
+        for (callable, body) in &self.program.bodies {
+            let signature = self.program.callable(*callable).ok_or_else(|| {
+                HirInvariantError::new("call protocols", "callable body has no signature")
+            })?;
+            let assumptions = self.trait_assumptions(&signature.generics, "call protocols")?;
+            let capabilities =
+                CapabilityAssumptions::from_generics(self.program, &signature.generics);
+            self.verify_call_protocol_tree(
+                body.root,
+                &assumptions,
+                &capabilities,
+                &analysis,
+                &format!("{} call protocols", callable_context(*callable)),
+            )?;
+        }
+        for closure in &self.program.closures {
+            let assumptions = self.trait_assumptions(
+                &closure.generics,
+                &format!("closure#{} call protocols", closure.id.index()),
+            )?;
+            let capabilities =
+                CapabilityAssumptions::from_generics(self.program, &closure.generics);
+            self.verify_call_protocol_tree(
+                closure.body.root,
+                &assumptions,
+                &capabilities,
+                &analysis,
+                &format!("closure#{} call protocols", closure.id.index()),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn trait_assumptions(
+        &self,
+        generics: &[HirGenericParameter],
+        context: &str,
+    ) -> Result<BTreeSet<TraitQuery>, HirInvariantError> {
+        let mut interner = self.program.interner.clone();
+        let mut assumptions = BTreeSet::new();
+        for parameter in generics {
+            let target = interner
+                .generic_parameter(parameter.position)
+                .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
+            assumptions.extend(
+                parameter
+                    .bounds
+                    .iter()
+                    .map(|bound| TraitQuery::new(bound, target)),
+            );
+        }
+        Ok(assumptions)
+    }
+
+    fn verify_call_protocol_tree(
+        &self,
+        root: HirExpressionId,
+        assumptions: &BTreeSet<TraitQuery>,
+        capabilities: &CapabilityAssumptions,
+        analysis: &CapabilityAnalysis,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        let mut pending = vec![root];
+        let mut visited = BTreeSet::new();
+        while let Some(id) = pending.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let expression = self.expression(id, context)?;
+            if let HirExpressionKind::Call {
+                callee,
+                signature,
+                protocol,
+                ..
+            } = &expression.kind
+            {
+                let callee_type = self.expression(*callee, context)?.ty;
+                let available = self.available_call_protocols(
+                    callee_type,
+                    *signature,
+                    assumptions,
+                    capabilities,
+                    analysis,
+                    context,
+                )?;
+                let expected = if available.supports(super::HirCallProtocol::Call) {
+                    Some(super::HirCallProtocol::Call)
+                } else if available.supports(super::HirCallProtocol::CallMut)
+                    && self.call_mut_place_is_available(*callee, context)?
+                {
+                    Some(super::HirCallProtocol::CallMut)
+                } else if available.supports(super::HirCallProtocol::CallOnce)
+                    && analysis
+                        .status(self.program, callee_type, HirCapability::Copy, capabilities)
+                        .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                        == super::HirCapabilityStatus::Satisfied
+                {
+                    Some(super::HirCallProtocol::CallOnce)
+                } else {
+                    None
+                };
+                if expected != Some(*protocol) {
+                    return Err(HirInvariantError::new(
+                        context,
+                        format!(
+                            "call expression#{} records {protocol:?}, expected {expected:?}",
+                            id.index()
+                        ),
+                    ));
+                }
+            }
+            pending.extend(expression_children(expression));
+        }
+        Ok(())
+    }
+
+    fn available_call_protocols(
+        &self,
+        callee_type: TypeId,
+        signature: TypeId,
+        assumptions: &BTreeSet<TraitQuery>,
+        capabilities: &CapabilityAssumptions,
+        analysis: &CapabilityAnalysis,
+        context: &str,
+    ) -> Result<super::HirClosureProtocols, HirInvariantError> {
+        match self
+            .program
+            .interner
+            .kind(callee_type)
+            .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+        {
+            TypeKind::Function(_) => {
+                return Ok(super::HirClosureProtocols::new(
+                    callee_type == signature,
+                    callee_type == signature,
+                    callee_type == signature,
+                ));
+            }
+            TypeKind::Generated {
+                identity,
+                arguments,
+            } => {
+                if let Some(closure) = self.program.closure_by_identity(identity) {
+                    let mut interner = self.program.interner.clone();
+                    let actual = TypeSubstitution::new(arguments.clone())
+                        .apply(&mut interner, closure.function_type)
+                        .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
+                    return Ok(if actual == signature {
+                        closure.protocols
+                    } else {
+                        super::HirClosureProtocols::new(false, false, false)
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        let queries = match self
+            .program
+            .interner
+            .kind(callee_type)
+            .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+        {
+            TypeKind::GenericParameter(_) => assumptions
+                .iter()
+                .filter(|query| query.target() == callee_type)
+                .cloned()
+                .collect::<Vec<_>>(),
+            TypeKind::OpaqueResult {
+                identity,
+                arguments,
+            } => {
+                let opaque = self.program.opaque_result(identity).ok_or_else(|| {
+                    HirInvariantError::new(context, "opaque call target has no contract")
+                })?;
+                let mut interner = self.program.interner.clone();
+                let substitution = TypeSubstitution::new(arguments.clone());
+                opaque
+                    .bounds
+                    .iter()
+                    .map(|bound| {
+                        let arguments = bound
+                            .arguments
+                            .iter()
+                            .map(|argument| {
+                                substitution
+                                    .apply(&mut interner, *argument)
+                                    .map_err(|error| {
+                                        HirInvariantError::new(context, error.to_string())
+                                    })
+                            })
+                            .collect::<Result<Vec<_>, _>>()?;
+                        Ok(TraitQuery::from_parts(
+                            bound.constructor.clone(),
+                            arguments,
+                            callee_type,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>, HirInvariantError>>()?
+            }
+            _ => Vec::new(),
+        };
+        let mut call = false;
+        let mut call_mut = false;
+        let mut call_once = false;
+        for query in queries {
+            if query.arguments() != [signature] {
+                continue;
+            }
+            let HirTraitConstructor::Prelude(name) = query.constructor() else {
+                continue;
+            };
+            match name.as_str() {
+                "Call" => call = true,
+                "CallMut" => call_mut = true,
+                "CallOnce" => call_once = true,
+                _ => {}
+            }
+        }
+        call_mut |= call;
+        let discard = analysis
+            .status(
+                self.program,
+                callee_type,
+                HirCapability::Discard,
+                capabilities,
+            )
+            .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+            == super::HirCapabilityStatus::Satisfied;
+        call_once |= discard && call_mut;
+        Ok(super::HirClosureProtocols::new(call, call_mut, call_once))
+    }
+
+    fn call_mut_place_is_available(
+        &self,
+        expression: HirExpressionId,
+        context: &str,
+    ) -> Result<bool, HirInvariantError> {
+        Ok(match &self.expression(expression, context)?.kind {
+            HirExpressionKind::Local(local) => {
+                self.local_is_mutable_binding(*local)
+                    || self.program.callables.iter().any(|callable| {
+                        callable.parameters.iter().any(|parameter| {
+                            parameter.local == Some(*local)
+                                && matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
+                        })
+                    })
+                    || self.program.closures.iter().any(|closure| {
+                        closure.parameters.iter().any(|parameter| {
+                            parameter.local == Some(*local)
+                                && matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
+                        })
+                    })
+            }
+            HirExpressionKind::Field { base, .. }
+            | HirExpressionKind::TupleField { base, .. }
+            | HirExpressionKind::Index { base, .. }
+            | HirExpressionKind::Slice { base, .. } => {
+                self.call_mut_place_is_available(*base, context)?
+            }
+            HirExpressionKind::Receiver => self.program.callables.iter().any(|callable| {
+                callable.parameters.iter().any(|parameter| {
+                    parameter.receiver
+                        && matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
+                })
+            }),
+            _ => false,
+        })
     }
 
     fn verify_type(&self, ty: TypeId, context: impl Into<String>) -> Result<(), HirInvariantError> {
@@ -3494,7 +4213,9 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
             children.extend(end);
             children.extend(step);
         }
-        HirExpressionKind::Call { callee, arguments } => {
+        HirExpressionKind::Call {
+            callee, arguments, ..
+        } => {
             children.push(*callee);
             children.extend(arguments.iter().map(|argument| argument.value));
         }
@@ -4105,6 +4826,17 @@ mod tests {
         let error = verify_typed_hir(&resolved, &wrong_construction).unwrap_err();
         assert!(error.message().contains("not one-to-one"));
 
+        let (resolved, mut wrong_protocols) = checked_program_from(SOURCE);
+        wrong_protocols.closures[0].protocols =
+            crate::hir::HirClosureProtocols::new(true, true, true);
+        let error = verify_typed_hir(&resolved, &wrong_protocols).unwrap_err();
+        assert!(error.message().contains("protocols"));
+
+        let (resolved, mut wrong_arity) = checked_program_from(SOURCE);
+        wrong_arity.closures[0].generic_arity = 1;
+        let error = verify_typed_hir(&resolved, &wrong_arity).unwrap_err();
+        assert!(error.message().contains("generic arity"));
+
         let (resolved, mut non_copy_capture) = checked_program_from(SOURCE);
         let join = non_copy_capture
             .interner
@@ -4131,6 +4863,64 @@ mod tests {
             "{error}"
         );
         assert!(error.message().contains("Copy"), "{error}");
+    }
+
+    #[test]
+    fn generic_call_protocol_selection_is_reproved_before_mir() {
+        const SOURCE: &str = "fn invoke[F: Call[fn(Int): Int]](\n\
+             operation: F,\n\
+             value: Int,\n\
+         ): Int {\n\
+             operation(value)\n\
+         }\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut wrong_protocol) = checked_program_from(SOURCE);
+        let call = wrong_protocol
+            .expressions
+            .iter_mut()
+            .find(|expression| matches!(expression.kind, HirExpressionKind::Call { .. }))
+            .expect("the generic body contains one call");
+        let HirExpressionKind::Call { protocol, .. } = &mut call.kind else {
+            unreachable!()
+        };
+        *protocol = crate::hir::HirCallProtocol::CallMut;
+        let error = verify_typed_hir(&resolved, &wrong_protocol).unwrap_err();
+        assert!(error.message().contains("expected Some(Call)"), "{error}");
+
+        let (resolved, mut wrong_signature) = checked_program_from(SOURCE);
+        let unit = wrong_signature.interner.scalar(ScalarType::Unit);
+        let call = wrong_signature
+            .expressions
+            .iter_mut()
+            .find(|expression| matches!(expression.kind, HirExpressionKind::Call { .. }))
+            .expect("the generic body contains one call");
+        let HirExpressionKind::Call { signature, .. } = &mut call.kind else {
+            unreachable!()
+        };
+        *signature = unit;
+        let error = verify_typed_hir(&resolved, &wrong_signature).unwrap_err();
+        assert!(error.message().contains("function signature"), "{error}");
+
+        let (resolved, mut wrong_bound) = checked_program_from(SOURCE);
+        let int = wrong_bound.interner.scalar(ScalarType::Int);
+        wrong_bound
+            .callables
+            .iter_mut()
+            .find(|callable| !callable.generics.is_empty())
+            .unwrap()
+            .generics[0]
+            .bounds[0]
+            .arguments[0] = int;
+        let error = verify_typed_hir(&resolved, &wrong_bound).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("call bounds do not use one exact function signature"),
+            "{error}"
+        );
     }
 
     #[test]

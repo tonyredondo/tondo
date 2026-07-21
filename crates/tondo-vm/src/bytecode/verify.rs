@@ -873,6 +873,7 @@ impl Verifier<'_> {
 
     fn verify_callables(&self) -> Result<(), BytecodeVerificationError> {
         let mut names = BTreeSet::new();
+        let mut closure_environments = BTreeSet::new();
         for (index, callable) in self.program.callables.iter().enumerate() {
             let context = format!("callable#{index}");
             if callable.name.is_empty() || !names.insert(callable.name.as_str()) {
@@ -952,8 +953,86 @@ impl Verifier<'_> {
             if let Some(function) = callable.implementation {
                 self.function(function, &context)?;
             }
+            if let Some(closure) = &callable.closure {
+                if callable.implementation.is_none()
+                    || !closure_environments.insert(closure.environment)
+                    || !matches!(
+                        self.ty(closure.environment, &context)?.kind,
+                        BytecodeTypeKind::Generated { .. }
+                    )
+                    || (closure.protocols.call && !closure.protocols.call_mut)
+                    || (closure.protocols.call_mut && !closure.protocols.call_once)
+                {
+                    return Err(BytecodeVerificationError::new(
+                        &context,
+                        "closure callable metadata is inconsistent",
+                    ));
+                }
+                self.verify_type_ids(&closure.captures, &context)?;
+                let derived = self.derive_closure_protocols(
+                    BytecodeCallableId::new(index as u32),
+                    callable,
+                    &context,
+                )?;
+                if closure.protocols != derived {
+                    return Err(BytecodeVerificationError::new(
+                        &context,
+                        "closure protocols differ from the implementation body",
+                    ));
+                }
+            }
         }
         Ok(())
+    }
+
+    fn derive_closure_protocols(
+        &self,
+        callable_id: BytecodeCallableId,
+        callable: &BytecodeCallable,
+        context: &str,
+    ) -> Result<BytecodeClosureProtocols, BytecodeVerificationError> {
+        let implementation = callable
+            .implementation
+            .ok_or_else(|| BytecodeVerificationError::new(context, "closure has no body"))?;
+        let function = self.function(implementation, context)?;
+        let writes_capture = function.blocks.iter().any(|block| {
+            block.instructions.iter().any(|instruction| {
+                matches!(
+                    &instruction.kind,
+                    BytecodeInstructionKind::Store { destination, .. }
+                        if closure_capture_place(function, callable_id, destination)
+                )
+            }) || matches!(
+                &block.terminator.kind,
+                BytecodeTerminatorKind::Invoke {
+                    operation:
+                        BytecodeOperation {
+                            kind: BytecodeOperationKind::Call {
+                                callee,
+                                arguments,
+                                protocol,
+                                ..
+                            },
+                            ..
+                        },
+                    ..
+                } if (*protocol == BytecodeCallProtocol::CallMut
+                    && operand_place(callee).is_some_and(|place| {
+                        closure_capture_place(function, callable_id, place)
+                    }))
+                    || arguments.iter().any(|argument| {
+                        matches!(argument.mode, BytecodeParameterMode::Mut | BytecodeParameterMode::Var)
+                            && operand_place(&argument.value).is_some_and(|place| {
+                                closure_capture_place(function, callable_id, place)
+                            })
+                    })
+            )
+        });
+        Ok(BytecodeClosureProtocols {
+            call: !writes_capture,
+            call_mut: true,
+            call_once: true,
+        })
     }
 
     fn verify_constants(&self) -> Result<(), BytecodeVerificationError> {
@@ -994,7 +1073,8 @@ impl Verifier<'_> {
             } => {
                 let callable = self.callable(*callable, context)?;
                 self.verify_type_ids(arguments, context)?;
-                if arguments.len() != callable.generic_arity as usize
+                if callable.closure.is_some()
+                    || arguments.len() != callable.generic_arity as usize
                     || !self.representation_matches_substitution(
                         callable.function_type,
                         value.ty,
@@ -1512,18 +1592,32 @@ impl Verifier<'_> {
                 BytecodeSlotKind::Temporary => {}
             }
         }
+        let environment_count = usize::from(callable.closure.is_some());
+        let expected_parameters = callable.parameters.len() + environment_count;
         if return_count != 1
-            || parameter_count != callable.parameters.len()
-            || function.parameters.len() != callable.parameters.len()
+            || parameter_count != expected_parameters
+            || function.parameters.len() != expected_parameters
         {
             return Err(BytecodeVerificationError::new(
                 &context,
                 "return or parameter slot count is inconsistent",
             ));
         }
+        if let Some(closure) = &callable.closure {
+            let slot = self.slot(function, function.parameters[0], &context)?;
+            if slot.ty != closure.environment
+                || slot.kind != (BytecodeSlotKind::Parameter { index: 0 })
+            {
+                return Err(BytecodeVerificationError::new(
+                    &context,
+                    "closure environment slot differs from callable metadata",
+                ));
+            }
+        }
         for (position, (slot, parameter)) in function
             .parameters
             .iter()
+            .skip(environment_count)
             .zip(&callable.parameters)
             .enumerate()
         {
@@ -1531,7 +1625,7 @@ impl Verifier<'_> {
             if slot.ty != parameter.ty
                 || slot.kind
                     != (BytecodeSlotKind::Parameter {
-                        index: position as u32,
+                        index: (position + environment_count) as u32,
                     })
             {
                 return Err(BytecodeVerificationError::new(
@@ -1604,6 +1698,20 @@ impl Verifier<'_> {
         for projection in &place.projections {
             self.function_type(function, projection.ty, context)?;
             let expected = match &projection.kind {
+                BytecodeProjectionKind::ClosureCapture { callable, index } => {
+                    let callable = self.callable(*callable, context)?;
+                    let closure = callable
+                        .closure
+                        .as_ref()
+                        .ok_or_else(|| projection_error(context))?;
+                    if closure.environment != current {
+                        return Err(projection_error(context));
+                    }
+                    *closure
+                        .captures
+                        .get(*index as usize)
+                        .ok_or_else(|| projection_error(context))?
+                }
                 BytecodeProjectionKind::Field(member) => {
                     let (_, arguments, metadata) = self.nominal_instance(current, context)?;
                     let BytecodeNominalShape::Record { fields } = &metadata.shape else {
@@ -1800,7 +1908,9 @@ impl Verifier<'_> {
                     ));
                 }
             },
-            BytecodeOperandKind::Copy(place) | BytecodeOperandKind::Move(place) => {
+            BytecodeOperandKind::Copy(place)
+            | BytecodeOperandKind::Move(place)
+            | BytecodeOperandKind::Borrow(place) => {
                 self.verify_place(function, place, context)?;
                 if place.ty != operand.ty {
                     return Err(BytecodeVerificationError::new(
@@ -1817,7 +1927,8 @@ impl Verifier<'_> {
                 for argument in arguments {
                     self.function_type(function, *argument, context)?;
                 }
-                if arguments.len() != callable.generic_arity as usize
+                if callable.closure.is_some()
+                    || arguments.len() != callable.generic_arity as usize
                     || !self.representation_matches_substitution(
                         callable.function_type,
                         operand.ty,
@@ -1841,6 +1952,12 @@ impl Verifier<'_> {
         value: &BytecodeRvalue,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
+        if rvalue_contains_borrow(value) {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "environment borrow escapes its call-callee position",
+            ));
+        }
         self.function_type(function, value.ty, context)?;
         match &value.kind {
             BytecodeRvalueKind::Use(operand) => {
@@ -1990,11 +2107,15 @@ impl Verifier<'_> {
                     self.intrinsic_argument(result, BytecodeIntrinsicType::Set, 0, context)?;
                 self.verify_repeated_operands(values, item, context)?;
             }
-            BytecodeAggregateKind::Closure { captures, .. } => {
-                if !matches!(
-                    self.ty(result, context)?.kind,
-                    BytecodeTypeKind::Generated { .. }
-                ) || captures.len() != values.len()
+            BytecodeAggregateKind::Closure { callable, captures } => {
+                let callable = self.callable(*callable, context)?;
+                let closure = callable
+                    .closure
+                    .as_ref()
+                    .ok_or_else(|| rvalue_error(context))?;
+                if closure.environment != result
+                    || closure.captures != *captures
+                    || captures.len() != values.len()
                     || captures
                         .iter()
                         .zip(values)
@@ -2322,6 +2443,9 @@ impl Verifier<'_> {
         if self.is_scalar(actual, BytecodeScalarType::Never) {
             return Ok(Some(BytecodeCoercion::Diverging));
         }
+        if self.callable_erasure_matches(actual, expected, context)? {
+            return Ok(Some(BytecodeCoercion::CallableErasure));
+        }
         if self.opaque_coercion_matches(actual, expected, context)? {
             return Ok(Some(BytecodeCoercion::Opaque));
         }
@@ -2346,6 +2470,42 @@ impl Verifier<'_> {
             return Ok(Some(BytecodeCoercion::OptionLift));
         }
         Ok(None)
+    }
+
+    fn callable_erasure_matches(
+        &self,
+        actual: BytecodeTypeId,
+        expected: BytecodeTypeId,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        if !matches!(
+            self.ty(expected, context)?.kind,
+            BytecodeTypeKind::Function(_)
+        ) {
+            return Ok(false);
+        }
+        let Some(callable) = self.closure_callable_for_type(actual, context)? else {
+            return Ok(false);
+        };
+        let closure = callable
+            .closure
+            .as_ref()
+            .expect("closure lookup only returns closure callables");
+        if callable.function_type != expected || !closure.protocols.call {
+            return Ok(false);
+        }
+        for capture in &closure.captures {
+            for capability in [
+                ClosedCapability::Copy,
+                ClosedCapability::Send,
+                ClosedCapability::Share,
+            ] {
+                if !self.capability(*capture, capability, context)? {
+                    return Ok(false);
+                }
+            }
+        }
+        Ok(true)
     }
 
     fn opaque_coercion_matches(
@@ -2577,6 +2737,12 @@ impl Verifier<'_> {
         operation: &BytecodeOperation,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
+        if operation_contains_invalid_borrow(operation) {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "environment borrow escapes its call-callee position",
+            ));
+        }
         self.function_type(function, operation.ty, context)?;
         match &operation.kind {
             BytecodeOperationKind::CheckedPrefix { operator, operand } => {
@@ -2643,12 +2809,24 @@ impl Verifier<'_> {
                     return Err(operation_error(context));
                 }
             }
-            BytecodeOperationKind::Call { callee, arguments } => {
+            BytecodeOperationKind::Call {
+                callee,
+                arguments,
+                signature,
+                protocol,
+            } => {
                 self.verify_operand(function, callee, context)?;
                 for argument in arguments {
                     self.verify_operand(function, &argument.value, context)?;
                 }
-                self.verify_call(callee, arguments, operation.ty, context)?;
+                self.verify_call(
+                    callee,
+                    arguments,
+                    *signature,
+                    *protocol,
+                    operation.ty,
+                    context,
+                )?;
             }
             BytecodeOperationKind::ExplicitPanic { message } => {
                 self.verify_operand(function, message, context)?;
@@ -2710,18 +2888,63 @@ impl Verifier<'_> {
         &self,
         callee: &BytecodeOperand,
         arguments: &[BytecodeCallArgument],
+        signature: BytecodeTypeId,
+        protocol: BytecodeCallProtocol,
         outcome: BytecodeTypeId,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
-        let BytecodeTypeKind::Function(function) = &self.ty(callee.ty, context)?.kind else {
+        let BytecodeTypeKind::Function(function) = &self.ty(signature, context)?.kind else {
             return Err(operation_error(context));
         };
         if function.outcome != outcome {
             return Err(operation_error(context));
         }
+        let closure_callable = self.closure_callable_for_type(callee.ty, context)?;
+        match &self.ty(callee.ty, context)?.kind {
+            BytecodeTypeKind::Function(_) => {
+                if callee.ty != signature || protocol != BytecodeCallProtocol::Call {
+                    return Err(operation_error(context));
+                }
+            }
+            BytecodeTypeKind::Generated { .. } | BytecodeTypeKind::OpaqueResult { .. } => {
+                let callable = closure_callable.ok_or_else(|| operation_error(context))?;
+                let closure = callable
+                    .closure
+                    .as_ref()
+                    .ok_or_else(|| operation_error(context))?;
+                let expected = if closure.protocols.call {
+                    Some(BytecodeCallProtocol::Call)
+                } else if closure.protocols.call_mut
+                    && matches!(callee.kind, BytecodeOperandKind::Borrow(_))
+                {
+                    Some(BytecodeCallProtocol::CallMut)
+                } else if closure.protocols.call_once
+                    && !matches!(callee.kind, BytecodeOperandKind::Borrow(_))
+                {
+                    Some(BytecodeCallProtocol::CallOnce)
+                } else {
+                    None
+                };
+                if callable.function_type != signature || expected != Some(protocol) {
+                    return Err(operation_error(context));
+                }
+            }
+            _ => return Err(operation_error(context)),
+        }
+        if protocol == BytecodeCallProtocol::CallMut
+            && !matches!(callee.kind, BytecodeOperandKind::Borrow(_))
+            || protocol == BytecodeCallProtocol::CallOnce
+                && matches!(callee.kind, BytecodeOperandKind::Borrow(_))
+        {
+            return Err(operation_error(context));
+        }
         let callable = match callee.kind {
             BytecodeOperandKind::Function { callable, .. } => {
-                Some(self.callable(callable, context)?)
+                let callable = self.callable(callable, context)?;
+                if callable.closure.is_some() {
+                    return Err(operation_error(context));
+                }
+                Some(callable)
             }
             _ => None,
         };
@@ -2821,6 +3044,27 @@ impl Verifier<'_> {
         Ok(())
     }
 
+    fn closure_callable_for_type(
+        &self,
+        mut ty: BytecodeTypeId,
+        context: &str,
+    ) -> Result<Option<&BytecodeCallable>, BytecodeVerificationError> {
+        loop {
+            match &self.ty(ty, context)?.kind {
+                BytecodeTypeKind::OpaqueResult { witness, .. } => ty = *witness,
+                BytecodeTypeKind::Generated { .. } => {
+                    return Ok(self.program.callables.iter().find(|callable| {
+                        callable
+                            .closure
+                            .as_ref()
+                            .is_some_and(|closure| closure.environment == ty)
+                    }));
+                }
+                _ => return Ok(None),
+            }
+        }
+    }
+
     fn verify_terminator(
         &self,
         function: &BytecodeFunction,
@@ -2836,7 +3080,7 @@ impl Verifier<'_> {
                 if_true,
                 if_false,
             } => {
-                if block.kind != BytecodeBlockKind::Normal {
+                if block.kind != BytecodeBlockKind::Normal || operand_is_borrow(condition) {
                     return Err(terminator_error(context));
                 }
                 self.verify_operand(function, condition, context)?;
@@ -2851,7 +3095,10 @@ impl Verifier<'_> {
                 cases,
                 otherwise,
             } => {
-                if block.kind != BytecodeBlockKind::Normal || cases.is_empty() {
+                if block.kind != BytecodeBlockKind::Normal
+                    || cases.is_empty()
+                    || operand_is_borrow(value)
+                {
                     return Err(terminator_error(context));
                 }
                 self.verify_operand(function, value, context)?;
@@ -2918,6 +3165,7 @@ impl Verifier<'_> {
                 if block.kind != BytecodeBlockKind::Normal
                     || places.is_empty()
                     || places.len() != replacements.len()
+                    || replacements.iter().flatten().any(operand_is_borrow)
                 {
                     return Err(terminator_error(context));
                 }
@@ -3747,6 +3995,98 @@ fn integer_range_contains(target: IntegerShape, source: IntegerShape) -> bool {
     }
 }
 
+fn operand_place(operand: &BytecodeOperand) -> Option<&BytecodePlace> {
+    match &operand.kind {
+        BytecodeOperandKind::Copy(place)
+        | BytecodeOperandKind::Move(place)
+        | BytecodeOperandKind::Borrow(place) => Some(place),
+        BytecodeOperandKind::Constant(_) | BytecodeOperandKind::Function { .. } => None,
+    }
+}
+
+fn operand_is_borrow(operand: &BytecodeOperand) -> bool {
+    matches!(operand.kind, BytecodeOperandKind::Borrow(_))
+}
+
+fn rvalue_contains_borrow(value: &BytecodeRvalue) -> bool {
+    match &value.kind {
+        BytecodeRvalueKind::Use(value)
+        | BytecodeRvalueKind::Length(value)
+        | BytecodeRvalueKind::IteratorState(value)
+        | BytecodeRvalueKind::Prefix { operand: value, .. }
+        | BytecodeRvalueKind::Coerce { value, .. }
+        | BytecodeRvalueKind::NumericConversion { value, .. } => operand_is_borrow(value),
+        BytecodeRvalueKind::Binary { left, right, .. }
+        | BytecodeRvalueKind::Range {
+            start: left,
+            end: right,
+            ..
+        }
+        | BytecodeRvalueKind::Contains {
+            item: left,
+            container: right,
+            ..
+        } => operand_is_borrow(left) || operand_is_borrow(right),
+        BytecodeRvalueKind::Construct { values, .. } => values.iter().any(operand_is_borrow),
+        BytecodeRvalueKind::RecordUpdate { base, fields } => {
+            operand_is_borrow(base) || fields.iter().any(|(_, value)| operand_is_borrow(value))
+        }
+    }
+}
+
+fn operation_contains_invalid_borrow(operation: &BytecodeOperation) -> bool {
+    match &operation.kind {
+        BytecodeOperationKind::CheckedPrefix { operand, .. }
+        | BytecodeOperationKind::ExplicitPanic { message: operand } => operand_is_borrow(operand),
+        BytecodeOperationKind::CheckedBinary { left, right, .. } => {
+            operand_is_borrow(left) || operand_is_borrow(right)
+        }
+        BytecodeOperationKind::BuildMap { entries, .. } => entries
+            .iter()
+            .any(|(key, value)| operand_is_borrow(key) || operand_is_borrow(value)),
+        BytecodeOperationKind::Index { base, index, .. } => {
+            operand_is_borrow(base) || operand_is_borrow(index)
+        }
+        BytecodeOperationKind::Slice {
+            base,
+            start,
+            end,
+            step,
+        } => operand_is_borrow(base) || start.iter().chain(end).chain(step).any(operand_is_borrow),
+        BytecodeOperationKind::Call { arguments, .. } => arguments
+            .iter()
+            .any(|argument| operand_is_borrow(&argument.value)),
+        BytecodeOperationKind::Assert {
+            condition,
+            message_parts,
+            ..
+        } => {
+            operand_is_borrow(condition)
+                || message_parts
+                    .iter()
+                    .any(|part| operand_is_borrow(&part.value))
+        }
+        BytecodeOperationKind::BootstrapHostCall { arguments, .. } => {
+            arguments.iter().any(operand_is_borrow)
+        }
+    }
+}
+
+fn closure_capture_place(
+    function: &BytecodeFunction,
+    callable: BytecodeCallableId,
+    place: &BytecodePlace,
+) -> bool {
+    function.parameters.first() == Some(&place.slot)
+        && matches!(
+            place.projections.first().map(|projection| &projection.kind),
+            Some(BytecodeProjectionKind::ClosureCapture {
+                callable: projected,
+                ..
+            }) if *projected == callable
+        )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct LocalState {
     live: bool,
@@ -3799,9 +4139,9 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
             otherwise,
         } => {
             let place = match &value.kind {
-                BytecodeOperandKind::Copy(place) | BytecodeOperandKind::Move(place) => {
-                    Some(place.clone())
-                }
+                BytecodeOperandKind::Copy(place)
+                | BytecodeOperandKind::Move(place)
+                | BytecodeOperandKind::Borrow(place) => Some(place.clone()),
                 BytecodeOperandKind::Constant(_) | BytecodeOperandKind::Function { .. } => None,
             };
             cases
@@ -4084,7 +4424,9 @@ fn push_tag_operation(
                 push_tag_operand(function, value, events);
             }
         }
-        BytecodeOperationKind::Call { callee, arguments } => {
+        BytecodeOperationKind::Call {
+            callee, arguments, ..
+        } => {
             push_tag_operand(function, callee, events);
             for argument in arguments {
                 push_tag_operand(function, &argument.value, events);
@@ -4116,7 +4458,10 @@ fn push_tag_operand(
     operand: &BytecodeOperand,
     events: &mut Vec<TagEvent>,
 ) {
-    if let BytecodeOperandKind::Copy(place) | BytecodeOperandKind::Move(place) = &operand.kind {
+    if let BytecodeOperandKind::Copy(place)
+    | BytecodeOperandKind::Move(place)
+    | BytecodeOperandKind::Borrow(place) = &operand.kind
+    {
         push_tag_place(function, place, false, events);
     }
 }
@@ -4138,7 +4483,8 @@ fn push_tag_place(
                 Some(BytecodeTag::Variant(variant))
             }
             BytecodeProjectionKind::UnionValue(member) => Some(BytecodeTag::Union(member)),
-            BytecodeProjectionKind::Field(_)
+            BytecodeProjectionKind::ClosureCapture { .. }
+            | BytecodeProjectionKind::Field(_)
             | BytecodeProjectionKind::TupleField(_)
             | BytecodeProjectionKind::NewtypeValue
             | BytecodeProjectionKind::ArrayPatternIndex(_)
@@ -4284,7 +4630,9 @@ fn push_operation_events(operation: &BytecodeOperation, events: &mut Vec<LocalEv
                 push_operand_events(value, events);
             }
         }
-        BytecodeOperationKind::Call { callee, arguments } => {
+        BytecodeOperationKind::Call {
+            callee, arguments, ..
+        } => {
             push_operand_events(callee, events);
             for argument in arguments {
                 push_operand_events(&argument.value, events);
@@ -4312,7 +4660,10 @@ fn push_operation_events(operation: &BytecodeOperation, events: &mut Vec<LocalEv
 }
 
 fn push_operand_events(operand: &BytecodeOperand, events: &mut Vec<LocalEvent>) {
-    if let BytecodeOperandKind::Copy(place) | BytecodeOperandKind::Move(place) = &operand.kind {
+    if let BytecodeOperandKind::Copy(place)
+    | BytecodeOperandKind::Move(place)
+    | BytecodeOperandKind::Borrow(place) = &operand.kind
+    {
         push_place_events(place, true, events);
     }
 }
@@ -4347,7 +4698,8 @@ fn push_place_events(place: &BytecodePlace, read_root: bool, events: &mut Vec<Lo
                         .map(LocalEvent::Read),
                 );
             }
-            BytecodeProjectionKind::Field(_)
+            BytecodeProjectionKind::ClosureCapture { .. }
+            | BytecodeProjectionKind::Field(_)
             | BytecodeProjectionKind::TupleField(_)
             | BytecodeProjectionKind::NewtypeValue
             | BytecodeProjectionKind::VariantTuple { .. }

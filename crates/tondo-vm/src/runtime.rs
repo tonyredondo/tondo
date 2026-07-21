@@ -293,7 +293,7 @@ mod tests {
         let closure = heap
             .allocate(
                 HeapObject::Closure {
-                    closure: 7,
+                    callable: crate::bytecode::BytecodeCallableId::new(7),
                     captures: vec![Some(Value::Heap(captured))],
                 },
                 &[Value::Heap(captured)],

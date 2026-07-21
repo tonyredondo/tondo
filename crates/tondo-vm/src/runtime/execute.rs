@@ -655,6 +655,7 @@ impl Engine<'_, '_> {
                 self.copy_value(&value)
             }
             BytecodeOperandKind::Move(place) => self.take_place(frame, place),
+            BytecodeOperandKind::Borrow(place) => self.read_place(frame, place),
             BytecodeOperandKind::Function {
                 callable,
                 arguments,
@@ -880,9 +881,9 @@ impl Engine<'_, '_> {
                 let values = self.copy_optional_values(&values)?;
                 self.allocate(HeapObject::Set(values), &[])
             }
-            HeapObject::Closure { closure, captures } => {
+            HeapObject::Closure { callable, captures } => {
                 let captures = self.copy_optional_values(&captures)?;
-                self.allocate(HeapObject::Closure { closure, captures }, &[])
+                self.allocate(HeapObject::Closure { callable, captures }, &[])
             }
             HeapObject::Newtype { nominal, value } => {
                 let value = self.copy_optional_value(&value)?;
@@ -1063,7 +1064,9 @@ impl Engine<'_, '_> {
             BytecodeRvalueKind::Coerce { kind, value } => {
                 let value_result = self.evaluate_operand(frame, value)?;
                 match kind {
-                    BytecodeCoercion::Exact | BytecodeCoercion::Opaque => Ok(value_result),
+                    BytecodeCoercion::Exact
+                    | BytecodeCoercion::Opaque
+                    | BytecodeCoercion::CallableErasure => Ok(value_result),
                     BytecodeCoercion::UnionInjection => self.allocate(
                         HeapObject::Union {
                             member: value.ty,
@@ -1175,14 +1178,14 @@ impl Engine<'_, '_> {
                 }
                 HeapObject::Set(unique)
             }
-            BytecodeAggregateKind::Closure { closure, captures } => {
+            BytecodeAggregateKind::Closure { callable, captures } => {
                 if captures.len() != values.len() {
                     return Err(VmError::invariant(
                         "closure construction has the wrong capture count",
                     ));
                 }
                 HeapObject::Closure {
-                    closure: *closure,
+                    callable: *callable,
                     captures: values.into_iter().map(Some).collect(),
                 }
             }
@@ -1641,6 +1644,13 @@ impl Engine<'_, '_> {
         };
         let object = self.heap.get(handle)?.clone();
         match (&projection.kind, object) {
+            (
+                BytecodeProjectionKind::ClosureCapture { callable, index },
+                HeapObject::Closure {
+                    callable: actual,
+                    captures,
+                },
+            ) if *callable == actual => clone_index(&captures, *index, "closure capture"),
             (BytecodeProjectionKind::Field(member), HeapObject::Record { fields, .. }) => {
                 clone_field(&fields, *member, "record field")
             }
@@ -1761,6 +1771,13 @@ impl Engine<'_, '_> {
         };
         let mut object = self.heap.get(handle)?.clone();
         let value = match (&projection.kind, &mut object) {
+            (
+                BytecodeProjectionKind::ClosureCapture { callable, index },
+                HeapObject::Closure {
+                    callable: actual,
+                    captures,
+                },
+            ) if callable == actual => take_index(captures, *index, "closure capture")?,
             (BytecodeProjectionKind::Field(member), HeapObject::Record { fields, .. }) => {
                 take_field(fields, *member, "record field")?
             }
@@ -1844,6 +1861,15 @@ impl Engine<'_, '_> {
         };
         let mut object = self.heap.get(handle)?.clone();
         match (&projection.kind, &mut object) {
+            (
+                BytecodeProjectionKind::ClosureCapture { callable, index },
+                HeapObject::Closure {
+                    callable: actual,
+                    captures,
+                },
+            ) if callable == actual => {
+                set_index(captures, *index, value.clone(), "closure capture")?;
+            }
             (BytecodeProjectionKind::Field(member), HeapObject::Record { fields, .. }) => {
                 set_field(fields, *member, value.clone())?;
             }
@@ -2032,6 +2058,12 @@ impl Engine<'_, '_> {
         };
         let object = self.heap.get(*handle)?;
         Ok(match (&projection.kind, object) {
+            (
+                BytecodeProjectionKind::ClosureCapture { callable, index },
+                HeapObject::Closure {
+                    callable: actual, ..
+                },
+            ) if callable == actual => PlaceComponent::Field(*index),
             (BytecodeProjectionKind::Field(field), HeapObject::Record { .. })
             | (BytecodeProjectionKind::VariantField { field, .. }, HeapObject::Variant { .. }) => {
                 PlaceComponent::Field(*field)
@@ -2249,7 +2281,9 @@ impl Engine<'_, '_> {
                     Err((code, message)) => OperationResult::Panic(code, message),
                 })
             }
-            BytecodeOperationKind::Call { callee, arguments } => {
+            BytecodeOperationKind::Call {
+                callee, arguments, ..
+            } => {
                 let callee = self.evaluate_operand(frame, callee)?;
                 self.prepare_call(frame, callee, arguments)
             }
@@ -2683,89 +2717,123 @@ impl Engine<'_, '_> {
         callee: Value,
         arguments: &[BytecodeCallArgument],
     ) -> Result<OperationResult, VmError> {
-        let Value::Function {
-            callable,
-            arguments: _type_arguments,
-        } = callee
-        else {
-            return Err(VmError::invariant("call callee is not a function value"));
-        };
-        let metadata = self
-            .program
-            .callable(callable)
-            .ok_or_else(|| VmError::invariant("callable metadata index is invalid"))?
-            .clone();
-        let mut values = vec![None; metadata.parameters.len()];
-        let variadic = metadata
-            .parameters
-            .iter()
-            .position(|parameter| parameter.variadic_element.is_some());
-        let receiver = metadata
-            .parameters
-            .iter()
-            .position(|parameter| parameter.receiver);
-        let mut variadic_values = Vec::new();
-        for argument in arguments {
-            if argument.mode != BytecodeParameterMode::Value {
+        let marker = self.temporary_roots.len();
+        self.temporary_roots.push(callee.clone());
+        let result = (|| {
+            let (callable, environment) = match callee {
+                Value::Function {
+                    callable,
+                    arguments: _type_arguments,
+                } => (callable, None),
+                Value::Heap(handle) => {
+                    let HeapObject::Closure { callable, .. } = self.heap.get(handle)? else {
+                        return Err(VmError::invariant(
+                            "call callee is not a function or closure value",
+                        ));
+                    };
+                    (*callable, Some(Value::Heap(handle)))
+                }
+                _ => {
+                    return Err(VmError::invariant(
+                        "call callee is not a function or closure value",
+                    ));
+                }
+            };
+            let metadata = self
+                .program
+                .callable(callable)
+                .ok_or_else(|| VmError::invariant("callable metadata index is invalid"))?
+                .clone();
+            if metadata.closure.is_some() != environment.is_some() {
                 return Err(VmError::invariant(
-                    "borrowed calls await the M5 ownership runtime",
+                    "callable kind differs from its runtime value",
                 ));
             }
-            let value = self.evaluate_operand(frame, &argument.value)?;
-            match argument.target {
-                BytecodeCallArgumentTarget::Receiver => {
-                    let index = receiver.ok_or_else(|| {
-                        VmError::invariant("call provides a receiver to a free function")
-                    })?;
-                    values[index] = Some(value);
+            let mut values = vec![None; metadata.parameters.len()];
+            let variadic = metadata
+                .parameters
+                .iter()
+                .position(|parameter| parameter.variadic_element.is_some());
+            let receiver = metadata
+                .parameters
+                .iter()
+                .position(|parameter| parameter.receiver);
+            let mut variadic_values = Vec::new();
+            for argument in arguments {
+                if argument.mode != BytecodeParameterMode::Value {
+                    return Err(VmError::invariant(
+                        "borrowed calls await the M5 ownership runtime",
+                    ));
                 }
-                BytecodeCallArgumentTarget::Fixed(index) => {
-                    let slot = values
-                        .get_mut(index as usize)
-                        .ok_or_else(|| VmError::invariant("fixed call target index is invalid"))?;
-                    *slot = Some(value);
-                }
-                BytecodeCallArgumentTarget::VariadicElement => variadic_values.push(value),
-                BytecodeCallArgumentTarget::VariadicSpread => {
-                    let Value::Heap(handle) = value else {
-                        return Err(VmError::invariant("variadic spread is not Array"));
-                    };
-                    let HeapObject::Array(items) = self.heap.get(handle)?.clone() else {
-                        return Err(VmError::invariant("variadic spread is not Array"));
-                    };
-                    for item in items {
-                        variadic_values.push(self.copy_value(present(&item, "variadic item")?)?);
+                let value = self.evaluate_operand(frame, &argument.value)?;
+                self.temporary_roots.push(value.clone());
+                match argument.target {
+                    BytecodeCallArgumentTarget::Receiver => {
+                        let index = receiver.ok_or_else(|| {
+                            VmError::invariant("call provides a receiver to a free function")
+                        })?;
+                        values[index] = Some(value);
+                    }
+                    BytecodeCallArgumentTarget::Fixed(index) => {
+                        let slot = values.get_mut(index as usize).ok_or_else(|| {
+                            VmError::invariant("fixed call target index is invalid")
+                        })?;
+                        *slot = Some(value);
+                    }
+                    BytecodeCallArgumentTarget::VariadicElement => variadic_values.push(value),
+                    BytecodeCallArgumentTarget::VariadicSpread => {
+                        let Value::Heap(handle) = value else {
+                            return Err(VmError::invariant("variadic spread is not Array"));
+                        };
+                        let HeapObject::Array(items) = self.heap.get(handle)?.clone() else {
+                            return Err(VmError::invariant("variadic spread is not Array"));
+                        };
+                        for item in items {
+                            let value = self.copy_value(present(&item, "variadic item")?)?;
+                            self.temporary_roots.push(value.clone());
+                            variadic_values.push(value);
+                        }
                     }
                 }
             }
-        }
-        if let Some(index) = variadic {
-            values[index] = Some(self.allocate(
-                HeapObject::Array(variadic_values.into_iter().map(Some).collect()),
-                &[],
-            )?);
-        }
-        let values = values
-            .into_iter()
-            .map(|value| value.ok_or_else(|| VmError::invariant("call parameter is uninitialized")))
-            .collect::<Result<Vec<_>, _>>()?;
-        if let Some(function) = metadata.implementation {
-            Ok(OperationResult::Call {
-                function,
-                arguments: values,
-            })
-        } else {
-            let snapshots = values
-                .iter()
+            if let Some(index) = variadic {
+                values[index] = Some(self.allocate(
+                    HeapObject::Array(variadic_values.into_iter().map(Some).collect()),
+                    &[],
+                )?);
+            }
+            let mut values = values
+                .into_iter()
                 .map(|value| {
-                    snapshot_value(value, &self.heap, &self.callable_names, &self.nominal_names)
+                    value.ok_or_else(|| VmError::invariant("call parameter is uninitialized"))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            let returned = self.host.invoke(&metadata.name, &snapshots)?;
-            Ok(OperationResult::Value(
-                self.materialize_host_value(returned)?,
-            ))
-        }
+            if let Some(environment) = environment {
+                values.insert(0, environment);
+            }
+            if let Some(function) = metadata.implementation {
+                Ok(OperationResult::Call {
+                    function,
+                    arguments: values,
+                })
+            } else {
+                if metadata.closure.is_some() {
+                    return Err(VmError::invariant("closure callable has no implementation"));
+                }
+                let snapshots = values
+                    .iter()
+                    .map(|value| {
+                        snapshot_value(value, &self.heap, &self.callable_names, &self.nominal_names)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let returned = self.host.invoke(&metadata.name, &snapshots)?;
+                Ok(OperationResult::Value(
+                    self.materialize_host_value(returned)?,
+                ))
+            }
+        })();
+        self.temporary_roots.truncate(marker);
+        result
     }
 
     fn materialize_host_value(&mut self, value: RuntimeValue) -> Result<Value, VmError> {

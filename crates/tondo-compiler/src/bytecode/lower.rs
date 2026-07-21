@@ -4,10 +4,10 @@ use tondo_vm::bytecode as bc;
 
 use super::{BytecodeError, BytecodeLoweringLimits};
 use crate::hir::{
-    HirCallableId, HirConstantValue, HirConstantValueKind, HirConstantVariantValue,
-    HirNominalShape, HirPreludeTraitMethod, HirProgram, HirTraitConstructor, HirTraitMethodKey,
-    HirTypeDeclarationKind, HirVariantPayload, TraitQuery, TraitSelectionError,
-    select_implementation,
+    HirCallProtocol, HirCallableId, HirClosureId, HirConstantValue, HirConstantValueKind,
+    HirConstantVariantValue, HirNominalShape, HirPreludeTraitMethod, HirProgram,
+    HirTraitConstructor, HirTraitMethodKey, HirTypeDeclarationKind, HirVariantPayload, TraitQuery,
+    TraitSelectionError, select_implementation,
 };
 use crate::mir::{
     MirAggregateKind, MirBasicBlock, MirBlockKind, MirCallArgument, MirConstant, MirFunction,
@@ -29,6 +29,27 @@ struct CallableInstance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ClosureInstance {
+    closure: HirClosureId,
+    arguments: Vec<TypeId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ExecutableInstance {
+    Named(CallableInstance),
+    Closure(ClosureInstance),
+}
+
+impl ExecutableInstance {
+    fn arguments(&self) -> &[TypeId] {
+        match self {
+            Self::Named(instance) => &instance.arguments,
+            Self::Closure(instance) => &instance.arguments,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct PreludeTraitInstance {
     method: HirPreludeTraitMethod,
     arguments: Vec<TypeId>,
@@ -44,13 +65,17 @@ enum FunctionReference {
         method: HirPreludeTraitMethod,
         arguments: Vec<TypeId>,
     },
+    Closure {
+        closure: HirClosureId,
+        arguments: Vec<TypeId>,
+    },
 }
 
 struct Monomorphization {
     interner: TypeInterner,
-    callables: Vec<CallableInstance>,
-    functions: Vec<CallableInstance>,
-    type_maps: BTreeMap<CallableInstance, BTreeMap<TypeId, TypeId>>,
+    callables: Vec<ExecutableInstance>,
+    functions: Vec<ExecutableInstance>,
+    type_maps: BTreeMap<ExecutableInstance, BTreeMap<TypeId, TypeId>>,
     dispatches: BTreeMap<CallableInstance, CallableInstance>,
     prelude_dispatches: BTreeMap<PreludeTraitInstance, CallableInstance>,
 }
@@ -98,6 +123,7 @@ pub fn lower_to_bytecode(
     )?;
     let functions = {
         let context = FunctionLoweringContext {
+            hir,
             catalog: &catalog,
             nominal_ids: &nominal_ids,
             callable_ids: &callable_ids,
@@ -109,7 +135,7 @@ pub fn lower_to_bytecode(
             .functions
             .iter()
             .map(|instance| {
-                let function = mir.function(instance.callable).ok_or_else(|| {
+                let function = mir_function(mir, instance).ok_or_else(|| {
                     BytecodeError::construction(
                         "monomorphization",
                         format!("{instance:?} has no MIR template"),
@@ -172,10 +198,29 @@ fn monomorphize(
             hir,
             mir,
             &interner,
-            CallableInstance {
+            ExecutableInstance::Named(CallableInstance {
                 callable: callable.id(),
                 arguments: Vec::new(),
-            },
+            }),
+            generic_limit,
+            &mut generic_count,
+            &mut callables,
+            &mut functions,
+            &mut pending,
+        )?;
+    }
+    for closure in hir
+        .closures()
+        .filter(|closure| closure.generic_arity() == 0)
+    {
+        register_instance(
+            hir,
+            mir,
+            &interner,
+            ExecutableInstance::Closure(ClosureInstance {
+                closure: closure.id(),
+                arguments: Vec::new(),
+            }),
             generic_limit,
             &mut generic_count,
             &mut callables,
@@ -210,19 +255,20 @@ fn monomorphize(
     }
 
     while let Some(instance) = pending.pop_first() {
-        let function = mir.function(instance.callable).ok_or_else(|| {
+        let function = mir_function(mir, &instance).ok_or_else(|| {
             BytecodeError::construction(
                 "monomorphization",
                 format!("{instance:?} has no MIR template"),
             )
         })?;
-        let substitution = TypeSubstitution::new(instance.arguments.clone());
+        let substitution = TypeSubstitution::new(instance.arguments().to_vec());
         let mut references = Vec::new();
         collect_function_references(function, &mut references);
         for reference in references {
             let templates = match &reference {
                 FunctionReference::Callable { arguments, .. }
-                | FunctionReference::PreludeTrait { arguments, .. } => arguments,
+                | FunctionReference::PreludeTrait { arguments, .. }
+                | FunctionReference::Closure { arguments, .. } => arguments,
             };
             let arguments = templates
                 .iter()
@@ -267,6 +313,17 @@ fn monomorphize(
                     &mut pending,
                     &mut prelude_dispatches,
                 )?,
+                FunctionReference::Closure { closure, .. } => register_instance(
+                    hir,
+                    mir,
+                    &interner,
+                    ExecutableInstance::Closure(ClosureInstance { closure, arguments }),
+                    generic_limit,
+                    &mut generic_count,
+                    &mut callables,
+                    &mut functions,
+                    &mut pending,
+                )?,
             }
         }
     }
@@ -276,27 +333,50 @@ fn monomorphize(
     let function_set = functions.iter().cloned().collect::<BTreeSet<_>>();
     let mut type_maps = BTreeMap::new();
     for instance in &callables {
-        let signature = hir.callable(instance.callable).ok_or_else(|| {
-            BytecodeError::construction(
-                "monomorphization",
-                format!("{instance:?} has no HIR signature"),
-            )
-        })?;
-        let mut templates = BTreeSet::from([signature.outcome(), signature.function_type()]);
-        for parameter in signature.parameters() {
-            templates.insert(parameter.ty());
-            if let Some(element) = parameter.variadic_element() {
-                templates.insert(element);
+        let (span, mut templates) = match instance {
+            ExecutableInstance::Named(instance) => {
+                let signature = hir.callable(instance.callable).ok_or_else(|| {
+                    BytecodeError::construction(
+                        "monomorphization",
+                        format!("{instance:?} has no HIR signature"),
+                    )
+                })?;
+                let mut templates =
+                    BTreeSet::from([signature.outcome(), signature.function_type()]);
+                for parameter in signature.parameters() {
+                    templates.insert(parameter.ty());
+                    if let Some(element) = parameter.variadic_element() {
+                        templates.insert(element);
+                    }
+                }
+                (signature.span(), templates)
             }
-        }
+            ExecutableInstance::Closure(instance) => {
+                let closure = hir.closure(instance.closure).ok_or_else(|| {
+                    BytecodeError::construction(
+                        "monomorphization",
+                        format!("{instance:?} has no HIR closure metadata"),
+                    )
+                })?;
+                let mut templates = BTreeSet::from([closure.ty(), closure.function_type()]);
+                templates.extend(closure.captures().iter().map(|capture| capture.ty()));
+                for parameter in closure.parameters() {
+                    templates.insert(parameter.ty());
+                    if let Some(element) = parameter.variadic_element() {
+                        templates.insert(element);
+                    }
+                }
+                (closure.span(), templates)
+            }
+        };
         if function_set.contains(instance) {
             collect_function_types(
-                mir.function(instance.callable)
+                mir_function(mir, instance)
                     .expect("registered function instances have a MIR template"),
                 &mut templates,
             );
         }
-        let substitution = TypeSubstitution::new(instance.arguments.clone());
+        let substitution = TypeSubstitution::new(instance.arguments().to_vec());
         let mut map = BTreeMap::new();
         for template in templates {
             let concrete = substitution
@@ -304,7 +384,7 @@ fn monomorphize(
                 .map_err(|error| {
                     monomorphization_type_error(
                         error,
-                        Some(signature.span()),
+                        Some(span),
                         format!("cannot specialize {template}"),
                     )
                 })?;
@@ -352,9 +432,9 @@ fn register_reference(
     reference: CallableInstance,
     generic_limit: u32,
     generic_count: &mut usize,
-    callables: &mut BTreeSet<CallableInstance>,
-    functions: &mut BTreeSet<CallableInstance>,
-    pending: &mut BTreeSet<CallableInstance>,
+    callables: &mut BTreeSet<ExecutableInstance>,
+    functions: &mut BTreeSet<ExecutableInstance>,
+    pending: &mut BTreeSet<ExecutableInstance>,
     dispatches: &mut BTreeMap<CallableInstance, CallableInstance>,
 ) -> Result<(), BytecodeError> {
     let target = resolve_source_trait_dispatch(resolved, hir, interner, &reference)?;
@@ -377,7 +457,7 @@ fn register_reference(
         hir,
         mir,
         interner,
-        target,
+        ExecutableInstance::Named(target),
         generic_limit,
         generic_count,
         callables,
@@ -394,9 +474,9 @@ fn register_prelude_reference(
     reference: PreludeTraitInstance,
     generic_limit: u32,
     generic_count: &mut usize,
-    callables: &mut BTreeSet<CallableInstance>,
-    functions: &mut BTreeSet<CallableInstance>,
-    pending: &mut BTreeSet<CallableInstance>,
+    callables: &mut BTreeSet<ExecutableInstance>,
+    functions: &mut BTreeSet<ExecutableInstance>,
+    pending: &mut BTreeSet<ExecutableInstance>,
     dispatches: &mut BTreeMap<PreludeTraitInstance, CallableInstance>,
 ) -> Result<(), BytecodeError> {
     let target = resolve_prelude_trait_dispatch(hir, interner, &reference)?;
@@ -414,7 +494,7 @@ fn register_prelude_reference(
         hir,
         mir,
         interner,
-        target,
+        ExecutableInstance::Named(target),
         generic_limit,
         generic_count,
         callables,
@@ -775,31 +855,43 @@ fn register_instance(
     hir: &HirProgram,
     mir: &MirProgram,
     interner: &TypeInterner,
-    instance: CallableInstance,
+    instance: ExecutableInstance,
     generic_limit: u32,
     generic_count: &mut usize,
-    callables: &mut BTreeSet<CallableInstance>,
-    functions: &mut BTreeSet<CallableInstance>,
-    pending: &mut BTreeSet<CallableInstance>,
+    callables: &mut BTreeSet<ExecutableInstance>,
+    functions: &mut BTreeSet<ExecutableInstance>,
+    pending: &mut BTreeSet<ExecutableInstance>,
 ) -> Result<(), BytecodeError> {
-    let signature = hir.callable(instance.callable).ok_or_else(|| {
-        BytecodeError::construction(
-            "monomorphization",
-            format!("{:?} has no HIR signature", instance.callable),
-        )
-    })?;
-    if instance.arguments.len() != signature.generic_arity() as usize {
+    let (generic_arity, span) = match &instance {
+        ExecutableInstance::Named(instance) => {
+            let signature = hir.callable(instance.callable).ok_or_else(|| {
+                BytecodeError::construction(
+                    "monomorphization",
+                    format!("{:?} has no HIR signature", instance.callable),
+                )
+            })?;
+            (signature.generic_arity(), signature.span())
+        }
+        ExecutableInstance::Closure(instance) => {
+            let closure = hir.closure(instance.closure).ok_or_else(|| {
+                BytecodeError::construction(
+                    "monomorphization",
+                    format!("closure#{} has no HIR metadata", instance.closure.index()),
+                )
+            })?;
+            (closure.generic_arity(), closure.span())
+        }
+    };
+    if instance.arguments().len() != generic_arity as usize {
         return Err(BytecodeError::construction(
             "monomorphization",
             format!(
-                "{:?} expects {} type arguments, found {}",
-                instance.callable,
-                signature.generic_arity(),
-                instance.arguments.len()
+                "{instance:?} expects {generic_arity} type arguments, found {}",
+                instance.arguments().len()
             ),
         ));
     }
-    for argument in &instance.arguments {
+    for argument in instance.arguments() {
         if type_contains_generic_parameter(interner, *argument)? {
             return Err(BytecodeError::construction(
                 "monomorphization",
@@ -810,25 +902,32 @@ fn register_instance(
     if !callables.insert(instance.clone()) {
         return Ok(());
     }
-    if signature.generic_arity() != 0 {
+    if generic_arity != 0 {
         *generic_count = generic_count
             .checked_add(1)
             .ok_or(BytecodeError::NodeLimit {
-                span: Some(signature.span()),
+                span: Some(span),
                 resource: "generic instantiations",
             })?;
         ensure_count(
             *generic_count,
             generic_limit,
-            Some(signature.span()),
+            Some(span),
             "generic instantiations",
         )?;
     }
-    if mir.function(instance.callable).is_some() {
+    if mir_function(mir, &instance).is_some() {
         functions.insert(instance.clone());
         pending.insert(instance);
     }
     Ok(())
+}
+
+fn mir_function<'a>(mir: &'a MirProgram, instance: &ExecutableInstance) -> Option<&'a MirFunction> {
+    match instance {
+        ExecutableInstance::Named(instance) => mir.function(instance.callable),
+        ExecutableInstance::Closure(instance) => mir.closure_function(instance.closure),
+    }
 }
 
 fn type_contains_generic_parameter(
@@ -876,9 +975,9 @@ fn nominal_ids(
 }
 
 fn callable_ids(
-    instances: &[CallableInstance],
+    instances: &[ExecutableInstance],
     limit: u32,
-) -> Result<BTreeMap<CallableInstance, bc::BytecodeCallableId>, BytecodeError> {
+) -> Result<BTreeMap<ExecutableInstance, bc::BytecodeCallableId>, BytecodeError> {
     ensure_count(instances.len(), limit, None, "callable metadata")?;
     instances
         .iter()
@@ -894,9 +993,9 @@ fn callable_ids(
 }
 
 fn function_ids(
-    instances: &[CallableInstance],
+    instances: &[ExecutableInstance],
     limit: u32,
-) -> Result<BTreeMap<CallableInstance, bc::BytecodeFunctionId>, BytecodeError> {
+) -> Result<BTreeMap<ExecutableInstance, bc::BytecodeFunctionId>, BytecodeError> {
     ensure_count(instances.len(), limit, None, "function count")?;
     instances
         .iter()
@@ -942,7 +1041,7 @@ impl TypeCatalog {
     fn build(
         interner: &mut TypeInterner,
         hir: &HirProgram,
-        type_maps: &BTreeMap<CallableInstance, BTreeMap<TypeId, TypeId>>,
+        type_maps: &BTreeMap<ExecutableInstance, BTreeMap<TypeId, TypeId>>,
         limit: u32,
     ) -> Result<Self, BytecodeError> {
         let mut seeds = BTreeSet::new();
@@ -1333,7 +1432,9 @@ fn collect_place_types(place: &MirPlace, types: &mut BTreeSet<TypeId>) {
 fn collect_operand_types(operand: &MirOperand, types: &mut BTreeSet<TypeId>) {
     types.insert(operand.ty());
     match operand.kind() {
-        MirOperandKind::Copy(place) | MirOperandKind::Move(place) => {
+        MirOperandKind::Copy(place)
+        | MirOperandKind::Move(place)
+        | MirOperandKind::Borrow(place) => {
             collect_place_types(place, types);
         }
         MirOperandKind::Function { arguments, .. }
@@ -1367,7 +1468,10 @@ fn collect_rvalue_types(value: &MirRvalue, types: &mut BTreeSet<TypeId>) {
             collect_operand_types(left, types);
             collect_operand_types(right, types);
         }
-        MirRvalueKind::Aggregate { values, .. } => {
+        MirRvalueKind::Aggregate { shape, values } => {
+            if let MirAggregateKind::Closure { arguments, .. } = shape {
+                types.extend(arguments.iter().copied());
+            }
             for value in values {
                 collect_operand_types(value, types);
             }
@@ -1413,7 +1517,13 @@ fn collect_operation_types(operation: &MirOperation, types: &mut BTreeSet<TypeId
                 collect_operand_types(value, types);
             }
         }
-        MirOperationKind::Call { callee, arguments } => {
+        MirOperationKind::Call {
+            callee,
+            arguments,
+            signature,
+            ..
+        } => {
+            types.insert(*signature);
             collect_operand_types(callee, types);
             for argument in arguments {
                 collect_operand_types(argument.value(), types);
@@ -1512,7 +1622,10 @@ fn collect_operand_function_references(
                 arguments: arguments.clone(),
             });
         }
-        MirOperandKind::Constant(_) | MirOperandKind::Copy(_) | MirOperandKind::Move(_) => {}
+        MirOperandKind::Constant(_)
+        | MirOperandKind::Copy(_)
+        | MirOperandKind::Move(_)
+        | MirOperandKind::Borrow(_) => {}
     }
 }
 
@@ -1540,7 +1653,13 @@ fn collect_rvalue_function_references(value: &MirRvalue, references: &mut Vec<Fu
             collect_operand_function_references(left, references);
             collect_operand_function_references(right, references);
         }
-        MirRvalueKind::Aggregate { values, .. } => {
+        MirRvalueKind::Aggregate { shape, values } => {
+            if let MirAggregateKind::Closure { closure, arguments } = shape {
+                references.push(FunctionReference::Closure {
+                    closure: *closure,
+                    arguments: arguments.clone(),
+                });
+            }
             for value in values {
                 collect_operand_function_references(value, references);
             }
@@ -1588,7 +1707,9 @@ fn collect_operation_function_references(
                 collect_operand_function_references(value, references);
             }
         }
-        MirOperationKind::Call { callee, arguments } => {
+        MirOperationKind::Call {
+            callee, arguments, ..
+        } => {
             collect_operand_function_references(callee, references);
             for argument in arguments {
                 collect_operand_function_references(argument.value(), references);
@@ -1740,14 +1861,11 @@ fn lower_callables(
     hir: &HirProgram,
     monomorphization: &Monomorphization,
     catalog: &TypeCatalog,
-    callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
-    function_ids: &BTreeMap<CallableInstance, bc::BytecodeFunctionId>,
+    callable_ids: &BTreeMap<ExecutableInstance, bc::BytecodeCallableId>,
+    function_ids: &BTreeMap<ExecutableInstance, bc::BytecodeFunctionId>,
 ) -> Result<Vec<bc::BytecodeCallable>, BytecodeError> {
     let mut output = vec![None; callable_ids.len()];
     for instance in &monomorphization.callables {
-        let callable = hir.callable(instance.callable).ok_or_else(|| {
-            BytecodeError::construction("callable metadata", "missing HIR signature")
-        })?;
         let type_map = monomorphization
             .type_maps
             .get(instance)
@@ -1755,10 +1873,60 @@ fn lower_callables(
         let id = callable_ids.get(instance).copied().ok_or_else(|| {
             BytecodeError::construction("callable metadata", "missing callable ID")
         })?;
-        let mut name = callable_name(resolved, callable.id());
-        if !instance.arguments.is_empty() {
+        let (mut name, parameters, outcome, function_type, closure) = match instance {
+            ExecutableInstance::Named(instance) => {
+                let callable = hir.callable(instance.callable).ok_or_else(|| {
+                    BytecodeError::construction("callable metadata", "missing HIR signature")
+                })?;
+                (
+                    callable_name(resolved, callable.id()),
+                    callable.parameters(),
+                    callable.outcome(),
+                    callable.function_type(),
+                    None,
+                )
+            }
+            ExecutableInstance::Closure(instance) => {
+                let closure = hir.closure(instance.closure).ok_or_else(|| {
+                    BytecodeError::construction("callable metadata", "missing HIR closure")
+                })?;
+                let TypeKind::Function(function) = hir
+                    .interner()
+                    .kind(closure.function_type())
+                    .map_err(|error| {
+                        BytecodeError::construction("callable metadata", error.to_string())
+                    })?
+                else {
+                    return Err(BytecodeError::construction(
+                        "callable metadata",
+                        "closure signature is not a function type",
+                    ));
+                };
+                let protocols = closure.protocols();
+                (
+                    format!("closure#{}", closure.id().index()),
+                    closure.parameters(),
+                    function.outcome(),
+                    closure.function_type(),
+                    Some(bc::BytecodeClosure {
+                        environment: mapped_catalog_id(closure.ty(), type_map, catalog)?,
+                        captures: closure
+                            .captures()
+                            .iter()
+                            .map(|capture| mapped_catalog_id(capture.ty(), type_map, catalog))
+                            .collect::<Result<_, BytecodeError>>()?,
+                        protocols: bc::BytecodeClosureProtocols {
+                            call: protocols.call(),
+                            call_mut: protocols.call_mut(),
+                            call_once: protocols.call_once(),
+                        },
+                    }),
+                )
+            }
+        };
+        if !instance.arguments().is_empty() {
             let arguments = instance
-                .arguments
+                .arguments()
                 .iter()
                 .map(|argument| monomorphization.interner.canonical(*argument))
                 .collect::<Result<Vec<_>, _>>()
@@ -1772,8 +1940,7 @@ fn lower_callables(
         output[id.index() as usize] = Some(bc::BytecodeCallable {
             name,
             generic_arity: 0,
-            parameters: callable
-                .parameters()
+            parameters: parameters
                 .iter()
                 .map(|parameter| {
                     Ok(bc::BytecodeParameter {
@@ -1787,9 +1954,10 @@ fn lower_callables(
                     })
                 })
                 .collect::<Result<_, BytecodeError>>()?,
-            outcome: mapped_catalog_id(callable.outcome(), type_map, catalog)?,
-            function_type: mapped_catalog_id(callable.function_type(), type_map, catalog)?,
+            outcome: mapped_catalog_id(outcome, type_map, catalog)?,
+            function_type: mapped_catalog_id(function_type, type_map, catalog)?,
             implementation: function_ids.get(instance).copied(),
+            closure,
         });
     }
     output
@@ -1834,7 +2002,7 @@ fn lower_constants(
     hir: &HirProgram,
     catalog: &TypeCatalog,
     nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
-    callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
+    callable_ids: &BTreeMap<ExecutableInstance, bc::BytecodeCallableId>,
     dispatches: &BTreeMap<CallableInstance, CallableInstance>,
     constant_ids: &BTreeMap<SymbolId, bc::BytecodeConstantId>,
 ) -> Result<Vec<bc::BytecodeNamedConstant>, BytecodeError> {
@@ -1870,7 +2038,7 @@ fn lower_constant_value(
     value: &HirConstantValue,
     catalog: &TypeCatalog,
     nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
-    callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
+    callable_ids: &BTreeMap<ExecutableInstance, bc::BytecodeCallableId>,
     dispatches: &BTreeMap<CallableInstance, CallableInstance>,
 ) -> Result<bc::BytecodeConstantValue, BytecodeError> {
     let ty = catalog.id(value.ty())?;
@@ -1891,7 +2059,7 @@ fn lower_constant_value(
                     arguments: arguments.clone(),
                 };
                 let target = dispatches.get(&source).unwrap_or(&source);
-                map_callable_instance(target, callable_ids)?
+                map_named_callable_instance(target, callable_ids)?
             },
             arguments: Vec::new(),
         },
@@ -2013,7 +2181,7 @@ fn lower_constant_values(
     values: &[HirConstantValue],
     catalog: &TypeCatalog,
     nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
-    callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
+    callable_ids: &BTreeMap<ExecutableInstance, bc::BytecodeCallableId>,
     dispatches: &BTreeMap<CallableInstance, CallableInstance>,
 ) -> Result<Vec<bc::BytecodeConstantValue>, BytecodeError> {
     values
@@ -2026,7 +2194,7 @@ fn lower_constant_variant(
     payload: &HirConstantVariantValue,
     catalog: &TypeCatalog,
     nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
-    callable_ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
+    callable_ids: &BTreeMap<ExecutableInstance, bc::BytecodeCallableId>,
     dispatches: &BTreeMap<CallableInstance, CallableInstance>,
 ) -> Result<bc::BytecodeConstantVariantValue, BytecodeError> {
     Ok(match payload {
@@ -2055,16 +2223,17 @@ fn lower_constant_variant(
 }
 
 struct FunctionLoweringContext<'a> {
+    hir: &'a HirProgram,
     catalog: &'a TypeCatalog,
     nominal_ids: &'a BTreeMap<SymbolId, bc::BytecodeNominalId>,
-    callable_ids: &'a BTreeMap<CallableInstance, bc::BytecodeCallableId>,
+    callable_ids: &'a BTreeMap<ExecutableInstance, bc::BytecodeCallableId>,
     dispatches: &'a BTreeMap<CallableInstance, CallableInstance>,
     prelude_dispatches: &'a BTreeMap<PreludeTraitInstance, CallableInstance>,
     constant_ids: &'a BTreeMap<SymbolId, bc::BytecodeConstantId>,
 }
 
 fn lower_function(
-    instance: &CallableInstance,
+    instance: &ExecutableInstance,
     function: &MirFunction,
     context: &FunctionLoweringContext<'_>,
     type_map: &BTreeMap<TypeId, TypeId>,
@@ -2230,7 +2399,7 @@ fn lower_statement(
             bc::BytecodeInstructionKind::StorageDead(bc::BytecodeSlotId::new(local.index()))
         }
         MirStatementKind::Assign { destination, value } => bc::BytecodeInstructionKind::Store {
-            destination: lower_place(destination, context.catalog, type_map)?,
+            destination: lower_place(destination, context, type_map)?,
             value: lower_rvalue(value, context, type_map)?,
         },
     };
@@ -2285,7 +2454,7 @@ fn lower_terminator(
             operation: lower_operation(operation, context, type_map)?,
             destination: destination
                 .as_ref()
-                .map(|place| lower_place(place, context.catalog, type_map))
+                .map(|place| lower_place(place, context, type_map))
                 .transpose()?,
             target: target.map(block_id),
             unwind: block_id(*unwind),
@@ -2297,8 +2466,8 @@ fn lower_terminator(
             exhausted,
             unwind,
         } => bc::BytecodeTerminatorKind::IteratorNext {
-            state: lower_place(state, context.catalog, type_map)?,
-            destination: lower_place(destination, context.catalog, type_map)?,
+            state: lower_place(state, context, type_map)?,
+            destination: lower_place(destination, context, type_map)?,
             has_value: block_id(*has_value),
             exhausted: block_id(*exhausted),
             unwind: block_id(*unwind),
@@ -2312,7 +2481,7 @@ fn lower_terminator(
         } => bc::BytecodeTerminatorKind::ValidatePlaces {
             places: places
                 .iter()
-                .map(|place| lower_place(place, context.catalog, type_map))
+                .map(|place| lower_place(place, context, type_map))
                 .collect::<Result<_, BytecodeError>>()?,
             replacements: replacements
                 .iter()
@@ -2339,26 +2508,32 @@ fn lower_terminator(
 
 fn lower_place(
     place: &MirPlace,
-    catalog: &TypeCatalog,
+    context: &FunctionLoweringContext<'_>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodePlace, BytecodeError> {
     Ok(bc::BytecodePlace {
         slot: bc::BytecodeSlotId::new(place.local().index()),
-        ty: mapped_catalog_id(place.ty(), type_map, catalog)?,
+        ty: mapped_catalog_id(place.ty(), type_map, context.catalog)?,
         projections: place
             .projections()
             .iter()
-            .map(|projection| lower_projection(projection, catalog, type_map))
+            .map(|projection| lower_projection(projection, context, type_map))
             .collect::<Result<_, BytecodeError>>()?,
     })
 }
 
 fn lower_projection(
     projection: &MirProjection,
-    catalog: &TypeCatalog,
+    context: &FunctionLoweringContext<'_>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeProjection, BytecodeError> {
     let kind = match projection.kind() {
+        MirProjectionKind::ClosureCapture { closure, index } => {
+            bc::BytecodeProjectionKind::ClosureCapture {
+                callable: closure_callable_id(*closure, context, type_map)?,
+                index: *index,
+            }
+        }
         MirProjectionKind::Field(member) => bc::BytecodeProjectionKind::Field(member.index()),
         MirProjectionKind::TupleField(index) => bc::BytecodeProjectionKind::TupleField(*index),
         MirProjectionKind::NewtypeValue => bc::BytecodeProjectionKind::NewtypeValue,
@@ -2377,9 +2552,9 @@ fn lower_projection(
         MirProjectionKind::OptionValue => bc::BytecodeProjectionKind::OptionValue,
         MirProjectionKind::ResultOkValue => bc::BytecodeProjectionKind::ResultOkValue,
         MirProjectionKind::ResultErrValue => bc::BytecodeProjectionKind::ResultErrValue,
-        MirProjectionKind::UnionValue(member) => {
-            bc::BytecodeProjectionKind::UnionValue(mapped_catalog_id(*member, type_map, catalog)?)
-        }
+        MirProjectionKind::UnionValue(member) => bc::BytecodeProjectionKind::UnionValue(
+            mapped_catalog_id(*member, type_map, context.catalog)?,
+        ),
         MirProjectionKind::ArrayPatternIndex(index) => {
             bc::BytecodeProjectionKind::ArrayPatternIndex(*index)
         }
@@ -2400,9 +2575,41 @@ fn lower_projection(
         },
     };
     Ok(bc::BytecodeProjection {
-        ty: mapped_catalog_id(projection.ty(), type_map, catalog)?,
+        ty: mapped_catalog_id(projection.ty(), type_map, context.catalog)?,
         kind,
     })
+}
+
+fn closure_callable_id(
+    closure: HirClosureId,
+    context: &FunctionLoweringContext<'_>,
+    type_map: &BTreeMap<TypeId, TypeId>,
+) -> Result<bc::BytecodeCallableId, BytecodeError> {
+    let closure_metadata = context.hir.closure(closure).ok_or_else(|| {
+        BytecodeError::construction(
+            "closure projection",
+            format!("closure#{} has no HIR metadata", closure.index()),
+        )
+    })?;
+    let TypeKind::Generated { arguments, .. } = context
+        .hir
+        .interner()
+        .kind(closure_metadata.ty())
+        .map_err(|error| BytecodeError::construction("closure projection", error.to_string()))?
+    else {
+        return Err(BytecodeError::construction(
+            "closure projection",
+            "closure environment is not a generated type",
+        ));
+    };
+    let instance = ExecutableInstance::Closure(ClosureInstance {
+        closure,
+        arguments: arguments
+            .iter()
+            .map(|argument| mapped_type(*argument, type_map))
+            .collect::<Result<_, BytecodeError>>()?,
+    });
+    map_callable_instance(&instance, context.callable_ids)
 }
 
 fn lower_operand(
@@ -2415,10 +2622,13 @@ fn lower_operand(
             bc::BytecodeOperandKind::Constant(lower_immediate(value, context.constant_ids)?)
         }
         MirOperandKind::Copy(place) => {
-            bc::BytecodeOperandKind::Copy(lower_place(place, context.catalog, type_map)?)
+            bc::BytecodeOperandKind::Copy(lower_place(place, context, type_map)?)
         }
         MirOperandKind::Move(place) => {
-            bc::BytecodeOperandKind::Move(lower_place(place, context.catalog, type_map)?)
+            bc::BytecodeOperandKind::Move(lower_place(place, context, type_map)?)
+        }
+        MirOperandKind::Borrow(place) => {
+            bc::BytecodeOperandKind::Borrow(lower_place(place, context, type_map)?)
         }
         MirOperandKind::Function {
             callable,
@@ -2433,7 +2643,7 @@ fn lower_operand(
                         .collect::<Result<_, _>>()?,
                 };
                 let target = context.dispatches.get(&source).unwrap_or(&source);
-                map_callable_instance(target, context.callable_ids)?
+                map_named_callable_instance(target, context.callable_ids)?
             },
             arguments: Vec::new(),
         },
@@ -2452,7 +2662,7 @@ fn lower_operand(
                 )
             })?;
             bc::BytecodeOperandKind::Function {
-                callable: map_callable_instance(target, context.callable_ids)?,
+                callable: map_named_callable_instance(target, context.callable_ids)?,
                 arguments: Vec::new(),
             }
         }
@@ -2515,7 +2725,7 @@ fn lower_rvalue(
                 .map(operand)
                 .collect::<Result<Vec<_>, BytecodeError>>()?;
             bc::BytecodeRvalueKind::Construct {
-                shape: lower_aggregate(shape, context.nominal_ids, &values)?,
+                shape: lower_aggregate(shape, context, type_map, &values)?,
                 values,
             }
         }
@@ -2566,22 +2776,32 @@ fn lower_rvalue(
 
 fn lower_aggregate(
     shape: &MirAggregateKind,
-    nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
+    context: &FunctionLoweringContext<'_>,
+    type_map: &BTreeMap<TypeId, TypeId>,
     values: &[bc::BytecodeOperand],
 ) -> Result<bc::BytecodeAggregateKind, BytecodeError> {
     Ok(match shape {
         MirAggregateKind::Tuple => bc::BytecodeAggregateKind::Tuple,
         MirAggregateKind::Array => bc::BytecodeAggregateKind::Array,
         MirAggregateKind::Set => bc::BytecodeAggregateKind::Set,
-        MirAggregateKind::Closure { closure } => bc::BytecodeAggregateKind::Closure {
-            closure: closure.index(),
+        MirAggregateKind::Closure { closure, arguments } => bc::BytecodeAggregateKind::Closure {
+            callable: map_callable_instance(
+                &ExecutableInstance::Closure(ClosureInstance {
+                    closure: *closure,
+                    arguments: arguments
+                        .iter()
+                        .map(|argument| mapped_type(*argument, type_map))
+                        .collect::<Result<_, BytecodeError>>()?,
+                }),
+                context.callable_ids,
+            )?,
             captures: values.iter().map(|value| value.ty).collect(),
         },
         MirAggregateKind::Newtype { owner } => bc::BytecodeAggregateKind::Newtype {
-            nominal: map_nominal(*owner, nominal_ids)?,
+            nominal: map_nominal(*owner, context.nominal_ids)?,
         },
         MirAggregateKind::Record { owner, fields } => bc::BytecodeAggregateKind::Record {
-            nominal: map_nominal(*owner, nominal_ids)?,
+            nominal: map_nominal(*owner, context.nominal_ids)?,
             fields: fields.iter().map(|field| field.index()).collect(),
         },
         MirAggregateKind::Variant { variant, fields } => bc::BytecodeAggregateKind::Variant {
@@ -2651,12 +2871,19 @@ fn lower_operation(
             end: end.as_ref().map(operand).transpose()?,
             step: step.as_ref().map(operand).transpose()?,
         },
-        MirOperationKind::Call { callee, arguments } => bc::BytecodeOperationKind::Call {
+        MirOperationKind::Call {
+            callee,
+            arguments,
+            signature,
+            protocol,
+        } => bc::BytecodeOperationKind::Call {
             callee: operand(callee)?,
             arguments: arguments
                 .iter()
                 .map(|argument| lower_call_argument(argument, context, type_map))
                 .collect::<Result<_, BytecodeError>>()?,
+            signature: mapped_catalog_id(*signature, type_map, context.catalog)?,
+            protocol: call_protocol(*protocol),
         },
         MirOperationKind::ExplicitPanic { message } => bc::BytecodeOperationKind::ExplicitPanic {
             message: operand(message)?,
@@ -2775,8 +3002,8 @@ fn mapped_catalog_id(
 }
 
 fn map_callable_instance(
-    instance: &CallableInstance,
-    ids: &BTreeMap<CallableInstance, bc::BytecodeCallableId>,
+    instance: &ExecutableInstance,
+    ids: &BTreeMap<ExecutableInstance, bc::BytecodeCallableId>,
 ) -> Result<bc::BytecodeCallableId, BytecodeError> {
     ids.get(instance).copied().ok_or_else(|| {
         BytecodeError::construction(
@@ -2784,6 +3011,13 @@ fn map_callable_instance(
             format!("{instance:?} has no callable metadata"),
         )
     })
+}
+
+fn map_named_callable_instance(
+    instance: &CallableInstance,
+    ids: &BTreeMap<ExecutableInstance, bc::BytecodeCallableId>,
+) -> Result<bc::BytecodeCallableId, BytecodeError> {
+    map_callable_instance(&ExecutableInstance::Named(instance.clone()), ids)
 }
 
 fn block_id(id: crate::mir::MirBlockId) -> bc::BytecodeBlockId {
@@ -2870,10 +3104,19 @@ fn parameter_mode(value: ParameterMode) -> bc::BytecodeParameterMode {
     }
 }
 
+fn call_protocol(value: HirCallProtocol) -> bc::BytecodeCallProtocol {
+    match value {
+        HirCallProtocol::Call => bc::BytecodeCallProtocol::Call,
+        HirCallProtocol::CallMut => bc::BytecodeCallProtocol::CallMut,
+        HirCallProtocol::CallOnce => bc::BytecodeCallProtocol::CallOnce,
+    }
+}
+
 fn coercion(value: Assignability) -> bc::BytecodeCoercion {
     match value {
         Assignability::Exact => bc::BytecodeCoercion::Exact,
         Assignability::Opaque => bc::BytecodeCoercion::Opaque,
+        Assignability::CallableErasure => bc::BytecodeCoercion::CallableErasure,
         Assignability::UnionInjection => bc::BytecodeCoercion::UnionInjection,
         Assignability::UnionWidening => bc::BytecodeCoercion::UnionWidening,
         Assignability::OptionLift => bc::BytecodeCoercion::OptionLift,
@@ -3782,7 +4025,11 @@ mod tests {
 
         fn closure_schema(
             program: &mut bc::BytecodeProgram,
-        ) -> (bc::BytecodeTypeId, &mut Vec<bc::BytecodeTypeId>) {
+        ) -> (
+            bc::BytecodeTypeId,
+            &mut bc::BytecodeCallableId,
+            &mut Vec<bc::BytecodeTypeId>,
+        ) {
             program
                 .functions
                 .iter_mut()
@@ -3793,29 +4040,176 @@ mod tests {
                         value:
                             bc::BytecodeRvalue {
                                 ty,
-                                kind:
-                                    bc::BytecodeRvalueKind::Construct {
-                                        shape: bc::BytecodeAggregateKind::Closure { captures, .. },
-                                        ..
-                                    },
-                            },
-                        ..
-                    } => Some((*ty, captures)),
+                                    kind:
+                                        bc::BytecodeRvalueKind::Construct {
+                                            shape:
+                                                bc::BytecodeAggregateKind::Closure {
+                                                    callable,
+                                                    captures,
+                                                },
+                                            ..
+                                        },
+                                },
+                            ..
+                        } => Some((*ty, callable, captures)),
                     _ => None,
                 })
                 .expect("closure construction lowers to bytecode")
         }
 
         let mut wrong_count = program.clone();
-        closure_schema(&mut wrong_count).1.clear();
+        closure_schema(&mut wrong_count).2.clear();
         let error = bc::verify_bytecode(&wrong_count).unwrap_err();
         assert!(error.message().contains("rvalue"));
 
-        let mut wrong_type = program;
-        let (closure_type, captures) = closure_schema(&mut wrong_type);
+        let mut wrong_type = program.clone();
+        let (closure_type, _, captures) = closure_schema(&mut wrong_type);
         captures[0] = closure_type;
         let error = bc::verify_bytecode(&wrong_type).unwrap_err();
         assert!(error.message().contains("rvalue"));
+
+        let mut wrong_callable = program.clone();
+        let named = bc::BytecodeCallableId::new(
+            wrong_callable
+                .callables
+                .iter()
+                .position(|callable| callable.closure.is_none())
+                .unwrap() as u32,
+        );
+        *closure_schema(&mut wrong_callable).1 = named;
+        let error = bc::verify_bytecode(&wrong_callable).unwrap_err();
+        assert!(error.message().contains("rvalue"));
+
+        let mut wrong_protocols = program;
+        wrong_protocols
+            .callables
+            .iter_mut()
+            .find_map(|callable| callable.closure.as_mut())
+            .unwrap()
+            .protocols
+            .call = false;
+        let error = bc::verify_bytecode(&wrong_protocols).unwrap_err();
+        assert!(error.message().contains("implementation body"));
+    }
+
+    #[test]
+    fn bytecode_verifier_rederives_indirect_call_signature_and_protocol() {
+        fn indirect_call(
+            program: &mut bc::BytecodeProgram,
+        ) -> (
+            &mut bc::BytecodeOperand,
+            &mut bc::BytecodeTypeId,
+            &mut bc::BytecodeCallProtocol,
+        ) {
+            program
+                .functions
+                .iter_mut()
+                .flat_map(|function| &mut function.blocks)
+                .find_map(|block| match &mut block.terminator.kind {
+                    bc::BytecodeTerminatorKind::Invoke {
+                        operation:
+                            bc::BytecodeOperation {
+                                kind:
+                                    bc::BytecodeOperationKind::Call {
+                                        callee,
+                                        signature,
+                                        protocol,
+                                        ..
+                                    },
+                                ..
+                            },
+                        ..
+                    } if !matches!(callee.kind, bc::BytecodeOperandKind::Function { .. }) => {
+                        Some((callee, signature, protocol))
+                    }
+                    _ => None,
+                })
+                .expect("program contains one indirect closure call")
+        }
+
+        let pure = lowered(
+            "fn execute(): Int {\n\
+                 let operation = (value: Int): Int { value + 1 }\n\
+                 operation(41)\n\
+             }\n",
+        );
+        let mut wrong_selection = pure.clone();
+        let (callee, _, protocol) = indirect_call(&mut wrong_selection);
+        let bc::BytecodeOperandKind::Borrow(place) = &callee.kind else {
+            panic!("a closure place call borrows its environment")
+        };
+        callee.kind = bc::BytecodeOperandKind::Copy(place.clone());
+        *protocol = bc::BytecodeCallProtocol::CallOnce;
+        let error = bc::verify_bytecode(&wrong_selection).unwrap_err();
+        assert!(error.message().contains("operation"));
+
+        let mut wrong_signature = pure;
+        let int = wrong_signature
+            .types
+            .iter()
+            .position(|ty| {
+                matches!(
+                    ty.kind,
+                    bc::BytecodeTypeKind::Scalar(bc::BytecodeScalarType::Int)
+                )
+            })
+            .map(|index| bc::BytecodeTypeId::new(index as u32))
+            .unwrap();
+        *indirect_call(&mut wrong_signature).1 = int;
+        let error = bc::verify_bytecode(&wrong_signature).unwrap_err();
+        assert!(error.message().contains("operation"));
+
+        let mut wrong_stateful = lowered(
+            "fn execute(): Int {\n\
+                 var count = 0\n\
+                 var next = (): Int {\n\
+                     count += 1\n\
+                     count\n\
+                 }\n\
+                 next()\n\
+             }\n",
+        );
+        *indirect_call(&mut wrong_stateful).2 = bc::BytecodeCallProtocol::Call;
+        let error = bc::verify_bytecode(&wrong_stateful).unwrap_err();
+        assert!(error.message().contains("operation"));
+    }
+
+    #[test]
+    fn bytecode_verifier_confines_environment_borrows_to_indirect_callees() {
+        let mut program = lowered(
+            "fn execute(): Int {\n\
+                 let operation = (value: Int): Int { value + 1 }\n\
+                 operation(41)\n\
+             }\n",
+        );
+        let (callee, arguments) = program
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind:
+                                bc::BytecodeOperationKind::Call {
+                                    callee, arguments, ..
+                                },
+                            ..
+                        },
+                    ..
+                } if matches!(callee.kind, bc::BytecodeOperandKind::Borrow(_)) => {
+                    Some((callee, arguments))
+                }
+                _ => None,
+            })
+            .expect("closure place call borrows its environment");
+        let bc::BytecodeOperandKind::Borrow(environment) = &callee.kind else {
+            unreachable!()
+        };
+        arguments[0].value.kind = bc::BytecodeOperandKind::Borrow(environment.clone());
+
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(error.message().contains("borrow escapes"));
     }
 
     #[test]
@@ -4478,6 +4872,155 @@ mod tests {
         .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
         assert_eq!(execution.outcome, VmOutcome::Returned(RuntimeValue::Unit));
         assert!(execution.statistics.collections > 0);
+    }
+
+    #[test]
+    fn closures_execute_with_call_call_mut_call_once_and_fn_erasure_semantics() {
+        assert_eq!(
+            execute_function(
+                "fn pure(): Int {\n\
+                     let offset = 40\n\
+                     let add = (value: Int): Int { offset + value }\n\
+                     add(2)\n\
+                 }\n",
+                "pure",
+            ),
+            RuntimeValue::Integer(42)
+        );
+        assert_eq!(
+            execute_function(
+                "fn stateful(): Int {\n\
+                     var count = 0\n\
+                     var next = (): Int {\n\
+                         count += 1\n\
+                         count\n\
+                     }\n\
+                     next() + next()\n\
+                 }\n",
+                "stateful",
+            ),
+            RuntimeValue::Integer(3)
+        );
+        assert_eq!(
+            execute_function(
+                "fn copied_once(): Int {\n\
+                     var count = 0\n\
+                     let next = (): Int {\n\
+                         count += 1\n\
+                         count\n\
+                     }\n\
+                     next() + next()\n\
+                 }\n",
+                "copied_once",
+            ),
+            RuntimeValue::Integer(2)
+        );
+        assert_eq!(
+            execute_function(
+                "fn erased(): Int {\n\
+                     let offset = 40\n\
+                     let add: fn(Int): Int = (value) { offset + value }\n\
+                     add(2)\n\
+                 }\n",
+                "erased",
+            ),
+            RuntimeValue::Integer(42)
+        );
+    }
+
+    #[test]
+    fn generic_opaque_and_variadic_closure_calls_use_the_same_indirect_path() {
+        assert_eq!(
+            execute_function(
+                "fn increment(value: Int): Int { value + 1 }\n\
+                 fn apply[F: Call[fn(Int): Int]](operation: F, value: Int): Int {\n\
+                     operation(value)\n\
+                 }\n\
+                 fn execute(): (Int, Int) {\n\
+                     let offset = 2\n\
+                     let closure = (value: Int): Int { value + offset }\n\
+                     (apply(closure, 40), apply(increment, 41))\n\
+                 }\n",
+                "execute",
+            ),
+            RuntimeValue::Tuple(vec![RuntimeValue::Integer(42), RuntimeValue::Integer(42)])
+        );
+        assert_eq!(
+            execute_function(
+                "fn make(offset: Int): impl Call[fn(Int): Int] + Discard {\n\
+                     (value: Int): Int { value + offset }\n\
+                 }\n\
+                 fn execute(): Int {\n\
+                     let operation = make(40)\n\
+                     operation(2)\n\
+                 }\n",
+                "execute",
+            ),
+            RuntimeValue::Integer(42)
+        );
+        assert_eq!(
+            execute_function(
+                "fn invoke[T: Copy + Discard](value: T): T {\n\
+                     let get = (): T { value }\n\
+                     get()\n\
+                 }\n\
+                 fn execute(): (Int, Bool) { (invoke(42), invoke(true)) }\n",
+                "execute",
+            ),
+            RuntimeValue::Tuple(vec![RuntimeValue::Integer(42), RuntimeValue::Bool(true)])
+        );
+        assert_eq!(
+            execute_function(
+                "fn execute(): Int {\n\
+                     let sum = (head: Int, tail: ...Int): Int {\n\
+                         head + tail[0] + tail[1]\n\
+                     }\n\
+                     sum(10, 20, 12)\n\
+                 }\n",
+                "execute",
+            ),
+            RuntimeValue::Integer(42)
+        );
+    }
+
+    #[test]
+    fn borrowed_closure_environments_remain_rooted_during_argument_gc_pressure() {
+        let program = lowered(
+            "fn execute(): Int {\n\
+                 let anchor = [40, 2]\n\
+                 var count = 0\n\
+                 var next = (items: ...Array[Int]): Int {\n\
+                     _ = anchor\n\
+                     _ = items\n\
+                     count += 1\n\
+                     count\n\
+                 }\n\
+                 for _ in 0..200 {\n\
+                     _ = next([1], [2], [3])\n\
+                 }\n\
+                 next([4], [5], [6])\n\
+             }\n",
+        );
+        let entry = function_id(&program, "execute");
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            entry,
+            &mut host,
+            VmLimits {
+                max_heap_objects: 128,
+                max_heap_bytes: 128 * 1024,
+                initial_gc_threshold: 1,
+                ..VmLimits::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(201))
+        );
+        assert!(execution.statistics.collections > 0);
+        assert!(execution.statistics.reclaimed_objects > 0);
     }
 
     #[test]

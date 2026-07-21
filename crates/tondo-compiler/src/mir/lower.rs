@@ -2,9 +2,9 @@ use std::collections::BTreeMap;
 
 use crate::hir::{
     HirAssignmentOperator, HirAssignmentTarget, HirAssignmentTargetKind, HirBinaryOperator,
-    HirBootstrapHostFunction, HirCallableId, HirCallableSignature, HirExpression, HirExpressionId,
-    HirExpressionKind, HirForKind, HirIterationProtocol, HirLiteral, HirLoopId, HirNominalShape,
-    HirPatternId, HirPatternKind, HirPreludeTraitMethod, HirProgram, HirStatement,
+    HirBootstrapHostFunction, HirCallProtocol, HirCallableSignature, HirClosure, HirExpression,
+    HirExpressionId, HirExpressionKind, HirForKind, HirIterationProtocol, HirLiteral, HirLoopId,
+    HirNominalShape, HirPatternId, HirPatternKind, HirPreludeTraitMethod, HirProgram, HirStatement,
     HirValueCategory, HirVariantPayload, HirVariantValue, verify_typed_hir,
 };
 use crate::resolve::{LocalId, ResolvedProgram};
@@ -13,9 +13,9 @@ use crate::types::{ScalarType, TypeId, TypeKind};
 
 use super::{
     MirAggregateKind, MirAssertMessagePart, MirBasicBlock, MirBlockId, MirBlockKind,
-    MirBootstrapHostFunction, MirCallArgument, MirConstant, MirError, MirFunction, MirLocal,
-    MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation, MirOperationKind, MirPlace,
-    MirProgram, MirProjection, MirProjectionKind, MirRvalue, MirRvalueKind, MirStatement,
+    MirBootstrapHostFunction, MirCallArgument, MirConstant, MirError, MirFunction, MirFunctionId,
+    MirLocal, MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation, MirOperationKind,
+    MirPlace, MirProgram, MirProjection, MirProjectionKind, MirRvalue, MirRvalueKind, MirStatement,
     MirStatementKind, MirTag, MirTerminator, MirTerminatorKind, MirVerificationLimits,
     verify_mir_with_limits,
 };
@@ -59,7 +59,18 @@ pub fn lower_to_mir(
             });
         }
         let function = FunctionBuilder::new(hir, callable, limits)?.lower(body.root())?;
-        functions.insert(callable.id(), function);
+        functions.insert(MirFunctionId::Callable(callable.id()), function);
+    }
+    for closure in hir.closures() {
+        if functions.len() >= limits.max_functions as usize {
+            return Err(MirError::NodeLimit {
+                span: closure.span(),
+                resource: "function",
+            });
+        }
+        let function =
+            FunctionBuilder::new_closure(hir, closure, limits)?.lower(closure.body().root())?;
+        functions.insert(MirFunctionId::Closure(closure.id()), function);
     }
     let program = MirProgram { functions };
     if let Err(error) = verify_mir_with_limits(
@@ -88,7 +99,7 @@ struct OpenBlock {
 
 struct FunctionBuilder<'a> {
     hir: &'a HirProgram,
-    id: HirCallableId,
+    id: MirFunctionId,
     span: Span,
     outcome: TypeId,
     limits: MirLoweringLimits,
@@ -96,6 +107,7 @@ struct FunctionBuilder<'a> {
     locals: Vec<MirLocal>,
     parameters: Vec<MirLocalId>,
     source_locals: BTreeMap<LocalId, MirLocalId>,
+    capture_places: BTreeMap<LocalId, MirPlace>,
     loops: BTreeMap<HirLoopId, LoopTargets>,
     receiver: Option<MirLocalId>,
     return_local: MirLocalId,
@@ -141,7 +153,7 @@ impl<'a> FunctionBuilder<'a> {
         callable: &HirCallableSignature,
         limits: MirLoweringLimits,
     ) -> Result<Self, MirError> {
-        let id = callable.id();
+        let id = MirFunctionId::Callable(callable.id());
         let span = callable.span();
         let mut builder = Self {
             hir,
@@ -153,6 +165,7 @@ impl<'a> FunctionBuilder<'a> {
             locals: Vec::new(),
             parameters: Vec::new(),
             source_locals: BTreeMap::new(),
+            capture_places: BTreeMap::new(),
             loops: BTreeMap::new(),
             receiver: None,
             return_local: MirLocalId(0),
@@ -175,6 +188,96 @@ impl<'a> FunctionBuilder<'a> {
             if parameter.is_receiver() {
                 builder.receiver = Some(local);
             } else if let Some(source) = parameter.local() {
+                builder.source_locals.insert(source, local);
+            }
+        }
+        builder.entry = builder.allocate_block(MirBlockKind::Normal)?;
+        builder.unwind = builder.allocate_block(MirBlockKind::Cleanup)?;
+        builder.terminate(builder.unwind, span, MirTerminatorKind::ResumePanic)?;
+        Ok(builder)
+    }
+
+    fn new_closure(
+        hir: &'a HirProgram,
+        closure: &HirClosure,
+        limits: MirLoweringLimits,
+    ) -> Result<Self, MirError> {
+        let TypeKind::Function(function) =
+            hir.interner()
+                .kind(closure.function_type())
+                .map_err(|error| MirError::Construction {
+                    span: closure.span(),
+                    message: format!("closure has an invalid call signature: {error}"),
+                })?
+        else {
+            return Err(MirError::Construction {
+                span: closure.span(),
+                message: "closure call signature is not a function type".into(),
+            });
+        };
+        let span = closure.span();
+        let mut builder = Self {
+            hir,
+            id: MirFunctionId::Closure(closure.id()),
+            span,
+            outcome: function.outcome(),
+            limits,
+            statement_count: 0,
+            locals: Vec::new(),
+            parameters: Vec::new(),
+            source_locals: BTreeMap::new(),
+            capture_places: BTreeMap::new(),
+            loops: BTreeMap::new(),
+            receiver: None,
+            return_local: MirLocalId(0),
+            entry: MirBlockId(0),
+            unwind: MirBlockId(0),
+            blocks: Vec::new(),
+        };
+        builder.return_local =
+            builder.allocate_local(function.outcome(), span, MirLocalKind::Return)?;
+        let environment = builder.allocate_local(
+            closure.ty(),
+            span,
+            MirLocalKind::Parameter {
+                index: 0,
+                source: None,
+            },
+        )?;
+        builder.parameters.push(environment);
+        for (index, capture) in closure.captures().iter().enumerate() {
+            let mut place = builder.local_place(environment);
+            place.ty = capture.ty();
+            place.projections.push(MirProjection {
+                ty: capture.ty(),
+                kind: MirProjectionKind::ClosureCapture {
+                    closure: closure.id(),
+                    index: u32::try_from(index).map_err(|_| MirError::NodeLimit {
+                        span,
+                        resource: "closure capture",
+                    })?,
+                },
+            });
+            builder.capture_places.insert(capture.local(), place);
+        }
+        for (index, parameter) in closure.parameters().iter().enumerate() {
+            let parameter_index = u32::try_from(index)
+                .ok()
+                .and_then(|index| index.checked_add(1))
+                .ok_or(MirError::NodeLimit {
+                    span,
+                    resource: "parameter",
+                })?;
+            let local = builder.allocate_local(
+                parameter.ty(),
+                parameter.span(),
+                MirLocalKind::Parameter {
+                    index: parameter_index,
+                    source: parameter.local(),
+                },
+            )?;
+            builder.parameters.push(local);
+            if let Some(source) = parameter.local() {
                 builder.source_locals.insert(source, local);
             }
         }
@@ -242,8 +345,16 @@ impl<'a> FunctionBuilder<'a> {
                 Ok(Some(block))
             }
             HirExpressionKind::Local(local) => {
-                let local = self.source_local(*local, span)?;
-                self.assign_operand(block, span, destination, self.copy_local(local))?;
+                let place = self.source_place(*local, span)?;
+                self.assign_operand(
+                    block,
+                    span,
+                    destination,
+                    MirOperand {
+                        ty: place.ty,
+                        kind: MirOperandKind::Copy(place),
+                    },
+                )?;
                 Ok(Some(block))
             }
             HirExpressionKind::Receiver => {
@@ -329,8 +440,11 @@ impl<'a> FunctionBuilder<'a> {
                     .collect::<Vec<_>>();
                 let mut values = Vec::with_capacity(captures.len());
                 for (local, ty) in captures {
-                    let local = self.source_local(local, span)?;
-                    let operand = self.copy_local(local);
+                    let place = self.source_place(local, span)?;
+                    let operand = MirOperand {
+                        ty: place.ty,
+                        kind: MirOperandKind::Copy(place),
+                    };
                     if operand.ty != ty {
                         return Err(MirError::Construction {
                             span,
@@ -339,6 +453,21 @@ impl<'a> FunctionBuilder<'a> {
                     }
                     values.push(operand);
                 }
+                let arguments =
+                    match self.hir.interner().kind(expression.ty()).map_err(|error| {
+                        MirError::Construction {
+                            span,
+                            message: format!("closure has an invalid generated type: {error}"),
+                        }
+                    })? {
+                        TypeKind::Generated { arguments, .. } => arguments.clone(),
+                        _ => {
+                            return Err(MirError::Construction {
+                                span,
+                                message: "closure expression has a non-generated type".into(),
+                            });
+                        }
+                    };
                 self.assign(
                     block,
                     span,
@@ -348,6 +477,7 @@ impl<'a> FunctionBuilder<'a> {
                         kind: MirRvalueKind::Aggregate {
                             shape: MirAggregateKind::Closure {
                                 closure: *closure_id,
+                                arguments,
                             },
                             values,
                         },
@@ -767,8 +897,14 @@ impl<'a> FunctionBuilder<'a> {
                     },
                 )
             }
-            HirExpressionKind::Call { callee, arguments } => {
-                let Some((mut current, callee)) = self.lower_callee(*callee, block)? else {
+            HirExpressionKind::Call {
+                callee,
+                arguments,
+                signature,
+                protocol,
+            } => {
+                let Some((mut current, callee)) = self.lower_callee(*callee, *protocol, block)?
+                else {
                     return Ok(None);
                 };
                 let mut lowered = Vec::with_capacity(arguments.len());
@@ -792,6 +928,8 @@ impl<'a> FunctionBuilder<'a> {
                         kind: MirOperationKind::Call {
                             callee,
                             arguments: lowered,
+                            signature: *signature,
+                            protocol: *protocol,
                         },
                     },
                 )
@@ -1633,6 +1771,8 @@ impl<'a> FunctionBuilder<'a> {
                             target: crate::hir::HirCallArgumentTarget::Receiver,
                             value: self.copy_local(state),
                         }],
+                        signature: function_type,
+                        protocol: HirCallProtocol::Call,
                     },
                 },
                 destination: Some(self.local_place(next)),
@@ -1920,6 +2060,7 @@ impl<'a> FunctionBuilder<'a> {
     fn lower_callee(
         &mut self,
         id: HirExpressionId,
+        protocol: HirCallProtocol,
         block: MirBlockId,
     ) -> Result<Option<(MirBlockId, MirOperand)>, MirError> {
         let expression = self.expression(id)?;
@@ -1952,6 +2093,19 @@ impl<'a> FunctionBuilder<'a> {
         };
         if let Some(operand) = operand {
             Ok(Some((block, operand)))
+        } else if matches!(protocol, HirCallProtocol::Call | HirCallProtocol::CallMut)
+            && self.expression(id)?.category() == HirValueCategory::Place
+        {
+            let Some((block, place)) = self.lower_place(id, block)? else {
+                return Ok(None);
+            };
+            Ok(Some((
+                block,
+                MirOperand {
+                    ty: place.ty,
+                    kind: MirOperandKind::Borrow(place),
+                },
+            )))
         } else {
             self.lower_value(id, block)
         }
@@ -2717,8 +2871,8 @@ impl<'a> FunctionBuilder<'a> {
         let span = expression.span();
         match expression.kind() {
             HirExpressionKind::Local(local) => {
-                let local = self.source_local(*local, span)?;
-                Ok(Some((block, self.local_place(local))))
+                let place = self.source_place(*local, span)?;
+                Ok(Some((block, place)))
             }
             HirExpressionKind::Receiver => {
                 let local = self.receiver.ok_or_else(|| MirError::Construction {
@@ -2895,6 +3049,14 @@ impl<'a> FunctionBuilder<'a> {
                 span,
                 message: format!("HIR local#{} has no MIR local", local.index()),
             })
+    }
+
+    fn source_place(&self, local: LocalId, span: Span) -> Result<MirPlace, MirError> {
+        if let Some(place) = self.capture_places.get(&local) {
+            return Ok(place.clone());
+        }
+        self.source_local(local, span)
+            .map(|local| self.local_place(local))
     }
 
     fn allocate_user_local(
@@ -3169,7 +3331,9 @@ impl<'a> FunctionBuilder<'a> {
 mod tests {
     use std::sync::Arc;
 
-    use crate::hir::{ExpressionCheckLimits, TypeLoweringLimits, check_expressions, lower_types};
+    use crate::hir::{
+        ExpressionCheckLimits, HirCallableId, TypeLoweringLimits, check_expressions, lower_types,
+    };
     use crate::mir::{MirTag, MirVerificationLimits, verify_mir, verify_mir_with_limits};
     use crate::package::PackageGraph;
     use crate::resolve::{ResolvedProgram, SymbolKind, resolve};
@@ -3793,7 +3957,7 @@ mod tests {
             lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         let main = invalid_successor
             .functions
-            .get_mut(&function_id(&resolved, "main"))
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "main")))
             .unwrap();
         let target = main
             .blocks
@@ -3814,7 +3978,7 @@ mod tests {
             lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         let main = invalid_cleanup
             .functions
-            .get_mut(&function_id(&resolved, "main"))
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "main")))
             .unwrap();
         let entry = main.entry;
         let unwind = main
@@ -3836,7 +4000,7 @@ mod tests {
         let mut invalid_use = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         let function = invalid_use
             .functions
-            .get_mut(&function_id(&resolved, "value"))
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "value")))
             .unwrap();
         let entry = function.entry.0 as usize;
         let MirStatementKind::Assign { destination, value } =
@@ -3859,7 +4023,7 @@ mod tests {
             lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         let function = invalid_projection
             .functions
-            .get_mut(&function_id(&resolved, "first"))
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "first")))
             .unwrap();
         let projection = function
             .blocks
@@ -3895,7 +4059,7 @@ mod tests {
             lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         let function = invalid_slice
             .functions
-            .get_mut(&function_id(&resolved, "replace"))
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "replace")))
             .unwrap();
         let replacement = function
             .blocks
@@ -3971,7 +4135,7 @@ mod tests {
         let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         let function = mir
             .functions
-            .get_mut(&function_id(&resolved, "check"))
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "check")))
             .unwrap();
         let condition_repr = function
             .blocks
@@ -4005,7 +4169,7 @@ mod tests {
         let mut invalid_call = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         let main = invalid_call
             .functions
-            .get_mut(&function_id(&resolved, "main"))
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "main")))
             .unwrap();
         let arguments = main
             .blocks
@@ -4037,7 +4201,7 @@ mod tests {
         let mut invalid_tag = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         let inspect = invalid_tag
             .functions
-            .get_mut(&function_id(&resolved, "inspect"))
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "inspect")))
             .unwrap();
         let tag = inspect
             .blocks
@@ -4055,7 +4219,7 @@ mod tests {
             lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         let inspect = unguarded_payload
             .functions
-            .get_mut(&function_id(&resolved, "inspect"))
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "inspect")))
             .unwrap();
         let (case, otherwise) = inspect
             .blocks
@@ -4090,6 +4254,101 @@ mod tests {
     }
 
     #[test]
+    fn mir_verifier_rederives_generic_and_opaque_call_protocols() {
+        fn first_call_protocol(function: &mut MirFunction) -> &mut HirCallProtocol {
+            function
+                .blocks
+                .iter_mut()
+                .find_map(|block| match &mut block.terminator.kind {
+                    MirTerminatorKind::Invoke {
+                        operation:
+                            MirOperation {
+                                kind: MirOperationKind::Call { protocol, .. },
+                                ..
+                            },
+                        ..
+                    } => Some(protocol),
+                    _ => None,
+                })
+                .expect("function contains a call")
+        }
+
+        let (resolved, hir) = checked(
+            "fn apply[F: Call[fn(Int): Int]](operation: F, value: Int): Int {\n\
+                 operation(value)\n\
+             }\n",
+        );
+        let mut generic = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        *first_call_protocol(
+            generic
+                .functions
+                .get_mut(&MirFunctionId::Callable(function_id(&resolved, "apply")))
+                .unwrap(),
+        ) = HirCallProtocol::CallMut;
+        let error = verify_mir(&resolved, &hir, &generic).unwrap_err();
+        assert!(error.message().contains("closed callee contract"));
+
+        let (resolved, hir) = checked(
+            "fn make(offset: Int): impl Call[fn(Int): Int] + Discard {\n\
+                 (value: Int): Int { value + offset }\n\
+             }\n\
+             fn execute(): Int {\n\
+                 let operation = make(40)\n\
+                 operation(2)\n\
+             }\n",
+        );
+        let mut opaque = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        *first_call_protocol(
+            opaque
+                .functions
+                .get_mut(&MirFunctionId::Callable(function_id(&resolved, "execute")))
+                .unwrap(),
+        ) = HirCallProtocol::CallOnce;
+        let error = verify_mir(&resolved, &hir, &opaque).unwrap_err();
+        assert!(error.message().contains("closed callee contract"));
+    }
+
+    #[test]
+    fn mir_verifier_confines_environment_borrows_to_indirect_callees() {
+        let (resolved, hir) = checked(
+            "fn execute(): Int {\n\
+                 let operation = (value: Int): Int { value + 1 }\n\
+                 operation(41)\n\
+             }\n",
+        );
+        let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let execute = mir
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "execute")))
+            .unwrap();
+        let (callee, arguments) = execute
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::Invoke {
+                    operation:
+                        MirOperation {
+                            kind:
+                                MirOperationKind::Call {
+                                    callee, arguments, ..
+                                },
+                            ..
+                        },
+                    ..
+                } if matches!(callee.kind, MirOperandKind::Borrow(_)) => Some((callee, arguments)),
+                _ => None,
+            })
+            .expect("closure place call borrows its environment");
+        let MirOperandKind::Borrow(environment) = &callee.kind else {
+            unreachable!()
+        };
+        arguments[0].value.kind = MirOperandKind::Borrow(environment.clone());
+
+        let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
+        assert!(error.message().contains("borrow escapes"));
+    }
+
+    #[test]
     fn mir_verifier_rejects_invalid_prelude_trait_function_operands() {
         let source = "type Label = { text: String }\n\
                       impl Display for Label {\n\
@@ -4102,7 +4361,7 @@ mod tests {
 
         let render = mir
             .functions
-            .get_mut(&function_id(&resolved, "render"))
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "render")))
             .unwrap();
         let callee = render
             .blocks

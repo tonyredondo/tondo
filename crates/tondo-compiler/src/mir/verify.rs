@@ -4,21 +4,21 @@ use std::error::Error;
 use std::fmt;
 
 use crate::hir::{
-    HirBinaryOperator, HirCallableId, HirCapability, HirCapabilityStatus, HirContainmentKind,
-    HirIndexAccess, HirNominalShape, HirPrefixOperator, HirProgram, HirTypeDeclarationKind,
-    HirVariantPayload,
+    HirBinaryOperator, HirCallProtocol, HirCallableId, HirCapability, HirCapabilityStatus,
+    HirClosureProtocols, HirContainmentKind, HirGenericParameter, HirIndexAccess, HirNominalShape,
+    HirPrefixOperator, HirProgram, HirTraitConstructor, HirTypeDeclarationKind, HirVariantPayload,
 };
 use crate::resolve::{MemberKind, MemberOwner, ResolvedProgram, SymbolId};
 use crate::types::{
     Assignability, IntrinsicType, NumericConversion, ScalarType, TypeId, TypeKind,
-    numeric_conversion,
+    TypeSubstitution, numeric_conversion,
 };
 
 use super::{
-    MirAggregateKind, MirBasicBlock, MirBlockId, MirBlockKind, MirFunction, MirLocalId,
-    MirLocalKind, MirOperand, MirOperandKind, MirOperation, MirOperationKind, MirPlace, MirProgram,
-    MirProjection, MirProjectionKind, MirRvalue, MirRvalueKind, MirStatementKind, MirTag,
-    MirTerminatorKind,
+    MirAggregateKind, MirBasicBlock, MirBlockId, MirBlockKind, MirFunction, MirFunctionId,
+    MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation, MirOperationKind, MirPlace,
+    MirProgram, MirProjection, MirProjectionKind, MirRvalue, MirRvalueKind, MirStatementKind,
+    MirTag, MirTerminatorKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -100,7 +100,11 @@ pub fn verify_mir_with_limits(
     let expected = hir
         .callables()
         .filter(|callable| hir.body(callable.id()).is_some())
-        .map(|callable| callable.id())
+        .map(|callable| MirFunctionId::Callable(callable.id()))
+        .chain(
+            hir.closures()
+                .map(|closure| MirFunctionId::Closure(closure.id())),
+        )
         .collect::<BTreeSet<_>>();
     let actual = program.functions.keys().copied().collect::<BTreeSet<_>>();
     if actual != expected {
@@ -151,6 +155,82 @@ struct LocalState {
     initialized: bool,
 }
 
+fn mir_operand_is_borrow(operand: &MirOperand) -> bool {
+    matches!(operand.kind, MirOperandKind::Borrow(_))
+}
+
+fn mir_rvalue_contains_borrow(value: &MirRvalue) -> bool {
+    match &value.kind {
+        MirRvalueKind::Use(value)
+        | MirRvalueKind::Length(value)
+        | MirRvalueKind::IteratorState { source: value }
+        | MirRvalueKind::Prefix { operand: value, .. }
+        | MirRvalueKind::Coerce { value, .. }
+        | MirRvalueKind::NumericConversion { value, .. } => mir_operand_is_borrow(value),
+        MirRvalueKind::Binary { left, right, .. }
+        | MirRvalueKind::Range {
+            start: left,
+            end: right,
+            ..
+        }
+        | MirRvalueKind::Contains {
+            item: left,
+            container: right,
+            ..
+        } => mir_operand_is_borrow(left) || mir_operand_is_borrow(right),
+        MirRvalueKind::Aggregate { values, .. } => values.iter().any(mir_operand_is_borrow),
+        MirRvalueKind::RecordUpdate { base, fields } => {
+            mir_operand_is_borrow(base)
+                || fields.iter().any(|(_, value)| mir_operand_is_borrow(value))
+        }
+    }
+}
+
+fn mir_operation_contains_invalid_borrow(operation: &MirOperation) -> bool {
+    match &operation.kind {
+        MirOperationKind::CheckedPrefix { operand, .. }
+        | MirOperationKind::ExplicitPanic { message: operand } => mir_operand_is_borrow(operand),
+        MirOperationKind::CheckedBinary { left, right, .. } => {
+            mir_operand_is_borrow(left) || mir_operand_is_borrow(right)
+        }
+        MirOperationKind::BuildMap { entries, .. } => entries
+            .iter()
+            .any(|(key, value)| mir_operand_is_borrow(key) || mir_operand_is_borrow(value)),
+        MirOperationKind::Index { base, index, .. } => {
+            mir_operand_is_borrow(base) || mir_operand_is_borrow(index)
+        }
+        MirOperationKind::Slice {
+            base,
+            start,
+            end,
+            step,
+        } => {
+            mir_operand_is_borrow(base)
+                || start
+                    .iter()
+                    .chain(end)
+                    .chain(step)
+                    .any(mir_operand_is_borrow)
+        }
+        MirOperationKind::Call { arguments, .. } => arguments
+            .iter()
+            .any(|argument| mir_operand_is_borrow(&argument.value)),
+        MirOperationKind::Assert {
+            condition,
+            message_parts,
+            ..
+        } => {
+            mir_operand_is_borrow(condition)
+                || message_parts
+                    .iter()
+                    .any(|part| mir_operand_is_borrow(&part.value))
+        }
+        MirOperationKind::BootstrapHostCall { arguments, .. } => {
+            arguments.iter().any(mir_operand_is_borrow)
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct SuccessorEdge {
     target: MirBlockId,
@@ -175,16 +255,52 @@ impl Verifier<'_> {
     fn verify_function(&self, function: &MirFunction) -> Result<(), MirInvariantError> {
         let context = function_context(function.id);
         self.verify_span(function, function.span, &context)?;
-        let signature = self.hir.callable(function.id).ok_or_else(|| {
-            MirInvariantError::new(&context, "function has no typed HIR callable")
-        })?;
-        if signature.outcome() != function.outcome {
+        let (expected_outcome, expected_parameters) = match function.id {
+            MirFunctionId::Callable(id) => {
+                let signature = self.hir.callable(id).ok_or_else(|| {
+                    MirInvariantError::new(&context, "function has no typed HIR callable")
+                })?;
+                (
+                    signature.outcome(),
+                    signature
+                        .parameters()
+                        .iter()
+                        .map(|parameter| (parameter.ty(), parameter.local()))
+                        .collect::<Vec<_>>(),
+                )
+            }
+            MirFunctionId::Closure(id) => {
+                let closure = self.hir.closure(id).ok_or_else(|| {
+                    MirInvariantError::new(&context, "function has no typed HIR closure")
+                })?;
+                let TypeKind::Function(signature) = self
+                    .hir
+                    .interner()
+                    .kind(closure.function_type())
+                    .map_err(|error| MirInvariantError::new(&context, error.to_string()))?
+                else {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "closure function has a non-function HIR signature",
+                    ));
+                };
+                let mut parameters = Vec::with_capacity(closure.parameters().len() + 1);
+                parameters.push((closure.ty(), None));
+                parameters.extend(
+                    closure
+                        .parameters()
+                        .iter()
+                        .map(|parameter| (parameter.ty(), parameter.local())),
+                );
+                (signature.outcome(), parameters)
+            }
+        };
+        if expected_outcome != function.outcome {
             return Err(MirInvariantError::new(
                 &context,
                 format!(
                     "outcome is {}, typed HIR requires {}",
-                    function.outcome,
-                    signature.outcome()
+                    function.outcome, expected_outcome
                 ),
             ));
         }
@@ -199,21 +315,21 @@ impl Verifier<'_> {
                 "return local kind or type does not match the function outcome",
             ));
         }
-        if function.parameters.len() != signature.parameters().len() {
+        if function.parameters.len() != expected_parameters.len() {
             return Err(MirInvariantError::new(
                 &context,
                 format!(
                     "{} MIR parameters for {} typed HIR parameters",
                     function.parameters.len(),
-                    signature.parameters().len()
+                    expected_parameters.len()
                 ),
             ));
         }
         let mut parameter_locals = BTreeSet::new();
-        for (index, (local_id, parameter)) in function
+        for (index, (local_id, (expected_type, expected_source))) in function
             .parameters
             .iter()
-            .zip(signature.parameters())
+            .zip(&expected_parameters)
             .enumerate()
         {
             if !parameter_locals.insert(*local_id) {
@@ -223,11 +339,11 @@ impl Verifier<'_> {
                 ));
             }
             let local = self.local(function, *local_id, &context)?;
-            if local.ty != parameter.ty()
+            if local.ty != *expected_type
                 || local.kind
                     != (MirLocalKind::Parameter {
                         index: index as u32,
-                        source: parameter.local(),
+                        source: *expected_source,
                     })
             {
                 return Err(MirInvariantError::new(
@@ -374,10 +490,12 @@ impl Verifier<'_> {
                     ));
                 }
                 self.verify_operand(function, condition, &context)?;
-                if condition.ty != self.hir.interner().scalar(ScalarType::Bool) {
+                if mir_operand_is_borrow(condition)
+                    || condition.ty != self.hir.interner().scalar(ScalarType::Bool)
+                {
                     return Err(MirInvariantError::new(
                         &context,
-                        "SwitchBool condition is not Bool",
+                        "SwitchBool condition is not a materialized Bool",
                     ));
                 }
                 self.normal_block(function, *if_true, &context)?;
@@ -581,6 +699,12 @@ impl Verifier<'_> {
         value: &MirRvalue,
         context: &str,
     ) -> Result<(), MirInvariantError> {
+        if mir_rvalue_contains_borrow(value) {
+            return Err(MirInvariantError::new(
+                context,
+                "environment borrow escapes its call-callee position",
+            ));
+        }
         self.verify_type(value.ty, context)?;
         match &value.kind {
             MirRvalueKind::Use(operand) => {
@@ -653,19 +777,24 @@ impl Verifier<'_> {
                 value: operand,
             } => {
                 self.verify_operand(function, operand, context)?;
-                let actual = if *kind == Assignability::Opaque {
-                    let mut interner = self.hir.interner().clone();
-                    self.hir
-                        .opaque_coercion_matches(&mut interner, operand.ty, value.ty)
-                        .map_err(|error| {
-                            MirInvariantError::new(
-                                context,
-                                format!("cannot validate opaque MIR coercion: {error}"),
-                            )
-                        })?
-                        .then_some(Assignability::Opaque)
-                } else {
-                    self.hir
+                let actual = match kind {
+                    Assignability::Opaque => {
+                        let mut interner = self.hir.interner().clone();
+                        self.hir
+                            .opaque_coercion_matches(&mut interner, operand.ty, value.ty)
+                            .map_err(|error| {
+                                MirInvariantError::new(
+                                    context,
+                                    format!("cannot validate opaque MIR coercion: {error}"),
+                                )
+                            })?
+                            .then_some(Assignability::Opaque)
+                    }
+                    Assignability::CallableErasure => self
+                        .callable_erasure_matches(operand.ty, value.ty, context)?
+                        .then_some(Assignability::CallableErasure),
+                    _ => self
+                        .hir
                         .interner()
                         .assignability(operand.ty, value.ty)
                         .map_err(|error| {
@@ -673,7 +802,7 @@ impl Verifier<'_> {
                                 context,
                                 format!("cannot validate MIR coercion: {error}"),
                             )
-                        })?
+                        })?,
                 };
                 if actual != Some(*kind) || *kind == Assignability::Exact {
                     return Err(MirInvariantError::new(
@@ -746,6 +875,12 @@ impl Verifier<'_> {
         operation: &MirOperation,
         context: &str,
     ) -> Result<(), MirInvariantError> {
+        if mir_operation_contains_invalid_borrow(operation) {
+            return Err(MirInvariantError::new(
+                context,
+                "environment borrow escapes its call-callee position",
+            ));
+        }
         self.verify_type(operation.ty, context)?;
         match &operation.kind {
             MirOperationKind::CheckedPrefix { operator, operand } => {
@@ -816,7 +951,12 @@ impl Verifier<'_> {
                     ));
                 }
             }
-            MirOperationKind::Call { callee, arguments } => {
+            MirOperationKind::Call {
+                callee,
+                arguments,
+                signature,
+                protocol,
+            } => {
                 self.verify_operand(function, callee, context)?;
                 for argument in arguments {
                     if argument.target == crate::hir::HirCallArgumentTarget::Invalid {
@@ -827,7 +967,15 @@ impl Verifier<'_> {
                     }
                     self.verify_operand(function, &argument.value, context)?;
                 }
-                self.verify_call(callee, arguments, operation.ty, context)?;
+                self.verify_call(
+                    function,
+                    callee,
+                    arguments,
+                    *signature,
+                    *protocol,
+                    operation.ty,
+                    context,
+                )?;
             }
             MirOperationKind::ExplicitPanic { message } => {
                 self.verify_operand(function, message, context)?;
@@ -945,33 +1093,42 @@ impl Verifier<'_> {
                     ));
                 }
             }
-            MirAggregateKind::Closure { closure } => {
+            MirAggregateKind::Closure { closure, arguments } => {
                 let closure = self.hir.closure(*closure).ok_or_else(|| {
                     MirInvariantError::new(context, "closure aggregate has no HIR metadata")
                 })?;
-                if ty != closure.ty()
+                if arguments.len() != closure.generic_arity() as usize {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "closure aggregate has the wrong generic arity",
+                    ));
+                }
+                for argument in arguments {
+                    self.verify_type(*argument, context)?;
+                }
+                let substitution = TypeSubstitution::new(arguments.clone());
+                let mut interner = self.hir.interner().clone();
+                let expected_type = substitution
+                    .apply(&mut interner, closure.ty())
+                    .map_err(|error| MirInvariantError::new(context, error.to_string()))?;
+                if ty != expected_type
                     || values.len() != closure.captures().len()
                     || values
                         .iter()
                         .zip(closure.captures())
                         .any(|(value, capture)| {
-                            if value.ty != capture.ty() {
+                            let Ok(expected_capture) =
+                                substitution.apply(&mut interner, capture.ty())
+                            else {
+                                return true;
+                            };
+                            if value.ty != expected_capture {
                                 return true;
                             }
                             let MirOperandKind::Copy(place) = &value.kind else {
                                 return true;
                             };
-                            if !place.projections.is_empty() {
-                                return true;
-                            }
-                            !matches!(
-                                function.locals.get(place.local.0 as usize).map(|local| local.kind),
-                                Some(MirLocalKind::User(source))
-                                    | Some(MirLocalKind::Parameter {
-                                        source: Some(source),
-                                        ..
-                                    }) if source == capture.local()
-                            )
+                            !self.place_represents_source_local(function, place, capture.local())
                         })
                 {
                     return Err(MirInvariantError::new(
@@ -1129,7 +1286,9 @@ impl Verifier<'_> {
             MirOperandKind::Constant(constant) => {
                 self.verify_constant(constant, operand.ty, context)?;
             }
-            MirOperandKind::Copy(place) | MirOperandKind::Move(place) => {
+            MirOperandKind::Copy(place)
+            | MirOperandKind::Move(place)
+            | MirOperandKind::Borrow(place) => {
                 self.verify_place(function, place, context)?;
                 if place.ty != operand.ty {
                     return Err(MirInvariantError::new(
@@ -1204,6 +1363,31 @@ impl Verifier<'_> {
         context: &str,
     ) -> Result<(), MirInvariantError> {
         let local = self.local(function, place.local, context)?;
+        if let Some((position, projection)) =
+            place
+                .projections
+                .iter()
+                .enumerate()
+                .find(|(_, projection)| {
+                    matches!(projection.kind, MirProjectionKind::ClosureCapture { .. })
+                })
+        {
+            let valid_root = position == 0
+                && function.parameters.first() == Some(&place.local)
+                && matches!(
+                    (function.id, &projection.kind),
+                    (
+                        MirFunctionId::Closure(function_closure),
+                        MirProjectionKind::ClosureCapture { closure, .. }
+                    ) if function_closure == *closure
+                );
+            if !valid_root {
+                return Err(MirInvariantError::new(
+                    context,
+                    "closure capture projection is not rooted in its hidden environment parameter",
+                ));
+            }
+        }
         self.verify_type(place.ty, context)?;
         let mut current = local.ty;
         for projection in &place.projections {
@@ -1428,6 +1612,35 @@ impl Verifier<'_> {
             }
         }
         Ok(true)
+    }
+
+    fn callable_erasure_matches(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+        context: &str,
+    ) -> Result<bool, MirInvariantError> {
+        if !matches!(self.kind(expected, context)?, TypeKind::Function(_)) {
+            return Ok(false);
+        }
+        let TypeKind::Generated {
+            identity,
+            arguments,
+        } = self.kind(actual, context)?
+        else {
+            return Ok(false);
+        };
+        let Some(closure) = self.hir.closure_by_identity(identity) else {
+            return Ok(false);
+        };
+        let mut interner = self.hir.interner().clone();
+        let signature = TypeSubstitution::new(arguments.clone())
+            .apply(&mut interner, closure.function_type())
+            .map_err(|error| MirInvariantError::new(context, error.to_string()))?;
+        Ok(signature == expected
+            && closure
+                .protocols()
+                .supports(crate::hir::HirCallProtocol::Call))
     }
 
     fn nominal_field_matches(
@@ -1748,6 +1961,33 @@ impl Verifier<'_> {
     ) -> Result<TypeId, MirInvariantError> {
         let declared = projection.ty;
         match &projection.kind {
+            MirProjectionKind::ClosureCapture { closure, index } => {
+                let metadata = self.hir.closure(*closure).ok_or_else(|| {
+                    MirInvariantError::new(
+                        context,
+                        "closure capture projection has no HIR metadata",
+                    )
+                })?;
+                if function.id != MirFunctionId::Closure(*closure) || current != metadata.ty() {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "closure capture projection has the wrong function or environment type",
+                    ));
+                }
+                let capture = metadata.captures().get(*index as usize).ok_or_else(|| {
+                    MirInvariantError::new(
+                        context,
+                        "closure capture projection index is out of range",
+                    )
+                })?;
+                if declared != capture.ty() {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "closure capture projection has the wrong capture type",
+                    ));
+                }
+                Ok(declared)
+            }
             MirProjectionKind::Field(member) => {
                 if !self.nominal_field_matches(current, *member, declared, context)? {
                     return Err(MirInvariantError::new(
@@ -2210,24 +2450,139 @@ impl Verifier<'_> {
         self.array_element(ty).is_some()
     }
 
+    fn place_represents_source_local(
+        &self,
+        function: &MirFunction,
+        place: &MirPlace,
+        source: crate::resolve::LocalId,
+    ) -> bool {
+        if place.projections.is_empty() {
+            return matches!(
+                function.locals.get(place.local.0 as usize).map(|local| local.kind),
+                Some(MirLocalKind::User(candidate))
+                    | Some(MirLocalKind::Parameter {
+                        source: Some(candidate),
+                        ..
+                    }) if candidate == source
+            );
+        }
+        let (
+            MirFunctionId::Closure(function_closure),
+            [
+                MirProjection {
+                    kind: MirProjectionKind::ClosureCapture { closure, index },
+                    ..
+                },
+            ],
+        ) = (function.id, place.projections.as_slice())
+        else {
+            return false;
+        };
+        function_closure == *closure
+            && function.parameters.first() == Some(&place.local)
+            && self
+                .hir
+                .closure(*closure)
+                .and_then(|metadata| metadata.captures().get(*index as usize))
+                .is_some_and(|capture| capture.local() == source)
+    }
+
     fn verify_call(
         &self,
+        function: &MirFunction,
         callee: &MirOperand,
         arguments: &[super::MirCallArgument],
+        signature: TypeId,
+        protocol: crate::hir::HirCallProtocol,
         outcome: TypeId,
         context: &str,
     ) -> Result<(), MirInvariantError> {
-        let TypeKind::Function(function) = self.kind(callee.ty, context)? else {
+        let TypeKind::Function(call_signature) = self.kind(signature, context)? else {
             return Err(MirInvariantError::new(
                 context,
-                "call operation callee is not a function",
+                "call operation signature is not a function",
             ));
         };
-        if function.outcome() != outcome {
+        if call_signature.outcome() != outcome {
             return Err(MirInvariantError::new(
                 context,
                 "call operation outcome differs from its function type",
             ));
+        }
+        let available = match self.kind(callee.ty, context)? {
+            TypeKind::Function(_) => {
+                if callee.ty == signature {
+                    HirClosureProtocols::new(true, true, true)
+                } else {
+                    HirClosureProtocols::new(false, false, false)
+                }
+            }
+            TypeKind::Generated {
+                identity,
+                arguments,
+            } => {
+                if let Some(closure) = self.hir.closure_by_identity(identity) {
+                    let mut interner = self.hir.interner().clone();
+                    let actual = TypeSubstitution::new(arguments.clone())
+                        .apply(&mut interner, closure.function_type())
+                        .map_err(|error| MirInvariantError::new(context, error.to_string()))?;
+                    if actual == signature {
+                        closure.protocols()
+                    } else {
+                        HirClosureProtocols::new(false, false, false)
+                    }
+                } else {
+                    HirClosureProtocols::new(false, false, false)
+                }
+            }
+            TypeKind::GenericParameter(position) => {
+                self.generic_call_protocols(function, *position, signature, context)?
+            }
+            TypeKind::OpaqueResult {
+                identity,
+                arguments,
+            } => self.opaque_call_protocols(identity, arguments, signature, context)?,
+            _ => HirClosureProtocols::new(false, false, false),
+        };
+        let expected_protocol = if available.supports(HirCallProtocol::Call) {
+            Some(HirCallProtocol::Call)
+        } else if available.supports(HirCallProtocol::CallMut)
+            && matches!(callee.kind, MirOperandKind::Borrow(_))
+        {
+            Some(HirCallProtocol::CallMut)
+        } else if available.supports(HirCallProtocol::CallOnce)
+            && !matches!(callee.kind, MirOperandKind::Borrow(_))
+        {
+            Some(HirCallProtocol::CallOnce)
+        } else {
+            None
+        };
+        if expected_protocol != Some(protocol) {
+            return Err(MirInvariantError::new(
+                context,
+                format!(
+                    "call operation records {protocol:?}, expected {expected_protocol:?} from its closed callee contract"
+                ),
+            ));
+        }
+        match protocol {
+            crate::hir::HirCallProtocol::CallMut
+                if !matches!(callee.kind, MirOperandKind::Borrow(_)) =>
+            {
+                return Err(MirInvariantError::new(
+                    context,
+                    "CallMut callee is not an exclusive environment borrow",
+                ));
+            }
+            crate::hir::HirCallProtocol::CallOnce
+                if matches!(callee.kind, MirOperandKind::Borrow(_)) =>
+            {
+                return Err(MirInvariantError::new(
+                    context,
+                    "CallOnce callee cannot be an environment borrow",
+                ));
+            }
+            _ => {}
         }
 
         let callable = match &callee.kind {
@@ -2237,20 +2592,20 @@ impl Verifier<'_> {
         let mut fixed = Vec::new();
         let mut receiver = None;
         if matches!(callee.kind, MirOperandKind::PreludeTraitFunction { .. }) {
-            if function.variadic().is_some() || function.parameters().len() != 1 {
+            if call_signature.variadic().is_some() || call_signature.parameters().len() != 1 {
                 return Err(MirInvariantError::new(
                     context,
                     "prelude trait callable does not have exactly one fixed receiver",
                 ));
             }
-            let parameter = &function.parameters()[0];
+            let parameter = &call_signature.parameters()[0];
             receiver = Some((
                 crate::hir::HirCallArgumentTarget::Receiver,
                 parameter.mode(),
                 parameter.ty(),
             ));
         } else if let Some(callable) = callable {
-            let mut concrete = function.parameters().iter();
+            let mut concrete = call_signature.parameters().iter();
             for (source_index, parameter) in callable.parameters().iter().enumerate() {
                 if parameter.variadic_element().is_some() {
                     continue;
@@ -2285,19 +2640,15 @@ impl Verifier<'_> {
                 ));
             }
         } else {
-            fixed.extend(
-                function
-                    .parameters()
-                    .iter()
-                    .enumerate()
-                    .map(|(index, parameter)| {
-                        (
-                            crate::hir::HirCallArgumentTarget::Fixed(index as u32),
-                            parameter.mode(),
-                            parameter.ty(),
-                        )
-                    }),
-            );
+            fixed.extend(call_signature.parameters().iter().enumerate().map(
+                |(index, parameter)| {
+                    (
+                        crate::hir::HirCallArgumentTarget::Fixed(index as u32),
+                        parameter.mode(),
+                        parameter.ty(),
+                    )
+                },
+            ));
         }
 
         let mut provided = Vec::new();
@@ -2311,7 +2662,7 @@ impl Verifier<'_> {
                         *target == crate::hir::HirCallArgumentTarget::Fixed(index)
                     })
                     .copied(),
-                crate::hir::HirCallArgumentTarget::VariadicElement => function
+                crate::hir::HirCallArgumentTarget::VariadicElement => call_signature
                     .variadic()
                     .map(|ty| (argument.target, crate::types::ParameterMode::Value, ty)),
                 crate::hir::HirCallArgumentTarget::VariadicSpread => {
@@ -2322,7 +2673,7 @@ impl Verifier<'_> {
                         ));
                     }
                     spread = true;
-                    let element = function.variadic().ok_or_else(|| {
+                    let element = call_signature.variadic().ok_or_else(|| {
                         MirInvariantError::new(
                             context,
                             "variadic spread targets a non-variadic function",
@@ -2387,6 +2738,115 @@ impl Verifier<'_> {
             ));
         }
         Ok(())
+    }
+
+    fn generic_call_protocols(
+        &self,
+        function: &MirFunction,
+        position: u32,
+        signature: TypeId,
+        context: &str,
+    ) -> Result<HirClosureProtocols, MirInvariantError> {
+        let generics: &[HirGenericParameter] = match function.id {
+            MirFunctionId::Callable(callable) => self
+                .hir
+                .callable(callable)
+                .map(|callable| callable.generics())
+                .ok_or_else(|| {
+                    MirInvariantError::new(context, "MIR function has no HIR callable metadata")
+                })?,
+            MirFunctionId::Closure(closure) => self
+                .hir
+                .closure(closure)
+                .map(|closure| closure.generics())
+                .ok_or_else(|| {
+                    MirInvariantError::new(context, "MIR closure has no HIR metadata")
+                })?,
+        };
+        let parameter = generics
+            .iter()
+            .find(|parameter| parameter.position() == position)
+            .ok_or_else(|| {
+                MirInvariantError::new(
+                    context,
+                    format!("generic call target ${position} has no function binder"),
+                )
+            })?;
+        self.call_protocols_from_bounds(
+            parameter
+                .bounds()
+                .iter()
+                .map(|bound| (bound.constructor().clone(), bound.arguments().to_vec())),
+            signature,
+            context,
+        )
+    }
+
+    fn opaque_call_protocols(
+        &self,
+        identity: &crate::package::SymbolIdentity,
+        arguments: &[TypeId],
+        signature: TypeId,
+        context: &str,
+    ) -> Result<HirClosureProtocols, MirInvariantError> {
+        let opaque = self.hir.opaque_result(identity).ok_or_else(|| {
+            MirInvariantError::new(context, "opaque call target has no published contract")
+        })?;
+        let substitution = TypeSubstitution::new(arguments.to_vec());
+        let mut interner = self.hir.interner().clone();
+        let bounds = opaque
+            .bounds()
+            .iter()
+            .map(|bound| {
+                Ok((
+                    bound.constructor().clone(),
+                    bound
+                        .arguments()
+                        .iter()
+                        .map(|argument| {
+                            substitution
+                                .apply(&mut interner, *argument)
+                                .map_err(|error| MirInvariantError::new(context, error.to_string()))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                ))
+            })
+            .collect::<Result<Vec<_>, MirInvariantError>>()?;
+        self.call_protocols_from_bounds(bounds, signature, context)
+    }
+
+    fn call_protocols_from_bounds(
+        &self,
+        bounds: impl IntoIterator<Item = (HirTraitConstructor, Vec<TypeId>)>,
+        signature: TypeId,
+        context: &str,
+    ) -> Result<HirClosureProtocols, MirInvariantError> {
+        let mut call = false;
+        let mut call_mut = false;
+        let mut call_once = false;
+        let mut discard = false;
+        for (constructor, arguments) in bounds {
+            let HirTraitConstructor::Prelude(name) = constructor else {
+                continue;
+            };
+            match (name.as_str(), arguments.as_slice()) {
+                ("Call", [actual]) if *actual == signature => call = true,
+                ("CallMut", [actual]) if *actual == signature => call_mut = true,
+                ("CallOnce", [actual]) if *actual == signature => call_once = true,
+                ("Discard", []) => discard = true,
+                ("Call" | "CallMut" | "CallOnce", [_]) => {}
+                ("Call" | "CallMut" | "CallOnce", _) => {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "call protocol bound has an invalid signature arity",
+                    ));
+                }
+                _ => {}
+            }
+        }
+        call_mut |= call;
+        call_once |= discard && call_mut;
+        Ok(HirClosureProtocols::new(call, call_mut, call_once))
     }
 
     fn verify_span(
@@ -2873,15 +3333,22 @@ impl Verifier<'_> {
     }
 }
 
-fn function_context(id: HirCallableId) -> String {
+fn function_context(id: MirFunctionId) -> String {
     match id {
-        HirCallableId::Symbol(symbol) => format!("MIR function symbol#{}", symbol.index()),
-        HirCallableId::Member(member) => format!("MIR function member#{}", member.index()),
-        HirCallableId::Implementation(method) => format!(
+        MirFunctionId::Callable(HirCallableId::Symbol(symbol)) => {
+            format!("MIR function symbol#{}", symbol.index())
+        }
+        MirFunctionId::Callable(HirCallableId::Member(member)) => {
+            format!("MIR function member#{}", member.index())
+        }
+        MirFunctionId::Callable(HirCallableId::Implementation(method)) => format!(
             "MIR function implementation#{}.method#{}",
             method.implementation().index(),
             method.index()
         ),
+        MirFunctionId::Closure(closure) => {
+            format!("MIR closure function#{}", closure.index())
+        }
     }
 }
 
@@ -3011,7 +3478,9 @@ fn push_tag_operation(
                 push_tag_operand(function, value, events);
             }
         }
-        MirOperationKind::Call { callee, arguments } => {
+        MirOperationKind::Call {
+            callee, arguments, ..
+        } => {
             push_tag_operand(function, callee, events);
             for argument in arguments {
                 push_tag_operand(function, &argument.value, events);
@@ -3039,7 +3508,10 @@ fn push_tag_operation(
 }
 
 fn push_tag_operand(function: &MirFunction, operand: &MirOperand, events: &mut Vec<TagEvent>) {
-    if let MirOperandKind::Copy(place) | MirOperandKind::Move(place) = &operand.kind {
+    if let MirOperandKind::Copy(place)
+    | MirOperandKind::Move(place)
+    | MirOperandKind::Borrow(place) = &operand.kind
+    {
         push_tag_place(function, place, false, events);
     }
 }
@@ -3059,7 +3531,8 @@ fn push_tag_place(
             MirProjectionKind::VariantTuple { variant, .. }
             | MirProjectionKind::VariantField { variant, .. } => Some(MirTag::Variant(*variant)),
             MirProjectionKind::UnionValue(member) => Some(MirTag::Union(*member)),
-            MirProjectionKind::Field(_)
+            MirProjectionKind::ClosureCapture { .. }
+            | MirProjectionKind::Field(_)
             | MirProjectionKind::TupleField(_)
             | MirProjectionKind::NewtypeValue
             | MirProjectionKind::ArrayPatternIndex(_)
@@ -3144,7 +3617,9 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
             otherwise,
         } => {
             let place = match &value.kind {
-                MirOperandKind::Copy(place) | MirOperandKind::Move(place) => Some(place.clone()),
+                MirOperandKind::Copy(place)
+                | MirOperandKind::Move(place)
+                | MirOperandKind::Borrow(place) => Some(place.clone()),
                 MirOperandKind::Constant(_)
                 | MirOperandKind::Function { .. }
                 | MirOperandKind::PreludeTraitFunction { .. } => None,
@@ -3316,7 +3791,9 @@ fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>)
                 push_operand_events(value, events);
             }
         }
-        MirOperationKind::Call { callee, arguments } => {
+        MirOperationKind::Call {
+            callee, arguments, ..
+        } => {
             push_operand_events(callee, events);
             for argument in arguments {
                 push_operand_events(&argument.value, events);
@@ -3342,7 +3819,10 @@ fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>)
 }
 
 fn push_operand_events(operand: &MirOperand, events: &mut Vec<LocalEvent>) {
-    if let MirOperandKind::Copy(place) | MirOperandKind::Move(place) = &operand.kind {
+    if let MirOperandKind::Copy(place)
+    | MirOperandKind::Move(place)
+    | MirOperandKind::Borrow(place) = &operand.kind
+    {
         push_place_events(place, true, events);
     }
 }
@@ -3375,7 +3855,8 @@ fn push_place_events(place: &MirPlace, read_root: bool, events: &mut Vec<LocalEv
                         .map(LocalEvent::Read),
                 );
             }
-            MirProjectionKind::Field(_)
+            MirProjectionKind::ClosureCapture { .. }
+            | MirProjectionKind::Field(_)
             | MirProjectionKind::TupleField(_)
             | MirProjectionKind::NewtypeValue
             | MirProjectionKind::VariantTuple { .. }

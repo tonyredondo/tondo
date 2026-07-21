@@ -148,8 +148,8 @@ fn snapshot_object(
                 .map(|value| snapshot(present_value(value)?, visiting))
                 .collect::<Result<_, _>>()?,
         ),
-        HeapObject::Closure { closure, captures } => RuntimeValue::Closure {
-            closure: *closure,
+        HeapObject::Closure { callable, captures } => RuntimeValue::Closure {
+            closure: callable.index(),
             captures: captures
                 .iter()
                 .map(|value| snapshot(present_value(value)?, visiting))

@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::mem;
 
-use crate::bytecode::{BytecodeNominalId, BytecodeRangeKind, BytecodeTypeId};
+use crate::bytecode::{BytecodeCallableId, BytecodeNominalId, BytecodeRangeKind, BytecodeTypeId};
 
 use super::value::{AggregatePayload, Value};
 use super::{VmError, VmLimits, VmStatistics};
@@ -27,7 +27,7 @@ pub(super) enum HeapObject {
     Map(Vec<(Option<Value>, Option<Value>)>),
     Set(Vec<Option<Value>>),
     Closure {
-        closure: u32,
+        callable: BytecodeCallableId,
         captures: Vec<Option<Value>>,
     },
     Newtype {

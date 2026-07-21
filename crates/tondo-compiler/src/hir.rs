@@ -1332,7 +1332,9 @@ pub struct HirClosure {
     identity: GeneratedTypeIdentity,
     span: Span,
     ty: TypeId,
+    generic_arity: u32,
     function_type: TypeId,
+    protocols: HirClosureProtocols,
     generics: Vec<HirGenericParameter>,
     parameters: Vec<HirParameter>,
     captures: Vec<HirClosureCapture>,
@@ -1356,8 +1358,16 @@ impl HirClosure {
         self.ty
     }
 
+    pub fn generic_arity(&self) -> u32 {
+        self.generic_arity
+    }
+
     pub fn function_type(&self) -> TypeId {
         self.function_type
+    }
+
+    pub fn protocols(&self) -> HirClosureProtocols {
+        self.protocols
     }
 
     pub fn generics(&self) -> &[HirGenericParameter] {
@@ -1375,6 +1385,54 @@ impl HirClosure {
     pub fn body(&self) -> &HirBody {
         &self.body
     }
+}
+
+/// The three closed invocation contracts derived for a concrete closure.
+///
+/// The implications from the language specification are materialized here so
+/// every later compiler layer can validate and consume one canonical answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HirClosureProtocols {
+    call: bool,
+    call_mut: bool,
+    call_once: bool,
+}
+
+impl HirClosureProtocols {
+    pub const fn new(call: bool, call_mut: bool, call_once: bool) -> Self {
+        Self {
+            call,
+            call_mut,
+            call_once,
+        }
+    }
+
+    pub const fn supports(self, protocol: HirCallProtocol) -> bool {
+        match protocol {
+            HirCallProtocol::Call => self.call,
+            HirCallProtocol::CallMut => self.call_mut,
+            HirCallProtocol::CallOnce => self.call_once,
+        }
+    }
+
+    pub const fn call(self) -> bool {
+        self.call
+    }
+
+    pub const fn call_mut(self) -> bool {
+        self.call_mut
+    }
+
+    pub const fn call_once(self) -> bool {
+        self.call_once
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum HirCallProtocol {
+    Call,
+    CallMut,
+    CallOnce,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1656,6 +1714,8 @@ pub enum HirExpressionKind {
     Call {
         callee: HirExpressionId,
         arguments: Vec<HirCallArgument>,
+        signature: TypeId,
+        protocol: HirCallProtocol,
     },
     PreludePanic {
         message: HirExpressionId,

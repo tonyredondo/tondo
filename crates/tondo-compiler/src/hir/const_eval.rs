@@ -543,7 +543,7 @@ fn evaluate_composite(
                 Assignability::UnionInjection | Assignability::UnionWidening => {
                     HirConstantValueKind::Converted(Box::new(inner))
                 }
-                Assignability::Diverging => {
+                Assignability::CallableErasure | Assignability::Diverging => {
                     return Err(ConstantEvaluationError::Unavailable);
                 }
             }

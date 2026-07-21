@@ -226,6 +226,31 @@ pub struct BytecodeCallable {
     pub outcome: BytecodeTypeId,
     pub function_type: BytecodeTypeId,
     pub implementation: Option<BytecodeFunctionId>,
+    pub closure: Option<BytecodeClosure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BytecodeClosure {
+    pub environment: BytecodeTypeId,
+    pub captures: Vec<BytecodeTypeId>,
+    pub protocols: BytecodeClosureProtocols,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BytecodeClosureProtocols {
+    pub call: bool,
+    pub call_mut: bool,
+    pub call_once: bool,
+}
+
+impl BytecodeClosureProtocols {
+    pub const fn supports(self, protocol: BytecodeCallProtocol) -> bool {
+        match protocol {
+            BytecodeCallProtocol::Call => self.call,
+            BytecodeCallProtocol::CallMut => self.call_mut,
+            BytecodeCallProtocol::CallOnce => self.call_once,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -381,6 +406,10 @@ pub struct BytecodeProjection {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BytecodeProjectionKind {
+    ClosureCapture {
+        callable: BytecodeCallableId,
+        index: u32,
+    },
     Field(u32),
     TupleField(u32),
     NewtypeValue,
@@ -423,6 +452,7 @@ pub enum BytecodeOperandKind {
     Constant(BytecodeConstant),
     Copy(BytecodePlace),
     Move(BytecodePlace),
+    Borrow(BytecodePlace),
     Function {
         callable: BytecodeCallableId,
         arguments: Vec<BytecodeTypeId>,
@@ -495,7 +525,7 @@ pub enum BytecodeAggregateKind {
     Array,
     Set,
     Closure {
-        closure: u32,
+        callable: BytecodeCallableId,
         captures: Vec<BytecodeTypeId>,
     },
     Newtype {
@@ -519,6 +549,7 @@ pub enum BytecodeAggregateKind {
 pub enum BytecodeCoercion {
     Exact,
     Opaque,
+    CallableErasure,
     UnionInjection,
     UnionWidening,
     OptionLift,
@@ -618,6 +649,8 @@ pub enum BytecodeOperationKind {
     Call {
         callee: BytecodeOperand,
         arguments: Vec<BytecodeCallArgument>,
+        signature: BytecodeTypeId,
+        protocol: BytecodeCallProtocol,
     },
     ExplicitPanic {
         message: BytecodeOperand,
@@ -631,6 +664,13 @@ pub enum BytecodeOperationKind {
         function: BytecodeBootstrapHostFunction,
         arguments: Vec<BytecodeOperand>,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BytecodeCallProtocol {
+    Call,
+    CallMut,
+    CallOnce,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
