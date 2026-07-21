@@ -16075,6 +16075,69 @@ mod tests {
     }
 
     #[test]
+    fn closure_protocols_follow_nested_mutable_calls_and_arguments() {
+        let (_, _, output) = check(
+            "fn touch(value: mut Int) {\n\
+                 value += 1\n\
+             }\n\
+             fn build() {\n\
+                 var count = 0\n\
+                 var inner = (): Int {\n\
+                     count += 1\n\
+                     count\n\
+                 }\n\
+                 let through_call = (): Int { inner() }\n\
+                 let through_argument = () { touch(mut count) }\n\
+                 _ = through_call\n\
+                 _ = through_argument\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let protocols = output
+            .program()
+            .closures()
+            .map(HirClosure::protocols)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            protocols,
+            vec![HirClosureProtocols::new(false, true, true); 3]
+        );
+    }
+
+    #[test]
+    fn unreachable_capture_writes_do_not_weaken_closure_protocols() {
+        let (_, _, output) = check(
+            "fn build(): Int {\n\
+                 var count = 0\n\
+                 let operation = (): Int {\n\
+                     return 42\n\
+                     count += 1\n\
+                     count\n\
+                 }\n\
+                 operation()\n\
+             }\n",
+        );
+        assert!(output.is_complete());
+        assert!(
+            output
+                .diagnostics()
+                .iter()
+                .all(|diagnostic| diagnostic.code().as_str() == "W1006"),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert_eq!(
+            output.program().closures().next().unwrap().protocols(),
+            HirClosureProtocols::new(true, true, true)
+        );
+    }
+
+    #[test]
     fn ordinary_closure_calls_choose_the_first_permitted_protocol() {
         let (_, _, output) = check(
             "fn execute(offset: Int): (Int, Int, Int) {\n\

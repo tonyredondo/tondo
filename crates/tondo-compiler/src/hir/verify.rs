@@ -3674,11 +3674,25 @@ impl Verifier<'_> {
             let assumptions = self.trait_assumptions(&signature.generics, "call protocols")?;
             let capabilities =
                 CapabilityAssumptions::from_generics(self.program, &signature.generics);
+            let exclusive_parameters = signature
+                .parameters
+                .iter()
+                .filter(|parameter| {
+                    matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
+                })
+                .filter_map(|parameter| parameter.local)
+                .collect::<BTreeSet<_>>();
+            let mutable_receiver = signature.parameters.iter().any(|parameter| {
+                parameter.receiver
+                    && matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
+            });
             self.verify_call_protocol_tree(
                 body.root,
                 &assumptions,
                 &capabilities,
                 &analysis,
+                &exclusive_parameters,
+                mutable_receiver,
                 &format!("{} call protocols", callable_context(*callable)),
             )?;
         }
@@ -3689,11 +3703,21 @@ impl Verifier<'_> {
             )?;
             let capabilities =
                 CapabilityAssumptions::from_generics(self.program, &closure.generics);
+            let exclusive_parameters = closure
+                .parameters
+                .iter()
+                .filter(|parameter| {
+                    matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
+                })
+                .filter_map(|parameter| parameter.local)
+                .collect::<BTreeSet<_>>();
             self.verify_call_protocol_tree(
                 closure.body.root,
                 &assumptions,
                 &capabilities,
                 &analysis,
+                &exclusive_parameters,
+                false,
                 &format!("closure#{} call protocols", closure.id.index()),
             )?;
         }
@@ -3727,6 +3751,8 @@ impl Verifier<'_> {
         assumptions: &BTreeSet<TraitQuery>,
         capabilities: &CapabilityAssumptions,
         analysis: &CapabilityAnalysis,
+        exclusive_parameters: &BTreeSet<crate::resolve::LocalId>,
+        mutable_receiver: bool,
         context: &str,
     ) -> Result<(), HirInvariantError> {
         let mut pending = vec![root];
@@ -3755,7 +3781,12 @@ impl Verifier<'_> {
                 let expected = if available.supports(super::HirCallProtocol::Call) {
                     Some(super::HirCallProtocol::Call)
                 } else if available.supports(super::HirCallProtocol::CallMut)
-                    && self.call_mut_place_is_available(*callee, context)?
+                    && self.call_mut_place_is_available(
+                        *callee,
+                        exclusive_parameters,
+                        mutable_receiver,
+                        context,
+                    )?
                 {
                     Some(super::HirCallProtocol::CallMut)
                 } else if available.supports(super::HirCallProtocol::CallOnce)
@@ -3903,36 +3934,24 @@ impl Verifier<'_> {
     fn call_mut_place_is_available(
         &self,
         expression: HirExpressionId,
+        exclusive_parameters: &BTreeSet<crate::resolve::LocalId>,
+        mutable_receiver: bool,
         context: &str,
     ) -> Result<bool, HirInvariantError> {
         Ok(match &self.expression(expression, context)?.kind {
             HirExpressionKind::Local(local) => {
-                self.local_is_mutable_binding(*local)
-                    || self.program.callables.iter().any(|callable| {
-                        callable.parameters.iter().any(|parameter| {
-                            parameter.local == Some(*local)
-                                && matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
-                        })
-                    })
-                    || self.program.closures.iter().any(|closure| {
-                        closure.parameters.iter().any(|parameter| {
-                            parameter.local == Some(*local)
-                                && matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
-                        })
-                    })
+                self.local_is_mutable_binding(*local) || exclusive_parameters.contains(local)
             }
             HirExpressionKind::Field { base, .. }
             | HirExpressionKind::TupleField { base, .. }
             | HirExpressionKind::Index { base, .. }
-            | HirExpressionKind::Slice { base, .. } => {
-                self.call_mut_place_is_available(*base, context)?
-            }
-            HirExpressionKind::Receiver => self.program.callables.iter().any(|callable| {
-                callable.parameters.iter().any(|parameter| {
-                    parameter.receiver
-                        && matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
-                })
-            }),
+            | HirExpressionKind::Slice { base, .. } => self.call_mut_place_is_available(
+                *base,
+                exclusive_parameters,
+                mutable_receiver,
+                context,
+            )?,
+            HirExpressionKind::Receiver => mutable_receiver,
             _ => false,
         })
     }

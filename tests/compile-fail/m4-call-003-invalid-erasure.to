@@ -1,0 +1,9 @@
+fn main() {
+    var count = 0
+    let increment = (): Int {
+        count += 1
+        count
+    }
+    let erased: fn(): Int = increment
+    _ = erased
+}

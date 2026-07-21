@@ -125,6 +125,7 @@ pub fn lower_to_bytecode(
         let context = FunctionLoweringContext {
             hir,
             catalog: &catalog,
+            callables: &callables,
             nominal_ids: &nominal_ids,
             callable_ids: &callable_ids,
             dispatches: &monomorphization.dispatches,
@@ -2225,6 +2226,7 @@ fn lower_constant_variant(
 struct FunctionLoweringContext<'a> {
     hir: &'a HirProgram,
     catalog: &'a TypeCatalog,
+    callables: &'a [bc::BytecodeCallable],
     nominal_ids: &'a BTreeMap<SymbolId, bc::BytecodeNominalId>,
     callable_ids: &'a BTreeMap<ExecutableInstance, bc::BytecodeCallableId>,
     dispatches: &'a BTreeMap<CallableInstance, CallableInstance>,
@@ -2876,15 +2878,19 @@ fn lower_operation(
             arguments,
             signature,
             protocol,
-        } => bc::BytecodeOperationKind::Call {
-            callee: operand(callee)?,
-            arguments: arguments
-                .iter()
-                .map(|argument| lower_call_argument(argument, context, type_map))
-                .collect::<Result<_, BytecodeError>>()?,
-            signature: mapped_catalog_id(*signature, type_map, context.catalog)?,
-            protocol: call_protocol(*protocol),
-        },
+        } => {
+            let callee = operand(callee)?;
+            let protocol = normalized_call_protocol(*protocol, &callee, context)?;
+            bc::BytecodeOperationKind::Call {
+                callee,
+                arguments: arguments
+                    .iter()
+                    .map(|argument| lower_call_argument(argument, context, type_map))
+                    .collect::<Result<_, BytecodeError>>()?,
+                signature: mapped_catalog_id(*signature, type_map, context.catalog)?,
+                protocol,
+            }
+        }
         MirOperationKind::ExplicitPanic { message } => bc::BytecodeOperationKind::ExplicitPanic {
             message: operand(message)?,
         },
@@ -2924,6 +2930,132 @@ fn lower_operation(
         ty: mapped_catalog_id(operation.ty(), type_map, context.catalog)?,
         kind,
     })
+}
+
+fn normalized_call_protocol(
+    source: HirCallProtocol,
+    callee: &bc::BytecodeOperand,
+    context: &FunctionLoweringContext<'_>,
+) -> Result<bc::BytecodeCallProtocol, BytecodeError> {
+    let concrete = match &context
+        .catalog
+        .types
+        .get(callee.ty.index() as usize)
+        .ok_or_else(|| {
+            BytecodeError::construction(
+                "call protocol",
+                format!("callee references missing type#{}", callee.ty.index()),
+            )
+        })?
+        .kind
+    {
+        bc::BytecodeTypeKind::Function(_) => bc::BytecodeCallProtocol::Call,
+        bc::BytecodeTypeKind::Generated { .. } | bc::BytecodeTypeKind::OpaqueResult { .. } => {
+            match concrete_callable_for_type(callee.ty, context)? {
+                ConcreteCallable::Function => bc::BytecodeCallProtocol::Call,
+                ConcreteCallable::Closure(closure) => {
+                    let borrowed = matches!(callee.kind, bc::BytecodeOperandKind::Borrow(_));
+                    if closure.protocols.call {
+                        bc::BytecodeCallProtocol::Call
+                    } else if closure.protocols.call_mut && borrowed {
+                        bc::BytecodeCallProtocol::CallMut
+                    } else if closure.protocols.call_once && !borrowed {
+                        bc::BytecodeCallProtocol::CallOnce
+                    } else {
+                        return Err(BytecodeError::construction(
+                            "call protocol",
+                            "specialized closure does not permit the lowered callee access",
+                        ));
+                    }
+                }
+            }
+        }
+        _ => {
+            return Err(BytecodeError::construction(
+                "call protocol",
+                "indirect callee has no executable callable representation",
+            ));
+        }
+    };
+    let source = call_protocol(source);
+    let valid_specialization = matches!(
+        (source, concrete),
+        (
+            bc::BytecodeCallProtocol::Call,
+            bc::BytecodeCallProtocol::Call
+        ) | (
+            bc::BytecodeCallProtocol::CallMut,
+            bc::BytecodeCallProtocol::Call | bc::BytecodeCallProtocol::CallMut
+        ) | (bc::BytecodeCallProtocol::CallOnce, _)
+    );
+    if !valid_specialization {
+        return Err(BytecodeError::construction(
+            "call protocol",
+            "specialization weakens the source call protocol",
+        ));
+    }
+    Ok(concrete)
+}
+
+enum ConcreteCallable<'a> {
+    Function,
+    Closure(&'a bc::BytecodeClosure),
+}
+
+fn concrete_callable_for_type<'a>(
+    mut ty: bc::BytecodeTypeId,
+    context: &'a FunctionLoweringContext<'_>,
+) -> Result<ConcreteCallable<'a>, BytecodeError> {
+    let mut visited = BTreeSet::new();
+    loop {
+        if !visited.insert(ty) {
+            return Err(BytecodeError::construction(
+                "call protocol",
+                "opaque callable representation forms a cycle",
+            ));
+        }
+        let kind = &context
+            .catalog
+            .types
+            .get(ty.index() as usize)
+            .ok_or_else(|| {
+                BytecodeError::construction(
+                    "call protocol",
+                    format!("callable references missing type#{}", ty.index()),
+                )
+            })?
+            .kind;
+        match kind {
+            bc::BytecodeTypeKind::OpaqueResult { witness, .. } => ty = *witness,
+            bc::BytecodeTypeKind::Generated { .. } => {
+                let mut matches = context
+                    .callables
+                    .iter()
+                    .filter_map(|callable| callable.closure.as_ref())
+                    .filter(|closure| closure.environment == ty);
+                let closure = matches.next();
+                if matches.next().is_some() {
+                    return Err(BytecodeError::construction(
+                        "call protocol",
+                        "generated environment maps to multiple closure callables",
+                    ));
+                }
+                return closure.map(ConcreteCallable::Closure).ok_or_else(|| {
+                    BytecodeError::construction(
+                        "call protocol",
+                        "generated callable has no closure metadata",
+                    )
+                });
+            }
+            bc::BytecodeTypeKind::Function(_) => return Ok(ConcreteCallable::Function),
+            _ => {
+                return Err(BytecodeError::construction(
+                    "call protocol",
+                    "callable representation is neither a function nor a closure",
+                ));
+            }
+        }
+    }
 }
 
 fn lower_call_argument(
@@ -4172,6 +4304,40 @@ mod tests {
         *indirect_call(&mut wrong_stateful).2 = bc::BytecodeCallProtocol::Call;
         let error = bc::verify_bytecode(&wrong_stateful).unwrap_err();
         assert!(error.message().contains("operation"));
+
+        let mut generic_once = lowered(
+            "fn increment(value: Int): Int { value + 1 }\n\
+             fn invoke[F: Copy + CallOnce[fn(Int): Int]](operation: F): Int {\n\
+                 operation(41)\n\
+             }\n\
+             fn execute(): Int { invoke(increment) }\n",
+        );
+        assert_eq!(
+            *indirect_call(&mut generic_once).2,
+            bc::BytecodeCallProtocol::Call,
+            "a closed specialization records the strongest concrete protocol"
+        );
+        *indirect_call(&mut generic_once).2 = bc::BytecodeCallProtocol::CallOnce;
+        let error = bc::verify_bytecode(&generic_once).unwrap_err();
+        assert!(error.message().contains("operation"));
+
+        let mut opaque_mut = lowered(
+            "fn make(offset: Int): impl CallMut[fn(Int): Int] + Discard {\n\
+                 (value: Int): Int { value + offset }\n\
+             }\n\
+             fn execute(): Int {\n\
+                 var operation = make(40)\n\
+                 operation(2)\n\
+             }\n",
+        );
+        assert_eq!(
+            *indirect_call(&mut opaque_mut).2,
+            bc::BytecodeCallProtocol::Call,
+            "the sealed pure witness safely strengthens its published protocol"
+        );
+        *indirect_call(&mut opaque_mut).2 = bc::BytecodeCallProtocol::CallMut;
+        let error = bc::verify_bytecode(&opaque_mut).unwrap_err();
+        assert!(error.message().contains("operation"));
     }
 
     #[test]
@@ -4929,6 +5095,74 @@ mod tests {
     }
 
     #[test]
+    fn nested_projected_stateful_and_fallible_closures_execute() {
+        assert_eq!(
+            execute_function(
+                "fn execute(): Int {\n\
+                     let base = 39\n\
+                     let make = (offset: Int) {\n\
+                         (value: Int): Int { base + offset + value }\n\
+                     }\n\
+                     let operation = make(1)\n\
+                     operation(2)\n\
+                 }\n",
+                "execute",
+            ),
+            RuntimeValue::Integer(42)
+        );
+        assert_eq!(
+            execute_function(
+                "fn make_counter(start: Int): impl CallMut[fn(): Int] + Discard {\n\
+                     var count = start\n\
+                     (): Int {\n\
+                         count += 1\n\
+                         count\n\
+                     }\n\
+                 }\n\
+                 fn execute(): Int {\n\
+                     var counter = make_counter(40)\n\
+                     counter() + counter()\n\
+                 }\n",
+                "execute",
+            ),
+            RuntimeValue::Integer(83)
+        );
+        assert_eq!(
+            execute_function(
+                "fn execute(): Int {\n\
+                     let offset = 40\n\
+                     let add: fn(Int): Int = (value) { offset + value }\n\
+                     let operations = [add]\n\
+                     operations[0](2)\n\
+                 }\n",
+                "execute",
+            ),
+            RuntimeValue::Integer(42)
+        );
+
+        let source = "fn evaluate(value: Int): Int ! String {\n\
+                          let adjust = (candidate: Int): Int ! String {\n\
+                              if candidate < 0 {\n\
+                                  fail \"negative\"\n\
+                              }\n\
+                              candidate + 1\n\
+                          }\n\
+                          let adjusted = adjust(value)?\n\
+                          adjusted + 1\n\
+                      }\n\
+                      fn success(): Int ! String { evaluate(0) }\n\
+                      fn failure(): Int ! String { evaluate(-1) }\n";
+        assert_eq!(
+            execute_function(source, "success"),
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(2)))
+        );
+        assert_eq!(
+            execute_function(source, "failure"),
+            RuntimeValue::ResultErr(Box::new(RuntimeValue::String("negative".into())))
+        );
+    }
+
+    #[test]
     fn generic_opaque_and_variadic_closure_calls_use_the_same_indirect_path() {
         assert_eq!(
             execute_function(
@@ -4947,12 +5181,70 @@ mod tests {
         );
         assert_eq!(
             execute_function(
+                "fn increment(value: Int): Int { value + 1 }\n\
+                 fn invoke_once[F: Copy + CallOnce[fn(Int): Int]](\n\
+                     operation: F,\n\
+                     value: Int,\n\
+                 ): Int {\n\
+                     operation(value)\n\
+                 }\n\
+                 fn execute(): (Int, Int) {\n\
+                     let offset = 40\n\
+                     let closure = (value: Int): Int { value + offset }\n\
+                     (invoke_once(increment, 41), invoke_once(closure, 2))\n\
+                 }\n",
+                "execute",
+            ),
+            RuntimeValue::Tuple(vec![RuntimeValue::Integer(42), RuntimeValue::Integer(42)])
+        );
+        assert_eq!(
+            execute_function(
                 "fn make(offset: Int): impl Call[fn(Int): Int] + Discard {\n\
                      (value: Int): Int { value + offset }\n\
                  }\n\
                  fn execute(): Int {\n\
                      let operation = make(40)\n\
                      operation(2)\n\
+                 }\n",
+                "execute",
+            ),
+            RuntimeValue::Integer(42)
+        );
+        assert_eq!(
+            execute_function(
+                "fn make(offset: Int): impl CallMut[fn(Int): Int] + Discard {\n\
+                     (value: Int): Int { value + offset }\n\
+                 }\n\
+                 fn execute(): Int {\n\
+                     var operation = make(40)\n\
+                     operation(2)\n\
+                 }\n",
+                "execute",
+            ),
+            RuntimeValue::Integer(42)
+        );
+        assert_eq!(
+            execute_function(
+                "fn make(offset: Int): impl Copy + CallOnce[fn(Int): Int] + Discard {\n\
+                     (value: Int): Int { value + offset }\n\
+                 }\n\
+                 fn execute(): Int {\n\
+                     let operation = make(40)\n\
+                     operation(2)\n\
+                 }\n",
+                "execute",
+            ),
+            RuntimeValue::Integer(42)
+        );
+        assert_eq!(
+            execute_function(
+                "fn increment(value: Int): Int { value + 1 }\n\
+                 fn make(): impl Copy + CallOnce[fn(Int): Int] + Discard {\n\
+                     increment\n\
+                 }\n\
+                 fn execute(): Int {\n\
+                     let operation = make()\n\
+                     operation(41)\n\
                  }\n",
                 "execute",
             ),

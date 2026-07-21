@@ -272,9 +272,8 @@ impl CapabilityAnalysis {
             BytecodeTypeKind::OpaqueResult { witness, .. } => {
                 dependent_capability(vec![(*witness, capability)])
             }
-            BytecodeTypeKind::Generated { .. } | BytecodeTypeKind::Cursor { .. } => {
-                fixed_capability(false)
-            }
+            BytecodeTypeKind::Generated { .. } => generated_capability(program, ty, capability),
+            BytecodeTypeKind::Cursor { .. } => fixed_capability(false),
         };
         Ok(node)
     }
@@ -352,9 +351,12 @@ fn capability_requirement(
             BytecodeTypeKind::OpaqueResult { witness, .. } => {
                 pending.push((*witness, capability));
             }
-            BytecodeTypeKind::Generated { .. } | BytecodeTypeKind::Cursor { .. } => {
-                requirement.possible = false;
+            BytecodeTypeKind::Generated { .. } => {
+                let node = generated_capability(program, ty, capability);
+                requirement.possible &= node.possible;
+                pending.extend(node.dependencies);
             }
+            BytecodeTypeKind::Cursor { .. } => requirement.possible = false,
         }
     }
     Ok(requirement)
@@ -374,6 +376,30 @@ fn nominal_capability_roots(shape: &BytecodeNominalShape) -> Vec<BytecodeTypeId>
                 }
             })
             .collect(),
+    }
+}
+
+fn generated_capability(
+    program: &BytecodeProgram,
+    ty: BytecodeTypeId,
+    capability: ClosedCapability,
+) -> CapabilityNode {
+    let captures = program.callables.iter().find_map(|callable| {
+        callable
+            .closure
+            .as_ref()
+            .filter(|closure| closure.environment == ty)
+            .map(|closure| closure.captures.as_slice())
+    });
+    let Some(captures) = captures else {
+        return fixed_capability(false);
+    };
+    match capability {
+        ClosedCapability::Copy
+        | ClosedCapability::Discard
+        | ClosedCapability::Send
+        | ClosedCapability::Share => same_capability(captures, capability),
+        ClosedCapability::Equatable | ClosedCapability::Key => fixed_capability(false),
     }
 }
 
@@ -1918,6 +1944,14 @@ impl Verifier<'_> {
                         "place operand changes its type",
                     ));
                 }
+                if matches!(operand.kind, BytecodeOperandKind::Copy(_))
+                    && !self.capability(operand.ty, ClosedCapability::Copy, context)?
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "Copy operand type does not satisfy its closed Copy contract",
+                    ));
+                }
             }
             BytecodeOperandKind::Function {
                 callable,
@@ -2899,7 +2933,6 @@ impl Verifier<'_> {
         if function.outcome != outcome {
             return Err(operation_error(context));
         }
-        let closure_callable = self.closure_callable_for_type(callee.ty, context)?;
         match &self.ty(callee.ty, context)?.kind {
             BytecodeTypeKind::Function(_) => {
                 if callee.ty != signature || protocol != BytecodeCallProtocol::Call {
@@ -2907,25 +2940,26 @@ impl Verifier<'_> {
                 }
             }
             BytecodeTypeKind::Generated { .. } | BytecodeTypeKind::OpaqueResult { .. } => {
-                let callable = closure_callable.ok_or_else(|| operation_error(context))?;
-                let closure = callable
-                    .closure
-                    .as_ref()
-                    .ok_or_else(|| operation_error(context))?;
-                let expected = if closure.protocols.call {
-                    Some(BytecodeCallProtocol::Call)
-                } else if closure.protocols.call_mut
-                    && matches!(callee.kind, BytecodeOperandKind::Borrow(_))
-                {
-                    Some(BytecodeCallProtocol::CallMut)
-                } else if closure.protocols.call_once
-                    && !matches!(callee.kind, BytecodeOperandKind::Borrow(_))
-                {
-                    Some(BytecodeCallProtocol::CallOnce)
-                } else {
-                    None
+                let (concrete_signature, callable) =
+                    self.concrete_callable_for_type(callee.ty, context)?;
+                let expected = match callable.and_then(|callable| callable.closure.as_ref()) {
+                    None => Some(BytecodeCallProtocol::Call),
+                    Some(closure) if closure.protocols.call => Some(BytecodeCallProtocol::Call),
+                    Some(closure)
+                        if closure.protocols.call_mut
+                            && matches!(callee.kind, BytecodeOperandKind::Borrow(_)) =>
+                    {
+                        Some(BytecodeCallProtocol::CallMut)
+                    }
+                    Some(closure)
+                        if closure.protocols.call_once
+                            && !matches!(callee.kind, BytecodeOperandKind::Borrow(_)) =>
+                    {
+                        Some(BytecodeCallProtocol::CallOnce)
+                    }
+                    Some(_) => None,
                 };
-                if callable.function_type != signature || expected != Some(protocol) {
+                if concrete_signature != signature || expected != Some(protocol) {
                     return Err(operation_error(context));
                 }
             }
@@ -3061,6 +3095,34 @@ impl Verifier<'_> {
                     }));
                 }
                 _ => return Ok(None),
+            }
+        }
+    }
+
+    fn concrete_callable_for_type(
+        &self,
+        mut ty: BytecodeTypeId,
+        context: &str,
+    ) -> Result<(BytecodeTypeId, Option<&BytecodeCallable>), BytecodeVerificationError> {
+        loop {
+            match &self.ty(ty, context)?.kind {
+                BytecodeTypeKind::OpaqueResult { witness, .. } => ty = *witness,
+                BytecodeTypeKind::Function(_) => return Ok((ty, None)),
+                BytecodeTypeKind::Generated { .. } => {
+                    let callable = self
+                        .program
+                        .callables
+                        .iter()
+                        .find(|callable| {
+                            callable
+                                .closure
+                                .as_ref()
+                                .is_some_and(|closure| closure.environment == ty)
+                        })
+                        .ok_or_else(|| operation_error(context))?;
+                    return Ok((callable.function_type, Some(callable)));
+                }
+                _ => return Err(operation_error(context)),
             }
         }
     }

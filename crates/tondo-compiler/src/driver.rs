@@ -2103,22 +2103,28 @@ mod tests {
     }
 
     #[test]
-    fn closure_environments_are_constructed_copied_and_traced_by_the_vm() {
+    fn closure_protocols_and_invocation_cross_the_public_run_pipeline() {
         let output = execute(operation_request(
             Operation::Run,
-            b"fn keep[T: Copy + Discard](value: T) {\n\
+            b"fn keep[T: Copy + Discard](value: T): T {\n\
                   let closure = (): T { value }\n\
-                  let copied = closure\n\
-                  _ = closure\n\
-                  _ = copied\n\
+                  closure()\n\
               }\n\
               fn main() {\n\
                   let seed = 40\n\
                   let add = (value: Int): Int { seed + value }\n\
                   let copied = add\n\
-                  _ = add\n\
-                  _ = copied\n\
-                  keep(42)\n\
+                  assert(add(2) == 42)\n\
+                  assert(copied(2) == 42)\n\
+                  var count = 0\n\
+                  var next = (): Int {\n\
+                      count += 1\n\
+                      count\n\
+                  }\n\
+                  assert(next() == 1)\n\
+                  assert(next() == 2)\n\
+                  assert(count == 0)\n\
+                  assert(keep(42) == 42)\n\
               }\n",
             SourceForm::Script,
             ResourceLimits::default(),

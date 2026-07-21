@@ -1,0 +1,38 @@
+fn increment(value: Int): Int {
+    value + 1
+}
+
+fn apply[F: Call[fn(Int): Int]](operation: F, value: Int): Int {
+    operation(value)
+}
+
+fn makeCounter(start: Int): impl CallMut[fn(): Int] + Discard {
+    var count = start
+    (): Int {
+        count += 1
+        count
+    }
+}
+
+fn main() {
+    let offset = 40
+    let add = (value: Int): Int { offset + value }
+    assert(apply(add, 2) == 42)
+    assert(apply(increment, 41) == 42)
+
+    var counter = makeCounter(40)
+    assert(counter() == 41)
+    assert(counter() == 42)
+
+    var captured = 0
+    let copiedOnce = (): Int {
+        captured += 1
+        captured
+    }
+    assert(copiedOnce() == 1)
+    assert(copiedOnce() == 1)
+    assert(captured == 0)
+
+    let erased: fn(Int): Int = (value) { offset + value }
+    assert(erased(2) == 42)
+}
