@@ -75,6 +75,14 @@ pub struct MirVerificationLimits {
     pub max_dataflow_steps: u64,
 }
 
+struct MirCallVerification<'a> {
+    callee: &'a MirOperand,
+    arguments: &'a [super::MirCallArgument],
+    signature: TypeId,
+    protocol: HirCallProtocol,
+    outcome: TypeId,
+}
+
 impl Default for MirVerificationLimits {
     fn default() -> Self {
         Self {
@@ -969,11 +977,13 @@ impl Verifier<'_> {
                 }
                 self.verify_call(
                     function,
-                    callee,
-                    arguments,
-                    *signature,
-                    *protocol,
-                    operation.ty,
+                    MirCallVerification {
+                        callee,
+                        arguments,
+                        signature: *signature,
+                        protocol: *protocol,
+                        outcome: operation.ty,
+                    },
                     context,
                 )?;
             }
@@ -2490,13 +2500,16 @@ impl Verifier<'_> {
     fn verify_call(
         &self,
         function: &MirFunction,
-        callee: &MirOperand,
-        arguments: &[super::MirCallArgument],
-        signature: TypeId,
-        protocol: crate::hir::HirCallProtocol,
-        outcome: TypeId,
+        verification: MirCallVerification<'_>,
         context: &str,
     ) -> Result<(), MirInvariantError> {
+        let MirCallVerification {
+            callee,
+            arguments,
+            signature,
+            protocol,
+            outcome,
+        } = verification;
         let TypeKind::Function(call_signature) = self.kind(signature, context)? else {
             return Err(MirInvariantError::new(
                 context,

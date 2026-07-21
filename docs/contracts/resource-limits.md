@@ -62,17 +62,19 @@ summaries over the already bounded interned type graph and does not recursively
 instantiate nominal families. Each generic
 bound request still consumes the trait-obligation budget. Concrete closure
 signatures and environments are bounded by the existing syntax, type, and HIR
-budgets; callable-protocol derivation owned by CALL-003 remains incomplete
-rather than being guessed.
+budgets. Callable-protocol derivation performs a bounded traversal over the
+already topological HIR arenas and does not add recursive source traversal.
 
 MIR and bytecode construction bound every request-local table before growth;
 their initialization, lifetime, and tag-refinement analyses share independent
 step budgets and use worklists. Bytecode monomorphization counts each unique
-generic callable plus concrete argument vector exactly once. Same-instance
-recursion is deduplicated, while type-expanding recursion stops at the generic
-instantiation limit. Specialized type construction remains subject to the
-interned type-node limit, and the final concrete catalog has its own bytecode
-type-entry limit.
+named or closure callable plus concrete argument vector exactly once; a generic
+closure body therefore consumes one instance independently of its enclosing
+function. Same-instance recursion is deduplicated, while type-expanding
+recursion stops at the generic instantiation limit. Closure callable schemas and
+protocol rows use the existing callable/type table budgets. Specialized type
+construction remains subject to the interned type-node limit, and the final
+concrete catalog has its own bytecode type-entry limit.
 
 VM admission and execution enforce non-zero verification, instruction, frame,
 object, byte, and initial-collection budgets. The collector performs a full

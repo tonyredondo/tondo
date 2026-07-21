@@ -77,6 +77,15 @@ struct Verifier<'a> {
     program: &'a HirProgram,
 }
 
+struct CallProtocolVerification<'a> {
+    assumptions: &'a BTreeSet<TraitQuery>,
+    capabilities: &'a CapabilityAssumptions,
+    analysis: &'a CapabilityAnalysis,
+    exclusive_parameters: &'a BTreeSet<crate::resolve::LocalId>,
+    mutable_receiver: bool,
+    context: &'a str,
+}
+
 struct OpaqueTraitProof {
     interner: TypeInterner,
     assumptions: BTreeSet<TraitQuery>,
@@ -3686,14 +3695,17 @@ impl Verifier<'_> {
                 parameter.receiver
                     && matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
             });
+            let context = format!("{} call protocols", callable_context(*callable));
             self.verify_call_protocol_tree(
                 body.root,
-                &assumptions,
-                &capabilities,
-                &analysis,
-                &exclusive_parameters,
-                mutable_receiver,
-                &format!("{} call protocols", callable_context(*callable)),
+                CallProtocolVerification {
+                    assumptions: &assumptions,
+                    capabilities: &capabilities,
+                    analysis: &analysis,
+                    exclusive_parameters: &exclusive_parameters,
+                    mutable_receiver,
+                    context: &context,
+                },
             )?;
         }
         for closure in &self.program.closures {
@@ -3711,14 +3723,17 @@ impl Verifier<'_> {
                 })
                 .filter_map(|parameter| parameter.local)
                 .collect::<BTreeSet<_>>();
+            let context = format!("closure#{} call protocols", closure.id.index());
             self.verify_call_protocol_tree(
                 closure.body.root,
-                &assumptions,
-                &capabilities,
-                &analysis,
-                &exclusive_parameters,
-                false,
-                &format!("closure#{} call protocols", closure.id.index()),
+                CallProtocolVerification {
+                    assumptions: &assumptions,
+                    capabilities: &capabilities,
+                    analysis: &analysis,
+                    exclusive_parameters: &exclusive_parameters,
+                    mutable_receiver: false,
+                    context: &context,
+                },
             )?;
         }
         Ok(())
@@ -3748,13 +3763,16 @@ impl Verifier<'_> {
     fn verify_call_protocol_tree(
         &self,
         root: HirExpressionId,
-        assumptions: &BTreeSet<TraitQuery>,
-        capabilities: &CapabilityAssumptions,
-        analysis: &CapabilityAnalysis,
-        exclusive_parameters: &BTreeSet<crate::resolve::LocalId>,
-        mutable_receiver: bool,
-        context: &str,
+        verification: CallProtocolVerification<'_>,
     ) -> Result<(), HirInvariantError> {
+        let CallProtocolVerification {
+            assumptions,
+            capabilities,
+            analysis,
+            exclusive_parameters,
+            mutable_receiver,
+            context,
+        } = verification;
         let mut pending = vec![root];
         let mut visited = BTreeSet::new();
         while let Some(id) = pending.pop() {

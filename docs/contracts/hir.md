@@ -1,10 +1,10 @@
 # Semantic and typed HIR contract
 
 **Status:** bootstrap declarations, typed expressions, generic specialization,
-uniform named function values, concrete closure values and Copy captures,
-static trait selection, declaration-owned opaque results, patterns, assignment,
-discard, structured control flow, calls, semantic occurrences, and verified MIR
-admission implemented
+uniform named function values, synchronous Copy closures with closed call
+protocols and invocation, static trait selection, declaration-owned opaque
+results, patterns, assignment, discard, structured control flow, calls,
+semantic occurrences, and verified MIR admission implemented
 
 ## Boundary
 
@@ -35,6 +35,8 @@ The output owns:
 - one concrete generated type, exact call signature, separate body root, and
   stable LocalId-ordered capture environment for every admitted closure
   expression;
+- one independently derived `Call`/`CallMut`/`CallOnce` row for every closure,
+  plus the exact signature and selected protocol on every indirect call;
 - a static type, value category, source span, and resolved identity for every
   expression in the implemented subset;
 - a bottom-up normal-completion summary and reachable loop-transfer targets for
@@ -51,12 +53,13 @@ surface whose semantics belongs to an unfinished phase. It checks bounded and
 unbounded generic function bodies, invariant call inference, explicit
 specialization, static source/prelude trait selection, declaration-owned opaque
 results, trait default bodies, exact implementation bodies, trait-provided
-iteration, and the closed structural capabilities `Copy`, `Discard`,
-`Equatable`, `Key`, `Send`, and `Share`. Concrete external implementations,
-closure call-protocol derivation and invocation, closure-to-`fn` coercion,
-non-`Copy` capture moves, `async`/`unsafe` closures, string interpolation through
-`Display`, `defer`, ownership availability, and executable async bodies remain
-explicit later boundaries rather than receiving provisional semantics.
+iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
+`Key`, `Send`, and `Share`, synchronous closure call protocols, closure
+invocation, and safe closure-to-`fn` coercion. Concrete external
+implementations, non-`Copy` capture moves, `async`/`unsafe` closures, string
+interpolation through `Display`, `defer`, ownership availability, and
+executable async bodies remain explicit later boundaries rather than receiving
+provisional semantics.
 
 ## Typed expression invariants
 
@@ -99,6 +102,9 @@ The implemented bootstrap subset includes:
   parameters, inferred or explicit outcomes, variadic body bindings, separate
   semantic body roots, syntactic by-value environments, and generated nominal
   identities that preserve enclosing generic arguments;
+- exact `Call`, `CallMut`, and `CallOnce` derivation for those closures,
+  invocation through concrete, generic, and opaque callable types, and
+  contextual erasure to an exact uniform `fn(...)` value;
 - `some`, `ok`, `err`, implicit callable-success lifting, `fail`, and postfix
   `?` over both `Option` and `Result`;
 - exact error propagation, injection into a union, and closed union-subset
@@ -234,21 +240,39 @@ componentwise from the substituted capture types. It never derives
 proofs while the request-wide capability row remains `Deferred` when the same
 fact depends on an open binder.
 
-The M4 bootstrap admits an executable closure construction only when every
-capture has a proved `Copy` capability. An affine capture keeps expression
-checking incomplete until OWN-006/OWN-007 add move and availability analysis.
-Likewise, a direct expected function type may supply the closure signature, but
-the concrete-to-uniform conversion remains incomplete until CALL-003 derives
-`Call`; this phase boundary does not emit a false ordinary type-mismatch
-diagnostic. CALL-003 also owns closure invocation and the `Call`, `CallMut`, and
-`CallOnce` proofs. CALL-004 owns `async` and `unsafe` closure effects.
+The M4 bootstrap admits an executable closure only when every capture has a
+proved `Copy` capability. An affine capture keeps expression checking
+incomplete until OWN-006/OWN-007 add move and availability analysis. CALL-003
+implements invocation and contextual concrete-to-uniform conversion for this
+closed subset. A direct expected function type may supply the closure signature;
+the conversion then requires that exact signature, `Call`, and an environment
+that proves `Copy + Send + Share`, otherwise it emits `E1108`. CALL-004 owns
+`async` and `unsafe` closure effects.
+
+Protocol derivation walks only reachable operations in the closure's own body.
+An assignment rooted in a captured place, a `CallMut` through a captured
+callable, or passing a capture as `mut`/`var` prevents `Call`. Constructing a
+nested closure does not execute its independently rooted body, and operations
+after a diverging transfer do not weaken the enclosing protocol. Because the
+current executable subset has only Copy captures, no body can move a capture
+out: `CallMut` and `CallOnce` are therefore both available, while M5 will add
+the path-sensitive affine rules.
+
+An ordinary call chooses the first available protocol in the order `Call`,
+`CallMut`, `CallOnce`. `CallMut` requires a mutable/replacement-capable place;
+the Copy-only `CallOnce` fallback may copy an immutable binding. Generic code
+uses only its exact written call bounds and their closed implications. Opaque
+callers use only published bounds. Both forms must expose one exact function
+signature or produce `E1115`, and an inaccessible protocol produces `E1407`.
 
 HIR admission independently requires exactly one construction expression per
 closure table entry, the correct generated kind and source position, a complete
 signature/body agreement, canonical inherited generics, exact parameter locals,
 and sorted owned capture locals whose types, mutability, and CALL-002 `Copy`
-proof are rederived from their bindings and inherited bounds. No recovery
-closure crosses into MIR.
+proof are rederived from their bindings and inherited bounds. It independently
+rederives the body protocol row, every call's exact signature and access-selected
+protocol, and every callable-erasure precondition. No recovery closure crosses
+into MIR.
 
 ## Trait declarations, defaults, and implementations
 
@@ -456,9 +480,12 @@ receiver method implies `Self: Send`; that implication is available to generic
 callers and opaque contracts and is required of every concrete implementation
 target.
 
-`Call`, `CallMut`, and `CallOnce` are not part of this structural engine. They
-remain deferred until closure bodies and capture modes can determine them; the
-driver never treats a deferred callable capability as satisfied.
+`Call`, `CallMut`, and `CallOnce` use a separate closed callable engine rather
+than the six-column structural capability graph. Function values implement all
+three for their exact signature. Concrete closures use their derived protocol
+row; generic parameters use only visible bounds and closed implications; opaque
+types use only their published bounds. A call bound whose sole argument is not
+one exact function type is rejected before body checking.
 
 Range HIR distinguishes exclusive and inclusive ends and accepts only identical
 integer or `Char` endpoint types. Membership HIR records whether it observes an

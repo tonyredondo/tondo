@@ -148,11 +148,13 @@ boundary as uniform values only after their exact `fn(...)` type and complete
 specialization are known; receiver methods never become implicit bound values.
 Synchronous safe closure expressions cross as distinct generated types with an
 exact signature, separate checked body, inherited binders, and a syntactic
-by-value environment. CALL-002 executes construction only for proved Copy
-captures; affine moves, invocation, contextual erasure, call protocols, and
-async/unsafe effects remain explicit later boundaries. Open source/prelude
-trait obligations use coherent static selection; callable capabilities remain
-owned by CALL-003. Trait declarations
+by-value environment. CALL-003 derives `Call`, `CallMut`, and `CallOnce` from
+reachable capture accesses, selects one exact protocol at every call, and
+admits contextual closure-to-`fn(...)` erasure only for `Call` environments
+that prove `Copy + Send + Share`. The executable M4 subset still requires Copy
+captures; affine capture moves remain an M5 boundary and async/unsafe effects
+remain owned by CALL-004. Open source/prelude trait obligations use coherent
+static selection. Trait declarations
 carry a sorted method table, contextual `Self`, default-body and async-receiver
 requirements. Default bodies are checked once with rigid trait binders; calls to
 another receiver method of the same trait resolve locally and both inferred and
@@ -206,7 +208,9 @@ signatures from their source or prelude trait, proves table/callable
 correspondence and orphan ownership, and rejects incomplete contracts as compiler
 defects. It also proves one-to-one closure construction metadata, generated
 identity/signature agreement, and exact owned capture type, mutability, and
-source binding. Partial HIR remains available to
+source binding. Closure protocols, call signatures, access selection, generic
+and opaque call bounds, and callable-erasure preconditions are rederived rather
+than trusted as checker annotations. Partial HIR remains available to
 semantic tooling but is never executable. The phase ownership of moves, loans,
 cleanup, and suspension is fixed by ADR-016 and `docs/contracts/mir.md`.
 
@@ -231,8 +235,9 @@ six-column capability decision for every interned type and never turns `_` into
 a hidden write. Type formation rejects `Map[K, V]` and `Set[K]` without `K: Key`
 and `Ref[T]` without `T: Discard`; equality, membership, map lookup, opaque
 bounds, and async receiver implementations consume the same proof. Full
-ownership availability, closure call protocols and invocation, and terminal
-cleanup remain later analyses.
+ownership availability and terminal cleanup remain later analyses. Synchronous
+Copy closure invocation already crosses this boundary with an explicit exact
+signature and selected call protocol.
 
 Type IDs are request-local interned handles; only canonical recursive type
 strings are observable. Alias expansion, union normalization, nominal identity,
@@ -296,8 +301,11 @@ Uniform function values stored in locals, aggregates, or constants use the same
 verified indirect-call operation; source-trait values are statically selected
 before entering the constant or operand catalog.
 Concrete closure construction uses an ordinary generated-type aggregate with a
-verified capture schema. Managed environment construction is executable now;
-closure body cataloguing and invocation enter this boundary in CALL-003.
+verified capture schema. Each reached closure specialization also receives one
+real callable and function body with a hidden environment parameter. Calls use
+the ordinary verified indirect-call operation, carrying an exact signature and
+concrete protocol; a shallow environment borrow is confined to the immediate
+callee position while `CallOnce` retains ordinary copy/move operand semantics.
 Generic nominal declarations remain compact layout templates checked with their
 concrete arguments by the verifier.
 

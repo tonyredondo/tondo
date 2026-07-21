@@ -2,8 +2,8 @@
 
 **Status:** BC-001 through BC-005, GEN-002 monomorphization, TRAIT-005 static
 dispatch, TRAIT-006 opaque results, CAP-001 closed capabilities, CALL-001
-uniform named function values, CALL-002 concrete closure environments, and the
-M3 VM admission path implemented
+uniform named function values, CALL-002 concrete closure environments, CALL-003
+closure protocols and invocation, and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -47,22 +47,25 @@ for checking representation seals; it is not a runtime witness table, value
 field, vtable, or reflection capability. Ordinary callable signatures and
 consumers continue to name the opaque entry rather than the witness.
 
-The VM data model can retain receiver position, parameter modes, variadic
-element type, generic arity, outcome, and function type. Compiler-produced
-executable callable entries are concrete instances: their generic arity is zero
-and their signature types have already been substituted. Static function
-operands name that concrete callable and carry an empty type-argument vector.
-Indirect calls retain a structural concrete function type. Named constants are
-already evaluated and normalized; execution never invokes arbitrary code to
-initialize them.
+The VM data model retains receiver position, parameter modes, variadic element
+type, generic arity, outcome, function type, optional implementation, and
+optional concrete-closure metadata. Closure metadata records the generated
+environment type, ordered capture schema, and `Call`/`CallMut`/`CallOnce` row.
+Compiler-produced executable callable entries are concrete instances: their
+generic arity is zero and their signature types have already been substituted.
+Static function operands name that concrete callable and carry an empty
+type-argument vector. Indirect calls retain a structural concrete function
+signature and selected protocol. Named constants are already evaluated and
+normalized; execution never invokes arbitrary code to initialize them.
 
 ## Monomorphization boundary
 
-`lower_to_bytecode` discovers concrete callable instances before allocating any
-bytecode table. It roots every non-generic callable and every specialized
-function value reachable from an evaluated constant, then transitively scans
-the reached MIR templates for static function operands. Nested type arguments
-are substituted with the enclosing instance before their callee is queued.
+`lower_to_bytecode` discovers concrete named and closure callable instances
+before allocating any bytecode table. It roots every non-generic callable and
+every specialized function value reachable from an evaluated constant, then
+transitively scans reached MIR templates for static function operands and
+closure aggregate references. Nested type arguments are substituted with the
+enclosing instance before their callee is queued.
 When a constant retains a qualified source-trait associated function, the same
 static selection used for a reached MIR operand chooses its override or default;
 the normalized constant stores only that concrete callable ID. Composite
@@ -91,10 +94,12 @@ direct reference to the selected `next` implementation and then ordinary
 `Option` discriminant control flow. Only the closed collection protocols use
 the VM's intrinsic iterator-state and iterator-next instructions.
 
-Instances are deduplicated by callable identity plus the complete concrete
-argument vector. Direct recursion with the same vector therefore terminates.
+Named instances are deduplicated by callable identity plus the complete
+concrete argument vector; closure instances use the source closure identity plus
+that vector. Direct recursion with the same vector therefore terminates.
 Type-expanding recursion creates distinct instances and stops with `T0002` when
-the request's generic-instantiation budget is exhausted. The same failure rule
+the shared generic-instantiation budget is exhausted. A generic closure body
+consumes its own unique instance from that same budget. The same failure rule
 applies if substitution exhausts the interned specialized-type budget. No
 partial program crosses the verifier boundary.
 
@@ -129,6 +134,11 @@ Each function owns:
 - parameter, entry, unwind, and return-slot indices; and
 - basic blocks in deterministic MIR order.
 
+A closure function's parameter slot zero is its generated environment; the
+source-visible parameters follow it. Capture projections identify both the
+concrete closure callable and capture index, so another environment with a
+compatible-looking field type cannot substitute for it.
+
 Every executable item references a function-local span-table index. All spans
 remain in the function's source file and use semi-open byte ranges. The
 function source span is retained separately for symbolication and diagnostics.
@@ -145,25 +155,30 @@ a pure rvalue. Rvalues cover loads, copies/moves, constants, pure arithmetic,
 construction, record update, coercion, total conversion, range, membership,
 length, and iterator-state creation.
 
-A CALL-002 closure construction is an ordinary managed aggregate whose result
-is a concrete generated type. Its shape carries the source closure ID and an
-ordered capture-type schema; its operands carry the corresponding concrete
-values. Verification requires schema/value agreement before allocation.
-Closure bodies and an invocation catalog are intentionally absent until
-CALL-003, so this ID identifies environment metadata only and is never
-interpreted as a callable entry in CALL-002 bytecode.
+A closure construction is an ordinary managed aggregate whose result is a
+concrete generated type. Its shape names one concrete closure callable; that
+callable owns the identical environment type, ordered capture schema, protocol
+row, and executable body. Its operands carry the corresponding concrete capture
+values. Verification requires identity, schema, and value agreement before
+allocation.
 
 A call operation accepts either a direct concrete function operand or a
-copy/move of a place containing the same structural function type. The latter
-is the uniform indirect-call path used by parameters, locals, fields, and named
-constants. Both forms use the same positional argument descriptors and the
-verifier requires exact modes, arity, variadic shape, outcome, and function
-type before execution.
+borrow/copy/move of a place containing a callable value. The latter is the
+uniform indirect-call path used by concrete closures, generic or opaque
+callables, parameters, locals, fields, and named constants. It carries the exact
+structural function signature and selected protocol. Before execution the
+verifier resolves the concrete callable representation and requires exact
+modes, arity, variadic shape, outcome, function signature, protocol support, and
+access form. A source protocol exposed by a generic or opaque contract is
+normalized to the strongest safe concrete specialization without changing
+whether the source operand borrows, copies, or moves.
 
-`BytecodeCoercion::Opaque` is a verified runtime no-op: execution forwards the
-already materialized value unchanged. Its distinct opcode preserves the proof
-boundary and cannot be replaced by another coercion kind without invalidating
-the program.
+`BytecodeCoercion::Opaque` and `BytecodeCoercion::CallableErasure` are verified
+runtime no-ops: execution forwards the already materialized value unchanged.
+The latter is admitted only from an exact `Call` closure whose environment
+proves `Copy + Send + Share` to the identical structural `fn(...)` signature.
+Their distinct opcodes preserve proof boundaries and cannot be exchanged with
+another coercion kind without invalidating the program.
 
 Potentially panicking work remains a terminator-level `Invoke` with explicit
 normal destination/target and cleanup target. This includes checked arithmetic,
@@ -199,10 +214,12 @@ Before execution, the verifier proves:
 - type constructors, generic arities, nominal fields/variants, constants,
   projections, aggregates, operators, conversions, iterators, and tags have
   their exact structural types;
-- closure aggregates have a generated result type and an exact capture schema
-  aligned with every operand; verified MIR remains responsible for tying those
-  operands to the precise source bindings until CALL-003 publishes the
-  specialized closure callable catalog;
+- every closure callable has a unique generated environment, executable body,
+  hidden environment parameter, exact capture schema, and protocol row; closure
+  aggregates and capture projections name that same callable and match every
+  operand exactly;
+- closure protocols are rederived from the executable body and cannot be
+  strengthened by forged catalog metadata;
 - every closed executable `Map[K, V]` and `Set[K]` has `K: Key`, every `Ref[T]`
   has `T: Discard`, equality has `T: Equatable`, array membership has an
   equatable element, map/set membership has a key, and map lookup has `V: Copy`;
@@ -211,8 +228,14 @@ Before execution, the verifier proves:
   no direct or mutual representation cycle;
 - every opaque coercion seals exactly its catalogued witness into the matching
   opaque family;
-- calls have a function callee, matching outcome, complete fixed/receiver
-  association, correct modes, and valid variadic element or final spread;
+- calls have an exact structural signature, matching outcome, complete
+  fixed/receiver association, correct modes, valid variadic element or final
+  spread, supported protocol, and protocol-compatible borrow/copy/move access;
+- a generic or opaque callable resolves to one concrete named function or
+  closure with the same signature, while a callable erasure preserves the
+  concrete closure value and exact uniform function signature;
+- `Borrow` is confined to the immediate callee of an indirect call and cannot
+  escape into slots, arguments, aggregates, or unrelated operations;
 - normal edges remain in normal code, unwind edges enter cleanup code, and the
   distinguished unwind block resumes panic;
 - all reachable reads have a dominating live definition, edge-produced values
@@ -229,7 +252,9 @@ limit, not malformed source and not permission to execute partially verified
 code.
 
 These capability checks are derived again from the bytecode type graph and
-generic nominal layout summaries; the VM does not trust the HIR status table or
+generic nominal layout summaries; generated closure types derive `Copy`,
+`Discard`, `Send`, and `Share` componentwise from their capture schema and never
+derive `Equatable` or `Key`. The VM does not trust the HIR status table or
 receive runtime capability objects. Generic template parameters are admitted
 only because HIR has already proved their contextual bounds, and every reached
 executable specialization is closed before this verifier consumes it.
@@ -243,8 +268,8 @@ callables, constants, functions, per-function slots, blocks, instructions, and
 spans. Driver exhaustion becomes `T0002`.
 
 `disassemble` renders deterministic human-readable text for tests and debugging
-and labels itself tooling-only. It prints an opaque declaration identity and
-family arguments but deliberately redacts the private witness relation. There
-is no bytecode serializer or loader in the bootstrap. The text, enum layout,
-dense indices, and Rust representation may change without compatibility
-guarantees.
+and labels itself tooling-only. It prints closure schema/protocol metadata and
+an opaque declaration identity plus family arguments, but deliberately redacts
+the private opaque witness relation. There is no bytecode serializer or loader
+in the bootstrap. The text, enum layout, dense indices, and Rust representation
+may change without compatibility guarantees.

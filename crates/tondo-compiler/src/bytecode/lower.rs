@@ -4088,6 +4088,45 @@ mod tests {
     }
 
     #[test]
+    fn generic_closure_bodies_share_the_monomorphization_budget() {
+        let source = "fn invoke[T: Copy + Discard](value: T): T {\n\
+                          let get = (): T { value }\n\
+                          get()\n\
+                      }\n\
+                      fn execute(): Int { invoke(42) }\n";
+        let (resolved, hir) = checked(source);
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let error = lower_to_bytecode(
+            &resolved,
+            &hir,
+            &mir,
+            BytecodeLoweringLimits {
+                max_generic_instantiations: 1,
+                ..BytecodeLoweringLimits::default()
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            BytecodeError::NodeLimit {
+                resource: "generic instantiations",
+                ..
+            }
+        ));
+
+        lower_to_bytecode(
+            &resolved,
+            &hir,
+            &mir,
+            BytecodeLoweringLimits {
+                max_generic_instantiations: 2,
+                ..BytecodeLoweringLimits::default()
+            },
+        )
+        .unwrap();
+    }
+
+    #[test]
     fn expanding_generic_recursion_stops_at_the_instantiation_budget() {
         let source = "fn expand[T: Discard](value: T) {\n\
                           let wrapped = some(value)\n\
@@ -4154,6 +4193,9 @@ mod tests {
                       }\n";
         let program = lowered(source);
         bc::verify_bytecode(&program).unwrap();
+        let tooling = bc::disassemble(&program);
+        assert!(tooling.contains("closure=Some(BytecodeClosure"));
+        assert!(tooling.contains("protocols: BytecodeClosureProtocols"));
 
         fn closure_schema(
             program: &mut bc::BytecodeProgram,

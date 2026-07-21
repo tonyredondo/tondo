@@ -1,10 +1,10 @@
 # Tondo: tracker de implementación
 
 **Estado:** activo  
-**Versión del tracker:** 0.31
+**Versión del tracker:** 0.32
 **Última actualización:** 2026-07-21  
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
-**Objetivo inmediato:** derivar `Call`, `CallMut` y `CallOnce` (CALL-003).
+**Objetivo inmediato:** representar closures sync, async y unsafe (CALL-004).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -988,14 +988,14 @@ dinámicos ni dispatch oculto.
 
 - [x] **CALL-002 — Implementar closures y captura por valor.**
 
-- [ ] **CALL-003 — Derivar `Call`, `CallMut` y `CallOnce` desde cuerpo y
+- [x] **CALL-003 — Derivar `Call`, `CallMut` y `CallOnce` desde cuerpo y
   capturas.**
 
 - [ ] **CALL-004 — Implementar closures sync, async y unsafe en la
   representación semántica, aunque sus runtimes se activen después.**
 
 Evidencia observada el 2026-07-21 para GEN-001, GEN-002, TRAIT-001 a TRAIT-006,
-CAP-001, CALL-001 y CALL-002:
+CAP-001 y CALL-001 a CALL-003:
 
 - Los bodies genéricos bounded y unbounded se comprueban una sola vez con
   parámetros rígidos. Las llamadas explícitas e inferidas cierran todas las
@@ -1004,8 +1004,8 @@ CAP-001, CALL-001 y CALL-002:
 - Cada especialización valida sus bounds antes de publicar HIR. `Copy`,
   `Discard`, `Equatable`, `Key`, `Send` y `Share` comparten una prueba
   estructural cerrada; traits fuente, `Display` e `Iterator[T]` usan selección
-  estática y prueba recursiva. `Call`, `CallMut` y `CallOnce` permanecen en las
-  tareas de closures.
+  estática y prueba recursiva. `Call`, `CallMut` y `CallOnce` usan una prueba
+  cerrada independiente para funciones, closures, genéricos y opacos.
 - La monomorfización se ejecuta entre MIR verificado y bytecode. Parte de todos
   los callables no genéricos y de function values constantes, sigue referencias
   transitivas, sustituye todos los tipos de firma y body y deduplica por
@@ -1163,11 +1163,34 @@ CAP-001, CALL-001 y CALL-002:
 - La VM construye, copia, traza y snapshottea entornos gestionados. Una pila de
   raíces temporales protege capturas compuestas cuando el GC se dispara a mitad
   de una construcción o copia multi-captura.
-- Un tipo `fn(...)` esperado ya puede inferir la firma fuente, pero la coerción
-  del tipo concreto, la invocación y los protocolos cerrados permanecen en
-  CALL-003. Capturas no `Copy` quedan incompletas para M5 y closures
-  `async`/`unsafe` para CALL-004, sin semántica provisional ni falso `E1102`.
-- El gate acumulado pasa 418 tests, `git diff --check`, formatter check, build
+- El análisis de cada body alcanzable deriva su fila exacta `Call`/`CallMut`/
+  `CallOnce`: una escritura, paso mutable o `CallMut` sobre una captura impide
+  `Call`; los bodies de closures anidadas y código inalcanzable no contaminan la
+  fila exterior. Cada invocación elige el protocolo más fuerte compatible con
+  el acceso real a la expresión callee.
+- Funciones, closures concretas y callable bounds genéricos u opacos comparten
+  una firma estructural exacta. Un contrato ambiguo produce `E1115`, un
+  protocolo inaccesible `E1407`, y la coerción contextual a `fn(...)` exige
+  `Call`, firma idéntica y entorno `Copy + Send + Share`, o produce `E1108`.
+- El admission verifier HIR vuelve a derivar protocolos, selección de cada call
+  y erasures. MIR crea un cuerpo `MirFunctionId::Closure` con entorno oculto en
+  el parámetro cero, proyecta capturas y confina `Borrow` al callee inmediato;
+  el verifier MIR repite firma, protocolo y forma de acceso.
+- La monomorfización crea instancias de callable para closures, incluidos bodies
+  genéricos, y las carga al mismo presupuesto `T0002`. El catálogo bytecode
+  contiene identidad, entorno, esquema, protocolos y body; su verifier deriva
+  otra vez capacidades y protocolos, resuelve testigos opacos y rechaza
+  metadata, firmas, accesos o erasures forjados.
+- La VM inserta el entorno como argumento oculto, conserva `Call`/`CallMut` por
+  préstamo superficial y aplica la copia lógica de `CallOnce` en el subset
+  `Copy`. Callee y argumentos permanecen en raíces temporales durante toda la
+  preparación y el GC puede ejecutarse bajo presión sin invalidar el entorno.
+- Las regresiones públicas y unitarias ejecutan closures puras, mutables,
+  `CallOnce`, borradas a `fn`, genéricas, opacas, variádicas, anidadas,
+  proyectadas, fallibles y bajo presión de GC; también mutan HIR, MIR y bytecode
+  para probar cada frontera defensiva. Capturas no `Copy` siguen en M5 y los
+  efectos `async`/`unsafe` en CALL-004.
+- El gate acumulado pasa 434 tests, `git diff --check`, formatter check, build
   de todos los targets, Clippy con warnings denegados y Rustdoc con warnings
   denegados.
 
@@ -1809,12 +1832,30 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es CALL-003: derivar `Call`, `CallMut` y `CallOnce`
-desde el body y las capturas ya representadas por CALL-002.
+La siguiente acción activa es CALL-004: representar closures sync, async y
+unsafe sin adelantar el runtime asíncrono de M7 ni la validación unsafe de M6.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.32 — 2026-07-21
+
+- Se completa CALL-003 con derivación cerrada de `Call`, `CallMut` y `CallOnce`
+  desde accesos alcanzables a capturas, selección exacta por llamada y
+  diagnósticos diferenciados para contrato, protocolo y erasure inválidos.
+- HIR, MIR y bytecode vuelven a probar protocolos, firma y acceso. Cada closure
+  tiene un body monomorfizado con entorno oculto, y la VM ejecuta llamadas
+  puras, mutables, consumibles, genéricas, opacas y borradas sin vtables.
+- `Borrow` queda confinado al callee indirecto; las raíces temporales protegen
+  callee, argumentos y copias del entorno frente a colecciones durante la
+  invocación.
+- Los cuerpos genéricos de closure consumen el presupuesto compartido de
+  instanciación, el desensamblador expone schema/protocolos y los verifiers
+  rechazan metadata, protocolos, firmas, accesos y erasures falsificados.
+- Capturas afines continúan en M5 y los efectos `async`/`unsafe` avanzan a
+  CALL-004. El gate acumulado queda en 434 tests, `cargo check`, formatter
+  check, build de todos los targets, Clippy y Rustdoc sin warnings.
 
 ### 0.31 — 2026-07-21
 

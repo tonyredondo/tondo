@@ -149,7 +149,7 @@ fn snapshot_object(
                 .collect::<Result<_, _>>()?,
         ),
         HeapObject::Closure { callable, captures } => RuntimeValue::Closure {
-            closure: callable.index(),
+            callable: callable.index(),
             captures: captures
                 .iter()
                 .map(|value| snapshot(present_value(value)?, visiting))

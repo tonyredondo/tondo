@@ -99,13 +99,14 @@ A closed call error query returns:
 
 ## Deliberate later boundaries
 
-CHECK-009 does not fabricate facts whose defining analysis does not yet exist.
-Borrow regions, ownership state, terminal obligations, dynamic overlap checks,
-closure protocols, iterator cursor proofs, unsafe regions, and complete sugar
+CHECK-009 does not fabricate facts outside its deliberately minimal public
+query surface. Borrow regions, ownership state, terminal obligations, dynamic
+overlap checks, iterator cursor proofs, unsafe regions, and complete sugar
 expansion remain the later §22.5 queries associated with their semantic
-milestones. HIR already derives the six closed capability statuses and retains
-opaque-result bounds, but CHECK-009 does not yet expose either as a public
-structured query. The same snapshot type can grow those views without changing
+milestones. HIR already derives closure protocols and the six closed capability
+statuses and retains opaque-result bounds, but CHECK-009 does not yet expose
+those facts as public structured queries. The same snapshot type can grow those
+views without changing
 source identity or asking an LSP to reinterpret syntax.
 
 AST formatting remains the formatter's lossless-CST operation. A format request

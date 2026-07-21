@@ -1,8 +1,8 @@
 # Typed HIR to MIR contract
 
-**Status:** M3 typed CFG plus M4 uniform function values, concrete Copy closure
-environments, static-trait and opaque-result lowering and verification
-implemented
+**Status:** M3 typed CFG plus M4 uniform function values, executable synchronous
+Copy closures and call protocols, static-trait and opaque-result lowering, and
+verification implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -35,8 +35,11 @@ An admitted program guarantees:
   the same type;
 - callable IDs are unique and deterministically ordered, and every source body
   has one checked root;
-- every concrete closure has one generated type, exact signature, independent
-  body root, one construction expression, and an exact owned capture table;
+- every concrete closure has one generated type, exact signature, independently
+  derived protocol row, independent body root, one construction expression, and
+  an exact owned capture table;
+- every indirect call has one exact signature, selected call protocol, and
+  source access form accepted by typed HIR;
 - every prelude trait operand has complete canonical arguments and the exact
   `Display.display` or `Iterator.next` function type;
 - every ordinary named-function operand is either intrinsically non-generic or
@@ -59,8 +62,8 @@ They remain queryable but can never be lowered or executed.
 | Phase | Facts proved or represented |
 |---|---|
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
-| Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, concrete closure signatures and capture sets, value/place category, pattern coverage, source evaluation order, and source-level control targets |
-| MIR construction (M3/M4) | Typed locals and temporaries, explicit CFG, places, calls, Copy closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
+| Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, concrete closure signatures, capture sets and call protocols, selected call access, value/place category, pattern coverage, source evaluation order, and source-level control targets |
+| MIR construction (M3/M4) | Typed locals and temporaries, explicit CFG, places, calls, executable closure bodies with a hidden environment, Copy closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
 | Ownership MIR (M5) | `Copy` versus `Move`, availability, loans and regions, confirmed transfers, cleanup actions, and dynamic overlap checks |
 | Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
@@ -106,11 +109,21 @@ A concrete closure expression lowers to one aggregate with its `HirClosureId`
 and captures in the exact HIR table order. CALL-002 admits only captures whose
 `Copy` proof is closed, so each operand is an unprojected copy of the MIR local
 that represents that exact outer `LocalId`. The aggregate result retains the
-generated closure type. The closure body is deliberately not a child of this
-construction and is not emitted as an invocable MIR function yet; CALL-003 owns
-body callable conversion, invocation, and `Call`/`CallMut`/`CallOnce`
-derivation. OWN-006 later replaces the bootstrap Copy-only boundary with
-availability-checked moves for affine captures.
+generated closure type. Its independently rooted body becomes a
+`MirFunctionId::Closure` function. Slot zero is a hidden environment parameter;
+capture references are typed projections from that slot, and explicit source
+parameters follow it in their original order. Construction remains separate
+from body execution. OWN-006 later replaces the bootstrap Copy-only boundary
+with availability-checked moves for affine captures.
+
+An indirect closure call carries the exact protocol selected by HIR. `Call` and
+`CallMut` read a place through a shallow, non-escaping `Borrow` operand so body
+updates observe the original environment; `CallMut` additionally requires the
+source place to be writable. `CallOnce` uses the ordinary Copy or Move operand
+selected by source access. In the M4 Copy-only subset an immutable fallback is a
+logical copy, while M5 will make affine consumption and availability explicit.
+`Borrow` is not a general MIR loan and is valid only as the immediate callee of
+an indirect call.
 
 Checked operations use `Invoke`; indexed and sliced reads therefore cannot
 bypass their bounds/unwind edge. Assignment first resolves all destination
@@ -127,11 +140,12 @@ are resolved to direct implementation callables during monomorphization.
 
 Storing or passing a function value uses the ordinary typed local, constant, or
 aggregate path. A later call through that place is therefore genuinely indirect
-in MIR, but its callee still has one exact structural function type. Its
-arguments are indexed positionally and preserve modes and variadic association;
-no parameter label survives in the function type. The MIR verifier checks the
-same call contract whether the callee is a static function operand or a value
-read from a place.
+in MIR. Its source type may be concrete, generic, or opaque, but HIR records one
+exact structural function signature and call protocol. Arguments are indexed
+positionally and preserve modes and variadic association; no parameter label
+survives in the function type. The MIR verifier checks the same exact call
+contract whether the callee is a static function operand or a value read from a
+place.
 
 An opaque success exit remains an explicit coercion rvalue whose kind is
 `Assignability::Opaque`. MIR preserves both operand and destination types, so a
@@ -186,7 +200,8 @@ The structural verifier introduced in M3 proves at minimum:
   declared storage lifetime;
 - place projections are legal for their base type;
 - call arity, modes, argument types, and outcome agree with the selected
-  callable;
+  callable, and every indirect call repeats the exact HIR signature/protocol
+  selection for concrete, generic, and opaque callees;
 - every static function operand has complete specialization arity and its exact
   substituted type, while an indirect callee has that same concrete structural
   function type;
@@ -200,6 +215,12 @@ The structural verifier introduced in M3 proves at minimum:
 - a closure aggregate names existing HIR metadata, has the exact generated
   result and capture layout, and copies each capture from the corresponding
   unprojected outer source binding rather than a merely type-compatible value;
+- every closure has exactly one body function with its generated environment as
+  hidden parameter zero, exact explicit parameters, capture projections, and
+  outcome, while no ordinary function may forge that shape;
+- `Borrow` appears only as an immediate indirect-call callee, agrees with
+  `Call`/`CallMut`, and never escapes into storage, arguments, or arbitrary
+  rvalues; `CallOnce` never uses it;
 - equality, collection membership, and map lookup satisfy the `Equatable`,
   `Key`, or `Copy` requirement recorded and independently verified in HIR;
 - a variant, union, option, or result payload is read only on an edge dominated

@@ -9,18 +9,20 @@ Tondo traits use static dispatch and do not expose dynamic trait objects.
 ## Decision
 
 Instantiate generic callables for concrete substitutions between verified MIR
-and bytecode lowering. One instance is identified by the pair of its resolved
-callable ID and its complete canonical type-argument vector.
+and bytecode lowering. An instance is either a named callable ID or a source
+closure ID paired with its complete canonical type-argument vector.
 
 The request-local worklist starts with every non-generic callable and every
 generic function value retained anywhere inside a closed constant. It then
-follows static function operands in each reached MIR template, applies the
-enclosing substitution to nested specializations, and inserts unseen instances
-in stable order. A source-trait associated function retained by a constant is
-resolved to the same concrete override or default as an operand reached from
-MIR, and the constant stores only that selected callable. Reaching the same
-recursive instance is a no-op. Recursion that keeps constructing a different
-type is stopped by the generic-instantiation budget.
+follows static function operands and closure aggregates in each reached MIR
+template, applies the enclosing substitution to nested specializations, and
+inserts unseen named or closure instances in stable order. A source-trait
+associated function retained by a constant is resolved to the same concrete
+override or default as an operand reached from MIR, and the constant stores only
+that selected callable. Reaching the same recursive instance is a no-op.
+Recursion that keeps constructing a different type is stopped by the shared
+generic-instantiation budget; a unique generic closure body consumes a distinct
+entry from that budget.
 
 Every reached MIR type is substituted through the request's cloned interner
 before bytecode construction. Executable bytecode callables consequently have
@@ -33,14 +35,17 @@ field or variant projection.
 Source constraints are checked before an instance is admitted. All six closed
 intrinsic constraints (`Copy`, `Discard`, `Equatable`, `Key`, `Send`, and
 `Share`) use the completed structural proof; open source/prelude traits use the
-unique coherent static-selection proof. Callable capabilities remain deferred
-to the closure milestones and cannot be guessed to admit executable code.
+unique coherent static-selection proof. Function, concrete closure, generic,
+and opaque callables use the completed closed protocol proof; each call retains
+one exact signature, supported protocol, and compatible access form.
 
 ## Consequences
 
-Bytecode stays simply typed and calls remain direct. A generic function that is
-never reached produces no executable body, while equal substitutions across
-multiple call sites share one body. Constants can root an otherwise unreachable
+Bytecode stays simply typed. Named calls remain direct; closure values dispatch
+through a concrete callable identity and body whose hidden first parameter is
+the environment. A generic named function or closure that is never reached
+produces no executable body, while equal substitutions across multiple call
+sites share one body. Constants can root an otherwise unreachable
 specialization because their function values are executable data.
 
 Compilation cost and code size grow with the number of unique instances. The

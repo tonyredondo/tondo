@@ -59,7 +59,7 @@ pub enum RuntimeValue {
     Map(Vec<(Self, Self)>),
     Set(Vec<Self>),
     Closure {
-        closure: u32,
+        callable: u32,
         captures: Vec<Self>,
     },
     Newtype {
@@ -311,7 +311,7 @@ mod tests {
         assert_eq!(
             snapshot_value(&Value::Heap(closure), &heap, &[], &[]).unwrap(),
             RuntimeValue::Closure {
-                closure: 7,
+                callable: 7,
                 captures: vec![RuntimeValue::String("captured".into())],
             }
         );

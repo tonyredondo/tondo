@@ -1,6 +1,7 @@
 # Bootstrap VM object and execution contract
 
-**Status:** implemented M3 baseline plus CALL-002 closure environments
+**Status:** implemented M3 baseline plus CALL-003 synchronous Copy closure
+invocation
 **Language baseline:** Tondo 0.1-draft.8
 
 This contract fixes the bootstrap object model selected by DEC-006. It is an
@@ -24,15 +25,14 @@ Managed heap objects cover:
 - ranges and lazy iterator state; and
 - the identity cell used by the future `Ref[T]` surface.
 
-CALL-002 closures pair a source closure identity with a managed environment
+Closures pair a concrete bytecode callable identity with a managed environment
 whose capture fields use the same optional-value move representation as other
 aggregates. The environment traces every present capture and is rooted by the
 closure value in a frame, another object, or the operation-local root stack.
 Logical copy recursively copies the environment and every Copy capture;
 immutable strings and `Ref[T]` retain their ordinary sharing rule. Snapshotting
-produces a detached closure identity plus detached capture values for tooling.
-CALL-003 adds callable bodies and invocation without changing this object,
-handle, or tracing contract.
+produces the detached callable identity plus detached capture values for
+tooling.
 
 Compound payload fields are individually optional internally. Absence records
 a logical move and is never a Tondo `none`. Bytecode verification and runtime
@@ -89,6 +89,18 @@ The VM executes verified branches, tag dispatch, loops, iterators, calls,
 returns, and cleanup edges directly. Checked operations either produce a value
 for their normal successor or begin a language panic on their unwind successor.
 
+An indirect call evaluates and roots its callee before evaluating arguments
+left to right, retaining every completed value as an operation-local root. A
+uniform named function selects its direct implementation. A managed closure
+selects the callable stored in its environment and inserts that same environment
+as hidden parameter zero before pushing the body frame. `Borrow` performs a
+shallow read so `Call`/`CallMut` bodies observe the original environment;
+Copy-based `CallOnce` logically clones the environment before invocation. The
+bytecode verifier has already proved the exact signature, protocol, and access
+combination, so runtime dispatch performs no trait selection. Opaque callable
+views and closure-to-`fn` erasure are representation-preserving and still reach
+the same managed closure value.
+
 A panic stores its normative `P` code, stable name, message, primary source
 span, and a canonical innermost-first call stack. Cleanup blocks execute while
 the pending panic crosses frames. Tondo 0.1 cannot catch it. `assert` evaluates
@@ -122,14 +134,15 @@ relabelled as recoverable Tondo errors or language panics.
 ## Required tests
 
 The baseline suite must exercise real lowered bytecode for scalar and compound
-values, calls and returns, branches, loops, pattern dispatch, checked
-arithmetic, indexing and slicing, variadics, collections, `assert`, `panic`, and
-stack traces. Heap tests retain reachable graphs, reclaim unreachable cycles,
-reject stale generations, trace and snapshot managed closure captures, and
-collect under allocation pressure. A multi-capture closure regression forces
-collections during construction and logical copy to prove temporary roots
-cannot become stale. A mutated bytecode fixture must prove that admission fails
-before host or instruction execution.
+values, direct and indirect calls, all three closure protocols, nested,
+projected, generic, opaque, erased, variadic, fallible, and stateful closures,
+returns, branches, loops, pattern dispatch, checked arithmetic, indexing and
+slicing, collections, `assert`, `panic`, and stack traces. Heap tests retain
+reachable graphs, reclaim unreachable cycles, reject stale generations, trace
+and snapshot managed closure captures, and collect during construction, logical
+copy, and invocation. Mutated HIR, MIR, and bytecode fixtures must prove that
+their respective admission gates reject forged closure identity, schema,
+protocol, signature, access, and erasure before execution.
 
 Slice assignment materializes the complete RHS before its write validation.
 The validation terminator carries aligned destination/replacement metadata,

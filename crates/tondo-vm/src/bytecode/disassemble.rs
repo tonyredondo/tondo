@@ -27,11 +27,12 @@ pub fn disassemble(program: &BytecodeProgram) -> String {
     for (index, callable) in program.callables.iter().enumerate() {
         writeln!(
             output,
-            "callable c{index} {} : t{} -> t{} ; impl={:?}",
+            "callable c{index} {} : t{} -> t{} ; impl={:?} closure={:?}",
             callable.name,
             callable.function_type.index(),
             callable.outcome.index(),
             callable.implementation.map(BytecodeFunctionId::index),
+            callable.closure,
         )
         .unwrap();
     }
