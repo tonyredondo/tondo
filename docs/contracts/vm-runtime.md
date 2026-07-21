@@ -1,6 +1,6 @@
 # Bootstrap VM object and execution contract
 
-**Status:** implemented M3 baseline  
+**Status:** implemented M3 baseline plus CALL-002 closure environments
 **Language baseline:** Tondo 0.1-draft.8
 
 This contract fixes the bootstrap object model selected by DEC-006. It is an
@@ -19,16 +19,20 @@ Managed heap objects cover:
 - strings;
 - tuples and arrays;
 - insertion-ordered maps and sets;
+- concrete closure environments with ordered optional capture fields;
 - newtypes, records, enum variants, options, results, and union injections;
 - ranges and lazy iterator state; and
 - the identity cell used by the future `Ref[T]` surface.
 
-M4 closures will pair a callable identity with a managed environment whose
-capture fields use the same optional-value move representation as other
+CALL-002 closures pair a source closure identity with a managed environment
+whose capture fields use the same optional-value move representation as other
 aggregates. The environment traces every present capture and is rooted by the
-closure value in a frame or parent object. It is deliberately absent from the
-M3 bytecode surface until closure conversion exists; adding it does not change
-the collector, handle identity, or root rules fixed here.
+closure value in a frame, another object, or the operation-local root stack.
+Logical copy recursively copies the environment and every Copy capture;
+immutable strings and `Ref[T]` retain their ordinary sharing rule. Snapshotting
+produces a detached closure identity plus detached capture values for tooling.
+CALL-003 adds callable bodies and invocation without changing this object,
+handle, or tracing contract.
 
 Compound payload fields are individually optional internally. Absence records
 a logical move and is never a Tondo `none`. Bytecode verification and runtime
@@ -55,7 +59,9 @@ function-wide slots start live. Reads, writes, and moves check their runtime
 state even though the bytecode verifier has already proved the same contract.
 
 At every possible collection, roots are enumerated precisely from every live
-value in every frame plus operation-local values that have not yet been stored.
+value in every frame plus an explicit stack of operation-local values that have
+not yet been stored. Multi-operand aggregate construction and recursive value
+copy push each completed temporary until its parent object has been allocated.
 Managed objects trace only their actual managed children. Iterator state and
 partially moved aggregate fields participate in the same tracing walk. Later
 environments, suspended tasks, and host handles must add explicit root sources;
@@ -119,9 +125,11 @@ The baseline suite must exercise real lowered bytecode for scalar and compound
 values, calls and returns, branches, loops, pattern dispatch, checked
 arithmetic, indexing and slicing, variadics, collections, `assert`, `panic`, and
 stack traces. Heap tests retain reachable graphs, reclaim unreachable cycles,
-reject stale generations, and collect under allocation pressure. A mutated
-bytecode fixture must prove that admission fails before host or instruction
-execution.
+reject stale generations, trace and snapshot managed closure captures, and
+collect under allocation pressure. A multi-capture closure regression forces
+collections during construction and logical copy to prove temporary roots
+cannot become stale. A mutated bytecode fixture must prove that admission fails
+before host or instruction execution.
 
 Slice assignment materializes the complete RHS before its write validation.
 The validation terminator carries aligned destination/replacement metadata,

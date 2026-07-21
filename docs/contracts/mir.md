@@ -1,7 +1,8 @@
 # Typed HIR to MIR contract
 
-**Status:** M3 typed CFG plus M4 uniform function values, static-trait and
-opaque-result lowering and verification implemented
+**Status:** M3 typed CFG plus M4 uniform function values, concrete Copy closure
+environments, static-trait and opaque-result lowering and verification
+implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -34,6 +35,8 @@ An admitted program guarantees:
   the same type;
 - callable IDs are unique and deterministically ordered, and every source body
   has one checked root;
+- every concrete closure has one generated type, exact signature, independent
+  body root, one construction expression, and an exact owned capture table;
 - every prelude trait operand has complete canonical arguments and the exact
   `Display.display` or `Iterator.next` function type;
 - every ordinary named-function operand is either intrinsically non-generic or
@@ -56,8 +59,8 @@ They remain queryable but can never be lowered or executed.
 | Phase | Facts proved or represented |
 |---|---|
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
-| Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, value/place category, pattern coverage, source evaluation order, and source-level control targets |
-| MIR construction (M3) | Typed locals and temporaries, explicit CFG, places, calls, branch targets, normal/abnormal edge shape, and spans |
+| Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, concrete closure signatures and capture sets, value/place category, pattern coverage, source evaluation order, and source-level control targets |
+| MIR construction (M3/M4) | Typed locals and temporaries, explicit CFG, places, calls, Copy closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
 | Ownership MIR (M5) | `Copy` versus `Move`, availability, loans and regions, confirmed transfers, cleanup actions, and dynamic overlap checks |
 | Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
@@ -98,6 +101,16 @@ and guards, assignment, construction and update, collections, indexing,
 slicing, numeric conversions, calls, and both `Option` and `Result`
 propagation. Recovery and incomplete interpolation nodes cannot cross the HIR
 admission boundary and therefore have no executable MIR interpretation.
+
+A concrete closure expression lowers to one aggregate with its `HirClosureId`
+and captures in the exact HIR table order. CALL-002 admits only captures whose
+`Copy` proof is closed, so each operand is an unprojected copy of the MIR local
+that represents that exact outer `LocalId`. The aggregate result retains the
+generated closure type. The closure body is deliberately not a child of this
+construction and is not emitted as an invocable MIR function yet; CALL-003 owns
+body callable conversion, invocation, and `Call`/`CallMut`/`CallOnce`
+derivation. OWN-006 later replaces the bootstrap Copy-only boundary with
+availability-checked moves for affine captures.
 
 Checked operations use `Invoke`; indexed and sliced reads therefore cannot
 bypass their bounds/unwind edge. Assignment first resolves all destination
@@ -184,6 +197,9 @@ The structural verifier introduced in M3 proves at minimum:
   relation;
 - aggregate, conversion, iterator, index, slice, range, membership, and tag
   operations have the exact instantiated input and result types;
+- a closure aggregate names existing HIR metadata, has the exact generated
+  result and capture layout, and copies each capture from the corresponding
+  unprojected outer source binding rather than a merely type-compatible value;
 - equality, collection membership, and map lookup satisfy the `Equatable`,
   `Key`, or `Copy` requirement recorded and independently verified in HIR;
 - a variant, union, option, or result payload is read only on an edge dominated

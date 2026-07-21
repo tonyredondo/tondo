@@ -494,6 +494,10 @@ pub enum BytecodeAggregateKind {
     Tuple,
     Array,
     Set,
+    Closure {
+        closure: u32,
+        captures: Vec<BytecodeTypeId>,
+    },
     Newtype {
         nominal: BytecodeNominalId,
     },

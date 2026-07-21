@@ -11,8 +11,9 @@ use crate::source::{FileId, SourceDatabase, Span, TextRange};
 use crate::syntax::ast::{Expression as AstExpression, Pattern as AstPattern};
 use crate::syntax::{Parsed, SyntaxElement, SyntaxKind, SyntaxNodeRef, SyntaxTokenRef, TokenKind};
 use crate::types::{
-    Assignability, InferenceContext, InferenceError, InferenceId, IntrinsicType, NumericConversion,
-    ParameterMode, ScalarType, TypeId, TypeKind, TypeSubstitution, numeric_conversion,
+    Assignability, FunctionParameter, FunctionType, GeneratedTypeIdentity, GeneratedTypeKind,
+    InferenceContext, InferenceError, InferenceId, IntrinsicType, NumericConversion, ParameterMode,
+    ScalarType, TypeId, TypeKind, TypeSubstitution, numeric_conversion,
 };
 
 use super::capabilities::{CapabilityAnalysis, CapabilityAssumptions};
@@ -22,12 +23,13 @@ use super::const_eval::{
 use super::{
     HirAssertMessagePart, HirAssignmentOperator, HirAssignmentTarget, HirAssignmentTargetKind,
     HirBinaryOperator, HirBody, HirBootstrapHostFunction, HirCallArgument, HirCallArgumentTarget,
-    HirCallableId, HirCallableSignature, HirCapability, HirCapabilityStatus, HirContainmentKind,
-    HirError, HirExpression, HirExpressionId, HirExpressionKind, HirField, HirFlow, HirForKind,
-    HirIndexAccess, HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry, HirMatchArm,
-    HirMemberReference, HirNominalShape, HirPattern, HirPatternField, HirPatternId, HirPatternKind,
-    HirPrefixOperator, HirPreludeTraitMethod, HirProgram, HirRangeKind, HirRecordFieldValue,
-    HirStatement, HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
+    HirCallableId, HirCallableSignature, HirCapability, HirCapabilityStatus, HirClosure,
+    HirClosureCapture, HirClosureId, HirContainmentKind, HirError, HirExpression, HirExpressionId,
+    HirExpressionKind, HirField, HirFlow, HirForKind, HirIndexAccess, HirIterationProtocol,
+    HirLiteral, HirLoopId, HirMapEntry, HirMatchArm, HirMemberReference, HirNominalShape,
+    HirParameter, HirPattern, HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator,
+    HirPreludeTraitMethod, HirProgram, HirRangeKind, HirRecordFieldValue, HirStatement,
+    HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
     HirVariantValue, HirWriteKind, TraitQuery, TraitSelectionError, select_implementation,
 };
 
@@ -92,6 +94,7 @@ pub fn check_expressions<'a>(
         capability_analysis: None,
         reported_capability_requirements: BTreeSet::new(),
         opaque_body: None,
+        closure_body: None,
     };
     checker.check_capability_contracts()?;
     checker.check_discard_parameters()?;
@@ -262,6 +265,9 @@ struct BodyContext {
     trait_body: Option<TraitBodyContext>,
     trait_assumptions: Vec<TraitQuery>,
     capability_assumptions: CapabilityAssumptions,
+    generic_arguments: Vec<TypeId>,
+    generics: Vec<super::HirGenericParameter>,
+    noncapturable_locals: BTreeSet<LocalId>,
     loops: Vec<HirLoopId>,
 }
 
@@ -427,6 +433,15 @@ enum OpaqueExpectedMatch {
     Mismatch,
 }
 
+enum ClosureExpectedMatch {
+    NotInferred,
+    Matched {
+        target: TypeId,
+        coercion: Assignability,
+    },
+    Mismatch,
+}
+
 fn explicit_receiver_argument_mode(mode: ParameterMode) -> ParameterMode {
     match mode {
         ParameterMode::Ref | ParameterMode::Value => ParameterMode::Value,
@@ -480,6 +495,15 @@ struct OpaqueBodyInference {
     pattern_start: usize,
 }
 
+struct ClosureBodyInference {
+    solver: InferenceContext,
+    variables: BTreeSet<InferenceId>,
+    witness: TypeId,
+    signature: Span,
+    expression_start: usize,
+    pattern_start: usize,
+}
+
 impl FlowSummary {
     fn completes() -> Self {
         Self {
@@ -520,6 +544,7 @@ struct ExpressionChecker<'a> {
     capability_analysis: Option<CapabilityAnalysis>,
     reported_capability_requirements: BTreeSet<(Span, TypeId, HirCapability)>,
     opaque_body: Option<OpaqueBodyInference>,
+    closure_body: Option<ClosureBodyInference>,
 }
 
 impl<'a> ExpressionChecker<'a> {
@@ -956,6 +981,10 @@ impl<'a> ExpressionChecker<'a> {
                 contextual_self: self.callable_contextual_self(callable.id),
                 ..BodyContext::default()
             };
+            context.generic_arguments = (0..callable.generic_arity)
+                .map(|position| self.program.interner.generic_parameter(position))
+                .collect::<Result<_, _>>()?;
+            context.generics = callable.generics.clone();
             context.trait_body = self.trait_body_context(callable.id);
             let (declared_success, error) = match self.program.interner.kind(callable.outcome)? {
                 TypeKind::Result { success, error } => (*success, Some(*error)),
@@ -1003,6 +1032,9 @@ impl<'a> ExpressionChecker<'a> {
                 } else if let Some(local) = parameter.local() {
                     context.locals.insert(local, parameter.ty());
                     context.local_permissions.insert(local, permission);
+                    if parameter.mode() != ParameterMode::Value {
+                        context.noncapturable_locals.insert(local);
+                    }
                 }
             }
             let root = self.check_expression(
@@ -1603,6 +1635,12 @@ impl<'a> ExpressionChecker<'a> {
             .values()
             .filter_map(|constant| constant.value())
             .chain(self.program.bodies.values().map(HirBody::root))
+            .chain(
+                self.program
+                    .closures
+                    .iter()
+                    .map(|closure| closure.body.root),
+            )
             .collect::<Vec<_>>();
         let mut visited = BTreeSet::new();
         let mut warnings = Vec::new();
@@ -1635,6 +1673,7 @@ impl<'a> ExpressionChecker<'a> {
                 | HirExpressionKind::Function(_)
                 | HirExpressionKind::SpecializedFunction { .. }
                 | HirExpressionKind::PreludeTraitFunction { .. }
+                | HirExpressionKind::Closure(_)
                 | HirExpressionKind::Receiver
                 | HirExpressionKind::Break { .. }
                 | HirExpressionKind::Continue { .. } => {}
@@ -1869,6 +1908,14 @@ impl<'a> ExpressionChecker<'a> {
         {
             return Ok(value);
         }
+        if self.concrete_closure_requires_call_protocol(actual, expectation.contextual_type())? {
+            // CALL-003 proves the call protocol and publishes the coercion to
+            // the uniform function representation. Retain the fully checked
+            // concrete closure, but do not diagnose that unfinished boundary
+            // as an ordinary type mismatch.
+            self.complete = false;
+            return self.recovery_expression(file, node.range());
+        }
         if let ExpressionExpectation::CallableOutcome { full, success } = expectation {
             if actual == full {
                 return Ok(value);
@@ -1961,6 +2008,20 @@ impl<'a> ExpressionChecker<'a> {
             }
             OpaqueExpectedMatch::NotOpaque => {}
         }
+        match self.match_closure_expected(actual, expected)? {
+            ClosureExpectedMatch::Matched { target, coercion } => {
+                return if coercion == Assignability::Exact {
+                    Ok(value)
+                } else {
+                    self.coerce_with(value, target, coercion)
+                };
+            }
+            ClosureExpectedMatch::Mismatch => {
+                self.emit_closure_return_mismatch(self.sources.span(file, node.range())?, actual)?;
+                return self.recovery_expression(file, node.range());
+            }
+            ClosureExpectedMatch::NotInferred => {}
+        }
         let Some(assignability) = self.program.interner.assignability(actual, expected)? else {
             let expected_name = self.program.interner.canonical(expected)?;
             let actual_name = self.program.interner.canonical(actual)?;
@@ -2027,8 +2088,8 @@ impl<'a> ExpressionChecker<'a> {
             AstExpression::OptionResult(_) => {
                 self.check_option_result(file, node, expected, context)
             }
-            AstExpression::Closure(_)
-            | AstExpression::Await(_)
+            AstExpression::Closure(_) => self.check_closure(file, node, expected, context),
+            AstExpression::Await(_)
             | AstExpression::Spawn(_)
             | AstExpression::Scope(_)
             | AstExpression::Unsafe(_) => {
@@ -2036,6 +2097,560 @@ impl<'a> ExpressionChecker<'a> {
                 self.recovery_expression(file, node.range())
             }
         }
+    }
+
+    fn check_closure(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'_>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        if node
+            .child_tokens()
+            .any(|token| matches!(token.kind(), TokenKind::Async | TokenKind::Unsafe))
+        {
+            // CALL-004 owns the semantic distinction and the additional safety
+            // contracts. Keeping this surface incomplete avoids inventing a
+            // provisional sync representation for it.
+            self.complete = false;
+            return self.recovery_expression(file, node.range());
+        }
+
+        let span = self.sources.span(file, node.range())?;
+        let Some(body_node) = node
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::Block)
+        else {
+            self.complete = false;
+            return self.recovery_expression(file, node.range());
+        };
+        let (captures, captures_valid) =
+            self.collect_closure_captures(file, node.range(), body_node, context)?;
+        if !captures_valid {
+            return self.recovery_expression(file, node.range());
+        }
+
+        let expected_function = expected
+            .map(ExpressionExpectation::contextual_type)
+            .and_then(|ty| match self.program.interner.kind(ty) {
+                Ok(TypeKind::Function(function)) => Some(function.clone()),
+                _ => None,
+            });
+        let parameter_nodes = node
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::ClosureParameterList)
+            .map(|list| {
+                list.child_nodes()
+                    .filter(|child| child.kind() == SyntaxKind::ClosureParameter)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let expected_parameters = expected_function.as_ref().map(|function| {
+            function
+                .parameters()
+                .iter()
+                .map(|parameter| (parameter.mode(), parameter.ty(), false))
+                .chain(
+                    function
+                        .variadic()
+                        .map(|element| (ParameterMode::Value, element, true)),
+                )
+                .collect::<Vec<_>>()
+        });
+        let mut signature_valid = true;
+        if let Some(expected_parameters) = &expected_parameters
+            && expected_parameters.len() != parameter_nodes.len()
+        {
+            self.emit(
+                span,
+                "E1102",
+                format!(
+                    "closure has {} parameters, but the expected function type has {}",
+                    parameter_nodes.len(),
+                    expected_parameters.len()
+                ),
+                Vec::new(),
+                None,
+            )?;
+            signature_valid = false;
+        }
+
+        let mut parameters = Vec::with_capacity(parameter_nodes.len());
+        let mut function_parameters = Vec::new();
+        let mut variadic = None;
+        for (index, parameter_node) in parameter_nodes.iter().enumerate() {
+            let parameter_span = self.sources.span(file, parameter_node.range())?;
+            let annotation = parameter_node
+                .child_nodes()
+                .find(|child| child.kind() == SyntaxKind::TypeExpr);
+            let explicit_variadic = parameter_node
+                .child_tokens()
+                .any(|token| token.kind() == TokenKind::Ellipsis);
+            let explicit_mode = closure_parameter_mode(*parameter_node);
+            let contextual = expected_parameters
+                .as_ref()
+                .and_then(|parameters| parameters.get(index).copied());
+
+            let (mode, source_type, is_variadic) = if let Some(annotation) = annotation {
+                let source_type = self
+                    .program
+                    .type_at(file, annotation.range())
+                    .unwrap_or_else(|| self.program.interner.error());
+                if let Some((expected_mode, expected_type, expected_variadic)) = contextual
+                    && (explicit_mode != expected_mode
+                        || source_type != expected_type
+                        || explicit_variadic != expected_variadic)
+                {
+                    self.emit(
+                        parameter_span,
+                        "E1102",
+                        "closure parameter does not match the expected function signature",
+                        Vec::new(),
+                        None,
+                    )?;
+                    signature_valid = false;
+                }
+                (explicit_mode, source_type, explicit_variadic)
+            } else if let Some((expected_mode, expected_type, expected_variadic)) = contextual {
+                if expected_mode != ParameterMode::Value {
+                    self.emit(
+                        parameter_span,
+                        "E1115",
+                        "a closure parameter using `ref`, `mut`, or `var` must spell its mode and type",
+                        Vec::new(),
+                        None,
+                    )?;
+                    signature_valid = false;
+                }
+                (expected_mode, expected_type, expected_variadic)
+            } else {
+                self.emit(
+                    parameter_span,
+                    "E1115",
+                    "a closure parameter requires a type when no function signature is expected",
+                    Vec::new(),
+                    None,
+                )?;
+                signature_valid = false;
+                (ParameterMode::Value, self.program.interner.error(), false)
+            };
+
+            if is_variadic
+                && (variadic.is_some()
+                    || index + 1 != parameter_nodes.len()
+                    || mode != ParameterMode::Value)
+            {
+                self.emit(
+                    parameter_span,
+                    "E1115",
+                    "a variadic closure parameter must be the unique final value parameter",
+                    Vec::new(),
+                    None,
+                )?;
+                signature_valid = false;
+            }
+
+            let name = parameter_node
+                .child_tokens()
+                .find(|token| token.kind() == TokenKind::Identifier);
+            let discard =
+                name.is_some_and(|token| token.token().normalized_identifier() == Some("_"));
+            if is_variadic && discard {
+                self.emit(
+                    parameter_span,
+                    "E1115",
+                    "a variadic closure parameter requires a name",
+                    Vec::new(),
+                    None,
+                )?;
+                signature_valid = false;
+            }
+            let local = name.and_then(|token| self.resolved.local_at(file, token.range()));
+            let (body_type, variadic_element) = if is_variadic {
+                variadic = Some(source_type);
+                (
+                    self.program
+                        .interner
+                        .intrinsic(IntrinsicType::Array, vec![source_type])?,
+                    Some(source_type),
+                )
+            } else {
+                function_parameters.push(FunctionParameter::new(mode, source_type));
+                (source_type, None)
+            };
+            parameters.push(HirParameter {
+                span: parameter_span,
+                local: local.map(|local| local.id()),
+                mode,
+                ty: body_type,
+                variadic_element,
+                receiver: false,
+                discard,
+            });
+        }
+
+        let explicit_outcome = node
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::OutcomeAnnotation)
+            .and_then(|annotation| {
+                annotation
+                    .child_nodes()
+                    .find(|child| child.kind() == SyntaxKind::TypeExpr)
+            })
+            .and_then(|ty| self.program.type_at(file, ty.range()));
+        let contextual_outcome = expected_function.as_ref().map(FunctionType::outcome);
+        if let (Some(explicit), Some(contextual)) = (explicit_outcome, contextual_outcome)
+            && explicit != contextual
+        {
+            self.emit(
+                span,
+                "E1102",
+                "closure result does not match the expected function signature",
+                Vec::new(),
+                None,
+            )?;
+            signature_valid = false;
+        }
+
+        if !signature_valid {
+            return self.recovery_expression(file, node.range());
+        }
+
+        let mut inferred = None;
+        let outcome = if let Some(outcome) = explicit_outcome.or(contextual_outcome) {
+            outcome
+        } else {
+            let mut solver = InferenceContext::new();
+            let witness = solver.fresh(&mut self.program.interner)?;
+            let TypeKind::Inference(variable) = self.program.interner.kind(witness)? else {
+                unreachable!("fresh inference produces an inference type");
+            };
+            inferred = Some(ClosureBodyInference {
+                solver,
+                variables: BTreeSet::from([*variable]),
+                witness,
+                signature: span,
+                expression_start: self.program.expressions.len(),
+                pattern_start: self.program.patterns.len(),
+            });
+            witness
+        };
+        let (success, error) = match self.program.interner.kind(outcome)? {
+            TypeKind::Result { success, error } => (*success, Some(*error)),
+            _ => (outcome, None),
+        };
+
+        let mut closure_context = context.clone();
+        closure_context.loops.clear();
+        closure_context.receiver = None;
+        closure_context.receiver_permission = PlacePermission::Invalid;
+        closure_context.callable = Some(CallableContext {
+            full: outcome,
+            success,
+            error,
+            signature: span,
+        });
+        for parameter in &parameters {
+            let Some(local) = parameter.local() else {
+                continue;
+            };
+            let permission = match parameter.mode() {
+                ParameterMode::Mut => PlacePermission::MutRoot,
+                ParameterMode::Var => PlacePermission::Replace,
+                ParameterMode::Value | ParameterMode::Ref => PlacePermission::Immutable,
+            };
+            closure_context.locals.insert(local, parameter.ty());
+            closure_context.local_permissions.insert(local, permission);
+            if parameter.mode() != ParameterMode::Value {
+                closure_context.noncapturable_locals.insert(local);
+            }
+            self.program.local_types.insert(local, parameter.ty());
+        }
+
+        let suspended_opaque = self.opaque_body.take();
+        let suspended_closure = self.closure_body.take();
+        self.closure_body = inferred;
+        let checked_body = (|| {
+            let root = self.check_expression(
+                file,
+                body_node,
+                Some(
+                    closure_context
+                        .callable
+                        .expect("closure callable context was initialized")
+                        .expectation(),
+                ),
+                &mut closure_context,
+            )?;
+            if self.closure_body.is_some() {
+                self.finish_closure_body(root, &mut closure_context)
+            } else {
+                Ok((root, outcome))
+            }
+        })();
+        self.closure_body = suspended_closure;
+        self.opaque_body = suspended_opaque;
+        let (body_root, outcome) = checked_body?;
+
+        let function_type = self.program.interner.function(FunctionType::new(
+            false,
+            false,
+            function_parameters,
+            variadic,
+            outcome,
+        ))?;
+        if let Some(expected_function) = expected_function {
+            let expected_type = self.program.interner.function(expected_function)?;
+            if function_type != expected_type {
+                self.emit(
+                    span,
+                    "E1102",
+                    "closure signature does not match the expected function type",
+                    Vec::new(),
+                    None,
+                )?;
+            }
+        }
+
+        for parameter in &parameters {
+            if parameter.is_discard() && parameter.mode() == ParameterMode::Value {
+                self.require_discard_with_generics(
+                    parameter.span(),
+                    parameter.ty(),
+                    &closure_context.capability_assumptions,
+                    "discard closure parameter",
+                )?;
+            }
+        }
+        for capture in &captures {
+            if self.capability_status_with_generics(
+                capture.ty(),
+                HirCapability::Copy,
+                &closure_context.capability_assumptions,
+            )? != HirCapabilityStatus::Satisfied
+            {
+                // M4 executes the closed Copy + Discard subset. M5 replaces
+                // this bootstrap boundary with availability-aware moves.
+                self.complete = false;
+            }
+        }
+
+        let source = self.sources.get(file)?;
+        let identity = GeneratedTypeIdentity::new(
+            GeneratedTypeKind::Closure,
+            source.source_id().clone(),
+            source.module().clone(),
+            source.path().clone(),
+            node.range().start(),
+        );
+        let closure_type = self
+            .program
+            .interner
+            .generated(identity.clone(), context.generic_arguments.clone())?;
+        let id = HirClosureId(u32::try_from(self.program.closures.len()).map_err(|_| {
+            HirError::NodeLimit {
+                file,
+                offset: node.range().start(),
+            }
+        })?);
+        self.program.closures.push(HirClosure {
+            id,
+            identity,
+            span,
+            ty: closure_type,
+            function_type,
+            generics: context.generics.clone(),
+            parameters,
+            captures,
+            body: HirBody { root: body_root },
+        });
+        self.capability_analysis = None;
+        self.program.local_types.extend(closure_context.locals);
+
+        self.allocate_expression(HirExpression {
+            span,
+            ty: closure_type,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Closure(id),
+        })
+    }
+
+    fn collect_closure_captures(
+        &mut self,
+        file: FileId,
+        closure_range: TextRange,
+        body: SyntaxNodeRef<'_>,
+        context: &BodyContext,
+    ) -> Result<(Vec<HirClosureCapture>, bool), HirError> {
+        let mut uses = BTreeMap::<LocalId, Span>::new();
+        let mut receiver_use = None;
+        for token in body.descendant_tokens() {
+            let Some(reference) = self.resolved.reference(file, token.range()) else {
+                continue;
+            };
+            match reference.entity() {
+                ResolvedEntity::Name(ResolvedName::Local(local)) => {
+                    let Some(binding) = self.resolved.local(*local) else {
+                        continue;
+                    };
+                    if binding.kind() == LocalKind::GenericParameter
+                        || (binding.span().file() == file
+                            && contains_range(closure_range, binding.span().range()))
+                    {
+                        continue;
+                    }
+                    uses.entry(*local)
+                        .or_insert(self.sources.span(file, token.range())?);
+                }
+                ResolvedEntity::Name(ResolvedName::Receiver) => {
+                    receiver_use.get_or_insert(self.sources.span(file, token.range())?);
+                }
+                ResolvedEntity::Name(
+                    ResolvedName::Symbol(_)
+                    | ResolvedName::ContextualSelf
+                    | ResolvedName::Prelude { .. }
+                    | ResolvedName::External { .. },
+                )
+                | ResolvedEntity::Module(_)
+                | ResolvedEntity::ContextualCandidates { .. } => {}
+            }
+        }
+
+        let mut valid = true;
+        if let Some(use_span) = receiver_use {
+            self.emit(
+                use_span,
+                "E1402",
+                "a closure cannot capture the borrowed receiver; pass an owned value explicitly",
+                Vec::new(),
+                None,
+            )?;
+            valid = false;
+        }
+        let mut captures = Vec::with_capacity(uses.len());
+        for (local, use_span) in uses {
+            let Some(ty) = context.locals.get(&local).copied() else {
+                self.complete = false;
+                valid = false;
+                continue;
+            };
+            if context.noncapturable_locals.contains(&local) {
+                let related = self
+                    .resolved
+                    .local(local)
+                    .map(|binding| vec![("the borrowed binding is declared here", binding.span())])
+                    .unwrap_or_default();
+                self.emit(
+                    use_span,
+                    "E1402",
+                    "a `ref`, `mut`, or `var` loan cannot be captured by a closure",
+                    related,
+                    None,
+                )?;
+                valid = false;
+                continue;
+            }
+            captures.push(HirClosureCapture {
+                local,
+                ty,
+                mutable: context
+                    .local_permissions
+                    .get(&local)
+                    .copied()
+                    .unwrap_or(PlacePermission::Immutable)
+                    == PlacePermission::Replace,
+            });
+        }
+        Ok((captures, valid))
+    }
+
+    fn finish_closure_body(
+        &mut self,
+        root: HirExpressionId,
+        context: &mut BodyContext,
+    ) -> Result<(HirExpressionId, TypeId), HirError> {
+        let state = self
+            .closure_body
+            .take()
+            .expect("an inferred closure starts body-local inference");
+        let outcome = match state
+            .solver
+            .resolve(&mut self.program.interner, state.witness)
+        {
+            Ok(outcome) if outcome != self.program.interner.error() => outcome,
+            Ok(_) => self.program.interner.error(),
+            Err(InferenceError::Unsolved(_)) if !self.expression_flow(root).may_complete() => {
+                self.program.interner.scalar(ScalarType::Never)
+            }
+            Err(InferenceError::Unsolved(_)) => {
+                self.emit(
+                    state.signature,
+                    "E1102",
+                    "closure result type cannot be inferred from its reachable paths",
+                    Vec::new(),
+                    None,
+                )?;
+                self.program.interner.error()
+            }
+            Err(InferenceError::Type(error)) => return Err(error.into()),
+            Err(InferenceError::Mismatch { .. } | InferenceError::RecursiveSolution { .. }) => {
+                self.emit(
+                    state.signature,
+                    "E1102",
+                    "closure result inference did not produce one finite type",
+                    Vec::new(),
+                    None,
+                )?;
+                self.program.interner.error()
+            }
+        };
+
+        let mut replacements = BTreeMap::new();
+        let mut roots = BTreeSet::new();
+        for expression in &self.program.expressions[state.expression_start..] {
+            collect_expression_type_roots(expression, &mut roots);
+        }
+        for pattern in &self.program.patterns[state.pattern_start..] {
+            collect_pattern_type_roots(pattern, &mut roots);
+        }
+        roots.extend(context.locals.values().copied());
+        roots.extend(self.program.local_types.values().copied());
+        for ty in roots {
+            if type_contains_inference_set(&self.program.interner, ty, &state.variables)? {
+                let resolved = if ty == state.witness {
+                    outcome
+                } else {
+                    state.solver.resolve(&mut self.program.interner, ty)?
+                };
+                replacements.insert(ty, resolved);
+            }
+        }
+        for expression in &mut self.program.expressions[state.expression_start..] {
+            rewrite_expression_types(expression, &replacements);
+        }
+        for pattern in &mut self.program.patterns[state.pattern_start..] {
+            rewrite_pattern_types(pattern, &replacements);
+        }
+        for ty in context.locals.values_mut() {
+            *ty = replaced_type(*ty, &replacements);
+        }
+        for ty in self.program.local_types.values_mut() {
+            *ty = replaced_type(*ty, &replacements);
+        }
+
+        let root = if outcome == self.program.interner.scalar(ScalarType::Never) {
+            match self.program.expressions[root.0 as usize].kind {
+                HirExpressionKind::Coerce {
+                    kind: Assignability::Diverging,
+                    value,
+                } => value,
+                _ => root,
+            }
+        } else {
+            root
+        };
+        Ok((root, outcome))
     }
 
     fn check_literal(
@@ -6093,6 +6708,9 @@ impl<'a> ExpressionChecker<'a> {
             .local_permissions
             .entry(local.id())
             .or_insert(PlacePermission::Immutable);
+        if borrowed {
+            context.noncapturable_locals.insert(local.id());
+        }
         self.program.local_types.insert(local.id(), ty);
         let id = self.allocate_pattern(HirPattern {
             span: self.sources.span(file, node.range())?,
@@ -8312,6 +8930,19 @@ impl<'a> ExpressionChecker<'a> {
                         Some(callable.expectation()),
                         context,
                     )?),
+                    (None, Some(callable)) if self.closure_body.is_some() => {
+                        let unit = self.program.interner.scalar(ScalarType::Unit);
+                        if matches!(
+                            self.match_closure_expected(unit, callable.success)?,
+                            ClosureExpectedMatch::Mismatch
+                        ) {
+                            self.emit_closure_return_mismatch(
+                                self.sources.span(file, node.range())?,
+                                unit,
+                            )?;
+                        }
+                        None
+                    }
                     (None, Some(callable)) if self.opaque_body.is_some() => {
                         Some(self.check_opaque_unit_return(
                             self.sources.span(file, node.range())?,
@@ -9174,6 +9805,152 @@ impl<'a> ExpressionChecker<'a> {
                 | InferenceError::Unsolved(_),
             ) => Ok(OpaqueExpectedMatch::Mismatch),
         }
+    }
+
+    fn match_closure_expected(
+        &mut self,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> Result<ClosureExpectedMatch, HirError> {
+        if !self.type_contains_closure_inference(expected)? {
+            return Ok(ClosureExpectedMatch::NotInferred);
+        }
+        if actual == self.program.interner.scalar(ScalarType::Never) {
+            return Ok(ClosureExpectedMatch::Matched {
+                target: expected,
+                coercion: Assignability::Diverging,
+            });
+        }
+
+        let solver = self
+            .closure_body
+            .as_ref()
+            .expect("closure inference presence implies an active closure body")
+            .solver
+            .clone();
+        let resolved_actual = match solver.resolve(&mut self.program.interner, actual) {
+            Ok(ty) => Some(ty),
+            Err(InferenceError::Unsolved(_)) => None,
+            Err(InferenceError::Type(error)) => return Err(error.into()),
+            Err(InferenceError::Mismatch { .. } | InferenceError::RecursiveSolution { .. }) => {
+                return Ok(ClosureExpectedMatch::Mismatch);
+            }
+        };
+        let resolved_expected = match solver.resolve(&mut self.program.interner, expected) {
+            Ok(ty) => Some(ty),
+            Err(InferenceError::Unsolved(_)) => None,
+            Err(InferenceError::Type(error)) => return Err(error.into()),
+            Err(InferenceError::Mismatch { .. } | InferenceError::RecursiveSolution { .. }) => {
+                return Ok(ClosureExpectedMatch::Mismatch);
+            }
+        };
+        if let (Some(actual), Some(expected)) = (resolved_actual, resolved_expected) {
+            return Ok(if actual == expected {
+                ClosureExpectedMatch::Matched {
+                    target: expected,
+                    coercion: Assignability::Exact,
+                }
+            } else {
+                ClosureExpectedMatch::Mismatch
+            });
+        }
+
+        let state = self
+            .closure_body
+            .as_mut()
+            .expect("closure inference presence implies an active closure body");
+        match state
+            .solver
+            .equate(&self.program.interner, actual, expected)
+        {
+            Ok(()) => Ok(ClosureExpectedMatch::Matched {
+                target: actual,
+                coercion: Assignability::Exact,
+            }),
+            Err(InferenceError::Type(error)) => Err(error.into()),
+            Err(
+                InferenceError::Mismatch { .. }
+                | InferenceError::RecursiveSolution { .. }
+                | InferenceError::Unsolved(_),
+            ) => Ok(ClosureExpectedMatch::Mismatch),
+        }
+    }
+
+    fn concrete_closure_requires_call_protocol(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+    ) -> Result<bool, HirError> {
+        if !matches!(self.program.interner.kind(expected)?, TypeKind::Function(_)) {
+            return Ok(false);
+        }
+        let TypeKind::Generated { identity, .. } = self.program.interner.kind(actual)? else {
+            return Ok(false);
+        };
+        Ok(self.program.closure_by_identity(identity).is_some())
+    }
+
+    fn type_contains_closure_inference(&self, root: TypeId) -> Result<bool, HirError> {
+        let Some(state) = self.closure_body.as_ref() else {
+            return Ok(false);
+        };
+        let mut pending = vec![root];
+        let mut visited = BTreeSet::new();
+        while let Some(ty) = pending.pop() {
+            if !visited.insert(ty) {
+                continue;
+            }
+            match self.program.interner.kind(ty)? {
+                TypeKind::Inference(inference) => {
+                    if state.variables.contains(inference) {
+                        return Ok(true);
+                    }
+                }
+                TypeKind::Nominal { arguments, .. }
+                | TypeKind::Tuple(arguments)
+                | TypeKind::Union(arguments)
+                | TypeKind::Intrinsic { arguments, .. }
+                | TypeKind::Generated { arguments, .. }
+                | TypeKind::OpaqueResult { arguments, .. } => {
+                    pending.extend(arguments.iter().copied());
+                }
+                TypeKind::Function(function) => {
+                    pending.extend(function.parameters().iter().map(|parameter| parameter.ty()));
+                    pending.extend(function.variadic());
+                    pending.push(function.outcome());
+                }
+                TypeKind::Option(item) => pending.push(*item),
+                TypeKind::Result { success, error } => {
+                    pending.push(*success);
+                    pending.push(*error);
+                }
+                TypeKind::Cursor { collection, .. } => pending.push(*collection),
+                TypeKind::Error | TypeKind::Scalar(_) | TypeKind::GenericParameter(_) => {}
+            }
+        }
+        Ok(false)
+    }
+
+    fn emit_closure_return_mismatch(&mut self, span: Span, actual: TypeId) -> Result<(), HirError> {
+        let signature = self
+            .closure_body
+            .as_ref()
+            .expect("closure return diagnostics require an active inference")
+            .signature;
+        let actual = self
+            .program
+            .interner
+            .canonical(actual)
+            .unwrap_or_else(|_| "<contextual value>".into());
+        self.emit(
+            span,
+            "E1102",
+            format!(
+                "closure return paths must produce one compatible type; this path produces `{actual}`"
+            ),
+            vec![("the inferred closure begins here", signature)],
+            None,
+        )
     }
 
     fn type_contains_opaque_inference(&self, root: TypeId) -> Result<bool, HirError> {
@@ -12932,6 +13709,7 @@ impl<'a> ExpressionChecker<'a> {
             | HirExpressionKind::Function(_)
             | HirExpressionKind::SpecializedFunction { .. }
             | HirExpressionKind::PreludeTraitFunction { .. }
+            | HirExpressionKind::Closure(_)
             | HirExpressionKind::Receiver => FlowSummary::completes(),
             HirExpressionKind::Tuple(items)
             | HirExpressionKind::Array(items)
@@ -13323,6 +14101,31 @@ impl<'a> ExpressionChecker<'a> {
 
 fn is_option_type(kind: &TypeKind) -> bool {
     matches!(kind, TypeKind::Option(_))
+}
+
+fn contains_range(container: TextRange, query: TextRange) -> bool {
+    container.start() <= query.start() && query.end() <= container.end()
+}
+
+fn closure_parameter_mode(node: SyntaxNodeRef<'_>) -> ParameterMode {
+    if node
+        .child_tokens()
+        .any(|token| token.kind() == TokenKind::Ref)
+    {
+        ParameterMode::Ref
+    } else if node
+        .child_tokens()
+        .any(|token| token.kind() == TokenKind::Mut)
+    {
+        ParameterMode::Mut
+    } else if node
+        .child_tokens()
+        .any(|token| token.kind() == TokenKind::Var)
+    {
+        ParameterMode::Var
+    } else {
+        ParameterMode::Value
+    }
 }
 
 fn is_result_type(kind: &TypeKind) -> bool {
@@ -14287,6 +15090,260 @@ mod tests {
             .body(callable.id())
             .expect("the callable body is checked")
             .root()
+    }
+
+    #[test]
+    fn closures_have_distinct_concrete_types_and_capture_owned_snapshots() {
+        let (_, _, output) = check(
+            "fn build[T: Copy + Discard](input: T) {\n\
+                 let offset = 2\n\
+                 var count = 0\n\
+                 let first = (value: Int): Int {\n\
+                     count += 1\n\
+                     value + offset\n\
+                 }\n\
+                 let second = (): T { input }\n\
+                 _ = first\n\
+                 _ = second\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let closures = output.program().closures().collect::<Vec<_>>();
+        assert_eq!(closures.len(), 2);
+        assert_ne!(closures[0].ty(), closures[1].ty());
+        assert_eq!(closures[0].captures().len(), 2);
+        assert!(closures[0].captures()[0].local() < closures[0].captures()[1].local());
+        assert!(
+            closures[0]
+                .captures()
+                .iter()
+                .any(|capture| capture.is_mutable())
+        );
+        assert!(
+            closures[0]
+                .captures()
+                .iter()
+                .any(|capture| !capture.is_mutable())
+        );
+        assert_eq!(closures[1].captures().len(), 1);
+        assert_eq!(
+            output
+                .program()
+                .interner()
+                .canonical(closures[0].function_type())
+                .unwrap(),
+            "fn(Int): Int"
+        );
+        assert_eq!(
+            output
+                .program()
+                .interner()
+                .canonical(closures[1].function_type())
+                .unwrap(),
+            "fn(): $0"
+        );
+        for (index, closure) in closures.into_iter().enumerate() {
+            for capability in [
+                HirCapability::Copy,
+                HirCapability::Discard,
+                HirCapability::Send,
+                HirCapability::Share,
+            ] {
+                assert_eq!(
+                    output.program().capability_status(closure.ty(), capability),
+                    Some(if index == 0 {
+                        HirCapabilityStatus::Satisfied
+                    } else {
+                        HirCapabilityStatus::Deferred
+                    })
+                );
+            }
+            for capability in [HirCapability::Equatable, HirCapability::Key] {
+                assert_eq!(
+                    output.program().capability_status(closure.ty(), capability),
+                    Some(HirCapabilityStatus::Unsatisfied)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn closure_signatures_preserve_parameter_modes_and_variadics() {
+        let (_, _, output) = check(
+            "fn build() {\n\
+                 let mutate = (value: mut Int) {\n\
+                     value += 1\n\
+                 }\n\
+                 let count = (values: ...String): Int { 0 }\n\
+                 _ = mutate\n\
+                 _ = count\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let closures = output.program().closures().collect::<Vec<_>>();
+        assert_eq!(closures.len(), 2);
+        let TypeKind::Function(mutate) = output
+            .program()
+            .interner()
+            .kind(closures[0].function_type())
+            .unwrap()
+        else {
+            panic!("closure signature must be a function type")
+        };
+        assert_eq!(mutate.parameters()[0].mode(), ParameterMode::Mut);
+        let TypeKind::Function(count) = output
+            .program()
+            .interner()
+            .kind(closures[1].function_type())
+            .unwrap()
+        else {
+            panic!("closure signature must be a function type")
+        };
+        assert!(count.parameters().is_empty());
+        assert_eq!(
+            count.variadic(),
+            Some(output.program().interner().scalar(ScalarType::String))
+        );
+        assert!(matches!(
+            output
+                .program()
+                .interner()
+                .kind(closures[1].parameters()[0].ty()),
+            Ok(TypeKind::Intrinsic {
+                constructor: IntrinsicType::Array,
+                arguments,
+            }) if arguments.as_slice()
+                == [output.program().interner().scalar(ScalarType::String)]
+        ));
+    }
+
+    #[test]
+    fn closure_result_inference_handles_nested_closures_and_bare_return() {
+        let (_, _, output) = check(
+            "fn build(seed: Int) {\n\
+                 let outer = () {\n\
+                     let inner = () { seed }\n\
+                     _ = inner\n\
+                 }\n\
+                 let done = () {\n\
+                     return\n\
+                 }\n\
+                 _ = outer\n\
+                 _ = done\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let closures = output.program().closures().collect::<Vec<_>>();
+        assert_eq!(closures.len(), 3);
+        let outer = closures
+            .iter()
+            .find(|closure| closure.captures().len() == 1 && closure.body().root().index() > 0)
+            .expect("the outer closure propagates the nested free use");
+        assert_eq!(outer.captures().len(), 1);
+        assert!(closures.iter().any(|closure| {
+            matches!(
+                output
+                    .program()
+                    .interner()
+                    .kind(closure.function_type()),
+                Ok(TypeKind::Function(function))
+                    if function.outcome()
+                        == output.program().interner().scalar(ScalarType::Unit)
+            )
+        }));
+    }
+
+    #[test]
+    fn closures_reject_captured_loans_and_borrowed_receivers() {
+        let (_, _, loan) = check(
+            "fn invalid(value: ref Int) {\n\
+                 let closure = () { value }\n\
+                 _ = closure\n\
+             }\n",
+        );
+        assert_eq!(codes(&loan), ["E1402"]);
+
+        let (_, _, receiver) = check(
+            "type Counter = { value: Int }\n\
+             fn Counter.invalid(self) {\n\
+                 let closure = () { self.value }\n\
+                 _ = closure\n\
+             }\n",
+        );
+        assert_eq!(codes(&receiver), ["E1402"]);
+    }
+
+    #[test]
+    fn closure_parameters_and_inferred_returns_are_diagnosed_at_the_boundary() {
+        let (_, _, missing_parameter) = check(
+            "fn invalid() {\n\
+                 let closure = (value) { value }\n\
+                 _ = closure\n\
+             }\n",
+        );
+        assert_eq!(codes(&missing_parameter), ["E1115"]);
+
+        let (_, _, mismatched_return) = check(
+            "fn invalid() {\n\
+                 let closure = (flag: Bool) {\n\
+                     if flag { 1 } else { \"text\" }\n\
+                 }\n\
+                 _ = closure\n\
+             }\n",
+        );
+        assert_eq!(codes(&mismatched_return), ["E1102"]);
+
+        let (_, _, unnamed_variadic) = check(
+            "fn invalid() {\n\
+                 let closure = (_: ...String) { () }\n\
+                 _ = closure\n\
+             }\n",
+        );
+        assert_eq!(codes(&unnamed_variadic), ["E1115"]);
+    }
+
+    #[test]
+    fn contextual_closure_signatures_wait_for_call_protocol_derivation() {
+        let (_, _, output) = check(
+            "fn build() {\n\
+                 let operation: fn(Int): Int = (value) { value + 1 }\n\
+                 _ = operation\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(!output.is_complete());
+        let closure = output
+            .program()
+            .closures()
+            .next()
+            .expect("the concrete closure is checked before coercion");
+        assert_eq!(
+            output
+                .program()
+                .interner()
+                .canonical(closure.function_type())
+                .unwrap(),
+            "fn(Int): Int"
+        );
     }
 
     fn assignment_target_contains_coercion(

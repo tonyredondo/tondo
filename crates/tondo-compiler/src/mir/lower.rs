@@ -314,6 +314,47 @@ impl<'a> FunctionBuilder<'a> {
                 )?;
                 Ok(Some(block))
             }
+            HirExpressionKind::Closure(closure_id) => {
+                let closure =
+                    self.hir
+                        .closure(*closure_id)
+                        .ok_or_else(|| MirError::Construction {
+                            span,
+                            message: format!("closure#{} has no HIR metadata", closure_id.index()),
+                        })?;
+                let captures = closure
+                    .captures()
+                    .iter()
+                    .map(|capture| (capture.local(), capture.ty()))
+                    .collect::<Vec<_>>();
+                let mut values = Vec::with_capacity(captures.len());
+                for (local, ty) in captures {
+                    let local = self.source_local(local, span)?;
+                    let operand = self.copy_local(local);
+                    if operand.ty != ty {
+                        return Err(MirError::Construction {
+                            span,
+                            message: "closure capture type differs from its source local".into(),
+                        });
+                    }
+                    values.push(operand);
+                }
+                self.assign(
+                    block,
+                    span,
+                    destination,
+                    MirRvalue {
+                        ty: expression.ty(),
+                        kind: MirRvalueKind::Aggregate {
+                            shape: MirAggregateKind::Closure {
+                                closure: *closure_id,
+                            },
+                            values,
+                        },
+                    },
+                )?;
+                Ok(Some(block))
+            }
             HirExpressionKind::Tuple(values) => self.lower_aggregate(
                 values,
                 MirAggregateKind::Tuple,
@@ -3873,6 +3914,55 @@ mod tests {
         *replacement = None;
         let error = verify_mir(&resolved, &hir, &invalid_slice).unwrap_err();
         assert!(error.message().contains("replacement shape"));
+    }
+
+    #[test]
+    fn mir_verifier_rejects_a_forged_closure_capture_layout() {
+        fn closure_values(mir: &mut MirProgram) -> &mut Vec<MirOperand> {
+            mir.functions
+                .values_mut()
+                .flat_map(|function| &mut function.blocks)
+                .flat_map(|block| &mut block.statements)
+                .find_map(|statement| {
+                    let MirStatementKind::Assign {
+                        value:
+                            MirRvalue {
+                                kind:
+                                    MirRvalueKind::Aggregate {
+                                        shape: MirAggregateKind::Closure { .. },
+                                        values,
+                                    },
+                                ..
+                            },
+                        ..
+                    } = &mut statement.kind
+                    else {
+                        return None;
+                    };
+                    Some(values)
+                })
+                .expect("closure construction lowers to a MIR aggregate")
+        }
+
+        let source = "fn build() {\n\
+                          let seed = 41\n\
+                          let closure = (): Int { seed + 1 }\n\
+                          _ = closure\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+        let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        closure_values(&mut mir).clear();
+
+        let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
+        assert!(error.message().contains("capture layout"));
+
+        let mut wrong_source = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        closure_values(&mut wrong_source)[0].kind =
+            MirOperandKind::Constant(MirConstant::Integer("41".into()));
+        let error = verify_mir(&resolved, &hir, &wrong_source).unwrap_err();
+        assert!(error.message().contains("source binding"));
     }
 
     #[test]

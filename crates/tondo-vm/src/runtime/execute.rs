@@ -18,6 +18,8 @@ use super::literal;
 use super::value::{AggregatePayload, Value, snapshot_value};
 use super::{PanicCode, RuntimeValue, VmError, VmLimits, VmPanic, VmStackFrame, VmStatistics};
 
+type HeapMapEntry = (Option<Value>, Option<Value>);
+
 /// Host boundary for callables that deliberately have no bytecode body.
 pub trait VmHost {
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError>;
@@ -126,6 +128,7 @@ struct Engine<'program, 'host> {
     limits: VmLimits,
     heap: Heap,
     frames: Vec<Frame>,
+    temporary_roots: Vec<Value>,
     pending_panic: Option<VmPanic>,
     statistics: VmStatistics,
     callable_names: Vec<String>,
@@ -144,6 +147,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             limits,
             heap: Heap::new(limits),
             frames: Vec::new(),
+            temporary_roots: Vec::new(),
             pending_panic: None,
             statistics: VmStatistics::default(),
             callable_names: program
@@ -590,6 +594,7 @@ impl<'program, 'host> Engine<'program, 'host> {
 
     fn roots(&self, extra: &[Value]) -> Vec<Value> {
         let mut roots = extra.to_vec();
+        roots.extend(self.temporary_roots.iter().cloned());
         for frame in &self.frames {
             frame.roots(&mut roots);
         }
@@ -868,28 +873,23 @@ impl Engine<'_, '_> {
                 self.allocate(HeapObject::Array(values), &[])
             }
             HeapObject::Map(entries) => {
-                let mut output = Vec::with_capacity(entries.len());
-                for (key, value) in entries {
-                    output.push((
-                        self.copy_optional_value(&key)?,
-                        self.copy_optional_value(&value)?,
-                    ));
-                }
+                let output = self.copy_map_entries(&entries)?;
                 self.allocate(HeapObject::Map(output), &[])
             }
             HeapObject::Set(values) => {
                 let values = self.copy_optional_values(&values)?;
                 self.allocate(HeapObject::Set(values), &[])
             }
+            HeapObject::Closure { closure, captures } => {
+                let captures = self.copy_optional_values(&captures)?;
+                self.allocate(HeapObject::Closure { closure, captures }, &[])
+            }
             HeapObject::Newtype { nominal, value } => {
                 let value = self.copy_optional_value(&value)?;
                 self.allocate(HeapObject::Newtype { nominal, value }, &[])
             }
             HeapObject::Record { nominal, fields } => {
-                let mut output = Vec::with_capacity(fields.len());
-                for (field, value) in fields {
-                    output.push((field, self.copy_optional_value(&value)?));
-                }
+                let output = self.copy_record_fields(&fields)?;
                 self.allocate(
                     HeapObject::Record {
                         nominal,
@@ -920,8 +920,15 @@ impl Engine<'_, '_> {
                 self.allocate(HeapObject::Union { member, value }, &[])
             }
             HeapObject::Range { kind, start, end } => {
-                let start = self.copy_optional_value(&start)?;
-                let end = self.copy_optional_value(&end)?;
+                let marker = self.temporary_roots.len();
+                let result: Result<(Option<Value>, Option<Value>), VmError> = (|| {
+                    let start = self.copy_optional_value(&start)?;
+                    self.retain_optional_temporary(&start);
+                    let end = self.copy_optional_value(&end)?;
+                    Ok((start, end))
+                })();
+                self.temporary_roots.truncate(marker);
+                let (start, end) = result?;
                 self.allocate(HeapObject::Range { kind, start, end }, &[])
             }
         }
@@ -931,10 +938,18 @@ impl Engine<'_, '_> {
         &mut self,
         values: &[Option<Value>],
     ) -> Result<Vec<Option<Value>>, VmError> {
-        values
-            .iter()
-            .map(|value| self.copy_optional_value(value))
-            .collect()
+        let marker = self.temporary_roots.len();
+        let result = (|| {
+            let mut output = Vec::with_capacity(values.len());
+            for value in values {
+                let value = self.copy_optional_value(value)?;
+                self.retain_optional_temporary(&value);
+                output.push(value);
+            }
+            Ok(output)
+        })();
+        self.temporary_roots.truncate(marker);
+        result
     }
 
     fn copy_optional_value(&mut self, value: &Option<Value>) -> Result<Option<Value>, VmError> {
@@ -944,6 +959,47 @@ impl Engine<'_, '_> {
             .transpose()
     }
 
+    fn copy_map_entries(&mut self, entries: &[HeapMapEntry]) -> Result<Vec<HeapMapEntry>, VmError> {
+        let marker = self.temporary_roots.len();
+        let result = (|| {
+            let mut output = Vec::with_capacity(entries.len());
+            for (key, value) in entries {
+                let key = self.copy_optional_value(key)?;
+                self.retain_optional_temporary(&key);
+                let value = self.copy_optional_value(value)?;
+                self.retain_optional_temporary(&value);
+                output.push((key, value));
+            }
+            Ok(output)
+        })();
+        self.temporary_roots.truncate(marker);
+        result
+    }
+
+    fn copy_record_fields(
+        &mut self,
+        fields: &[(u32, Option<Value>)],
+    ) -> Result<Vec<(u32, Option<Value>)>, VmError> {
+        let marker = self.temporary_roots.len();
+        let result = (|| {
+            let mut output = Vec::with_capacity(fields.len());
+            for (field, value) in fields {
+                let value = self.copy_optional_value(value)?;
+                self.retain_optional_temporary(&value);
+                output.push((*field, value));
+            }
+            Ok(output)
+        })();
+        self.temporary_roots.truncate(marker);
+        result
+    }
+
+    fn retain_optional_temporary(&mut self, value: &Option<Value>) {
+        if let Some(value) = value {
+            self.temporary_roots.push(value.clone());
+        }
+    }
+
     fn copy_payload(&mut self, payload: &AggregatePayload) -> Result<AggregatePayload, VmError> {
         Ok(match payload {
             AggregatePayload::Unit => AggregatePayload::Unit,
@@ -951,11 +1007,7 @@ impl Engine<'_, '_> {
                 AggregatePayload::Tuple(self.copy_optional_values(values)?)
             }
             AggregatePayload::Record(fields) => {
-                let mut output = Vec::with_capacity(fields.len());
-                for (field, value) in fields {
-                    output.push((*field, self.copy_optional_value(value)?));
-                }
-                AggregatePayload::Record(output)
+                AggregatePayload::Record(self.copy_record_fields(fields)?)
             }
         })
     }
@@ -1080,10 +1132,18 @@ impl Engine<'_, '_> {
         frame: usize,
         operands: &[BytecodeOperand],
     ) -> Result<Vec<Value>, VmError> {
-        operands
-            .iter()
-            .map(|operand| self.evaluate_operand(frame, operand))
-            .collect()
+        let marker = self.temporary_roots.len();
+        let result = (|| {
+            let mut values = Vec::with_capacity(operands.len());
+            for operand in operands {
+                let value = self.evaluate_operand(frame, operand)?;
+                self.temporary_roots.push(value.clone());
+                values.push(value);
+            }
+            Ok(values)
+        })();
+        self.temporary_roots.truncate(marker);
+        result
     }
 
     fn construct_aggregate(
@@ -1114,6 +1174,17 @@ impl Engine<'_, '_> {
                     }
                 }
                 HeapObject::Set(unique)
+            }
+            BytecodeAggregateKind::Closure { closure, captures } => {
+                if captures.len() != values.len() {
+                    return Err(VmError::invariant(
+                        "closure construction has the wrong capture count",
+                    ));
+                }
+                HeapObject::Closure {
+                    closure: *closure,
+                    captures: values.into_iter().map(Some).collect(),
+                }
             }
             BytecodeAggregateKind::Newtype { nominal } => {
                 let [value] = values.try_into().map_err(|_| {
@@ -2735,6 +2806,7 @@ impl Engine<'_, '_> {
             }
             RuntimeValue::Map(_)
             | RuntimeValue::Set(_)
+            | RuntimeValue::Closure { .. }
             | RuntimeValue::Function { .. }
             | RuntimeValue::Newtype { .. }
             | RuntimeValue::Record { .. }
@@ -3263,6 +3335,9 @@ fn queue_object_equality(
             }
         }
         (HeapObject::Ref(_), HeapObject::Ref(_)) => false,
+        (HeapObject::Closure { .. }, HeapObject::Closure { .. }) => {
+            return Err(VmError::invariant("closure equality is not defined"));
+        }
         (HeapObject::Iterator { .. }, HeapObject::Iterator { .. }) => {
             return Err(VmError::invariant("iterator equality is not defined"));
         }

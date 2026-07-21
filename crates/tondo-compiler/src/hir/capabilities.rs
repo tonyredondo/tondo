@@ -2,7 +2,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::package::SymbolIdentity;
 use crate::resolve::{ResolvedProgram, SymbolId};
-use crate::types::{IntrinsicType, ScalarType, TypeError, TypeId, TypeKind};
+use crate::types::{
+    IntrinsicType, ScalarType, TypeError, TypeId, TypeInterner, TypeKind, TypeSubstitution,
+};
 
 use super::{
     HirCapability, HirCapabilityStatus, HirGenericParameter, HirNominalShape, HirProgram,
@@ -111,13 +113,14 @@ impl CapabilityAnalysis {
         capability: HirCapability,
         assumptions: &CapabilityAssumptions,
     ) -> Result<HirCapabilityStatus, TypeError> {
+        let mut interner = program.interner.clone();
         let mut nodes = BTreeMap::<(TypeId, HirCapability), CapabilityNode>::new();
         let mut pending = vec![(root, capability)];
         while let Some(key @ (ty, capability)) = pending.pop() {
             if nodes.contains_key(&key) {
                 continue;
             }
-            let mut node = self.node(program, ty, capability, assumptions)?;
+            let mut node = self.node(program, &mut interner, ty, capability, assumptions)?;
             node.dependencies.sort_unstable();
             node.dependencies.dedup();
             pending.extend(node.dependencies.iter().copied());
@@ -233,6 +236,7 @@ impl CapabilityAnalysis {
     fn node(
         &self,
         program: &HirProgram,
+        interner: &mut TypeInterner,
         ty: TypeId,
         capability: HirCapability,
         assumptions: &CapabilityAssumptions,
@@ -245,7 +249,7 @@ impl CapabilityAnalysis {
             floor,
             dependencies: Vec::new(),
         };
-        let node = match program.interner.kind(ty)?.clone() {
+        let node = match interner.kind(ty)?.clone() {
             TypeKind::Error => satisfied(Vec::new()),
             TypeKind::Scalar(scalar) => fixed(scalar_status(scalar, capability)),
             TypeKind::Function(_) => fixed(function_status(capability)),
@@ -290,7 +294,30 @@ impl CapabilityAnalysis {
                     HirCapabilityStatus::Unsatisfied
                 },
             ),
-            TypeKind::Inference(_) | TypeKind::Generated { .. } | TypeKind::Cursor { .. } => {
+            TypeKind::Generated {
+                identity,
+                arguments,
+            } => {
+                let Some(closure) = program.closure_by_identity(&identity) else {
+                    return Ok(fixed(HirCapabilityStatus::Deferred));
+                };
+                if matches!(capability, HirCapability::Equatable | HirCapability::Key) {
+                    fixed(HirCapabilityStatus::Unsatisfied)
+                } else {
+                    let substitution = TypeSubstitution::new(arguments);
+                    let dependencies = closure
+                        .captures()
+                        .iter()
+                        .map(|capture| {
+                            substitution
+                                .apply(interner, capture.ty())
+                                .map(|ty| (ty, capability))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    satisfied(dependencies)
+                }
+            }
+            TypeKind::Inference(_) | TypeKind::Cursor { .. } => {
                 fixed(HirCapabilityStatus::Deferred)
             }
         };

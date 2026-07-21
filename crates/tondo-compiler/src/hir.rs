@@ -13,8 +13,9 @@ use crate::package::{ModuleId, Name, PackageGraphError, SymbolIdentity};
 use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::{FileId, SourceError, Span, TextRange};
 use crate::types::{
-    Assignability, FunctionParameter, FunctionType, InferenceError, NumericConversion,
-    ParameterMode, ScalarType, TypeError, TypeId, TypeInterner, TypeKind, TypeSubstitution,
+    Assignability, FunctionParameter, FunctionType, GeneratedTypeIdentity, InferenceError,
+    NumericConversion, ParameterMode, ScalarType, TypeError, TypeId, TypeInterner, TypeKind,
+    TypeSubstitution,
 };
 
 mod capabilities;
@@ -154,6 +155,7 @@ pub struct HirProgram {
     member_references: Vec<HirMemberReference>,
     patterns: Vec<HirPattern>,
     bodies: BTreeMap<HirCallableId, HirBody>,
+    closures: Vec<HirClosure>,
     local_types: BTreeMap<LocalId, TypeId>,
     capability_statuses: Vec<[HirCapabilityStatus; HirCapability::COUNT]>,
     expression_check_complete: bool,
@@ -486,6 +488,25 @@ impl HirProgram {
 
     pub fn body(&self, callable: HirCallableId) -> Option<&HirBody> {
         self.bodies.get(&callable)
+    }
+
+    pub fn closure(&self, id: HirClosureId) -> Option<&HirClosure> {
+        self.closures
+            .get(id.0 as usize)
+            .filter(|closure| closure.id == id)
+    }
+
+    pub fn closures(&self) -> impl ExactSizeIterator<Item = &HirClosure> {
+        self.closures.iter()
+    }
+
+    pub(crate) fn closure_by_identity(
+        &self,
+        identity: &GeneratedTypeIdentity,
+    ) -> Option<&HirClosure> {
+        self.closures
+            .iter()
+            .find(|closure| closure.identity == *identity)
     }
 
     pub fn local_type(&self, local: LocalId) -> Option<TypeId> {
@@ -1292,6 +1313,92 @@ impl HirParameter {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HirClosureId(u32);
+
+impl HirClosureId {
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
+/// The static environment and callable signature of one source closure.
+///
+/// The body remains a separate semantic root: constructing a closure evaluates
+/// its captures, but never executes the body. CALL-003 lowers that root into an
+/// invocable callable after deriving the closed call protocols.
+#[derive(Debug, Clone)]
+pub struct HirClosure {
+    id: HirClosureId,
+    identity: GeneratedTypeIdentity,
+    span: Span,
+    ty: TypeId,
+    function_type: TypeId,
+    generics: Vec<HirGenericParameter>,
+    parameters: Vec<HirParameter>,
+    captures: Vec<HirClosureCapture>,
+    body: HirBody,
+}
+
+impl HirClosure {
+    pub fn id(&self) -> HirClosureId {
+        self.id
+    }
+
+    pub fn identity(&self) -> &GeneratedTypeIdentity {
+        &self.identity
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    pub fn ty(&self) -> TypeId {
+        self.ty
+    }
+
+    pub fn function_type(&self) -> TypeId {
+        self.function_type
+    }
+
+    pub fn generics(&self) -> &[HirGenericParameter] {
+        &self.generics
+    }
+
+    pub fn parameters(&self) -> &[HirParameter] {
+        &self.parameters
+    }
+
+    pub fn captures(&self) -> &[HirClosureCapture] {
+        &self.captures
+    }
+
+    pub fn body(&self) -> &HirBody {
+        &self.body
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HirClosureCapture {
+    local: LocalId,
+    ty: TypeId,
+    mutable: bool,
+}
+
+impl HirClosureCapture {
+    pub fn local(&self) -> LocalId {
+        self.local
+    }
+
+    pub fn ty(&self) -> TypeId {
+        self.ty
+    }
+
+    pub fn is_mutable(&self) -> bool {
+        self.mutable
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct HirExpressionId(u32);
 
 impl HirExpressionId {
@@ -1474,6 +1581,7 @@ pub enum HirExpressionKind {
         method: HirPreludeTraitMethod,
         arguments: Vec<TypeId>,
     },
+    Closure(HirClosureId),
     Receiver,
     Tuple(Vec<HirExpressionId>),
     Array(Vec<HirExpressionId>),

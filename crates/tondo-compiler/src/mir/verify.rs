@@ -621,7 +621,7 @@ impl Verifier<'_> {
                 for operand in values {
                     self.verify_operand(function, operand, context)?;
                 }
-                self.verify_aggregate(shape, values, value.ty, context)?;
+                self.verify_aggregate(function, shape, values, value.ty, context)?;
             }
             MirRvalueKind::RecordUpdate { base, fields } => {
                 self.verify_operand(function, base, context)?;
@@ -911,6 +911,7 @@ impl Verifier<'_> {
 
     fn verify_aggregate(
         &self,
+        function: &MirFunction,
         shape: &MirAggregateKind,
         values: &[MirOperand],
         ty: TypeId,
@@ -941,6 +942,41 @@ impl Verifier<'_> {
                     return Err(MirInvariantError::new(
                         context,
                         "set aggregate contains a value of the wrong element type",
+                    ));
+                }
+            }
+            MirAggregateKind::Closure { closure } => {
+                let closure = self.hir.closure(*closure).ok_or_else(|| {
+                    MirInvariantError::new(context, "closure aggregate has no HIR metadata")
+                })?;
+                if ty != closure.ty()
+                    || values.len() != closure.captures().len()
+                    || values
+                        .iter()
+                        .zip(closure.captures())
+                        .any(|(value, capture)| {
+                            if value.ty != capture.ty() {
+                                return true;
+                            }
+                            let MirOperandKind::Copy(place) = &value.kind else {
+                                return true;
+                            };
+                            if !place.projections.is_empty() {
+                                return true;
+                            }
+                            !matches!(
+                                function.locals.get(place.local.0 as usize).map(|local| local.kind),
+                                Some(MirLocalKind::User(source))
+                                    | Some(MirLocalKind::Parameter {
+                                        source: Some(source),
+                                        ..
+                                    }) if source == capture.local()
+                            )
+                        })
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "closure aggregate type, capture layout, or source binding is inconsistent",
                     ));
                 }
             }

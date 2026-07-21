@@ -148,6 +148,13 @@ fn snapshot_object(
                 .map(|value| snapshot(present_value(value)?, visiting))
                 .collect::<Result<_, _>>()?,
         ),
+        HeapObject::Closure { closure, captures } => RuntimeValue::Closure {
+            closure: *closure,
+            captures: captures
+                .iter()
+                .map(|value| snapshot(present_value(value)?, visiting))
+                .collect::<Result<_, _>>()?,
+        },
         HeapObject::Newtype { nominal, value } => RuntimeValue::Newtype {
             name: nominal_name(*nominal, nominal_names),
             value: Box::new(snapshot(present_value(value)?, visiting)?),

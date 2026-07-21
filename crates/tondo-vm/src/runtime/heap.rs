@@ -26,6 +26,10 @@ pub(super) enum HeapObject {
     Array(Vec<Option<Value>>),
     Map(Vec<(Option<Value>, Option<Value>)>),
     Set(Vec<Option<Value>>),
+    Closure {
+        closure: u32,
+        captures: Vec<Option<Value>>,
+    },
     Newtype {
         nominal: BytecodeNominalId,
         value: Option<Value>,
@@ -66,6 +70,9 @@ impl HeapObject {
             Self::Tuple(values) | Self::Array(values) | Self::Set(values) => {
                 output.extend(values.iter().flatten().cloned());
             }
+            Self::Closure { captures, .. } => {
+                output.extend(captures.iter().flatten().cloned());
+            }
             Self::Map(entries) => {
                 for (key, value) in entries {
                     output.extend(key.iter().cloned());
@@ -98,6 +105,7 @@ impl HeapObject {
             Self::Tuple(values) | Self::Array(values) | Self::Set(values) => {
                 (values.capacity() as u64).saturating_mul(value)
             }
+            Self::Closure { captures, .. } => (captures.capacity() as u64).saturating_mul(value),
             Self::Map(entries) => (entries.capacity() as u64)
                 .saturating_mul((mem::size_of::<(Option<Value>, Option<Value>)>()) as u64),
             Self::Record { fields, .. } => (fields.capacity() as u64)

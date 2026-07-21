@@ -1,10 +1,10 @@
 # Tondo: tracker de implementación
 
 **Estado:** activo  
-**Versión del tracker:** 0.30
+**Versión del tracker:** 0.31
 **Última actualización:** 2026-07-21  
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
-**Objetivo inmediato:** implementar closures y captura por valor (CALL-002).
+**Objetivo inmediato:** derivar `Call`, `CallMut` y `CallOnce` (CALL-003).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -986,7 +986,7 @@ dinámicos ni dispatch oculto.
 - [x] **CALL-001 — Implementar funciones como valores y coerción exacta a
   `fn(...)`.**
 
-- [ ] **CALL-002 — Implementar closures y captura por valor.**
+- [x] **CALL-002 — Implementar closures y captura por valor.**
 
 - [ ] **CALL-003 — Derivar `Call`, `CallMut` y `CallOnce` desde cuerpo y
   capturas.**
@@ -995,7 +995,7 @@ dinámicos ni dispatch oculto.
   representación semántica, aunque sus runtimes se activen después.**
 
 Evidencia observada el 2026-07-21 para GEN-001, GEN-002, TRAIT-001 a TRAIT-006,
-CAP-001 y CALL-001:
+CAP-001, CALL-001 y CALL-002:
 
 - Los bodies genéricos bounded y unbounded se comprueban una sola vez con
   parámetros rígidos. Las llamadas explícitas e inferidas cierran todas las
@@ -1142,7 +1142,32 @@ CAP-001 y CALL-001:
   también ahí el dispatch estático de traits. La VM ejecuta funciones libres,
   asociadas, de trait, locales, parámetros y constantes sin vtable ni type pack
   runtime.
-- El gate acumulado pasa 406 tests, `git diff --check`, formatter check, build
+- Cada expresión de cierre sync-safe publica un tipo generado distinto, una
+  firma exacta, binders heredados, parámetros completos, un body HIR separado y
+  capturas sintácticas ordenadas por `LocalId`. El outcome se infiere sobre
+  todos los caminos alcanzables y las closures anidadas conservan problemas de
+  inferencia independientes.
+- Las capturas conservan `let`/`var`, copian un snapshot owned y propagan free
+  uses de closures anidadas. Préstamos `ref`/`mut`/`var` y el receiver prestado
+  producen `E1402`; parámetros variádicos exigen nombre y conservan elemento en
+  la firma y `Array[T]` dentro del body.
+- `Copy`, `Discard`, `Send` y `Share` se derivan componente a componente desde
+  las capturas sustituidas; `Equatable` y `Key` se rechazan. El bootstrap
+  ejecutable permanece deliberadamente limitado a capturas `Copy`; OWN-006 y
+  OWN-007 añadirán moves, disponibilidad y obligaciones afines.
+- El admission verifier exige correspondencia uno-a-uno entre metadata y
+  expresión, identidad generada, firma/body, capacidad `Copy` y tipo,
+  mutabilidad y binding de cada captura. MIR sólo admite copias directas del
+  local exterior exacto; bytecode vuelve a comprobar el esquema concreto del
+  entorno.
+- La VM construye, copia, traza y snapshottea entornos gestionados. Una pila de
+  raíces temporales protege capturas compuestas cuando el GC se dispara a mitad
+  de una construcción o copia multi-captura.
+- Un tipo `fn(...)` esperado ya puede inferir la firma fuente, pero la coerción
+  del tipo concreto, la invocación y los protocolos cerrados permanecen en
+  CALL-003. Capturas no `Copy` quedan incompletas para M5 y closures
+  `async`/`unsafe` para CALL-004, sin semántica provisional ni falso `E1102`.
+- El gate acumulado pasa 418 tests, `git diff --check`, formatter check, build
   de todos los targets, Clippy con warnings denegados y Rustdoc con warnings
   denegados.
 
@@ -1784,12 +1809,27 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es CALL-002: implementar closures y captura por
-valor sobre el tipo concreto anónimo definido por la especificación.
+La siguiente acción activa es CALL-003: derivar `Call`, `CallMut` y `CallOnce`
+desde el body y las capturas ya representadas por CALL-002.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.31 — 2026-07-21
+
+- Se completa CALL-002 con tipos concretos estables, firmas explícitas o
+  inferidas, bodies HIR independientes y capturas sintácticas por valor que
+  preservan mutabilidad y binders genéricos.
+- HIR y MIR revalidan la correspondencia exacta de cada captura; bytecode y VM
+  construyen, copian y trazan el entorno gestionado sin ejecutar el body.
+- Las raíces temporales de la VM hacen segura una colección durante
+  construcción o copia recursiva de entornos con capturas compuestas.
+- La coerción a `fn(...)`, la invocación y los protocolos cerrados avanzan a
+  CALL-003; moves de capturas afines siguen perteneciendo a M5 y los efectos
+  `async`/`unsafe` a CALL-004.
+- El gate acumulado queda en 418 tests, `cargo check`, formatter check, build de
+  todos los targets, Clippy y Rustdoc sin warnings; la cola avanza a CALL-003.
 
 ### 0.30 — 2026-07-21
 

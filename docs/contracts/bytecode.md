@@ -2,7 +2,8 @@
 
 **Status:** BC-001 through BC-005, GEN-002 monomorphization, TRAIT-005 static
 dispatch, TRAIT-006 opaque results, CAP-001 closed capabilities, CALL-001
-uniform named function values, and the M3 VM admission path implemented
+uniform named function values, CALL-002 concrete closure environments, and the
+M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -144,6 +145,14 @@ a pure rvalue. Rvalues cover loads, copies/moves, constants, pure arithmetic,
 construction, record update, coercion, total conversion, range, membership,
 length, and iterator-state creation.
 
+A CALL-002 closure construction is an ordinary managed aggregate whose result
+is a concrete generated type. Its shape carries the source closure ID and an
+ordered capture-type schema; its operands carry the corresponding concrete
+values. Verification requires schema/value agreement before allocation.
+Closure bodies and an invocation catalog are intentionally absent until
+CALL-003, so this ID identifies environment metadata only and is never
+interpreted as a callable entry in CALL-002 bytecode.
+
 A call operation accepts either a direct concrete function operand or a
 copy/move of a place containing the same structural function type. The latter
 is the uniform indirect-call path used by parameters, locals, fields, and named
@@ -190,6 +199,10 @@ Before execution, the verifier proves:
 - type constructors, generic arities, nominal fields/variants, constants,
   projections, aggregates, operators, conversions, iterators, and tags have
   their exact structural types;
+- closure aggregates have a generated result type and an exact capture schema
+  aligned with every operand; verified MIR remains responsible for tying those
+  operands to the precise source bindings until CALL-003 publishes the
+  specialized closure callable catalog;
 - every closed executable `Map[K, V]` and `Set[K]` has `K: Key`, every `Ref[T]`
   has `T: Discard`, equality has `T: Equatable`, array membership has an
   equatable element, map/set membership has a key, and map lookup has `V: Copy`;

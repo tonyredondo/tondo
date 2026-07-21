@@ -9,8 +9,8 @@ use std::error::Error;
 use std::fmt;
 
 use crate::hir::{
-    HirBinaryOperator, HirCallArgumentTarget, HirCallableId, HirContainmentKind, HirPrefixOperator,
-    HirPreludeTraitMethod, HirRangeKind,
+    HirBinaryOperator, HirCallArgumentTarget, HirCallableId, HirClosureId, HirContainmentKind,
+    HirPrefixOperator, HirPreludeTraitMethod, HirRangeKind,
 };
 use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::Span;
@@ -421,6 +421,9 @@ pub enum MirAggregateKind {
     Tuple,
     Array,
     Set,
+    Closure {
+        closure: HirClosureId,
+    },
     Newtype {
         owner: SymbolId,
     },

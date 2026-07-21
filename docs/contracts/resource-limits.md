@@ -60,8 +60,10 @@ checks, and diagnostic-witness expansion. The common proof for `Copy`,
 `Discard`, `Equatable`, `Key`, `Send`, and `Share` computes finite symbolic
 summaries over the already bounded interned type graph and does not recursively
 instantiate nominal families. Each generic
-bound request still consumes the trait-obligation budget. Callable capabilities
-owned by the closure phases remain incomplete rather than being guessed.
+bound request still consumes the trait-obligation budget. Concrete closure
+signatures and environments are bounded by the existing syntax, type, and HIR
+budgets; callable-protocol derivation owned by CALL-003 remains incomplete
+rather than being guessed.
 
 MIR and bytecode construction bound every request-local table before growth;
 their initialization, lifetime, and tag-refinement analyses share independent

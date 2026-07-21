@@ -58,6 +58,10 @@ pub enum RuntimeValue {
     Array(Vec<Self>),
     Map(Vec<(Self, Self)>),
     Set(Vec<Self>),
+    Closure {
+        closure: u32,
+        captures: Vec<Self>,
+    },
     Newtype {
         name: String,
         value: Box<Self>,
@@ -219,7 +223,7 @@ impl From<BytecodeVerificationError> for VmError {
 #[cfg(test)]
 mod tests {
     use super::heap::{Heap, HeapObject};
-    use super::value::Value;
+    use super::value::{Value, snapshot_value};
     use super::*;
 
     fn limits() -> VmLimits {
@@ -277,5 +281,42 @@ mod tests {
         assert_eq!(old.index(), new.index());
         assert!(heap.get(old).is_err());
         assert!(matches!(heap.get(new), Ok(HeapObject::String(value)) if value == "new"));
+    }
+
+    #[test]
+    fn closure_environments_trace_and_snapshot_managed_captures() {
+        let mut heap = Heap::new(limits());
+        let mut statistics = VmStatistics::default();
+        let captured = heap
+            .allocate(HeapObject::String("captured".into()), &[], &mut statistics)
+            .unwrap();
+        let closure = heap
+            .allocate(
+                HeapObject::Closure {
+                    closure: 7,
+                    captures: vec![Some(Value::Heap(captured))],
+                },
+                &[Value::Heap(captured)],
+                &mut statistics,
+            )
+            .unwrap();
+
+        heap.collect(&[Value::Heap(closure)], &mut statistics)
+            .unwrap();
+        assert_eq!(heap.live_objects(), 2);
+        assert!(matches!(
+            heap.get(captured),
+            Ok(HeapObject::String(value)) if value == "captured"
+        ));
+        assert_eq!(
+            snapshot_value(&Value::Heap(closure), &heap, &[], &[]).unwrap(),
+            RuntimeValue::Closure {
+                closure: 7,
+                captures: vec![RuntimeValue::String("captured".into())],
+            }
+        );
+
+        heap.collect(&[], &mut statistics).unwrap();
+        assert_eq!(heap.live_objects(), 0);
     }
 }

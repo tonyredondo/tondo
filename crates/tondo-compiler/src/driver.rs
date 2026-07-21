@@ -2103,6 +2103,38 @@ mod tests {
     }
 
     #[test]
+    fn closure_environments_are_constructed_copied_and_traced_by_the_vm() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"fn keep[T: Copy + Discard](value: T) {\n\
+                  let closure = (): T { value }\n\
+                  let copied = closure\n\
+                  _ = closure\n\
+                  _ = copied\n\
+              }\n\
+              fn main() {\n\
+                  let seed = 40\n\
+                  let add = (value: Int): Int { seed + value }\n\
+                  let copied = add\n\
+                  _ = add\n\
+                  _ = copied\n\
+                  keep(42)\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics().diagnostics()
+        );
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
     fn unbounded_generics_infer_invariant_arguments_and_execute() {
         let output = execute(operation_request(
             Operation::Run,

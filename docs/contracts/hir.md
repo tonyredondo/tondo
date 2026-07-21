@@ -1,9 +1,10 @@
 # Semantic and typed HIR contract
 
 **Status:** bootstrap declarations, typed expressions, generic specialization,
-uniform named function values, static trait selection, declaration-owned opaque
-results, patterns, assignment, discard, structured control flow, calls,
-semantic occurrences, and verified MIR admission implemented
+uniform named function values, concrete closure values and Copy captures,
+static trait selection, declaration-owned opaque results, patterns, assignment,
+discard, structured control flow, calls, semantic occurrences, and verified MIR
+admission implemented
 
 ## Boundary
 
@@ -31,6 +32,9 @@ The output owns:
   lowered `TypeId`;
 - typed constant initializers, their normalized compile-time values, and
   callable bodies in request-owned expression and pattern arenas;
+- one concrete generated type, exact call signature, separate body root, and
+  stable LocalId-ordered capture environment for every admitted closure
+  expression;
 - a static type, value category, source span, and resolved identity for every
   expression in the implemented subset;
 - a bottom-up normal-completion summary and reachable loop-transfer targets for
@@ -49,7 +53,8 @@ specialization, static source/prelude trait selection, declaration-owned opaque
 results, trait default bodies, exact implementation bodies, trait-provided
 iteration, and the closed structural capabilities `Copy`, `Discard`,
 `Equatable`, `Key`, `Send`, and `Share`. Concrete external implementations,
-closures and their callable capabilities, string interpolation through
+closure call-protocol derivation and invocation, closure-to-`fn` coercion,
+non-`Copy` capture moves, `async`/`unsafe` closures, string interpolation through
 `Display`, `defer`, ownership availability, and executable async bodies remain
 explicit later boundaries rather than receiving provisional semantics.
 
@@ -90,6 +95,10 @@ The implemented bootstrap subset includes:
 - first-class free and receiver-free associated functions with one exact
   uniform `fn(...)` type, including contextual generic specialization and
   qualified source-trait associated operations;
+- concrete synchronous safe closures with annotated or context-inferred
+  parameters, inferred or explicit outcomes, variadic body bindings, separate
+  semantic body roots, syntactic by-value environments, and generated nominal
+  identities that preserve enclosing generic arguments;
 - `some`, `ok`, `err`, implicit callable-success lifting, `fail`, and postfix
   `?` over both `Option` and `Result`;
 - exact error propagation, injection into a union, and closed union-subset
@@ -191,6 +200,55 @@ incomplete arity, and any `SpecializedFunction` whose expression type differs
 from the exact substitution of its callable signature. The capability verifier
 also rechecks closed generic bounds. MIR therefore receives neither an open
 function value nor a type assertion that needs contextual reinterpretation.
+
+## Concrete closures and capture environments
+
+CALL-002 assigns every synchronous safe closure expression one unnameable
+generated type keyed by its stable source identity. The closure table retains
+that type, the exact structural function signature, inherited generic binders,
+parameter metadata, capture metadata, and a checked body root. The body is an
+independent semantic root: constructing the closure evaluates only its
+environment and never traverses or executes the body.
+
+Parameter types are explicit unless a direct expected `fn(...)` signature
+supplies them. Modes and explicit annotations must still match exactly. A
+variadic parameter is a unique named final value parameter; its function
+signature stores the element type while its body local has `Array[T]`. The
+outcome may be written or inferred by one invariant problem shared by every
+reachable implicit result and `return`. Nested closures suspend the enclosing
+inference problem, retain their own body root, and propagate syntactic free uses
+to every environment that must carry them.
+
+Captures are the sorted unique outer locals referenced anywhere in the closure
+body, including nested closure bodies. Symbols, constants, types, modules,
+generic parameters, and locals declared inside the closure are not environment
+fields. Each admitted CALL-002 capture is a logical `Copy` of the owned outer
+binding at construction time; its metadata preserves whether that binding was
+`let` or `var`, so later invocation can map writes to the private environment.
+A `ref`, `mut`, or `var` loan and a borrowed receiver produce `E1402` rather
+than an implicit lifetime or reference capture.
+
+The generated type derives `Copy`, `Discard`, `Send`, and `Share`
+componentwise from the substituted capture types. It never derives
+`Equatable` or `Key`. Generic closures use their enclosing bounds for local
+proofs while the request-wide capability row remains `Deferred` when the same
+fact depends on an open binder.
+
+The M4 bootstrap admits an executable closure construction only when every
+capture has a proved `Copy` capability. An affine capture keeps expression
+checking incomplete until OWN-006/OWN-007 add move and availability analysis.
+Likewise, a direct expected function type may supply the closure signature, but
+the concrete-to-uniform conversion remains incomplete until CALL-003 derives
+`Call`; this phase boundary does not emit a false ordinary type-mismatch
+diagnostic. CALL-003 also owns closure invocation and the `Call`, `CallMut`, and
+`CallOnce` proofs. CALL-004 owns `async` and `unsafe` closure effects.
+
+HIR admission independently requires exactly one construction expression per
+closure table entry, the correct generated kind and source position, a complete
+signature/body agreement, canonical inherited generics, exact parameter locals,
+and sorted owned capture locals whose types, mutability, and CALL-002 `Copy`
+proof are rederived from their bindings and inherited bounds. No recovery
+closure crosses into MIR.
 
 ## Trait declarations, defaults, and implementations
 
@@ -713,6 +771,13 @@ propagation. Capability regressions cover the complete intrinsic matrix,
 implication forwarding, recursive nominal equality and keys, opaque bounds,
 async-trait `Self: Send`, collection and reference formation, equality,
 membership, map lookup, and order-insensitive map/set runtime equality.
+Closure regressions cover distinct generated identities, inherited generic
+binders, exact and inferred outcomes, nested free-use propagation, mutable
+snapshot metadata, modes, variadics, borrowed-capture rejection, deferred
+contextual coercion, all six structural capabilities, and executable Copy
+environments. Mutated HIR proves that capture type, mutability, construction
+correspondence, and the bootstrap `Copy` admission proof are independently
+rechecked.
 Dedicated admission tests mutate
 otherwise valid HIR to prove rejection of incomplete/recovery state,
 noncanonical types, non-topological edges, misaligned flow metadata, missing

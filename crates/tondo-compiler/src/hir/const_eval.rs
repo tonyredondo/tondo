@@ -275,6 +275,7 @@ fn constant_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
         | HirExpressionKind::Function(_)
         | HirExpressionKind::SpecializedFunction { .. }
         | HirExpressionKind::PreludeTraitFunction { .. }
+        | HirExpressionKind::Closure(_)
         | HirExpressionKind::Receiver
         | HirExpressionKind::Block { .. }
         | HirExpressionKind::Call { .. }
@@ -555,6 +556,7 @@ fn evaluate_composite(
         | HirExpressionKind::Function(_)
         | HirExpressionKind::SpecializedFunction { .. }
         | HirExpressionKind::PreludeTraitFunction { .. }
+        | HirExpressionKind::Closure(_)
         | HirExpressionKind::Receiver
         | HirExpressionKind::Block { .. }
         | HirExpressionKind::Call { .. }

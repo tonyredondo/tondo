@@ -2509,13 +2509,16 @@ fn lower_rvalue(
             left: operand(left)?,
             right: operand(right)?,
         },
-        MirRvalueKind::Aggregate { shape, values } => bc::BytecodeRvalueKind::Construct {
-            shape: lower_aggregate(shape, context.nominal_ids)?,
-            values: values
+        MirRvalueKind::Aggregate { shape, values } => {
+            let values = values
                 .iter()
                 .map(operand)
-                .collect::<Result<_, BytecodeError>>()?,
-        },
+                .collect::<Result<Vec<_>, BytecodeError>>()?;
+            bc::BytecodeRvalueKind::Construct {
+                shape: lower_aggregate(shape, context.nominal_ids, &values)?,
+                values,
+            }
+        }
         MirRvalueKind::RecordUpdate { base, fields } => bc::BytecodeRvalueKind::RecordUpdate {
             base: operand(base)?,
             fields: fields
@@ -2564,11 +2567,16 @@ fn lower_rvalue(
 fn lower_aggregate(
     shape: &MirAggregateKind,
     nominal_ids: &BTreeMap<SymbolId, bc::BytecodeNominalId>,
+    values: &[bc::BytecodeOperand],
 ) -> Result<bc::BytecodeAggregateKind, BytecodeError> {
     Ok(match shape {
         MirAggregateKind::Tuple => bc::BytecodeAggregateKind::Tuple,
         MirAggregateKind::Array => bc::BytecodeAggregateKind::Array,
         MirAggregateKind::Set => bc::BytecodeAggregateKind::Set,
+        MirAggregateKind::Closure { closure } => bc::BytecodeAggregateKind::Closure {
+            closure: closure.index(),
+            captures: values.iter().map(|value| value.ty).collect(),
+        },
         MirAggregateKind::Newtype { owner } => bc::BytecodeAggregateKind::Newtype {
             nominal: map_nominal(*owner, nominal_ids)?,
         },
@@ -3763,6 +3771,54 @@ mod tests {
     }
 
     #[test]
+    fn bytecode_verifier_rejects_forged_closure_capture_schemas() {
+        let source = "fn build() {\n\
+                          let seed = 41\n\
+                          let closure = (): Int { seed + 1 }\n\
+                          _ = closure\n\
+                      }\n";
+        let program = lowered(source);
+        bc::verify_bytecode(&program).unwrap();
+
+        fn closure_schema(
+            program: &mut bc::BytecodeProgram,
+        ) -> (bc::BytecodeTypeId, &mut Vec<bc::BytecodeTypeId>) {
+            program
+                .functions
+                .iter_mut()
+                .flat_map(|function| &mut function.blocks)
+                .flat_map(|block| &mut block.instructions)
+                .find_map(|instruction| match &mut instruction.kind {
+                    bc::BytecodeInstructionKind::Store {
+                        value:
+                            bc::BytecodeRvalue {
+                                ty,
+                                kind:
+                                    bc::BytecodeRvalueKind::Construct {
+                                        shape: bc::BytecodeAggregateKind::Closure { captures, .. },
+                                        ..
+                                    },
+                            },
+                        ..
+                    } => Some((*ty, captures)),
+                    _ => None,
+                })
+                .expect("closure construction lowers to bytecode")
+        }
+
+        let mut wrong_count = program.clone();
+        closure_schema(&mut wrong_count).1.clear();
+        let error = bc::verify_bytecode(&wrong_count).unwrap_err();
+        assert!(error.message().contains("rvalue"));
+
+        let mut wrong_type = program;
+        let (closure_type, captures) = closure_schema(&mut wrong_type);
+        captures[0] = closure_type;
+        let error = bc::verify_bytecode(&wrong_type).unwrap_err();
+        assert!(error.message().contains("rvalue"));
+    }
+
+    #[test]
     fn verifier_rejects_call_arity_and_unguarded_payload_projection() {
         let mut invalid_call = lowered(
             "fn add(left: Int, right: Int): Int { left + right }\n\
@@ -4377,6 +4433,51 @@ mod tests {
         assert!(execution.statistics.collections > 0);
         assert!(execution.statistics.reclaimed_objects > 0);
         assert!(execution.statistics.peak_live_objects <= 16);
+    }
+
+    #[test]
+    fn closure_capture_temporaries_survive_gc_pressure() {
+        let program = lowered(
+            "fn main() {\n\
+                 let a = [1]\n\
+                 let b = [2]\n\
+                 let c = [3]\n\
+                 let d = [4]\n\
+                 let e = [5]\n\
+                 let f = [6]\n\
+                 let g = [7]\n\
+                 let h = [8]\n\
+                 let closure = () {\n\
+                     _ = a\n\
+                     _ = b\n\
+                     _ = c\n\
+                     _ = d\n\
+                     _ = e\n\
+                     _ = f\n\
+                     _ = g\n\
+                     _ = h\n\
+                 }\n\
+                 let copied = closure\n\
+                 _ = closure\n\
+                 _ = copied\n\
+             }\n",
+        );
+        let entry = function_id(&program, "main");
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            entry,
+            &mut host,
+            VmLimits {
+                max_heap_objects: 256,
+                max_heap_bytes: 64 * 1024,
+                initial_gc_threshold: 1,
+                ..VmLimits::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
+        assert_eq!(execution.outcome, VmOutcome::Returned(RuntimeValue::Unit));
+        assert!(execution.statistics.collections > 0);
     }
 
     #[test]

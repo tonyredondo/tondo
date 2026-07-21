@@ -5,18 +5,18 @@ use std::fmt;
 use crate::package::{ModuleId, SymbolIdentity};
 use crate::resolve::{LocalKind, MemberKind, MemberOwner, ResolvedProgram, SymbolKind};
 use crate::types::{
-    FunctionParameter, FunctionType, IntrinsicType, ParameterMode, ScalarType, TypeId,
-    TypeInterner, TypeKind, TypeSubstitution,
+    FunctionParameter, FunctionType, GeneratedTypeKind, IntrinsicType, ParameterMode, ScalarType,
+    TypeId, TypeInterner, TypeKind, TypeSubstitution,
 };
 
 use super::capabilities::{CapabilityAnalysis, CapabilityAssumptions, bounds_imply};
 use super::termination::{TraitTerminationEdge, analyze_trait_termination};
 use super::{
     HirAssignmentTarget, HirAssignmentTargetKind, HirBinaryOperator, HirCallableId, HirCapability,
-    HirCapabilityStatus, HirConstantValue, HirConstantValueKind, HirConstantVariantValue,
-    HirContainmentKind, HirExpression, HirExpressionId, HirExpressionKind, HirFlow, HirForKind,
-    HirGenericParameter, HirIndexAccess, HirIterationProtocol, HirPattern, HirPatternId,
-    HirPatternKind, HirProgram, HirStatement, HirTraitConstructor, HirTraitIdentity,
+    HirCapabilityStatus, HirClosureId, HirConstantValue, HirConstantValueKind,
+    HirConstantVariantValue, HirContainmentKind, HirExpression, HirExpressionId, HirExpressionKind,
+    HirFlow, HirForKind, HirGenericParameter, HirIndexAccess, HirIterationProtocol, HirPattern,
+    HirPatternId, HirPatternKind, HirProgram, HirStatement, HirTraitConstructor, HirTraitIdentity,
     HirTraitMethodKey, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
     HirVariantValue, TraitQuery, TraitSelectionError, select_implementation,
 };
@@ -124,6 +124,7 @@ impl Verifier<'_> {
         self.verify_implementations()?;
         self.verify_constants()?;
         self.verify_callables()?;
+        self.verify_closures()?;
         self.verify_capability_contracts()?;
         self.verify_annotations_and_locals()?;
         self.verify_member_references()?;
@@ -203,6 +204,25 @@ impl Verifier<'_> {
             self.verify_type_formations(&analysis, roots, &assumptions, &context)?;
         }
 
+        for closure in &self.program.closures {
+            let context = format!("closure#{}", closure.id.index());
+            let assumptions = CapabilityAssumptions::from_generics(self.program, &closure.generics);
+            let mut roots = vec![closure.ty, closure.function_type];
+            roots.extend(closure.generics.iter().flat_map(generic_bound_type_roots));
+            roots.extend(closure.captures.iter().map(|capture| capture.ty));
+            self.verify_type_formations(&analysis, roots, &assumptions, &context)?;
+            for capture in &closure.captures {
+                self.verify_capability_requirement(
+                    &analysis,
+                    capture.ty,
+                    HirCapability::Copy,
+                    &assumptions,
+                    &context,
+                    "CALL-002 closure capture",
+                )?;
+            }
+        }
+
         let default_assumptions = CapabilityAssumptions::default();
         for constant in self.program.constants.values() {
             if let Some(ty) = constant.declared_type {
@@ -265,6 +285,15 @@ impl Verifier<'_> {
                 &analysis,
                 &assumptions,
                 &format!("callable {callable:?}"),
+            )?;
+        }
+        for closure in &self.program.closures {
+            let assumptions = CapabilityAssumptions::from_generics(self.program, &closure.generics);
+            self.verify_expression_capability_tree(
+                closure.body.root,
+                &analysis,
+                &assumptions,
+                &format!("closure#{}", closure.id.index()),
             )?;
         }
         Ok(())
@@ -1784,6 +1813,284 @@ impl Verifier<'_> {
         Ok(())
     }
 
+    fn verify_closures(&self) -> Result<(), HirInvariantError> {
+        let mut identities = BTreeSet::new();
+        let mut constructions = BTreeMap::<HirClosureId, (usize, crate::source::Span)>::new();
+        for expression in &self.program.expressions {
+            let HirExpressionKind::Closure(id) = &expression.kind else {
+                continue;
+            };
+            constructions
+                .entry(*id)
+                .and_modify(|(count, _)| *count += 1)
+                .or_insert((1, expression.span));
+        }
+        for (index, closure) in self.program.closures.iter().enumerate() {
+            let id =
+                HirClosureId(u32::try_from(index).map_err(|_| {
+                    HirInvariantError::new("closures", "closure index exceeds u32")
+                })?);
+            let context = format!("closure#{}", id.index());
+            if closure.id != id {
+                return Err(HirInvariantError::new(
+                    context,
+                    "closure IDs are not dense in deterministic registration order",
+                ));
+            }
+            if !identities.insert(closure.identity.clone()) {
+                return Err(HirInvariantError::new(
+                    context,
+                    "generated closure identity is duplicated",
+                ));
+            }
+            if closure.identity.kind() != GeneratedTypeKind::Closure
+                || closure.identity.start_byte() != closure.span.range().start()
+            {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "generated closure identity has the wrong kind or source position",
+                ));
+            }
+            let Some((construction_count, construction_span)) = constructions.get(&id) else {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "closure metadata has no construction expression",
+                ));
+            };
+            if *construction_count != 1 || *construction_span != closure.span {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "closure metadata and its construction expression are not one-to-one",
+                ));
+            }
+            let TypeKind::Generated {
+                identity,
+                arguments,
+            } = self.program.interner.kind(closure.ty).map_err(|error| {
+                HirInvariantError::new(&context, format!("invalid closure type: {error}"))
+            })?
+            else {
+                return Err(HirInvariantError::new(
+                    context,
+                    "closure has a non-generated concrete type",
+                ));
+            };
+            if *identity != closure.identity
+                || !arguments.iter().enumerate().all(|(position, argument)| {
+                    matches!(
+                        self.program.interner.kind(*argument),
+                        Ok(TypeKind::GenericParameter(actual))
+                            if usize::try_from(*actual).ok() == Some(position)
+                    )
+                })
+            {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "closure type identity or inherited generic arguments are invalid",
+                ));
+            }
+            let generic_arity = u32::try_from(arguments.len()).map_err(|_| {
+                HirInvariantError::new(&context, "closure generic arity exceeds u32")
+            })?;
+            let inherited_positions = closure
+                .generics
+                .iter()
+                .map(|generic| generic.position)
+                .collect::<BTreeSet<_>>();
+            let missing = (0..generic_arity)
+                .filter(|position| !inherited_positions.contains(position))
+                .collect::<Vec<_>>();
+            let hidden = match missing.as_slice() {
+                [] => None,
+                [position] => Some(*position),
+                _ => {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        "closure inherited more than one hidden generic position",
+                    ));
+                }
+            };
+            self.verify_generics(&closure.generics, generic_arity, hidden, &context)?;
+
+            let TypeKind::Function(function) = self
+                .program
+                .interner
+                .kind(closure.function_type)
+                .map_err(|error| {
+                    HirInvariantError::new(&context, format!("invalid closure signature: {error}"))
+                })?
+            else {
+                return Err(HirInvariantError::new(
+                    context,
+                    "closure call signature is not a function type",
+                ));
+            };
+            if function.is_async() || function.is_unsafe() {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "CALL-002 closure carries async or unsafe effects",
+                ));
+            }
+            let mut fixed = Vec::new();
+            let mut variadic = None;
+            for (parameter_index, parameter) in closure.parameters.iter().enumerate() {
+                self.verify_type(
+                    parameter.ty,
+                    format!("{context} parameter {parameter_index}"),
+                )?;
+                let local_valid = if parameter.discard {
+                    parameter.local.is_none()
+                } else if let Some(local) = parameter.local {
+                    self.verify_local(local, &context)?.kind() == LocalKind::ClosureParameter
+                        && self.program.local_types.get(&local) == Some(&parameter.ty)
+                } else {
+                    false
+                };
+                if !local_valid || parameter.receiver {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        format!("closure parameter {parameter_index} has invalid local metadata"),
+                    ));
+                }
+                if let Some(element) = parameter.variadic_element {
+                    if variadic.is_some()
+                        || parameter_index + 1 != closure.parameters.len()
+                        || parameter.mode != ParameterMode::Value
+                    {
+                        return Err(HirInvariantError::new(
+                            &context,
+                            "closure variadic parameter is not unique, final, and by value",
+                        ));
+                    }
+                    let expected_body = self
+                        .program
+                        .interner
+                        .kind(parameter.ty)
+                        .map_err(|error| HirInvariantError::new(&context, error.to_string()))?;
+                    if !matches!(
+                        expected_body,
+                        TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Array,
+                            arguments,
+                        } if arguments.as_slice() == [element]
+                    ) {
+                        return Err(HirInvariantError::new(
+                            &context,
+                            "closure variadic body binding is not Array[element]",
+                        ));
+                    }
+                    variadic = Some(element);
+                } else {
+                    fixed.push(FunctionParameter::new(parameter.mode, parameter.ty));
+                }
+            }
+            if function.parameters() != fixed.as_slice()
+                || function.variadic() != variadic
+                || closure.body.root.0 as usize >= self.program.expressions.len()
+                || self.program.expressions[closure.body.root.0 as usize].ty != function.outcome()
+            {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "closure parameters, body result, and call signature disagree",
+                ));
+            }
+
+            let mut previous_capture = None;
+            for capture in &closure.captures {
+                if previous_capture.is_some_and(|previous| previous >= capture.local) {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        "closure captures are not sorted and unique",
+                    ));
+                }
+                previous_capture = Some(capture.local);
+                let local = self.verify_local(capture.local, &context)?;
+                if self.program.local_types.get(&capture.local) != Some(&capture.ty) {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        format!(
+                            "capture local#{} type differs from its checked binding",
+                            capture.local.index()
+                        ),
+                    ));
+                }
+                if capture.mutable != self.local_is_mutable_binding(capture.local) {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        format!(
+                            "capture local#{} mutability differs from its binding",
+                            capture.local.index()
+                        ),
+                    ));
+                }
+                if (local.span().file() == closure.span.file()
+                    && closure.span.range().start() <= local.span().range().start()
+                    && local.span().range().end() <= closure.span.range().end())
+                    || self.local_is_loan(capture.local)
+                {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        format!(
+                            "capture local#{} is not an owned outer binding",
+                            capture.local.index()
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn local_is_loan(&self, local: crate::resolve::LocalId) -> bool {
+        self.program.callables.iter().any(|callable| {
+            callable.parameters.iter().any(|parameter| {
+                parameter.local == Some(local) && parameter.mode != ParameterMode::Value
+            })
+        }) || self.program.closures.iter().any(|closure| {
+            closure.parameters.iter().any(|parameter| {
+                parameter.local == Some(local) && parameter.mode != ParameterMode::Value
+            })
+        }) || self.program.patterns.iter().any(|pattern| {
+            matches!(pattern.kind, HirPatternKind::BorrowBinding(candidate) if candidate == local)
+        })
+    }
+
+    fn local_is_mutable_binding(&self, local: crate::resolve::LocalId) -> bool {
+        self.program.expressions.iter().any(|expression| {
+            let HirExpressionKind::Block { statements, .. } = &expression.kind else {
+                return false;
+            };
+            statements.iter().any(|statement| {
+                let HirStatement::Binding {
+                    mutable: true,
+                    pattern,
+                    ..
+                } = statement
+                else {
+                    return false;
+                };
+                let mut pending = vec![*pattern];
+                let mut visited = BTreeSet::new();
+                while let Some(pattern) = pending.pop() {
+                    if !visited.insert(pattern) {
+                        continue;
+                    }
+                    let Some(pattern) = self.program.pattern(pattern) else {
+                        continue;
+                    };
+                    if matches!(
+                        pattern.kind,
+                        HirPatternKind::Binding(candidate) if candidate == local
+                    ) {
+                        return true;
+                    }
+                    pending.extend(pattern_children(pattern));
+                }
+                false
+            })
+        })
+    }
+
     fn verify_opaque_result(
         &self,
         callable: &super::HirCallableSignature,
@@ -2550,6 +2857,17 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            HirExpressionKind::Closure(closure) => {
+                let closure = self.program.closure(*closure).ok_or_else(|| {
+                    HirInvariantError::new(context, "closure expression has no closure metadata")
+                })?;
+                if expression.ty != closure.ty {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "closure expression type differs from its concrete closure type",
+                    ));
+                }
+            }
             HirExpressionKind::Newtype { constructor, .. } => {
                 self.verify_symbol(*constructor, &[SymbolKind::Type], context)?
             }
@@ -3100,6 +3418,7 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
         | HirExpressionKind::Function(_)
         | HirExpressionKind::SpecializedFunction { .. }
         | HirExpressionKind::PreludeTraitFunction { .. }
+        | HirExpressionKind::Closure(_)
         | HirExpressionKind::Receiver
         | HirExpressionKind::Break { .. }
         | HirExpressionKind::Continue { .. } => {}
@@ -3742,6 +4061,76 @@ mod tests {
         arguments[0] = string;
         let error = verify_typed_hir(&resolved, &inexact).unwrap_err();
         assert!(error.message().contains("exact substituted signature"));
+    }
+
+    #[test]
+    fn closure_capture_metadata_is_reproved_before_mir() {
+        const SOURCE: &str = "fn build(task: Join[Int, Int]) {\n\
+             let offset = 2\n\
+             var count = 0\n\
+             let closure = (value: Int): Int {\n\
+                 count += 1\n\
+                 value + offset\n\
+             }\n\
+             _ = closure\n\
+         }\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut wrong_mutability) = checked_program_from(SOURCE);
+        let capture = wrong_mutability.closures[0]
+            .captures
+            .iter_mut()
+            .find(|capture| capture.mutable)
+            .expect("the closure captures `count` as mutable");
+        capture.mutable = false;
+        let error = verify_typed_hir(&resolved, &wrong_mutability).unwrap_err();
+        assert!(error.message().contains("mutability differs"));
+
+        let (resolved, mut wrong_type) = checked_program_from(SOURCE);
+        let boolean = wrong_type.interner.scalar(ScalarType::Bool);
+        wrong_type.closures[0].captures[0].ty = boolean;
+        let error = verify_typed_hir(&resolved, &wrong_type).unwrap_err();
+        assert!(error.message().contains("type differs"));
+
+        let (resolved, mut wrong_construction) = checked_program_from(SOURCE);
+        let parameter_span = wrong_construction.closures[0].parameters[0].span;
+        wrong_construction
+            .expressions
+            .iter_mut()
+            .find(|expression| matches!(expression.kind, HirExpressionKind::Closure(_)))
+            .unwrap()
+            .span = parameter_span;
+        let error = verify_typed_hir(&resolved, &wrong_construction).unwrap_err();
+        assert!(error.message().contains("not one-to-one"));
+
+        let (resolved, mut non_copy_capture) = checked_program_from(SOURCE);
+        let join = non_copy_capture
+            .interner
+            .ids()
+            .find(|ty| {
+                matches!(
+                    non_copy_capture.interner.kind(*ty),
+                    Ok(TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Join,
+                        ..
+                    })
+                )
+            })
+            .expect("the source interns its Join parameter type");
+        let closure_type = non_copy_capture.closures[0].ty;
+        let capture_local = non_copy_capture.closures[0].captures[0].local;
+        non_copy_capture.closures[0].captures[0].ty = join;
+        non_copy_capture.local_types.insert(capture_local, join);
+        non_copy_capture.capability_statuses[closure_type.index() as usize] =
+            [HirCapabilityStatus::Unsatisfied; HirCapability::COUNT];
+        let error = verify_typed_hir(&resolved, &non_copy_capture).unwrap_err();
+        assert!(
+            error.message().contains("CALL-002 closure capture"),
+            "{error}"
+        );
+        assert!(error.message().contains("Copy"), "{error}");
     }
 
     #[test]

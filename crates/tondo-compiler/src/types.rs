@@ -289,6 +289,14 @@ impl GeneratedTypeIdentity {
             start_byte,
         }
     }
+
+    pub(crate) fn kind(&self) -> GeneratedTypeKind {
+        self.kind
+    }
+
+    pub(crate) fn start_byte(&self) -> u32 {
+        self.start_byte
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

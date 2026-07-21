@@ -1990,6 +1990,19 @@ impl Verifier<'_> {
                     self.intrinsic_argument(result, BytecodeIntrinsicType::Set, 0, context)?;
                 self.verify_repeated_operands(values, item, context)?;
             }
+            BytecodeAggregateKind::Closure { captures, .. } => {
+                if !matches!(
+                    self.ty(result, context)?.kind,
+                    BytecodeTypeKind::Generated { .. }
+                ) || captures.len() != values.len()
+                    || captures
+                        .iter()
+                        .zip(values)
+                        .any(|(expected, value)| *expected != value.ty)
+                {
+                    return Err(rvalue_error(context));
+                }
+            }
             BytecodeAggregateKind::Newtype { nominal } => {
                 let (actual, arguments, metadata) = self.nominal_instance(result, context)?;
                 let BytecodeNominalShape::Newtype { underlying } = &metadata.shape else {

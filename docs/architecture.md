@@ -146,8 +146,13 @@ constraint (`Copy`, `Discard`, `Equatable`, `Key`, `Send`, and `Share`) before
 leaving HIR. Named free and receiver-free associated functions may cross that
 boundary as uniform values only after their exact `fn(...)` type and complete
 specialization are known; receiver methods never become implicit bound values.
-Open source/prelude trait obligations use coherent static selection; callable
-capabilities remain owned by the closure phases. Trait declarations
+Synchronous safe closure expressions cross as distinct generated types with an
+exact signature, separate checked body, inherited binders, and a syntactic
+by-value environment. CALL-002 executes construction only for proved Copy
+captures; affine moves, invocation, contextual erasure, call protocols, and
+async/unsafe effects remain explicit later boundaries. Open source/prelude
+trait obligations use coherent static selection; callable capabilities remain
+owned by CALL-003. Trait declarations
 carry a sorted method table, contextual `Self`, default-body and async-receiver
 requirements. Default bodies are checked once with rigid trait binders; calls to
 another receiver method of the same trait resolve locally and both inferred and
@@ -199,7 +204,9 @@ or cyclic arena edges, unresolved semantic IDs, invalid value categories, and
 misaligned flow metadata as compiler defects. It also re-derives implementation
 signatures from their source or prelude trait, proves table/callable
 correspondence and orphan ownership, and rejects incomplete contracts as compiler
-defects. Partial HIR remains available to
+defects. It also proves one-to-one closure construction metadata, generated
+identity/signature agreement, and exact owned capture type, mutability, and
+source binding. Partial HIR remains available to
 semantic tooling but is never executable. The phase ownership of moves, loans,
 cleanup, and suspension is fixed by ADR-016 and `docs/contracts/mir.md`.
 
@@ -224,8 +231,8 @@ six-column capability decision for every interned type and never turns `_` into
 a hidden write. Type formation rejects `Map[K, V]` and `Set[K]` without `K: Key`
 and `Ref[T]` without `T: Discard`; equality, membership, map lookup, opaque
 bounds, and async receiver implementations consume the same proof. Full
-ownership availability, callable capabilities, and terminal cleanup remain
-later analyses.
+ownership availability, closure call protocols and invocation, and terminal
+cleanup remain later analyses.
 
 Type IDs are request-local interned handles; only canonical recursive type
 strings are observable. Alias expansion, union normalization, nominal identity,
@@ -250,6 +257,8 @@ Before bytecode lowering, the MIR verifier proves:
 - Payload projections are dominated by a compatible discriminant branch.
 - Calls preserve the selected callable, receiver mode, specialization, and
   argument association.
+- Closure aggregates preserve the exact generated type and copy each capture
+  from its declared outer source binding in HIR order.
 - Capability-sensitive equality, membership, and map lookup agree with the
   independently verified HIR capability table.
 - No unresolved inference, symbol, or contextual syntax node remains.
@@ -286,6 +295,9 @@ bodies contain only concrete types and direct calls carry no runtime type pack.
 Uniform function values stored in locals, aggregates, or constants use the same
 verified indirect-call operation; source-trait values are statically selected
 before entering the constant or operand catalog.
+Concrete closure construction uses an ordinary generated-type aggregate with a
+verified capture schema. Managed environment construction is executable now;
+closure body cataloguing and invocation enter this boundary in CALL-003.
 Generic nominal declarations remain compact layout templates checked with their
 concrete arguments by the verifier.
 
@@ -300,9 +312,11 @@ eager. COW, ARC, compact tagging, and native lowering are later optimizations
 that must preserve the same tests.
 
 The implemented synchronous engine uses iterative frames, checked slot states,
-normal/unwind continuations, precise roots, generational heap handles, and a
-stop-the-world mark-and-sweep collector. Its exact object, tracing, panic, host,
-and admission boundary is recorded in `docs/contracts/vm-runtime.md`.
+normal/unwind continuations, precise frame and temporary roots, generational
+heap handles, and a stop-the-world mark-and-sweep collector. Closure
+environments trace, snapshot, and copy their capture fields through the same
+managed-value machinery. Its exact object, tracing, panic, host, and admission
+boundary is recorded in `docs/contracts/vm-runtime.md`.
 The sole M3 standard-library bridge, capability-gated
 `std.console.print(String): Unit`, is isolated by
 `docs/contracts/bootstrap-host.md` and is not a general FFI or a frozen stdlib

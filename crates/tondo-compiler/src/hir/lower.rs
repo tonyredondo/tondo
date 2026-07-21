@@ -85,6 +85,7 @@ pub fn lower_types<'a>(
             member_references: Vec::new(),
             patterns: Vec::new(),
             bodies: BTreeMap::new(),
+            closures: Vec::new(),
             local_types: lowerer.generic_types,
             capability_statuses: Vec::new(),
             expression_check_complete: false,
