@@ -11,24 +11,24 @@ use crate::source::{FileId, SourceDatabase, Span, TextRange};
 use crate::syntax::ast::{Expression as AstExpression, Pattern as AstPattern};
 use crate::syntax::{Parsed, SyntaxElement, SyntaxKind, SyntaxNodeRef, SyntaxTokenRef, TokenKind};
 use crate::types::{
-    Assignability, InferenceContext, InferenceError, IntrinsicType, NumericConversion,
-    ParameterMode, ScalarType, TypeId, TypeKind, TypeSubstitution, numeric_conversion,
+    Assignability, FunctionParameter, FunctionType, InferenceContext, InferenceError,
+    IntrinsicType, NumericConversion, ParameterMode, ScalarType, TypeId, TypeKind,
+    TypeSubstitution, numeric_conversion,
 };
 
 use super::const_eval::{
     ConstantEvaluationError, evaluate, has_unavailable_input, is_nan, values_equal,
 };
-use super::traits::{TraitQuery, TraitSelectionError, select_implementation};
-
 use super::{
     HirAssertMessagePart, HirAssignmentOperator, HirAssignmentTarget, HirAssignmentTargetKind,
     HirBinaryOperator, HirBody, HirBootstrapHostFunction, HirCallArgument, HirCallArgumentTarget,
     HirCallableId, HirCallableSignature, HirContainmentKind, HirError, HirExpression,
     HirExpressionId, HirExpressionKind, HirField, HirFlow, HirForKind, HirIndexAccess, HirLiteral,
     HirLoopId, HirMapEntry, HirMatchArm, HirMemberReference, HirNominalShape, HirPattern,
-    HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator, HirProgram, HirRangeKind,
-    HirRecordFieldValue, HirStatement, HirTraitConstructor, HirTypeDeclarationKind,
-    HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind,
+    HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod,
+    HirProgram, HirRangeKind, HirRecordFieldValue, HirStatement, HirTraitConstructor,
+    HirTraitMethodKey, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
+    HirVariantValue, HirWriteKind, TraitQuery, TraitSelectionError, select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -246,6 +246,7 @@ struct BodyContext {
     receiver: Option<TypeId>,
     receiver_permission: PlacePermission,
     callable: Option<CallableContext>,
+    contextual_self: Option<TypeId>,
     trait_body: Option<TraitBodyContext>,
     trait_assumptions: Vec<TraitQuery>,
     discard_statuses: BTreeMap<u32, DiscardStatus>,
@@ -352,8 +353,27 @@ struct ExplicitGenericArguments {
     arguments: BTreeMap<u32, TypeId>,
 }
 
+#[derive(Clone, Copy)]
+enum GenericCallTarget {
+    Callable(HirCallableId),
+    PreludeTrait(HirPreludeTraitMethod),
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum ConstrainedTraitMethod {
+    Source {
+        query: TraitQuery,
+        member: MemberId,
+    },
+    Prelude {
+        query: TraitQuery,
+        method: HirPreludeTraitMethod,
+    },
+}
+
 struct GenericCallInference {
-    callable: HirCallableId,
+    target: GenericCallTarget,
+    function_type: TypeId,
     arguments: Vec<TypeId>,
     solver: InferenceContext,
     contradiction: bool,
@@ -364,6 +384,14 @@ enum InferenceAssignment {
     Applied,
     Ambiguous,
     Mismatch,
+}
+
+fn explicit_receiver_argument_mode(mode: ParameterMode) -> ParameterMode {
+    match mode {
+        ParameterMode::Ref | ParameterMode::Value => ParameterMode::Value,
+        ParameterMode::Mut => ParameterMode::Mut,
+        ParameterMode::Var => ParameterMode::Var,
+    }
 }
 
 enum CheckedAssignmentTargetKind {
@@ -703,6 +731,7 @@ impl<'a> ExpressionChecker<'a> {
             let mut context = BodyContext {
                 discard_statuses: callable_discard_statuses(&callable),
                 trait_assumptions: self.callable_trait_assumptions(&callable)?,
+                contextual_self: self.callable_contextual_self(callable.id),
                 ..BodyContext::default()
             };
             context.trait_body = self.trait_body_context(callable.id);
@@ -920,6 +949,27 @@ impl<'a> ExpressionChecker<'a> {
             self_type: definition.self_type(),
             fixed_arity,
         })
+    }
+
+    fn callable_contextual_self(&self, callable: HirCallableId) -> Option<TypeId> {
+        match callable {
+            HirCallableId::Symbol(_) => None,
+            HirCallableId::Implementation(method) => self
+                .program
+                .implementation(method.implementation())
+                .map(|implementation| implementation.target()),
+            HirCallableId::Member(member) => {
+                let member = self.resolved.member(member)?;
+                let MemberOwner::Type(owner) = member.owner() else {
+                    return None;
+                };
+                match self.program.declaration(owner)?.kind() {
+                    HirTypeDeclarationKind::Alias { target } => Some(*target),
+                    HirTypeDeclarationKind::Nominal(definition) => Some(definition.self_type()),
+                    HirTypeDeclarationKind::Trait(definition) => Some(definition.self_type()),
+                }
+            }
+        }
     }
 
     fn callable_trait_assumptions(
@@ -1239,6 +1289,11 @@ impl<'a> ExpressionChecker<'a> {
         };
         let actual = self.expression_type(value);
         if actual == self.program.interner.error() {
+            return Ok(value);
+        }
+        if expectation.contextual_type() == self.program.interner.error()
+            || expectation.resulting_type() == self.program.interner.error()
+        {
             return Ok(value);
         }
         if let ExpressionExpectation::CallableOutcome { full, success } = expectation {
@@ -2020,7 +2075,8 @@ impl<'a> ExpressionChecker<'a> {
             )?;
             return self.recovery_expression(file, range);
         }
-        let Some(arguments) = self.expression_generic_arguments(file, bracket)? else {
+        let Some(arguments) = self.expression_generic_arguments(file, bracket, Some(context))?
+        else {
             return self.recovery_expression(file, range);
         };
         if arguments.len() != callable.generic_arity as usize {
@@ -2761,7 +2817,7 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(None);
         }
         let applied = if let Some(bracket) = brackets.first().copied() {
-            let Some(arguments) = self.expression_generic_arguments(file, bracket)? else {
+            let Some(arguments) = self.expression_generic_arguments(file, bracket, None)? else {
                 return Ok(None);
             };
             let Some(applied) =
@@ -2791,6 +2847,7 @@ impl<'a> ExpressionChecker<'a> {
         &mut self,
         file: FileId,
         bracket: SyntaxNodeRef<'_>,
+        context: Option<&BodyContext>,
     ) -> Result<Option<Vec<TypeId>>, HirError> {
         let mut arguments = Vec::new();
         for item in bracket
@@ -2806,7 +2863,15 @@ impl<'a> ExpressionChecker<'a> {
                 .child_nodes()
                 .find(|child| AstExpression::cast(*child).is_some())
             {
-                self.lower_pattern_type_expression(file, expression)?
+                let contextual_self = self
+                    .resolved_type_name(file, expression)
+                    .filter(|resolved| matches!(resolved, ResolvedName::ContextualSelf))
+                    .and_then(|_| context.and_then(|context| context.contextual_self));
+                if contextual_self.is_some() {
+                    contextual_self
+                } else {
+                    self.lower_pattern_type_expression(file, expression)?
+                }
             } else {
                 None
             };
@@ -8360,6 +8425,11 @@ impl<'a> ExpressionChecker<'a> {
             {
                 return Ok(call);
             }
+            if let Some(call) =
+                self.check_member_call(file, node.range(), base_node, suffix, expected, context)?
+            {
+                return Ok(call);
+            }
             if let Some(call) = self.check_explicit_generic_call(
                 file,
                 node.range(),
@@ -8368,11 +8438,6 @@ impl<'a> ExpressionChecker<'a> {
                 expected,
                 context,
             )? {
-                return Ok(call);
-            }
-            if let Some(call) =
-                self.check_member_call(file, node.range(), base_node, suffix, expected, context)?
-            {
                 return Ok(call);
             }
             if let Some(constructor) = self.check_nominal_constructor_call(
@@ -8941,7 +9006,9 @@ impl<'a> ExpressionChecker<'a> {
             )?;
             return Ok(Some(self.recovery_expression(file, range)?));
         }
-        let Some(arguments) = self.expression_generic_arguments(file, brackets[0])? else {
+        let Some(arguments) =
+            self.expression_generic_arguments(file, brackets[0], Some(context))?
+        else {
             return Ok(Some(self.recovery_expression(file, range)?));
         };
         if arguments.len() != callable.generic_arity as usize {
@@ -9036,6 +9103,20 @@ impl<'a> ExpressionChecker<'a> {
                 return Ok(None);
             };
             if resolved_index + 1 < tokens.len() {
+                if let Some(call) = self.check_qualified_prelude_trait_call(
+                    file,
+                    range,
+                    base_node,
+                    suffix,
+                    explicit_bracket,
+                    &tokens,
+                    resolved_index,
+                    &resolved,
+                    expected,
+                    context,
+                )? {
+                    return Ok(Some(call));
+                }
                 if let Some(call) = self.check_qualified_source_trait_call(
                     file,
                     range,
@@ -9158,6 +9239,145 @@ impl<'a> ExpressionChecker<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn check_qualified_prelude_trait_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        base_node: SyntaxNodeRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        tokens: &[SyntaxTokenRef<'_>],
+        resolved_index: usize,
+        resolved: &ResolvedName,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let ResolvedName::Prelude {
+            namespace: Namespace::Type,
+            name,
+        } = resolved
+        else {
+            return Ok(None);
+        };
+        let (method_name, method, trait_arity) = match name.as_str() {
+            "Display" => ("display", HirPreludeTraitMethod::Display, 0usize),
+            "Iterator" => ("next", HirPreludeTraitMethod::IteratorNext, 1usize),
+            _ => return Ok(None),
+        };
+        if resolved_index + 2 != tokens.len() {
+            return Ok(None);
+        }
+        let member_token = *tokens.last().expect("a qualified call has a member token");
+        if member_token.token().normalized_identifier() != Some(method_name) {
+            self.emit(
+                self.sources.span(file, member_token.range())?,
+                "E1102",
+                format!("`{name}` has no callable member with this name"),
+                Vec::new(),
+                None,
+            )?;
+            return Ok(Some(self.recovery_expression(file, range)?));
+        }
+
+        let mut trait_brackets = Vec::new();
+        let mut method_brackets = Vec::new();
+        for bracket in base_node
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::BracketPostfix)
+        {
+            if bracket.range().end() <= member_token.range().start() {
+                trait_brackets.push(bracket);
+            } else {
+                method_brackets.push(bracket);
+            }
+        }
+        if let Some(bracket) = explicit_bracket
+            && !method_brackets
+                .iter()
+                .any(|existing| existing.range() == bracket.range())
+        {
+            method_brackets.push(bracket);
+        }
+        if trait_brackets.len() > 1 || method_brackets.len() > 1 {
+            self.emit(
+                self.sources.span(file, base_node.range())?,
+                "E1104",
+                "a qualified prelude trait call has at most one trait argument list",
+                Vec::new(),
+                None,
+            )?;
+            return Ok(Some(self.recovery_expression(file, range)?));
+        }
+        if let Some(bracket) = method_brackets.first() {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "this prelude trait method has no method-local generic parameters",
+                Vec::new(),
+                None,
+            )?;
+            return Ok(Some(self.recovery_expression(file, range)?));
+        }
+        let trait_arguments = if let Some(bracket) = trait_brackets.first().copied() {
+            let Some(arguments) =
+                self.expression_generic_arguments(file, bracket, Some(context))?
+            else {
+                return Ok(Some(self.recovery_expression(file, range)?));
+            };
+            arguments
+        } else {
+            Vec::new()
+        };
+        if trait_arguments.len() != trait_arity {
+            self.emit(
+                self.sources.span(file, base_node.range())?,
+                "E1104",
+                format!(
+                    "qualified `{name}` expects {trait_arity} trait type arguments, found {}",
+                    trait_arguments.len()
+                ),
+                Vec::new(),
+                None,
+            )?;
+            return Ok(Some(self.recovery_expression(file, range)?));
+        }
+
+        let (_, function_type) = self.prelude_trait_function_template(method)?;
+        let callee = self.allocate_expression(HirExpression {
+            span: self.sources.span(file, member_token.range())?,
+            ty: function_type,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::PreludeTraitFunction {
+                method,
+                arguments: Vec::new(),
+            },
+        })?;
+        let fixed = trait_arguments
+            .into_iter()
+            .enumerate()
+            .map(|(position, argument)| {
+                (
+                    u32::try_from(position).expect("prelude trait arity fits in u32"),
+                    argument,
+                )
+            })
+            .collect();
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            None,
+            Some(ExplicitGenericArguments { arguments: fixed }),
+            context,
+        )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn check_qualified_source_trait_call(
         &mut self,
         file: FileId,
@@ -9238,7 +9458,9 @@ impl<'a> ExpressionChecker<'a> {
         }
 
         let trait_arguments = if let Some(bracket) = trait_brackets.first().copied() {
-            let Some(arguments) = self.expression_generic_arguments(file, bracket)? else {
+            let Some(arguments) =
+                self.expression_generic_arguments(file, bracket, Some(context))?
+            else {
                 return Ok(Some(self.recovery_expression(file, range)?));
             };
             arguments
@@ -9266,7 +9488,9 @@ impl<'a> ExpressionChecker<'a> {
         let has_receiver = member_declaration.kind() == MemberKind::TraitMethod;
         let method_arity = member_declaration.generic_arity();
         let method_arguments = if let Some(bracket) = method_brackets.first().copied() {
-            let Some(arguments) = self.expression_generic_arguments(file, bracket)? else {
+            let Some(arguments) =
+                self.expression_generic_arguments(file, bracket, Some(context))?
+            else {
                 return Ok(Some(self.recovery_expression(file, range)?));
             };
             arguments
@@ -9417,21 +9641,47 @@ impl<'a> ExpressionChecker<'a> {
                 .map(Some);
         }
         let mut constrained = Vec::new();
+        let member_name = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?);
         for query in &context.trait_assumptions {
             if query.target() != receiver_type {
                 continue;
             }
-            let HirTraitConstructor::Symbol(owner) = query.constructor() else {
-                continue;
-            };
-            let Some(member) =
-                self.callable_member(file, *owner, member_token, &[MemberKind::TraitMethod])?
-            else {
-                continue;
-            };
-            constrained.push((query.clone(), member));
+            match query.constructor() {
+                HirTraitConstructor::Symbol(owner) => {
+                    let Some(member) = self.callable_member(
+                        file,
+                        *owner,
+                        member_token,
+                        &[MemberKind::TraitMethod],
+                    )?
+                    else {
+                        continue;
+                    };
+                    constrained.push(ConstrainedTraitMethod::Source {
+                        query: query.clone(),
+                        member,
+                    });
+                }
+                HirTraitConstructor::Prelude(name) => {
+                    let method = match (name.as_str(), member_name) {
+                        ("Display", "display") => Some(HirPreludeTraitMethod::Display),
+                        ("Iterator", "next") => Some(HirPreludeTraitMethod::IteratorNext),
+                        _ => None,
+                    };
+                    if let Some(method) = method {
+                        constrained.push(ConstrainedTraitMethod::Prelude {
+                            query: query.clone(),
+                            method,
+                        });
+                    }
+                }
+                HirTraitConstructor::External(_) => {}
+            }
         }
-        constrained.sort_by_key(|(query, member)| (query.clone(), *member));
+        constrained.sort();
         constrained.dedup();
         if constrained.len() > 1 {
             self.emit(
@@ -9440,14 +9690,25 @@ impl<'a> ExpressionChecker<'a> {
                 "method name is provided by more than one visible trait constraint; use a qualified trait call",
                 constrained
                     .iter()
-                    .filter_map(|(_, member)| self.resolved.member(*member))
+                    .filter_map(|candidate| match candidate {
+                        ConstrainedTraitMethod::Source { member, .. } => {
+                            self.resolved.member(*member)
+                        }
+                        ConstrainedTraitMethod::Prelude { .. } => None,
+                    })
                     .map(|member| ("candidate trait method", member.span()))
                     .collect(),
                 None,
             )?;
             return self.recovery_expression(file, range).map(Some);
         }
-        if let Some((query, member)) = constrained.pop() {
+        if matches!(
+            constrained.last(),
+            Some(ConstrainedTraitMethod::Source { .. })
+        ) {
+            let Some(ConstrainedTraitMethod::Source { query, member }) = constrained.pop() else {
+                unreachable!("the constrained source method was just matched")
+            };
             let mut fixed = query
                 .arguments()
                 .iter()
@@ -9475,6 +9736,58 @@ impl<'a> ExpressionChecker<'a> {
                     explicit_bracket,
                     fixed,
                     expected,
+                    context,
+                )
+                .map(Some);
+        }
+        if let Some(ConstrainedTraitMethod::Prelude { query, method }) = constrained.pop() {
+            if let Some(bracket) = explicit_bracket {
+                self.emit(
+                    self.sources.span(file, bracket.range())?,
+                    "E1104",
+                    "this prelude trait method has no method-local generic parameters",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range).map(Some);
+            }
+            let mut fixed = query
+                .arguments()
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(position, argument)| {
+                    (
+                        u32::try_from(position).expect("trait arity fits in u32"),
+                        argument,
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            fixed.insert(
+                u32::try_from(query.arguments().len()).expect("trait arity fits in u32"),
+                query.target(),
+            );
+            let (_, function_type) = self.prelude_trait_function_template(method)?;
+            let callee = self.allocate_expression(HirExpression {
+                span: self.sources.span(file, member_token.range())?,
+                ty: function_type,
+                category: HirValueCategory::Value,
+                kind: HirExpressionKind::PreludeTraitFunction {
+                    method,
+                    arguments: Vec::new(),
+                },
+            })?;
+            return self
+                .check_call(
+                    CallSite {
+                        file,
+                        range,
+                        suffix,
+                        expected,
+                    },
+                    callee,
+                    Some(receiver),
+                    Some(ExplicitGenericArguments { arguments: fixed }),
                     context,
                 )
                 .map(Some);
@@ -9582,7 +9895,9 @@ impl<'a> ExpressionChecker<'a> {
                 )?;
                 return self.recovery_expression(file, range);
             }
-            let Some(arguments) = self.expression_generic_arguments(file, bracket)? else {
+            let Some(arguments) =
+                self.expression_generic_arguments(file, bracket, Some(context))?
+            else {
                 return self.recovery_expression(file, range);
             };
             if arguments.len() != member_generic_arity as usize {
@@ -9976,6 +10291,65 @@ impl<'a> ExpressionChecker<'a> {
         Ok((values, valid))
     }
 
+    fn prelude_trait_function_template(
+        &mut self,
+        method: HirPreludeTraitMethod,
+    ) -> Result<(u32, TypeId), HirError> {
+        let (generic_arity, mode, receiver, outcome) = match method {
+            HirPreludeTraitMethod::Display => (
+                1,
+                ParameterMode::Ref,
+                self.program.interner.generic_parameter(0)?,
+                self.program.interner.scalar(ScalarType::String),
+            ),
+            HirPreludeTraitMethod::IteratorNext => {
+                let element = self.program.interner.generic_parameter(0)?;
+                (
+                    2,
+                    ParameterMode::Mut,
+                    self.program.interner.generic_parameter(1)?,
+                    self.program.interner.option(element)?,
+                )
+            }
+        };
+        let function_type = self.program.interner.function(FunctionType::new(
+            false,
+            false,
+            vec![FunctionParameter::new(mode, receiver)],
+            None,
+            outcome,
+        ))?;
+        Ok((generic_arity, function_type))
+    }
+
+    fn prelude_trait_query(
+        &self,
+        method: HirPreludeTraitMethod,
+        arguments: &[TypeId],
+    ) -> Result<TraitQuery, HirError> {
+        let (name, trait_arguments, target) = match (method, arguments) {
+            (HirPreludeTraitMethod::Display, [target]) => ("Display", Vec::new(), *target),
+            (HirPreludeTraitMethod::IteratorNext, [element, target]) => {
+                ("Iterator", vec![*element], *target)
+            }
+            (HirPreludeTraitMethod::Display, _) | (HirPreludeTraitMethod::IteratorNext, _) => {
+                return Err(HirError::TraitSelectionInvariant {
+                    message: format!(
+                        "prelude method {method:?} has {} complete type arguments",
+                        arguments.len()
+                    ),
+                });
+            }
+        };
+        Ok(TraitQuery::from_parts(
+            HirTraitConstructor::Prelude(
+                Name::new(name).expect("prelude trait names are valid names"),
+            ),
+            trait_arguments,
+            target,
+        ))
+    }
+
     fn check_call(
         &mut self,
         site: CallSite<'_>,
@@ -10009,25 +10383,41 @@ impl<'a> ExpressionChecker<'a> {
                 return self.recovery_expression(file, range);
             }
         };
-        let generic_callable = match self
+        let generic_template = match self
             .program
             .expression(callee)
             .expect("allocated callee expressions remain indexed")
             .kind()
         {
-            HirExpressionKind::Function(id) => self
-                .callable(*id)
-                .filter(|callable| callable.generic_arity != 0)
-                .cloned(),
+            HirExpressionKind::Function(id) => self.callable(*id).and_then(|callable| {
+                (callable.generic_arity != 0).then_some((
+                    GenericCallTarget::Callable(*id),
+                    callable.generic_arity,
+                    callable.function_type,
+                    self.trait_body_context(*id)
+                        .zip(context.trait_body)
+                        .filter(|(callee, body)| callee.owner == body.owner)
+                        .map_or(0, |(_, body)| body.fixed_arity),
+                ))
+            }),
+            HirExpressionKind::PreludeTraitFunction { method, arguments }
+                if arguments.is_empty() =>
+            {
+                let (generic_arity, function_type) =
+                    self.prelude_trait_function_template(*method)?;
+                Some((
+                    GenericCallTarget::PreludeTrait(*method),
+                    generic_arity,
+                    function_type,
+                    0,
+                ))
+            }
             _ => None,
         };
-        let mut inference = if let Some(callable) = generic_callable {
-            let fixed_arity = self
-                .trait_body_context(callable.id)
-                .zip(context.trait_body)
-                .filter(|(callee, body)| callee.owner == body.owner)
-                .map_or(0, |(_, body)| body.fixed_arity);
-            let arguments = (0..callable.generic_arity)
+        let mut inference = if let Some((target, generic_arity, function_type, fixed_arity)) =
+            generic_template
+        {
+            let arguments = (0..generic_arity)
                 .map(|position| {
                     let explicit = explicit_generics
                         .as_ref()
@@ -10048,13 +10438,14 @@ impl<'a> ExpressionChecker<'a> {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let inferred_type = TypeSubstitution::new(arguments.clone())
-                .apply(&mut self.program.interner, callable.function_type)?;
+                .apply(&mut self.program.interner, function_type)?;
             function = match self.program.interner.kind(inferred_type)?.clone() {
                 TypeKind::Function(function) => function,
                 _ => unreachable!("callable signatures always lower to function types"),
             };
             let mut inference = GenericCallInference {
-                callable: callable.id,
+                target,
+                function_type,
                 arguments,
                 solver: InferenceContext::new(),
                 contradiction: false,
@@ -10195,7 +10586,7 @@ impl<'a> ExpressionChecker<'a> {
                     };
                     expected_type = Some(shape.fixed[fixed].ty);
                     expected_mode = if shape.fixed[fixed].receiver {
-                        ParameterMode::Value
+                        explicit_receiver_argument_mode(shape.fixed[fixed].mode)
                     } else {
                         shape.fixed[fixed].mode
                     };
@@ -10282,7 +10673,7 @@ impl<'a> ExpressionChecker<'a> {
                     };
                     expected_type = Some(shape.fixed[fixed].ty);
                     expected_mode = if shape.fixed[fixed].receiver {
-                        ParameterMode::Value
+                        explicit_receiver_argument_mode(shape.fixed[fixed].mode)
                     } else {
                         shape.fixed[fixed].mode
                     };
@@ -10417,32 +10808,48 @@ impl<'a> ExpressionChecker<'a> {
                     return self.recovery_expression(file, range);
                 }
             };
-            let inferred_callable = self
-                .callable(generic.callable)
-                .expect("an inferred callable remains indexed")
-                .clone();
-            self.validate_generic_bounds(
-                self.sources.span(file, suffix.range())?,
-                &inferred_callable,
-                &type_arguments,
-                context,
-            )?;
-            let function_type = inferred_callable.function_type;
             let final_type = TypeSubstitution::new(type_arguments.clone())
-                .apply(&mut self.program.interner, function_type)?;
+                .apply(&mut self.program.interner, generic.function_type)?;
             let final_function = match self.program.interner.kind(final_type)?.clone() {
                 TypeKind::Function(function) => function,
                 _ => unreachable!("callable signatures always lower to function types"),
+            };
+            let callee_kind = match generic.target {
+                GenericCallTarget::Callable(callable) => {
+                    let inferred_callable = self
+                        .callable(callable)
+                        .expect("an inferred callable remains indexed")
+                        .clone();
+                    self.validate_generic_bounds(
+                        self.sources.span(file, suffix.range())?,
+                        &inferred_callable,
+                        &type_arguments,
+                        context,
+                    )?;
+                    HirExpressionKind::SpecializedFunction {
+                        callable,
+                        arguments: type_arguments,
+                    }
+                }
+                GenericCallTarget::PreludeTrait(method) => {
+                    let query = self.prelude_trait_query(method, &type_arguments)?;
+                    self.require_trait_query(
+                        self.sources.span(file, suffix.range())?,
+                        query,
+                        context,
+                    )?;
+                    HirExpressionKind::PreludeTraitFunction {
+                        method,
+                        arguments: type_arguments,
+                    }
+                }
             };
             let callee_span = self.program.expressions[callee.0 as usize].span;
             callee = self.allocate_expression(HirExpression {
                 span: callee_span,
                 ty: final_type,
                 category: HirValueCategory::Value,
-                kind: HirExpressionKind::SpecializedFunction {
-                    callable: generic.callable,
-                    arguments: type_arguments,
-                },
+                kind: callee_kind,
             })?;
             let full_shape = self.call_shape(callee, &final_function, false);
             for argument in &mut arguments {
@@ -10615,7 +11022,32 @@ impl<'a> ExpressionChecker<'a> {
         function: &crate::types::FunctionType,
         bound_receiver: bool,
     ) -> CallShape {
-        let callable_id = match self.program.expressions[callee.0 as usize].kind() {
+        let callee_kind = self.program.expressions[callee.0 as usize].kind();
+        if matches!(callee_kind, HirExpressionKind::PreludeTraitFunction { .. }) {
+            let fixed = function
+                .parameters()
+                .iter()
+                .enumerate()
+                .filter_map(|(index, parameter)| {
+                    if bound_receiver && index == 0 {
+                        return None;
+                    }
+                    Some(CallParameterInfo {
+                        index: u32::try_from(index).expect("call parameter counts fit in u32"),
+                        name: None,
+                        mode: parameter.mode(),
+                        ty: parameter.ty(),
+                        receiver: index == 0,
+                    })
+                })
+                .collect();
+            return CallShape {
+                fixed,
+                variadic: None,
+                outcome: function.outcome(),
+            };
+        }
+        let callable_id = match callee_kind {
             HirExpressionKind::Function(id)
             | HirExpressionKind::SpecializedFunction { callable: id, .. } => Some(*id),
             _ => None,
@@ -12385,15 +12817,23 @@ mod tests {
     #[test]
     fn constraint_method_collisions_require_qualification() {
         let (_, _, ambiguous) = check(
-            "trait Left { fn label(self): String }\n\
-             trait Right { fn label(self): String }\n\
+            "trait Left {\n\
+                 fn label(self): String\n\
+             }\n\
+             trait Right {\n\
+                 fn label(self): String\n\
+             }\n\
              fn choose[T: Left + Right](value: T): String { value.label() }\n",
         );
         assert_eq!(codes(&ambiguous), ["E1004"]);
 
         let (_, _, qualified) = check(
-            "trait Left { fn label(self): String }\n\
-             trait Right { fn label(self): String }\n\
+            "trait Left {\n\
+                 fn label(self): String\n\
+             }\n\
+             trait Right {\n\
+                 fn label(self): String\n\
+             }\n\
              fn choose[T: Left + Right](value: T): String { Left.label(value) }\n",
         );
         assert!(
@@ -12407,7 +12847,9 @@ mod tests {
     #[test]
     fn qualified_trait_calls_prove_recursive_implementation_bounds() {
         let (_, _, accepted) = check(
-            "trait Summary { fn summarize(self): String }\n\
+            "trait Summary {\n\
+                 fn summarize(self): String\n\
+             }\n\
              type Leaf = { value: String }\n\
              type Box[T] = { value: T }\n\
              impl Summary for Leaf {\n\
@@ -12426,7 +12868,9 @@ mod tests {
         assert!(accepted.is_complete());
 
         let (_, _, rejected) = check(
-            "trait Summary { fn summarize(self): String }\n\
+            "trait Summary {\n\
+                 fn summarize(self): String\n\
+             }\n\
              type Box[T] = { value: T }\n\
              impl[T: Summary] Summary for Box[T] {\n\
                  fn summarize(self): String { self.value.summarize() }\n\
@@ -12434,6 +12878,95 @@ mod tests {
              fn render(value: Box[Int]): String { Summary.summarize(value) }\n",
         );
         assert_eq!(codes(&rejected), ["E1105"]);
+    }
+
+    #[test]
+    fn qualified_associated_trait_operations_require_explicit_self_before_method_generics() {
+        let (_, _, output) = check(
+            "trait Codec[Format] {\n\
+                 fn decode[Input: Discard](value: Input): Self\n\
+             }\n\
+             type Json = Unit\n\
+             type User = { name: String }\n\
+             impl Codec[Json] for User {\n\
+                 fn decode[Input: Discard](value: Input): User {\n\
+                     _ = value\n\
+                     User { name: \"Tony\" }\n\
+                 }\n\
+             }\n\
+             fn decode(value: String): User {\n\
+                 Codec[Json].decode[User, String](value)\n\
+             }\n",
+        );
+        assert!(output.diagnostics().is_empty(), "{:#?}", output.diagnostics());
+        assert!(output.is_complete());
+
+        let (_, _, missing_self) = check(
+            "trait Decode {\n\
+                 fn decode(value: String): Self\n\
+             }\n\
+             type User = { name: String }\n\
+             impl Decode for User {\n\
+                 fn decode(value: String): User { User { name: value } }\n\
+             }\n\
+             fn invalid(): User { Decode.decode(\"Tony\") }\n",
+        );
+        assert_eq!(codes(&missing_self), ["E1104"]);
+    }
+
+    #[test]
+    fn qualified_trait_receivers_require_explicit_mutability_modes() {
+        let source = "trait Reset {\n\
+                          fn reset(mut self)\n\
+                      }\n\
+                      type Counter = { value: Int }\n\
+                      impl Reset for Counter {\n\
+                          fn reset(mut self) {\n\
+                              self.value = 0\n\
+                          }\n\
+                      }\n";
+        let (_, _, valid) = check(&format!(
+            "{source}fn apply(value: var Counter) {{ Reset.reset(mut value) }}\n"
+        ));
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        let (_, _, omitted) = check(&format!(
+            "{source}fn apply(value: var Counter) {{ Reset.reset(value) }}\n"
+        ));
+        assert_eq!(codes(&omitted), ["E1407"]);
+
+        let (_, _, immutable) = check(&format!(
+            "{source}fn apply(value: Counter) {{ Reset.reset(mut value) }}\n"
+        ));
+        assert_eq!(codes(&immutable), ["E1407"]);
+    }
+
+    #[test]
+    fn imported_traits_support_module_qualified_static_calls() {
+        let output = check_modules(&[
+            (
+                "api",
+                "api.to",
+                "pub trait Summary {\n\
+                     fn summarize(self): String\n\
+                 }\n\
+                 pub type User = { name: String }\n\
+                 impl Summary for User {\n\
+                     fn summarize(self): String { self.name }\n\
+                 }\n",
+            ),
+            (
+                "main",
+                "main.to",
+                "import app.api\n\
+                 fn render(value: api.User): String {\n\
+                     api.Summary.summarize(value)\n\
+                 }\n",
+            ),
+        ]);
+        assert!(output.diagnostics().is_empty(), "{:#?}", output.diagnostics());
+        assert!(output.is_complete());
     }
 
     #[test]

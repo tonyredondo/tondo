@@ -818,7 +818,11 @@ impl NameResolver<'_> {
             };
             let second = normalized_name(second_token)
                 .expect("qualified path identifiers are ordinary names");
-            self.resolve_module_member(&import.module, second, second_token, namespace)?;
+            if namespace == Namespace::Value && shape != ValuePathShape::Plain {
+                self.resolve_either_module_member(&import.module, second, second_token)?;
+            } else {
+                self.resolve_module_member(&import.module, second, second_token, namespace)?;
+            }
             return Ok(());
         }
 

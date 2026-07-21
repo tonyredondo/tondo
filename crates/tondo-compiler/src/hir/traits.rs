@@ -93,14 +93,14 @@ impl From<TypeError> for TraitSelectionError {
     }
 }
 
-pub(crate) fn select_implementation(
+pub(crate) fn select_implementation<'a>(
     interner: &TypeInterner,
-    implementations: &[HirImplementation],
+    implementations: impl IntoIterator<Item = &'a HirImplementation>,
     query: &TraitQuery,
 ) -> Result<Option<TraitSelection>, TraitSelectionError> {
     let actuals = query.components();
     let mut selected = None;
-    for implementation in implementations.iter().filter(|implementation| {
+    for implementation in implementations.into_iter().filter(|implementation| {
         implementation.contract_complete
             && implementation.trait_reference.constructor == query.constructor
     }) {

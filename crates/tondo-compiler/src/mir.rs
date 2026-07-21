@@ -10,7 +10,7 @@ use std::fmt;
 
 use crate::hir::{
     HirBinaryOperator, HirCallArgumentTarget, HirCallableId, HirContainmentKind, HirPrefixOperator,
-    HirRangeKind,
+    HirPreludeTraitMethod, HirRangeKind,
 };
 use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::Span;
@@ -336,6 +336,10 @@ pub enum MirOperandKind {
     Move(MirPlace),
     Function {
         callable: HirCallableId,
+        arguments: Vec<TypeId>,
+    },
+    PreludeTraitFunction {
+        method: HirPreludeTraitMethod,
         arguments: Vec<TypeId>,
     },
 }
