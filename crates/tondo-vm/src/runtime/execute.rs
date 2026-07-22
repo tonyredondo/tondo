@@ -5,10 +5,10 @@ use crate::bytecode::{
     BytecodeCallArgument, BytecodeCallArgumentTarget, BytecodeCoercion, BytecodeConstant,
     BytecodeConstantValue, BytecodeConstantValueKind, BytecodeConstantVariantValue,
     BytecodeContainmentKind, BytecodeCursorMode, BytecodeFunctionId, BytecodeIndexAccess,
-    BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeNumericConversion,
-    BytecodeOperand, BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind,
-    BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator, BytecodeProgram,
-    BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
+    BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeLoanId,
+    BytecodeNumericConversion, BytecodeOperand, BytecodeOperandKind, BytecodeOperation,
+    BytecodeOperationKind, BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator,
+    BytecodeProgram, BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
     BytecodeRvalueKind, BytecodeScalarType, BytecodeSpan, BytecodeTag, BytecodeTerminator,
     BytecodeTerminatorKind, BytecodeTypeId, BytecodeTypeKind, BytecodeVerificationLimits,
     verify_bytecode_with_limits,
@@ -16,7 +16,7 @@ use crate::bytecode::{
 
 use super::heap::{Heap, HeapHandle, HeapObject};
 use super::literal;
-use super::value::{AggregatePayload, Value, snapshot_value};
+use super::value::{AggregatePayload, RuntimeLoan, Value, snapshot_value};
 use super::{PanicCode, RuntimeValue, VmError, VmLimits, VmPanic, VmStackFrame, VmStatistics};
 
 type HeapMapEntry = (Option<Value>, Option<Value>);
@@ -132,12 +132,19 @@ struct CallContinuation {
     call_span: BytecodeSpan,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct RuntimeReservation {
+    mode: BytecodeParameterMode,
+    path: ResolvedPlacePath,
+}
+
 #[derive(Debug)]
 struct Frame {
     function: BytecodeFunctionId,
     block: BytecodeBlockId,
     instruction: usize,
     slots: Vec<SlotState>,
+    loans: Vec<Option<RuntimeReservation>>,
     continuation: Option<CallContinuation>,
 }
 
@@ -276,7 +283,9 @@ impl<'program, 'host> Engine<'program, 'host> {
             .filter_map(|instruction| match instruction.kind {
                 BytecodeInstructionKind::StorageLive(slot)
                 | BytecodeInstructionKind::StorageDead(slot) => Some(slot),
-                BytecodeInstructionKind::Store { .. } => None,
+                BytecodeInstructionKind::ReserveLoan(_)
+                | BytecodeInstructionKind::ReleaseLoan(_)
+                | BytecodeInstructionKind::Store { .. } => None,
             })
             .collect::<std::collections::BTreeSet<_>>();
         let mut slots = function
@@ -300,6 +309,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             block: function.entry,
             instruction: 0,
             slots,
+            loans: vec![None; function.loans.len()],
             continuation,
         });
         self.statistics.peak_stack_depth = self
@@ -333,10 +343,104 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
                 *state = SlotState::Dead;
             }
+            BytecodeInstructionKind::ReserveLoan(loan) => {
+                self.reserve_loan(frame, *loan)?;
+            }
+            BytecodeInstructionKind::ReleaseLoan(loan) => {
+                self.release_loan(frame, *loan)?;
+            }
             BytecodeInstructionKind::Store { destination, value } => {
                 let value = self.evaluate_rvalue(frame, value)?;
                 self.write_place(frame, destination, value)?;
             }
+        }
+        Ok(())
+    }
+
+    fn reserve_loan(&mut self, frame: usize, id: BytecodeLoanId) -> Result<(), VmError> {
+        let loan = {
+            let function = self
+                .program
+                .function(self.frames[frame].function)
+                .ok_or_else(|| VmError::invariant("loan frame has an invalid function"))?;
+            function
+                .loans
+                .get(id.index() as usize)
+                .cloned()
+                .ok_or_else(|| VmError::invariant("ReserveLoan references an invalid loan"))?
+        };
+        if loan.mode == BytecodeParameterMode::Value {
+            return Err(VmError::invariant(
+                "ReserveLoan uses the owning value parameter mode",
+            ));
+        }
+        if let Some(source) = self.root_loan(frame, loan.place.slot)? {
+            let compatible = match loan.mode {
+                BytecodeParameterMode::Value => false,
+                BytecodeParameterMode::Ref => true,
+                BytecodeParameterMode::Mut => matches!(
+                    source.mode,
+                    BytecodeParameterMode::Mut | BytecodeParameterMode::Var
+                ),
+                BytecodeParameterMode::Var => {
+                    source.mode == BytecodeParameterMode::Var
+                        || source.mode == BytecodeParameterMode::Mut
+                            && !loan.place.projections.is_empty()
+                }
+            };
+            if !compatible {
+                return Err(VmError::invariant(
+                    "a reborrow requests stronger permissions than its source loan",
+                ));
+            }
+        }
+        let path =
+            self.validate_place(frame, &loan.place, false)
+                .map_err(|failure| match failure {
+                    PlaceFailure::Vm(error) => error,
+                    PlaceFailure::Panic(_, _) => VmError::invariant(
+                        "a fixed-region loan unexpectedly required a runtime place check",
+                    ),
+                })?;
+        let reservations = self
+            .frames
+            .get(frame)
+            .ok_or_else(|| VmError::invariant("ReserveLoan escaped the current frame"))?;
+        if reservations
+            .loans
+            .get(id.index() as usize)
+            .is_none_or(Option::is_some)
+        {
+            return Err(VmError::invariant(
+                "ReserveLoan reuses an active or invalid reservation",
+            ));
+        }
+        if reservations.loans.iter().flatten().any(|active| {
+            paths_overlap(&active.path, &path)
+                && !(active.mode == BytecodeParameterMode::Ref
+                    && loan.mode == BytecodeParameterMode::Ref)
+        }) {
+            return Err(VmError::invariant(
+                "ReserveLoan overlaps an incompatible active reservation",
+            ));
+        }
+        self.frames[frame].loans[id.index() as usize] = Some(RuntimeReservation {
+            mode: loan.mode,
+            path,
+        });
+        Ok(())
+    }
+
+    fn release_loan(&mut self, frame: usize, id: BytecodeLoanId) -> Result<(), VmError> {
+        let reservation = self
+            .frames
+            .get_mut(frame)
+            .and_then(|frame| frame.loans.get_mut(id.index() as usize))
+            .ok_or_else(|| VmError::invariant("ReleaseLoan references an invalid loan"))?;
+        if reservation.take().is_none() {
+            return Err(VmError::invariant(
+                "ReleaseLoan references an inactive reservation",
+            ));
         }
         Ok(())
     }
@@ -443,6 +547,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
             }
             BytecodeTerminatorKind::Return => {
+                if self.frames[frame].loans.iter().any(Option::is_some) {
+                    return Err(VmError::invariant(
+                        "a function returned with an active loan reservation",
+                    ));
+                }
                 let function = self
                     .program
                     .function(self.frames[frame].function)
@@ -487,6 +596,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     let caller = self.frames.len().checked_sub(1).ok_or_else(|| {
                         VmError::invariant("panicking callee has no caller frame")
                     })?;
+                    self.frames[caller].loans.fill(None);
                     self.jump(caller, continuation.unwind);
                 } else {
                     let panic = self.pending_panic.take().ok_or_else(|| {
@@ -549,6 +659,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             span,
             stack,
         });
+        self.frames[frame].loans.fill(None);
         self.jump(frame, unwind);
         Ok(())
     }
@@ -597,6 +708,24 @@ impl<'program, 'host> Engine<'program, 'host> {
             Some(SlotState::Dead) => Err(VmError::invariant("read from a dead frame slot")),
             Some(SlotState::Uninitialized) => {
                 Err(VmError::invariant("read from an uninitialized frame slot"))
+            }
+            None => Err(VmError::invariant("read from an invalid frame slot")),
+        }
+    }
+
+    fn root_loan(
+        &self,
+        frame: usize,
+        slot: crate::bytecode::BytecodeSlotId,
+    ) -> Result<Option<RuntimeLoan>, VmError> {
+        match self
+            .frames
+            .get(frame)
+            .and_then(|frame| frame.slots.get(slot.index() as usize))
+        {
+            Some(SlotState::Value(Value::Loan(loan))) => Ok(Some(loan.clone())),
+            Some(SlotState::Value(_)) | Some(SlotState::Uninitialized) | Some(SlotState::Dead) => {
+                Ok(None)
             }
             None => Err(VmError::invariant("read from an invalid frame slot")),
         }
@@ -684,6 +813,9 @@ impl Engine<'_, '_> {
             }
             BytecodeOperandKind::Move(place) => self.take_place(frame, place),
             BytecodeOperandKind::Borrow(place) => self.read_place(frame, place),
+            BytecodeOperandKind::Loan(_) => Err(VmError::invariant(
+                "a loan operand escaped its consuming call",
+            )),
             BytecodeOperandKind::Function {
                 callable,
                 arguments,
@@ -884,6 +1016,11 @@ impl Engine<'_, '_> {
     }
 
     fn copy_value(&mut self, value: &Value) -> Result<Value, VmError> {
+        if matches!(value, Value::Loan(_)) {
+            return Err(VmError::invariant(
+                "a call-local loan was copied as a first-class value",
+            ));
+        }
         let Value::Heap(handle) = value else {
             return Ok(value.clone());
         };
@@ -1636,6 +1773,9 @@ impl Engine<'_, '_> {
 impl Engine<'_, '_> {
     fn read_place(&mut self, frame: usize, place: &BytecodePlace) -> Result<Value, VmError> {
         let mut value = self.read_slot(frame, place.slot)?.clone();
+        if let Value::Loan(loan) = value {
+            value = self.read_place(loan.frame, &loan.place)?;
+        }
         for projection in &place.projections {
             value = self.read_projection(frame, value, projection)?;
         }
@@ -1643,6 +1783,11 @@ impl Engine<'_, '_> {
     }
 
     fn take_place(&mut self, frame: usize, place: &BytecodePlace) -> Result<Value, VmError> {
+        if self.root_loan(frame, place.slot)?.is_some() {
+            return Err(VmError::invariant(
+                "a move attempted to transfer borrowed content",
+            ));
+        }
         let Some((last, prefix)) = place.projections.split_last() else {
             return self.take_slot(frame, place.slot);
         };
@@ -1659,6 +1804,25 @@ impl Engine<'_, '_> {
         place: &BytecodePlace,
         value: Value,
     ) -> Result<(), VmError> {
+        if let Some(loan) = self.root_loan(frame, place.slot)? {
+            if loan.mode == BytecodeParameterMode::Ref {
+                return Err(VmError::invariant(
+                    "a write attempted to mutate through a shared loan",
+                ));
+            }
+            if place.projections.is_empty() {
+                return self.write_place(loan.frame, &loan.place, value);
+            }
+            let mut parent = self.read_place(loan.frame, &loan.place)?;
+            let (last, prefix) = place
+                .projections
+                .split_last()
+                .expect("the non-empty projection branch has a final projection");
+            for projection in prefix {
+                parent = self.read_projection(frame, parent, projection)?;
+            }
+            return self.write_projection(frame, parent, last, value);
+        }
         let Some((last, prefix)) = place.projections.split_last() else {
             let state = self.slot_mut(frame, place.slot)?;
             if matches!(state, SlotState::Dead) {
@@ -2094,17 +2258,31 @@ impl Engine<'_, '_> {
         place: &BytecodePlace,
         for_write: bool,
     ) -> Result<ResolvedPlacePath, PlaceFailure> {
-        let mut path = ResolvedPlacePath {
-            root: place.slot.index(),
-            components: Vec::with_capacity(place.projections.len()),
+        let root_loan = self.root_loan(frame, place.slot)?;
+        let mut path = if let Some(loan) = &root_loan {
+            if for_write && loan.mode == BytecodeParameterMode::Ref {
+                return Err(PlaceFailure::Vm(VmError::invariant(
+                    "a write place is rooted in a shared loan",
+                )));
+            }
+            self.validate_place(loan.frame, &loan.place, for_write)?
+        } else {
+            ResolvedPlacePath {
+                root: (frame, place.slot.index()),
+                components: Vec::with_capacity(place.projections.len()),
+            }
         };
         if place.projections.is_empty() {
-            if !for_write {
+            if !for_write && root_loan.is_none() {
                 self.read_slot(frame, place.slot)?;
             }
             return Ok(path);
         }
-        let mut value = self.read_slot(frame, place.slot)?.clone();
+        let mut value = if let Some(loan) = root_loan {
+            self.read_place(loan.frame, &loan.place)?
+        } else {
+            self.read_slot(frame, place.slot)?.clone()
+        };
         for (index, projection) in place.projections.iter().enumerate() {
             let component = self.resolve_place_component(frame, &value, projection)?;
             path.components.push(component);
@@ -2831,13 +3009,56 @@ impl Engine<'_, '_> {
                 .iter()
                 .position(|parameter| parameter.receiver);
             let mut variadic_values = Vec::new();
+            let mut consumed_loans = Vec::new();
             for argument in arguments {
-                if argument.mode != BytecodeParameterMode::Value {
-                    return Err(VmError::invariant(
-                        "borrowed calls await the M5 ownership runtime",
-                    ));
-                }
-                let value = self.evaluate_operand(frame, &argument.value)?;
+                let value = if argument.mode == BytecodeParameterMode::Value {
+                    self.evaluate_operand(frame, &argument.value)?
+                } else {
+                    let BytecodeOperandKind::Loan(id) = &argument.value.kind else {
+                        return Err(VmError::invariant(
+                            "a borrowed call argument is not a loan operand",
+                        ));
+                    };
+                    let id = *id;
+                    if consumed_loans.contains(&id) {
+                        return Err(VmError::invariant(
+                            "a call consumes the same loan reservation more than once",
+                        ));
+                    }
+                    let loan = {
+                        let function = self
+                            .program
+                            .function(self.frames[frame].function)
+                            .ok_or_else(|| {
+                                VmError::invariant("call frame has an invalid function")
+                            })?;
+                        function
+                            .loans
+                            .get(id.index() as usize)
+                            .cloned()
+                            .ok_or_else(|| {
+                                VmError::invariant("call references an invalid loan operand")
+                            })?
+                    };
+                    let reservation = self.frames[frame]
+                        .loans
+                        .get(id.index() as usize)
+                        .and_then(Option::as_ref)
+                        .ok_or_else(|| {
+                            VmError::invariant("call consumes an inactive loan reservation")
+                        })?;
+                    if loan.mode != argument.mode || reservation.mode != argument.mode {
+                        return Err(VmError::invariant(
+                            "call argument mode differs from its loan reservation",
+                        ));
+                    }
+                    consumed_loans.push(id);
+                    Value::Loan(RuntimeLoan {
+                        frame,
+                        place: loan.place,
+                        mode: loan.mode,
+                    })
+                };
                 self.temporary_roots.push(value.clone());
                 match argument.target {
                     BytecodeCallArgumentTarget::Receiver => {
@@ -2868,6 +3089,17 @@ impl Engine<'_, '_> {
                     }
                 }
             }
+            for loan in consumed_loans {
+                let reservation = self.frames[frame]
+                    .loans
+                    .get_mut(loan.index() as usize)
+                    .ok_or_else(|| VmError::invariant("consumed loan index became invalid"))?;
+                if reservation.take().is_none() {
+                    return Err(VmError::invariant(
+                        "call loan reservation disappeared before consumption",
+                    ));
+                }
+            }
             if let Some(index) = variadic {
                 values[index] = Some(self.allocate(
                     HeapObject::Array(variadic_values.into_iter().map(Some).collect()),
@@ -2891,6 +3123,11 @@ impl Engine<'_, '_> {
             } else {
                 if metadata.closure.is_some() {
                     return Err(VmError::invariant("closure callable has no implementation"));
+                }
+                if values.iter().any(|value| matches!(value, Value::Loan(_))) {
+                    return Err(VmError::invariant(
+                        "host callables cannot receive borrowed parameters",
+                    ));
                 }
                 let snapshots = values
                     .iter()
@@ -3161,7 +3398,7 @@ fn next_unicode_scalar(value: u32) -> Option<u32> {
 
 #[derive(Debug, Clone, PartialEq)]
 struct ResolvedPlacePath {
-    root: u32,
+    root: (usize, u32),
     components: Vec<PlaceComponent>,
 }
 
@@ -3594,9 +3831,12 @@ fn convert_numeric(target: BytecodeScalarType, value: &Value) -> Result<Value, u
                 }
             }
         }
-        Value::Unit | Value::Bool(_) | Value::Char(_) | Value::Function { .. } | Value::Heap(_) => {
-            Err(0)
-        }
+        Value::Unit
+        | Value::Bool(_)
+        | Value::Char(_)
+        | Value::Function { .. }
+        | Value::Loan(_)
+        | Value::Heap(_) => Err(0),
     }
 }
 

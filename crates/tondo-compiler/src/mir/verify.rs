@@ -17,9 +17,9 @@ use crate::types::{
 
 use super::{
     MirAggregateKind, MirBasicBlock, MirBlockId, MirBlockKind, MirFunction, MirFunctionId,
-    MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation, MirOperationKind, MirPlace,
-    MirProgram, MirProjection, MirProjectionKind, MirRvalue, MirRvalueKind, MirStatementKind,
-    MirTag, MirTerminatorKind,
+    MirLoanId, MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation,
+    MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind, MirRvalue,
+    MirRvalueKind, MirStatementKind, MirTag, MirTerminatorKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,6 +181,14 @@ enum LocalEvent {
     StorageDead(MirLocalId),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LoanEvent {
+    Local(LocalEvent),
+    Reserve(MirLoanId),
+    Release(MirLoanId),
+    Consume(Vec<MirLoanId>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct LocalAccess {
     local: MirLocalId,
@@ -269,11 +277,16 @@ fn mir_operand_is_borrow(operand: &MirOperand) -> bool {
     matches!(operand.kind, MirOperandKind::Borrow(_))
 }
 
-fn operand_place(operand: &MirOperand) -> Option<&MirPlace> {
+fn mir_operand_is_loan(operand: &MirOperand) -> bool {
+    matches!(operand.kind, MirOperandKind::Loan(_))
+}
+
+fn operand_place<'a>(function: &'a MirFunction, operand: &'a MirOperand) -> Option<&'a MirPlace> {
     match &operand.kind {
         MirOperandKind::Copy(place)
         | MirOperandKind::Move(place)
         | MirOperandKind::Borrow(place) => Some(place),
+        MirOperandKind::Loan(loan) => function.loan(*loan).map(|loan| loan.place()),
         MirOperandKind::Constant(_)
         | MirOperandKind::Function { .. }
         | MirOperandKind::PreludeTraitFunction { .. } => None,
@@ -331,67 +344,71 @@ fn closure_capture_transfer_index(
 }
 
 fn mir_rvalue_contains_invalid_borrow(value: &MirRvalue) -> bool {
+    let escapes =
+        |operand: &MirOperand| mir_operand_is_borrow(operand) || mir_operand_is_loan(operand);
     match &value.kind {
         MirRvalueKind::Use(value)
         | MirRvalueKind::Prefix { operand: value, .. }
         | MirRvalueKind::Coerce { value, .. }
-        | MirRvalueKind::NumericConversion { value, .. } => mir_operand_is_borrow(value),
+        | MirRvalueKind::NumericConversion { value, .. } => escapes(value),
         MirRvalueKind::Binary {
+            left,
+            right,
             operator: HirBinaryOperator::Equal | HirBinaryOperator::NotEqual,
-            ..
-        }
-        | MirRvalueKind::Contains { .. }
-        | MirRvalueKind::Length(_)
-        | MirRvalueKind::IteratorState { .. } => false,
+        } => mir_operand_is_loan(left) || mir_operand_is_loan(right),
+        MirRvalueKind::Contains {
+            item, container, ..
+        } => mir_operand_is_loan(item) || mir_operand_is_loan(container),
+        MirRvalueKind::Length(operand) => mir_operand_is_loan(operand),
+        MirRvalueKind::IteratorState { source } => mir_operand_is_loan(source),
         MirRvalueKind::Binary { left, right, .. }
         | MirRvalueKind::Range {
             start: left,
             end: right,
             ..
-        } => mir_operand_is_borrow(left) || mir_operand_is_borrow(right),
-        MirRvalueKind::Aggregate { values, .. } => values.iter().any(mir_operand_is_borrow),
+        } => escapes(left) || escapes(right),
+        MirRvalueKind::Aggregate { values, .. } => values.iter().any(escapes),
         MirRvalueKind::RecordUpdate { base, fields } => {
-            mir_operand_is_borrow(base)
-                || fields.iter().any(|(_, value)| mir_operand_is_borrow(value))
+            escapes(base) || fields.iter().any(|(_, value)| escapes(value))
         }
     }
 }
 
 fn mir_operation_contains_invalid_borrow(operation: &MirOperation) -> bool {
+    let escapes =
+        |operand: &MirOperand| mir_operand_is_borrow(operand) || mir_operand_is_loan(operand);
     match &operation.kind {
         MirOperationKind::CheckedPrefix { operand, .. }
-        | MirOperationKind::ExplicitPanic { message: operand } => mir_operand_is_borrow(operand),
-        MirOperationKind::CheckedBinary { left, right, .. } => {
-            mir_operand_is_borrow(left) || mir_operand_is_borrow(right)
-        }
+        | MirOperationKind::ExplicitPanic { message: operand } => escapes(operand),
+        MirOperationKind::CheckedBinary { left, right, .. } => escapes(left) || escapes(right),
         MirOperationKind::BuildMap { entries, .. } => entries
             .iter()
-            .any(|(key, value)| mir_operand_is_borrow(key) || mir_operand_is_borrow(value)),
-        MirOperationKind::Index { index, .. } => mir_operand_is_borrow(index),
+            .any(|(key, value)| escapes(key) || escapes(value)),
+        MirOperationKind::Index { base, index, .. } => mir_operand_is_loan(base) || escapes(index),
         MirOperationKind::Slice {
-            start, end, step, ..
-        } => start
-            .iter()
-            .chain(end)
-            .chain(step)
-            .any(mir_operand_is_borrow),
-        MirOperationKind::Call { arguments, .. } => arguments.iter().any(|argument| {
-            let borrows = mir_operand_is_borrow(&argument.value);
-            argument.mode == crate::types::ParameterMode::Value && borrows
-        }),
+            base,
+            start,
+            end,
+            step,
+        } => mir_operand_is_loan(base) || start.iter().chain(end).chain(step).any(escapes),
+        MirOperationKind::Call {
+            callee, arguments, ..
+        } => {
+            mir_operand_is_loan(callee)
+                || arguments.iter().any(|argument| {
+                    if argument.mode == crate::types::ParameterMode::Value {
+                        escapes(&argument.value)
+                    } else {
+                        !mir_operand_is_loan(&argument.value)
+                    }
+                })
+        }
         MirOperationKind::Assert {
             condition,
             message_parts,
             ..
-        } => {
-            mir_operand_is_borrow(condition)
-                || message_parts
-                    .iter()
-                    .any(|part| mir_operand_is_borrow(&part.value))
-        }
-        MirOperationKind::BootstrapHostCall { arguments, .. } => {
-            arguments.iter().any(mir_operand_is_borrow)
-        }
+        } => escapes(condition) || message_parts.iter().any(|part| escapes(&part.value)),
+        MirOperationKind::BootstrapHostCall { arguments, .. } => arguments.iter().any(escapes),
     }
 }
 
@@ -558,6 +575,27 @@ impl Verifier<'_> {
                 format!("function has {return_count} return locals instead of one"),
             ));
         }
+        for (index, loan) in function.loans.iter().enumerate() {
+            let loan_context = format!("{context} loan#{index}");
+            if loan.mode == ParameterMode::Value {
+                return Err(MirInvariantError::new(
+                    &loan_context,
+                    "loan metadata uses the owning value mode",
+                ));
+            }
+            self.verify_place(function, &loan.place, &loan_context)?;
+            if loan.place.projections.iter().any(|projection| {
+                matches!(
+                    projection.kind,
+                    MirProjectionKind::Index { .. } | MirProjectionKind::Slice { .. }
+                )
+            }) {
+                return Err(MirInvariantError::new(
+                    &loan_context,
+                    "collection-region loans require BORROW-004 region proof",
+                ));
+            }
+        }
         if function.blocks.is_empty() {
             return Err(MirInvariantError::new(
                 &context,
@@ -644,11 +682,11 @@ impl Verifier<'_> {
             } = &block.terminator.kind
             {
                 writes_capture |= *protocol == HirCallProtocol::CallMut
-                    && operand_place(callee)
+                    && operand_place(function, callee)
                         .is_some_and(|place| place_is_closure_capture(function, closure, place));
                 writes_capture |= arguments.iter().any(|argument| {
                     matches!(argument.mode, ParameterMode::Mut | ParameterMode::Var)
-                        && operand_place(&argument.value)
+                        && operand_place(function, &argument.value)
                             .is_some_and(|place| place_is_closure_capture(function, closure, place))
                 });
             }
@@ -785,6 +823,15 @@ impl Verifier<'_> {
                         ));
                     }
                 }
+                MirStatementKind::ReserveLoan(loan) | MirStatementKind::ReleaseLoan(loan) => {
+                    if block.kind != MirBlockKind::Normal {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "cleanup block manipulates a call-local loan",
+                        ));
+                    }
+                    self.loan(function, *loan, &context)?;
+                }
                 MirStatementKind::Assign { destination, value } => {
                     self.verify_place(function, destination, &context)?;
                     self.verify_rvalue(function, value, &context)?;
@@ -824,6 +871,7 @@ impl Verifier<'_> {
                 }
                 self.verify_operand(function, condition, &context)?;
                 if mir_operand_is_borrow(condition)
+                    || mir_operand_is_loan(condition)
                     || condition.ty != self.hir.interner().scalar(ScalarType::Bool)
                 {
                     return Err(MirInvariantError::new(
@@ -1664,6 +1712,15 @@ impl Verifier<'_> {
                     return Err(MirInvariantError::new(
                         context,
                         "borrow operand changes its place type",
+                    ));
+                }
+            }
+            MirOperandKind::Loan(loan) => {
+                let loan = self.loan(function, *loan, context)?;
+                if loan.place.ty != operand.ty {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "loan operand changes its reserved place type",
                     ));
                 }
             }
@@ -3157,12 +3214,21 @@ impl Verifier<'_> {
                     "call argument mode or type differs from its parameter",
                 ));
             }
-            let borrows = matches!(argument.value.kind, MirOperandKind::Borrow(_));
-            if (argument.mode == crate::types::ParameterMode::Value) == borrows {
+            let loans = matches!(argument.value.kind, MirOperandKind::Loan(_));
+            if (argument.mode == crate::types::ParameterMode::Value) == loans {
                 return Err(MirInvariantError::new(
                     context,
-                    "call argument ownership access does not match its parameter mode",
+                    "call argument loan access does not match its parameter mode",
                 ));
+            }
+            if let MirOperandKind::Loan(loan) = argument.value.kind {
+                let loan = self.loan(function, loan, context)?;
+                if loan.mode != argument.mode || loan.place.ty != argument.value.ty {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "call argument differs from its reserved loan metadata",
+                    ));
+                }
             }
         }
         let expected_fixed = fixed.len() + usize::from(receiver.is_some());
@@ -3394,8 +3460,400 @@ impl Verifier<'_> {
                 &context,
             )?;
         }
+        self.verify_loan_flow(function, &reachable, &context)?;
         self.verify_tag_refinements(function, &successors, &reachable, &context)?;
         Ok(())
+    }
+
+    fn verify_loan_flow(
+        &self,
+        function: &MirFunction,
+        reachable: &[bool],
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let events = function
+            .blocks
+            .iter()
+            .map(|block| mir_loan_events(function, block))
+            .collect::<Vec<_>>();
+        let mut reservations = vec![0_u32; function.loans.len()];
+        let mut consumptions = vec![0_u32; function.loans.len()];
+        for block_events in &events {
+            for event in block_events {
+                match event {
+                    LoanEvent::Reserve(loan) => {
+                        let count =
+                            reservations.get_mut(loan.index() as usize).ok_or_else(|| {
+                                MirInvariantError::new(context, "reserves an unknown loan")
+                            })?;
+                        *count = count.saturating_add(1);
+                    }
+                    LoanEvent::Consume(loans) => {
+                        for loan in loans {
+                            let count =
+                                consumptions.get_mut(loan.index() as usize).ok_or_else(|| {
+                                    MirInvariantError::new(context, "consumes an unknown loan")
+                                })?;
+                            *count = count.saturating_add(1);
+                        }
+                    }
+                    LoanEvent::Local(_) | LoanEvent::Release(_) => {}
+                }
+            }
+        }
+        for index in 0..function.loans.len() {
+            if reservations[index] != 1 || consumptions[index] > 1 {
+                return Err(MirInvariantError::new(
+                    format!("{context} loan#{index}"),
+                    format!(
+                        "has {} reservations and {} call consumptions; expected exactly one reservation and at most one call consumption",
+                        reservations[index], consumptions[index]
+                    ),
+                ));
+            }
+        }
+
+        let mut incoming = vec![None::<BTreeSet<MirLoanId>>; function.blocks.len()];
+        incoming[function.entry.index() as usize] = Some(BTreeSet::new());
+        let mut queue = VecDeque::from([function.entry]);
+        let mut queued = vec![false; function.blocks.len()];
+        queued[function.entry.index() as usize] = true;
+        while let Some(block_id) = queue.pop_front() {
+            queued[block_id.index() as usize] = false;
+            self.consume_dataflow_step(context)?;
+            let mut state = incoming[block_id.index() as usize]
+                .clone()
+                .expect("queued loan-flow blocks have an incoming state");
+            let block_context = format!("{context} block#{}", block_id.index());
+            for event in &events[block_id.index() as usize] {
+                self.apply_loan_event(function, &mut state, event, &block_context)?;
+            }
+            let block = &function.blocks[block_id.index() as usize];
+            let mut propagate = |target: MirBlockId,
+                                 edge_state: BTreeSet<MirLoanId>|
+             -> Result<(), MirInvariantError> {
+                let target_index = target.index() as usize;
+                if !reachable[target_index] {
+                    return Ok(());
+                }
+                match &incoming[target_index] {
+                    Some(existing) if existing != &edge_state => {
+                        return Err(MirInvariantError::new(
+                            format!("{context} block#{}", target.index()),
+                            "control-flow predecessors disagree about active call-local loans",
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        incoming[target_index] = Some(edge_state);
+                        if !queued[target_index] {
+                            queued[target_index] = true;
+                            queue.push_back(target);
+                        }
+                    }
+                }
+                Ok(())
+            };
+            match &block.terminator.kind {
+                MirTerminatorKind::Goto { target } => propagate(*target, state)?,
+                MirTerminatorKind::SwitchBool {
+                    if_true, if_false, ..
+                } => {
+                    propagate(*if_true, state.clone())?;
+                    propagate(*if_false, state)?;
+                }
+                MirTerminatorKind::SwitchTag {
+                    cases, otherwise, ..
+                } => {
+                    for (_, target) in cases {
+                        propagate(*target, state.clone())?;
+                    }
+                    propagate(*otherwise, state)?;
+                }
+                MirTerminatorKind::Invoke {
+                    destination,
+                    target,
+                    unwind,
+                    ..
+                } => {
+                    if let Some(target) = target {
+                        let normal = state.clone();
+                        if let Some(destination) = destination {
+                            self.verify_loan_local_access(
+                                function,
+                                &normal,
+                                &LocalEvent::Write(LocalAccess::from_place(destination)),
+                                &block_context,
+                            )?;
+                        }
+                        propagate(*target, normal)?;
+                    }
+                    propagate(*unwind, BTreeSet::new())?;
+                }
+                MirTerminatorKind::IteratorNext {
+                    destination,
+                    has_value,
+                    exhausted,
+                    unwind,
+                    ..
+                } => {
+                    let has_value_state = state.clone();
+                    self.verify_loan_local_access(
+                        function,
+                        &has_value_state,
+                        &LocalEvent::Write(LocalAccess::from_place(destination)),
+                        &block_context,
+                    )?;
+                    propagate(*has_value, has_value_state)?;
+                    propagate(*exhausted, state)?;
+                    propagate(*unwind, BTreeSet::new())?;
+                }
+                MirTerminatorKind::ValidatePlaces { target, unwind, .. } => {
+                    propagate(*target, state)?;
+                    propagate(*unwind, BTreeSet::new())?;
+                }
+                MirTerminatorKind::Return => {
+                    if !state.is_empty() {
+                        return Err(MirInvariantError::new(
+                            block_context,
+                            "return abandons active loans without explicit release",
+                        ));
+                    }
+                }
+                MirTerminatorKind::ResumePanic | MirTerminatorKind::Unreachable => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_loan_event(
+        &self,
+        function: &MirFunction,
+        state: &mut BTreeSet<MirLoanId>,
+        event: &LoanEvent,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        match event {
+            LoanEvent::Local(event) => {
+                self.verify_loan_local_access(function, state, event, context)
+            }
+            LoanEvent::Reserve(id) => {
+                let loan = self.loan(function, *id, context)?;
+                self.verify_reborrow_mode(function, loan, context)?;
+                let access = LocalAccess::from_place(loan.place());
+                if state.contains(id) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        format!("reserves already-active loan#{}", id.index()),
+                    ));
+                }
+                for active in state.iter().copied() {
+                    let existing = self.loan(function, active, context)?;
+                    let existing_access = LocalAccess::from_place(existing.place());
+                    if access.local == existing_access.local
+                        && move_paths_overlap(&access.path, &existing_access.path)
+                        && !(loan.mode() == ParameterMode::Ref
+                            && existing.mode() == ParameterMode::Ref)
+                    {
+                        return Err(MirInvariantError::new(
+                            context,
+                            format!(
+                                "loan#{} overlaps incompatible active loan#{}",
+                                id.index(),
+                                active.index()
+                            ),
+                        ));
+                    }
+                }
+                state.insert(*id);
+                Ok(())
+            }
+            LoanEvent::Release(loan) => {
+                if state.remove(loan) {
+                    Ok(())
+                } else {
+                    Err(MirInvariantError::new(
+                        context,
+                        format!("releases inactive loan#{}", loan.index()),
+                    ))
+                }
+            }
+            LoanEvent::Consume(loans) => {
+                let mut seen = BTreeSet::new();
+                for loan in loans {
+                    if !seen.insert(*loan) || !state.remove(loan) {
+                        return Err(MirInvariantError::new(
+                            context,
+                            format!("consumes inactive loan#{}", loan.index()),
+                        ));
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn verify_loan_local_access(
+        &self,
+        function: &MirFunction,
+        state: &BTreeSet<MirLoanId>,
+        event: &LocalEvent,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let (access, access_kind) = match event {
+            LocalEvent::Read(access) => (Some(access), "read"),
+            LocalEvent::Move(access) => (Some(access), "move"),
+            LocalEvent::Write(access) | LocalEvent::WriteAccess(access) => (Some(access), "write"),
+            LocalEvent::StorageLive(local) | LocalEvent::StorageDead(local) => {
+                let access = LocalAccess {
+                    local: *local,
+                    path: Vec::new(),
+                };
+                return self.verify_active_loan_access(
+                    function,
+                    state,
+                    &access,
+                    "storage change",
+                    context,
+                );
+            }
+        };
+        let access = access.expect("access events carry a place");
+        if let Some(mode) = self.parameter_mode(function, access.local, context)? {
+            if access_kind == "move" && mode != ParameterMode::Value {
+                return Err(MirInvariantError::new(
+                    context,
+                    "moves content out of a borrowed parameter",
+                ));
+            }
+            if access_kind == "write" && mode == ParameterMode::Ref {
+                return Err(MirInvariantError::new(
+                    context,
+                    "writes through a shared `ref` parameter",
+                ));
+            }
+        }
+        self.verify_active_loan_access(function, state, access, access_kind, context)
+    }
+
+    fn verify_active_loan_access(
+        &self,
+        function: &MirFunction,
+        state: &BTreeSet<MirLoanId>,
+        access: &LocalAccess,
+        access_kind: &str,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        for active in state.iter().copied() {
+            let loan = self.loan(function, active, context)?;
+            let loan_access = LocalAccess::from_place(loan.place());
+            if access.local == loan_access.local
+                && move_paths_overlap(&access.path, &loan_access.path)
+                && !(access_kind == "read" && loan.mode() == ParameterMode::Ref)
+            {
+                return Err(MirInvariantError::new(
+                    context,
+                    format!(
+                        "{access_kind} overlaps active loan#{} ({:?})",
+                        active.index(),
+                        loan.mode()
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_reborrow_mode(
+        &self,
+        function: &MirFunction,
+        loan: &super::MirLoan,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let Some(source) = self.loan_source_mode(function, loan, context)? else {
+            return Ok(());
+        };
+        let compatible = match loan.mode() {
+            ParameterMode::Value => false,
+            ParameterMode::Ref => true,
+            ParameterMode::Mut => matches!(source, ParameterMode::Mut | ParameterMode::Var),
+            ParameterMode::Var => {
+                source == ParameterMode::Var
+                    || source == ParameterMode::Mut && !loan.place().projections().is_empty()
+            }
+        };
+        if compatible {
+            Ok(())
+        } else {
+            Err(MirInvariantError::new(
+                context,
+                "loan requests stronger permissions than its borrowed parameter source",
+            ))
+        }
+    }
+
+    fn loan_source_mode(
+        &self,
+        function: &MirFunction,
+        loan: &super::MirLoan,
+        context: &str,
+    ) -> Result<Option<ParameterMode>, MirInvariantError> {
+        if let MirFunctionId::Closure(closure_id) = function.id
+            && function.parameters.first() == Some(&loan.place().local())
+            && let Some(MirProjectionKind::ClosureCapture { closure, index }) =
+                loan.place().projections().first().map(MirProjection::kind)
+        {
+            if *closure != closure_id {
+                return Err(MirInvariantError::new(
+                    context,
+                    "loan capture projection belongs to a different closure",
+                ));
+            }
+            let capture = self
+                .hir
+                .closure(closure_id)
+                .and_then(|closure| closure.captures().get(*index as usize))
+                .ok_or_else(|| {
+                    MirInvariantError::new(context, "loan references an unknown closure capture")
+                })?;
+            return Ok(Some(if capture.is_mutable() {
+                ParameterMode::Var
+            } else {
+                ParameterMode::Ref
+            }));
+        }
+        self.parameter_mode(function, loan.place().local(), context)
+    }
+
+    fn parameter_mode(
+        &self,
+        function: &MirFunction,
+        local: MirLocalId,
+        context: &str,
+    ) -> Result<Option<ParameterMode>, MirInvariantError> {
+        let MirLocalKind::Parameter { index, .. } = self.local(function, local, context)?.kind
+        else {
+            return Ok(None);
+        };
+        let mode = match function.id {
+            MirFunctionId::Callable(callable) => self
+                .hir
+                .callable(callable)
+                .and_then(|callable| callable.parameters().get(index as usize))
+                .map(|parameter| parameter.mode()),
+            MirFunctionId::Closure(closure) if index == 0 => Some(ParameterMode::Value),
+            MirFunctionId::Closure(closure) => self
+                .hir
+                .closure(closure)
+                .and_then(|closure| closure.parameters().get(index as usize - 1))
+                .map(|parameter| parameter.mode()),
+        };
+        mode.map(Some).ok_or_else(|| {
+            MirInvariantError::new(
+                context,
+                "parameter local has no matching HIR parameter mode",
+            )
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3708,6 +4166,12 @@ impl Verifier<'_> {
                 MirStatementKind::StorageDead(local) => {
                     events.push(LocalEvent::StorageDead(*local));
                 }
+                MirStatementKind::ReserveLoan(loan) => {
+                    if let Some(loan) = function.loan(*loan) {
+                        push_place_events(loan.place(), true, &mut events);
+                    }
+                }
+                MirStatementKind::ReleaseLoan(_) => {}
                 MirStatementKind::Assign { destination, value } => {
                     push_rvalue_events(value, &mut events);
                     push_destination_events(destination, &mut events);
@@ -3789,6 +4253,20 @@ impl Verifier<'_> {
         })
     }
 
+    fn loan<'a>(
+        &self,
+        function: &'a MirFunction,
+        id: MirLoanId,
+        context: &str,
+    ) -> Result<&'a super::MirLoan, MirInvariantError> {
+        function.loans.get(id.0 as usize).ok_or_else(|| {
+            MirInvariantError::new(
+                context,
+                format!("references unknown MIR loan#{}", id.index()),
+            )
+        })
+    }
+
     fn block<'a>(
         &self,
         function: &'a MirFunction,
@@ -3819,6 +4297,93 @@ impl Verifier<'_> {
     }
 }
 
+fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEvent> {
+    let mut events = Vec::new();
+    for statement in &block.statements {
+        match &statement.kind {
+            MirStatementKind::StorageLive(local) => {
+                events.push(LoanEvent::Local(LocalEvent::StorageLive(*local)));
+            }
+            MirStatementKind::StorageDead(local) => {
+                events.push(LoanEvent::Local(LocalEvent::StorageDead(*local)));
+            }
+            MirStatementKind::ReserveLoan(id) => {
+                if let Some(loan) = function.loan(*id) {
+                    let mut local = Vec::new();
+                    push_place_events(loan.place(), true, &mut local);
+                    events.extend(local.into_iter().map(LoanEvent::Local));
+                }
+                events.push(LoanEvent::Reserve(*id));
+            }
+            MirStatementKind::ReleaseLoan(id) => {
+                events.push(LoanEvent::Release(*id));
+            }
+            MirStatementKind::Assign { destination, value } => {
+                let mut local = Vec::new();
+                push_rvalue_events(value, &mut local);
+                push_destination_events(destination, &mut local);
+                events.extend(local.into_iter().map(LoanEvent::Local));
+            }
+        }
+    }
+    let mut local = Vec::new();
+    match &block.terminator.kind {
+        MirTerminatorKind::Goto { .. }
+        | MirTerminatorKind::ResumePanic
+        | MirTerminatorKind::Unreachable => {}
+        MirTerminatorKind::SwitchBool { condition, .. } => {
+            push_operand_events(condition, &mut local);
+        }
+        MirTerminatorKind::SwitchTag { value, .. } => {
+            push_operand_events(value, &mut local);
+        }
+        MirTerminatorKind::Invoke { operation, .. } => {
+            push_operation_events(operation, &mut local);
+        }
+        MirTerminatorKind::IteratorNext { state, .. } => {
+            push_destination_reads(state, true, &mut local);
+        }
+        MirTerminatorKind::ValidatePlaces {
+            places,
+            replacements,
+            for_write,
+            ..
+        } => {
+            for place in places {
+                push_destination_reads(place, *for_write, &mut local);
+            }
+            for replacement in replacements.iter().flatten() {
+                push_operand_events(replacement, &mut local);
+            }
+        }
+        MirTerminatorKind::Return => local.push(LocalEvent::Read(LocalAccess {
+            local: function.return_local,
+            path: Vec::new(),
+        })),
+    }
+    events.extend(local.into_iter().map(LoanEvent::Local));
+    if let MirTerminatorKind::Invoke {
+        operation:
+            MirOperation {
+                kind: MirOperationKind::Call { arguments, .. },
+                ..
+            },
+        ..
+    } = &block.terminator.kind
+    {
+        events.push(LoanEvent::Consume(
+            arguments
+                .iter()
+                .filter_map(|argument| match &argument.value.kind {
+                    MirOperandKind::Loan(loan) => Some(*loan),
+                    _ => None,
+                })
+                .collect(),
+        ));
+    }
+    events
+}
+
 fn function_context(id: MirFunctionId) -> String {
     match id {
         MirFunctionId::Callable(HirCallableId::Symbol(symbol)) => {
@@ -3842,7 +4407,10 @@ fn tag_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<TagEvent> {
     let mut events = Vec::new();
     for statement in &block.statements {
         match &statement.kind {
-            MirStatementKind::StorageLive(_) | MirStatementKind::StorageDead(_) => {}
+            MirStatementKind::StorageLive(_)
+            | MirStatementKind::StorageDead(_)
+            | MirStatementKind::ReserveLoan(_)
+            | MirStatementKind::ReleaseLoan(_) => {}
             MirStatementKind::Assign { destination, value } => {
                 push_tag_rvalue(function, value, &mut events);
                 push_tag_place(function, destination, true, &mut events);
@@ -4107,7 +4675,8 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
                 | MirOperandKind::Borrow(place) => Some(place.clone()),
                 MirOperandKind::Constant(_)
                 | MirOperandKind::Function { .. }
-                | MirOperandKind::PreludeTraitFunction { .. } => None,
+                | MirOperandKind::PreludeTraitFunction { .. }
+                | MirOperandKind::Loan(_) => None,
             };
             cases
                 .iter()
@@ -4446,6 +5015,7 @@ fn push_operand_events(operand: &MirOperand, events: &mut Vec<LocalEvent>) {
             events.push(LocalEvent::Read(LocalAccess::from_place(place)));
         }
         MirOperandKind::Constant(_)
+        | MirOperandKind::Loan(_)
         | MirOperandKind::Function { .. }
         | MirOperandKind::PreludeTraitFunction { .. } => {}
     }

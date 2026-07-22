@@ -7,8 +7,8 @@ closure protocols and synchronous-safe invocation, CALL-004 effect-preserving
 closure callables, OWN-001 intrinsic cursor capabilities, OWN-002 affine
 transfers and immediate observations, OWN-003 flow availability, OWN-004
 complete-slot reinitialization, OWN-005 typed move paths, OWN-006 affine closure
-captures, OWN-007 exact closed `CallOnce` rows, and the M3 VM admission path
-implemented
+captures, OWN-007 exact closed `CallOnce` rows, BORROW-001 call-local loans, and
+the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -146,6 +146,8 @@ Each function owns:
 - a sorted, deduplicated source-span table;
 - typed frame slots for the return place, parameters, user locals, and
   temporaries;
+- a dense loan table whose entries retain one non-value parameter mode and one
+  fixed typed place;
 - parameter, entry, unwind, and return-slot indices; and
 - basic blocks in deterministic MIR order.
 
@@ -165,8 +167,9 @@ return place have function-wide storage.
 
 ## Instructions and control flow
 
-Ordinary instructions perform storage lifetime changes or one typed store from
-a pure rvalue. Rvalues cover loads, copies/moves, constants, pure arithmetic,
+Ordinary instructions perform storage lifetime changes, reserve/release one
+call-local loan identity, or store one pure typed rvalue. Rvalues cover loads,
+copies/moves, constants, pure arithmetic,
 construction, record update, coercion, total conversion, range, membership,
 length, and iterator-state creation. The latter accepts an intrinsic collection
 `C` and produces only its distinct `cursor[own,C]` or `cursor[ref,C]` type;
@@ -215,15 +218,27 @@ modes, arity, variadic shape, outcome, function signature, protocol support, and
 access form. A source protocol exposed by a generic or opaque contract is
 normalized to the strongest safe concrete specialization without changing
 whether the source operand borrows, copies, or moves.
-Value arguments use copy/move access; `ref`, `mut`, and `var` arguments require
-an immediate `Borrow`. Such a borrow cannot escape the call. The same
-non-escaping form is admitted only for equality, membership, length,
-discriminant branches, index/slice collection bases, indirect shared/exclusive
-callees, intrinsic ref-cursor construction, and the replacement inspected
-before a slice write. Stores, aggregates, returns, value arguments, and
-unrelated operations reject it.
-This fixes the representation boundary for non-value arguments; BORROW-001
-still owns their VM loan/write-through execution and region proof.
+Value arguments use copy/move access. Each `ref`, `mut`, or `var` argument uses
+one `Loan(id)` operand whose table entry has the identical mode, type, and fixed
+place. `ReserveLoan(id)` begins its active interval after that argument's place
+is resolved. The call consumes all of its loan operands atomically;
+`ReleaseLoan(id)` closes reservations abandoned while a later argument executes
+`return`, `fail`, `?`, `break`, or `continue`. The verifier propagates the exact
+active set through branches and loops, rejects mismatched joins, duplicate or
+inactive reservation events, overlapping exclusive access, and every use of a
+loan operand outside its consuming call.
+Panic unwinding discards every reservation in the abandoned frame, so cleanup
+blocks cannot reserve or release call-local loans.
+
+Reborrowing preserves the same permission order as HIR/MIR, including `var`
+from a strict fixed projection of `mut`. Record fields and tuple slots may be
+proved disjoint. Loan metadata containing an index or slice projection is
+invalid until BORROW-004 and BORROW-005 define collection-region proof.
+`Borrow` remains a separate non-storable form admitted only for equality,
+membership, length, discriminant branches, index/slice collection bases,
+indirect shared/exclusive callees, intrinsic ref-cursor construction, and the
+replacement inspected before a slice write. Stores, aggregates, returns, every
+call argument, and unrelated operations reject it.
 
 The bootstrap `Call` operation is deliberately synchronous and safe. Its
 signature must have both effect bits clear; the verifier rejects a forged async
@@ -295,14 +310,18 @@ Before execution, the verifier proves:
   opaque family;
 - calls have an exact structural signature, matching outcome, complete
   fixed/receiver association, correct modes, valid variadic element or final
-  spread, supported protocol, protocol-compatible borrow/copy/move access, and
-  no unimplemented effect;
+  spread, supported protocol, protocol-compatible loan/copy/move access, and no
+  unimplemented effect;
 - a generic or opaque callable resolves to one concrete named function or
   closure with the same signature, while a callable erasure preserves the
   concrete closure value and exact uniform function signature;
 - `Borrow` is confined to the enumerated immediate observation positions and
-  non-value call arguments, and cannot escape into slots, value arguments,
-  aggregates, returns, or unrelated operations;
+  cannot escape into any call argument, slot, aggregate, return, or unrelated
+  operation;
+- each loan has exactly one static reservation and at most one static call
+  consumer; every reachable path consumes or explicitly releases an active
+  reservation, active sets agree at joins, overlapping exclusive regions are
+  rejected, and `Loan` cannot occur outside its matching non-value argument;
 - normal edges remain in normal code, unwind edges enter cleanup code, and the
   distinguished unwind block resumes panic;
 - all reachable reads have a dominating live definition, every root or

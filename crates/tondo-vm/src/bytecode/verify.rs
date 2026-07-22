@@ -106,6 +106,14 @@ struct Verifier<'a> {
     capabilities: OnceCell<CapabilityAnalysis>,
 }
 
+struct CallVerification<'a> {
+    callee: &'a BytecodeOperand,
+    arguments: &'a [BytecodeCallArgument],
+    signature: BytecodeTypeId,
+    protocol: BytecodeCallProtocol,
+    outcome: BytecodeTypeId,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ClosedCapability {
     Copy,
@@ -1042,6 +1050,17 @@ impl Verifier<'_> {
                     "async callable has an exclusive parameter",
                 ));
             }
+            if callable.implementation.is_none()
+                && callable
+                    .parameters
+                    .iter()
+                    .any(|parameter| parameter.mode != BytecodeParameterMode::Value)
+            {
+                return Err(BytecodeVerificationError::new(
+                    &context,
+                    "host callable ABI cannot receive borrowed parameters",
+                ));
+            }
             if let Some(function) = callable.implementation {
                 self.function(function, &context)?;
             }
@@ -1113,12 +1132,12 @@ impl Verifier<'_> {
                         },
                     ..
                 } if (*protocol == BytecodeCallProtocol::CallMut
-                    && operand_place(callee).is_some_and(|place| {
+                    && operand_place(function, callee).is_some_and(|place| {
                         closure_capture_place(function, callable_id, place)
                     }))
                     || arguments.iter().any(|argument| {
                         matches!(argument.mode, BytecodeParameterMode::Mut | BytecodeParameterMode::Var)
-                            && operand_place(&argument.value).is_some_and(|place| {
+                            && operand_place(function, &argument.value).is_some_and(|place| {
                                 closure_capture_place(function, callable_id, place)
                             })
                     })
@@ -1848,6 +1867,27 @@ impl Verifier<'_> {
                 ));
             }
         }
+        for (index, loan) in function.loans.iter().enumerate() {
+            let loan_context = format!("{context} loan#{index}");
+            if loan.mode == BytecodeParameterMode::Value {
+                return Err(BytecodeVerificationError::new(
+                    &loan_context,
+                    "loan metadata uses the owning value mode",
+                ));
+            }
+            self.verify_place(function, &loan.place, &loan_context)?;
+            if loan.place.projections.iter().any(|projection| {
+                matches!(
+                    projection.kind,
+                    BytecodeProjectionKind::Index { .. } | BytecodeProjectionKind::Slice { .. }
+                )
+            }) {
+                return Err(BytecodeVerificationError::new(
+                    &loan_context,
+                    "collection-region loans require BORROW-004 region proof",
+                ));
+            }
+        }
         if function.entry == function.unwind
             || self.block(function, function.entry, &context)?.kind != BytecodeBlockKind::Normal
             || self.block(function, function.unwind, &context)?.kind != BytecodeBlockKind::Cleanup
@@ -1867,6 +1907,18 @@ impl Verifier<'_> {
             let block_context = format!("{context} block#{block_index}");
             for instruction in &block.instructions {
                 self.span(function, instruction.span, &block_context)?;
+                if block.kind == BytecodeBlockKind::Cleanup
+                    && matches!(
+                        instruction.kind,
+                        BytecodeInstructionKind::ReserveLoan(_)
+                            | BytecodeInstructionKind::ReleaseLoan(_)
+                    )
+                {
+                    return Err(BytecodeVerificationError::new(
+                        &block_context,
+                        "cleanup block manipulates a call-local loan",
+                    ));
+                }
                 self.verify_instruction(function, instruction, &block_context)?;
             }
             self.span(function, block.terminator.span, &block_context)?;
@@ -1886,6 +1938,10 @@ impl Verifier<'_> {
             BytecodeInstructionKind::StorageLive(slot)
             | BytecodeInstructionKind::StorageDead(slot) => {
                 self.slot(function, *slot, context)?;
+            }
+            BytecodeInstructionKind::ReserveLoan(loan)
+            | BytecodeInstructionKind::ReleaseLoan(loan) => {
+                self.loan(function, *loan, context)?;
             }
             BytecodeInstructionKind::Store { destination, value } => {
                 self.verify_place(function, destination, context)?;
@@ -2138,6 +2194,15 @@ impl Verifier<'_> {
                     return Err(BytecodeVerificationError::new(
                         context,
                         "Copy operand type does not satisfy its closed Copy contract",
+                    ));
+                }
+            }
+            BytecodeOperandKind::Loan(loan) => {
+                let loan = self.loan(function, *loan, context)?;
+                if loan.place.ty != operand.ty {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "loan operand changes its reserved place type",
                     ));
                 }
             }
@@ -3064,11 +3129,14 @@ impl Verifier<'_> {
                     self.verify_operand(function, &argument.value, context)?;
                 }
                 self.verify_call(
-                    callee,
-                    arguments,
-                    *signature,
-                    *protocol,
-                    operation.ty,
+                    function,
+                    CallVerification {
+                        callee,
+                        arguments,
+                        signature: *signature,
+                        protocol: *protocol,
+                        outcome: operation.ty,
+                    },
                     context,
                 )?;
             }
@@ -3130,23 +3198,27 @@ impl Verifier<'_> {
 
     fn verify_call(
         &self,
-        callee: &BytecodeOperand,
-        arguments: &[BytecodeCallArgument],
-        signature: BytecodeTypeId,
-        protocol: BytecodeCallProtocol,
-        outcome: BytecodeTypeId,
+        bytecode_function: &BytecodeFunction,
+        call: CallVerification<'_>,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
-        let BytecodeTypeKind::Function(function) = &self.ty(signature, context)?.kind else {
+        let CallVerification {
+            callee,
+            arguments,
+            signature,
+            protocol,
+            outcome,
+        } = call;
+        let BytecodeTypeKind::Function(function_type) = &self.ty(signature, context)?.kind else {
             return Err(operation_error(context));
         };
-        if function.is_async || function.is_unsafe {
+        if function_type.is_async || function_type.is_unsafe {
             return Err(BytecodeVerificationError::new(
                 context,
                 "effectful call reached the synchronous safe bytecode call operation",
             ));
         }
-        if function.outcome != outcome {
+        if function_type.outcome != outcome {
             return Err(operation_error(context));
         }
         match &self.ty(callee.ty, context)?.kind {
@@ -3201,7 +3273,7 @@ impl Verifier<'_> {
         let mut fixed = Vec::new();
         let mut receiver = None;
         if let Some(callable) = callable {
-            let mut concrete = function.parameters.iter();
+            let mut concrete = function_type.parameters.iter();
             for (source_index, parameter) in callable.parameters.iter().enumerate() {
                 if parameter.variadic_element.is_some() {
                     continue;
@@ -3226,7 +3298,7 @@ impl Verifier<'_> {
             }
         } else {
             fixed.extend(
-                function
+                function_type
                     .parameters
                     .iter()
                     .enumerate()
@@ -3248,7 +3320,7 @@ impl Verifier<'_> {
                     .iter()
                     .find(|(target, _, _)| *target == BytecodeCallArgumentTarget::Fixed(index))
                     .copied(),
-                BytecodeCallArgumentTarget::VariadicElement => function
+                BytecodeCallArgumentTarget::VariadicElement => function_type
                     .variadic
                     .map(|ty| (argument.target, BytecodeParameterMode::Value, ty)),
                 BytecodeCallArgumentTarget::VariadicSpread => {
@@ -3256,7 +3328,9 @@ impl Verifier<'_> {
                         return Err(operation_error(context));
                     }
                     spread = true;
-                    let element = function.variadic.ok_or_else(|| operation_error(context))?;
+                    let element = function_type
+                        .variadic
+                        .ok_or_else(|| operation_error(context))?;
                     let valid = matches!(
                         &self.ty(argument.value.ty, context)?.kind,
                         BytecodeTypeKind::Intrinsic {
@@ -3287,9 +3361,15 @@ impl Verifier<'_> {
             if argument.mode != expected.1 || argument.value.ty != expected.2 {
                 return Err(operation_error(context));
             }
-            let borrows = matches!(argument.value.kind, BytecodeOperandKind::Borrow(_));
-            if (argument.mode == BytecodeParameterMode::Value) == borrows {
+            let loans = matches!(argument.value.kind, BytecodeOperandKind::Loan(_));
+            if (argument.mode == BytecodeParameterMode::Value) == loans {
                 return Err(operation_error(context));
+            }
+            if let BytecodeOperandKind::Loan(loan) = argument.value.kind {
+                let loan = self.loan(bytecode_function, loan, context)?;
+                if loan.mode != argument.mode || loan.place.ty != argument.value.ty {
+                    return Err(operation_error(context));
+                }
             }
         }
         if provided.len() != fixed.len() + usize::from(receiver.is_some()) {
@@ -3362,7 +3442,10 @@ impl Verifier<'_> {
                 if_true,
                 if_false,
             } => {
-                if block.kind != BytecodeBlockKind::Normal || operand_is_borrow(condition) {
+                if block.kind != BytecodeBlockKind::Normal
+                    || operand_is_borrow(condition)
+                    || operand_is_loan(condition)
+                {
                     return Err(terminator_error(context));
                 }
                 self.verify_operand(function, condition, context)?;
@@ -3377,7 +3460,10 @@ impl Verifier<'_> {
                 cases,
                 otherwise,
             } => {
-                if block.kind != BytecodeBlockKind::Normal || cases.is_empty() {
+                if block.kind != BytecodeBlockKind::Normal
+                    || cases.is_empty()
+                    || operand_is_loan(value)
+                {
                     return Err(terminator_error(context));
                 }
                 self.verify_operand(function, value, context)?;
@@ -3652,8 +3738,401 @@ impl Verifier<'_> {
                 context,
             )?;
         }
+        self.verify_loan_flow(function, &reachable, context)?;
         self.verify_tag_refinements(function, &successors, &reachable, context)?;
         Ok(())
+    }
+
+    fn verify_loan_flow(
+        &self,
+        function: &BytecodeFunction,
+        reachable: &[bool],
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let events = function
+            .blocks
+            .iter()
+            .map(|block| bytecode_loan_events(function, block))
+            .collect::<Vec<_>>();
+        let mut reservations = vec![0_u32; function.loans.len()];
+        let mut consumptions = vec![0_u32; function.loans.len()];
+        for block_events in &events {
+            for event in block_events {
+                match event {
+                    LoanEvent::Reserve(loan) => {
+                        let count =
+                            reservations.get_mut(loan.index() as usize).ok_or_else(|| {
+                                BytecodeVerificationError::new(context, "reserves an unknown loan")
+                            })?;
+                        *count = count.saturating_add(1);
+                    }
+                    LoanEvent::Consume(loans) => {
+                        for loan in loans {
+                            let count =
+                                consumptions.get_mut(loan.index() as usize).ok_or_else(|| {
+                                    BytecodeVerificationError::new(
+                                        context,
+                                        "consumes an unknown loan",
+                                    )
+                                })?;
+                            *count = count.saturating_add(1);
+                        }
+                    }
+                    LoanEvent::Local(_) | LoanEvent::Release(_) => {}
+                }
+            }
+        }
+        for index in 0..function.loans.len() {
+            if reservations[index] != 1 || consumptions[index] > 1 {
+                return Err(BytecodeVerificationError::new(
+                    format!("{context} loan#{index}"),
+                    format!(
+                        "has {} reservations and {} call consumptions; expected exactly one reservation and at most one call consumption",
+                        reservations[index], consumptions[index]
+                    ),
+                ));
+            }
+        }
+
+        let mut incoming = vec![None::<BTreeSet<BytecodeLoanId>>; function.blocks.len()];
+        incoming[function.entry.index() as usize] = Some(BTreeSet::new());
+        let mut queue = VecDeque::from([function.entry]);
+        let mut queued = vec![false; function.blocks.len()];
+        queued[function.entry.index() as usize] = true;
+        while let Some(block_id) = queue.pop_front() {
+            queued[block_id.index() as usize] = false;
+            self.consume_dataflow_step(context)?;
+            let mut state = incoming[block_id.index() as usize]
+                .clone()
+                .expect("queued loan-flow blocks have an incoming state");
+            let block_context = format!("{context} block#{}", block_id.index());
+            for event in &events[block_id.index() as usize] {
+                self.apply_loan_event(function, &mut state, event, &block_context)?;
+            }
+            let block = &function.blocks[block_id.index() as usize];
+            let mut propagate = |target: BytecodeBlockId,
+                                 edge_state: BTreeSet<BytecodeLoanId>|
+             -> Result<(), BytecodeVerificationError> {
+                let target_index = target.index() as usize;
+                if !reachable[target_index] {
+                    return Ok(());
+                }
+                match &incoming[target_index] {
+                    Some(existing) if existing != &edge_state => {
+                        return Err(BytecodeVerificationError::new(
+                            format!("{context} block#{}", target.index()),
+                            "control-flow predecessors disagree about active call-local loans",
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        incoming[target_index] = Some(edge_state);
+                        if !queued[target_index] {
+                            queued[target_index] = true;
+                            queue.push_back(target);
+                        }
+                    }
+                }
+                Ok(())
+            };
+            match &block.terminator.kind {
+                BytecodeTerminatorKind::Goto { target } => propagate(*target, state)?,
+                BytecodeTerminatorKind::BranchBool {
+                    if_true, if_false, ..
+                } => {
+                    propagate(*if_true, state.clone())?;
+                    propagate(*if_false, state)?;
+                }
+                BytecodeTerminatorKind::BranchTag {
+                    cases, otherwise, ..
+                } => {
+                    for (_, target) in cases {
+                        propagate(*target, state.clone())?;
+                    }
+                    propagate(*otherwise, state)?;
+                }
+                BytecodeTerminatorKind::Invoke {
+                    destination,
+                    target,
+                    unwind,
+                    ..
+                } => {
+                    if let Some(target) = target {
+                        let normal = state.clone();
+                        if let Some(destination) = destination {
+                            self.verify_loan_local_access(
+                                function,
+                                &normal,
+                                &LocalEvent::Write(LocalAccess::from_place(destination)),
+                                &block_context,
+                            )?;
+                        }
+                        propagate(*target, normal)?;
+                    }
+                    propagate(*unwind, BTreeSet::new())?;
+                }
+                BytecodeTerminatorKind::IteratorNext {
+                    destination,
+                    has_value,
+                    exhausted,
+                    unwind,
+                    ..
+                } => {
+                    let has_value_state = state.clone();
+                    self.verify_loan_local_access(
+                        function,
+                        &has_value_state,
+                        &LocalEvent::Write(LocalAccess::from_place(destination)),
+                        &block_context,
+                    )?;
+                    propagate(*has_value, has_value_state)?;
+                    propagate(*exhausted, state)?;
+                    propagate(*unwind, BTreeSet::new())?;
+                }
+                BytecodeTerminatorKind::ValidatePlaces { target, unwind, .. } => {
+                    propagate(*target, state)?;
+                    propagate(*unwind, BTreeSet::new())?;
+                }
+                BytecodeTerminatorKind::Return => {
+                    if !state.is_empty() {
+                        return Err(BytecodeVerificationError::new(
+                            block_context,
+                            "return abandons active loans without explicit release",
+                        ));
+                    }
+                }
+                BytecodeTerminatorKind::ResumePanic | BytecodeTerminatorKind::Unreachable => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn apply_loan_event(
+        &self,
+        function: &BytecodeFunction,
+        state: &mut BTreeSet<BytecodeLoanId>,
+        event: &LoanEvent,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        match event {
+            LoanEvent::Local(event) => {
+                self.verify_loan_local_access(function, state, event, context)
+            }
+            LoanEvent::Reserve(id) => {
+                let loan = self.loan(function, *id, context)?;
+                self.verify_reborrow_mode(function, loan, context)?;
+                let access = LocalAccess::from_place(&loan.place);
+                if state.contains(id) {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        format!("reserves already-active loan#{}", id.index()),
+                    ));
+                }
+                for active in state.iter().copied() {
+                    let existing = self.loan(function, active, context)?;
+                    let existing_access = LocalAccess::from_place(&existing.place);
+                    if access.slot == existing_access.slot
+                        && move_paths_overlap(&access.path, &existing_access.path)
+                        && !(loan.mode == BytecodeParameterMode::Ref
+                            && existing.mode == BytecodeParameterMode::Ref)
+                    {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            format!(
+                                "loan#{} overlaps incompatible active loan#{}",
+                                id.index(),
+                                active.index()
+                            ),
+                        ));
+                    }
+                }
+                state.insert(*id);
+                Ok(())
+            }
+            LoanEvent::Release(loan) => {
+                if state.remove(loan) {
+                    Ok(())
+                } else {
+                    Err(BytecodeVerificationError::new(
+                        context,
+                        format!("releases inactive loan#{}", loan.index()),
+                    ))
+                }
+            }
+            LoanEvent::Consume(loans) => {
+                let mut seen = BTreeSet::new();
+                for loan in loans {
+                    if !seen.insert(*loan) || !state.remove(loan) {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            format!("consumes inactive loan#{}", loan.index()),
+                        ));
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn verify_loan_local_access(
+        &self,
+        function: &BytecodeFunction,
+        state: &BTreeSet<BytecodeLoanId>,
+        event: &LocalEvent,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let (access, access_kind) = match event {
+            LocalEvent::Read(access) => (Some(access), "read"),
+            LocalEvent::Move(access) => (Some(access), "move"),
+            LocalEvent::Write(access) | LocalEvent::WriteAccess(access) => (Some(access), "write"),
+            LocalEvent::StorageLive(slot) | LocalEvent::StorageDead(slot) => {
+                let access = LocalAccess {
+                    slot: *slot,
+                    path: Vec::new(),
+                };
+                return self.verify_active_loan_access(
+                    function,
+                    state,
+                    &access,
+                    "storage change",
+                    context,
+                );
+            }
+        };
+        let access = access.expect("access events carry a place");
+        if let Some(mode) = self.parameter_mode(function, access.slot, context)? {
+            if access_kind == "move" && mode != BytecodeParameterMode::Value {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "moves content out of a borrowed parameter",
+                ));
+            }
+            if access_kind == "write" && mode == BytecodeParameterMode::Ref {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "writes through a shared `ref` parameter",
+                ));
+            }
+        }
+        self.verify_active_loan_access(function, state, access, access_kind, context)
+    }
+
+    fn verify_active_loan_access(
+        &self,
+        function: &BytecodeFunction,
+        state: &BTreeSet<BytecodeLoanId>,
+        access: &LocalAccess,
+        access_kind: &str,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        for active in state.iter().copied() {
+            let loan = self.loan(function, active, context)?;
+            let loan_access = LocalAccess::from_place(&loan.place);
+            if access.slot == loan_access.slot
+                && move_paths_overlap(&access.path, &loan_access.path)
+                && !(access_kind == "read" && loan.mode == BytecodeParameterMode::Ref)
+            {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    format!(
+                        "{access_kind} overlaps active loan#{} ({:?})",
+                        active.index(),
+                        loan.mode
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_reborrow_mode(
+        &self,
+        function: &BytecodeFunction,
+        loan: &BytecodeLoan,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let Some(source) = self.loan_source_mode(function, loan, context)? else {
+            return Ok(());
+        };
+        let compatible = match loan.mode {
+            BytecodeParameterMode::Value => false,
+            BytecodeParameterMode::Ref => true,
+            BytecodeParameterMode::Mut => matches!(
+                source,
+                BytecodeParameterMode::Mut | BytecodeParameterMode::Var
+            ),
+            BytecodeParameterMode::Var => {
+                source == BytecodeParameterMode::Var
+                    || source == BytecodeParameterMode::Mut && !loan.place.projections.is_empty()
+            }
+        };
+        if compatible {
+            Ok(())
+        } else {
+            Err(BytecodeVerificationError::new(
+                context,
+                "loan requests stronger permissions than its borrowed parameter source",
+            ))
+        }
+    }
+
+    fn loan_source_mode(
+        &self,
+        function: &BytecodeFunction,
+        loan: &BytecodeLoan,
+        context: &str,
+    ) -> Result<Option<BytecodeParameterMode>, BytecodeVerificationError> {
+        let callable = self.callable(function.callable, context)?;
+        if callable.closure.is_some()
+            && function.parameters.first() == Some(&loan.place.slot)
+            && let Some(BytecodeProjectionKind::ClosureCapture {
+                callable: projected,
+                ..
+            }) = loan
+                .place
+                .projections
+                .first()
+                .map(|projection| &projection.kind)
+        {
+            if *projected != function.callable {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "loan capture projection belongs to a different closure",
+                ));
+            }
+            // The invocation owns its environment. Source-level capture
+            // mutability was proved before bytecode lowering, while the
+            // derived closure protocol proves exclusive access to stateful
+            // bodies at this representation boundary.
+            return Ok(Some(BytecodeParameterMode::Var));
+        }
+        self.parameter_mode(function, loan.place.slot, context)
+    }
+
+    fn parameter_mode(
+        &self,
+        function: &BytecodeFunction,
+        slot: BytecodeSlotId,
+        context: &str,
+    ) -> Result<Option<BytecodeParameterMode>, BytecodeVerificationError> {
+        let BytecodeSlotKind::Parameter { index } = self.slot(function, slot, context)?.kind else {
+            return Ok(None);
+        };
+        let callable = self.callable(function.callable, context)?;
+        if callable.closure.is_some() && index == 0 {
+            return Ok(Some(BytecodeParameterMode::Value));
+        }
+        let offset = u32::from(callable.closure.is_some());
+        callable
+            .parameters
+            .get((index - offset) as usize)
+            .map(|parameter| Some(parameter.mode))
+            .ok_or_else(|| {
+                BytecodeVerificationError::new(
+                    context,
+                    "parameter slot has no matching callable parameter mode",
+                )
+            })
     }
 
     fn verify_tag_refinements(
@@ -3976,6 +4455,20 @@ impl Verifier<'_> {
             BytecodeVerificationError::new(
                 context,
                 format!("references unknown slot#{}", id.index()),
+            )
+        })
+    }
+
+    fn loan<'a>(
+        &self,
+        function: &'a BytecodeFunction,
+        id: BytecodeLoanId,
+        context: &str,
+    ) -> Result<&'a BytecodeLoan, BytecodeVerificationError> {
+        function.loans.get(id.index() as usize).ok_or_else(|| {
+            BytecodeVerificationError::new(
+                context,
+                format!("references unknown loan#{}", id.index()),
             )
         })
     }
@@ -4319,11 +4812,18 @@ fn integer_range_contains(target: IntegerShape, source: IntegerShape) -> bool {
     }
 }
 
-fn operand_place(operand: &BytecodeOperand) -> Option<&BytecodePlace> {
+fn operand_place<'a>(
+    function: &'a BytecodeFunction,
+    operand: &'a BytecodeOperand,
+) -> Option<&'a BytecodePlace> {
     match &operand.kind {
         BytecodeOperandKind::Copy(place)
         | BytecodeOperandKind::Move(place)
         | BytecodeOperandKind::Borrow(place) => Some(place),
+        BytecodeOperandKind::Loan(loan) => function
+            .loans
+            .get(loan.index() as usize)
+            .map(|loan| &loan.place),
         BytecodeOperandKind::Constant(_) | BytecodeOperandKind::Function { .. } => None,
     }
 }
@@ -4332,63 +4832,77 @@ fn operand_is_borrow(operand: &BytecodeOperand) -> bool {
     matches!(operand.kind, BytecodeOperandKind::Borrow(_))
 }
 
+fn operand_is_loan(operand: &BytecodeOperand) -> bool {
+    matches!(operand.kind, BytecodeOperandKind::Loan(_))
+}
+
 fn rvalue_contains_invalid_borrow(value: &BytecodeRvalue) -> bool {
+    let escapes =
+        |operand: &BytecodeOperand| operand_is_borrow(operand) || operand_is_loan(operand);
     match &value.kind {
         BytecodeRvalueKind::Use(value)
         | BytecodeRvalueKind::Prefix { operand: value, .. }
         | BytecodeRvalueKind::Coerce { value, .. }
-        | BytecodeRvalueKind::NumericConversion { value, .. } => operand_is_borrow(value),
+        | BytecodeRvalueKind::NumericConversion { value, .. } => escapes(value),
         BytecodeRvalueKind::Binary {
+            left,
+            right,
             operator: BytecodeBinaryOperator::Equal | BytecodeBinaryOperator::NotEqual,
-            ..
+        } => operand_is_loan(left) || operand_is_loan(right),
+        BytecodeRvalueKind::Contains {
+            item, container, ..
+        } => operand_is_loan(item) || operand_is_loan(container),
+        BytecodeRvalueKind::Length(operand) | BytecodeRvalueKind::IteratorState(operand) => {
+            operand_is_loan(operand)
         }
-        | BytecodeRvalueKind::Contains { .. }
-        | BytecodeRvalueKind::Length(_)
-        | BytecodeRvalueKind::IteratorState(_) => false,
         BytecodeRvalueKind::Binary { left, right, .. }
         | BytecodeRvalueKind::Range {
             start: left,
             end: right,
             ..
-        } => operand_is_borrow(left) || operand_is_borrow(right),
-        BytecodeRvalueKind::Construct { values, .. } => values.iter().any(operand_is_borrow),
+        } => escapes(left) || escapes(right),
+        BytecodeRvalueKind::Construct { values, .. } => values.iter().any(escapes),
         BytecodeRvalueKind::RecordUpdate { base, fields } => {
-            operand_is_borrow(base) || fields.iter().any(|(_, value)| operand_is_borrow(value))
+            escapes(base) || fields.iter().any(|(_, value)| escapes(value))
         }
     }
 }
 
 fn operation_contains_invalid_borrow(operation: &BytecodeOperation) -> bool {
+    let escapes =
+        |operand: &BytecodeOperand| operand_is_borrow(operand) || operand_is_loan(operand);
     match &operation.kind {
         BytecodeOperationKind::CheckedPrefix { operand, .. }
-        | BytecodeOperationKind::ExplicitPanic { message: operand } => operand_is_borrow(operand),
-        BytecodeOperationKind::CheckedBinary { left, right, .. } => {
-            operand_is_borrow(left) || operand_is_borrow(right)
-        }
+        | BytecodeOperationKind::ExplicitPanic { message: operand } => escapes(operand),
+        BytecodeOperationKind::CheckedBinary { left, right, .. } => escapes(left) || escapes(right),
         BytecodeOperationKind::BuildMap { entries, .. } => entries
             .iter()
-            .any(|(key, value)| operand_is_borrow(key) || operand_is_borrow(value)),
-        BytecodeOperationKind::Index { index, .. } => operand_is_borrow(index),
+            .any(|(key, value)| escapes(key) || escapes(value)),
+        BytecodeOperationKind::Index { base, index, .. } => operand_is_loan(base) || escapes(index),
         BytecodeOperationKind::Slice {
-            start, end, step, ..
-        } => start.iter().chain(end).chain(step).any(operand_is_borrow),
-        BytecodeOperationKind::Call { arguments, .. } => arguments.iter().any(|argument| {
-            let borrows = operand_is_borrow(&argument.value);
-            argument.mode == BytecodeParameterMode::Value && borrows
-        }),
+            base,
+            start,
+            end,
+            step,
+        } => operand_is_loan(base) || start.iter().chain(end).chain(step).any(escapes),
+        BytecodeOperationKind::Call {
+            callee, arguments, ..
+        } => {
+            operand_is_loan(callee)
+                || arguments.iter().any(|argument| {
+                    if argument.mode == BytecodeParameterMode::Value {
+                        escapes(&argument.value)
+                    } else {
+                        !operand_is_loan(&argument.value)
+                    }
+                })
+        }
         BytecodeOperationKind::Assert {
             condition,
             message_parts,
             ..
-        } => {
-            operand_is_borrow(condition)
-                || message_parts
-                    .iter()
-                    .any(|part| operand_is_borrow(&part.value))
-        }
-        BytecodeOperationKind::BootstrapHostCall { arguments, .. } => {
-            arguments.iter().any(operand_is_borrow)
-        }
+        } => escapes(condition) || message_parts.iter().any(|part| escapes(&part.value)),
+        BytecodeOperationKind::BootstrapHostCall { arguments, .. } => arguments.iter().any(escapes),
     }
 }
 
@@ -4470,6 +4984,14 @@ enum LocalEvent {
     StorageDead(BytecodeSlotId),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum LoanEvent {
+    Local(LocalEvent),
+    Reserve(BytecodeLoanId),
+    Release(BytecodeLoanId),
+    Consume(Vec<BytecodeLoanId>),
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct LocalAccess {
     slot: BytecodeSlotId,
@@ -4548,6 +5070,93 @@ impl MovePathComponent {
     }
 }
 
+fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<LoanEvent> {
+    let mut events = Vec::new();
+    for instruction in &block.instructions {
+        match &instruction.kind {
+            BytecodeInstructionKind::StorageLive(slot) => {
+                events.push(LoanEvent::Local(LocalEvent::StorageLive(*slot)));
+            }
+            BytecodeInstructionKind::StorageDead(slot) => {
+                events.push(LoanEvent::Local(LocalEvent::StorageDead(*slot)));
+            }
+            BytecodeInstructionKind::ReserveLoan(id) => {
+                if let Some(loan) = function.loans.get(id.index() as usize) {
+                    let mut local = Vec::new();
+                    push_place_events(&loan.place, true, &mut local);
+                    events.extend(local.into_iter().map(LoanEvent::Local));
+                }
+                events.push(LoanEvent::Reserve(*id));
+            }
+            BytecodeInstructionKind::ReleaseLoan(id) => {
+                events.push(LoanEvent::Release(*id));
+            }
+            BytecodeInstructionKind::Store { destination, value } => {
+                let mut local = Vec::new();
+                push_rvalue_events(value, &mut local);
+                push_destination_events(destination, &mut local);
+                events.extend(local.into_iter().map(LoanEvent::Local));
+            }
+        }
+    }
+    let mut local = Vec::new();
+    match &block.terminator.kind {
+        BytecodeTerminatorKind::Goto { .. }
+        | BytecodeTerminatorKind::ResumePanic
+        | BytecodeTerminatorKind::Unreachable => {}
+        BytecodeTerminatorKind::BranchBool { condition, .. } => {
+            push_operand_events(condition, &mut local);
+        }
+        BytecodeTerminatorKind::BranchTag { value, .. } => {
+            push_operand_events(value, &mut local);
+        }
+        BytecodeTerminatorKind::Invoke { operation, .. } => {
+            push_operation_events(operation, &mut local);
+        }
+        BytecodeTerminatorKind::IteratorNext { state, .. } => {
+            push_destination_reads(state, true, &mut local);
+        }
+        BytecodeTerminatorKind::ValidatePlaces {
+            places,
+            replacements,
+            for_write,
+            ..
+        } => {
+            for place in places {
+                push_destination_reads(place, *for_write, &mut local);
+            }
+            for replacement in replacements.iter().flatten() {
+                push_operand_events(replacement, &mut local);
+            }
+        }
+        BytecodeTerminatorKind::Return => local.push(LocalEvent::Read(LocalAccess {
+            slot: function.return_slot,
+            path: Vec::new(),
+        })),
+    }
+    events.extend(local.into_iter().map(LoanEvent::Local));
+    if let BytecodeTerminatorKind::Invoke {
+        operation:
+            BytecodeOperation {
+                kind: BytecodeOperationKind::Call { arguments, .. },
+                ..
+            },
+        ..
+    } = &block.terminator.kind
+    {
+        events.push(LoanEvent::Consume(
+            arguments
+                .iter()
+                .filter_map(|argument| match &argument.value.kind {
+                    BytecodeOperandKind::Loan(loan) => Some(*loan),
+                    _ => None,
+                })
+                .collect(),
+        ));
+    }
+    events
+}
+
 #[derive(Debug, Clone)]
 struct SuccessorEdge {
     target: BytecodeBlockId,
@@ -4575,7 +5184,9 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
                 BytecodeOperandKind::Copy(place)
                 | BytecodeOperandKind::Move(place)
                 | BytecodeOperandKind::Borrow(place) => Some(place.clone()),
-                BytecodeOperandKind::Constant(_) | BytecodeOperandKind::Function { .. } => None,
+                BytecodeOperandKind::Constant(_)
+                | BytecodeOperandKind::Function { .. }
+                | BytecodeOperandKind::Loan(_) => None,
             };
             cases
                 .iter()
@@ -4813,6 +5424,12 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
             BytecodeInstructionKind::StorageDead(slot) => {
                 events.push(LocalEvent::StorageDead(*slot));
             }
+            BytecodeInstructionKind::ReserveLoan(loan) => {
+                if let Some(loan) = function.loans.get(loan.index() as usize) {
+                    push_place_events(&loan.place, true, &mut events);
+                }
+            }
+            BytecodeInstructionKind::ReleaseLoan(_) => {}
             BytecodeInstructionKind::Store { destination, value } => {
                 push_rvalue_events(value, &mut events);
                 push_destination_events(destination, &mut events);
@@ -4870,7 +5487,10 @@ fn tag_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<TagEven
     let mut events = Vec::new();
     for instruction in &block.instructions {
         match &instruction.kind {
-            BytecodeInstructionKind::StorageLive(_) | BytecodeInstructionKind::StorageDead(_) => {}
+            BytecodeInstructionKind::StorageLive(_)
+            | BytecodeInstructionKind::StorageDead(_)
+            | BytecodeInstructionKind::ReserveLoan(_)
+            | BytecodeInstructionKind::ReleaseLoan(_) => {}
             BytecodeInstructionKind::Store { destination, value } => {
                 push_tag_rvalue(function, value, &mut events);
                 push_tag_place(function, destination, true, &mut events);
@@ -5241,7 +5861,9 @@ fn push_operand_events(operand: &BytecodeOperand, events: &mut Vec<LocalEvent>) 
             push_projection_index_events(place, events);
             events.push(LocalEvent::Read(LocalAccess::from_place(place)));
         }
-        BytecodeOperandKind::Constant(_) | BytecodeOperandKind::Function { .. } => {}
+        BytecodeOperandKind::Constant(_)
+        | BytecodeOperandKind::Function { .. }
+        | BytecodeOperandKind::Loan(_) => {}
     }
 }
 

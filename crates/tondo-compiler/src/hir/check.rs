@@ -1195,6 +1195,18 @@ impl<'a> ExpressionChecker<'a> {
                     Vec::new(),
                     None,
                 )?,
+                AvailabilityFindingKind::ConflictingLoan => self.emit(
+                    finding.use_span(),
+                    "E1403",
+                    "this access overlaps an incompatible earlier loan in the same call",
+                    vec![(
+                        "the earlier loan is reserved here",
+                        finding
+                            .move_span()
+                            .expect("loan conflicts retain the earlier reservation"),
+                    )],
+                    None,
+                )?,
             }
         }
         Ok(())
@@ -5866,6 +5878,12 @@ impl<'a> ExpressionChecker<'a> {
                 context,
             )?
         };
+        if operator == HirAssignmentOperator::Assign
+            && self.expression_flow(value).may_complete()
+            && self.assignment_needs_fixed_extent_proof(&checked_target)?
+        {
+            self.complete = false;
+        }
         let value_type = self.expression_type(value);
         let target = if operator == HirAssignmentOperator::Assign {
             self.finalize_assignment_target(
@@ -13622,6 +13640,7 @@ impl<'a> ExpressionChecker<'a> {
                 Some(receiver_parameter.ty)
             };
             self.check_method_receiver(receiver, receiver_mode, resolved_expected, context)?;
+            self.defer_collection_loan(receiver, receiver_mode);
             arguments.push(HirCallArgument {
                 label: None,
                 mode: receiver_mode,
@@ -13853,6 +13872,9 @@ impl<'a> ExpressionChecker<'a> {
             }
             if let Some(receiver_mode) = receiver_mode {
                 self.check_method_receiver(value, receiver_mode, None, context)?;
+                self.defer_collection_loan(value, receiver_mode);
+            } else if mode == expected_mode && target != HirCallArgumentTarget::Invalid {
+                self.check_loan_argument(value, mode, context)?;
             }
             arguments.push(HirCallArgument {
                 label,
@@ -14274,6 +14296,86 @@ impl<'a> ExpressionChecker<'a> {
         Ok(())
     }
 
+    fn check_loan_argument(
+        &mut self,
+        argument: HirExpressionId,
+        mode: ParameterMode,
+        context: &BodyContext,
+    ) -> Result<(), HirError> {
+        if mode == ParameterMode::Value {
+            return Ok(());
+        }
+        let expression = self
+            .program
+            .expression(argument)
+            .expect("allocated call arguments remain indexed");
+        let span = expression.span();
+        let category = expression.category();
+        let permission = self.expression_place_permission(argument, context);
+        let allowed = match mode {
+            ParameterMode::Ref => true,
+            ParameterMode::Mut => {
+                category == HirValueCategory::Place
+                    && matches!(
+                        permission,
+                        PlacePermission::MutRoot | PlacePermission::Replace
+                    )
+            }
+            ParameterMode::Var => {
+                category == HirValueCategory::Place && permission == PlacePermission::Replace
+            }
+            ParameterMode::Value => unreachable!(),
+        };
+        if !allowed {
+            self.emit(
+                span,
+                "E1407",
+                match mode {
+                    ParameterMode::Mut => "a `mut` argument requires a mutable writable lvalue",
+                    ParameterMode::Var => {
+                        "a `var` argument requires a structurally replaceable lvalue"
+                    }
+                    ParameterMode::Ref | ParameterMode::Value => unreachable!(),
+                },
+                Vec::new(),
+                None,
+            )?;
+        }
+
+        // BORROW-004 and BORROW-005 own collection-region disjointness and
+        // its data-dependent runtime proof. Keep the accepted HIR available to
+        // tooling, but do not admit an executable body until those projections
+        // can be represented without approximating a view as an owned value.
+        self.defer_collection_loan(argument, mode);
+        Ok(())
+    }
+
+    fn defer_collection_loan(&mut self, argument: HirExpressionId, mode: ParameterMode) {
+        if mode != ParameterMode::Value
+            && self
+                .program
+                .expression(argument)
+                .is_some_and(|expression| expression.category() == HirValueCategory::Place)
+            && self.loan_has_collection_projection(argument)
+        {
+            self.complete = false;
+        }
+    }
+
+    fn loan_has_collection_projection(&self, mut expression: HirExpressionId) -> bool {
+        loop {
+            let Some(node) = self.program.expression(expression) else {
+                return false;
+            };
+            match node.kind() {
+                HirExpressionKind::Index { .. } | HirExpressionKind::Slice { .. } => return true,
+                HirExpressionKind::Field { base, .. }
+                | HirExpressionKind::TupleField { base, .. } => expression = *base,
+                _ => return false,
+            }
+        }
+    }
+
     fn expression_place_permission(
         &self,
         expression: HirExpressionId,
@@ -14296,6 +14398,40 @@ impl<'a> ExpressionChecker<'a> {
                 self.expression_place_permission(*base, context).projected()
             }
             _ => PlacePermission::Immutable,
+        }
+    }
+
+    fn assignment_needs_fixed_extent_proof(
+        &self,
+        target: &CheckedAssignmentTarget,
+    ) -> Result<bool, HirError> {
+        match &target.kind {
+            CheckedAssignmentTargetKind::Place(place)
+                if place.permission == PlacePermission::MutRoot =>
+            {
+                Ok(matches!(
+                    self.program.interner.kind(place.ty)?,
+                    TypeKind::GenericParameter(_)
+                        | TypeKind::OpaqueResult { .. }
+                        | TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Array
+                                | IntrinsicType::Map
+                                | IntrinsicType::Set,
+                            ..
+                        }
+                ))
+            }
+            CheckedAssignmentTargetKind::Place(_) | CheckedAssignmentTargetKind::Discard => {
+                Ok(false)
+            }
+            CheckedAssignmentTargetKind::Tuple(items) => {
+                for item in items {
+                    if self.assignment_needs_fixed_extent_proof(item)? {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
         }
     }
 
@@ -20189,6 +20325,112 @@ mod tests {
              }\n",
         );
         assert!(valid_mode.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn borrowed_calls_require_writable_places_and_reserve_arguments_in_order() {
+        let (_, _, valid) = check(
+            "type Pair = { left: Int, right: Int }\n\
+             fn inspect(value: ref Int): Int {\n\
+                 value\n\
+             }\n\
+             fn inspectBoth(left: ref Int, right: ref Int): Int {\n\
+                 left + right\n\
+             }\n\
+             fn updateBoth(left: mut Int, right: mut Int) {\n\
+                 left += 1\n\
+                 right += 1\n\
+             }\n\
+             fn valid(pair: var Pair): Int {\n\
+                 updateBoth(mut pair.left, mut pair.right)\n\
+                 inspectBoth(ref pair.left, ref pair.left) + inspect(ref (1 + 1))\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        let (_, _, immutable) = check(
+            "fn update(value: mut Int) {\n}\n\
+             fn invalid() {\n\
+                 let value = 1\n\
+                 update(mut value)\n\
+             }\n",
+        );
+        assert_eq!(codes(&immutable), ["E1407"]);
+
+        let (_, _, stronger_reborrow) = check(
+            "fn replace(value: var Int) {\n}\n\
+             fn invalid(value: mut Int) {\n\
+                 replace(var value)\n\
+             }\n",
+        );
+        assert_eq!(codes(&stronger_reborrow), ["E1407"]);
+
+        let (_, _, direct_conflict) = check(
+            "fn conflict(left: mut Int, right: ref Int) {\n}\n\
+             fn invalid() {\n\
+                 var value = 1\n\
+                 conflict(mut value, ref value)\n\
+             }\n",
+        );
+        assert_eq!(codes(&direct_conflict), ["E1403"]);
+
+        let (_, _, nested_conflict) = check(
+            "fn inspect(value: ref Int): Int {\n\
+                 value\n\
+             }\n\
+             fn update(target: mut Int, replacement: Int) {\n\
+                 target = replacement\n\
+             }\n\
+             fn invalid() {\n\
+                 var value = 1\n\
+                 update(mut value, inspect(ref value))\n\
+             }\n",
+        );
+        assert_eq!(codes(&nested_conflict), ["E1403"]);
+    }
+
+    #[test]
+    fn collection_region_loans_remain_incomplete_until_region_analysis() {
+        let (_, _, output) = check(
+            "fn update(left: mut Int, right: mut Int) {\n\
+                 left += 1\n\
+                 right += 1\n\
+             }\n\
+             fn main(values: var Array[Int]) {\n\
+                 update(mut values[0], mut values[1])\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(!output.is_complete());
+    }
+
+    #[test]
+    fn unproved_mut_extent_replacement_remains_incomplete() {
+        let (_, _, fixed) = check(
+            "fn replace(value: mut Int) {\n\
+                 value = 2\n\
+             }\n",
+        );
+        assert!(fixed.diagnostics().is_empty(), "{:#?}", fixed.diagnostics());
+        assert!(fixed.is_complete());
+
+        for source in [
+            "fn resize(values: mut Array[Int]) {\n    values = [1, 2]\n}\n",
+            "fn replace[T](value: mut T, next: T) {\n    value = next\n}\n",
+        ] {
+            let (_, _, output) = check(source);
+            assert!(
+                output.diagnostics().is_empty(),
+                "{source}\n{:#?}",
+                output.diagnostics()
+            );
+            assert!(!output.is_complete(), "{source}");
+        }
     }
 
     #[test]

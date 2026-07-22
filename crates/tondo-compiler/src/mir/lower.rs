@@ -16,10 +16,11 @@ use crate::types::{ScalarType, TypeId, TypeKind};
 use super::{
     MirAggregateKind, MirAssertMessagePart, MirBasicBlock, MirBlockId, MirBlockKind,
     MirBootstrapHostFunction, MirCallArgument, MirConstant, MirError, MirFunction, MirFunctionId,
-    MirLocal, MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation, MirOperationKind,
-    MirPlace, MirProgram, MirProjection, MirProjectionKind, MirRvalue, MirRvalueKind, MirStatement,
-    MirStatementKind, MirTag, MirTerminator, MirTerminatorKind, MirVerificationLimits,
-    verify_mir_with_capability_analysis, verify_mir_with_limits,
+    MirLoan, MirLoanId, MirLocal, MirLocalId, MirLocalKind, MirOperand, MirOperandKind,
+    MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind,
+    MirRvalue, MirRvalueKind, MirStatement, MirStatementKind, MirTag, MirTerminator,
+    MirTerminatorKind, MirVerificationLimits, verify_mir_with_capability_analysis,
+    verify_mir_with_limits,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +155,8 @@ struct FunctionBuilder<'a> {
     limits: MirLoweringLimits,
     statement_count: u32,
     locals: Vec<MirLocal>,
+    loans: Vec<MirLoan>,
+    active_loans: Vec<MirLoanId>,
     parameters: Vec<MirLocalId>,
     source_locals: BTreeMap<LocalId, MirLocalId>,
     capture_places: BTreeMap<LocalId, MirPlace>,
@@ -170,6 +173,7 @@ struct FunctionBuilder<'a> {
 struct LoopTargets {
     break_target: MirBlockId,
     continue_target: MirBlockId,
+    loan_depth: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -232,6 +236,8 @@ impl<'a> FunctionBuilder<'a> {
             limits,
             statement_count: 0,
             locals: Vec::new(),
+            loans: Vec::new(),
+            active_loans: Vec::new(),
             parameters: Vec::new(),
             source_locals: BTreeMap::new(),
             capture_places: BTreeMap::new(),
@@ -300,6 +306,8 @@ impl<'a> FunctionBuilder<'a> {
             limits,
             statement_count: 0,
             locals: Vec::new(),
+            loans: Vec::new(),
+            active_loans: Vec::new(),
             parameters: Vec::new(),
             source_locals: BTreeMap::new(),
             capture_places: BTreeMap::new(),
@@ -387,6 +395,7 @@ impl<'a> FunctionBuilder<'a> {
             span: self.span,
             outcome: self.outcome,
             locals: self.locals,
+            loans: self.loans,
             parameters: self.parameters,
             return_local: self.return_local,
             entry: self.entry,
@@ -981,14 +990,16 @@ impl<'a> FunctionBuilder<'a> {
                 else {
                     return Ok(None);
                 };
+                let loan_depth = self.active_loans.len();
                 let mut lowered = Vec::with_capacity(arguments.len());
                 for argument in arguments {
                     let result = if argument.mode() == crate::types::ParameterMode::Value {
                         self.lower_value(argument.value(), current)?
                     } else {
-                        self.lower_borrowed_value(argument.value(), current)?
+                        self.lower_loan_value(argument.value(), argument.mode(), current)?
                     };
                     let Some((next, value)) = result else {
+                        self.active_loans.truncate(loan_depth);
                         return Ok(None);
                     };
                     current = next;
@@ -998,6 +1009,7 @@ impl<'a> FunctionBuilder<'a> {
                         value,
                     });
                 }
+                self.consume_call_loans(&lowered, loan_depth, span)?;
                 self.invoke(
                     current,
                     span,
@@ -1149,6 +1161,7 @@ impl<'a> FunctionBuilder<'a> {
                     Some(block)
                 };
                 if let Some(end) = end {
+                    self.release_loans_from(end, span, 0)?;
                     self.terminate(end, span, MirTerminatorKind::Return)?;
                 }
                 Ok(None)
@@ -1169,6 +1182,7 @@ impl<'a> FunctionBuilder<'a> {
                         },
                     },
                 )?;
+                self.release_loans_from(block, span, 0)?;
                 self.terminate(block, span, MirTerminatorKind::Return)?;
                 Ok(None)
             }
@@ -1200,6 +1214,7 @@ impl<'a> FunctionBuilder<'a> {
                             span,
                             message: format!("break targets inactive loop#{}", target.index()),
                         })?;
+                self.release_loans_from(block, span, targets.loan_depth)?;
                 self.terminate(
                     block,
                     span,
@@ -1222,6 +1237,7 @@ impl<'a> FunctionBuilder<'a> {
                             span,
                             message: format!("continue targets inactive loop#{}", target.index()),
                         })?;
+                self.release_loans_from(block, span, targets.loan_depth)?;
                 self.terminate(
                     block,
                     span,
@@ -1692,6 +1708,7 @@ impl<'a> FunctionBuilder<'a> {
             LoopTargets {
                 break_target: exit,
                 continue_target: body_start,
+                loan_depth: self.active_loans.len(),
             },
         );
         let body_end = self.lower_value(body, body_start)?.map(|(block, _)| block);
@@ -1744,6 +1761,7 @@ impl<'a> FunctionBuilder<'a> {
             LoopTargets {
                 break_target: exit,
                 continue_target: header,
+                loan_depth: self.active_loans.len(),
             },
         );
         let body_end = self.lower_value(body, body_start)?.map(|(block, _)| block);
@@ -1842,6 +1860,19 @@ impl<'a> FunctionBuilder<'a> {
         let body_start = self.allocate_block(MirBlockKind::Normal)?;
         let exit = self.allocate_block(MirBlockKind::Normal)?;
         self.terminate(block, span, MirTerminatorKind::Goto { target: header })?;
+        let loan_depth = self.active_loans.len();
+        let state_loan = self.reserve_loan(
+            header,
+            span,
+            crate::types::ParameterMode::Mut,
+            self.local_place(state),
+        )?;
+        let arguments = vec![MirCallArgument {
+            mode: crate::types::ParameterMode::Mut,
+            target: crate::hir::HirCallArgumentTarget::Receiver,
+            value: state_loan,
+        }];
+        self.consume_call_loans(&arguments, loan_depth, span)?;
         self.terminate(
             header,
             span,
@@ -1856,11 +1887,7 @@ impl<'a> FunctionBuilder<'a> {
                                 arguments: vec![element, source_type],
                             },
                         },
-                        arguments: vec![MirCallArgument {
-                            mode: crate::types::ParameterMode::Mut,
-                            target: crate::hir::HirCallArgumentTarget::Receiver,
-                            value: self.borrow_local(state),
-                        }],
+                        arguments,
                         signature: function_type,
                         protocol: HirCallProtocol::Call,
                     },
@@ -1907,6 +1934,7 @@ impl<'a> FunctionBuilder<'a> {
             LoopTargets {
                 break_target: exit,
                 continue_target: header,
+                loan_depth: self.active_loans.len(),
             },
         );
         let Some(body_start) = self.bind_irrefutable(pattern, item, body_start)? else {
@@ -2164,6 +2192,37 @@ impl<'a> FunctionBuilder<'a> {
         Ok(Some((block, self.borrow_place(place))))
     }
 
+    fn lower_loan_value(
+        &mut self,
+        expression: HirExpressionId,
+        mode: crate::types::ParameterMode,
+        block: MirBlockId,
+    ) -> Result<Option<(MirBlockId, MirOperand)>, MirError> {
+        let expression_node = self.expression(expression)?.clone();
+        let span = expression_node.span();
+        let (block, place) = if expression_node.category() == HirValueCategory::Place {
+            let Some((block, place)) = self.lower_place(expression, block)? else {
+                return Ok(None);
+            };
+            (block, place)
+        } else {
+            if mode != crate::types::ParameterMode::Ref {
+                return Err(MirError::Construction {
+                    span,
+                    message: "an exclusive loan was not formed from a place".into(),
+                });
+            }
+            let local = self.allocate_temporary(expression_node.ty(), span, block)?;
+            let place = self.local_place(local);
+            let Some(block) = self.lower_expression(expression, place.clone(), block)? else {
+                return Ok(None);
+            };
+            (block, place)
+        };
+        let loan = self.reserve_loan(block, span, mode, place)?;
+        Ok(Some((block, loan)))
+    }
+
     fn lower_callee(
         &mut self,
         id: HirExpressionId,
@@ -2411,6 +2470,7 @@ impl<'a> FunctionBuilder<'a> {
                 });
             }
         }
+        self.release_loans_from(none, span, 0)?;
         self.terminate(none, span, MirTerminatorKind::Return)?;
         Ok(Some(join))
     }
@@ -2530,6 +2590,7 @@ impl<'a> FunctionBuilder<'a> {
                 },
             },
         )?;
+        self.release_loans_from(err, span, 0)?;
         self.terminate(err, span, MirTerminatorKind::Return)?;
         Ok(Some(join))
     }
@@ -3439,6 +3500,96 @@ impl<'a> FunctionBuilder<'a> {
         );
         self.locals.push(MirLocal { ty, span, kind });
         Ok(id)
+    }
+
+    fn reserve_loan(
+        &mut self,
+        block: MirBlockId,
+        span: Span,
+        mode: crate::types::ParameterMode,
+        place: MirPlace,
+    ) -> Result<MirOperand, MirError> {
+        if mode == crate::types::ParameterMode::Value {
+            return Err(MirError::Construction {
+                span,
+                message: "a value parameter cannot reserve a loan".into(),
+            });
+        }
+        if self.loans.len() >= self.limits.max_locals_per_function as usize {
+            return Err(MirError::NodeLimit {
+                span,
+                resource: "loan",
+            });
+        }
+        let id = MirLoanId(
+            u32::try_from(self.loans.len()).map_err(|_| MirError::NodeLimit {
+                span,
+                resource: "loan",
+            })?,
+        );
+        let ty = place.ty;
+        self.loans.push(MirLoan { mode, place });
+        self.push_statement(block, span, MirStatementKind::ReserveLoan(id))?;
+        self.active_loans.push(id);
+        Ok(MirOperand {
+            ty,
+            kind: MirOperandKind::Loan(id),
+        })
+    }
+
+    fn release_loans_from(
+        &mut self,
+        block: MirBlockId,
+        span: Span,
+        depth: usize,
+    ) -> Result<(), MirError> {
+        if depth > self.active_loans.len() {
+            return Err(MirError::Construction {
+                span,
+                message: "loan release depth exceeds the active reservation stack".into(),
+            });
+        }
+        let released = self.active_loans[depth..]
+            .iter()
+            .rev()
+            .copied()
+            .collect::<Vec<_>>();
+        for loan in released {
+            self.push_statement(block, span, MirStatementKind::ReleaseLoan(loan))?;
+        }
+        Ok(())
+    }
+
+    fn consume_call_loans(
+        &mut self,
+        arguments: &[MirCallArgument],
+        expected_depth: usize,
+        span: Span,
+    ) -> Result<(), MirError> {
+        for loan in arguments
+            .iter()
+            .filter_map(|argument| match &argument.value.kind {
+                MirOperandKind::Loan(loan) => Some(*loan),
+                _ => None,
+            })
+        {
+            let position = self
+                .active_loans
+                .iter()
+                .rposition(|active| *active == loan)
+                .ok_or_else(|| MirError::Construction {
+                    span,
+                    message: format!("call consumes inactive loan#{}", loan.index()),
+                })?;
+            self.active_loans.remove(position);
+        }
+        if self.active_loans.len() != expected_depth {
+            return Err(MirError::Construction {
+                span,
+                message: "call did not consume exactly its own loan reservations".into(),
+            });
+        }
+        Ok(())
     }
 
     fn allocate_block(&mut self, kind: MirBlockKind) -> Result<MirBlockId, MirError> {
@@ -5563,11 +5714,45 @@ mod tests {
              }\n",
         );
         let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let (function, loan) = mir
+            .functions
+            .iter()
+            .find_map(|(function, body)| {
+                body.blocks
+                    .iter()
+                    .find_map(|block| match &block.terminator.kind {
+                        MirTerminatorKind::Invoke {
+                            operation:
+                                MirOperation {
+                                    kind: MirOperationKind::Call { arguments, .. },
+                                    ..
+                                },
+                            ..
+                        } => arguments.iter().find_map(|argument| {
+                            if argument.mode == crate::types::ParameterMode::Ref {
+                                match argument.value.kind {
+                                    MirOperandKind::Loan(loan) => Some((*function, loan)),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        }),
+                        _ => None,
+                    })
+            })
+            .expect("ref argument consumes an explicit loan");
+        let place = mir.functions[&function].loans[loan.index() as usize]
+            .place
+            .clone();
         let argument = mir
             .functions
-            .values_mut()
-            .flat_map(|function| &mut function.blocks)
-            .find_map(|block| match &mut block.terminator.kind {
+            .get_mut(&function)
+            .unwrap()
+            .blocks
+            .iter_mut()
+            .find_map(|block| {
+                match &mut block.terminator.kind {
                 MirTerminatorKind::Invoke {
                     operation:
                         MirOperation {
@@ -5576,18 +5761,199 @@ mod tests {
                         },
                     ..
                 } => arguments.iter_mut().find(|argument| {
-                    argument.mode == crate::types::ParameterMode::Ref
-                        && matches!(argument.value.kind, MirOperandKind::Borrow(_))
+                    matches!(argument.value.kind, MirOperandKind::Loan(id) if id == loan)
                 }),
                 _ => None,
+            }
             })
-            .expect("ref argument uses an immediate borrow");
-        let MirOperandKind::Borrow(place) = &argument.value.kind else {
-            unreachable!()
-        };
-        argument.value.kind = MirOperandKind::Copy(place.clone());
+            .unwrap();
+        argument.value.kind = MirOperandKind::Borrow(place);
         let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
-        assert!(error.message().contains("ownership access"));
+        assert!(error.message().contains("borrow escapes"));
+    }
+
+    #[test]
+    fn mir_loans_have_one_explicit_reservation_and_call_consumption() {
+        let source = "fn inspect(value: ref Int): Int { value }\n\
+                      fn execute(): Int {\n\
+                          let value = 42\n\
+                          inspect(ref value)\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let execute = mir.function(function_id(&resolved, "execute")).unwrap();
+        assert_eq!(execute.loans().len(), 1);
+        let loan = MirLoanId(0);
+        assert!(execute.blocks().any(|block| {
+            block.statements().iter().any(|statement| {
+                matches!(statement.kind(), MirStatementKind::ReserveLoan(id) if *id == loan)
+            })
+        }));
+        assert!(execute.blocks().any(|block| {
+            matches!(
+                block.terminator().kind(),
+                MirTerminatorKind::Invoke {
+                    operation: MirOperation {
+                        kind: MirOperationKind::Call { arguments, .. },
+                        ..
+                    },
+                    ..
+                } if arguments.iter().any(|argument| {
+                    matches!(argument.value.kind, MirOperandKind::Loan(id) if id == loan)
+                })
+            )
+        }));
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let mut forged = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = forged
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "execute")))
+            .unwrap();
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.statements
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, statement)| {
+                        matches!(statement.kind, MirStatementKind::ReserveLoan(_))
+                            .then_some((block, index))
+                    })
+            })
+            .unwrap();
+        let duplicate = function.blocks[block].statements[index].clone();
+        function.blocks[block]
+            .statements
+            .insert(index + 1, duplicate);
+        let error = verify_mir(&resolved, &hir, &forged).unwrap_err();
+        assert!(error.message().contains("reservations"), "{error}");
+
+        let mut forged = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = forged
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "execute")))
+            .unwrap();
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.statements
+                    .iter()
+                    .position(|statement| {
+                        matches!(statement.kind, MirStatementKind::ReserveLoan(_))
+                    })
+                    .map(|index| (block, index))
+            })
+            .unwrap();
+        let reservation = function.blocks[block].statements.remove(index);
+        function.blocks[function.unwind.index() as usize]
+            .statements
+            .push(reservation);
+        let error = verify_mir(&resolved, &hir, &forged).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("cleanup block manipulates a call-local loan"),
+            "{error}"
+        );
+
+        let mut forged = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = forged
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "execute")))
+            .unwrap();
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.statements
+                    .iter()
+                    .position(|statement| {
+                        matches!(statement.kind, MirStatementKind::ReserveLoan(_))
+                    })
+                    .map(|index| (block, index))
+            })
+            .unwrap();
+        let mut release = function.blocks[block].statements[index].clone();
+        release.kind = MirStatementKind::ReleaseLoan(MirLoanId(0));
+        function.blocks[block].statements.insert(index, release);
+        let error = verify_mir(&resolved, &hir, &forged).unwrap_err();
+        assert!(
+            error.message().contains("releases inactive loan"),
+            "{error}"
+        );
+
+        let mut forged = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = forged
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "execute")))
+            .unwrap();
+        let loan_local = function.loans[0].place.local;
+        let write = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .find(|statement| {
+                matches!(
+                    &statement.kind,
+                    MirStatementKind::Assign { destination, .. }
+                        if destination.local == loan_local
+                )
+            })
+            .cloned()
+            .unwrap();
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.statements
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, statement)| {
+                        matches!(statement.kind, MirStatementKind::ReserveLoan(_))
+                            .then_some((block, index))
+                    })
+            })
+            .unwrap();
+        function.blocks[block].statements.insert(index + 1, write);
+        let error = verify_mir(&resolved, &hir, &forged).unwrap_err();
+        assert!(
+            error.message().contains("write overlaps active loan"),
+            "{error}"
+        );
+
+        let branch_source = "fn inspect(value: ref Bool): Bool { value }\n\
+                             fn execute(): Bool {\n\
+                                 let value = true\n\
+                                 if inspect(ref value) { true } else { false }\n\
+                             }\n";
+        let (branch_resolved, branch_hir) = checked(branch_source);
+        let mut forged =
+            lower_to_mir(&branch_resolved, &branch_hir, MirLoweringLimits::default()).unwrap();
+        let function = forged
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(
+                &branch_resolved,
+                "execute",
+            )))
+            .unwrap();
+        let condition = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::SwitchBool { condition, .. } => Some(condition),
+                _ => None,
+            })
+            .unwrap();
+        condition.kind = MirOperandKind::Loan(MirLoanId(0));
+        let error = verify_mir(&branch_resolved, &branch_hir, &forged).unwrap_err();
+        assert!(error.message().contains("materialized Bool"), "{error}");
     }
 
     #[test]

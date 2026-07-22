@@ -36,6 +36,7 @@ index_type!(BytecodeCallableId);
 index_type!(BytecodeFunctionId);
 index_type!(BytecodeConstantId);
 index_type!(BytecodeSlotId);
+index_type!(BytecodeLoanId);
 index_type!(BytecodeBlockId);
 index_type!(BytecodeSpanId);
 
@@ -326,6 +327,7 @@ pub struct BytecodeFunction {
     pub types: Vec<BytecodeTypeId>,
     pub spans: Vec<BytecodeSpan>,
     pub slots: Vec<BytecodeSlot>,
+    pub loans: Vec<BytecodeLoan>,
     pub parameters: Vec<BytecodeSlotId>,
     pub return_slot: BytecodeSlotId,
     pub entry: BytecodeBlockId,
@@ -385,6 +387,8 @@ pub struct BytecodeInstruction {
 pub enum BytecodeInstructionKind {
     StorageLive(BytecodeSlotId),
     StorageDead(BytecodeSlotId),
+    ReserveLoan(BytecodeLoanId),
+    ReleaseLoan(BytecodeLoanId),
     Store {
         destination: BytecodePlace,
         value: BytecodeRvalue,
@@ -396,6 +400,12 @@ pub struct BytecodePlace {
     pub slot: BytecodeSlotId,
     pub ty: BytecodeTypeId,
     pub projections: Vec<BytecodeProjection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BytecodeLoan {
+    pub mode: BytecodeParameterMode,
+    pub place: BytecodePlace,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -453,6 +463,7 @@ pub enum BytecodeOperandKind {
     Copy(BytecodePlace),
     Move(BytecodePlace),
     Borrow(BytecodePlace),
+    Loan(BytecodeLoanId),
     Function {
         callable: BytecodeCallableId,
         arguments: Vec<BytecodeTypeId>,

@@ -101,6 +101,7 @@ pub struct MirFunction {
     span: Span,
     outcome: TypeId,
     locals: Vec<MirLocal>,
+    loans: Vec<MirLoan>,
     parameters: Vec<MirLocalId>,
     return_local: MirLocalId,
     entry: MirBlockId,
@@ -127,6 +128,14 @@ impl MirFunction {
 
     pub fn local(&self, id: MirLocalId) -> Option<&MirLocal> {
         self.locals.get(id.0 as usize)
+    }
+
+    pub fn loans(&self) -> impl ExactSizeIterator<Item = &MirLoan> {
+        self.loans.iter()
+    }
+
+    pub fn loan(&self, id: MirLoanId) -> Option<&MirLoan> {
+        self.loans.get(id.0 as usize)
     }
 
     pub fn parameters(&self) -> &[MirLocalId] {
@@ -158,6 +167,15 @@ impl MirFunction {
 pub struct MirLocalId(u32);
 
 impl MirLocalId {
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct MirLoanId(u32);
+
+impl MirLoanId {
     pub fn index(self) -> u32 {
         self.0
     }
@@ -248,6 +266,8 @@ impl MirStatement {
 pub enum MirStatementKind {
     StorageLive(MirLocalId),
     StorageDead(MirLocalId),
+    ReserveLoan(MirLoanId),
+    ReleaseLoan(MirLoanId),
     Assign {
         destination: MirPlace,
         value: MirRvalue,
@@ -259,6 +279,22 @@ pub struct MirPlace {
     local: MirLocalId,
     ty: TypeId,
     projections: Vec<MirProjection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MirLoan {
+    mode: ParameterMode,
+    place: MirPlace,
+}
+
+impl MirLoan {
+    pub fn mode(&self) -> ParameterMode {
+        self.mode
+    }
+
+    pub fn place(&self) -> &MirPlace {
+        &self.place
+    }
 }
 
 impl MirPlace {
@@ -350,6 +386,7 @@ pub enum MirOperandKind {
     Copy(MirPlace),
     Move(MirPlace),
     Borrow(MirPlace),
+    Loan(MirLoanId),
     Function {
         callable: HirCallableId,
         arguments: Vec<TypeId>,

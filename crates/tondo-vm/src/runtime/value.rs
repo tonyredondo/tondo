@@ -1,6 +1,9 @@
 use std::collections::BTreeMap;
 
-use crate::bytecode::{BytecodeCallableId, BytecodeNominalId, BytecodeRangeKind, BytecodeTypeId};
+use crate::bytecode::{
+    BytecodeCallableId, BytecodeNominalId, BytecodeParameterMode, BytecodePlace, BytecodeRangeKind,
+    BytecodeTypeId,
+};
 
 use super::heap::{Heap, HeapHandle, HeapObject};
 use super::{RuntimeValue, VmError};
@@ -17,7 +20,15 @@ pub(super) enum Value {
         callable: BytecodeCallableId,
         arguments: Vec<BytecodeTypeId>,
     },
+    Loan(RuntimeLoan),
     Heap(HeapHandle),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct RuntimeLoan {
+    pub(super) frame: usize,
+    pub(super) place: BytecodePlace,
+    pub(super) mode: BytecodeParameterMode,
 }
 
 impl Value {
@@ -30,7 +41,8 @@ impl Value {
             | Self::Float(_)
             | Self::Byte(_)
             | Self::Char(_)
-            | Self::Function { .. } => None,
+            | Self::Function { .. }
+            | Self::Loan(_) => None,
         }
     }
 }
@@ -88,6 +100,11 @@ fn snapshot_value_inner(
                 .unwrap_or_else(|| format!("callable#{}", callable.index())),
             type_arguments: arguments.iter().map(|argument| argument.index()).collect(),
         },
+        Value::Loan(_) => {
+            return Err(VmError::invariant(
+                "a call-local loan escaped through the VM boundary",
+            ));
+        }
         Value::Heap(handle) => {
             if let Some(id) = visiting.get(handle) {
                 return Ok(RuntimeValue::Cycle(*id));

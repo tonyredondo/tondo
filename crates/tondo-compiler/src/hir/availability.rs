@@ -16,6 +16,7 @@ use super::{
 struct AvailabilityState {
     unavailable: BTreeMap<LocalId, Span>,
     definitely_transferred: BTreeSet<LocalId>,
+    loans: Vec<LoanReservation>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -25,6 +26,7 @@ pub(crate) enum AvailabilityFindingKind {
     InvalidBorrowedTransfer,
     InvalidGuardAccess,
     InvalidMatchMode,
+    ConflictingLoan,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -57,13 +59,35 @@ impl AvailabilityFinding {
 enum PlaceRoot {
     Local(LocalId),
     Receiver,
-    Temporary,
+    Temporary(HirExpressionId),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum PlaceProjection {
+    Field(crate::resolve::MemberId),
+    TupleField(u32),
+    Collection,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PlaceInfo {
+    root: PlaceRoot,
+    projections: Vec<PlaceProjection>,
+    complete_transfer: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LoanReservation {
+    mode: ParameterMode,
+    place: PlaceInfo,
+    span: Span,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct PlaceInfo {
-    root: PlaceRoot,
-    complete_transfer: bool,
+enum LoanAccess {
+    Read,
+    Move,
+    Write,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -107,6 +131,21 @@ impl AvailabilityFlow {
         }
         for state in self.continues.values_mut() {
             remove_locals(state, locals);
+        }
+    }
+
+    fn truncate_loans(&mut self, count: usize) {
+        if let Some(state) = &mut self.normal {
+            state.loans.truncate(count);
+        }
+        if let Some(state) = &mut self.exits {
+            state.loans.truncate(count);
+        }
+        for state in self.breaks.values_mut() {
+            state.loans.truncate(count);
+        }
+        for state in self.continues.values_mut() {
+            state.loans.truncate(count);
         }
     }
 }
@@ -452,6 +491,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     Demand::Observe
                 };
                 let mut flow = self.expression(*callee, state, callee_demand)?;
+                let loan_depth = flow.normal.as_ref().map_or(0, |state| state.loans.len());
                 for argument in arguments {
                     let demand = if argument.mode() == ParameterMode::Value {
                         Demand::Transfer
@@ -459,7 +499,22 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         Demand::Observe
                     };
                     flow = self.then_expression(flow, argument.value(), demand)?;
+                    if argument.mode() != ParameterMode::Value
+                        && let Some(state) = &mut flow.normal
+                    {
+                        let place = self.loan_place(argument.value());
+                        self.reserve_loan(
+                            state,
+                            place,
+                            argument.mode(),
+                            self.program
+                                .expression(argument.value())
+                                .expect("verified call arguments remain indexed")
+                                .span(),
+                        );
+                    }
                 }
+                flow.truncate_loans(loan_depth);
                 flow
             }
             HirExpressionKind::PreludePanic { message } => {
@@ -591,6 +646,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         value: HirExpressionId,
         state: AvailabilityState,
     ) -> Result<AvailabilityFlow, TypeError> {
+        let mut written = Vec::new();
+        collect_written_places(target, &mut written);
         let mut direct = Vec::new();
         let target_flow = self.assignment_target(
             target,
@@ -605,6 +662,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         };
         let mut flow = self.then_expression(target_flow, value, Demand::Transfer)?;
         if let Some(state) = &mut flow.normal {
+            for (place, span) in written {
+                let place = self.loan_place(place);
+                self.check_loan_access(state, &place, LoanAccess::Write, span);
+            }
             remove_locals(state, &restorable);
         }
         Ok(flow)
@@ -963,6 +1024,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 AvailabilityFlow::normal(state),
                 PlaceInfo {
                     root: PlaceRoot::Local(*local),
+                    projections: Vec::new(),
                     complete_transfer: true,
                 },
             )),
@@ -970,22 +1032,26 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 AvailabilityFlow::normal(state),
                 PlaceInfo {
                     root: PlaceRoot::Receiver,
+                    projections: Vec::new(),
                     complete_transfer: true,
                 },
             )),
-            HirExpressionKind::Field { base, .. } => {
+            HirExpressionKind::Field { base, member } => {
                 let (flow, mut place) = self.place_base(*base, state)?;
                 place.complete_transfer &= self.is_newtype(self.expression_type(*base))?;
+                place.projections.push(PlaceProjection::Field(*member));
                 Ok((flow, place))
             }
-            HirExpressionKind::TupleField { base, .. } => {
+            HirExpressionKind::TupleField { base, index } => {
                 let (flow, mut place) = self.place_base(*base, state)?;
                 place.complete_transfer = false;
+                place.projections.push(PlaceProjection::TupleField(*index));
                 Ok((flow, place))
             }
             HirExpressionKind::Index { base, index, .. } => {
                 let (flow, mut place) = self.place_base(*base, state)?;
                 place.complete_transfer = false;
+                place.projections.push(PlaceProjection::Collection);
                 Ok((self.then_expression(flow, *index, Demand::Transfer)?, place))
             }
             HirExpressionKind::Slice {
@@ -996,6 +1062,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             } => {
                 let (mut flow, mut place) = self.place_base(*base, state)?;
                 place.complete_transfer = false;
+                place.projections.push(PlaceProjection::Collection);
                 for value in start.iter().chain(end).chain(step) {
                     flow = self.then_expression(flow, *value, Demand::Transfer)?;
                 }
@@ -1009,7 +1076,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             _ => Ok((
                 AvailabilityFlow::normal(state),
                 PlaceInfo {
-                    root: PlaceRoot::Temporary,
+                    root: PlaceRoot::Temporary(id),
+                    projections: Vec::new(),
                     complete_transfer: false,
                 },
             )),
@@ -1033,7 +1101,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             Ok((
                 self.expression(base, state, Demand::Transfer)?,
                 PlaceInfo {
-                    root: PlaceRoot::Temporary,
+                    root: PlaceRoot::Temporary(base),
+                    projections: Vec::new(),
                     complete_transfer: true,
                 },
             ))
@@ -1050,7 +1119,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
     ) -> Result<(), TypeError> {
         let local = match place.root {
             PlaceRoot::Local(local) => Some(local),
-            PlaceRoot::Receiver | PlaceRoot::Temporary => None,
+            PlaceRoot::Receiver | PlaceRoot::Temporary(_) => None,
         };
         if let Some(local) = local.filter(|local| self.owners.contains(local))
             && let Some(move_span) = state.unavailable.get(&local).copied()
@@ -1083,7 +1152,18 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             });
             return Ok(());
         }
-        if demand != Demand::Transfer || self.is_copy(ty)? {
+        let transfers = demand == Demand::Transfer && !self.is_copy(ty)?;
+        self.check_loan_access(
+            state,
+            &place,
+            if transfers {
+                LoanAccess::Move
+            } else {
+                LoanAccess::Read
+            },
+            span,
+        );
+        if !transfers {
             return Ok(());
         }
         match place.root {
@@ -1119,7 +1199,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     move_span: None,
                 });
             }
-            PlaceRoot::Temporary if !place.complete_transfer => {
+            PlaceRoot::Temporary(_) if !place.complete_transfer => {
                 self.findings.insert(AvailabilityFinding {
                     kind: AvailabilityFindingKind::InvalidPartialTransfer,
                     local: None,
@@ -1127,9 +1207,106 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     move_span: None,
                 });
             }
-            PlaceRoot::Local(_) | PlaceRoot::Temporary => {}
+            PlaceRoot::Local(_) | PlaceRoot::Temporary(_) => {}
         }
         Ok(())
+    }
+
+    fn loan_place(&self, id: HirExpressionId) -> PlaceInfo {
+        let Some(expression) = self.program.expression(id) else {
+            return PlaceInfo {
+                root: PlaceRoot::Temporary(id),
+                projections: Vec::new(),
+                complete_transfer: false,
+            };
+        };
+        if expression.category() != HirValueCategory::Place {
+            return PlaceInfo {
+                root: PlaceRoot::Temporary(id),
+                projections: Vec::new(),
+                complete_transfer: true,
+            };
+        }
+        match expression.kind() {
+            HirExpressionKind::Local(local) => PlaceInfo {
+                root: PlaceRoot::Local(*local),
+                projections: Vec::new(),
+                complete_transfer: true,
+            },
+            HirExpressionKind::Receiver => PlaceInfo {
+                root: PlaceRoot::Receiver,
+                projections: Vec::new(),
+                complete_transfer: true,
+            },
+            HirExpressionKind::Field { base, member } => {
+                let mut place = self.loan_place(*base);
+                place.projections.push(PlaceProjection::Field(*member));
+                place
+            }
+            HirExpressionKind::TupleField { base, index } => {
+                let mut place = self.loan_place(*base);
+                place.projections.push(PlaceProjection::TupleField(*index));
+                place
+            }
+            HirExpressionKind::Index { base, .. } | HirExpressionKind::Slice { base, .. } => {
+                let mut place = self.loan_place(*base);
+                place.projections.push(PlaceProjection::Collection);
+                place
+            }
+            _ => PlaceInfo {
+                root: PlaceRoot::Temporary(id),
+                projections: Vec::new(),
+                complete_transfer: false,
+            },
+        }
+    }
+
+    fn reserve_loan(
+        &mut self,
+        state: &mut AvailabilityState,
+        place: PlaceInfo,
+        mode: ParameterMode,
+        span: Span,
+    ) {
+        if place.projections.contains(&PlaceProjection::Collection) {
+            return;
+        }
+        for active in &state.loans {
+            if places_overlap(&active.place, &place)
+                && !(active.mode == ParameterMode::Ref && mode == ParameterMode::Ref)
+            {
+                self.findings.insert(AvailabilityFinding {
+                    kind: AvailabilityFindingKind::ConflictingLoan,
+                    local: place_local(&place),
+                    use_span: span,
+                    move_span: Some(active.span),
+                });
+            }
+        }
+        state.loans.push(LoanReservation { mode, place, span });
+    }
+
+    fn check_loan_access(
+        &mut self,
+        state: &AvailabilityState,
+        place: &PlaceInfo,
+        access: LoanAccess,
+        span: Span,
+    ) {
+        for active in &state.loans {
+            if !places_overlap(&active.place, place) {
+                continue;
+            }
+            let compatible = access == LoanAccess::Read && active.mode == ParameterMode::Ref;
+            if !compatible {
+                self.findings.insert(AvailabilityFinding {
+                    kind: AvailabilityFindingKind::ConflictingLoan,
+                    local: place_local(place),
+                    use_span: span,
+                    move_span: Some(active.span),
+                });
+            }
+        }
     }
 
     fn closure_construction(
@@ -1151,6 +1328,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 &mut state,
                 PlaceInfo {
                     root: PlaceRoot::Local(local),
+                    projections: Vec::new(),
                     complete_transfer: true,
                 },
                 span,
@@ -1347,6 +1525,13 @@ fn merge_control_states(
 }
 
 fn merge_state(target: &mut AvailabilityState, source: AvailabilityState) {
+    let common_loans = target
+        .loans
+        .iter()
+        .zip(&source.loans)
+        .take_while(|(left, right)| left == right)
+        .count();
+    target.loans.truncate(common_loans);
     for (local, origin) in source.unavailable {
         target.unavailable.entry(local).or_insert(origin);
     }
@@ -1364,9 +1549,46 @@ fn remove_locals(state: &mut AvailabilityState, locals: &[LocalId]) {
 fn state_keys_equal(left: &AvailabilityState, right: &AvailabilityState) -> bool {
     left.unavailable.keys().eq(right.unavailable.keys())
         && left.definitely_transferred == right.definitely_transferred
+        && left.loans == right.loans
 }
 
 fn remove_local(state: &mut AvailabilityState, local: LocalId) {
     state.unavailable.remove(&local);
     state.definitely_transferred.remove(&local);
+}
+
+fn place_local(place: &PlaceInfo) -> Option<LocalId> {
+    match place.root {
+        PlaceRoot::Local(local) => Some(local),
+        PlaceRoot::Receiver | PlaceRoot::Temporary(_) => None,
+    }
+}
+
+fn places_overlap(left: &PlaceInfo, right: &PlaceInfo) -> bool {
+    if left.root != right.root {
+        return false;
+    }
+    left.projections
+        .iter()
+        .zip(&right.projections)
+        .all(|(left, right)| match (left, right) {
+            (PlaceProjection::Field(left), PlaceProjection::Field(right)) => left == right,
+            (PlaceProjection::TupleField(left), PlaceProjection::TupleField(right)) => {
+                left == right
+            }
+            (PlaceProjection::Collection, _) | (_, PlaceProjection::Collection) => true,
+            _ => true,
+        })
+}
+
+fn collect_written_places(target: &HirAssignmentTarget, output: &mut Vec<(HirExpressionId, Span)>) {
+    match target.kind() {
+        HirAssignmentTargetKind::Place { place, .. } => output.push((*place, target.span())),
+        HirAssignmentTargetKind::Discard => {}
+        HirAssignmentTargetKind::Tuple(items) => {
+            for item in items {
+                collect_written_places(item, output);
+            }
+        }
+    }
 }

@@ -6,7 +6,8 @@ opaque-result lowering, OWN-001 intrinsic cursor state, OWN-002 affine
 transfers, OWN-003 flow availability, OWN-004 complete `var` reinitialization,
 OWN-005 typed move paths and uniform match ownership modes, OWN-006 contextual
 Copy/Move closure captures, OWN-007 all-exit terminal capture obligations, and
-verification implemented
+BORROW-001 call-local loans with explicit reservation/release and verification
+implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -69,7 +70,7 @@ They remain queryable but can never be lowered or executed.
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
 | Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, selected synchronous-safe call access, value/place category, pattern coverage, source evaluation order, and source-level control targets |
 | MIR construction (M3/M4/M5) | Typed locals and temporaries, explicit CFG, places, synchronous-safe calls, effect-preserving closure bodies with a hidden environment, contextual Copy/Move closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
-| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, and uniform `match` copy/observe/consume lowering; later M5 steps add regions, confirmed borrowed transfers, and cleanup actions |
+| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, and call-local `ref`/`mut`/`var` loans; later M5 steps add last-use and collection regions, confirmed borrowed transfers, and cleanup actions |
 | Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
 
@@ -92,7 +93,8 @@ bounds, receivers, keys, and other effectful operands are evaluated into
 temporaries before a place uses them. This preserves the HIR rule that an
 assignment resolves every destination once before evaluating its RHS.
 
-Operands distinguish constants, copy reads, move reads, and immediate borrows.
+Operands distinguish constants, copy reads, move reads, immediate borrows, and
+call-local loan identities.
 OWN-002 chooses `Copy` or `Move` from the HIR capability graph under the exact
 generic bounds of each body. A `T: Copy` body copies; an unbounded or merely
 `T: Discard` body moves. The decision is cached per body and type, retained
@@ -173,19 +175,46 @@ must-analysis: predecessor states intersect, a complete capture or chained
 newtype-value move inserts the capture, and any later write removes it. Cleanup,
 panic, and unreachable blocks do not create normal return obligations.
 
-`Borrow` is not yet a general MIR loan. OWN-002 uses it only where one operation
-must observe a place without transferring ownership: equality, membership,
-length, discriminant branches, the collection base of index/slice, an indirect
-`Call`/`CallMut` callee, a `ref`/`mut`/`var` call argument, and the replacement
-whose length is checked before a slice write. A borrowed call argument is
-required for every non-value parameter and forbidden for a value parameter. It
-may never be stored, returned, inserted into an aggregate, or used by an
-unrelated operation. `Iterator.next` uses the same immediate borrow for its
-mutable state receiver. A `cursor[ref,C]` source will use this operand once
-BORROW-001 admits the source body and proves the longer loop region. The
-ordinary MIR call operation rejects an `async` or
-`unsafe` function signature. M7 and M9 must introduce and verify their own
-effect-aware initiation/context forms rather than weakening that operation.
+`Borrow` remains a shallow operand for one immediate observation only:
+equality, membership, length, discriminant branches, the collection base of
+index/slice, an indirect `Call`/`CallMut` callee, intrinsic ref-cursor
+construction, and the replacement whose length is checked before a slice
+write. It may never be stored, returned, inserted into an aggregate, passed as
+a value argument, or used by an unrelated operation. It is not the
+representation of a non-value call argument.
+
+BORROW-001 gives each function a dense loan table. Every entry records one
+`ref`, `mut`, or `var` mode and one fully evaluated place. `ReserveLoan(id)` is
+emitted after that argument's place has been resolved; `Loan(id)` is the only
+valid operand for the matching non-value call argument. The call consumes its
+own loan operands as one terminator event. `ReleaseLoan(id)` closes a
+reservation on a path that leaves during evaluation of a later argument.
+Releases are emitted in reverse reservation order for `return`, `fail`, `?`,
+`break`, and `continue`; loop targets retain the reservation depth present when
+the loop began, so a transfer from a nested loop cannot release an outer call's
+loan. Panic edges enter unwind with an empty loan set because runtime unwinding
+invalidates every reservation in the abandoned caller frame.
+Cleanup blocks therefore cannot contain `ReserveLoan` or `ReleaseLoan`.
+
+The verifier propagates the exact active-loan set over the CFG and requires all
+predecessors of a join to agree. Shared reservations may overlap only other
+shared reservations; exclusive reservations reject every overlapping access
+or reservation while later arguments execute. Fixed record fields and tuple
+slots may be disjoint. Reborrowing permits `ref` from any borrowed source,
+`mut` from `mut`/`var`, and `var` from `var` or from a strict projection of
+`mut`. Moves out of borrowed parameters and writes through `ref` are invalid.
+Index and slice loan projections are rejected until BORROW-004 and BORROW-005
+provide collection-region proof. A loan operand has no valid use outside its
+consuming call and cannot reach a branch condition, rvalue, aggregate, host
+boundary, return, or storage.
+
+User `Iterator.next` calls use the same explicit call-local `mut` loan for
+their state receiver. A `cursor[ref,C]` source is a longer observation region
+and remains incomplete for BORROW-002 plus the collection-region work; it is
+never approximated by copying `C`. The ordinary MIR call operation rejects an
+`async` or `unsafe` function signature. M7 and M9 must introduce and verify
+their own effect-aware initiation/context forms rather than weakening that
+operation.
 
 Checked operations use `Invoke`; indexed and sliced reads therefore cannot
 bypass their bounds/unwind edge. Assignment first resolves all destination
@@ -225,8 +254,8 @@ collection `C` and whose result is the distinct concrete
 `cursor[own,C]`/`cursor[ref,C]` local consumed by `IteratorNext`. The verifier
 rejects both a cursor disguised as its collection and a cursor whose mode or
 collection differs from typed HIR. A user `Iterator[T]` source is evaluated once
-into a state local; each header invokes the typed `Iterator.next` operand with its
-immediately borrowed mutable receiver, observes the returned `T?` discriminant,
+into a state local; each header invokes the typed `Iterator.next` operand with
+an explicit call-local `mut` loan, observes the returned `T?` discriminant,
 projects the dominated
 `Option` payload, and then binds the irrefutable loop pattern. The MIR shape
 therefore exposes every evaluation and edge without treating a user iterator
@@ -234,8 +263,8 @@ as a VM intrinsic.
 
 The current admitted bootstrap subset forms only `cursor[own,C]`. Typed HIR
 already retains `cursor[ref,C]` and its closed capabilities, but keeps that body
-incomplete until BORROW-001 can lower the source as a real shared `Borrow`
-operand and prove its region; it is never approximated with a collection copy.
+incomplete until BORROW-002 and BORROW-004 can prove the shared collection
+region; it is never approximated with a collection copy.
 
 Map construction is an `Invoke` carrying the HIR-selected duplicate policy, so
 `P0009` has an ordinary unwind edge and last-write-wins is never an implicit VM
@@ -251,6 +280,9 @@ Every call or checked operation that may panic has an explicit unwind target.
 Normal scope exits and transfers route through cleanup blocks, even when the
 M3 cleanup chain is empty and collapses to a direct edge. Cleanup blocks are
 marked so verification can reject an edge that re-enters ordinary execution.
+Call-local loan release is already explicit on normal control transfers and
+early function exits; an unwind edge closes the abandoned frame's reservations
+as part of panic propagation.
 
 M5 populates those blocks with terminal fallback, guard, `defer`, and confirmed
 handoff operations. The representation enforces one armed action per terminal
@@ -302,9 +334,13 @@ The structural verifier introduced in M3 proves at minimum:
   `CallMut`; `CallOnce` additionally requires every non-`Discard` capture to be
   completely transferred on every reachable normal return;
 - `Borrow` appears only in an enumerated immediate observation, as an indirect
-  `Call`/`CallMut` callee, in a non-value call argument, or as the exact source
-  of `cursor[ref,C]`; it never escapes into storage, value arguments,
-  aggregates, returns, or arbitrary rvalues, and `CallOnce` never uses it;
+  `Call`/`CallMut` callee, or as the exact source of `cursor[ref,C]`; it never
+  escapes into storage, call arguments, aggregates, returns, or arbitrary
+  rvalues, and `CallOnce` never uses it;
+- every non-value argument consumes one matching `Loan` identity after an
+  explicit reservation; active sets agree at CFG joins, incompatible fixed
+  regions cannot overlap, abandoned paths release their reservations exactly
+  once, and no loan escapes its call;
 - equality, collection membership, and map lookup satisfy the `Equatable`,
   `Key`, or `Copy` requirement recorded and independently verified in HIR;
 - a variant, union, option, or result payload is read only on an edge dominated
@@ -321,9 +357,9 @@ on their successful edge, and the return place must be initialized on every
 `Return`. Payload refinement is a separate forward analysis so initialization
 alone cannot authorize an invalid projection.
 
-Later M5 and M7 work extends that proof with loan regions, confirmed borrowed
-transfers, downstream terminal tokens, cleanup, and suspension invariants.
-Verification always precedes bytecode lowering.
+Later M5 and M7 work extends that proof with last-use and collection loan
+regions, confirmed borrowed transfers, downstream terminal tokens, cleanup,
+and suspension invariants. Verification always precedes bytecode lowering.
 
 ## Determinism and resource limits
 

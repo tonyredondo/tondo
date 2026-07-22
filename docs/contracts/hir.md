@@ -7,7 +7,8 @@ synchronous-safe invocation, static trait selection, declaration-owned opaque
 results, patterns, assignment, discard, structured control flow, explicit
 intrinsic cursor state, calls, flow-sensitive ownership availability with
 complete `var` reinitialization, uniform match ownership modes, affine transfer
-restrictions, semantic occurrences, and verified MIR admission
+restrictions, ordered call-local `ref`/`mut`/`var` loans, semantic occurrences,
+and verified MIR admission
 implemented
 
 ## Boundary
@@ -65,9 +66,10 @@ iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   coercion. Concrete external implementations, effectful invocation, `await`,
   `spawn`, unsafe-region proofs and raw
   operations, async liveness/`Send` analysis, string interpolation through
-  `Display`, `defer`, general loan regions, confirmed borrowed replacement,
-  and terminal scope cleanup remain explicit later boundaries rather than
-  receiving provisional semantics. Persistent source-visible partial owner
+  `Display`, `defer`, non-call-local loan regions, collection-region
+  disjunction, suspension-crossing loans, confirmed borrowed replacement, and
+  terminal scope cleanup remain explicit later boundaries rather than receiving
+  provisional semantics. Persistent source-visible partial owner
   states are deliberately absent from Tondo 0.1; OWN-005 implements the typed
   internal paths needed by complete destructuring without adding such a state.
 
@@ -701,9 +703,9 @@ HIR proves the contextual capability facts consumed by OWN-002, including
 generic and opaque `Copy` status and the exact source-generic `CallOnce`
 protocol. MIR records the resulting copy or move. OWN-005 additionally records
 one uniform `Copy`/`Observe`/`Consume` mode per `match`; implicit scope-end
-obligations, loan regions, and terminal cleanup remain their owning phases'
-responsibility. Successful capability proof does not fabricate those later
-facts or cleanup.
+obligations, non-call-local loan regions, and terminal cleanup remain their
+owning phases' responsibility. Successful capability proof does not fabricate
+those later facts or cleanup.
 
 ## Flow-sensitive ownership availability
 
@@ -764,6 +766,47 @@ copies or moves the complete outer binding, and closure-body capture projections
 become typed environment move paths. OWN-007 intersects complete environment
 transfers across all normal exits; it adds no capture list, implicit loan, or
 second transfer form.
+
+## Call-local loans
+
+BORROW-001 gives every synchronous non-value call argument one ordered loan
+whose lexical extent is exactly that call. Argument expressions still evaluate
+left to right. A reservation begins only after its own argument expression and
+place projections have completed; it remains active while later arguments are
+evaluated, is consumed into the callee's loan when the call starts, and ends
+when that synchronous call returns. If a later argument leaves through
+`return`, `fail`, `?`, `break`, or `continue`, that path releases only the
+reservations it abandons. A nested loop transfer does not release a reservation
+created outside that loop.
+
+`ref` accepts either a stable place or a call-scoped temporary. `mut` requires a
+writable place and records fixed-extent writes, while `var` requires a
+structurally replaceable place. A completing root replacement through `mut`
+remains incomplete for `Array`, `Map`, `Set`, a generic parameter, or an opaque
+type until BORROW-003 can prove that the operation preserves extent; fixed
+scalars and aggregates, projected writes, and already checked slice-shape
+writes do not use a provisional structural rule. Reborrowing follows one
+monotone permission rule: `ref` may
+derive from any source; `mut` may derive from `mut` or `var`; `var` may derive
+from `var`, or from a strict fixed projection of `mut`, but never from the
+`mut` root itself. Mutable closure captures are owned replaceable projections
+of their invocation environment and follow the same rule.
+
+The availability analysis retains active reservations in evaluation order.
+Shared loans may overlap only other shared loans. Any read through an active
+exclusive loan, any write or move through an overlapping loan, or any
+incompatible later reservation emits `E1403` and points to the earlier
+reservation. Statically different record fields and tuple slots are disjoint;
+a root overlaps every descendant. `E1407` reports a `mut` or `var` argument
+whose value category or place permission is too weak.
+
+These loans are not first-class values. They cannot be bound, stored, returned,
+captured, placed in an aggregate, or passed through a value parameter. Index
+and slice projections remain deliberately incomplete because their disjunction
+may depend on runtime data. HIR may retain that error-free partial snapshot for
+tooling, but it does not admit the body to MIR until BORROW-004 and BORROW-005
+provide the static and dynamic region proof. BORROW-002 owns regions that last
+beyond one synchronous call, and BORROW-006 owns suspension boundaries.
 
 ## Declaration ordering
 
@@ -926,6 +969,10 @@ failure. OWN-004 regressions add complete direct and destructured `var`
 reinitialization, all-versus-one-branch joins, loop backedges, moved RHS
 rejection, immutable and partial destinations, mutated binding mutability, and
 execution through the public driver and VM.
+Call-local loan regressions cover shared temporaries, writable and replaceable
+place requirements, permission-preserving reborrow, ordered conflicts, nested
+calls, fixed-field disjunction, mutable closure captures, early exits, and the
+deliberately incomplete collection-projection boundary.
 Closure regressions cover distinct generated identities, inherited generic
 binders, exact and inferred outcomes, nested free-use propagation, mutable
 snapshot metadata, modes, variadics, borrowed-capture rejection, deferred

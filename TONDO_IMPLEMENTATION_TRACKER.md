@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.40
+**Versión del tracker:** 0.41
 
 **Última actualización:** 2026-07-22
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar préstamos `ref`, `mut` y `var` sobre MIR
-(BORROW-001).
+**Objetivo inmediato:** calcular regiones por último uso sin lifetimes de
+fuente (BORROW-002).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1091,8 +1091,8 @@ CAP-001 y CALL-001 a CALL-004:
   tienen regresiones que ejecutan en la VM.
 - `for` distingue protocolo intrínseco y `Iterator[T]` de usuario. El segundo
   evalúa la fuente una vez, llama estáticamente a `next`, ramifica sobre `T?` y
-  nunca usa el terminador intrínseco; la legalidad final del préstamo `mut`
-  pertenece a BORROW-001 en M5.
+  nunca usa el terminador intrínseco; BORROW-001 representa ya su receptor como
+  un loan `mut` call-local verificado.
 - `impl Bound` sólo se admite como éxito superior de funciones libres,
   inherentes y asociadas. El parser recupera las posiciones prohibidas con
   `E0004` sin fabricar un tipo opaco ni perder progreso.
@@ -1264,9 +1264,9 @@ lifetimes escritos por el usuario.
   conserva la decisión al monomorfizar y la vuelve a probar defensivamente.
   Parámetros, locals, retornos, argumentos por valor, agregados, cursores own y
   callees `CallOnce` transfieren ya valores afines. Las observaciones inmediatas
-  y argumentos `ref`/`mut`/`var` usan un `Borrow` no almacenable en vez de una
-  copia ficticia. OWN-003 rechaza ya sus usos posteriores y joins
-  inconsistentes.
+  usan un `Borrow` no almacenable en vez de una copia ficticia; los argumentos
+  `ref`/`mut`/`var` usan los loans explícitos de BORROW-001. OWN-003 rechaza ya
+  sus usos posteriores y joins inconsistentes.
 
 - [x] **OWN-003 — Implementar disponibilidad por flujo.** HIR conserva el span
   del primer move, emite `E1401` al reutilizar un owner no disponible y une
@@ -1315,7 +1315,18 @@ lifetimes escritos por el usuario.
 
 ### 10.2 Préstamos
 
-- [ ] **BORROW-001 — Implementar préstamos `ref`, `mut` y `var` sobre MIR.**
+- [x] **BORROW-001 — Implementar préstamos `ref`, `mut` y `var` sobre MIR.**
+  HIR valida permisos, reborrowing y reservas en orden, acepta temporales solo
+  para `ref`, diagnostica conflictos con `E1403` y lvalues exclusivos inválidos
+  con `E1407`, y mantiene index/slice incompletos para BORROW-004/005. MIR y
+  bytecode poseen tablas densas de loans, `ReserveLoan`, `Loan` y
+  `ReleaseLoan`; sus verificadores propagan el conjunto activo exacto por CFG,
+  exigen consumo por la llamada o liberación explícita, rechazan escapes,
+  accesos solapados y permisos crecientes. La VM normaliza identidad de
+  frame/slot/proyección, ejecuta lectura y escritura a través del lender,
+  soporta reborrow y campos disjuntos, y limpia reservas en transfers tempranos
+  y unwind. Un reemplazo raíz `mut` cuya extensión aún no puede probarse queda
+  incompleto para BORROW-003 en vez de ejecutarse con semántica provisional.
 
 - [ ] **BORROW-002 — Calcular regiones por último uso sin lifetimes de fuente.**
 
@@ -1915,13 +1926,37 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es BORROW-001: convertir los `Borrow` inmediatos ya
-tipados en préstamos MIR explícitos para `ref`, `mut` y `var`, conservando su
-identidad de lugar y sin introducir lifetimes escritos por el usuario.
+La siguiente acción activa es BORROW-002: extender el préstamo call-local ya
+verificado a regiones inferidas por último uso, sin introducir lifetimes
+escritos por el usuario ni debilitar la identidad de lugar.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.41 — 2026-07-22
+
+- Se completa BORROW-001 con una única representación explícita para argumentos
+  no-value: cada loan conserva modo y lugar, se reserva después de evaluar su
+  argumento y se consume al iniciar la llamada. Un `Borrow` vuelve a quedar
+  limitado a observaciones inmediatas y callees indirectos.
+- HIR aplica permisos `ref`/`mut`/`var`, reborrowing monotónico y conflictos en
+  orden de evaluación. MIR y bytecode verifican conjuntos activos exactos,
+  aliasing de proyecciones fijas, no escape y release explícito en `return`,
+  `fail`, `?`, `break` y `continue`; los límites de loop impiden liberar un loan
+  exterior por accidente.
+- La VM pasa loans como referencias internas al frame prestador, normaliza
+  paths para detectar aliasing, lee y escribe a través de reborrows y limpia
+  reservas durante unwind. La ABI host sigue cerrada a parámetros prestados y
+  los loans de index/slice permanecen detrás de BORROW-004/005.
+- Las regresiones cubren `ref` temporal, `mut`/`var` raíz, proyecciones y
+  capturas de closure, campos disjuntos, llamadas anidadas, reborrow, `?`,
+  transfers de loop, release inactivo, reservas duplicadas, acceso conflictivo
+  y operandos forjados fuera de una llamada.
+- El gate acumulado pasa 486 tests, incluidos 438 tests de la librería del
+  compilador; también pasan `git diff --check`, formatter check, check y build
+  de todos los targets, Clippy y Rustdoc con warnings denegados.
+- La cola avanza a BORROW-002 para inferir regiones generales por último uso.
 
 ### 0.40 — 2026-07-22
 

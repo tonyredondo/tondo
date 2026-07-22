@@ -184,6 +184,14 @@ impl Verifier<'_> {
                     "match at {} has an ownership mode inconsistent with its scrutinee and bindings",
                     finding.use_span().range()
                 ),
+                AvailabilityFindingKind::ConflictingLoan => format!(
+                    "{local} has an incompatible loan access at {} after a reservation at {}",
+                    finding.use_span().range(),
+                    finding
+                        .move_span()
+                        .expect("loan conflicts retain their reservation")
+                        .range()
+                ),
             };
             return Err(HirInvariantError::new("ownership availability", message));
         }

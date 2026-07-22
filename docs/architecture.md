@@ -255,7 +255,9 @@ and delays affine pattern transfers until after a successful guard. Typed move
 paths now live in MIR and bytecode as an internal destructuring mechanism;
 closure captures participate in the same whole-owner flow and become typed
 environment move paths. Closure terminal obligations are intersected across all
-normal exits; loan regions, confirmed borrowed transfers, downstream terminal
+normal exits. HIR now also reserves fixed `ref`/`mut`/`var` call arguments in
+source order and rejects overlapping later argument access. Last-use and
+collection loan regions, confirmed borrowed transfers, downstream terminal
 owners, and cleanup remain later analyses. Synchronous closure invocation
 crosses this boundary with an explicit exact signature and selected call
 protocol.
@@ -271,16 +273,20 @@ MIR is a typed control-flow graph with explicit locals, temporaries, branches,
 moves, storage lifetimes, checked-operation unwind edges, and reserved cleanup
 blocks. AST shape is no longer required to execute or analyze the program.
 OWN-002 selects explicit copy/move operands under each body's generic bounds
-and uses non-escaping borrows for immediate observations and non-value call
-arguments. OWN-003 first made each root move consume the local's available
+and uses non-escaping borrows for immediate observations. BORROW-001 gives
+non-value call arguments explicit loan-table identities, ordered reservations,
+call consumption, and release on abandoned argument paths. OWN-003 first made
+each root move consume the local's available
 definition and joined that fact across CFG edges and loop backedges. OWN-004
 uses the existing unprojected write as the new definition for a reinitialized
 `var`, only after RHS evaluation and validation. OWN-005 replaces the backend
 whole-local bit with typed unavailable paths: disjoint destructured components
 may move independently, overlapping paths cannot be reused, writes restore
-only a proved subtree, and joins conservatively union moved paths. Later
-ownership steps add regions, confirmed borrowed replacement and populated
-cleanup actions; async later adds
+only a proved subtree, and joins conservatively union moved paths. The loan
+verifier propagates exact active sets across that same CFG, rejects incompatible
+fixed-place overlap and illegal reborrows, and confines each loan operand to its
+call. Later ownership steps add last-use and collection regions, confirmed
+borrowed replacement, and populated cleanup actions; async later adds
 suspension, resume, cancellation, and frame-state edges without moving source
 semantic decisions into a backend.
 
@@ -294,6 +300,9 @@ Before bytecode lowering, the MIR verifier proves:
 - Payload projections are dominated by a compatible discriminant branch.
 - Calls preserve the selected callable, receiver mode, specialization, and
   argument association.
+- Every non-value call argument consumes one matching active loan; reservations
+  agree at joins, reject overlapping exclusive access, and are explicitly
+  released on abandoned normal paths.
 - Closure aggregates preserve the exact generated type and contextually copy or
   move each capture from its declared outer source binding in HIR order.
 - Closure bodies rederive their protocol row from writes and moves of the exact
@@ -341,9 +350,10 @@ verified capture schema and explicit Copy/Move operands. Each reached closure
 specialization also receives one real callable and function body with a hidden
 environment parameter. Calls use the ordinary verified indirect-call operation,
 carrying an exact signature and concrete protocol; a shallow borrow is confined
-to verified immediate observation/call positions while `CallOnce` retains
-ordinary copy/move operand semantics. Bytecode rederives environment writes and
-moves before accepting that protocol row, and accepts `CallOnce` only when each
+to verified immediate observation and indirect-callee positions, while
+non-value arguments carry verified call-local loan identities and `CallOnce`
+retains ordinary copy/move operand semantics. Bytecode rederives environment
+writes and moves before accepting that protocol row, and accepts `CallOnce` only when each
 non-`Discard` capture is completely transferred on every reachable return.
 Monomorphization specializes the source-generic row against concrete `Discard`
 facts before that independent verification.
@@ -364,8 +374,11 @@ eager. COW, ARC, compact tagging, and native lowering are later optimizations
 that must preserve the same tests.
 
 The implemented synchronous engine uses iterative frames, checked slot states,
-normal/unwind continuations, precise frame and temporary roots, generational
-heap handles, and a stop-the-world mark-and-sweep collector. Closure
+normal/unwind continuations, call-local reservation tables, normalized
+frame/slot/place identities, precise frame and temporary roots, generational
+heap handles, and a stop-the-world mark-and-sweep collector. Borrowed callee
+parameters read and write through to the lender place, and early control or
+panic releases abandoned reservations. Closure
 environments trace, snapshot, copy eligible fields, and take moved fields
 through the same managed-value machinery regardless of their effect signature.
 The operation-local root stack protects both copied and moved captures while an

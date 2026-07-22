@@ -4,7 +4,8 @@
 invocation, CALL-004 effectful-environment retention with execution guards,
 OWN-001 intrinsic cursor value semantics, and OWN-002 affine moves/immediate
 observations, OWN-003 flow availability, and OWN-004 complete-slot
-reinitialization, OWN-005 typed move paths, and OWN-006 affine closure captures
+reinitialization, OWN-005 typed move paths, OWN-006 affine closure captures,
+OWN-007 terminal capture obligations, and BORROW-001 call-local loan execution
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -18,6 +19,10 @@ The interpreter uses an explicit `Value` enum. `Unit`, booleans, integers,
 floats, bytes, characters, and function identities are immediate values. A
 managed value is a generational handle into a non-moving heap slot; source code
 cannot observe the slot index, generation, address, or collection schedule.
+The enum also has one VM-internal `Loan` carrier containing a lender frame,
+fixed place, and mode. It exists only in a borrowed callee parameter and is
+rejected by copying, snapshots, heap storage, host conversion, and every public
+runtime boundary.
 
 Managed heap objects cover:
 
@@ -58,7 +63,8 @@ Execution uses an iterative Rust vector of frames; a Tondo call never recurses
 through the Rust call stack. Each frame owns:
 
 - the verified bytecode function, block, and instruction cursor;
-- one state per typed slot: dead, live-uninitialized, or live with a value; and
+- one state per typed slot: dead, live-uninitialized, or live with a value;
+- one optional normalized reservation per function-local loan identity; and
 - an optional normal/unwind continuation for its caller.
 
 Parameters and the return slot follow the function metadata. Explicit
@@ -84,9 +90,26 @@ require the direct slot's current value.
 
 The immediate observation subset executes equality, membership, length,
 discriminant, index/slice-base, indirect-callee, and slice-shape borrows.
-Passing a `ref`, `mut`, or `var` parameter already has its exact bytecode access
-form, but the VM still rejects that call until BORROW-001 supplies loan
-identity, write-through behavior, and region enforcement.
+`Borrow` remains a shallow read and never creates a runtime reference.
+
+`ReserveLoan` resolves its fixed place to a normalized `(frame, slot, path)`
+identity after all projection operands have been evaluated. Shared/shared
+overlap is accepted; every overlap involving `mut` or `var` is rejected. A call
+then consumes each reservation exactly once and installs the VM-internal loan
+carrier in the callee's corresponding parameter slot. Reads recursively reach
+the lender place. Writes through `mut` or `var` update that original place,
+including nested reborrows and fixed field/tuple projections; writes through
+`ref` and moves through every borrowed parameter are invariant failures.
+Reborrow strength is checked both by bytecode verification and defensively at
+runtime.
+
+`ReleaseLoan` removes a reservation when later argument evaluation takes an
+early control transfer. Normal return rejects any reservation left active.
+Language panic clears current-frame reservations before entering unwind, and
+each propagated unwind clears the abandoned caller frame before following its
+cleanup edge. Because the synchronous caller frame remains live throughout the
+call, the original slot also remains a precise GC root. Host callables cannot
+declare or receive borrowed parameters in the bootstrap ABI.
 
 At every possible collection, roots are enumerated precisely from every live
 value in every frame plus an explicit stack of operation-local values that have
@@ -189,6 +212,14 @@ fixtures must prove that their respective admission gates reject forged closure
 identity, schema, protocol, signature, access, erasure, and effectful ordinary
 calls before execution. Entry tests must also reject async and unsafe callable
 bodies while their runtime contexts remain unimplemented.
+
+Loan regressions execute shared temporaries, root and projected exclusive
+write-through, nested and closure-capture reborrows, statically disjoint fields,
+and reservations that remain active across a nested call. Early `?`, `break`,
+and `continue` paths prove explicit release, while a nested-loop transfer proves
+that it cannot release an outer reservation. Mutated MIR and bytecode reject
+duplicate reservation, inactive release, conflicting access, and a loan operand
+outside its call.
 
 Slice assignment materializes the complete RHS before its write validation.
 The validation terminator carries aligned destination/replacement metadata,

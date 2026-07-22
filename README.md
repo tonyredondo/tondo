@@ -75,11 +75,15 @@ normative panics, precise generational mark-and-sweep collection, defensive
 limits, and a provisional capability-gated `std.console.print` host shim. Async
 entry points and implicit script bodies remain under construction. Ownership
 already distinguishes contextual copies, affine moves, immediate observations,
-whole-binding availability across branches and loops, and complete
-reinitialization of moved `var` bindings. Partial moves, affine captures,
-general loans, and terminal cleanup remain later milestones. The workspace
-therefore identifies itself as a bootstrap and does not claim full Tondo
-conformance.
+typed internal move paths, whole-binding availability across branches and
+loops, complete reinitialization of moved `var` bindings, and affine closure
+captures with all-exit `CallOnce` obligations. Synchronous `ref`, `mut`, and
+`var` arguments now use verified call-local loans with ordered reservation,
+alias rejection, reborrowing, VM write-through, and explicit release on
+abandoned argument paths. General last-use regions, collection-view loans,
+fixed-versus-structural mutation enforcement, suspension safety, and terminal
+cleanup remain later milestones. The workspace therefore identifies itself as
+a bootstrap and does not claim full Tondo conformance.
 
 ## Project documentation
 

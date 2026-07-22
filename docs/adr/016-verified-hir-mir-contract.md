@@ -38,6 +38,12 @@ suspension terminators and transforms live locals into frame state. Each of
 those transformations produces MIR that must pass the same structural
 verifier plus the invariants introduced by that phase.
 
+The first admitted M5 loan form is call-local: one table identity records its
+mode and resolved place, `ReserveLoan` starts it after argument evaluation, the
+call consumes its `Loan` operand, and `ReleaseLoan` closes an abandoned
+argument path. Longer last-use and collection regions extend this representation
+rather than reintroducing a shallow borrowed call operand.
+
 ## Consequences
 
 The backend never reinterprets AST/HIR control flow, guesses a move, invents a

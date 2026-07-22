@@ -71,6 +71,15 @@ pub fn disassemble(program: &BytecodeProgram) -> String {
             )
             .unwrap();
         }
+        for (loan_index, loan) in function.loans.iter().enumerate() {
+            writeln!(
+                output,
+                "  loan l{loan_index}: {:?} {}",
+                loan.mode,
+                place_text(&loan.place)
+            )
+            .unwrap();
+        }
         for (block_index, block) in function.blocks.iter().enumerate() {
             writeln!(output, "  b{block_index} [{:?}]:", block.kind).unwrap();
             for instruction in &block.instructions {
@@ -110,6 +119,8 @@ fn instruction_text(instruction: &BytecodeInstructionKind) -> String {
     match instruction {
         BytecodeInstructionKind::StorageLive(slot) => format!("storage_live s{}", slot.index()),
         BytecodeInstructionKind::StorageDead(slot) => format!("storage_dead s{}", slot.index()),
+        BytecodeInstructionKind::ReserveLoan(loan) => format!("reserve_loan l{}", loan.index()),
+        BytecodeInstructionKind::ReleaseLoan(loan) => format!("release_loan l{}", loan.index()),
         BytecodeInstructionKind::Store { destination, value } => format!(
             "store {} <- {:?}:t{}",
             place_text(destination),

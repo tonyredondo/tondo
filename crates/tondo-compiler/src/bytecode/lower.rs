@@ -1536,10 +1536,16 @@ fn type_children(kind: &TypeKind) -> Vec<TypeId> {
 fn collect_function_types(function: &MirFunction, types: &mut BTreeSet<TypeId>) {
     types.insert(function.outcome());
     types.extend(function.locals().map(|local| local.ty()));
+    for loan in function.loans() {
+        collect_place_types(loan.place(), types);
+    }
     for block in function.blocks() {
         for statement in block.statements() {
             match statement.kind() {
-                MirStatementKind::StorageLive(_) | MirStatementKind::StorageDead(_) => {}
+                MirStatementKind::StorageLive(_)
+                | MirStatementKind::StorageDead(_)
+                | MirStatementKind::ReserveLoan(_)
+                | MirStatementKind::ReleaseLoan(_) => {}
                 MirStatementKind::Assign { destination, value } => {
                     collect_place_types(destination, types);
                     collect_rvalue_types(value, types);
@@ -1572,7 +1578,7 @@ fn collect_operand_types(operand: &MirOperand, types: &mut BTreeSet<TypeId>) {
         | MirOperandKind::PreludeTraitFunction { arguments, .. } => {
             types.extend(arguments.iter().copied());
         }
-        MirOperandKind::Constant(_) => {}
+        MirOperandKind::Constant(_) | MirOperandKind::Loan(_) => {}
     }
 }
 
@@ -1756,7 +1762,8 @@ fn collect_operand_function_references(
         MirOperandKind::Constant(_)
         | MirOperandKind::Copy(_)
         | MirOperandKind::Move(_)
-        | MirOperandKind::Borrow(_) => {}
+        | MirOperandKind::Borrow(_)
+        | MirOperandKind::Loan(_) => {}
     }
 }
 
@@ -2403,10 +2410,16 @@ fn lower_function(
     let mut function_types = BTreeSet::new();
     function_types.insert(function.outcome());
     function_types.extend(function.locals().map(|local| local.ty()));
+    for loan in function.loans() {
+        collect_place_types(loan.place(), &mut function_types);
+    }
     for block in function.blocks() {
         for statement in block.statements() {
             match statement.kind() {
-                MirStatementKind::StorageLive(_) | MirStatementKind::StorageDead(_) => {}
+                MirStatementKind::StorageLive(_)
+                | MirStatementKind::StorageDead(_)
+                | MirStatementKind::ReserveLoan(_)
+                | MirStatementKind::ReleaseLoan(_) => {}
                 MirStatementKind::Assign { destination, value } => {
                     collect_place_types(destination, &mut function_types);
                     collect_rvalue_types(value, &mut function_types);
@@ -2435,6 +2448,15 @@ fn lower_function(
             })
         })
         .collect::<Result<_, BytecodeError>>()?;
+    let loans = function
+        .loans()
+        .map(|loan| {
+            Ok(bc::BytecodeLoan {
+                mode: parameter_mode(loan.mode()),
+                place: lower_place(loan.place(), context, type_map)?,
+            })
+        })
+        .collect::<Result<_, BytecodeError>>()?;
     let blocks = function
         .blocks()
         .map(|block| lower_block(block, &span_ids, context, type_map))
@@ -2452,6 +2474,7 @@ fn lower_function(
             .collect(),
         spans,
         slots,
+        loans,
         parameters: function
             .parameters()
             .iter()
@@ -2529,6 +2552,12 @@ fn lower_statement(
         }
         MirStatementKind::StorageDead(local) => {
             bc::BytecodeInstructionKind::StorageDead(bc::BytecodeSlotId::new(local.index()))
+        }
+        MirStatementKind::ReserveLoan(loan) => {
+            bc::BytecodeInstructionKind::ReserveLoan(bc::BytecodeLoanId::new(loan.index()))
+        }
+        MirStatementKind::ReleaseLoan(loan) => {
+            bc::BytecodeInstructionKind::ReleaseLoan(bc::BytecodeLoanId::new(loan.index()))
         }
         MirStatementKind::Assign { destination, value } => bc::BytecodeInstructionKind::Store {
             destination: lower_place(destination, context, type_map)?,
@@ -2761,6 +2790,9 @@ fn lower_operand(
         }
         MirOperandKind::Borrow(place) => {
             bc::BytecodeOperandKind::Borrow(lower_place(place, context, type_map)?)
+        }
+        MirOperandKind::Loan(loan) => {
+            bc::BytecodeOperandKind::Loan(bc::BytecodeLoanId::new(loan.index()))
         }
         MirOperandKind::Function {
             callable,
@@ -4975,11 +5007,43 @@ mod tests {
                  inspect(ref value)\n\
              }\n",
         );
-        let argument = program
+        let (function, loan) = program
             .functions
+            .iter()
+            .enumerate()
+            .find_map(|(function, body)| {
+                body.blocks
+                    .iter()
+                    .find_map(|block| match &block.terminator.kind {
+                        bc::BytecodeTerminatorKind::Invoke {
+                            operation:
+                                bc::BytecodeOperation {
+                                    kind: bc::BytecodeOperationKind::Call { arguments, .. },
+                                    ..
+                                },
+                            ..
+                        } => arguments.iter().find_map(|argument| {
+                            if argument.mode == bc::BytecodeParameterMode::Ref {
+                                match argument.value.kind {
+                                    bc::BytecodeOperandKind::Loan(loan) => Some((function, loan)),
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            }
+                        }),
+                        _ => None,
+                    })
+            })
+            .expect("ref argument consumes an explicit loan");
+        let place = program.functions[function].loans[loan.index() as usize]
+            .place
+            .clone();
+        let argument = program.functions[function]
+            .blocks
             .iter_mut()
-            .flat_map(|function| &mut function.blocks)
-            .find_map(|block| match &mut block.terminator.kind {
+            .find_map(|block| {
+                match &mut block.terminator.kind {
                 bc::BytecodeTerminatorKind::Invoke {
                     operation:
                         bc::BytecodeOperation {
@@ -4988,18 +5052,354 @@ mod tests {
                         },
                     ..
                 } => arguments.iter_mut().find(|argument| {
-                    argument.mode == bc::BytecodeParameterMode::Ref
-                        && matches!(argument.value.kind, bc::BytecodeOperandKind::Borrow(_))
+                    matches!(argument.value.kind, bc::BytecodeOperandKind::Loan(id) if id == loan)
                 }),
                 _ => None,
+            }
             })
-            .expect("ref argument uses an immediate borrow");
-        let bc::BytecodeOperandKind::Borrow(place) = &argument.value.kind else {
-            unreachable!()
-        };
-        argument.value.kind = bc::BytecodeOperandKind::Copy(place.clone());
+            .unwrap();
+        argument.value.kind = bc::BytecodeOperandKind::Borrow(place);
         let error = bc::verify_bytecode(&program).unwrap_err();
-        assert!(error.message().contains("operation"));
+        assert!(error.message().contains("borrow escapes"));
+    }
+
+    #[test]
+    fn call_local_loans_execute_shared_exclusive_reborrow_and_field_write_through() {
+        let source = "type Pair = { left: Int, right: Int }\n\
+                      type Inner = { value: Int }\n\
+                      type Outer = { inner: Inner }\n\
+                      fn inspect(value: ref Int): Int { value }\n\
+                      fn nestedProjection(value: ref Outer): Int {\n\
+                          inspect(ref value.inner.value)\n\
+                      }\n\
+                      fn nestedProjectionRun(): Int {\n\
+                          nestedProjection(ref Outer { inner: Inner { value: 5 } })\n\
+                      }\n\
+                      fn increment(value: mut Int) {\n\
+                          value += 1\n\
+                      }\n\
+                      fn replace(value: var Int) {\n\
+                          value = 42\n\
+                      }\n\
+                      fn replaceField(value: mut Pair) {\n\
+                          replace(var value.left)\n\
+                      }\n\
+                      fn nested(value: mut Int) { increment(mut value) }\n\
+                      fn captured(): Int {\n\
+                          var value = 1\n\
+                          var operation = (): Int {\n\
+                              increment(mut value)\n\
+                              value\n\
+                          }\n\
+                          operation()\n\
+                      }\n\
+                      fn projected(): Int {\n\
+                          var value = Pair { left: 1, right: 2 }\n\
+                          replaceField(mut value)\n\
+                          value.left\n\
+                      }\n\
+                      fn replacementValue(): Int { 7 }\n\
+                      fn assign(value: mut Int, next: Int) {\n\
+                          value = next\n\
+                      }\n\
+                      fn missing(): Int? { none }\n\
+                      fn early(): Int? {\n\
+                          var value = 1\n\
+                          assign(mut value, missing()?)\n\
+                          some(value)\n\
+                      }\n\
+                      fn breakArgument(): Int {\n\
+                          var value = 1\n\
+                          for {\n\
+                              assign(mut value, {\n\
+                                  break\n\
+                              })\n\
+                          }\n\
+                          value\n\
+                      }\n\
+                      fn continueArgument(): Int {\n\
+                          var value = 1\n\
+                          var again = true\n\
+                          for again {\n\
+                              again = false\n\
+                              assign(mut value, {\n\
+                                  continue\n\
+                              })\n\
+                          }\n\
+                          value\n\
+                      }\n\
+                      fn innerBreak(): Int {\n\
+                          var value = 1\n\
+                          assign(mut value, {\n\
+                              for {\n\
+                                  break\n\
+                              }\n\
+                              9\n\
+                          })\n\
+                          value\n\
+                      }\n\
+                      fn updateBoth(left: mut Int, right: mut Int) {\n\
+                          left += 1\n\
+                          right += 2\n\
+                      }\n\
+                      fn execute(): (Int, Int, Int, Int) {\n\
+                          var value = 1\n\
+                          let before = inspect(ref value)\n\
+                          let temporary = inspect(ref (1 + 1))\n\
+                          assign(mut value, replacementValue())\n\
+                          nested(mut value)\n\
+                          replace(var value)\n\
+                          var pair = Pair { left: 10, right: 20 }\n\
+                          updateBoth(mut pair.left, mut pair.right)\n\
+                          (before, temporary, value, pair.left + pair.right)\n\
+                      }\n";
+        let program = lowered(source);
+        assert!(program.functions.iter().any(|function| {
+            !function.loans.is_empty()
+                && function.blocks.iter().any(|block| {
+                    block.instructions.iter().any(|instruction| {
+                        matches!(
+                            instruction.kind,
+                            bc::BytecodeInstructionKind::ReserveLoan(_)
+                        )
+                    })
+                })
+        }));
+        let disassembly = bc::disassemble(&program);
+        assert!(disassembly.contains("loan l0:"));
+        assert!(disassembly.contains("reserve_loan l0"));
+        assert!(disassembly.contains("release_loan l0"));
+        assert_eq!(
+            execute_function(source, "execute"),
+            RuntimeValue::Tuple(vec![
+                RuntimeValue::Integer(1),
+                RuntimeValue::Integer(2),
+                RuntimeValue::Integer(42),
+                RuntimeValue::Integer(33),
+            ])
+        );
+        assert_eq!(execute_function(source, "early"), RuntimeValue::OptionNone);
+        assert_eq!(
+            execute_function(source, "captured"),
+            RuntimeValue::Integer(2)
+        );
+        assert_eq!(
+            execute_function(source, "projected"),
+            RuntimeValue::Integer(42)
+        );
+        assert_eq!(
+            execute_function(source, "nestedProjectionRun"),
+            RuntimeValue::Integer(5)
+        );
+        assert_eq!(
+            execute_function(source, "breakArgument"),
+            RuntimeValue::Integer(1)
+        );
+        assert_eq!(
+            execute_function(source, "continueArgument"),
+            RuntimeValue::Integer(1)
+        );
+        assert_eq!(
+            execute_function(source, "innerBreak"),
+            RuntimeValue::Integer(9)
+        );
+
+        let VmOutcome::Panicked(panic) = execute_outcome(
+            "fn assign(value: mut Int, next: Int) {\n\
+                 value = next\n\
+             }\n\
+             fn explode(): Int {\n\
+                 panic(\"boom\")\n\
+             }\n\
+             fn execute() {\n\
+                 var value = 1\n\
+                 assign(mut value, explode())\n\
+             }\n",
+            "execute",
+        ) else {
+            panic!("loaned call should propagate its language panic")
+        };
+        assert_eq!(panic.code, PanicCode::ExplicitPanic);
+    }
+
+    #[test]
+    fn bytecode_verifier_requires_one_reservation_per_call_local_loan() {
+        let source = "fn inspect(value: ref Int): Int { value }\n\
+                      fn execute(): Int {\n\
+                          let value = 42\n\
+                          inspect(ref value)\n\
+                      }\n";
+        let mut program = lowered(source);
+        let function = program
+            .callables
+            .iter()
+            .find(|callable| callable.name.ends_with("::value::execute"))
+            .and_then(|callable| callable.implementation)
+            .unwrap();
+        let function = &mut program.functions[function.index() as usize];
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.instructions
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, instruction)| {
+                        matches!(
+                            instruction.kind,
+                            bc::BytecodeInstructionKind::ReserveLoan(_)
+                        )
+                        .then_some((block, index))
+                    })
+            })
+            .unwrap();
+        let duplicate = function.blocks[block].instructions[index].clone();
+        function.blocks[block]
+            .instructions
+            .insert(index + 1, duplicate);
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(error.message().contains("reservations"), "{error}");
+
+        let mut program = lowered(source);
+        let function = program
+            .callables
+            .iter()
+            .find(|callable| callable.name.ends_with("::value::execute"))
+            .and_then(|callable| callable.implementation)
+            .unwrap();
+        let function = &mut program.functions[function.index() as usize];
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.instructions
+                    .iter()
+                    .position(|instruction| {
+                        matches!(
+                            instruction.kind,
+                            bc::BytecodeInstructionKind::ReserveLoan(_)
+                        )
+                    })
+                    .map(|index| (block, index))
+            })
+            .unwrap();
+        let reservation = function.blocks[block].instructions.remove(index);
+        function.blocks[function.unwind.index() as usize]
+            .instructions
+            .push(reservation);
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("cleanup block manipulates a call-local loan"),
+            "{error}"
+        );
+
+        let mut program = lowered(source);
+        let function = program
+            .callables
+            .iter()
+            .find(|callable| callable.name.ends_with("::value::execute"))
+            .and_then(|callable| callable.implementation)
+            .unwrap();
+        let function = &mut program.functions[function.index() as usize];
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.instructions
+                    .iter()
+                    .position(|instruction| {
+                        matches!(
+                            instruction.kind,
+                            bc::BytecodeInstructionKind::ReserveLoan(_)
+                        )
+                    })
+                    .map(|index| (block, index))
+            })
+            .unwrap();
+        let mut release = function.blocks[block].instructions[index].clone();
+        release.kind = bc::BytecodeInstructionKind::ReleaseLoan(bc::BytecodeLoanId::new(0));
+        function.blocks[block].instructions.insert(index, release);
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(
+            error.message().contains("releases inactive loan"),
+            "{error}"
+        );
+
+        let mut program = lowered(source);
+        let function = program
+            .callables
+            .iter()
+            .find(|callable| callable.name.ends_with("::value::execute"))
+            .and_then(|callable| callable.implementation)
+            .unwrap();
+        let function = &mut program.functions[function.index() as usize];
+        let loan_slot = function.loans[0].place.slot;
+        let write = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find(|instruction| {
+                matches!(
+                    &instruction.kind,
+                    bc::BytecodeInstructionKind::Store { destination, .. }
+                        if destination.slot == loan_slot
+                )
+            })
+            .cloned()
+            .unwrap();
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.instructions
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, instruction)| {
+                        matches!(
+                            instruction.kind,
+                            bc::BytecodeInstructionKind::ReserveLoan(_)
+                        )
+                        .then_some((block, index))
+                    })
+            })
+            .unwrap();
+        function.blocks[block].instructions.insert(index + 1, write);
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(
+            error.message().contains("write overlaps active loan"),
+            "{error}"
+        );
+
+        let mut program = lowered(
+            "fn inspect(value: ref Bool): Bool { value }\n\
+             fn execute(): Bool {\n\
+                 let value = true\n\
+                 if inspect(ref value) { true } else { false }\n\
+             }\n",
+        );
+        let function = program
+            .callables
+            .iter()
+            .find(|callable| callable.name.ends_with("::value::execute"))
+            .and_then(|callable| callable.implementation)
+            .unwrap();
+        let condition = program.functions[function.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::BranchBool { condition, .. } => Some(condition),
+                _ => None,
+            })
+            .unwrap();
+        condition.kind = bc::BytecodeOperandKind::Loan(bc::BytecodeLoanId::new(0));
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(error.message().contains("terminator"), "{error}");
     }
 
     #[test]
