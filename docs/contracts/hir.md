@@ -8,8 +8,9 @@ results, patterns, assignment, discard, structured control flow, explicit
 intrinsic cursor state, calls, flow-sensitive ownership availability with
 complete `var` reinitialization, uniform match ownership modes, affine transfer
 restrictions, ordered call-local `ref`/`mut`/`var` loans, semantic occurrences,
-BORROW-002 last-use regions for pattern `ref` bindings, and verified MIR admission
-implemented
+BORROW-002 last-use regions for pattern `ref` bindings, BORROW-003 fixed-extent
+permissions, BORROW-004 static collection regions, BORROW-005 deferred runtime
+overlap obligations, and verified MIR admission implemented
 
 ## Boundary
 
@@ -813,9 +814,12 @@ integer constants become static indices or bounds; all other index and slice
 inputs remain dynamic. The availability pass admits a lone region and any set
 of overlapping shared regions. For an incompatible pair it emits `E1403` when
 overlap is inevitable, admits the pair when interval or stride arithmetic proves
-it disjoint, and retains an error-free but incomplete snapshot when the answer
-depends on runtime data. Only that last case remains behind BORROW-005. This is
-an implementation staging boundary, not a source-language restriction.
+it disjoint, and records a deferred runtime proof obligation when the answer
+depends on runtime data. The same classification applies to a later read, move,
+or write against an active region. Deferred collection findings are neither
+diagnostics nor incomplete HIR: MIR must materialize their exact proof before a
+complete snapshot can become executable, and the HIR verifier independently
+allows only these two deferred finding kinds across that boundary.
 
 Resolving a later region of the same owner walks its place and evaluates each
 index or bound without reading the whole collection through an earlier
@@ -850,10 +854,11 @@ argument cannot mutate the source of an earlier `ref` argument.
 Array-pattern `ref` bindings now use exact prefix-index and rest-region
 projections. A prefix element is statically disjoint from a later prefix element
 and from a rest beginning after it; the same proof remains attached through a
-call-local reborrow. Data-dependent rest/slice relationships remain incomplete
-for BORROW-005. Intrinsic `for ref` is still error-free but incomplete because
-its runtime-selected element loan spans iterator control flow rather than one
-ordinary call.
+call-local reborrow. Data-dependent pattern/index and pattern/slice relationships
+use the same deferred runtime proof as call-local collection loans and ordinary
+accesses. Intrinsic `for ref` is still error-free but incomplete because its
+runtime-selected element loan spans iterator control flow rather than one
+ordinary call; BORROW-006 owns that suspension-capable boundary.
 
 ## Declaration ordering
 
@@ -1018,11 +1023,12 @@ rejection, immutable and partial destinations, mutated binding mutability, and
 execution through the public driver and VM.
 Call-local loan regressions cover shared temporaries, writable and replaceable
 place requirements, permission-preserving reborrow, ordered conflicts, nested
-calls, fixed-field disjunction, mutable closure captures, early exits, and the
-deliberately incomplete collection-projection boundary.
+calls, fixed-field disjunction, mutable closure captures, early exits, static
+collection disjunction, and deferred dynamic loan/read/write obligations.
 Pattern-region regressions cover sequential last use, branch-only use, match
 fallthrough, loop exits and backedges, ordered call arguments, nested region
-reborrows, later writes, and collection-pattern incompleteness.
+reborrows, later writes, static collection regions, and runtime-checked dynamic
+access against a live pattern region.
 Closure regressions cover distinct generated identities, inherited generic
 binders, exact and inferred outcomes, nested free-use propagation, mutable
 snapshot metadata, modes, variadics, borrowed-capture rejection, deferred

@@ -1643,14 +1643,14 @@ fn collect_operation_types(operation: &MirOperation, types: &mut BTreeSet<TypeId
             collect_operand_types(base, types);
             collect_operand_types(index, types);
         }
-        MirOperationKind::Slice {
-            base,
-            start,
-            end,
-            step,
-        } => {
+        MirOperationKind::Slice { base, bounds, .. } => {
             collect_operand_types(base, types);
-            for value in start.iter().chain(end).chain(step) {
+            for value in bounds
+                .start()
+                .into_iter()
+                .chain(bounds.end())
+                .chain(bounds.step())
+            {
                 collect_operand_types(value, types);
             }
         }
@@ -1687,6 +1687,7 @@ fn collect_operation_types(operation: &MirOperation, types: &mut BTreeSet<TypeId
 fn collect_terminator_types(terminator: &MirTerminator, types: &mut BTreeSet<TypeId>) {
     match terminator.kind() {
         MirTerminatorKind::Goto { .. }
+        | MirTerminatorKind::ValidateLoan { .. }
         | MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => {}
@@ -1834,14 +1835,14 @@ fn collect_operation_function_references(
             collect_operand_function_references(base, references);
             collect_operand_function_references(index, references);
         }
-        MirOperationKind::Slice {
-            base,
-            start,
-            end,
-            step,
-        } => {
+        MirOperationKind::Slice { base, bounds, .. } => {
             collect_operand_function_references(base, references);
-            for value in start.iter().chain(end).chain(step) {
+            for value in bounds
+                .start()
+                .into_iter()
+                .chain(bounds.end())
+                .chain(bounds.step())
+            {
                 collect_operand_function_references(value, references);
             }
         }
@@ -1880,7 +1881,8 @@ fn collect_terminator_function_references(
         | MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable
-        | MirTerminatorKind::IteratorNext { .. } => {}
+        | MirTerminatorKind::IteratorNext { .. }
+        | MirTerminatorKind::ValidateLoan { .. } => {}
         MirTerminatorKind::SwitchBool { condition, .. } => {
             collect_operand_function_references(condition, references);
         }
@@ -2640,6 +2642,7 @@ fn lower_terminator(
         MirTerminatorKind::ValidatePlaces {
             places,
             replacements,
+            against,
             for_write,
             target,
             unwind,
@@ -2657,7 +2660,30 @@ fn lower_terminator(
                         .transpose()
                 })
                 .collect::<Result<_, BytecodeError>>()?,
+            against: against
+                .iter()
+                .map(|loans| {
+                    loans
+                        .iter()
+                        .map(|loan| bc::BytecodeLoanId::new(loan.index()))
+                        .collect()
+                })
+                .collect(),
             for_write: *for_write,
+            target: block_id(*target),
+            unwind: block_id(*unwind),
+        },
+        MirTerminatorKind::ValidateLoan {
+            loan,
+            against,
+            target,
+            unwind,
+        } => bc::BytecodeTerminatorKind::ValidateLoan {
+            loan: bc::BytecodeLoanId::new(loan.index()),
+            against: against
+                .iter()
+                .map(|loan| bc::BytecodeLoanId::new(loan.index()))
+                .collect(),
             target: block_id(*target),
             unwind: block_id(*unwind),
         },
@@ -3026,21 +3052,31 @@ fn lower_operation(
             base,
             index,
             access,
+            against,
         } => bc::BytecodeOperationKind::Index {
             base: operand(base)?,
             index: operand(index)?,
             access: index_access(*access),
+            against: against
+                .iter()
+                .map(|loan| bc::BytecodeLoanId::new(loan.index()))
+                .collect(),
         },
         MirOperationKind::Slice {
             base,
-            start,
-            end,
-            step,
+            bounds,
+            against,
         } => bc::BytecodeOperationKind::Slice {
             base: operand(base)?,
-            start: start.as_ref().map(operand).transpose()?,
-            end: end.as_ref().map(operand).transpose()?,
-            step: step.as_ref().map(operand).transpose()?,
+            bounds: Box::new(bc::BytecodeSliceBounds {
+                start: bounds.start().map(operand).transpose()?,
+                end: bounds.end().map(operand).transpose()?,
+                step: bounds.step().map(operand).transpose()?,
+            }),
+            against: against
+                .iter()
+                .map(|loan| bc::BytecodeLoanId::new(loan.index()))
+                .collect(),
         },
         MirOperationKind::Call {
             callee,
@@ -5347,7 +5383,370 @@ mod tests {
         };
         *start = None;
         let error = bc::verify_bytecode(&forged).unwrap_err();
-        assert!(error.message().contains("overlaps active loan"), "{error}");
+        assert!(error.message().contains("runtime proof lists"), "{error}");
+    }
+
+    #[test]
+    fn runtime_collection_overlap_proofs_cover_loans_reads_writes_slices_and_maps() {
+        let source = "fn updateInts(left: mut Int, right: mut Int) {\n\
+                          left += 10\n\
+                          right *= 2\n\
+                      }\n\
+                      fn updateSlices(left: mut Array[Int], right: mut Array[Int]) {\n\
+                          left += 10\n\
+                          right *= 2\n\
+                      }\n\
+                      fn updateMixed(left: mut Int, right: mut Array[Int]) {}\n\
+                      fn addObserved(value: mut Int, observed: Int) {\n\
+                          value += observed\n\
+                      }\n\
+                      fn hold(value: mut Int, token: Int) {}\n\
+                      fn neverRun(left: mut Int, right: mut Int) {\n\
+                          panic(\"callee must not run\")\n\
+                      }\n\
+                      fn indexDisjoint(): Array[Int] {\n\
+                          var values = [1, 2]\n\
+                          let left = 0\n\
+                          let right = 1\n\
+                          updateInts(mut values[left], mut values[right])\n\
+                          values\n\
+                      }\n\
+                      fn indexOverlap() {\n\
+                          var values = [1, 2]\n\
+                          let left = 0\n\
+                          let right = 0\n\
+                          updateInts(mut values[left], mut values[right])\n\
+                      }\n\
+                      fn negativeIndexDisjoint(): Array[Int] {\n\
+                          var values = [1, 2]\n\
+                          let left = -1\n\
+                          let right = 0\n\
+                          updateInts(mut values[left], mut values[right])\n\
+                          values\n\
+                      }\n\
+                      fn negativeIndexOverlap() {\n\
+                          var values = [1, 2]\n\
+                          let left = -1\n\
+                          let right = 1\n\
+                          updateInts(mut values[left], mut values[right])\n\
+                      }\n\
+                      fn overlapBeforeCallee() {\n\
+                          var values = [1, 2]\n\
+                          let index = 0\n\
+                          neverRun(mut values[index], mut values[index])\n\
+                      }\n\
+                      fn laterBoundsFailure() {\n\
+                          var values = [1, 2]\n\
+                          let left = 0\n\
+                          let right = 9\n\
+                          updateInts(mut values[left], mut values[right])\n\
+                      }\n\
+                      fn laterZeroStepFailure() {\n\
+                          var values = [1, 2]\n\
+                          let index = 0\n\
+                          let step = 0\n\
+                          updateMixed(mut values[index], mut values[::step])\n\
+                      }\n\
+                      fn sliceDisjoint(): Array[Int] {\n\
+                          var values = [1, 2, 3, 4]\n\
+                          let leftEnd = 2\n\
+                          let rightStart = 2\n\
+                          updateSlices(mut values[:leftEnd], mut values[rightStart:])\n\
+                          values\n\
+                      }\n\
+                      fn sliceOverlap() {\n\
+                          var values = [1, 2, 3, 4]\n\
+                          let leftEnd = 3\n\
+                          let rightStart = 2\n\
+                          updateSlices(mut values[:leftEnd], mut values[rightStart:])\n\
+                      }\n\
+                      fn negativeStrideDisjoint(): Array[Int] {\n\
+                          var values = [1, 2, 3, 4]\n\
+                          let reverseStep = -2\n\
+                          updateSlices(mut values[::reverseStep], mut values[0:3:2])\n\
+                          values\n\
+                      }\n\
+                      fn negativeStrideOverlap() {\n\
+                          var values = [1, 2, 3, 4]\n\
+                          let reverseStep = -2\n\
+                          updateSlices(mut values[::reverseStep], mut values[1::2])\n\
+                      }\n\
+                      fn readDisjoint(): Array[Int] {\n\
+                          var values = [1, 2]\n\
+                          let left = 0\n\
+                          let right = 1\n\
+                          addObserved(mut values[left], values[right])\n\
+                          values\n\
+                      }\n\
+                      fn readOverlap() {\n\
+                          var values = [1, 2]\n\
+                          let left = 0\n\
+                          let right = 0\n\
+                          addObserved(mut values[left], values[right])\n\
+                      }\n\
+                      fn writeDisjoint(): Array[Int] {\n\
+                          var values = [1, 2]\n\
+                          let left = 0\n\
+                          let right = 1\n\
+                          hold(mut values[left], {\n\
+                              values[right] = 9\n\
+                              0\n\
+                          })\n\
+                          values\n\
+                      }\n\
+                      fn writeOverlap() {\n\
+                          var values = [1, 2]\n\
+                          let left = 0\n\
+                          let right = 0\n\
+                          hold(mut values[left], {\n\
+                              values[right] = 9\n\
+                              0\n\
+                          })\n\
+                      }\n\
+                      fn mapDisjoint(): Int? {\n\
+                          var values = [\"left\": 1, \"right\": 2]\n\
+                          let left = \"left\"\n\
+                          let right = \"right\"\n\
+                          (values[left], values[right]) = (11, 4)\n\
+                          values[\"left\"]\n\
+                      }\n\
+                      fn mapOverlap() {\n\
+                          var values = [\"left\": 1, \"right\": 2]\n\
+                          let left = \"left\"\n\
+                          let right = \"left\"\n\
+                          (values[left], values[right]) = (11, 4)\n\
+                      }\n\
+                      fn mapInsert(): Int? {\n\
+                          var values = [\"left\": 1]\n\
+                          let left = \"left\"\n\
+                          let right = \"missing\"\n\
+                          (values[left], values[right]) = (11, 4)\n\
+                          values[\"missing\"]\n\
+                      }\n";
+
+        assert_eq!(
+            execute_function(source, "indexDisjoint"),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(11), RuntimeValue::Integer(4)])
+        );
+        assert_eq!(
+            execute_function(source, "sliceDisjoint"),
+            RuntimeValue::Array(vec![
+                RuntimeValue::Integer(11),
+                RuntimeValue::Integer(12),
+                RuntimeValue::Integer(6),
+                RuntimeValue::Integer(8),
+            ])
+        );
+        assert_eq!(
+            execute_function(source, "negativeIndexDisjoint"),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(2), RuntimeValue::Integer(12)])
+        );
+        assert_eq!(
+            execute_function(source, "negativeStrideDisjoint"),
+            RuntimeValue::Array(vec![
+                RuntimeValue::Integer(2),
+                RuntimeValue::Integer(12),
+                RuntimeValue::Integer(6),
+                RuntimeValue::Integer(14),
+            ])
+        );
+        assert_eq!(
+            execute_function(source, "readDisjoint"),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(3), RuntimeValue::Integer(2)])
+        );
+        assert_eq!(
+            execute_function(source, "writeDisjoint"),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(1), RuntimeValue::Integer(9)])
+        );
+        assert_eq!(
+            execute_function(source, "mapDisjoint"),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(11)))
+        );
+        assert_eq!(
+            execute_function(source, "mapInsert"),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(4)))
+        );
+
+        for name in [
+            "indexOverlap",
+            "negativeIndexOverlap",
+            "sliceOverlap",
+            "negativeStrideOverlap",
+            "readOverlap",
+            "writeOverlap",
+            "mapOverlap",
+            "overlapBeforeCallee",
+        ] {
+            let VmOutcome::Panicked(panic) = execute_outcome(source, name) else {
+                panic!("{name} should reject its runtime overlap")
+            };
+            assert_eq!(panic.code, PanicCode::OverlappingBorrow, "{name}");
+        }
+        let VmOutcome::Panicked(panic) = execute_outcome(source, "laterBoundsFailure") else {
+            panic!("laterBoundsFailure should preserve its bounds failure")
+        };
+        assert_eq!(panic.code, PanicCode::Bounds);
+        let VmOutcome::Panicked(panic) = execute_outcome(source, "laterZeroStepFailure") else {
+            panic!("laterZeroStepFailure should preserve its zero-step failure")
+        };
+        assert_eq!(panic.code, PanicCode::ZeroSliceStep);
+    }
+
+    #[test]
+    fn runtime_pattern_regions_use_dynamic_access_proofs() {
+        let source = "fn keep(values: ref Array[Int]) {}\n\
+                      fn disjoint(): Array[Int] {\n\
+                          var values = [1, 2, 3]\n\
+                          let index = 0\n\
+                          match values {\n\
+                              [] => ()\n\
+                              [_, ..ref tail] => {\n\
+                                  values[index] = 9\n\
+                                  keep(ref tail)\n\
+                              }\n\
+                          }\n\
+                          values\n\
+                      }\n\
+                      fn overlap() {\n\
+                          var values = [1, 2, 3]\n\
+                          let index = 1\n\
+                          match values {\n\
+                              [] => ()\n\
+                              [_, ..ref tail] => {\n\
+                                  values[index] = 9\n\
+                                  keep(ref tail)\n\
+                              }\n\
+                          }\n\
+                      }\n";
+        assert_eq!(
+            execute_function(source, "disjoint"),
+            RuntimeValue::Array(vec![
+                RuntimeValue::Integer(9),
+                RuntimeValue::Integer(2),
+                RuntimeValue::Integer(3),
+            ])
+        );
+        let VmOutcome::Panicked(panic) = execute_outcome(source, "overlap") else {
+            panic!("the dynamic index should overlap the live pattern-rest region")
+        };
+        assert_eq!(panic.code, PanicCode::OverlappingBorrow);
+    }
+
+    #[test]
+    fn bytecode_verifier_rederives_every_dynamic_collection_proof() {
+        let source = "fn update(left: mut Int, right: mut Int) {}\n\
+                      fn hold(value: mut Int, token: Int) {}\n\
+                      fn execute() {\n\
+                          var values = [1, 2]\n\
+                          let left = 0\n\
+                          let right = 1\n\
+                          update(mut values[left], mut values[right])\n\
+                          hold(mut values[left], values[right])\n\
+                          hold(mut values[left], {\n\
+                              values[right] = 9\n\
+                              0\n\
+                          })\n\
+                      }\n";
+        let program = lowered(source);
+        bc::verify_bytecode(&program).unwrap();
+        let disassembly = bc::disassemble(&program);
+        assert!(
+            disassembly
+                .lines()
+                .any(|line| line.contains("validate_loan") && !line.contains("against []"))
+        );
+        assert!(
+            disassembly
+                .lines()
+                .any(|line| line.contains("validate_places") && !line.contains("against [[]]"))
+        );
+
+        let mut missing_loan_proof = program.clone();
+        let against = missing_loan_proof
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::ValidateLoan { against, .. } if !against.is_empty() => {
+                    Some(against)
+                }
+                _ => None,
+            })
+            .expect("the second dynamic loan has one runtime conflict proof");
+        against.clear();
+        let error = bc::verify_bytecode(&missing_loan_proof).unwrap_err();
+        assert!(error.message().contains("runtime proof lists"), "{error}");
+
+        let mut missing_read_proof = program.clone();
+        let against = missing_read_proof
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Index { against, .. },
+                            ..
+                        },
+                    ..
+                } if !against.is_empty() => Some(against),
+                _ => None,
+            })
+            .expect("the later indexed read has one runtime conflict proof");
+        against.clear();
+        let error = bc::verify_bytecode(&missing_read_proof).unwrap_err();
+        assert!(
+            error.message().contains("indexed operation runtime proof"),
+            "{error}"
+        );
+
+        let mut missing_write_proof = program.clone();
+        let against = missing_write_proof
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::ValidatePlaces { against, .. }
+                    if against.iter().any(|loans| !loans.is_empty()) =>
+                {
+                    Some(against)
+                }
+                _ => None,
+            })
+            .expect("the later indexed write has one runtime conflict proof");
+        against.iter_mut().for_each(Vec::clear);
+        let error = bc::verify_bytecode(&missing_write_proof).unwrap_err();
+        assert!(
+            error.message().contains("place validation runtime proof"),
+            "{error}"
+        );
+
+        let mut detached_validation = program;
+        let function = function_id(&detached_validation, "execute");
+        let target = detached_validation.functions[function.index() as usize]
+            .blocks
+            .iter()
+            .find_map(|block| match &block.terminator.kind {
+                bc::BytecodeTerminatorKind::ValidateLoan { target, .. } => Some(*target),
+                _ => None,
+            })
+            .expect("dynamic loan has an explicit validation target");
+        let first = detached_validation.functions[function.index() as usize].blocks
+            [target.index() as usize]
+            .instructions
+            .remove(0);
+        assert!(matches!(
+            first.kind,
+            bc::BytecodeInstructionKind::ReserveLoan(_)
+        ));
+        let error = bc::verify_bytecode(&detached_validation).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("terminator edge or block kind is invalid"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -7,7 +7,8 @@ transfers, OWN-003 flow availability, OWN-004 complete `var` reinitialization,
 OWN-005 typed move paths and uniform match ownership modes, OWN-006 contextual
 Copy/Move closure captures, OWN-007 all-exit terminal capture obligations, and
 BORROW-001 call-local loans plus BORROW-002 inferred pattern regions with
-explicit reservation/release and verification
+explicit reservation/release, BORROW-003 permission-preserving reborrows,
+BORROW-004 static collection disjunction, and BORROW-005 runtime overlap proofs
 implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
@@ -229,8 +230,11 @@ cleanup blocks therefore contain no loan manipulation. BORROW-004 admits index,
 slice, array-pattern element, and array-pattern rest loan projections. MIR
 recovers non-negative constants from single-definition temporary locals and
 rederives the same static region relation used by HIR. Statically disjoint paths
-may coexist; dynamic or potentially overlapping incompatible paths are rejected
-at this complete-IR boundary until BORROW-005 has inserted their runtime proof.
+may coexist without an overlap check; inevitable overlap remains invalid.
+BORROW-005 runs a post-liveness dataflow pass over the exact active-loan set and
+attaches canonical `against` loan IDs only to relations whose answer remains
+runtime-dependent. It does this for a new `ValidateLoan` terminator, indexed and
+sliced `Invoke` operations, and each place carried by `ValidatePlaces`.
 A loan operand has no valid use outside its consuming call and cannot reach a
 branch condition, rvalue, aggregate, host boundary, return, or storage.
 
@@ -245,7 +249,9 @@ operation.
 Checked operations use `Invoke`; indexed and sliced reads therefore cannot
 bypass their bounds/unwind edge. Assignment first resolves all destination
 places, then materializes its complete RHS, then validates overlap, bounds, and
-slice replacement lengths before performing any write. Compound assignment
+slice replacement lengths before performing any write. Each validated place
+carries an aligned `against` list for active runtime-dependent conflicts.
+Compound assignment
 uses an access validation before reading its previous value and validates the
 fully computed replacement again before storing it. Every write validation
 carries a borrowed replacement witness of the destination type. This is needed
@@ -255,12 +261,20 @@ Write validation of an unprojected destination does not read its previous
 value; every projected destination still reads an available root while
 resolving its path.
 
-Before reserving any index or slice loan, MIR emits a read-mode
-`ValidatePlaces` terminator with a normal successor and the current cleanup
-successor. It evaluates each already-materialized index/bound exactly once and
-turns bounds or zero-step failure into the ordinary language-panic path. An
-earlier argument reservation is cleared by unwind if a later validation fails,
-so no partial loan reaches the callee. Static callees remain callable operands
+Before reserving any index or slice loan, MIR emits `ValidateLoan` with a normal
+successor and the current cleanup successor. Its success block must immediately
+reserve that same loan. The terminator resolves every already-materialized
+index/bound exactly once for bounds and zero-step failure; its `against` list is
+empty for statically disjoint active loans and contains exactly the dynamic
+conflicts that require a runtime comparison. An earlier argument reservation is
+cleared by unwind if a later validation fails, so no partial loan reaches the
+callee. Indexed and sliced reads carry the same proof atomically in their
+`Invoke`, while `ValidatePlaces` hands a pending proof to the immediately
+following read or write. The verifier rederives every expected ID from CFG
+liveness and static-region facts, rejects missing or extra IDs, requires pending
+loan proofs to be consumed by the matching reservation, requires access proofs
+to be consumed before another terminator, and forbids changing materialized
+index/bound locals while either proof is pending. Static callees remain callable operands
 instead of being erased into ordinary
 temporaries, preserving the selected declaration, receiver mode, generic
 specialization, and variadic argument association. Source-trait calls retain
@@ -395,9 +409,8 @@ on their successful edge, and the return place must be initialized on every
 `Return`. Payload refinement is a separate forward analysis so initialization
 alone cannot authorize an invalid projection.
 
-Later M5 and M7 work extends that proof with collection loan regions, confirmed
-borrowed transfers, downstream terminal tokens, cleanup, and suspension
-invariants. Verification always precedes bytecode lowering.
+Later M7 work extends that proof with suspension invariants, terminal tokens,
+and their cleanup interaction. Verification always precedes bytecode lowering.
 
 ## Determinism and resource limits
 

@@ -1231,6 +1231,7 @@ impl Verifier<'_> {
                         }
                     }
                     LocalEvent::Read(_)
+                    | LocalEvent::Resolve(_)
                     | LocalEvent::WriteAccess(_)
                     | LocalEvent::StorageLive(_)
                     | LocalEvent::StorageDead(_) => {}
@@ -3121,21 +3122,23 @@ impl Verifier<'_> {
                 base,
                 index,
                 access,
+                against,
             } => {
                 self.verify_operand(function, base, context)?;
                 self.verify_operand(function, index, context)?;
                 if self.index_result(base.ty, index.ty, *access, context)? != operation.ty {
                     return Err(operation_error(context));
                 }
+                self.verify_runtime_conflict_ids(function, against, context)?;
+                let _ = operation_access_place(operation, context)?;
             }
             BytecodeOperationKind::Slice {
                 base,
-                start,
-                end,
-                step,
+                bounds,
+                against,
             } => {
                 self.verify_operand(function, base, context)?;
-                for bound in start.iter().chain(end).chain(step) {
+                for bound in bounds.start.iter().chain(&bounds.end).chain(&bounds.step) {
                     self.verify_operand(function, bound, context)?;
                     if !self.is_scalar(bound.ty, BytecodeScalarType::Int) {
                         return Err(operation_error(context));
@@ -3148,6 +3151,8 @@ impl Verifier<'_> {
                 {
                     return Err(operation_error(context));
                 }
+                self.verify_runtime_conflict_ids(function, against, context)?;
+                let _ = operation_access_place(operation, context)?;
             }
             BytecodeOperationKind::Call {
                 callee,
@@ -3554,6 +3559,7 @@ impl Verifier<'_> {
             BytecodeTerminatorKind::ValidatePlaces {
                 places,
                 replacements,
+                against,
                 for_write,
                 target,
                 unwind,
@@ -3561,16 +3567,26 @@ impl Verifier<'_> {
                 if block.kind != BytecodeBlockKind::Normal
                     || places.is_empty()
                     || places.len() != replacements.len()
+                    || places.len() != against.len()
                 {
                     return Err(terminator_error(context));
                 }
                 let mut unique = Vec::new();
-                for (place, replacement) in places.iter().zip(replacements) {
+                for ((place, replacement), against) in places.iter().zip(replacements).zip(against)
+                {
                     self.verify_place(function, place, context)?;
                     if unique.contains(place) {
                         return Err(terminator_error(context));
                     }
                     unique.push(place.clone());
+                    let mut previous = None;
+                    for loan in against {
+                        self.loan(function, *loan, context)?;
+                        if previous.is_some_and(|previous| previous >= *loan) {
+                            return Err(terminator_error(context));
+                        }
+                        previous = Some(*loan);
+                    }
                     match (*for_write, replacement) {
                         (false, None) => {}
                         (true, Some(replacement)) => {
@@ -3585,6 +3601,39 @@ impl Verifier<'_> {
                     }
                 }
                 self.normal_target(function, *target, context)?;
+                self.cleanup_target(function, *unwind, context)?;
+            }
+            BytecodeTerminatorKind::ValidateLoan {
+                loan,
+                against,
+                target,
+                unwind,
+            } => {
+                if block.kind != BytecodeBlockKind::Normal {
+                    return Err(terminator_error(context));
+                }
+                let metadata = self.loan(function, *loan, context)?;
+                if !place_requires_loan_validation(&metadata.place) {
+                    return Err(terminator_error(context));
+                }
+                let mut previous = None;
+                for candidate in against {
+                    self.loan(function, *candidate, context)?;
+                    if candidate == loan || previous.is_some_and(|previous| previous >= *candidate)
+                    {
+                        return Err(terminator_error(context));
+                    }
+                    previous = Some(*candidate);
+                }
+                let target_block = self.block(function, *target, context)?;
+                if target_block.kind != BytecodeBlockKind::Normal
+                    || !matches!(
+                        target_block.instructions.first().map(|instruction| &instruction.kind),
+                        Some(BytecodeInstructionKind::ReserveLoan(candidate)) if candidate == loan
+                    )
+                {
+                    return Err(terminator_error(context));
+                }
                 self.cleanup_target(function, *unwind, context)?;
             }
             BytecodeTerminatorKind::Return => {
@@ -3729,6 +3778,7 @@ impl Verifier<'_> {
             .filter_map(|event| match event {
                 LocalEvent::StorageLive(slot) | LocalEvent::StorageDead(slot) => Some(*slot),
                 LocalEvent::Read(_)
+                | LocalEvent::Resolve(_)
                 | LocalEvent::Move(_)
                 | LocalEvent::Write(_)
                 | LocalEvent::WriteAccess(_) => None,
@@ -3739,6 +3789,7 @@ impl Verifier<'_> {
             .flatten()
             .map(|event| match event {
                 LocalEvent::Read(access)
+                | LocalEvent::Resolve(access)
                 | LocalEvent::Move(access)
                 | LocalEvent::Write(access)
                 | LocalEvent::WriteAccess(access) => access.slot,
@@ -3783,6 +3834,7 @@ impl Verifier<'_> {
             .collect::<Vec<_>>();
         let static_integers = static_integer_slots(self.program, function);
         let mut reservations = vec![0_u32; function.loans.len()];
+        let mut validations = vec![0_u32; function.loans.len()];
         let mut consumptions = vec![0_u32; function.loans.len()];
         for block_events in &events {
             for event in block_events {
@@ -3810,25 +3862,37 @@ impl Verifier<'_> {
                 }
             }
         }
+        for block in &function.blocks {
+            if let BytecodeTerminatorKind::ValidateLoan { loan, .. } = &block.terminator.kind {
+                let count = validations.get_mut(loan.index() as usize).ok_or_else(|| {
+                    BytecodeVerificationError::new(context, "validates an unknown loan")
+                })?;
+                *count = count.saturating_add(1);
+            }
+        }
         for index in 0..function.loans.len() {
             let loan = &function.loans[index];
             let valid_consumptions = match loan.kind {
                 BytecodeLoanKind::CallLocal => consumptions[index] <= 1,
                 BytecodeLoanKind::Region => consumptions[index] == 0,
             };
-            if reservations[index] != 1 || !valid_consumptions {
+            let expected_validations = u32::from(place_requires_loan_validation(&loan.place));
+            if reservations[index] != 1
+                || validations[index] != expected_validations
+                || !valid_consumptions
+            {
                 return Err(BytecodeVerificationError::new(
                     format!("{context} loan#{index}"),
                     format!(
-                        "has {} reservations and {} call consumptions, which violates its {:?} contract",
-                        reservations[index], consumptions[index], loan.kind
+                        "has {} validations, {} reservations, and {} call consumptions, which violates its {:?} contract",
+                        validations[index], reservations[index], consumptions[index], loan.kind
                     ),
                 ));
             }
         }
 
-        let mut incoming = vec![None::<BTreeSet<BytecodeLoanId>>; function.blocks.len()];
-        incoming[function.entry.index() as usize] = Some(BTreeSet::new());
+        let mut incoming = vec![None::<LoanFlowState>; function.blocks.len()];
+        incoming[function.entry.index() as usize] = Some(LoanFlowState::default());
         let mut queue = VecDeque::from([function.entry]);
         let mut queued = vec![false; function.blocks.len()];
         queued[function.entry.index() as usize] = true;
@@ -3850,7 +3914,7 @@ impl Verifier<'_> {
             }
             let block = &function.blocks[block_id.index() as usize];
             let mut propagate = |target: BytecodeBlockId,
-                                 edge_state: BTreeSet<BytecodeLoanId>|
+                                 edge_state: LoanFlowState|
              -> Result<(), BytecodeVerificationError> {
                 let target_index = target.index() as usize;
                 if !reachable[target_index] {
@@ -3874,6 +3938,12 @@ impl Verifier<'_> {
                 }
                 Ok(())
             };
+            if !state.accesses.is_empty() {
+                return Err(BytecodeVerificationError::new(
+                    &block_context,
+                    "runtime place proof is not consumed by the immediate access",
+                ));
+            }
             match &block.terminator.kind {
                 BytecodeTerminatorKind::Goto { target } => propagate(*target, state)?,
                 BytecodeTerminatorKind::BranchBool {
@@ -3891,25 +3961,45 @@ impl Verifier<'_> {
                     propagate(*otherwise, state)?;
                 }
                 BytecodeTerminatorKind::Invoke {
+                    operation,
                     destination,
                     target,
                     unwind,
                     ..
                 } => {
+                    if let Some((place, against)) =
+                        operation_access_place(operation, &block_context)?
+                    {
+                        let expected = self.runtime_place_conflicts(
+                            function,
+                            &static_integers,
+                            &state.active,
+                            &place,
+                            false,
+                            &block_context,
+                        )?;
+                        if against != expected {
+                            return Err(BytecodeVerificationError::new(
+                                &block_context,
+                                "indexed operation runtime proof differs from active dynamic conflicts",
+                            ));
+                        }
+                    }
                     if let Some(target) = target {
                         let normal = state.clone();
                         if let Some(destination) = destination {
                             self.verify_loan_local_access(
                                 function,
                                 &static_integers,
-                                &normal,
+                                &normal.active,
                                 &LocalEvent::Write(LocalAccess::from_place(destination)),
+                                None,
                                 &block_context,
                             )?;
                         }
                         propagate(*target, normal)?;
                     }
-                    propagate(*unwind, BTreeSet::new())?;
+                    propagate(*unwind, LoanFlowState::default())?;
                 }
                 BytecodeTerminatorKind::IteratorNext {
                     destination,
@@ -3922,20 +4012,100 @@ impl Verifier<'_> {
                     self.verify_loan_local_access(
                         function,
                         &static_integers,
-                        &has_value_state,
+                        &has_value_state.active,
                         &LocalEvent::Write(LocalAccess::from_place(destination)),
+                        None,
                         &block_context,
                     )?;
                     propagate(*has_value, has_value_state)?;
                     propagate(*exhausted, state)?;
-                    propagate(*unwind, BTreeSet::new())?;
+                    propagate(*unwind, LoanFlowState::default())?;
                 }
-                BytecodeTerminatorKind::ValidatePlaces { target, unwind, .. } => {
+                BytecodeTerminatorKind::ValidatePlaces {
+                    places,
+                    against,
+                    for_write,
+                    target,
+                    unwind,
+                    ..
+                } => {
+                    let expected = places
+                        .iter()
+                        .map(|place| {
+                            self.runtime_place_conflicts(
+                                function,
+                                &static_integers,
+                                &state.active,
+                                place,
+                                *for_write,
+                                &block_context,
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if against != &expected {
+                        return Err(BytecodeVerificationError::new(
+                            &block_context,
+                            "place validation runtime proof differs from active dynamic conflicts",
+                        ));
+                    }
+                    for (place, loans) in places.iter().zip(expected) {
+                        if loans.is_empty() {
+                            continue;
+                        }
+                        let key = ValidatedAccess {
+                            access: LocalAccess::from_place(place),
+                            for_write: *for_write,
+                        };
+                        if state.accesses.insert(key, loans).is_some() {
+                            return Err(BytecodeVerificationError::new(
+                                &block_context,
+                                "place validation duplicates a pending runtime access proof",
+                            ));
+                        }
+                    }
                     propagate(*target, state)?;
-                    propagate(*unwind, BTreeSet::new())?;
+                    propagate(*unwind, LoanFlowState::default())?;
+                }
+                BytecodeTerminatorKind::ValidateLoan {
+                    loan,
+                    against,
+                    target,
+                    unwind,
+                } => {
+                    let expected = self.runtime_loan_conflicts(
+                        function,
+                        &static_integers,
+                        &state.active,
+                        *loan,
+                        &block_context,
+                    )?;
+                    if against != &expected {
+                        return Err(BytecodeVerificationError::new(
+                            &block_context,
+                            format!(
+                                "loan#{} runtime proof lists {:?}, expected {:?}",
+                                loan.index(),
+                                against.iter().map(|loan| loan.index()).collect::<Vec<_>>(),
+                                expected.iter().map(|loan| loan.index()).collect::<Vec<_>>()
+                            ),
+                        ));
+                    }
+                    if state.active.contains(loan)
+                        || state.validated.insert(*loan, expected).is_some()
+                    {
+                        return Err(BytecodeVerificationError::new(
+                            &block_context,
+                            format!("validates already-active or pending loan#{}", loan.index()),
+                        ));
+                    }
+                    propagate(*target, state)?;
+                    propagate(*unwind, LoanFlowState::default())?;
                 }
                 BytecodeTerminatorKind::Return => {
-                    if !state.is_empty() {
+                    if !state.active.is_empty()
+                        || !state.validated.is_empty()
+                        || !state.accesses.is_empty()
+                    {
                         return Err(BytecodeVerificationError::new(
                             block_context,
                             "return abandons active loans without explicit release",
@@ -3952,54 +4122,108 @@ impl Verifier<'_> {
         &self,
         function: &BytecodeFunction,
         static_integers: &BTreeMap<BytecodeSlotId, u64>,
-        state: &mut BTreeSet<BytecodeLoanId>,
+        state: &mut LoanFlowState,
         event: &LoanEvent,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
         match event {
             LoanEvent::Local(event) => {
-                self.verify_loan_local_access(function, static_integers, state, event, context)
+                self.verify_runtime_proof_inputs_stable(function, state, event, context)?;
+                let key = match event {
+                    LocalEvent::Read(access) => Some(ValidatedAccess {
+                        access: access.clone(),
+                        for_write: false,
+                    }),
+                    LocalEvent::Move(access) | LocalEvent::Write(access) => Some(ValidatedAccess {
+                        access: access.clone(),
+                        for_write: true,
+                    }),
+                    LocalEvent::Resolve(_)
+                    | LocalEvent::WriteAccess(_)
+                    | LocalEvent::StorageLive(_)
+                    | LocalEvent::StorageDead(_) => None,
+                };
+                let proof = key.as_ref().and_then(|key| state.accesses.remove(key));
+                self.verify_loan_local_access(
+                    function,
+                    static_integers,
+                    &state.active,
+                    event,
+                    proof.as_deref(),
+                    context,
+                )
             }
             LoanEvent::Reserve(id) => {
+                if !state.accesses.is_empty() {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "reserves a loan while a runtime access proof is pending",
+                    ));
+                }
                 let loan = self.loan(function, *id, context)?;
                 self.verify_reborrow_mode(function, loan, context)?;
-                let access = LocalAccess::from_place(&loan.place);
-                if state.contains(id) {
+                if state.active.contains(id) {
                     return Err(BytecodeVerificationError::new(
                         context,
                         format!("reserves already-active loan#{}", id.index()),
                     ));
                 }
-                for active in state.iter().copied() {
+                let proof = state.validated.remove(id);
+                if place_requires_loan_validation(&loan.place) != proof.is_some() {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        format!(
+                            "loan#{} reservation disagrees with its required validation",
+                            id.index()
+                        ),
+                    ));
+                }
+                for active in state.active.iter().copied() {
+                    self.consume_dataflow_step(context)?;
                     let existing = self.loan(function, active, context)?;
-                    let existing_access = LocalAccess::from_place(&existing.place);
-                    if access.slot == existing_access.slot
-                        && loan_paths_overlap(&access.path, &existing_access.path, static_integers)
-                        && !(loan.mode == BytecodeParameterMode::Ref
-                            && existing.mode == BytecodeParameterMode::Ref)
+                    if loan.mode == BytecodeParameterMode::Ref
+                        && existing.mode == BytecodeParameterMode::Ref
                     {
-                        return Err(BytecodeVerificationError::new(
-                            context,
-                            format!(
-                                "loan#{} overlaps incompatible active loan#{}",
-                                id.index(),
-                                active.index()
-                            ),
-                        ));
+                        continue;
+                    }
+                    let relation =
+                        loan_place_relation(&loan.place, &existing.place, static_integers);
+                    match relation {
+                        StaticRegionRelation::Disjoint => {}
+                        StaticRegionRelation::Runtime
+                            if proof
+                                .as_ref()
+                                .is_some_and(|against| against.contains(&active)) => {}
+                        StaticRegionRelation::Runtime | StaticRegionRelation::Overlap => {
+                            return Err(BytecodeVerificationError::new(
+                                context,
+                                format!(
+                                    "loan#{} lacks a valid proof against incompatible active loan#{}",
+                                    id.index(),
+                                    active.index()
+                                ),
+                            ));
+                        }
                     }
                 }
-                state.insert(*id);
+                state.active.insert(*id);
                 Ok(())
             }
             LoanEvent::Release(loan) => {
-                if !state.contains(loan) {
+                if !state.validated.is_empty() || !state.accesses.is_empty() {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "releases a loan while another reservation proof is pending",
+                    ));
+                }
+                if !state.active.contains(loan) {
                     return Err(BytecodeVerificationError::new(
                         context,
                         format!("releases inactive loan#{}", loan.index()),
                     ));
                 }
                 if let Some(dependent) =
-                    self.active_dependent_loan(function, state, *loan, context)?
+                    self.active_dependent_loan(function, &state.active, *loan, context)?
                 {
                     return Err(BytecodeVerificationError::new(
                         context,
@@ -4010,10 +4234,16 @@ impl Verifier<'_> {
                         ),
                     ));
                 }
-                state.remove(loan);
+                state.active.remove(loan);
                 Ok(())
             }
             LoanEvent::Consume(loans) => {
+                if !state.validated.is_empty() || !state.accesses.is_empty() {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "consumes loans while a runtime proof is pending",
+                    ));
+                }
                 let mut seen = BTreeSet::new();
                 for loan in loans {
                     let metadata = self.loan(function, *loan, context)?;
@@ -4025,12 +4255,12 @@ impl Verifier<'_> {
                     }
                     self.verify_source_loan_access(
                         function,
-                        state,
+                        &state.active,
                         &LocalAccess::from_place(&metadata.place),
                         "read",
                         context,
                     )?;
-                    if !seen.insert(*loan) || !state.remove(loan) {
+                    if !seen.insert(*loan) || !state.active.remove(loan) {
                         return Err(BytecodeVerificationError::new(
                             context,
                             format!("consumes inactive loan#{}", loan.index()),
@@ -4040,6 +4270,130 @@ impl Verifier<'_> {
                 Ok(())
             }
         }
+    }
+
+    fn verify_runtime_proof_inputs_stable(
+        &self,
+        function: &BytecodeFunction,
+        state: &LoanFlowState,
+        event: &LocalEvent,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let changed = match event {
+            LocalEvent::Move(access)
+            | LocalEvent::Write(access)
+            | LocalEvent::WriteAccess(access) => Some(access.slot),
+            LocalEvent::StorageLive(slot) | LocalEvent::StorageDead(slot) => Some(*slot),
+            LocalEvent::Read(_) | LocalEvent::Resolve(_) => None,
+        };
+        let Some(changed) = changed else {
+            return Ok(());
+        };
+        let access_input_changed = state.accesses.keys().any(|validated| {
+            move_path_runtime_inputs(&validated.access.path).any(|slot| slot == changed)
+        });
+        let loan_input_changed =
+            state
+                .validated
+                .keys()
+                .try_fold(false, |changed_input, loan| {
+                    if changed_input {
+                        return Ok(true);
+                    }
+                    let loan = self.loan(function, *loan, context)?;
+                    Ok(
+                        move_path_runtime_inputs(&LocalAccess::from_place(&loan.place).path)
+                            .any(|slot| slot == changed),
+                    )
+                })?;
+        if access_input_changed || loan_input_changed {
+            return Err(BytecodeVerificationError::new(
+                context,
+                format!(
+                    "changes slot#{} while it is an input to a pending runtime-overlap proof",
+                    changed.index()
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn runtime_loan_conflicts(
+        &self,
+        function: &BytecodeFunction,
+        static_integers: &BTreeMap<BytecodeSlotId, u64>,
+        active: &BTreeSet<BytecodeLoanId>,
+        candidate: BytecodeLoanId,
+        context: &str,
+    ) -> Result<Vec<BytecodeLoanId>, BytecodeVerificationError> {
+        let loan = self.loan(function, candidate, context)?;
+        if !place_requires_loan_validation(&loan.place) {
+            return Err(BytecodeVerificationError::new(
+                context,
+                format!(
+                    "loan#{} has no runtime-resolvable collection projection",
+                    candidate.index()
+                ),
+            ));
+        }
+        let mut against = Vec::new();
+        for active in active.iter().copied() {
+            self.consume_dataflow_step(context)?;
+            let existing = self.loan(function, active, context)?;
+            if loan.mode == BytecodeParameterMode::Ref
+                && existing.mode == BytecodeParameterMode::Ref
+            {
+                continue;
+            }
+            match loan_place_relation(&loan.place, &existing.place, static_integers) {
+                StaticRegionRelation::Disjoint => {}
+                StaticRegionRelation::Runtime => against.push(active),
+                StaticRegionRelation::Overlap => {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        format!(
+                            "loan#{} statically overlaps incompatible active loan#{}",
+                            candidate.index(),
+                            active.index()
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(against)
+    }
+
+    fn runtime_place_conflicts(
+        &self,
+        function: &BytecodeFunction,
+        static_integers: &BTreeMap<BytecodeSlotId, u64>,
+        active: &BTreeSet<BytecodeLoanId>,
+        place: &BytecodePlace,
+        for_write: bool,
+        context: &str,
+    ) -> Result<Vec<BytecodeLoanId>, BytecodeVerificationError> {
+        let mut against = Vec::new();
+        for active in active.iter().copied() {
+            self.consume_dataflow_step(context)?;
+            let existing = self.loan(function, active, context)?;
+            if !for_write && existing.mode == BytecodeParameterMode::Ref {
+                continue;
+            }
+            match loan_place_relation(place, &existing.place, static_integers) {
+                StaticRegionRelation::Disjoint => {}
+                StaticRegionRelation::Runtime => against.push(active),
+                StaticRegionRelation::Overlap => {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        format!(
+                            "place validation statically overlaps active loan#{}",
+                            active.index()
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(against)
     }
 
     fn active_dependent_loan(
@@ -4078,10 +4432,15 @@ impl Verifier<'_> {
         static_integers: &BTreeMap<BytecodeSlotId, u64>,
         state: &BTreeSet<BytecodeLoanId>,
         event: &LocalEvent,
+        proof: Option<&[BytecodeLoanId]>,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
         let (access, access_kind) = match event {
             LocalEvent::Read(access) => (Some(access), "read"),
+            LocalEvent::Resolve(access) => {
+                self.verify_source_loan_access(function, state, access, "read", context)?;
+                return Ok(());
+            }
             LocalEvent::Move(access) => (Some(access), "move"),
             LocalEvent::Write(access) | LocalEvent::WriteAccess(access) => (Some(access), "write"),
             LocalEvent::StorageLive(slot) | LocalEvent::StorageDead(slot) => {
@@ -4094,8 +4453,11 @@ impl Verifier<'_> {
                     function,
                     static_integers,
                     state,
-                    &access,
-                    "storage change",
+                    ClassifiedLocalAccess {
+                        access: &access,
+                        kind: "storage change",
+                    },
+                    None,
                     context,
                 );
             }
@@ -4120,8 +4482,11 @@ impl Verifier<'_> {
             function,
             static_integers,
             state,
-            access,
-            access_kind,
+            ClassifiedLocalAccess {
+                access,
+                kind: access_kind,
+            },
+            proof,
             context,
         )
     }
@@ -4176,25 +4541,34 @@ impl Verifier<'_> {
         function: &BytecodeFunction,
         static_integers: &BTreeMap<BytecodeSlotId, u64>,
         state: &BTreeSet<BytecodeLoanId>,
-        access: &LocalAccess,
-        access_kind: &str,
+        access: ClassifiedLocalAccess<'_>,
+        proof: Option<&[BytecodeLoanId]>,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
+        let ClassifiedLocalAccess { access, kind } = access;
         for active in state.iter().copied() {
+            self.consume_dataflow_step(context)?;
             let loan = self.loan(function, active, context)?;
             let loan_access = LocalAccess::from_place(&loan.place);
-            if access.slot == loan_access.slot
-                && loan_paths_overlap(&access.path, &loan_access.path, static_integers)
-                && !(access_kind == "read" && loan.mode == BytecodeParameterMode::Ref)
+            if access.slot != loan_access.slot
+                || kind == "read" && loan.mode == BytecodeParameterMode::Ref
             {
-                return Err(BytecodeVerificationError::new(
-                    context,
-                    format!(
-                        "{access_kind} overlaps active loan#{} ({:?})",
-                        active.index(),
-                        loan.mode
-                    ),
-                ));
+                continue;
+            }
+            match loan_paths_relation(&access.path, &loan_access.path, static_integers) {
+                StaticRegionRelation::Disjoint => {}
+                StaticRegionRelation::Runtime
+                    if proof.is_some_and(|proof| proof.contains(&active)) => {}
+                StaticRegionRelation::Runtime | StaticRegionRelation::Overlap => {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        format!(
+                            "{kind} overlaps active loan#{} ({:?})",
+                            active.index(),
+                            loan.mode
+                        ),
+                    ));
+                }
             }
         }
         Ok(())
@@ -4508,7 +4882,9 @@ impl Verifier<'_> {
             let mut state = incoming[block_index].clone();
             for event in block_events {
                 match event {
-                    LocalEvent::Read(access) if access.slot == slot => {
+                    LocalEvent::Read(access) | LocalEvent::Resolve(access)
+                        if access.slot == slot =>
+                    {
                         if !state.live || !path_is_available(&state.unavailable, &access.path) {
                             return Err(BytecodeVerificationError::new(
                                 format!("{context} block#{block_index}"),
@@ -4570,6 +4946,7 @@ impl Verifier<'_> {
                         state.unavailable.insert(Vec::new());
                     }
                     LocalEvent::Read(_)
+                    | LocalEvent::Resolve(_)
                     | LocalEvent::Move(_)
                     | LocalEvent::Write(_)
                     | LocalEvent::WriteAccess(_)
@@ -4637,6 +5014,26 @@ impl Verifier<'_> {
                 format!("references unknown loan#{}", id.index()),
             )
         })
+    }
+
+    fn verify_runtime_conflict_ids(
+        &self,
+        function: &BytecodeFunction,
+        loans: &[BytecodeLoanId],
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let mut previous = None;
+        for loan in loans {
+            self.loan(function, *loan, context)?;
+            if previous.is_some_and(|previous| previous >= *loan) {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "runtime conflict IDs are not unique and canonical",
+                ));
+            }
+            previous = Some(*loan);
+        }
+        Ok(())
     }
 
     fn block<'a>(
@@ -5045,12 +5442,15 @@ fn operation_contains_invalid_borrow(operation: &BytecodeOperation) -> bool {
             .iter()
             .any(|(key, value)| escapes(key) || escapes(value)),
         BytecodeOperationKind::Index { base, index, .. } => operand_is_loan(base) || escapes(index),
-        BytecodeOperationKind::Slice {
-            base,
-            start,
-            end,
-            step,
-        } => operand_is_loan(base) || start.iter().chain(end).chain(step).any(escapes),
+        BytecodeOperationKind::Slice { base, bounds, .. } => {
+            operand_is_loan(base)
+                || bounds
+                    .start
+                    .iter()
+                    .chain(&bounds.end)
+                    .chain(&bounds.step)
+                    .any(escapes)
+        }
         BytecodeOperationKind::Call {
             callee, arguments, ..
         } => {
@@ -5143,11 +5543,18 @@ enum TagEvent {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LocalEvent {
     Read(LocalAccess),
+    Resolve(LocalAccess),
     Move(LocalAccess),
     Write(LocalAccess),
     WriteAccess(LocalAccess),
     StorageLive(BytecodeSlotId),
     StorageDead(BytecodeSlotId),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClassifiedLocalAccess<'a> {
+    access: &'a LocalAccess,
+    kind: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5156,6 +5563,19 @@ enum LoanEvent {
     Reserve(BytecodeLoanId),
     Release(BytecodeLoanId),
     Consume(Vec<BytecodeLoanId>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct LoanFlowState {
+    active: BTreeSet<BytecodeLoanId>,
+    validated: BTreeMap<BytecodeLoanId, Vec<BytecodeLoanId>>,
+    accesses: BTreeMap<ValidatedAccess, Vec<BytecodeLoanId>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ValidatedAccess {
+    access: LocalAccess,
+    for_write: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -5196,7 +5616,10 @@ enum MovePathComponent {
         start: u32,
         suffix: u32,
     },
-    Index(BytecodeSlotId),
+    Index {
+        index: BytecodeSlotId,
+        access: BytecodeIndexAccess,
+    },
     Slice {
         start: Option<BytecodeSlotId>,
         end: Option<BytecodeSlotId>,
@@ -5228,13 +5651,95 @@ impl MovePathComponent {
                 start: *start,
                 suffix: *suffix,
             },
-            BytecodeProjectionKind::Index { index, .. } => Self::Index(*index),
+            BytecodeProjectionKind::Index { index, access } => Self::Index {
+                index: *index,
+                access: *access,
+            },
             BytecodeProjectionKind::Slice { start, end, step } => Self::Slice {
                 start: *start,
                 end: *end,
                 step: *step,
             },
         }
+    }
+}
+
+fn operation_access_place<'a>(
+    operation: &'a BytecodeOperation,
+    context: &str,
+) -> Result<Option<(BytecodePlace, &'a [BytecodeLoanId])>, BytecodeVerificationError> {
+    let (base, projection, against) = match &operation.kind {
+        BytecodeOperationKind::Index {
+            base,
+            index,
+            access,
+            against,
+        } => (
+            base,
+            BytecodeProjectionKind::Index {
+                index: operand_materialized_slot(index, context)?,
+                access: *access,
+            },
+            against.as_slice(),
+        ),
+        BytecodeOperationKind::Slice {
+            base,
+            bounds,
+            against,
+        } => (
+            base,
+            BytecodeProjectionKind::Slice {
+                start: bounds
+                    .start
+                    .as_ref()
+                    .map(|operand| operand_materialized_slot(operand, context))
+                    .transpose()?,
+                end: bounds
+                    .end
+                    .as_ref()
+                    .map(|operand| operand_materialized_slot(operand, context))
+                    .transpose()?,
+                step: bounds
+                    .step
+                    .as_ref()
+                    .map(|operand| operand_materialized_slot(operand, context))
+                    .transpose()?,
+            },
+            against.as_slice(),
+        ),
+        _ => return Ok(None),
+    };
+    let BytecodeOperandKind::Borrow(base) = &base.kind else {
+        return Err(BytecodeVerificationError::new(
+            context,
+            "indexed operation has no borrowed base place",
+        ));
+    };
+    let mut place = base.clone();
+    place.ty = operation.ty;
+    place.projections.push(BytecodeProjection {
+        ty: operation.ty,
+        kind: projection,
+    });
+    Ok(Some((place, against)))
+}
+
+fn operand_materialized_slot(
+    operand: &BytecodeOperand,
+    context: &str,
+) -> Result<BytecodeSlotId, BytecodeVerificationError> {
+    match &operand.kind {
+        BytecodeOperandKind::Copy(place)
+        | BytecodeOperandKind::Move(place)
+        | BytecodeOperandKind::Borrow(place)
+            if place.projections.is_empty() && place.source_loan.is_none() =>
+        {
+            Ok(place.slot)
+        }
+        _ => Err(BytecodeVerificationError::new(
+            context,
+            "index or slice input is not a materialized slot",
+        )),
     }
 }
 
@@ -5251,7 +5756,11 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
             BytecodeInstructionKind::ReserveLoan(id) => {
                 if let Some(loan) = function.loans.get(id.index() as usize) {
                     let mut local = Vec::new();
-                    push_place_events(&loan.place, true, &mut local);
+                    if place_requires_loan_validation(&loan.place) {
+                        push_resolve_place_events(&loan.place, &mut local);
+                    } else {
+                        push_place_events(&loan.place, true, &mut local);
+                    }
                     events.extend(local.into_iter().map(LoanEvent::Local));
                 }
                 events.push(LoanEvent::Reserve(*id));
@@ -5279,7 +5788,13 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
             push_operand_events(value, &mut local);
         }
         BytecodeTerminatorKind::Invoke { operation, .. } => {
-            push_operation_events(operation, &mut local);
+            if let Some((place, _)) = operation_access_place(operation, "loan events")
+                .expect("verified indexed operations retain materialized places")
+            {
+                push_resolve_place_events(&place, &mut local);
+            } else {
+                push_operation_events(operation, &mut local);
+            }
         }
         BytecodeTerminatorKind::IteratorNext { state, .. } => {
             push_destination_reads(state, true, &mut local);
@@ -5287,14 +5802,18 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
         BytecodeTerminatorKind::ValidatePlaces {
             places,
             replacements,
-            for_write,
             ..
         } => {
             for place in places {
-                push_destination_reads(place, *for_write, &mut local);
+                push_resolve_place_events(place, &mut local);
             }
             for replacement in replacements.iter().flatten() {
                 push_operand_events(replacement, &mut local);
+            }
+        }
+        BytecodeTerminatorKind::ValidateLoan { loan, .. } => {
+            if let Some(loan) = function.loans.get(loan.index() as usize) {
+                push_resolve_place_events(&loan.place, &mut local);
             }
         }
         BytecodeTerminatorKind::Return => local.push(LocalEvent::Read(LocalAccess {
@@ -5403,7 +5922,8 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
             edge(*exhausted),
             edge(*unwind),
         ],
-        BytecodeTerminatorKind::ValidatePlaces { target, unwind, .. } => {
+        BytecodeTerminatorKind::ValidatePlaces { target, unwind, .. }
+        | BytecodeTerminatorKind::ValidateLoan { target, unwind, .. } => {
             vec![edge(*target), edge(*unwind)]
         }
         BytecodeTerminatorKind::Return
@@ -5454,6 +5974,7 @@ fn transfer_local(state: LocalState, events: &[LocalEvent], slot: BytecodeSlotId
                 state.unavailable.insert(Vec::new());
             }
             LocalEvent::Read(_)
+            | LocalEvent::Resolve(_)
             | LocalEvent::Move(_)
             | LocalEvent::Write(_)
             | LocalEvent::WriteAccess(_)
@@ -5512,34 +6033,100 @@ fn move_paths_overlap(left: &[MovePathComponent], right: &[MovePathComponent]) -
         .all(|(left, right)| !move_path_components_are_disjoint(left, right))
 }
 
+#[cfg(test)]
 fn loan_paths_overlap(
     left: &[MovePathComponent],
     right: &[MovePathComponent],
     static_integers: &BTreeMap<BytecodeSlotId, u64>,
 ) -> bool {
+    loan_paths_relation(left, right, static_integers) != StaticRegionRelation::Disjoint
+}
+
+fn loan_place_relation(
+    left: &BytecodePlace,
+    right: &BytecodePlace,
+    static_integers: &BTreeMap<BytecodeSlotId, u64>,
+) -> StaticRegionRelation {
+    if left.slot != right.slot {
+        return StaticRegionRelation::Disjoint;
+    }
+    let left = left
+        .projections
+        .iter()
+        .map(MovePathComponent::from_projection)
+        .collect::<Vec<_>>();
+    let right = right
+        .projections
+        .iter()
+        .map(MovePathComponent::from_projection)
+        .collect::<Vec<_>>();
+    loan_paths_relation(&left, &right, static_integers)
+}
+
+fn loan_paths_relation(
+    left: &[MovePathComponent],
+    right: &[MovePathComponent],
+    static_integers: &BTreeMap<BytecodeSlotId, u64>,
+) -> StaticRegionRelation {
+    let mut relation = StaticRegionRelation::Overlap;
     for (left, right) in left.iter().zip(right) {
-        if left == right {
-            continue;
-        }
         match (
             collection_region(left, static_integers),
             collection_region(right, static_integers),
         ) {
             (CollectionComponent::Static(left), CollectionComponent::Static(right)) => {
-                return static_collection_relation(left, right) != StaticRegionRelation::Disjoint;
+                let current = static_collection_relation(left, right);
+                if current == StaticRegionRelation::Disjoint {
+                    return current;
+                }
+                if static_regions_are_identical(left, right) {
+                    relation = current;
+                    continue;
+                }
+                return current;
             }
             (CollectionComponent::None, CollectionComponent::None) => {
-                if move_path_components_are_disjoint(left, right) {
-                    return false;
+                if left == right {
+                    continue;
                 }
+                if move_path_components_are_disjoint(left, right) {
+                    return StaticRegionRelation::Disjoint;
+                }
+                return StaticRegionRelation::Overlap;
             }
             (CollectionComponent::Dynamic, _)
             | (_, CollectionComponent::Dynamic)
             | (CollectionComponent::Static(_), CollectionComponent::None)
-            | (CollectionComponent::None, CollectionComponent::Static(_)) => return true,
+            | (CollectionComponent::None, CollectionComponent::Static(_)) => {
+                return StaticRegionRelation::Runtime;
+            }
         }
     }
-    true
+    relation
+}
+
+fn move_path_runtime_inputs(
+    path: &[MovePathComponent],
+) -> impl Iterator<Item = BytecodeSlotId> + '_ {
+    path.iter().flat_map(|component| {
+        let inputs = match component {
+            MovePathComponent::Index { index, .. } => [Some(*index), None, None],
+            MovePathComponent::Slice { start, end, step } => [*start, *end, *step],
+            MovePathComponent::ClosureCapture(_, _)
+            | MovePathComponent::Field(_)
+            | MovePathComponent::TupleField(_)
+            | MovePathComponent::NewtypeValue
+            | MovePathComponent::VariantTuple(_, _)
+            | MovePathComponent::VariantField(_, _)
+            | MovePathComponent::OptionValue
+            | MovePathComponent::ResultOkValue
+            | MovePathComponent::ResultErrValue
+            | MovePathComponent::UnionValue(_)
+            | MovePathComponent::ArrayPatternIndex(_)
+            | MovePathComponent::ArrayPatternRest { .. } => [None, None, None],
+        };
+        inputs.into_iter().flatten()
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -5547,6 +6134,25 @@ enum CollectionComponent {
     None,
     Static(StaticCollectionRegion),
     Dynamic,
+}
+
+fn static_regions_are_identical(
+    left: StaticCollectionRegion,
+    right: StaticCollectionRegion,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    matches!(
+        (left, right),
+        (
+            StaticCollectionRegion::Index(left),
+            StaticCollectionRegion::PatternIndex(right)
+        ) | (
+            StaticCollectionRegion::PatternIndex(right),
+            StaticCollectionRegion::Index(left)
+        ) if left == u64::from(right)
+    )
 }
 
 fn collection_region(
@@ -5563,11 +6169,18 @@ fn collection_region(
                 suffix: *suffix,
             })
         }
-        MovePathComponent::Index(index) => static_integers
+        MovePathComponent::Index {
+            index,
+            access: BytecodeIndexAccess::Array,
+        } => static_integers
             .get(index)
             .map_or(CollectionComponent::Dynamic, |index| {
                 CollectionComponent::Static(StaticCollectionRegion::Index(*index))
             }),
+        MovePathComponent::Index {
+            access: BytecodeIndexAccess::MapLookup | BytecodeIndexAccess::MapEntry,
+            ..
+        } => CollectionComponent::Dynamic,
         MovePathComponent::Slice { start, end, step } => {
             let Some(start) = static_optional_bound(*start, static_integers) else {
                 return CollectionComponent::Dynamic;
@@ -5780,6 +6393,7 @@ fn static_integer_slots(
                 destination: None, ..
             }
             | BytecodeTerminatorKind::ValidatePlaces { .. }
+            | BytecodeTerminatorKind::ValidateLoan { .. }
             | BytecodeTerminatorKind::Return
             | BytecodeTerminatorKind::ResumePanic
             | BytecodeTerminatorKind::Unreachable => {}
@@ -5982,6 +6596,11 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
                 push_operand_events(replacement, &mut events);
             }
         }
+        BytecodeTerminatorKind::ValidateLoan { loan, .. } => {
+            if let Some(loan) = function.loans.get(loan.index() as usize) {
+                push_resolve_place_events(&loan.place, &mut events);
+            }
+        }
         BytecodeTerminatorKind::Return => events.push(LocalEvent::Read(LocalAccess {
             slot: function.return_slot,
             path: Vec::new(),
@@ -6042,6 +6661,11 @@ fn tag_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<TagEven
             }
             for replacement in replacements.iter().flatten() {
                 push_tag_operand(function, replacement, &mut events);
+            }
+        }
+        BytecodeTerminatorKind::ValidateLoan { loan, .. } => {
+            if let Some(loan) = function.loans.get(loan.index() as usize) {
+                push_tag_place(function, &loan.place, false, &mut events);
             }
         }
     }
@@ -6113,14 +6737,9 @@ fn push_tag_operation(
             push_tag_operand(function, base, events);
             push_tag_operand(function, index, events);
         }
-        BytecodeOperationKind::Slice {
-            base,
-            start,
-            end,
-            step,
-        } => {
+        BytecodeOperationKind::Slice { base, bounds, .. } => {
             push_tag_operand(function, base, events);
-            for value in start.iter().chain(end).chain(step) {
+            for value in bounds.start.iter().chain(&bounds.end).chain(&bounds.step) {
                 push_tag_operand(function, value, events);
             }
         }
@@ -6320,14 +6939,9 @@ fn push_operation_events(operation: &BytecodeOperation, events: &mut Vec<LocalEv
             push_operand_events(base, events);
             push_operand_events(index, events);
         }
-        BytecodeOperationKind::Slice {
-            base,
-            start,
-            end,
-            step,
-        } => {
+        BytecodeOperationKind::Slice { base, bounds, .. } => {
             push_operand_events(base, events);
-            for value in start.iter().chain(end).chain(step) {
+            for value in bounds.start.iter().chain(&bounds.end).chain(&bounds.step) {
                 push_operand_events(value, events);
             }
         }
@@ -6398,6 +7012,11 @@ fn push_place_events(place: &BytecodePlace, read_root: bool, events: &mut Vec<Lo
     }
 }
 
+fn push_resolve_place_events(place: &BytecodePlace, events: &mut Vec<LocalEvent>) {
+    push_projection_index_events(place, events);
+    events.push(LocalEvent::Resolve(LocalAccess::from_place(place)));
+}
+
 fn push_projection_index_events(place: &BytecodePlace, events: &mut Vec<LocalEvent>) {
     for projection in &place.projections {
         match &projection.kind {
@@ -6433,6 +7052,15 @@ fn push_projection_index_events(place: &BytecodePlace, events: &mut Vec<LocalEve
     }
 }
 
+fn place_requires_loan_validation(place: &BytecodePlace) -> bool {
+    place.projections.iter().any(|projection| {
+        matches!(
+            projection.kind,
+            BytecodeProjectionKind::Index { .. } | BytecodeProjectionKind::Slice { .. }
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -6463,8 +7091,14 @@ mod tests {
             &static_integers,
         ));
         assert!(loan_paths_overlap(
-            &[MovePathComponent::Index(dynamic)],
-            &[MovePathComponent::Index(split)],
+            &[MovePathComponent::Index {
+                index: dynamic,
+                access: BytecodeIndexAccess::Array,
+            }],
+            &[MovePathComponent::Index {
+                index: split,
+                access: BytecodeIndexAccess::Array,
+            }],
             &static_integers,
         ));
         assert!(!loan_paths_overlap(

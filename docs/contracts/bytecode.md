@@ -8,7 +8,9 @@ closure callables, OWN-001 intrinsic cursor capabilities, OWN-002 affine
 transfers and immediate observations, OWN-003 flow availability, OWN-004
 complete-slot reinitialization, OWN-005 typed move paths, OWN-006 affine closure
 captures, OWN-007 exact closed `CallOnce` rows, BORROW-001 call-local loans, and
-BORROW-002 inferred pattern regions, and the M3 VM admission path implemented
+BORROW-002 inferred pattern regions, BORROW-003 reborrow permissions, BORROW-004
+static collection disjunction, BORROW-005 runtime overlap proofs, and the M3 VM
+admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -255,9 +257,12 @@ can. Record fields and tuple slots may be proved disjoint. BORROW-004 admits
 loan metadata containing index, slice, array-pattern element, and array-pattern
 rest projections. The verifier recovers integer constants only from
 single-definition temporary slots and independently rederives interval, stride,
-and pattern-region disjunction. Any incompatible relation it cannot prove
-disjoint remains invalid until BORROW-005 has emitted explicit runtime-overlap
-validation.
+and pattern-region disjunction. BORROW-005 preserves runtime-dependent relations
+as explicit, canonical conflict IDs: `ValidateLoan` protects a reservation;
+`Index` and `Slice` operations protect their atomic read; and every
+`ValidatePlaces` entry has one aligned list protecting its following read or
+write. Statically disjoint relations carry no conflict ID, while inevitable
+overlap remains invalid bytecode.
 
 `Borrow` remains a separate non-storable form admitted only for equality,
 membership, length, discriminant branches, index/slice collection bases,
@@ -282,19 +287,32 @@ Potentially panicking work remains a terminator-level `Invoke` with explicit
 normal destination/target and cleanup target. This includes checked arithmetic,
 map construction, indexing, slicing, calls, `assert`, and `panic`. Other
 terminators cover direct branches, boolean and discriminant dispatch,
-iterator-next, atomic destination validation, return, panic resumption, and
-unreachable code. A read validation aligns each destination with no replacement;
+iterator-next, atomic destination validation, loan validation, return, panic
+resumption, and unreachable code. `ValidateLoan` must resolve to a normal block
+whose first instruction reserves the same loan. A read validation aligns each
+destination with no replacement;
 a write validation requires one borrowed replacement witness of exactly the
 place type. If the normalized effective path ends in a slice, including when
 that slice is hidden behind a borrowed callee parameter, the VM compares its
 length with the witnessed `Array` and can raise `P0006` before the first store
-without consuming the later write operand. Missing or misaligned metadata is
-invalid bytecode.
+without consuming the later write operand. The verifier propagates active loans
+and pending proofs together, rederives every `against` list, rejects missing,
+extra, duplicated, inactive, or noncanonical IDs, and prevents any pending
+index/bound slot from changing before its proof is consumed. Missing or
+misaligned metadata is invalid bytecode.
 
 Places start at one slot and carry typed projections. Projections include
 record/newtype fields, tuple positions, enum/option/result/union payloads,
 array-pattern segments, dynamic indexing, and slices. Index and bound operands
 are slots evaluated earlier, preserving MIR evaluation order.
+
+The VM resolves each protected path to normalized runtime components: negative
+indices use the current array length, slices become their exact selected-index
+sets, and map projections snapshot their key value. It compares only the active
+loans named by verified `against` metadata. Actual intersection raises `P0004`;
+disjoint data proceeds without changing evaluation order. Bounds, absent
+borrowed map entries, and zero slice steps retain their own panic classes before
+the callee runs, and unwind clears every reservation in the abandoned frame.
 
 Map construction includes an explicit reject-versus-replace flag for dynamic
 duplicate keys. The VM evaluates the already-materialized entry operands in

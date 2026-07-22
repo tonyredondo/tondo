@@ -651,7 +651,7 @@ pub enum BytecodeContainmentKind {
     StringChar,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BytecodeIndexAccess {
     Array,
     MapLookup,
@@ -683,12 +683,12 @@ pub enum BytecodeOperationKind {
         base: BytecodeOperand,
         index: BytecodeOperand,
         access: BytecodeIndexAccess,
+        against: Vec<BytecodeLoanId>,
     },
     Slice {
         base: BytecodeOperand,
-        start: Option<BytecodeOperand>,
-        end: Option<BytecodeOperand>,
-        step: Option<BytecodeOperand>,
+        bounds: Box<BytecodeSliceBounds>,
+        against: Vec<BytecodeLoanId>,
     },
     Call {
         callee: BytecodeOperand,
@@ -708,6 +708,13 @@ pub enum BytecodeOperationKind {
         function: BytecodeBootstrapHostFunction,
         arguments: Vec<BytecodeOperand>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BytecodeSliceBounds {
+    pub start: Option<BytecodeOperand>,
+    pub end: Option<BytecodeOperand>,
+    pub step: Option<BytecodeOperand>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -788,7 +795,14 @@ pub enum BytecodeTerminatorKind {
     ValidatePlaces {
         places: Vec<BytecodePlace>,
         replacements: Vec<Option<BytecodeOperand>>,
+        against: Vec<Vec<BytecodeLoanId>>,
         for_write: bool,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    },
+    ValidateLoan {
+        loan: BytecodeLoanId,
+        against: Vec<BytecodeLoanId>,
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
     },

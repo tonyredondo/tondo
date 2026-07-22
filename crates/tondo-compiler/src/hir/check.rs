@@ -1207,9 +1207,8 @@ impl<'a> ExpressionChecker<'a> {
                     )],
                     None,
                 )?,
-                AvailabilityFindingKind::DeferredCollectionConflict => {
-                    self.complete = false;
-                }
+                AvailabilityFindingKind::DeferredCollectionLoanConflict => {}
+                AvailabilityFindingKind::DeferredCollectionAccessConflict => {}
             }
         }
         Ok(())
@@ -20530,6 +20529,17 @@ mod tests {
              fn deferred(values: var Array[Int]) {\n\
                  process(mut values[:2], mut values[1:3])\n\
              }\n",
+            "fn consume(value: mut Int, observed: Int) {}\n\
+             fn deferredRead(values: var Array[Int], left: Int, right: Int) {\n\
+                 consume(mut values[left], values[right])\n\
+             }\n",
+            "fn consume(value: mut Int, token: Int) {}\n\
+             fn deferredWrite(values: var Array[Int], left: Int, right: Int) {\n\
+                 consume(mut values[left], {\n\
+                     values[right] = 42\n\
+                     0\n\
+                 })\n\
+             }\n",
         ] {
             let (_, _, deferred) = check(source);
             assert!(
@@ -20537,7 +20547,7 @@ mod tests {
                 "{source}\n{:#?}",
                 deferred.diagnostics()
             );
-            assert!(!deferred.is_complete(), "{source}");
+            assert!(deferred.is_complete(), "{source}");
         }
 
         let (_, _, shared_dynamic) = check(

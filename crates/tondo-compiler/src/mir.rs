@@ -17,6 +17,7 @@ use crate::source::Span;
 use crate::types::{Assignability, NumericConversion, ParameterMode, ScalarType, TypeId};
 
 mod lower;
+mod regions;
 mod verify;
 
 pub use lower::{MirLoweringLimits, lower_to_mir};
@@ -546,12 +547,12 @@ pub enum MirOperationKind {
         base: MirOperand,
         index: MirOperand,
         access: crate::hir::HirIndexAccess,
+        against: Vec<MirLoanId>,
     },
     Slice {
         base: MirOperand,
-        start: Option<MirOperand>,
-        end: Option<MirOperand>,
-        step: Option<MirOperand>,
+        bounds: Box<MirSliceBounds>,
+        against: Vec<MirLoanId>,
     },
     Call {
         callee: MirOperand,
@@ -571,6 +572,27 @@ pub enum MirOperationKind {
         function: MirBootstrapHostFunction,
         arguments: Vec<MirOperand>,
     },
+}
+
+#[derive(Debug, Clone)]
+pub struct MirSliceBounds {
+    pub(crate) start: Option<MirOperand>,
+    pub(crate) end: Option<MirOperand>,
+    pub(crate) step: Option<MirOperand>,
+}
+
+impl MirSliceBounds {
+    pub fn start(&self) -> Option<&MirOperand> {
+        self.start.as_ref()
+    }
+
+    pub fn end(&self) -> Option<&MirOperand> {
+        self.end.as_ref()
+    }
+
+    pub fn step(&self) -> Option<&MirOperand> {
+        self.step.as_ref()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -662,7 +684,14 @@ pub enum MirTerminatorKind {
     ValidatePlaces {
         places: Vec<MirPlace>,
         replacements: Vec<Option<MirOperand>>,
+        against: Vec<Vec<MirLoanId>>,
         for_write: bool,
+        target: MirBlockId,
+        unwind: MirBlockId,
+    },
+    ValidateLoan {
+        loan: MirLoanId,
+        against: Vec<MirLoanId>,
         target: MirBlockId,
         unwind: MirBlockId,
     },

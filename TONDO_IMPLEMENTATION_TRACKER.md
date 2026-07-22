@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.44
+**Versión del tracker:** 0.45
 
 **Última actualización:** 2026-07-22
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** insertar checks runtime para solapamientos de regiones
-dependientes de datos (BORROW-005).
+**Objetivo inmediato:** rechazar préstamos que crucen suspensión o fronteras no
+permitidas (BORROW-006).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1356,14 +1356,22 @@ lifetimes escritos por el usuario.
   canónica, reconoce índices y bounds constantes no negativos, y decide
   disjunción por intervalos, congruencias de stride y posiciones de patrón. Un
   préstamo de región aislado y cualquier conjunto solo `ref` son ejecutables;
-  un solapamiento incompatible inevitable produce `E1403`; únicamente una
-  pareja incompatible dependiente de datos conserva HIR parcial para
+  un solapamiento incompatible inevitable produce `E1403`; una pareja
+  incompatible dependiente de datos se conserva como obligación explícita para
   BORROW-005. MIR y bytecode recuperan constantes desde temporales de definición
   única y rederivan la misma prueba. `ValidatePlaces` comprueba bounds y step
   antes de reservar, y la VM vuelve a comparar las rutas normalizadas reales.
 
-- [ ] **BORROW-005 — Insertar checks runtime únicamente cuando el solapamiento
-  dependa de datos.**
+- [x] **BORROW-005 — Insertar checks runtime únicamente cuando el solapamiento
+  dependa de datos.** HIR admite como completas las obligaciones dinámicas de
+  reserva y acceso sin ocultar solapamientos inevitables. Un análisis MIR
+  posterior a liveness adjunta IDs `against` solo a conflictos `Runtime`:
+  `ValidateLoan` protege la reserva, `Index`/`Slice` su lectura atómica y
+  `ValidatePlaces` la lectura o escritura posterior. Los verificadores de MIR y
+  bytecode rederivan el conjunto exacto, exigen consumo inmediato del testigo y
+  estabilidad de índices/bounds. La VM normaliza índices negativos, slices y
+  claves, eleva `P0004` únicamente si las rutas reales intersectan, preserva
+  bounds/step y limpia reservas por unwind antes de entrar en el callee.
 
 - [ ] **BORROW-006 — Rechazar préstamos que crucen suspensión o fronteras no
   permitidas.**
@@ -1953,15 +1961,39 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es BORROW-005: materializar una comprobación conjunta
-de solapamiento para las parejas incompatibles cuyo resultado depende de datos,
-después de evaluar y validar todas sus regiones y antes de entrar en el callee.
-La ruta estática de BORROW-004 debe seguir sin ese check normativo; la VM conserva
-su defensa de invariantes en ambos casos.
+La siguiente acción activa es BORROW-006: fijar qué préstamos pueden existir en
+un punto de suspensión y rechazar los que crucen `await`, selección, cancelación
+o cualquier frontera no permitida. La solución debe partir del conjunto exacto
+de préstamos vivos que ya propagan MIR y bytecode, sin convertir referencias en
+valores almacenables ni anticipar el diseño completo del scheduler.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.45 — 2026-07-22
+
+- Se completa BORROW-005. HIR distingue obligaciones dinámicas de reserva y de
+  acceso, las admite como snapshots completos y mantiene `E1403` para todo
+  solapamiento inevitable.
+- MIR ejecuta un análisis posterior a liveness sobre el conjunto exacto de
+  préstamos activos. `ValidateLoan`, `Index`/`Slice` y `ValidatePlaces`
+  transportan listas `against` canónicas solo para relaciones `Runtime`; las
+  rutas demostrablemente disjuntas no pagan una comparación de solapamiento.
+- Los verificadores de MIR y bytecode recalculan las relaciones, rechazan IDs
+  ausentes, extra, duplicados o inactivos, enlazan cada validación con su reserva
+  o acceso y prohíben cambiar los temporales de índice/bounds mientras el testigo
+  está pendiente. El desensamblador expone estos IDs.
+- La VM normaliza índices positivos y negativos, strides, intervalos, regiones
+  de patrón y claves de map antes de comparar rutas. Una intersección produce
+  `P0004`; bounds, entrada de map ausente y step cero conservan sus pánicos y el
+  unwind invalida reservas previas antes de que pueda ejecutarse el callee.
+- Las regresiones end-to-end cubren éxito y solapamiento para índices, slices,
+  strides negativos, lectura y escritura posteriores, regiones de patrón y
+  claves dinámicas de map; también fijan orden de pánicos y bytecode/MIR
+  adversarial. El gate acumulado pasa 501 tests, incluidos 451 tests de la
+  librería del compilador; también pasan `git diff --check`, formatter check,
+  check y build de todos los targets, Clippy y Rustdoc con warnings denegados.
 
 ### 0.44 — 2026-07-22
 

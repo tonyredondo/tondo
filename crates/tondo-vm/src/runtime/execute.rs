@@ -9,9 +9,9 @@ use crate::bytecode::{
     BytecodeLoanKind, BytecodeNumericConversion, BytecodeOperand, BytecodeOperandKind,
     BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode, BytecodePlace,
     BytecodePrefixOperator, BytecodeProgram, BytecodeProjection, BytecodeProjectionKind,
-    BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind, BytecodeScalarType, BytecodeSpan,
-    BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind, BytecodeTypeId, BytecodeTypeKind,
-    BytecodeVerificationLimits, verify_bytecode_with_limits,
+    BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind, BytecodeScalarType, BytecodeSlotId,
+    BytecodeSpan, BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind, BytecodeTypeId,
+    BytecodeTypeKind, BytecodeVerificationLimits, verify_bytecode_with_limits,
 };
 
 use super::heap::{Heap, HeapHandle, HeapObject};
@@ -597,13 +597,29 @@ impl<'program, 'host> Engine<'program, 'host> {
             BytecodeTerminatorKind::ValidatePlaces {
                 places,
                 replacements,
+                against,
                 for_write,
                 target,
                 unwind,
             } => {
                 let span = self.resolve_span(frame, terminator.span)?;
-                let result = self.validate_places(frame, places, replacements, *for_write);
+                let result = self.validate_places(frame, places, replacements, against, *for_write);
                 match result {
+                    Ok(()) => self.jump(frame, *target),
+                    Err(PlaceFailure::Panic(code, message)) => {
+                        self.begin_panic(frame, code, message, span, *unwind)?;
+                    }
+                    Err(PlaceFailure::Vm(error)) => return Err(error),
+                }
+            }
+            BytecodeTerminatorKind::ValidateLoan {
+                loan,
+                against,
+                target,
+                unwind,
+            } => {
+                let span = self.resolve_span(frame, terminator.span)?;
+                match self.validate_loan(frame, *loan, against) {
                     Ok(()) => self.jump(frame, *target),
                     Err(PlaceFailure::Panic(code, message)) => {
                         self.begin_panic(frame, code, message, span, *unwind)?;
@@ -2319,16 +2335,37 @@ impl Engine<'_, '_> {
         frame: usize,
         places: &[BytecodePlace],
         replacements: &[Option<BytecodeOperand>],
+        against: &[Vec<BytecodeLoanId>],
         for_write: bool,
     ) -> Result<(), PlaceFailure> {
-        if places.len() != replacements.len() {
+        if places.len() != replacements.len() || places.len() != against.len() {
             return Err(PlaceFailure::Vm(VmError::invariant(
                 "place validation inputs are not aligned",
             )));
         }
         let mut paths = Vec::with_capacity(places.len());
-        for (place, replacement) in places.iter().zip(replacements) {
+        for ((place, replacement), against) in places.iter().zip(replacements).zip(against) {
             let path = self.validate_place(frame, place, for_write)?;
+            for loan in against {
+                let reservation = self.frames[frame]
+                    .loans
+                    .get(loan.index() as usize)
+                    .and_then(Option::as_ref)
+                    .ok_or_else(|| {
+                        PlaceFailure::Vm(VmError::invariant(
+                            "place validation references an inactive reservation",
+                        ))
+                    })?;
+                if paths_overlap(&path, &reservation.path) {
+                    return Err(PlaceFailure::Panic(
+                        PanicCode::OverlappingBorrow,
+                        format!(
+                            "place access overlaps active loan#{} at runtime",
+                            loan.index()
+                        ),
+                    ));
+                }
+            }
             let replacement = match (for_write, replacement) {
                 (true, Some(replacement)) => Some(replacement),
                 (false, None) => None,
@@ -2392,6 +2429,86 @@ impl Engine<'_, '_> {
         Ok(())
     }
 
+    fn validate_loan(
+        &mut self,
+        frame: usize,
+        loan: BytecodeLoanId,
+        against: &[BytecodeLoanId],
+    ) -> Result<(), PlaceFailure> {
+        let metadata = self
+            .program
+            .function(self.frames[frame].function)
+            .and_then(|function| function.loans.get(loan.index() as usize))
+            .cloned()
+            .ok_or_else(|| {
+                PlaceFailure::Vm(VmError::invariant(
+                    "loan validation references invalid metadata",
+                ))
+            })?;
+        if self.frames[frame]
+            .loans
+            .get(loan.index() as usize)
+            .is_none_or(Option::is_some)
+        {
+            return Err(PlaceFailure::Vm(VmError::invariant(
+                "loan validation reuses an active or invalid reservation",
+            )));
+        }
+        let path = self.validate_place(frame, &metadata.place, false)?;
+        for existing in against {
+            let reservation = self.frames[frame]
+                .loans
+                .get(existing.index() as usize)
+                .and_then(Option::as_ref)
+                .ok_or_else(|| {
+                    PlaceFailure::Vm(VmError::invariant(
+                        "loan validation references an inactive reservation",
+                    ))
+                })?;
+            if paths_overlap(&path, &reservation.path) {
+                return Err(PlaceFailure::Panic(
+                    PanicCode::OverlappingBorrow,
+                    format!(
+                        "loan#{} overlaps active loan#{} at runtime",
+                        loan.index(),
+                        existing.index()
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_runtime_access(
+        &mut self,
+        frame: usize,
+        place: &BytecodePlace,
+        against: &[BytecodeLoanId],
+    ) -> Result<(), PlaceFailure> {
+        let path = self.validate_place(frame, place, false)?;
+        for loan in against {
+            let reservation = self.frames[frame]
+                .loans
+                .get(loan.index() as usize)
+                .and_then(Option::as_ref)
+                .ok_or_else(|| {
+                    PlaceFailure::Vm(VmError::invariant(
+                        "runtime access validation references an inactive reservation",
+                    ))
+                })?;
+            if paths_overlap(&path, &reservation.path) {
+                return Err(PlaceFailure::Panic(
+                    PanicCode::OverlappingBorrow,
+                    format!(
+                        "place access overlaps active loan#{} at runtime",
+                        loan.index()
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn validate_place(
         &mut self,
         frame: usize,
@@ -2425,7 +2542,9 @@ impl Engine<'_, '_> {
             self.read_slot(frame, place.slot)?.clone()
         };
         for (index, projection) in place.projections.iter().enumerate() {
-            let component = self.resolve_place_component(frame, &value, projection)?;
+            let allow_missing_map_entry = for_write && index + 1 == place.projections.len();
+            let component =
+                self.resolve_place_component(frame, &value, projection, allow_missing_map_entry)?;
             path.components.push(component);
             if index + 1 < place.projections.len() {
                 value = self
@@ -2441,6 +2560,7 @@ impl Engine<'_, '_> {
         frame: usize,
         parent: &Value,
         projection: &BytecodeProjection,
+        allow_missing_map_entry: bool,
     ) -> Result<PlaceComponent, PlaceFailure> {
         let Value::Heap(handle) = parent else {
             return Err(PlaceFailure::Vm(VmError::invariant(
@@ -2504,10 +2624,22 @@ impl Engine<'_, '_> {
                 PlaceComponent::Index(index as i128)
             }
             (BytecodeProjectionKind::Index { index, access }, HeapObject::Map(entries))
-                if *access == BytecodeIndexAccess::MapEntry =>
+                if matches!(
+                    access,
+                    BytecodeIndexAccess::MapLookup | BytecodeIndexAccess::MapEntry
+                ) =>
             {
                 let key = self.read_slot(frame, *index)?.clone();
-                self.find_map_entry(entries, &key)?;
+                let found = self.find_map_entry(entries, &key)?;
+                if *access == BytecodeIndexAccess::MapEntry
+                    && found.is_none()
+                    && !allow_missing_map_entry
+                {
+                    return Err(PlaceFailure::Panic(
+                        PanicCode::Bounds,
+                        "map entry is absent".into(),
+                    ));
+                }
                 PlaceComponent::MapKey(snapshot_value(
                     &key,
                     &self.heap,
@@ -2640,7 +2772,20 @@ impl Engine<'_, '_> {
                 base,
                 index,
                 access,
+                against,
             } => {
+                if !against.is_empty() {
+                    let place = operation_access_place(operation)?
+                        .ok_or_else(|| VmError::invariant("index operation has no access place"))?;
+                    if let Err(failure) = self.validate_runtime_access(frame, &place, against) {
+                        return match failure {
+                            PlaceFailure::Panic(code, message) => {
+                                Ok(OperationResult::Panic(code, message))
+                            }
+                            PlaceFailure::Vm(error) => Err(error),
+                        };
+                    }
+                }
                 let base = self.evaluate_operand(frame, base)?;
                 let index = self.evaluate_operand(frame, index)?;
                 Ok(match self.index_value(base, index, *access)? {
@@ -2650,20 +2795,34 @@ impl Engine<'_, '_> {
             }
             BytecodeOperationKind::Slice {
                 base,
-                start,
-                end,
-                step,
+                bounds,
+                against,
             } => {
+                if !against.is_empty() {
+                    let place = operation_access_place(operation)?
+                        .ok_or_else(|| VmError::invariant("slice operation has no access place"))?;
+                    if let Err(failure) = self.validate_runtime_access(frame, &place, against) {
+                        return match failure {
+                            PlaceFailure::Panic(code, message) => {
+                                Ok(OperationResult::Panic(code, message))
+                            }
+                            PlaceFailure::Vm(error) => Err(error),
+                        };
+                    }
+                }
                 let base = self.evaluate_operand(frame, base)?;
-                let start = start
+                let start = bounds
+                    .start
                     .as_ref()
                     .map(|value| self.evaluate_operand(frame, value))
                     .transpose()?;
-                let end = end
+                let end = bounds
+                    .end
                     .as_ref()
                     .map(|value| self.evaluate_operand(frame, value))
                     .transpose()?;
-                let step = step
+                let step = bounds
+                    .step
                     .as_ref()
                     .map(|value| self.evaluate_operand(frame, value))
                     .transpose()?;
@@ -3556,6 +3715,71 @@ enum PlaceComponent {
     Index(i128),
     MapKey(RuntimeValue),
     Slice(Vec<usize>),
+}
+
+fn operation_access_place(operation: &BytecodeOperation) -> Result<Option<BytecodePlace>, VmError> {
+    let (base, projection) = match &operation.kind {
+        BytecodeOperationKind::Index {
+            base,
+            index,
+            access,
+            ..
+        } => (
+            base,
+            BytecodeProjectionKind::Index {
+                index: operand_materialized_slot(index)?,
+                access: *access,
+            },
+        ),
+        BytecodeOperationKind::Slice { base, bounds, .. } => (
+            base,
+            BytecodeProjectionKind::Slice {
+                start: bounds
+                    .start
+                    .as_ref()
+                    .map(operand_materialized_slot)
+                    .transpose()?,
+                end: bounds
+                    .end
+                    .as_ref()
+                    .map(operand_materialized_slot)
+                    .transpose()?,
+                step: bounds
+                    .step
+                    .as_ref()
+                    .map(operand_materialized_slot)
+                    .transpose()?,
+            },
+        ),
+        _ => return Ok(None),
+    };
+    let BytecodeOperandKind::Borrow(base) = &base.kind else {
+        return Err(VmError::invariant(
+            "indexed operation has no borrowed base place",
+        ));
+    };
+    let mut place = base.clone();
+    place.ty = operation.ty;
+    place.projections.push(BytecodeProjection {
+        ty: operation.ty,
+        kind: projection,
+    });
+    Ok(Some(place))
+}
+
+fn operand_materialized_slot(operand: &BytecodeOperand) -> Result<BytecodeSlotId, VmError> {
+    match &operand.kind {
+        BytecodeOperandKind::Copy(place)
+        | BytecodeOperandKind::Move(place)
+        | BytecodeOperandKind::Borrow(place)
+            if place.projections.is_empty() && place.source_loan.is_none() =>
+        {
+            Ok(place.slot)
+        }
+        _ => Err(VmError::invariant(
+            "index or slice input is not a materialized slot",
+        )),
+    }
 }
 
 fn paths_overlap(left: &ResolvedPlacePath, right: &ResolvedPlacePath) -> bool {

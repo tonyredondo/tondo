@@ -170,13 +170,32 @@ fn terminator_text(terminator: &BytecodeTerminatorKind) -> String {
             exhausted.index(),
             unwind.index()
         ),
-        BytecodeTerminatorKind::ValidatePlaces { target, unwind, .. } => {
-            format!(
-                "validate_places -> b{} unwind b{}",
-                target.index(),
-                unwind.index()
-            )
-        }
+        BytecodeTerminatorKind::ValidatePlaces {
+            against,
+            target,
+            unwind,
+            ..
+        } => format!(
+            "validate_places against {:?} -> b{} unwind b{}",
+            against
+                .iter()
+                .map(|loans| loans.iter().map(|loan| loan.index()).collect::<Vec<_>>())
+                .collect::<Vec<_>>(),
+            target.index(),
+            unwind.index()
+        ),
+        BytecodeTerminatorKind::ValidateLoan {
+            loan,
+            against,
+            target,
+            unwind,
+        } => format!(
+            "validate_loan l{} against {:?} -> b{} unwind b{}",
+            loan.index(),
+            against.iter().map(|loan| loan.index()).collect::<Vec<_>>(),
+            target.index(),
+            unwind.index()
+        ),
         BytecodeTerminatorKind::Return => "return".into(),
         BytecodeTerminatorKind::ResumePanic => "resume_panic".into(),
         BytecodeTerminatorKind::Unreachable => "unreachable".into(),

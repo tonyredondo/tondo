@@ -169,7 +169,13 @@ impl Verifier<'_> {
         if let Some(finding) = analyze_availability(self.program, &capabilities)
             .map_err(|error| HirInvariantError::new("ownership availability", error.to_string()))?
             .into_iter()
-            .next()
+            .find(|finding| {
+                !matches!(
+                    finding.kind(),
+                    AvailabilityFindingKind::DeferredCollectionLoanConflict
+                        | AvailabilityFindingKind::DeferredCollectionAccessConflict
+                )
+            })
         {
             let local = finding
                 .local()
@@ -208,9 +214,11 @@ impl Verifier<'_> {
                         .expect("loan conflicts retain their reservation")
                         .range()
                 ),
-                AvailabilityFindingKind::DeferredCollectionConflict => format!(
-                    "{local} requires a runtime collection-overlap proof at {}",
-                    finding.use_span().range()
+                AvailabilityFindingKind::DeferredCollectionLoanConflict => unreachable!(
+                    "runtime loan conflicts are filtered before HIR invariant reporting"
+                ),
+                AvailabilityFindingKind::DeferredCollectionAccessConflict => unreachable!(
+                    "runtime access conflicts are filtered before HIR invariant reporting"
                 ),
             };
             return Err(HirInvariantError::new("ownership availability", message));

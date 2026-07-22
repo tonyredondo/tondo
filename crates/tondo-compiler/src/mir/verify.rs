@@ -5,11 +5,10 @@ use std::fmt;
 
 use crate::hir::{
     CapabilityAnalysis, CapabilityAssumptions, HirBinaryOperator, HirCallProtocol, HirCallableId,
-    HirCapability, HirCapabilityStatus, HirClosureProtocols, HirConstantValueKind,
-    HirContainmentKind, HirGenericParameter, HirIndexAccess, HirNominalShape, HirPrefixOperator,
-    HirProgram, HirTraitConstructor, HirTypeDeclarationKind, HirVariantPayload,
-    StaticCollectionRegion, StaticRegionRelation, StaticSlice, parse_nonnegative_integer,
-    static_collection_relation,
+    HirCapability, HirCapabilityStatus, HirClosureProtocols, HirContainmentKind,
+    HirGenericParameter, HirIndexAccess, HirNominalShape, HirPrefixOperator, HirProgram,
+    HirTraitConstructor, HirTypeDeclarationKind, HirVariantPayload, StaticCollectionRegion,
+    StaticRegionRelation, StaticSlice, static_collection_relation,
 };
 use crate::resolve::{MemberKind, MemberOwner, ResolvedProgram, SymbolId};
 use crate::types::{
@@ -18,10 +17,10 @@ use crate::types::{
 };
 
 use super::{
-    MirAggregateKind, MirBasicBlock, MirBlockId, MirBlockKind, MirConstant, MirFunction,
-    MirFunctionId, MirLoanId, MirLoanKind, MirLocalId, MirLocalKind, MirOperand, MirOperandKind,
-    MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind,
-    MirRvalue, MirRvalueKind, MirStatementKind, MirTag, MirTerminatorKind,
+    MirAggregateKind, MirBasicBlock, MirBlockId, MirBlockKind, MirFunction, MirFunctionId,
+    MirLoanId, MirLoanKind, MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation,
+    MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind, MirRvalue,
+    MirRvalueKind, MirStatementKind, MirTag, MirTerminatorKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -176,11 +175,18 @@ struct Verifier<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum LocalEvent {
     Read(LocalAccess),
+    Resolve(LocalAccess),
     Move(LocalAccess),
     Write(LocalAccess),
     WriteAccess(LocalAccess),
     StorageLive(MirLocalId),
     StorageDead(MirLocalId),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ClassifiedLocalAccess<'a> {
+    access: &'a LocalAccess,
+    kind: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +195,19 @@ enum LoanEvent {
     Reserve(MirLoanId),
     Release(MirLoanId),
     Consume(Vec<MirLoanId>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct LoanFlowState {
+    active: BTreeSet<MirLoanId>,
+    validated: BTreeMap<MirLoanId, Vec<MirLoanId>>,
+    accesses: BTreeMap<ValidatedAccess, Vec<MirLoanId>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ValidatedAccess {
+    access: LocalAccess,
+    for_write: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -229,7 +248,10 @@ enum MovePathComponent {
         start: u32,
         suffix: u32,
     },
-    Index(MirLocalId),
+    Index {
+        index: MirLocalId,
+        access: HirIndexAccess,
+    },
     Slice {
         start: Option<MirLocalId>,
         end: Option<MirLocalId>,
@@ -261,7 +283,10 @@ impl MovePathComponent {
                 start: *start,
                 suffix: *suffix,
             },
-            MirProjectionKind::Index { index, .. } => Self::Index(*index),
+            MirProjectionKind::Index { index, access } => Self::Index {
+                index: *index,
+                access: *access,
+            },
             MirProjectionKind::Slice { start, end, step } => Self::Slice {
                 start: *start,
                 end: *end,
@@ -389,12 +414,15 @@ fn mir_operation_contains_invalid_borrow(operation: &MirOperation) -> bool {
             .iter()
             .any(|(key, value)| escapes(key) || escapes(value)),
         MirOperationKind::Index { base, index, .. } => mir_operand_is_loan(base) || escapes(index),
-        MirOperationKind::Slice {
-            base,
-            start,
-            end,
-            step,
-        } => mir_operand_is_loan(base) || start.iter().chain(end).chain(step).any(escapes),
+        MirOperationKind::Slice { base, bounds, .. } => {
+            mir_operand_is_loan(base)
+                || bounds
+                    .start
+                    .iter()
+                    .chain(&bounds.end)
+                    .chain(&bounds.step)
+                    .any(escapes)
+        }
         MirOperationKind::Call {
             callee, arguments, ..
         } => {
@@ -670,6 +698,7 @@ impl Verifier<'_> {
                         writes_capture = true;
                     }
                     LocalEvent::Read(_)
+                    | LocalEvent::Resolve(_)
                     | LocalEvent::Move(_)
                     | LocalEvent::Write(_)
                     | LocalEvent::WriteAccess(_)
@@ -781,6 +810,7 @@ impl Verifier<'_> {
                         }
                     }
                     LocalEvent::Read(_)
+                    | LocalEvent::Resolve(_)
                     | LocalEvent::WriteAccess(_)
                     | LocalEvent::StorageLive(_)
                     | LocalEvent::StorageDead(_) => {}
@@ -1002,6 +1032,7 @@ impl Verifier<'_> {
             MirTerminatorKind::ValidatePlaces {
                 places,
                 replacements,
+                against,
                 for_write,
                 target,
                 unwind,
@@ -1009,6 +1040,7 @@ impl Verifier<'_> {
                 if block.kind != MirBlockKind::Normal
                     || places.is_empty()
                     || places.len() != replacements.len()
+                    || places.len() != against.len()
                 {
                     return Err(MirInvariantError::new(
                         &context,
@@ -1016,7 +1048,8 @@ impl Verifier<'_> {
                     ));
                 }
                 let mut unique = Vec::new();
-                for (place, replacement) in places.iter().zip(replacements) {
+                for ((place, replacement), against) in places.iter().zip(replacements).zip(against)
+                {
                     self.verify_place(function, place, &context)?;
                     if unique.contains(&place) {
                         return Err(MirInvariantError::new(
@@ -1025,6 +1058,17 @@ impl Verifier<'_> {
                         ));
                     }
                     unique.push(place);
+                    let mut previous = None;
+                    for loan in against {
+                        self.loan(function, *loan, &context)?;
+                        if previous.is_some_and(|previous| previous >= *loan) {
+                            return Err(MirInvariantError::new(
+                                &context,
+                                "place validation conflicts are not unique canonical IDs",
+                            ));
+                        }
+                        previous = Some(*loan);
+                    }
                     match (*for_write, replacement) {
                         (false, None) => {}
                         (true, Some(replacement)) => {
@@ -1051,6 +1095,56 @@ impl Verifier<'_> {
                     return Err(MirInvariantError::new(
                         &context,
                         "place-validation unwind edge does not enter cleanup code",
+                    ));
+                }
+            }
+            MirTerminatorKind::ValidateLoan {
+                loan,
+                against,
+                target,
+                unwind,
+            } => {
+                if block.kind != MirBlockKind::Normal {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "cleanup block validates a loan reservation",
+                    ));
+                }
+                let loan_metadata = self.loan(function, *loan, &context)?;
+                if !place_requires_loan_validation(loan_metadata.place()) {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "loan validation has no index or slice projection",
+                    ));
+                }
+                let mut previous = None;
+                for candidate in against {
+                    self.loan(function, *candidate, &context)?;
+                    if candidate == loan || previous.is_some_and(|previous| previous >= *candidate)
+                    {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "loan validation conflicts are not unique canonical active IDs",
+                        ));
+                    }
+                    previous = Some(*candidate);
+                }
+                let target_block = self.block(function, *target, &context)?;
+                if target_block.kind != MirBlockKind::Normal
+                    || !matches!(
+                        target_block.statements.first().map(|statement| &statement.kind),
+                        Some(MirStatementKind::ReserveLoan(candidate)) if candidate == loan
+                    )
+                {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "loan-validation success does not immediately reserve the same loan",
+                    ));
+                }
+                if self.block(function, *unwind, &context)?.kind != MirBlockKind::Cleanup {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "loan-validation unwind edge does not enter cleanup code",
                     ));
                 }
             }
@@ -1324,19 +1418,21 @@ impl Verifier<'_> {
                 base,
                 index,
                 access,
+                against,
             } => {
                 self.verify_operand(function, base, context)?;
                 self.verify_operand(function, index, context)?;
                 self.verify_index_result(base.ty, index.ty, *access, operation.ty, context)?;
+                self.verify_runtime_conflict_ids(function, against, context)?;
+                let _ = operation_access_place(operation, context)?;
             }
             MirOperationKind::Slice {
                 base,
-                start,
-                end,
-                step,
+                bounds,
+                against,
             } => {
                 self.verify_operand(function, base, context)?;
-                for operand in start.iter().chain(end).chain(step) {
+                for operand in bounds.start.iter().chain(&bounds.end).chain(&bounds.step) {
                     self.verify_operand(function, operand, context)?;
                     if operand.ty != self.hir.interner().scalar(ScalarType::Int) {
                         return Err(MirInvariantError::new(context, "slice bound is not Int"));
@@ -1348,6 +1444,8 @@ impl Verifier<'_> {
                         "slice operation must preserve its Array type",
                     ));
                 }
+                self.verify_runtime_conflict_ids(function, against, context)?;
+                let _ = operation_access_place(operation, context)?;
             }
             MirOperationKind::Call {
                 callee,
@@ -3454,6 +3552,7 @@ impl Verifier<'_> {
             .filter_map(|event| match event {
                 LocalEvent::StorageLive(local) | LocalEvent::StorageDead(local) => Some(*local),
                 LocalEvent::Read(_)
+                | LocalEvent::Resolve(_)
                 | LocalEvent::Move(_)
                 | LocalEvent::Write(_)
                 | LocalEvent::WriteAccess(_) => None,
@@ -3464,6 +3563,7 @@ impl Verifier<'_> {
             .flatten()
             .map(|event| match event {
                 LocalEvent::Read(access)
+                | LocalEvent::Resolve(access)
                 | LocalEvent::Move(access)
                 | LocalEvent::Write(access)
                 | LocalEvent::WriteAccess(access) => access.local,
@@ -3506,8 +3606,9 @@ impl Verifier<'_> {
             .iter()
             .map(|block| mir_loan_events(function, block))
             .collect::<Vec<_>>();
-        let static_integers = static_integer_locals(self.hir, function);
+        let static_integers = super::regions::static_integer_locals(self.hir, function);
         let mut reservations = vec![0_u32; function.loans.len()];
+        let mut validations = vec![0_u32; function.loans.len()];
         let mut consumptions = vec![0_u32; function.loans.len()];
         for block_events in &events {
             for event in block_events {
@@ -3532,25 +3633,37 @@ impl Verifier<'_> {
                 }
             }
         }
+        for block in &function.blocks {
+            if let MirTerminatorKind::ValidateLoan { loan, .. } = &block.terminator.kind {
+                let count = validations
+                    .get_mut(loan.index() as usize)
+                    .ok_or_else(|| MirInvariantError::new(context, "validates an unknown loan"))?;
+                *count = count.saturating_add(1);
+            }
+        }
         for index in 0..function.loans.len() {
             let loan = &function.loans[index];
             let valid_consumptions = match loan.kind {
                 MirLoanKind::CallLocal => consumptions[index] <= 1,
                 MirLoanKind::Region => consumptions[index] == 0,
             };
-            if reservations[index] != 1 || !valid_consumptions {
+            let expected_validations = u32::from(place_requires_loan_validation(&loan.place));
+            if reservations[index] != 1
+                || validations[index] != expected_validations
+                || !valid_consumptions
+            {
                 return Err(MirInvariantError::new(
                     format!("{context} loan#{index}"),
                     format!(
-                        "has {} reservations and {} call consumptions, which violates its {:?} contract",
-                        reservations[index], consumptions[index], loan.kind
+                        "has {} validations, {} reservations, and {} call consumptions, which violates its {:?} contract",
+                        validations[index], reservations[index], consumptions[index], loan.kind
                     ),
                 ));
             }
         }
 
-        let mut incoming = vec![None::<BTreeSet<MirLoanId>>; function.blocks.len()];
-        incoming[function.entry.index() as usize] = Some(BTreeSet::new());
+        let mut incoming = vec![None::<LoanFlowState>; function.blocks.len()];
+        incoming[function.entry.index() as usize] = Some(LoanFlowState::default());
         let mut queue = VecDeque::from([function.entry]);
         let mut queued = vec![false; function.blocks.len()];
         queued[function.entry.index() as usize] = true;
@@ -3571,31 +3684,36 @@ impl Verifier<'_> {
                 )?;
             }
             let block = &function.blocks[block_id.index() as usize];
-            let mut propagate = |target: MirBlockId,
-                                 edge_state: BTreeSet<MirLoanId>|
-             -> Result<(), MirInvariantError> {
-                let target_index = target.index() as usize;
-                if !reachable[target_index] {
-                    return Ok(());
-                }
-                match &incoming[target_index] {
-                    Some(existing) if existing != &edge_state => {
-                        return Err(MirInvariantError::new(
-                            format!("{context} block#{}", target.index()),
-                            "control-flow predecessors disagree about active loans",
-                        ));
+            let mut propagate =
+                |target: MirBlockId, edge_state: LoanFlowState| -> Result<(), MirInvariantError> {
+                    let target_index = target.index() as usize;
+                    if !reachable[target_index] {
+                        return Ok(());
                     }
-                    Some(_) => {}
-                    None => {
-                        incoming[target_index] = Some(edge_state);
-                        if !queued[target_index] {
-                            queued[target_index] = true;
-                            queue.push_back(target);
+                    match &incoming[target_index] {
+                        Some(existing) if existing != &edge_state => {
+                            return Err(MirInvariantError::new(
+                                format!("{context} block#{}", target.index()),
+                                "control-flow predecessors disagree about active loans",
+                            ));
+                        }
+                        Some(_) => {}
+                        None => {
+                            incoming[target_index] = Some(edge_state);
+                            if !queued[target_index] {
+                                queued[target_index] = true;
+                                queue.push_back(target);
+                            }
                         }
                     }
-                }
-                Ok(())
-            };
+                    Ok(())
+                };
+            if !state.accesses.is_empty() {
+                return Err(MirInvariantError::new(
+                    &block_context,
+                    "runtime place proof is not consumed by the immediate access",
+                ));
+            }
             match &block.terminator.kind {
                 MirTerminatorKind::Goto { target } => propagate(*target, state)?,
                 MirTerminatorKind::SwitchBool {
@@ -3613,25 +3731,45 @@ impl Verifier<'_> {
                     propagate(*otherwise, state)?;
                 }
                 MirTerminatorKind::Invoke {
+                    operation,
                     destination,
                     target,
                     unwind,
                     ..
                 } => {
+                    if let Some((place, against)) =
+                        operation_access_place(operation, &block_context)?
+                    {
+                        let expected = self.runtime_place_conflicts(
+                            function,
+                            &static_integers,
+                            &state.active,
+                            &place,
+                            false,
+                            &block_context,
+                        )?;
+                        if against != expected {
+                            return Err(MirInvariantError::new(
+                                &block_context,
+                                "indexed operation runtime proof differs from active dynamic conflicts",
+                            ));
+                        }
+                    }
                     if let Some(target) = target {
                         let normal = state.clone();
                         if let Some(destination) = destination {
                             self.verify_loan_local_access(
                                 function,
                                 &static_integers,
-                                &normal,
+                                &normal.active,
                                 &LocalEvent::Write(LocalAccess::from_place(destination)),
+                                None,
                                 &block_context,
                             )?;
                         }
                         propagate(*target, normal)?;
                     }
-                    propagate(*unwind, BTreeSet::new())?;
+                    propagate(*unwind, LoanFlowState::default())?;
                 }
                 MirTerminatorKind::IteratorNext {
                     destination,
@@ -3644,20 +3782,100 @@ impl Verifier<'_> {
                     self.verify_loan_local_access(
                         function,
                         &static_integers,
-                        &has_value_state,
+                        &has_value_state.active,
                         &LocalEvent::Write(LocalAccess::from_place(destination)),
+                        None,
                         &block_context,
                     )?;
                     propagate(*has_value, has_value_state)?;
                     propagate(*exhausted, state)?;
-                    propagate(*unwind, BTreeSet::new())?;
+                    propagate(*unwind, LoanFlowState::default())?;
                 }
-                MirTerminatorKind::ValidatePlaces { target, unwind, .. } => {
+                MirTerminatorKind::ValidatePlaces {
+                    places,
+                    against,
+                    for_write,
+                    target,
+                    unwind,
+                    ..
+                } => {
+                    let expected = places
+                        .iter()
+                        .map(|place| {
+                            self.runtime_place_conflicts(
+                                function,
+                                &static_integers,
+                                &state.active,
+                                place,
+                                *for_write,
+                                &block_context,
+                            )
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    if against != &expected {
+                        return Err(MirInvariantError::new(
+                            &block_context,
+                            "place validation runtime proof differs from active dynamic conflicts",
+                        ));
+                    }
+                    for (place, loans) in places.iter().zip(expected) {
+                        if loans.is_empty() {
+                            continue;
+                        }
+                        let key = ValidatedAccess {
+                            access: LocalAccess::from_place(place),
+                            for_write: *for_write,
+                        };
+                        if state.accesses.insert(key, loans).is_some() {
+                            return Err(MirInvariantError::new(
+                                &block_context,
+                                "place validation duplicates a pending runtime access proof",
+                            ));
+                        }
+                    }
                     propagate(*target, state)?;
-                    propagate(*unwind, BTreeSet::new())?;
+                    propagate(*unwind, LoanFlowState::default())?;
+                }
+                MirTerminatorKind::ValidateLoan {
+                    loan,
+                    against,
+                    target,
+                    unwind,
+                } => {
+                    let expected = self.runtime_loan_conflicts(
+                        function,
+                        &static_integers,
+                        &state.active,
+                        *loan,
+                        &block_context,
+                    )?;
+                    if against != &expected {
+                        return Err(MirInvariantError::new(
+                            &block_context,
+                            format!(
+                                "loan#{} runtime proof lists {:?}, expected {:?}",
+                                loan.index(),
+                                against.iter().map(|loan| loan.index()).collect::<Vec<_>>(),
+                                expected.iter().map(|loan| loan.index()).collect::<Vec<_>>()
+                            ),
+                        ));
+                    }
+                    if state.active.contains(loan)
+                        || state.validated.insert(*loan, expected).is_some()
+                    {
+                        return Err(MirInvariantError::new(
+                            &block_context,
+                            format!("validates already-active or pending loan#{}", loan.index()),
+                        ));
+                    }
+                    propagate(*target, state)?;
+                    propagate(*unwind, LoanFlowState::default())?;
                 }
                 MirTerminatorKind::Return => {
-                    if !state.is_empty() {
+                    if !state.active.is_empty()
+                        || !state.validated.is_empty()
+                        || !state.accesses.is_empty()
+                    {
                         return Err(MirInvariantError::new(
                             block_context,
                             "return abandons active loans without explicit release",
@@ -3674,54 +3892,108 @@ impl Verifier<'_> {
         &self,
         function: &MirFunction,
         static_integers: &BTreeMap<MirLocalId, u64>,
-        state: &mut BTreeSet<MirLoanId>,
+        state: &mut LoanFlowState,
         event: &LoanEvent,
         context: &str,
     ) -> Result<(), MirInvariantError> {
         match event {
             LoanEvent::Local(event) => {
-                self.verify_loan_local_access(function, static_integers, state, event, context)
+                self.verify_runtime_proof_inputs_stable(function, state, event, context)?;
+                let key = match event {
+                    LocalEvent::Read(access) => Some(ValidatedAccess {
+                        access: access.clone(),
+                        for_write: false,
+                    }),
+                    LocalEvent::Move(access) | LocalEvent::Write(access) => Some(ValidatedAccess {
+                        access: access.clone(),
+                        for_write: true,
+                    }),
+                    LocalEvent::Resolve(_)
+                    | LocalEvent::WriteAccess(_)
+                    | LocalEvent::StorageLive(_)
+                    | LocalEvent::StorageDead(_) => None,
+                };
+                let proof = key.as_ref().and_then(|key| state.accesses.remove(key));
+                self.verify_loan_local_access(
+                    function,
+                    static_integers,
+                    &state.active,
+                    event,
+                    proof.as_deref(),
+                    context,
+                )
             }
             LoanEvent::Reserve(id) => {
+                if !state.accesses.is_empty() {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "reserves a loan while a runtime access proof is pending",
+                    ));
+                }
                 let loan = self.loan(function, *id, context)?;
                 self.verify_reborrow_mode(function, loan, context)?;
-                let access = LocalAccess::from_place(loan.place());
-                if state.contains(id) {
+                if state.active.contains(id) {
                     return Err(MirInvariantError::new(
                         context,
                         format!("reserves already-active loan#{}", id.index()),
                     ));
                 }
-                for active in state.iter().copied() {
+                let proof = state.validated.remove(id);
+                if place_requires_loan_validation(loan.place()) != proof.is_some() {
+                    return Err(MirInvariantError::new(
+                        context,
+                        format!(
+                            "loan#{} reservation disagrees with its required validation",
+                            id.index()
+                        ),
+                    ));
+                }
+                for active in state.active.iter().copied() {
+                    self.consume_dataflow_step(context)?;
                     let existing = self.loan(function, active, context)?;
-                    let existing_access = LocalAccess::from_place(existing.place());
-                    if access.local == existing_access.local
-                        && loan_paths_overlap(&access.path, &existing_access.path, static_integers)
-                        && !(loan.mode() == ParameterMode::Ref
-                            && existing.mode() == ParameterMode::Ref)
-                    {
-                        return Err(MirInvariantError::new(
-                            context,
-                            format!(
-                                "loan#{} overlaps incompatible active loan#{}",
-                                id.index(),
-                                active.index()
-                            ),
-                        ));
+                    if loan.mode() == ParameterMode::Ref && existing.mode() == ParameterMode::Ref {
+                        continue;
+                    }
+                    match super::regions::loan_place_relation(
+                        loan.place(),
+                        existing.place(),
+                        static_integers,
+                    ) {
+                        StaticRegionRelation::Disjoint => {}
+                        StaticRegionRelation::Runtime
+                            if proof
+                                .as_ref()
+                                .is_some_and(|against| against.contains(&active)) => {}
+                        StaticRegionRelation::Runtime | StaticRegionRelation::Overlap => {
+                            return Err(MirInvariantError::new(
+                                context,
+                                format!(
+                                    "loan#{} lacks a valid proof against incompatible active loan#{}",
+                                    id.index(),
+                                    active.index()
+                                ),
+                            ));
+                        }
                     }
                 }
-                state.insert(*id);
+                state.active.insert(*id);
                 Ok(())
             }
             LoanEvent::Release(loan) => {
-                if !state.contains(loan) {
+                if !state.validated.is_empty() || !state.accesses.is_empty() {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "releases a loan while another reservation proof is pending",
+                    ));
+                }
+                if !state.active.contains(loan) {
                     return Err(MirInvariantError::new(
                         context,
                         format!("releases inactive loan#{}", loan.index()),
                     ));
                 }
                 if let Some(dependent) =
-                    self.active_dependent_loan(function, state, *loan, context)?
+                    self.active_dependent_loan(function, &state.active, *loan, context)?
                 {
                     return Err(MirInvariantError::new(
                         context,
@@ -3732,10 +4004,16 @@ impl Verifier<'_> {
                         ),
                     ));
                 }
-                state.remove(loan);
+                state.active.remove(loan);
                 Ok(())
             }
             LoanEvent::Consume(loans) => {
+                if !state.validated.is_empty() || !state.accesses.is_empty() {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "consumes loans while a runtime proof is pending",
+                    ));
+                }
                 let mut seen = BTreeSet::new();
                 for loan in loans {
                     let metadata = self.loan(function, *loan, context)?;
@@ -3747,12 +4025,12 @@ impl Verifier<'_> {
                     }
                     self.verify_source_loan_access(
                         function,
-                        state,
+                        &state.active,
                         &LocalAccess::from_place(&metadata.place),
                         "read",
                         context,
                     )?;
-                    if !seen.insert(*loan) || !state.remove(loan) {
+                    if !seen.insert(*loan) || !state.active.remove(loan) {
                         return Err(MirInvariantError::new(
                             context,
                             format!("consumes inactive loan#{}", loan.index()),
@@ -3762,6 +4040,132 @@ impl Verifier<'_> {
                 Ok(())
             }
         }
+    }
+
+    fn verify_runtime_proof_inputs_stable(
+        &self,
+        function: &MirFunction,
+        state: &LoanFlowState,
+        event: &LocalEvent,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let changed = match event {
+            LocalEvent::Move(access)
+            | LocalEvent::Write(access)
+            | LocalEvent::WriteAccess(access) => Some(access.local),
+            LocalEvent::StorageLive(local) | LocalEvent::StorageDead(local) => Some(*local),
+            LocalEvent::Read(_) | LocalEvent::Resolve(_) => None,
+        };
+        let Some(changed) = changed else {
+            return Ok(());
+        };
+        let access_input_changed = state.accesses.keys().any(|validated| {
+            move_path_runtime_inputs(&validated.access.path).any(|local| local == changed)
+        });
+        let loan_input_changed =
+            state
+                .validated
+                .keys()
+                .try_fold(false, |changed_input, loan| {
+                    if changed_input {
+                        return Ok(true);
+                    }
+                    let loan = self.loan(function, *loan, context)?;
+                    Ok(
+                        move_path_runtime_inputs(&LocalAccess::from_place(loan.place()).path)
+                            .any(|local| local == changed),
+                    )
+                })?;
+        if access_input_changed || loan_input_changed {
+            return Err(MirInvariantError::new(
+                context,
+                format!(
+                    "changes local#{} while it is an input to a pending runtime-overlap proof",
+                    changed.index()
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    fn runtime_loan_conflicts(
+        &self,
+        function: &MirFunction,
+        static_integers: &BTreeMap<MirLocalId, u64>,
+        active: &BTreeSet<MirLoanId>,
+        candidate: MirLoanId,
+        context: &str,
+    ) -> Result<Vec<MirLoanId>, MirInvariantError> {
+        let loan = self.loan(function, candidate, context)?;
+        if !place_requires_loan_validation(loan.place()) {
+            return Err(MirInvariantError::new(
+                context,
+                format!(
+                    "loan#{} has no runtime-resolvable collection projection",
+                    candidate.index()
+                ),
+            ));
+        }
+        let mut against = Vec::new();
+        for active in active.iter().copied() {
+            self.consume_dataflow_step(context)?;
+            let existing = self.loan(function, active, context)?;
+            if loan.mode() == ParameterMode::Ref && existing.mode() == ParameterMode::Ref {
+                continue;
+            }
+            match super::regions::loan_place_relation(
+                loan.place(),
+                existing.place(),
+                static_integers,
+            ) {
+                StaticRegionRelation::Disjoint => {}
+                StaticRegionRelation::Runtime => against.push(active),
+                StaticRegionRelation::Overlap => {
+                    return Err(MirInvariantError::new(
+                        context,
+                        format!(
+                            "loan#{} statically overlaps incompatible active loan#{}",
+                            candidate.index(),
+                            active.index()
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(against)
+    }
+
+    fn runtime_place_conflicts(
+        &self,
+        function: &MirFunction,
+        static_integers: &BTreeMap<MirLocalId, u64>,
+        active: &BTreeSet<MirLoanId>,
+        place: &MirPlace,
+        for_write: bool,
+        context: &str,
+    ) -> Result<Vec<MirLoanId>, MirInvariantError> {
+        let mut against = Vec::new();
+        for active in active.iter().copied() {
+            self.consume_dataflow_step(context)?;
+            let existing = self.loan(function, active, context)?;
+            if !for_write && existing.mode() == ParameterMode::Ref {
+                continue;
+            }
+            match super::regions::loan_place_relation(place, existing.place(), static_integers) {
+                StaticRegionRelation::Disjoint => {}
+                StaticRegionRelation::Runtime => against.push(active),
+                StaticRegionRelation::Overlap => {
+                    return Err(MirInvariantError::new(
+                        context,
+                        format!(
+                            "place validation statically overlaps active loan#{}",
+                            active.index()
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(against)
     }
 
     fn active_dependent_loan(
@@ -3800,10 +4204,15 @@ impl Verifier<'_> {
         static_integers: &BTreeMap<MirLocalId, u64>,
         state: &BTreeSet<MirLoanId>,
         event: &LocalEvent,
+        proof: Option<&[MirLoanId]>,
         context: &str,
     ) -> Result<(), MirInvariantError> {
         let (access, access_kind) = match event {
             LocalEvent::Read(access) => (Some(access), "read"),
+            LocalEvent::Resolve(access) => {
+                self.verify_source_loan_access(function, state, access, "read", context)?;
+                return Ok(());
+            }
             LocalEvent::Move(access) => (Some(access), "move"),
             LocalEvent::Write(access) | LocalEvent::WriteAccess(access) => (Some(access), "write"),
             LocalEvent::StorageLive(local) | LocalEvent::StorageDead(local) => {
@@ -3816,8 +4225,11 @@ impl Verifier<'_> {
                     function,
                     static_integers,
                     state,
-                    &access,
-                    "storage change",
+                    ClassifiedLocalAccess {
+                        access: &access,
+                        kind: "storage change",
+                    },
+                    None,
                     context,
                 );
             }
@@ -3842,8 +4254,11 @@ impl Verifier<'_> {
             function,
             static_integers,
             state,
-            access,
-            access_kind,
+            ClassifiedLocalAccess {
+                access,
+                kind: access_kind,
+            },
+            proof,
             context,
         )
     }
@@ -3898,25 +4313,34 @@ impl Verifier<'_> {
         function: &MirFunction,
         static_integers: &BTreeMap<MirLocalId, u64>,
         state: &BTreeSet<MirLoanId>,
-        access: &LocalAccess,
-        access_kind: &str,
+        access: ClassifiedLocalAccess<'_>,
+        proof: Option<&[MirLoanId]>,
         context: &str,
     ) -> Result<(), MirInvariantError> {
+        let ClassifiedLocalAccess { access, kind } = access;
         for active in state.iter().copied() {
+            self.consume_dataflow_step(context)?;
             let loan = self.loan(function, active, context)?;
             let loan_access = LocalAccess::from_place(loan.place());
-            if access.local == loan_access.local
-                && loan_paths_overlap(&access.path, &loan_access.path, static_integers)
-                && !(access_kind == "read" && loan.mode() == ParameterMode::Ref)
+            if access.local != loan_access.local
+                || kind == "read" && loan.mode() == ParameterMode::Ref
             {
-                return Err(MirInvariantError::new(
-                    context,
-                    format!(
-                        "{access_kind} overlaps active loan#{} ({:?})",
-                        active.index(),
-                        loan.mode()
-                    ),
-                ));
+                continue;
+            }
+            match loan_paths_relation(&access.path, &loan_access.path, static_integers) {
+                StaticRegionRelation::Disjoint => {}
+                StaticRegionRelation::Runtime
+                    if proof.is_some_and(|proof| proof.contains(&active)) => {}
+                StaticRegionRelation::Runtime | StaticRegionRelation::Overlap => {
+                    return Err(MirInvariantError::new(
+                        context,
+                        format!(
+                            "{kind} overlaps active loan#{} ({:?})",
+                            active.index(),
+                            loan.mode()
+                        ),
+                    ));
+                }
             }
         }
         Ok(())
@@ -4122,7 +4546,9 @@ impl Verifier<'_> {
             let mut state = incoming[block_index].clone();
             for event in block_events {
                 match event {
-                    LocalEvent::Read(access) if access.local == local => {
+                    LocalEvent::Read(access) | LocalEvent::Resolve(access)
+                        if access.local == local =>
+                    {
                         if !state.live || !path_is_available(&state.unavailable, &access.path) {
                             return Err(MirInvariantError::new(
                                 format!("{context} block#{block_index}"),
@@ -4187,6 +4613,7 @@ impl Verifier<'_> {
                         state.unavailable.insert(Vec::new());
                     }
                     LocalEvent::Read(_)
+                    | LocalEvent::Resolve(_)
                     | LocalEvent::Move(_)
                     | LocalEvent::Write(_)
                     | LocalEvent::WriteAccess(_)
@@ -4386,6 +4813,11 @@ impl Verifier<'_> {
                     push_operand_events(replacement, &mut events);
                 }
             }
+            MirTerminatorKind::ValidateLoan { loan, .. } => {
+                if let Some(loan) = function.loan(*loan) {
+                    push_resolve_place_events(loan.place(), &mut events);
+                }
+            }
             MirTerminatorKind::Return => events.push(LocalEvent::Read(LocalAccess {
                 local: function.return_local,
                 path: Vec::new(),
@@ -4437,6 +4869,26 @@ impl Verifier<'_> {
         })
     }
 
+    fn verify_runtime_conflict_ids(
+        &self,
+        function: &MirFunction,
+        loans: &[MirLoanId],
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let mut previous = None;
+        for loan in loans {
+            self.loan(function, *loan, context)?;
+            if previous.is_some_and(|previous| previous >= *loan) {
+                return Err(MirInvariantError::new(
+                    context,
+                    "runtime conflict IDs are not unique and canonical",
+                ));
+            }
+            previous = Some(*loan);
+        }
+        Ok(())
+    }
+
     fn block<'a>(
         &self,
         function: &'a MirFunction,
@@ -4467,6 +4919,85 @@ impl Verifier<'_> {
     }
 }
 
+fn operation_access_place<'a>(
+    operation: &'a MirOperation,
+    context: &str,
+) -> Result<Option<(MirPlace, &'a [MirLoanId])>, MirInvariantError> {
+    let (base, projection, against) = match &operation.kind {
+        MirOperationKind::Index {
+            base,
+            index,
+            access,
+            against,
+        } => (
+            base,
+            MirProjectionKind::Index {
+                index: operand_materialized_local(index, context)?,
+                access: *access,
+            },
+            against.as_slice(),
+        ),
+        MirOperationKind::Slice {
+            base,
+            bounds,
+            against,
+        } => (
+            base,
+            MirProjectionKind::Slice {
+                start: bounds
+                    .start
+                    .as_ref()
+                    .map(|operand| operand_materialized_local(operand, context))
+                    .transpose()?,
+                end: bounds
+                    .end
+                    .as_ref()
+                    .map(|operand| operand_materialized_local(operand, context))
+                    .transpose()?,
+                step: bounds
+                    .step
+                    .as_ref()
+                    .map(|operand| operand_materialized_local(operand, context))
+                    .transpose()?,
+            },
+            against.as_slice(),
+        ),
+        _ => return Ok(None),
+    };
+    let MirOperandKind::Borrow(base) = &base.kind else {
+        return Err(MirInvariantError::new(
+            context,
+            "indexed operation has no borrowed base place",
+        ));
+    };
+    let mut place = base.clone();
+    place.ty = operation.ty;
+    place.projections.push(MirProjection {
+        ty: operation.ty,
+        kind: projection,
+    });
+    Ok(Some((place, against)))
+}
+
+fn operand_materialized_local(
+    operand: &MirOperand,
+    context: &str,
+) -> Result<MirLocalId, MirInvariantError> {
+    match &operand.kind {
+        MirOperandKind::Copy(place)
+        | MirOperandKind::Move(place)
+        | MirOperandKind::Borrow(place)
+            if place.projections.is_empty() && place.source_loan.is_none() =>
+        {
+            Ok(place.local)
+        }
+        _ => Err(MirInvariantError::new(
+            context,
+            "index or slice input is not a materialized local",
+        )),
+    }
+}
+
 fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEvent> {
     let mut events = Vec::new();
     for statement in &block.statements {
@@ -4480,7 +5011,11 @@ fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEve
             MirStatementKind::ReserveLoan(id) => {
                 if let Some(loan) = function.loan(*id) {
                     let mut local = Vec::new();
-                    push_place_events(loan.place(), true, &mut local);
+                    if place_requires_loan_validation(loan.place()) {
+                        push_resolve_place_events(loan.place(), &mut local);
+                    } else {
+                        push_place_events(loan.place(), true, &mut local);
+                    }
                     events.extend(local.into_iter().map(LoanEvent::Local));
                 }
                 events.push(LoanEvent::Reserve(*id));
@@ -4508,7 +5043,13 @@ fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEve
             push_operand_events(value, &mut local);
         }
         MirTerminatorKind::Invoke { operation, .. } => {
-            push_operation_events(operation, &mut local);
+            if let Some((place, _)) = operation_access_place(operation, "loan events")
+                .expect("verified indexed operations retain materialized places")
+            {
+                push_resolve_place_events(&place, &mut local);
+            } else {
+                push_operation_events(operation, &mut local);
+            }
         }
         MirTerminatorKind::IteratorNext { state, .. } => {
             push_destination_reads(state, true, &mut local);
@@ -4516,14 +5057,18 @@ fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEve
         MirTerminatorKind::ValidatePlaces {
             places,
             replacements,
-            for_write,
             ..
         } => {
             for place in places {
-                push_destination_reads(place, *for_write, &mut local);
+                push_resolve_place_events(place, &mut local);
             }
             for replacement in replacements.iter().flatten() {
                 push_operand_events(replacement, &mut local);
+            }
+        }
+        MirTerminatorKind::ValidateLoan { loan, .. } => {
+            if let Some(loan) = function.loan(*loan) {
+                push_resolve_place_events(loan.place(), &mut local);
             }
         }
         MirTerminatorKind::Return => local.push(LocalEvent::Read(LocalAccess {
@@ -4627,6 +5172,11 @@ fn tag_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<TagEvent> {
                 push_tag_operand(function, replacement, &mut events);
             }
         }
+        MirTerminatorKind::ValidateLoan { loan, .. } => {
+            if let Some(loan) = function.loan(*loan) {
+                push_tag_place(function, loan.place(), false, &mut events);
+            }
+        }
     }
     events
 }
@@ -4692,14 +5242,9 @@ fn push_tag_operation(
             push_tag_operand(function, base, events);
             push_tag_operand(function, index, events);
         }
-        MirOperationKind::Slice {
-            base,
-            start,
-            end,
-            step,
-        } => {
+        MirOperationKind::Slice { base, bounds, .. } => {
             push_tag_operand(function, base, events);
-            for value in start.iter().chain(end).chain(step) {
+            for value in bounds.start.iter().chain(&bounds.end).chain(&bounds.step) {
                 push_tag_operand(function, value, events);
             }
         }
@@ -4896,7 +5441,8 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
             edge(*exhausted),
             edge(*unwind),
         ],
-        MirTerminatorKind::ValidatePlaces { target, unwind, .. } => {
+        MirTerminatorKind::ValidatePlaces { target, unwind, .. }
+        | MirTerminatorKind::ValidateLoan { target, unwind, .. } => {
             vec![edge(*target), edge(*unwind)]
         }
         MirTerminatorKind::Return
@@ -4954,6 +5500,7 @@ fn transfer_local(state: LocalState, events: &[LocalEvent], local: MirLocalId) -
                 state.unavailable.insert(Vec::new());
             }
             LocalEvent::Read(_)
+            | LocalEvent::Resolve(_)
             | LocalEvent::Move(_)
             | LocalEvent::Write(_)
             | LocalEvent::WriteAccess(_)
@@ -5012,37 +5559,77 @@ fn move_paths_overlap(left: &[MovePathComponent], right: &[MovePathComponent]) -
         .all(|(left, right)| !move_path_components_are_disjoint(left, right))
 }
 
+#[cfg(test)]
 fn loan_paths_overlap(
     left: &[MovePathComponent],
     right: &[MovePathComponent],
     static_integers: &BTreeMap<MirLocalId, u64>,
 ) -> bool {
+    loan_paths_relation(left, right, static_integers) != StaticRegionRelation::Disjoint
+}
+
+fn loan_paths_relation(
+    left: &[MovePathComponent],
+    right: &[MovePathComponent],
+    static_integers: &BTreeMap<MirLocalId, u64>,
+) -> StaticRegionRelation {
+    let mut relation = StaticRegionRelation::Overlap;
     for (left, right) in left.iter().zip(right) {
-        if left == right {
-            continue;
-        }
         match (
             collection_region(left, static_integers),
             collection_region(right, static_integers),
         ) {
             (CollectionComponent::Static(left), CollectionComponent::Static(right)) => {
-                if static_collection_relation(left, right) == StaticRegionRelation::Disjoint {
-                    return false;
+                let current = static_collection_relation(left, right);
+                if current == StaticRegionRelation::Disjoint {
+                    return current;
                 }
-                return true;
+                if static_regions_are_identical(left, right) {
+                    relation = current;
+                    continue;
+                }
+                return current;
             }
             (CollectionComponent::None, CollectionComponent::None) => {
-                if move_path_components_are_disjoint(left, right) {
-                    return false;
+                if left == right {
+                    continue;
                 }
+                if move_path_components_are_disjoint(left, right) {
+                    return StaticRegionRelation::Disjoint;
+                }
+                return StaticRegionRelation::Overlap;
             }
             (CollectionComponent::Dynamic, _)
             | (_, CollectionComponent::Dynamic)
             | (CollectionComponent::Static(_), CollectionComponent::None)
-            | (CollectionComponent::None, CollectionComponent::Static(_)) => return true,
+            | (CollectionComponent::None, CollectionComponent::Static(_)) => {
+                return StaticRegionRelation::Runtime;
+            }
         }
     }
-    true
+    relation
+}
+
+fn move_path_runtime_inputs(path: &[MovePathComponent]) -> impl Iterator<Item = MirLocalId> + '_ {
+    path.iter().flat_map(|component| {
+        let inputs = match component {
+            MovePathComponent::Index { index, .. } => [Some(*index), None, None],
+            MovePathComponent::Slice { start, end, step } => [*start, *end, *step],
+            MovePathComponent::ClosureCapture(_, _)
+            | MovePathComponent::Field(_)
+            | MovePathComponent::TupleField(_)
+            | MovePathComponent::NewtypeValue
+            | MovePathComponent::VariantTuple(_, _)
+            | MovePathComponent::VariantField(_, _)
+            | MovePathComponent::OptionValue
+            | MovePathComponent::ResultOkValue
+            | MovePathComponent::ResultErrValue
+            | MovePathComponent::UnionValue(_)
+            | MovePathComponent::ArrayPatternIndex(_)
+            | MovePathComponent::ArrayPatternRest { .. } => [None, None, None],
+        };
+        inputs.into_iter().flatten()
+    })
 }
 
 #[derive(Clone, Copy)]
@@ -5050,6 +5637,25 @@ enum CollectionComponent {
     None,
     Static(StaticCollectionRegion),
     Dynamic,
+}
+
+fn static_regions_are_identical(
+    left: StaticCollectionRegion,
+    right: StaticCollectionRegion,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    matches!(
+        (left, right),
+        (
+            StaticCollectionRegion::Index(left),
+            StaticCollectionRegion::PatternIndex(right)
+        ) | (
+            StaticCollectionRegion::PatternIndex(right),
+            StaticCollectionRegion::Index(left)
+        ) if left == u64::from(right)
+    )
 }
 
 fn collection_region(
@@ -5066,11 +5672,18 @@ fn collection_region(
                 suffix: *suffix,
             })
         }
-        MovePathComponent::Index(index) => static_integers
+        MovePathComponent::Index {
+            index,
+            access: HirIndexAccess::Array,
+        } => static_integers
             .get(index)
             .map_or(CollectionComponent::Dynamic, |index| {
                 CollectionComponent::Static(StaticCollectionRegion::Index(*index))
             }),
+        MovePathComponent::Index {
+            access: HirIndexAccess::MapLookup | HirIndexAccess::MapEntry,
+            ..
+        } => CollectionComponent::Dynamic,
         MovePathComponent::Slice { start, end, step } => {
             let Some(start) = static_optional_bound(*start, static_integers) else {
                 return CollectionComponent::Dynamic;
@@ -5107,80 +5720,6 @@ fn static_optional_bound(
     match local {
         Some(local) => Some(Some(*static_integers.get(&local)?)),
         None => Some(None),
-    }
-}
-
-fn static_integer_locals(hir: &HirProgram, function: &MirFunction) -> BTreeMap<MirLocalId, u64> {
-    let mut candidates = BTreeMap::<MirLocalId, Option<u64>>::new();
-    let mut record = |place: &MirPlace, value: Option<u64>| {
-        if !place.projections.is_empty()
-            || function.locals[place.local.index() as usize].kind != MirLocalKind::Temporary
-        {
-            return;
-        }
-        candidates
-            .entry(place.local)
-            .and_modify(|candidate| *candidate = None)
-            .or_insert(value);
-    };
-    for block in &function.blocks {
-        for statement in &block.statements {
-            if let MirStatementKind::Assign { destination, value } = &statement.kind {
-                record(destination, static_integer_rvalue(hir, value));
-            }
-        }
-        match &block.terminator.kind {
-            MirTerminatorKind::Invoke {
-                destination: Some(destination),
-                ..
-            }
-            | MirTerminatorKind::IteratorNext { destination, .. } => record(destination, None),
-            MirTerminatorKind::Goto { .. }
-            | MirTerminatorKind::SwitchBool { .. }
-            | MirTerminatorKind::SwitchTag { .. }
-            | MirTerminatorKind::Invoke {
-                destination: None, ..
-            }
-            | MirTerminatorKind::ValidatePlaces { .. }
-            | MirTerminatorKind::Return
-            | MirTerminatorKind::ResumePanic
-            | MirTerminatorKind::Unreachable => {}
-        }
-    }
-    candidates
-        .into_iter()
-        .filter_map(|(local, value)| value.map(|value| (local, value)))
-        .collect()
-}
-
-fn static_integer_rvalue(hir: &HirProgram, value: &MirRvalue) -> Option<u64> {
-    let MirRvalueKind::Use(operand) = &value.kind else {
-        return None;
-    };
-    match &operand.kind {
-        MirOperandKind::Constant(MirConstant::Integer(spelling)) => {
-            parse_nonnegative_integer(spelling)
-        }
-        MirOperandKind::Constant(MirConstant::Named(symbol)) => {
-            let HirConstantValueKind::Integer(value) = hir.constant(*symbol)?.evaluated()?.kind()
-            else {
-                return None;
-            };
-            u64::try_from(*value).ok()
-        }
-        MirOperandKind::Constant(
-            MirConstant::Unit
-            | MirConstant::Bool(_)
-            | MirConstant::Float(_)
-            | MirConstant::Char(_)
-            | MirConstant::String(_),
-        )
-        | MirOperandKind::Copy(_)
-        | MirOperandKind::Move(_)
-        | MirOperandKind::Borrow(_)
-        | MirOperandKind::Loan(_)
-        | MirOperandKind::Function { .. }
-        | MirOperandKind::PreludeTraitFunction { .. } => None,
     }
 }
 
@@ -5310,14 +5849,9 @@ fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>)
             push_operand_events(base, events);
             push_operand_events(index, events);
         }
-        MirOperationKind::Slice {
-            base,
-            start,
-            end,
-            step,
-        } => {
+        MirOperationKind::Slice { base, bounds, .. } => {
             push_operand_events(base, events);
-            for value in start.iter().chain(end).chain(step) {
+            for value in bounds.start.iter().chain(&bounds.end).chain(&bounds.step) {
                 push_operand_events(value, events);
             }
         }
@@ -5387,6 +5921,11 @@ fn push_place_events(place: &MirPlace, read_root: bool, events: &mut Vec<LocalEv
     }
 }
 
+fn push_resolve_place_events(place: &MirPlace, events: &mut Vec<LocalEvent>) {
+    push_projection_index_events(place, events);
+    events.push(LocalEvent::Resolve(LocalAccess::from_place(place)));
+}
+
 fn push_projection_index_events(place: &MirPlace, events: &mut Vec<LocalEvent>) {
     for projection in &place.projections {
         match &projection.kind {
@@ -5418,6 +5957,15 @@ fn push_projection_index_events(place: &MirPlace, events: &mut Vec<LocalEvent>) 
             | MirProjectionKind::ArrayPatternRest { .. } => {}
         }
     }
+}
+
+fn place_requires_loan_validation(place: &MirPlace) -> bool {
+    place.projections.iter().any(|projection| {
+        matches!(
+            projection.kind,
+            MirProjectionKind::Index { .. } | MirProjectionKind::Slice { .. }
+        )
+    })
 }
 
 fn place_is_structurally_replaceable(place: &MirPlace) -> bool {
@@ -5553,8 +6101,14 @@ mod tests {
             &static_integers,
         ));
         assert!(loan_paths_overlap(
-            &[MovePathComponent::Index(dynamic)],
-            &[MovePathComponent::Index(split)],
+            &[MovePathComponent::Index {
+                index: dynamic,
+                access: HirIndexAccess::Array,
+            }],
+            &[MovePathComponent::Index {
+                index: split,
+                access: HirIndexAccess::Array,
+            }],
             &static_integers,
         ));
         assert!(!loan_paths_overlap(

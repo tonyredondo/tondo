@@ -28,7 +28,8 @@ pub(crate) enum AvailabilityFindingKind {
     InvalidGuardAccess,
     InvalidMatchMode,
     ConflictingLoan,
-    DeferredCollectionConflict,
+    DeferredCollectionLoanConflict,
+    DeferredCollectionAccessConflict,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -1273,7 +1274,41 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             .clone();
         let (mut flow, place) = self.place_components(id, state, &live_within)?;
         if let Some(state) = &mut flow.normal {
-            self.access_place(state, place, expression.span(), expression.ty(), demand)?;
+            self.access_place(
+                state,
+                place,
+                expression.span(),
+                expression.ty(),
+                demand,
+                true,
+            )?;
+        }
+        Ok(self.finish_expression(id, flow, live_after))
+    }
+
+    fn evaluate_loan_place(
+        &mut self,
+        id: HirExpressionId,
+        state: AvailabilityState,
+        demand: Demand,
+        live_after: &BTreeSet<LocalId>,
+    ) -> Result<AvailabilityFlow, TypeError> {
+        let live_within = self.expression_entry_liveness(id, live_after);
+        let expression = self
+            .program
+            .expression(id)
+            .expect("availability analysis receives verified loan place IDs")
+            .clone();
+        let (mut flow, place) = self.place_components(id, state, &live_within)?;
+        if let Some(state) = &mut flow.normal {
+            self.access_place(
+                state,
+                place,
+                expression.span(),
+                expression.ty(),
+                demand,
+                false,
+            )?;
         }
         Ok(self.finish_expression(id, flow, live_after))
     }
@@ -1398,6 +1433,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         span: Span,
         ty: TypeId,
         demand: Demand,
+        check_active_loans: bool,
     ) -> Result<(), TypeError> {
         let local = match place.root {
             PlaceRoot::Local(local) => Some(local),
@@ -1446,16 +1482,18 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 })
             })
             .unwrap_or_else(|| place.clone());
-        self.check_loan_access(
-            state,
-            &access_place,
-            if transfers {
-                LoanAccess::Move
-            } else {
-                LoanAccess::Read
-            },
-            span,
-        );
+        if check_active_loans {
+            self.check_loan_access(
+                state,
+                &access_place,
+                if transfers {
+                    LoanAccess::Move
+                } else {
+                    LoanAccess::Read
+                },
+                span,
+            );
+        }
         if !transfers {
             return Ok(());
         }
@@ -1603,7 +1641,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             let kind = match places_overlap(&active.place, &place) {
                 PlaceOverlap::Disjoint => continue,
                 PlaceOverlap::Overlap => AvailabilityFindingKind::ConflictingLoan,
-                PlaceOverlap::Runtime => AvailabilityFindingKind::DeferredCollectionConflict,
+                PlaceOverlap::Runtime => AvailabilityFindingKind::DeferredCollectionLoanConflict,
             };
             self.findings.insert(AvailabilityFinding {
                 kind,
@@ -1646,7 +1684,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         let kind = match places_overlap(&active.place, place) {
             PlaceOverlap::Disjoint => return,
             PlaceOverlap::Overlap => AvailabilityFindingKind::ConflictingLoan,
-            PlaceOverlap::Runtime => AvailabilityFindingKind::DeferredCollectionConflict,
+            PlaceOverlap::Runtime => AvailabilityFindingKind::DeferredCollectionAccessConflict,
         };
         self.findings.insert(AvailabilityFinding {
             kind,
@@ -1696,6 +1734,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 span,
                 ty,
                 Demand::Transfer,
+                true,
             )?;
         }
         Ok(AvailabilityFlow::normal(state))
@@ -1951,7 +1990,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         let argument = if expression_node.category() == HirValueCategory::Place
             || matches!(expression_node.kind(), HirExpressionKind::Slice { .. })
         {
-            self.place(expression, state, demand, live_after)?
+            self.evaluate_loan_place(expression, state, demand, live_after)?
         } else {
             self.expression(expression, state, demand, live_after)?
         };
