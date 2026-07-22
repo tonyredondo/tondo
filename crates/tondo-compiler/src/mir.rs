@@ -20,6 +20,7 @@ mod lower;
 mod verify;
 
 pub use lower::{MirLoweringLimits, lower_to_mir};
+pub(crate) use verify::verify_mir_with_capability_analysis;
 pub use verify::{MirInvariantError, MirVerificationLimits, verify_mir, verify_mir_with_limits};
 
 #[derive(Debug)]

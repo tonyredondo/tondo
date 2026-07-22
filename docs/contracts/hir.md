@@ -279,11 +279,11 @@ protocols. M5 will add the path-sensitive affine rules.
 
 For a synchronous safe signature, an ordinary call chooses the first available
 protocol in the order `Call`, `CallMut`, `CallOnce`. `CallMut` requires a
-mutable/replacement-capable place; the Copy-only `CallOnce` fallback may copy an
-immutable binding. Generic code uses only its exact written call bounds and
-their closed implications. Opaque callers use only published bounds. Both forms
-must expose one exact function signature or produce `E1115`, and an inaccessible
-protocol produces `E1407`. An async or unsafe signature never becomes this
+mutable/replacement-capable place; `CallOnce` transfers the callable and no
+longer requires a `Copy` bound. Generic code uses only its exact written call
+bounds and their closed implications. Opaque callers use only published bounds.
+Both forms must expose one exact function signature or produce `E1115`, and an
+inaccessible protocol produces `E1407`. An async or unsafe signature never becomes this
 ordinary HIR call node: expression checking remains incomplete until the
 effect-aware initiating expressions and context proofs are implemented.
 
@@ -670,9 +670,12 @@ by value uses the same proof; `ref`, `mut`, and `var` parameters retain only
 their borrow contract. In particular, a hosted fallible `main` admits its error
 type only when its `Discard` status is `Satisfied`.
 
-General move tracking, implicit scope-end obligations, callable capabilities,
-and terminal operations remain their owning phases' responsibility; successful
-closed-capability proof does not fabricate ownership availability or cleanup.
+HIR proves the contextual capability facts consumed by OWN-002, including
+generic and opaque `Copy` status and the exact `CallOnce` protocol. MIR records
+the resulting copy or move. Flow-sensitive availability, partial moves,
+implicit scope-end obligations, affine captures, and terminal operations remain
+their owning phases' responsibility; successful capability proof does not
+fabricate those later facts or cleanup.
 
 ## Declaration ordering
 

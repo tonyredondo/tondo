@@ -3892,12 +3892,7 @@ impl Verifier<'_> {
                     )?
                 {
                     Some(super::HirCallProtocol::CallMut)
-                } else if available.supports(super::HirCallProtocol::CallOnce)
-                    && analysis
-                        .status(self.program, callee_type, HirCapability::Copy, capabilities)
-                        .map_err(|error| HirInvariantError::new(context, error.to_string()))?
-                        == super::HirCapabilityStatus::Satisfied
-                {
+                } else if available.supports(super::HirCallProtocol::CallOnce) {
                     Some(super::HirCallProtocol::CallOnce)
                 } else {
                     None

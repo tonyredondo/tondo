@@ -1,12 +1,13 @@
-use std::cell::Cell;
-use std::collections::{BTreeSet, VecDeque};
+use std::cell::{Cell, RefCell};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 
 use crate::hir::{
-    HirBinaryOperator, HirCallProtocol, HirCallableId, HirCapability, HirCapabilityStatus,
-    HirClosureProtocols, HirContainmentKind, HirGenericParameter, HirIndexAccess, HirNominalShape,
-    HirPrefixOperator, HirProgram, HirTraitConstructor, HirTypeDeclarationKind, HirVariantPayload,
+    CapabilityAnalysis, CapabilityAssumptions, HirBinaryOperator, HirCallProtocol, HirCallableId,
+    HirCapability, HirCapabilityStatus, HirClosureProtocols, HirContainmentKind,
+    HirGenericParameter, HirIndexAccess, HirNominalShape, HirPrefixOperator, HirProgram,
+    HirTraitConstructor, HirTypeDeclarationKind, HirVariantPayload,
 };
 use crate::resolve::{MemberKind, MemberOwner, ResolvedProgram, SymbolId};
 use crate::types::{
@@ -105,6 +106,22 @@ pub fn verify_mir_with_limits(
     program: &MirProgram,
     limits: MirVerificationLimits,
 ) -> Result<(), MirInvariantError> {
+    let capability_analysis = CapabilityAnalysis::new(hir, resolved).map_err(|error| {
+        MirInvariantError::new(
+            "MIR ownership capabilities",
+            format!("cannot derive the typed HIR capability graph: {error}"),
+        )
+    })?;
+    verify_mir_with_capability_analysis(resolved, hir, program, limits, &capability_analysis)
+}
+
+pub(crate) fn verify_mir_with_capability_analysis(
+    resolved: &ResolvedProgram,
+    hir: &HirProgram,
+    program: &MirProgram,
+    limits: MirVerificationLimits,
+    capability_analysis: &CapabilityAnalysis,
+) -> Result<(), MirInvariantError> {
     let expected = hir
         .callables()
         .filter(|callable| hir.body(callable.id()).is_some())
@@ -124,6 +141,8 @@ pub fn verify_mir_with_limits(
     let verifier = Verifier {
         resolved,
         hir,
+        capability_analysis,
+        capability_statuses: RefCell::new(BTreeMap::new()),
         limits,
         dataflow_steps: Cell::new(0),
     };
@@ -145,6 +164,9 @@ pub fn verify_mir_with_limits(
 struct Verifier<'a> {
     resolved: &'a ResolvedProgram,
     hir: &'a HirProgram,
+    capability_analysis: &'a CapabilityAnalysis,
+    capability_statuses:
+        RefCell<BTreeMap<(MirFunctionId, TypeId, HirCapability), HirCapabilityStatus>>,
     limits: MirVerificationLimits,
     dataflow_steps: Cell<u64>,
 }
@@ -167,23 +189,23 @@ fn mir_operand_is_borrow(operand: &MirOperand) -> bool {
     matches!(operand.kind, MirOperandKind::Borrow(_))
 }
 
-fn mir_rvalue_contains_borrow(value: &MirRvalue) -> bool {
+fn mir_rvalue_contains_invalid_borrow(value: &MirRvalue) -> bool {
     match &value.kind {
         MirRvalueKind::Use(value)
-        | MirRvalueKind::Length(value)
         | MirRvalueKind::Prefix { operand: value, .. }
         | MirRvalueKind::Coerce { value, .. }
         | MirRvalueKind::NumericConversion { value, .. } => mir_operand_is_borrow(value),
-        MirRvalueKind::IteratorState { .. } => false,
+        MirRvalueKind::Binary {
+            operator: HirBinaryOperator::Equal | HirBinaryOperator::NotEqual,
+            ..
+        }
+        | MirRvalueKind::Contains { .. }
+        | MirRvalueKind::Length(_)
+        | MirRvalueKind::IteratorState { .. } => false,
         MirRvalueKind::Binary { left, right, .. }
         | MirRvalueKind::Range {
             start: left,
             end: right,
-            ..
-        }
-        | MirRvalueKind::Contains {
-            item: left,
-            container: right,
             ..
         } => mir_operand_is_borrow(left) || mir_operand_is_borrow(right),
         MirRvalueKind::Aggregate { values, .. } => values.iter().any(mir_operand_is_borrow),
@@ -204,25 +226,18 @@ fn mir_operation_contains_invalid_borrow(operation: &MirOperation) -> bool {
         MirOperationKind::BuildMap { entries, .. } => entries
             .iter()
             .any(|(key, value)| mir_operand_is_borrow(key) || mir_operand_is_borrow(value)),
-        MirOperationKind::Index { base, index, .. } => {
-            mir_operand_is_borrow(base) || mir_operand_is_borrow(index)
-        }
+        MirOperationKind::Index { index, .. } => mir_operand_is_borrow(index),
         MirOperationKind::Slice {
-            base,
-            start,
-            end,
-            step,
-        } => {
-            mir_operand_is_borrow(base)
-                || start
-                    .iter()
-                    .chain(end)
-                    .chain(step)
-                    .any(mir_operand_is_borrow)
-        }
-        MirOperationKind::Call { arguments, .. } => arguments
+            start, end, step, ..
+        } => start
             .iter()
-            .any(|argument| mir_operand_is_borrow(&argument.value)),
+            .chain(end)
+            .chain(step)
+            .any(mir_operand_is_borrow),
+        MirOperationKind::Call { arguments, .. } => arguments.iter().any(|argument| {
+            let borrows = mir_operand_is_borrow(&argument.value);
+            argument.mode == crate::types::ParameterMode::Value && borrows
+        }),
         MirOperationKind::Assert {
             condition,
             message_parts,
@@ -523,7 +538,7 @@ impl Verifier<'_> {
                 self.verify_operand(function, value, &context)?;
                 if !matches!(
                     value.kind,
-                    MirOperandKind::Copy(_) | MirOperandKind::Move(_)
+                    MirOperandKind::Copy(_) | MirOperandKind::Move(_) | MirOperandKind::Borrow(_)
                 ) {
                     return Err(MirInvariantError::new(
                         &context,
@@ -650,11 +665,11 @@ impl Verifier<'_> {
                         (true, true, Some(replacement)) => {
                             self.verify_operand(function, replacement, &context)?;
                             if replacement.ty() != place.ty()
-                                || !matches!(replacement.kind(), MirOperandKind::Copy(_))
+                                || !matches!(replacement.kind(), MirOperandKind::Borrow(_))
                             {
                                 return Err(MirInvariantError::new(
                                     &context,
-                                    "slice write validation requires a copied replacement of the place type",
+                                    "slice write validation requires a borrowed replacement of the place type",
                                 ));
                             }
                         }
@@ -707,10 +722,10 @@ impl Verifier<'_> {
         value: &MirRvalue,
         context: &str,
     ) -> Result<(), MirInvariantError> {
-        if mir_rvalue_contains_borrow(value) {
+        if mir_rvalue_contains_invalid_borrow(value) {
             return Err(MirInvariantError::new(
                 context,
-                "environment borrow escapes its call-callee position",
+                "borrow escapes its permitted immediate observation",
             ));
         }
         self.verify_type(value.ty, context)?;
@@ -896,7 +911,7 @@ impl Verifier<'_> {
         if mir_operation_contains_invalid_borrow(operation) {
             return Err(MirInvariantError::new(
                 context,
-                "environment borrow escapes its call-callee position",
+                "borrow escapes its permitted immediate operation",
             ));
         }
         self.verify_type(operation.ty, context)?;
@@ -1306,14 +1321,37 @@ impl Verifier<'_> {
             MirOperandKind::Constant(constant) => {
                 self.verify_constant(constant, operand.ty, context)?;
             }
-            MirOperandKind::Copy(place)
-            | MirOperandKind::Move(place)
-            | MirOperandKind::Borrow(place) => {
+            MirOperandKind::Copy(place) | MirOperandKind::Move(place) => {
                 self.verify_place(function, place, context)?;
                 if place.ty != operand.ty {
                     return Err(MirInvariantError::new(
                         context,
                         "place operand changes its place type",
+                    ));
+                }
+                let status =
+                    self.capability_status(function.id, operand.ty, HirCapability::Copy, context)?;
+                let valid = matches!(
+                    (&operand.kind, status),
+                    (MirOperandKind::Copy(_), HirCapabilityStatus::Satisfied)
+                        | (MirOperandKind::Move(_), HirCapabilityStatus::Unsatisfied)
+                );
+                if !valid {
+                    return Err(MirInvariantError::new(
+                        context,
+                        format!(
+                            "{:?} operand does not match the type's contextual Copy status {status:?}",
+                            operand.kind
+                        ),
+                    ));
+                }
+            }
+            MirOperandKind::Borrow(place) => {
+                self.verify_place(function, place, context)?;
+                if place.ty != operand.ty {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "borrow operand changes its place type",
                     ));
                 }
             }
@@ -1374,6 +1412,49 @@ impl Verifier<'_> {
             }
         }
         Ok(())
+    }
+
+    fn capability_status(
+        &self,
+        function: MirFunctionId,
+        ty: TypeId,
+        capability: HirCapability,
+        context: &str,
+    ) -> Result<HirCapabilityStatus, MirInvariantError> {
+        let key = (function, ty, capability);
+        if let Some(status) = self.capability_statuses.borrow().get(&key).copied() {
+            return Ok(status);
+        }
+        let generics = match function {
+            MirFunctionId::Callable(callable) => self
+                .hir
+                .callable(callable)
+                .map(|callable| callable.generics()),
+            MirFunctionId::Closure(closure) => {
+                self.hir.closure(closure).map(|closure| closure.generics())
+            }
+        }
+        .ok_or_else(|| MirInvariantError::new(context, "function has no typed HIR generics"))?;
+        let assumptions = CapabilityAssumptions::from_generics(self.hir, generics);
+        let status = self
+            .capability_analysis
+            .status(self.hir, ty, capability, &assumptions)
+            .map_err(|error| MirInvariantError::new(context, error.to_string()))?;
+        if status == HirCapabilityStatus::Deferred {
+            return Err(MirInvariantError::new(
+                context,
+                format!(
+                    "{} capability remains unresolved for MIR type {}",
+                    capability.as_str(),
+                    self.hir
+                        .interner()
+                        .canonical(ty)
+                        .unwrap_or_else(|_| ty.to_string())
+                ),
+            ));
+        }
+        self.capability_statuses.borrow_mut().insert(key, status);
+        Ok(status)
     }
 
     fn verify_place(
@@ -2762,6 +2843,13 @@ impl Verifier<'_> {
                 return Err(MirInvariantError::new(
                     context,
                     "call argument mode or type differs from its parameter",
+                ));
+            }
+            let borrows = matches!(argument.value.kind, MirOperandKind::Borrow(_));
+            if (argument.mode == crate::types::ParameterMode::Value) == borrows {
+                return Err(MirInvariantError::new(
+                    context,
+                    "call argument ownership access does not match its parameter mode",
                 ));
             }
         }

@@ -1,8 +1,10 @@
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use crate::hir::{
-    HirAssignmentOperator, HirAssignmentTarget, HirAssignmentTargetKind, HirBinaryOperator,
-    HirBootstrapHostFunction, HirCallProtocol, HirCallableSignature, HirClosure, HirExpression,
+    CapabilityAnalysis, CapabilityAssumptions, HirAssignmentOperator, HirAssignmentTarget,
+    HirAssignmentTargetKind, HirBinaryOperator, HirBootstrapHostFunction, HirCallProtocol,
+    HirCallableSignature, HirCapability, HirCapabilityStatus, HirClosure, HirExpression,
     HirExpressionId, HirExpressionKind, HirForKind, HirIterationProtocol, HirLiteral, HirLoopId,
     HirNominalShape, HirPatternId, HirPatternKind, HirPreludeTraitMethod, HirProgram, HirStatement,
     HirValueCategory, HirVariantPayload, HirVariantValue, verify_typed_hir,
@@ -17,7 +19,7 @@ use super::{
     MirLocal, MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation, MirOperationKind,
     MirPlace, MirProgram, MirProjection, MirProjectionKind, MirRvalue, MirRvalueKind, MirStatement,
     MirStatementKind, MirTag, MirTerminator, MirTerminatorKind, MirVerificationLimits,
-    verify_mir_with_limits,
+    verify_mir_with_capability_analysis, verify_mir_with_limits,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +50,19 @@ pub fn lower_to_mir(
 ) -> Result<MirProgram, MirError> {
     verify_typed_hir(resolved, hir)?;
     let mut functions = BTreeMap::new();
+    let first_body_span = hir
+        .callables()
+        .find(|callable| hir.body(callable.id()).is_some())
+        .map(HirCallableSignature::span)
+        .or_else(|| hir.closures().next().map(HirClosure::span));
+    let capability_analysis = first_body_span
+        .map(|span| {
+            CapabilityAnalysis::new(hir, resolved).map_err(|error| MirError::Construction {
+                span,
+                message: format!("cannot derive ownership capabilities: {error}"),
+            })
+        })
+        .transpose()?;
     for callable in hir.callables() {
         let Some(body) = hir.body(callable.id()) else {
             continue;
@@ -58,7 +73,15 @@ pub fn lower_to_mir(
                 resource: "function",
             });
         }
-        let function = FunctionBuilder::new(hir, callable, limits)?.lower(body.root())?;
+        let function = FunctionBuilder::new(
+            hir,
+            capability_analysis
+                .as_ref()
+                .expect("a callable body requires capability analysis"),
+            callable,
+            limits,
+        )?
+        .lower(body.root())?;
         functions.insert(MirFunctionId::Callable(callable.id()), function);
     }
     for closure in hir.closures() {
@@ -68,19 +91,39 @@ pub fn lower_to_mir(
                 resource: "function",
             });
         }
-        let function =
-            FunctionBuilder::new_closure(hir, closure, limits)?.lower(closure.body().root())?;
+        let function = FunctionBuilder::new_closure(
+            hir,
+            capability_analysis
+                .as_ref()
+                .expect("a closure body requires capability analysis"),
+            closure,
+            limits,
+        )?
+        .lower(closure.body().root())?;
         functions.insert(MirFunctionId::Closure(closure.id()), function);
     }
     let program = MirProgram { functions };
-    if let Err(error) = verify_mir_with_limits(
-        resolved,
-        hir,
-        &program,
-        MirVerificationLimits {
-            max_dataflow_steps: limits.max_verification_steps,
-        },
-    ) {
+    let verification = if let Some(capability_analysis) = capability_analysis.as_ref() {
+        verify_mir_with_capability_analysis(
+            resolved,
+            hir,
+            &program,
+            MirVerificationLimits {
+                max_dataflow_steps: limits.max_verification_steps,
+            },
+            capability_analysis,
+        )
+    } else {
+        verify_mir_with_limits(
+            resolved,
+            hir,
+            &program,
+            MirVerificationLimits {
+                max_dataflow_steps: limits.max_verification_steps,
+            },
+        )
+    };
+    if let Err(error) = verification {
         if error.is_resource_limit() {
             return Err(MirError::VerificationLimit {
                 resource: "verification dataflow",
@@ -99,6 +142,9 @@ struct OpenBlock {
 
 struct FunctionBuilder<'a> {
     hir: &'a HirProgram,
+    capability_analysis: &'a CapabilityAnalysis,
+    capability_assumptions: CapabilityAssumptions,
+    copy_statuses: RefCell<BTreeMap<TypeId, HirCapabilityStatus>>,
     id: MirFunctionId,
     span: Span,
     outcome: TypeId,
@@ -157,6 +203,7 @@ fn assignment_target_contains_slice(target: &LoweredAssignmentTarget) -> bool {
 impl<'a> FunctionBuilder<'a> {
     fn new(
         hir: &'a HirProgram,
+        capability_analysis: &'a CapabilityAnalysis,
         callable: &HirCallableSignature,
         limits: MirLoweringLimits,
     ) -> Result<Self, MirError> {
@@ -164,6 +211,9 @@ impl<'a> FunctionBuilder<'a> {
         let span = callable.span();
         let mut builder = Self {
             hir,
+            capability_analysis,
+            capability_assumptions: CapabilityAssumptions::from_generics(hir, callable.generics()),
+            copy_statuses: RefCell::new(BTreeMap::new()),
             id,
             span,
             outcome: callable.outcome(),
@@ -206,6 +256,7 @@ impl<'a> FunctionBuilder<'a> {
 
     fn new_closure(
         hir: &'a HirProgram,
+        capability_analysis: &'a CapabilityAnalysis,
         closure: &HirClosure,
         limits: MirLoweringLimits,
     ) -> Result<Self, MirError> {
@@ -225,6 +276,9 @@ impl<'a> FunctionBuilder<'a> {
         let span = closure.span();
         let mut builder = Self {
             hir,
+            capability_analysis,
+            capability_assumptions: CapabilityAssumptions::from_generics(hir, closure.generics()),
+            copy_statuses: RefCell::new(BTreeMap::new()),
             id: MirFunctionId::Closure(closure.id()),
             span,
             outcome: function.outcome(),
@@ -353,15 +407,8 @@ impl<'a> FunctionBuilder<'a> {
             }
             HirExpressionKind::Local(local) => {
                 let place = self.source_place(*local, span)?;
-                self.assign_operand(
-                    block,
-                    span,
-                    destination,
-                    MirOperand {
-                        ty: place.ty,
-                        kind: MirOperandKind::Copy(place),
-                    },
-                )?;
+                let value = self.transfer_place(place, span)?;
+                self.assign_operand(block, span, destination, value)?;
                 Ok(Some(block))
             }
             HirExpressionKind::Receiver => {
@@ -741,10 +788,24 @@ impl<'a> FunctionBuilder<'a> {
                 left,
                 right,
             } => {
-                let Some((block, left)) = self.lower_value(*left, block)? else {
+                let observes = matches!(
+                    operator,
+                    HirBinaryOperator::Equal | HirBinaryOperator::NotEqual
+                );
+                let left = if observes {
+                    self.lower_borrowed_value(*left, block)?
+                } else {
+                    self.lower_value(*left, block)?
+                };
+                let Some((block, left)) = left else {
                     return Ok(None);
                 };
-                let Some((block, right)) = self.lower_value(*right, block)? else {
+                let right = if observes {
+                    self.lower_borrowed_value(*right, block)?
+                } else {
+                    self.lower_value(*right, block)?
+                };
+                let Some((block, right)) = right else {
                     return Ok(None);
                 };
                 if self.binary_may_panic(*operator, left.ty) {
@@ -805,10 +866,10 @@ impl<'a> FunctionBuilder<'a> {
                 item,
                 container,
             } => {
-                let Some((block, item)) = self.lower_value(*item, block)? else {
+                let Some((block, item)) = self.lower_borrowed_value(*item, block)? else {
                     return Ok(None);
                 };
-                let Some((block, container)) = self.lower_value(*container, block)? else {
+                let Some((block, container)) = self.lower_borrowed_value(*container, block)? else {
                     return Ok(None);
                 };
                 self.assign(
@@ -830,15 +891,8 @@ impl<'a> FunctionBuilder<'a> {
                 let Some((block, place)) = self.lower_place(id, block)? else {
                     return Ok(None);
                 };
-                self.assign_operand(
-                    block,
-                    span,
-                    destination,
-                    MirOperand {
-                        ty: expression.ty(),
-                        kind: MirOperandKind::Copy(place),
-                    },
-                )?;
+                let value = self.transfer_place(place, span)?;
+                self.assign_operand(block, span, destination, value)?;
                 Ok(Some(block))
             }
             HirExpressionKind::Index {
@@ -846,7 +900,7 @@ impl<'a> FunctionBuilder<'a> {
                 index,
                 access,
             } => {
-                let Some((block, base)) = self.lower_value(*base, block)? else {
+                let Some((block, base)) = self.lower_borrowed_value(*base, block)? else {
                     return Ok(None);
                 };
                 let Some((block, index)) = self.lower_value(*index, block)? else {
@@ -872,7 +926,7 @@ impl<'a> FunctionBuilder<'a> {
                 end,
                 step,
             } => {
-                let Some((mut current, base)) = self.lower_value(*base, block)? else {
+                let Some((mut current, base)) = self.lower_borrowed_value(*base, block)? else {
                     return Ok(None);
                 };
                 let (next, start) = self.lower_optional_value(*start, current)?;
@@ -916,7 +970,12 @@ impl<'a> FunctionBuilder<'a> {
                 };
                 let mut lowered = Vec::with_capacity(arguments.len());
                 for argument in arguments {
-                    let Some((next, value)) = self.lower_value(argument.value(), current)? else {
+                    let result = if argument.mode() == crate::types::ParameterMode::Value {
+                        self.lower_value(argument.value(), current)?
+                    } else {
+                        self.lower_borrowed_value(argument.value(), current)?
+                    };
+                    let Some((next, value)) = result else {
                         return Ok(None);
                     };
                     current = next;
@@ -1314,7 +1373,7 @@ impl<'a> FunctionBuilder<'a> {
             )?;
             block
         };
-        let result = self.copy_local(result);
+        let result = self.transfer_local(result, span)?;
         let block =
             self.validate_assignment_places(&access_target, Some(&result), true, block, span)?;
         self.write_assignment_target(&access_target, result, block, span)?;
@@ -1421,10 +1480,13 @@ impl<'a> FunctionBuilder<'a> {
                             message: "slice assignment cannot defer a contextual coercion".into(),
                         });
                     }
-                    Some(replacement.cloned().ok_or_else(|| MirError::Construction {
+                    Some(self.borrow_operand(
+                        replacement.ok_or_else(|| MirError::Construction {
+                            span,
+                            message: "slice write validation has no replacement value".into(),
+                        })?,
                         span,
-                        message: "slice write validation has no replacement value".into(),
-                    })?)
+                    )?)
                 } else {
                     None
                 };
@@ -1718,7 +1780,7 @@ impl<'a> FunctionBuilder<'a> {
             span,
             id,
             iteration.pattern,
-            self.copy_local(item),
+            self.transfer_local(item, span)?,
             body,
             header,
             body_start,
@@ -1782,7 +1844,7 @@ impl<'a> FunctionBuilder<'a> {
                         arguments: vec![MirCallArgument {
                             mode: crate::types::ParameterMode::Mut,
                             target: crate::hir::HirCallArgumentTarget::Receiver,
-                            value: self.copy_local(state),
+                            value: self.borrow_local(state),
                         }],
                         signature: function_type,
                         protocol: HirCallProtocol::Call,
@@ -1797,13 +1859,13 @@ impl<'a> FunctionBuilder<'a> {
             inspect,
             span,
             MirTerminatorKind::SwitchTag {
-                value: self.copy_local(next),
+                value: self.borrow_local(next),
                 cases: vec![(MirTag::OptionSome, body_start)],
                 otherwise: exit,
             },
         )?;
         let item = self.project_operand(
-            &self.copy_local(next),
+            &self.transfer_local(next, span)?,
             MirProjection {
                 ty: element,
                 kind: MirProjectionKind::OptionValue,
@@ -2063,11 +2125,28 @@ impl<'a> FunctionBuilder<'a> {
         };
         Ok(Some((
             block,
-            MirOperand {
-                ty: expression_node.ty(),
-                kind: MirOperandKind::Copy(place),
-            },
+            self.transfer_place(place, expression_node.span())?,
         )))
+    }
+
+    fn lower_borrowed_value(
+        &mut self,
+        expression: HirExpressionId,
+        block: MirBlockId,
+    ) -> Result<Option<(MirBlockId, MirOperand)>, MirError> {
+        let expression_node = self.expression(expression)?.clone();
+        if expression_node.category() == HirValueCategory::Place {
+            let Some((block, place)) = self.lower_place(expression, block)? else {
+                return Ok(None);
+            };
+            return Ok(Some((block, self.borrow_place(place))));
+        }
+        let local = self.allocate_temporary(expression_node.ty(), expression_node.span(), block)?;
+        let place = self.local_place(local);
+        let Some(block) = self.lower_expression(expression, place.clone(), block)? else {
+            return Ok(None);
+        };
+        Ok(Some((block, self.borrow_place(place))))
     }
 
     fn lower_callee(
@@ -2241,7 +2320,7 @@ impl<'a> FunctionBuilder<'a> {
             block,
             span,
             MirTerminatorKind::SwitchTag {
-                value: option.clone(),
+                value: self.borrow_operand(&option, span)?,
                 cases: vec![(super::MirTag::OptionSome, some)],
                 otherwise: none,
             },
@@ -2305,7 +2384,7 @@ impl<'a> FunctionBuilder<'a> {
                         ty: self.outcome,
                         kind: MirRvalueKind::Aggregate {
                             shape: MirAggregateKind::ResultOk,
-                            values: vec![self.copy_local(option_local)],
+                            values: vec![self.transfer_local(option_local, span)?],
                         },
                     },
                 )?;
@@ -2381,7 +2460,7 @@ impl<'a> FunctionBuilder<'a> {
             block,
             span,
             MirTerminatorKind::SwitchTag {
-                value: result.clone(),
+                value: self.borrow_operand(&result, span)?,
                 cases: vec![(super::MirTag::ResultOk, ok)],
                 otherwise: err,
             },
@@ -2422,7 +2501,7 @@ impl<'a> FunctionBuilder<'a> {
                     },
                 },
             )?;
-            self.copy_local(local)
+            self.transfer_local(local, span)?
         };
         self.assign(
             err,
@@ -2581,7 +2660,7 @@ impl<'a> FunctionBuilder<'a> {
                     block,
                     span,
                     MirTerminatorKind::SwitchTag {
-                        value: value.clone(),
+                        value: self.borrow_operand(&value, span)?,
                         cases: vec![(super::MirTag::OptionSome, payload)],
                         otherwise: failed,
                     },
@@ -2600,7 +2679,7 @@ impl<'a> FunctionBuilder<'a> {
                 block,
                 span,
                 MirTerminatorKind::SwitchTag {
-                    value,
+                    value: self.borrow_operand(&value, span)?,
                     cases: vec![(super::MirTag::OptionNone, matched)],
                     otherwise: failed,
                 },
@@ -2620,7 +2699,7 @@ impl<'a> FunctionBuilder<'a> {
                     block,
                     span,
                     MirTerminatorKind::SwitchTag {
-                        value: value.clone(),
+                        value: self.borrow_operand(&value, span)?,
                         cases: vec![(tag, payload)],
                         otherwise: failed,
                     },
@@ -2652,7 +2731,7 @@ impl<'a> FunctionBuilder<'a> {
                     block,
                     span,
                     MirTerminatorKind::SwitchTag {
-                        value: value.clone(),
+                        value: self.borrow_operand(&value, span)?,
                         cases: vec![(super::MirTag::Variant(*variant), payload)],
                         otherwise: failed,
                     },
@@ -2697,7 +2776,7 @@ impl<'a> FunctionBuilder<'a> {
                     block,
                     span,
                     MirTerminatorKind::SwitchTag {
-                        value: value.clone(),
+                        value: self.borrow_operand(&value, span)?,
                         cases: vec![(super::MirTag::Union(*member), payload)],
                         otherwise: failed,
                     },
@@ -2724,7 +2803,7 @@ impl<'a> FunctionBuilder<'a> {
                     self.local_place(length),
                     MirRvalue {
                         ty: self.hir.interner().scalar(ScalarType::Int),
-                        kind: MirRvalueKind::Length(value.clone()),
+                        kind: MirRvalueKind::Length(self.borrow_operand(&value, span)?),
                     },
                 )?;
                 let condition = self.allocate_temporary(
@@ -3019,7 +3098,7 @@ impl<'a> FunctionBuilder<'a> {
         place.projections.push(projection);
         Ok(MirOperand {
             ty: place.ty,
-            kind: MirOperandKind::Copy(place),
+            kind: self.transfer_kind(place, span)?,
         })
     }
 
@@ -3269,6 +3348,67 @@ impl<'a> FunctionBuilder<'a> {
         }
     }
 
+    fn borrow_local(&self, local: MirLocalId) -> MirOperand {
+        self.borrow_place(self.local_place(local))
+    }
+
+    fn borrow_place(&self, place: MirPlace) -> MirOperand {
+        MirOperand {
+            ty: place.ty,
+            kind: MirOperandKind::Borrow(place),
+        }
+    }
+
+    fn borrow_operand(&self, operand: &MirOperand, span: Span) -> Result<MirOperand, MirError> {
+        Ok(self.borrow_place(self.operand_place(operand, span)?))
+    }
+
+    fn transfer_local(&self, local: MirLocalId, span: Span) -> Result<MirOperand, MirError> {
+        self.transfer_place(self.local_place(local), span)
+    }
+
+    fn transfer_place(&self, place: MirPlace, span: Span) -> Result<MirOperand, MirError> {
+        Ok(MirOperand {
+            ty: place.ty,
+            kind: self.transfer_kind(place, span)?,
+        })
+    }
+
+    fn transfer_kind(&self, place: MirPlace, span: Span) -> Result<MirOperandKind, MirError> {
+        let status = if let Some(status) = self.copy_statuses.borrow().get(&place.ty).copied() {
+            status
+        } else {
+            let status = self
+                .capability_analysis
+                .status(
+                    self.hir,
+                    place.ty,
+                    HirCapability::Copy,
+                    &self.capability_assumptions,
+                )
+                .map_err(|error| MirError::Construction {
+                    span,
+                    message: format!("cannot classify ownership transfer: {error}"),
+                })?;
+            self.copy_statuses.borrow_mut().insert(place.ty, status);
+            status
+        };
+        match status {
+            HirCapabilityStatus::Satisfied => Ok(MirOperandKind::Copy(place)),
+            HirCapabilityStatus::Unsatisfied => Ok(MirOperandKind::Move(place)),
+            HirCapabilityStatus::Deferred => Err(MirError::Construction {
+                span,
+                message: format!(
+                    "ownership transfer for `{}` has an unresolved Copy capability",
+                    self.hir
+                        .interner()
+                        .canonical(place.ty)
+                        .unwrap_or_else(|_| place.ty.to_string())
+                ),
+            }),
+        }
+    }
+
     fn unit_operand(&self) -> MirOperand {
         MirOperand {
             ty: self.hir.interner().scalar(ScalarType::Unit),
@@ -3457,6 +3597,198 @@ mod tests {
                 .any(|block| { matches!(block.terminator().kind(), MirTerminatorKind::Return) })
         );
         verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
+    fn affine_transfers_are_moves_and_copy_bounded_transfers_remain_copies() {
+        let source = "fn copied[T: Copy](input: T): T {\n\
+                          let local = input\n\
+                          local\n\
+                      }\n\
+                      fn moved[T: Discard](input: T): T {\n\
+                          let local = input\n\
+                          local\n\
+                      }\n\
+                      fn unbounded[T](input: T): T { input }\n\
+                      fn accept[T: Discard](input: T): T { input }\n\
+                      fn forward[T: Discard](input: T): T { accept(input) }\n\
+                      fn pack[T: Discard](input: T): Array[T] { [input] }\n\
+                      fn drain[T: Discard](values: Array[T]) {\n\
+                          for value in values {\n\
+                              _ = value\n\
+                          }\n\
+                      }\n\
+                      fn once[F: Discard + CallOnce[fn(Int): Int]](operation: F): Int {\n\
+                          operation(42)\n\
+                      }\n\
+                      fn replace_slice[T: Discard](\n\
+                          target: var Array[T],\n\
+                          replacement: Array[T],\n\
+                      ) {\n\
+                          target[:] = replacement\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+        let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+
+        let local_accesses = |function: &MirFunction| {
+            function
+                .blocks()
+                .flat_map(MirBasicBlock::statements)
+                .filter_map(|statement| match statement.kind() {
+                    MirStatementKind::Assign {
+                        value:
+                            MirRvalue {
+                                kind: MirRvalueKind::Use(operand),
+                                ..
+                            },
+                        ..
+                    } => match operand.kind() {
+                        MirOperandKind::Copy(place) => Some((true, place.local())),
+                        MirOperandKind::Move(place) => Some((false, place.local())),
+                        _ => None,
+                    },
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+        };
+        let copied = mir.function(function_id(&resolved, "copied")).unwrap();
+        let copied_accesses = local_accesses(copied);
+        assert!(copied_accesses.iter().all(|(copies, _)| *copies));
+        assert!(copied_accesses.iter().any(|(_, local)| {
+            matches!(
+                copied.local(*local).unwrap().kind(),
+                MirLocalKind::Parameter { .. }
+            )
+        }));
+        assert!(copied_accesses.iter().any(|(_, local)| {
+            matches!(copied.local(*local).unwrap().kind(), MirLocalKind::User(_))
+        }));
+
+        let moved = mir.function(function_id(&resolved, "moved")).unwrap();
+        let moved_accesses = local_accesses(moved);
+        assert!(moved_accesses.iter().all(|(copies, _)| !copies));
+        assert!(moved_accesses.iter().any(|(_, local)| {
+            matches!(
+                moved.local(*local).unwrap().kind(),
+                MirLocalKind::Parameter { .. }
+            )
+        }));
+        assert!(moved_accesses.iter().any(|(_, local)| {
+            matches!(moved.local(*local).unwrap().kind(), MirLocalKind::User(_))
+        }));
+
+        let unbounded = mir.function(function_id(&resolved, "unbounded")).unwrap();
+        assert!(local_accesses(unbounded).iter().all(|(copies, _)| !copies));
+
+        let forward = mir.function(function_id(&resolved, "forward")).unwrap();
+        assert!(forward.blocks().any(|block| matches!(
+            block.terminator().kind(),
+            MirTerminatorKind::Invoke {
+                operation: MirOperation {
+                    kind: MirOperationKind::Call { arguments, .. },
+                    ..
+                },
+                ..
+            } if matches!(arguments[0].value().kind(), MirOperandKind::Move(_))
+        )));
+
+        let pack = mir.function(function_id(&resolved, "pack")).unwrap();
+        assert!(
+            pack.blocks()
+                .flat_map(MirBasicBlock::statements)
+                .any(|statement| matches!(
+                    statement.kind(),
+                    MirStatementKind::Assign {
+                        value: MirRvalue {
+                            kind: MirRvalueKind::Aggregate { values, .. },
+                            ..
+                        },
+                        ..
+                    } if matches!(values[0].kind(), MirOperandKind::Move(_))
+                ))
+        );
+
+        let drain = mir.function(function_id(&resolved, "drain")).unwrap();
+        assert!(
+            drain
+                .blocks()
+                .flat_map(MirBasicBlock::statements)
+                .any(|statement| matches!(
+                    statement.kind(),
+                    MirStatementKind::Assign {
+                        value: MirRvalue {
+                            kind: MirRvalueKind::IteratorState { source },
+                            ..
+                        },
+                        ..
+                    } if matches!(source.kind(), MirOperandKind::Move(_))
+                ))
+        );
+
+        let once = mir.function(function_id(&resolved, "once")).unwrap();
+        assert!(once.blocks().any(|block| matches!(
+            block.terminator().kind(),
+            MirTerminatorKind::Invoke {
+                operation: MirOperation {
+                    kind: MirOperationKind::Call {
+                        callee,
+                        protocol: HirCallProtocol::CallOnce,
+                        ..
+                    },
+                    ..
+                },
+                ..
+            } if matches!(callee.kind(), MirOperandKind::Move(_))
+        )));
+
+        let replace_slice = mir
+            .function(function_id(&resolved, "replace_slice"))
+            .unwrap();
+        assert!(replace_slice.blocks().any(|block| matches!(
+            block.terminator().kind(),
+            MirTerminatorKind::ValidatePlaces {
+                replacements,
+                for_write: true,
+                ..
+            } if matches!(
+                replacements.as_slice(),
+                [Some(MirOperand {
+                    kind: MirOperandKind::Borrow(_),
+                    ..
+                })]
+            )
+        )));
+
+        let moved = mir
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "moved")))
+            .unwrap();
+        let operand = moved
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.statements)
+            .find_map(|statement| match &mut statement.kind {
+                MirStatementKind::Assign {
+                    value:
+                        MirRvalue {
+                            kind: MirRvalueKind::Use(operand),
+                            ..
+                        },
+                    ..
+                } if matches!(operand.kind, MirOperandKind::Move(_)) => Some(operand),
+                _ => None,
+            })
+            .unwrap();
+        let MirOperandKind::Move(place) = &operand.kind else {
+            unreachable!()
+        };
+        operand.kind = MirOperandKind::Copy(place.clone());
+        let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("contextual Copy status Unsatisfied")
+        );
     }
 
     #[test]
@@ -4102,6 +4434,31 @@ mod tests {
                 _ => None,
             })
             .expect("slice assignment has a checked replacement");
+        let MirOperandKind::Borrow(place) = &replacement.as_ref().unwrap().kind else {
+            panic!("slice assignment validation observes its replacement")
+        };
+        replacement.as_mut().unwrap().kind = MirOperandKind::Copy(place.clone());
+        let error = verify_mir(&resolved, &hir, &invalid_slice).unwrap_err();
+        assert!(error.message().contains("borrowed replacement"));
+
+        let function = invalid_slice
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "replace")))
+            .unwrap();
+        let replacement = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::ValidatePlaces {
+                    replacements,
+                    for_write: true,
+                    ..
+                } => replacements
+                    .iter_mut()
+                    .find(|replacement| replacement.is_some()),
+                _ => None,
+            })
+            .expect("slice assignment has a checked replacement");
         *replacement = None;
         let error = verify_mir(&resolved, &hir, &invalid_slice).unwrap_err();
         assert!(error.message().contains("replacement shape"));
@@ -4411,7 +4768,7 @@ mod tests {
     }
 
     #[test]
-    fn mir_verifier_confines_environment_borrows_to_indirect_callees() {
+    fn mir_verifier_rejects_borrows_in_value_arguments() {
         let (resolved, hir) = checked(
             "fn execute(): Int {\n\
                  let operation = (value: Int): Int { value + 1 }\n\
@@ -4448,6 +4805,40 @@ mod tests {
 
         let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
         assert!(error.message().contains("borrow escapes"));
+
+        let (resolved, hir) = checked(
+            "fn inspect(value: ref Int): Int { value }\n\
+             fn execute(): Int {\n\
+                 let value = 42\n\
+                 inspect(ref value)\n\
+             }\n",
+        );
+        let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let argument = mir
+            .functions
+            .values_mut()
+            .flat_map(|function| &mut function.blocks)
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::Invoke {
+                    operation:
+                        MirOperation {
+                            kind: MirOperationKind::Call { arguments, .. },
+                            ..
+                        },
+                    ..
+                } => arguments.iter_mut().find(|argument| {
+                    argument.mode == crate::types::ParameterMode::Ref
+                        && matches!(argument.value.kind, MirOperandKind::Borrow(_))
+                }),
+                _ => None,
+            })
+            .expect("ref argument uses an immediate borrow");
+        let MirOperandKind::Borrow(place) = &argument.value.kind else {
+            unreachable!()
+        };
+        argument.value.kind = MirOperandKind::Copy(place.clone());
+        let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
+        assert!(error.message().contains("ownership access"));
     }
 
     #[test]

@@ -4,8 +4,8 @@
 dispatch, TRAIT-006 opaque results, CAP-001 closed capabilities, CALL-001
 uniform named function values, CALL-002 concrete closure environments, CALL-003
 closure protocols and synchronous-safe invocation, CALL-004 effect-preserving
-closure callables, OWN-001 intrinsic cursor capabilities, and the M3 VM
-admission path implemented
+closure callables, OWN-001 intrinsic cursor capabilities, OWN-002 affine
+transfers and immediate observations, and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -163,6 +163,11 @@ length, and iterator-state creation. The latter accepts an intrinsic collection
 `IteratorNext` accepts that cursor rather than a collection-shaped alias. A ref
 cursor additionally requires a `Borrow` source operand, while an own cursor
 rejects one, so a backend cannot silently replace observation with a copy.
+Copy and move forms come directly from verified MIR. Monomorphization preserves
+that source-generic decision: a move selected in a `T: Discard` body remains a
+move even when one concrete instantiation happens to substitute a `Copy` type.
+The VM verifier independently rejects every forged `Copy` whose closed concrete
+type lacks `Copy`.
 
 A closure construction is an ordinary managed aggregate whose result is a
 concrete generated type. Its shape names one concrete closure callable; that
@@ -182,6 +187,15 @@ modes, arity, variadic shape, outcome, function signature, protocol support, and
 access form. A source protocol exposed by a generic or opaque contract is
 normalized to the strongest safe concrete specialization without changing
 whether the source operand borrows, copies, or moves.
+Value arguments use copy/move access; `ref`, `mut`, and `var` arguments require
+an immediate `Borrow`. Such a borrow cannot escape the call. The same
+non-escaping form is admitted only for equality, membership, length,
+discriminant branches, index/slice collection bases, indirect shared/exclusive
+callees, intrinsic ref-cursor construction, and the replacement inspected
+before a slice write. Stores, aggregates, returns, value arguments, and
+unrelated operations reject it.
+This fixes the representation boundary for non-value arguments; BORROW-001
+still owns their VM loan/write-through execution and region proof.
 
 The bootstrap `Call` operation is deliberately synchronous and safe. Its
 signature must have both effect bits clear; the verifier rejects a forged async
@@ -202,9 +216,10 @@ map construction, indexing, slicing, calls, `assert`, and `panic`. Other
 terminators cover direct branches, boolean and discriminant dispatch,
 iterator-next, atomic destination validation, return, panic resumption, and
 unreachable code. A write validation aligns each destination with an optional
-copied replacement; a slice write must include an `Array` replacement of the
-place type, allowing the VM to raise `P0006` before the first store. Missing or
-misaligned metadata is invalid bytecode.
+borrowed replacement; a slice write must include an `Array` replacement of the
+place type, allowing the VM to raise `P0006` before the first store without
+consuming the later write operand. Missing or misaligned metadata is invalid
+bytecode.
 
 Places start at one slot and carry typed projections. Projections include
 record/newtype fields, tuple positions, enum/option/result/union payloads,
@@ -254,9 +269,9 @@ Before execution, the verifier proves:
 - a generic or opaque callable resolves to one concrete named function or
   closure with the same signature, while a callable erasure preserves the
   concrete closure value and exact uniform function signature;
-- `Borrow` is confined to the immediate callee of an indirect call or the exact
-  source of `cursor[ref,C]`, and cannot escape into slots, arguments,
-  aggregates, or unrelated operations;
+- `Borrow` is confined to the enumerated immediate observation positions and
+  non-value call arguments, and cannot escape into slots, value arguments,
+  aggregates, returns, or unrelated operations;
 - normal edges remain in normal code, unwind edges enter cleanup code, and the
   distinguished unwind block resumes panic;
 - all reachable reads have a dominating live definition, edge-produced values

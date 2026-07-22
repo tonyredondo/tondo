@@ -26,6 +26,7 @@ mod termination;
 mod traits;
 mod verify;
 
+pub(crate) use capabilities::{CapabilityAnalysis, CapabilityAssumptions};
 pub use check::{ExpressionCheckLimits, HirCheckOutput, check_expressions};
 pub use lower::{TypeLoweringLimits, lower_types};
 pub(crate) use traits::{TraitQuery, TraitSelectionError, select_implementation};

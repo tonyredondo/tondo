@@ -4524,7 +4524,7 @@ mod tests {
     }
 
     #[test]
-    fn bytecode_verifier_confines_environment_borrows_to_indirect_callees() {
+    fn bytecode_verifier_rejects_borrows_in_value_arguments() {
         let mut program = lowered(
             "fn execute(): Int {\n\
                  let operation = (value: Int): Int { value + 1 }\n\
@@ -4559,6 +4559,39 @@ mod tests {
 
         let error = bc::verify_bytecode(&program).unwrap_err();
         assert!(error.message().contains("borrow escapes"));
+
+        let mut program = lowered(
+            "fn inspect(value: ref Int): Int { value }\n\
+             fn execute(): Int {\n\
+                 let value = 42\n\
+                 inspect(ref value)\n\
+             }\n",
+        );
+        let argument = program
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Call { arguments, .. },
+                            ..
+                        },
+                    ..
+                } => arguments.iter_mut().find(|argument| {
+                    argument.mode == bc::BytecodeParameterMode::Ref
+                        && matches!(argument.value.kind, bc::BytecodeOperandKind::Borrow(_))
+                }),
+                _ => None,
+            })
+            .expect("ref argument uses an immediate borrow");
+        let bc::BytecodeOperandKind::Borrow(place) = &argument.value.kind else {
+            unreachable!()
+        };
+        argument.value.kind = bc::BytecodeOperandKind::Copy(place.clone());
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(error.message().contains("operation"));
     }
 
     #[test]
@@ -5646,6 +5679,98 @@ mod tests {
     }
 
     #[test]
+    fn affine_opaque_values_move_through_generic_call_once_and_execute() {
+        let source = "fn identity[T: Discard](value: T): T {\n\
+                          let local = value\n\
+                          local\n\
+                      }\n\
+                      fn make(offset: Int): impl CallOnce[fn(Int): Int] + Discard {\n\
+                          (value: Int): Int { value + offset }\n\
+                      }\n\
+                      fn execute(): Int {\n\
+                          let operation = make(40)\n\
+                          let moved = identity(operation)\n\
+                          moved(2)\n\
+                      }\n";
+        let program = lowered(source);
+        let entry = function_id(&program, "execute");
+        let execute_body = program.function(entry).unwrap();
+        assert!(execute_body.blocks.iter().any(|block| matches!(
+            &block.terminator.kind,
+            bc::BytecodeTerminatorKind::Invoke {
+                operation: bc::BytecodeOperation {
+                    kind: bc::BytecodeOperationKind::Call {
+                        callee: bc::BytecodeOperand {
+                            kind: bc::BytecodeOperandKind::Move(_),
+                            ..
+                        },
+                        ..
+                    },
+                    ..
+                },
+                ..
+            }
+        )));
+        let mut host = RejectingHost;
+        let execution = execute(&program, entry, &mut host)
+            .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(42))
+        );
+    }
+
+    #[test]
+    fn affine_equality_and_membership_borrow_without_consuming_their_inputs() {
+        let source = "fn hidden(value: Int): impl Equatable + Discard { value }\n\
+                      fn execute(): (Bool, Bool) {\n\
+                          let left = hidden(42)\n\
+                          let right = hidden(42)\n\
+                          let equal = left == right\n\
+                          _ = left\n\
+                          _ = right\n\
+                          let needle = hidden(2)\n\
+                          let values = [hidden(1), hidden(2)]\n\
+                          let found = needle in values\n\
+                          _ = needle\n\
+                          _ = values\n\
+                          (equal, found)\n\
+                      }\n";
+        assert_eq!(
+            execute_function(source, "execute"),
+            RuntimeValue::Tuple(vec![RuntimeValue::Bool(true), RuntimeValue::Bool(true)])
+        );
+        let program = lowered(source);
+        let execute = program.function(function_id(&program, "execute")).unwrap();
+        assert!(
+            execute
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .any(|instruction| matches!(
+                    &instruction.kind,
+                    bc::BytecodeInstructionKind::Store {
+                        value: bc::BytecodeRvalue {
+                            kind: bc::BytecodeRvalueKind::Binary {
+                                left: bc::BytecodeOperand {
+                                    kind: bc::BytecodeOperandKind::Borrow(_),
+                                    ..
+                                },
+                                right: bc::BytecodeOperand {
+                                    kind: bc::BytecodeOperandKind::Borrow(_),
+                                    ..
+                                },
+                                ..
+                            },
+                            ..
+                        },
+                        ..
+                    }
+                ))
+        );
+    }
+
+    #[test]
     fn borrowed_closure_environments_remain_rooted_during_argument_gc_pressure() {
         let program = lowered(
             "fn execute(): Int {\n\
@@ -5711,6 +5836,34 @@ mod tests {
         let error = execute(&program, entry, &mut host).unwrap_err();
         assert!(matches!(error, VmError::InvalidBytecode(_)));
         assert_eq!(host.calls, 0);
+
+        let mut program = lowered(
+            "fn replace() {\n\
+                 var values = [1, 2]\n\
+                 values[:] = [3, 4]\n\
+             }\n",
+        );
+        let entry = function_id(&program, "replace");
+        let replacement = program.functions[entry.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::ValidatePlaces {
+                    replacements,
+                    for_write: true,
+                    ..
+                } => replacements
+                    .iter_mut()
+                    .find(|replacement| replacement.is_some()),
+                _ => None,
+            })
+            .expect("slice assignment has a checked replacement");
+        let bc::BytecodeOperandKind::Borrow(place) = &replacement.as_ref().unwrap().kind else {
+            panic!("slice assignment validation observes its replacement")
+        };
+        replacement.as_mut().unwrap().kind = bc::BytecodeOperandKind::Copy(place.clone());
+        let error = execute(&program, entry, &mut host).unwrap_err();
+        assert!(matches!(error, VmError::InvalidBytecode(_)));
 
         let mut program = lowered(
             "fn replace() {\n\

@@ -1,8 +1,9 @@
 # Bootstrap VM object and execution contract
 
-**Status:** implemented M3 baseline plus CALL-003 synchronous Copy closure
-invocation, CALL-004 effectful-environment retention with execution guards, and
-OWN-001 intrinsic cursor value semantics
+**Status:** implemented M3 baseline plus CALL-003 synchronous closure
+invocation, CALL-004 effectful-environment retention with execution guards,
+OWN-001 intrinsic cursor value semantics, and OWN-002 affine moves/immediate
+observations
 **Language baseline:** Tondo 0.1-draft.8
 
 This contract fixes the bootstrap object model selected by DEC-006. It is an
@@ -62,6 +63,17 @@ Parameters and the return slot follow the function metadata. Explicit
 `storage_live` and `storage_dead` instructions control scoped temporaries;
 function-wide slots start live. Reads, writes, and moves check their runtime
 state even though the bytecode verifier has already proved the same contract.
+`Move` takes the complete value or projected payload from its slot; `Borrow`
+performs a shallow read only in a verifier-approved immediate operation and
+cannot become a stored runtime reference. OWN-003 will make moved-state
+rejection a complete source-level flow proof; the runtime check remains a
+defensive invariant.
+
+The immediate observation subset executes equality, membership, length,
+discriminant, index/slice-base, indirect-callee, and slice-shape borrows.
+Passing a `ref`, `mut`, or `var` parameter already has its exact bytecode access
+form, but the VM still rejects that call until BORROW-001 supplies loan
+identity, write-through behavior, and region enforcement.
 
 At every possible collection, roots are enumerated precisely from every live
 value in every frame plus an explicit stack of operation-local values that have
@@ -162,8 +174,8 @@ Slice assignment materializes the complete RHS before its write validation.
 The validation terminator carries aligned destination/replacement metadata,
 checks normalized lengths and all destination overlap before the first store,
 and produces `P0006` for a shape mismatch. The bytecode verifier rejects a
-slice-write validation whose copied replacement is absent or has the wrong
-type.
+slice-write validation whose borrowed replacement is absent or has the wrong
+type or access form.
 
 Map construction carries its duplicate policy explicitly through HIR, MIR, and
 bytecode. Values satisfying `Discard` use ordered last-write-wins replacement

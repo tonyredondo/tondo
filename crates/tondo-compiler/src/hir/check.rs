@@ -13244,7 +13244,6 @@ impl<'a> ExpressionChecker<'a> {
         &mut self,
         span: Span,
         callee: HirExpressionId,
-        callee_type: TypeId,
         protocols: HirClosureProtocols,
         context: &BodyContext,
     ) -> Result<Option<HirCallProtocol>, HirError> {
@@ -13261,23 +13260,7 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(Some(HirCallProtocol::CallMut));
         }
         if protocols.supports(HirCallProtocol::CallOnce) {
-            match self.capability_status_with_generics(
-                callee_type,
-                HirCapability::Copy,
-                &context.capability_assumptions,
-            )? {
-                HirCapabilityStatus::Satisfied => {
-                    return Ok(Some(HirCallProtocol::CallOnce));
-                }
-                HirCapabilityStatus::Deferred | HirCapabilityStatus::Unsatisfied => {
-                    // M5 introduces affine availability and the consuming MIR
-                    // operand. Until then only the semantically exact Copy
-                    // subset can execute a CallOnce without losing ownership
-                    // information.
-                    self.complete = false;
-                    return Ok(None);
-                }
-            }
+            return Ok(Some(HirCallProtocol::CallOnce));
         }
         self.emit(
             span,
@@ -13329,7 +13312,7 @@ impl<'a> ExpressionChecker<'a> {
             return self.recovery_expression(file, range);
         }
         let Some(protocol) =
-            self.select_call_protocol(call_span, callee, callee_type, contract.protocols, context)?
+            self.select_call_protocol(call_span, callee, contract.protocols, context)?
         else {
             return self.recovery_expression(file, range);
         };
@@ -16443,6 +16426,31 @@ mod tests {
 
         let (_, _, malformed) = check("fn invalid[F: Call[Int]](operation: F) {}\n");
         assert_eq!(codes(&malformed), ["E1115"]);
+    }
+
+    #[test]
+    fn affine_call_once_no_longer_requires_a_copy_bound() {
+        let (_, _, output) = check(
+            "fn consume[F: Discard + CallOnce[fn(Int): Int]](\n\
+                 operation: F,\n\
+                 value: Int,\n\
+             ): Int {\n\
+                 operation(value)\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        assert!(output.program().expressions().any(|expression| matches!(
+            expression.kind(),
+            HirExpressionKind::Call {
+                protocol: HirCallProtocol::CallOnce,
+                ..
+            }
+        )));
     }
 
     #[test]

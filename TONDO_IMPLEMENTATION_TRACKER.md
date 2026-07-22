@@ -2,13 +2,13 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.34
+**Versión del tracker:** 0.35
 
 **Última actualización:** 2026-07-22
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar moves de valores no `Copy` (OWN-002).
+**Objetivo inmediato:** implementar disponibilidad por flujo (OWN-003).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1245,7 +1245,14 @@ lifetimes escritos por el usuario.
   `C`, y la VM realiza una copia lógica independiente cuando el contrato la
   permite.
 
-- [ ] **OWN-002 — Implementar moves de valores no `Copy`.**
+- [x] **OWN-002 — Implementar moves de valores no `Copy`.** MIR selecciona
+  `Copy` o `Move` con el grafo de capacidades y los bounds exactos de cada body,
+  conserva la decisión al monomorfizar y la vuelve a probar defensivamente.
+  Parámetros, locals, retornos, argumentos por valor, agregados, cursores own y
+  callees `CallOnce` transfieren ya valores afines. Las observaciones inmediatas
+  y argumentos `ref`/`mut`/`var` usan un `Borrow` no almacenable en vez de una
+  copia ficticia. OWN-003 sigue siendo dueño de rechazar usos posteriores y
+  joins inconsistentes.
 
 - [ ] **OWN-003 — Implementar disponibilidad por flujo.** Un binding debe estar
   disponible en todos los caminos que llegan a cada uso.
@@ -1861,13 +1868,40 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es OWN-002: introducir operands de movimiento para
-valores no `Copy` sin adelantar todavía el análisis de disponibilidad por flujo
-de OWN-003.
+La siguiente acción activa es OWN-003: convertir los `Move` ya explícitos en un
+análisis de disponibilidad por flujo que exija presencia en todos los caminos
+de entrada a cada uso.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.35 — 2026-07-22
+
+- Se completa OWN-002 con una decisión contextual y única de ownership:
+  `T: Copy` produce `Copy`; un tipo afín, opaco o genérico sin esa prueba produce
+  `Move`. El análisis estructural se comparte entre lowering y verifier y se
+  cachea por body/tipo.
+- Bindings, parámetros propietarios, retornos, argumentos por valor,
+  construcciones, cursores intrínsecos y `CallOnce` transfieren ownership sin
+  depender de la representación concreta de runtime. `CallOnce` deja de exigir
+  el límite bootstrap `Copy`.
+- Igualdad, pertenencia, longitud, discriminantes, bases de index/slice,
+  callees compartidos/exclusivos, argumentos `ref`/`mut`/`var` y la validación
+  previa de un slice write usan `Borrow` inmediato. MIR y bytecode impiden que
+  ese acceso escape a storage, agregados, retornos, argumentos por valor u
+  operaciones no autorizadas.
+- La VM ejecuta moves reales mediante `take_place`; regresiones end-to-end
+  transfieren un callable opaco afín a través de una función genérica, lo
+  invocan y obtienen `42`. Otras demuestran que igualdad y pertenencia dejan
+  disponibles sus operandos afines.
+- Los verificadores rechazan un `Copy` falsificado para un tipo contextual no
+  `Copy`, modos de argumento con acceso incorrecto y borrows que escapen.
+  OWN-003 conserva deliberadamente el análisis de uso posterior, joins y
+  disponibilidad por CFG.
+- El gate acumulado pasa 451 tests, `git diff --check`, formatter check, check y
+  build de todos los targets, Clippy con warnings denegados y Rustdoc con
+  warnings denegados.
 
 ### 0.34 — 2026-07-22
 

@@ -2029,10 +2029,10 @@ impl Verifier<'_> {
         value: &BytecodeRvalue,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
-        if rvalue_contains_borrow(value) {
+        if rvalue_contains_invalid_borrow(value) {
             return Err(BytecodeVerificationError::new(
                 context,
-                "environment borrow escapes its call-callee position",
+                "borrow escapes its permitted immediate observation",
             ));
         }
         self.function_type(function, value.ty, context)?;
@@ -2839,7 +2839,7 @@ impl Verifier<'_> {
         if operation_contains_invalid_borrow(operation) {
             return Err(BytecodeVerificationError::new(
                 context,
-                "environment borrow escapes its call-callee position",
+                "borrow escapes its permitted immediate operation",
             ));
         }
         self.function_type(function, operation.ty, context)?;
@@ -3142,6 +3142,10 @@ impl Verifier<'_> {
             if argument.mode != expected.1 || argument.value.ty != expected.2 {
                 return Err(operation_error(context));
             }
+            let borrows = matches!(argument.value.kind, BytecodeOperandKind::Borrow(_));
+            if (argument.mode == BytecodeParameterMode::Value) == borrows {
+                return Err(operation_error(context));
+            }
         }
         if provided.len() != fixed.len() + usize::from(receiver.is_some()) {
             return Err(operation_error(context));
@@ -3228,10 +3232,7 @@ impl Verifier<'_> {
                 cases,
                 otherwise,
             } => {
-                if block.kind != BytecodeBlockKind::Normal
-                    || cases.is_empty()
-                    || operand_is_borrow(value)
-                {
+                if block.kind != BytecodeBlockKind::Normal || cases.is_empty() {
                     return Err(terminator_error(context));
                 }
                 self.verify_operand(function, value, context)?;
@@ -3298,7 +3299,6 @@ impl Verifier<'_> {
                 if block.kind != BytecodeBlockKind::Normal
                     || places.is_empty()
                     || places.len() != replacements.len()
-                    || replacements.iter().flatten().any(operand_is_borrow)
                 {
                     return Err(terminator_error(context));
                 }
@@ -3318,7 +3318,7 @@ impl Verifier<'_> {
                         (true, true, Some(replacement)) => {
                             self.verify_operand(function, replacement, context)?;
                             if replacement.ty != place.ty
-                                || !matches!(replacement.kind, BytecodeOperandKind::Copy(_))
+                                || !matches!(replacement.kind, BytecodeOperandKind::Borrow(_))
                             {
                                 return Err(terminator_error(context));
                             }
@@ -4141,23 +4141,23 @@ fn operand_is_borrow(operand: &BytecodeOperand) -> bool {
     matches!(operand.kind, BytecodeOperandKind::Borrow(_))
 }
 
-fn rvalue_contains_borrow(value: &BytecodeRvalue) -> bool {
+fn rvalue_contains_invalid_borrow(value: &BytecodeRvalue) -> bool {
     match &value.kind {
         BytecodeRvalueKind::Use(value)
-        | BytecodeRvalueKind::Length(value)
         | BytecodeRvalueKind::Prefix { operand: value, .. }
         | BytecodeRvalueKind::Coerce { value, .. }
         | BytecodeRvalueKind::NumericConversion { value, .. } => operand_is_borrow(value),
-        BytecodeRvalueKind::IteratorState(_) => false,
+        BytecodeRvalueKind::Binary {
+            operator: BytecodeBinaryOperator::Equal | BytecodeBinaryOperator::NotEqual,
+            ..
+        }
+        | BytecodeRvalueKind::Contains { .. }
+        | BytecodeRvalueKind::Length(_)
+        | BytecodeRvalueKind::IteratorState(_) => false,
         BytecodeRvalueKind::Binary { left, right, .. }
         | BytecodeRvalueKind::Range {
             start: left,
             end: right,
-            ..
-        }
-        | BytecodeRvalueKind::Contains {
-            item: left,
-            container: right,
             ..
         } => operand_is_borrow(left) || operand_is_borrow(right),
         BytecodeRvalueKind::Construct { values, .. } => values.iter().any(operand_is_borrow),
@@ -4177,18 +4177,14 @@ fn operation_contains_invalid_borrow(operation: &BytecodeOperation) -> bool {
         BytecodeOperationKind::BuildMap { entries, .. } => entries
             .iter()
             .any(|(key, value)| operand_is_borrow(key) || operand_is_borrow(value)),
-        BytecodeOperationKind::Index { base, index, .. } => {
-            operand_is_borrow(base) || operand_is_borrow(index)
-        }
+        BytecodeOperationKind::Index { index, .. } => operand_is_borrow(index),
         BytecodeOperationKind::Slice {
-            base,
-            start,
-            end,
-            step,
-        } => operand_is_borrow(base) || start.iter().chain(end).chain(step).any(operand_is_borrow),
-        BytecodeOperationKind::Call { arguments, .. } => arguments
-            .iter()
-            .any(|argument| operand_is_borrow(&argument.value)),
+            start, end, step, ..
+        } => start.iter().chain(end).chain(step).any(operand_is_borrow),
+        BytecodeOperationKind::Call { arguments, .. } => arguments.iter().any(|argument| {
+            let borrows = operand_is_borrow(&argument.value);
+            argument.mode == BytecodeParameterMode::Value && borrows
+        }),
         BytecodeOperationKind::Assert {
             condition,
             message_parts,

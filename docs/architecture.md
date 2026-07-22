@@ -256,7 +256,10 @@ recorded in `docs/contracts/types.md`.
 MIR is a typed control-flow graph with explicit locals, temporaries, branches,
 moves, storage lifetimes, checked-operation unwind edges, and reserved cleanup
 blocks. AST shape is no longer required to execute or analyze the program.
-Ownership later adds loans and populated cleanup actions; async later adds
+OWN-002 selects explicit copy/move operands under each body's generic bounds
+and uses non-escaping borrows for immediate observations and non-value call
+arguments. Later ownership steps add availability, regions, partial moves and
+populated cleanup actions; async later adds
 suspension, resume, cancellation, and frame-state edges without moving source
 semantic decisions into a backend.
 
@@ -313,8 +316,9 @@ Concrete closure construction uses an ordinary generated-type aggregate with a
 verified capture schema. Each reached closure specialization also receives one
 real callable and function body with a hidden environment parameter. Calls use
 the ordinary verified indirect-call operation, carrying an exact signature and
-concrete protocol; a shallow environment borrow is confined to the immediate
-callee position while `CallOnce` retains ordinary copy/move operand semantics.
+concrete protocol; a shallow borrow is confined to verified immediate
+observation/call positions while `CallOnce` retains ordinary copy/move operand
+semantics.
 All four closure effect signatures survive in the callable catalog, but the
 ordinary call operation and bytecode verifier reject `async` or `unsafe`
 signatures until their effect-aware instructions exist.
