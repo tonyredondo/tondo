@@ -71,7 +71,7 @@ They remain queryable but can never be lowered or executed.
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
 | Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, selected synchronous-safe call access, value/place category, pattern coverage, source evaluation order, and source-level control targets |
 | MIR construction (M3/M4/M5) | Typed locals and temporaries, explicit CFG, places, synchronous-safe calls, effect-preserving closure bodies with a hidden environment, contextual Copy/Move closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
-| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, call-local `ref`/`mut`/`var` loans, and inferred fixed-place pattern regions; later M5 steps add collection regions, confirmed borrowed transfers, and cleanup actions |
+| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, call-local `ref`/`mut`/`var` loans, inferred last-use pattern regions, and static collection-region disjunction; later M5 steps add runtime-dependent overlap checks, confirmed borrowed transfers, and cleanup actions |
 | Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
 
@@ -225,16 +225,19 @@ consumed at most once.
 Releases remain explicit on `return`, `fail`, `?`, `break`, `continue`, and
 ordinary last-use edges. Panic edges enter unwind with an empty loan set because
 runtime unwinding invalidates every reservation in the abandoned caller frame;
-cleanup blocks therefore contain no loan manipulation. Index and slice loan
-projections are rejected until BORROW-004 and BORROW-005 provide
-collection-region proof. A loan operand has no valid use outside its consuming
-call and cannot reach a branch condition, rvalue, aggregate, host boundary,
-return, or storage.
+cleanup blocks therefore contain no loan manipulation. BORROW-004 admits index,
+slice, array-pattern element, and array-pattern rest loan projections. MIR
+recovers non-negative constants from single-definition temporary locals and
+rederives the same static region relation used by HIR. Statically disjoint paths
+may coexist; dynamic or potentially overlapping incompatible paths are rejected
+at this complete-IR boundary until BORROW-005 has inserted their runtime proof.
+A loan operand has no valid use outside its consuming call and cannot reach a
+branch condition, rvalue, aggregate, host boundary, return, or storage.
 
 User `Iterator.next` calls use the same explicit call-local `mut` loan for
 their state receiver. A `cursor[ref,C]` source is a longer observation region
-and remains incomplete for the collection-region work; it is
-never approximated by copying `C`. The ordinary MIR call operation rejects an
+and remains incomplete for runtime-selected loop regions and suspension
+boundaries; it is never approximated by copying `C`. The ordinary MIR call operation rejects an
 `async` or `unsafe` function signature. M7 and M9 must introduce and verify
 their own effect-aware initiation/context forms rather than weakening that
 operation.
@@ -244,10 +247,21 @@ bypass their bounds/unwind edge. Assignment first resolves all destination
 places, then materializes its complete RHS, then validates overlap, bounds, and
 slice replacement lengths before performing any write. Compound assignment
 uses an access validation before reading its previous value and validates the
-fully computed replacement again before storing it. Write validation of an
-unprojected destination does not read its previous value; every projected
-destination still reads an available root while resolving its path. Static
-callees remain callable operands instead of being erased into ordinary
+fully computed replacement again before storing it. Every write validation
+carries a borrowed replacement witness of the destination type. This is needed
+even for a syntactically unprojected borrowed parameter because its effective
+lender path may end in a slice; the VM consults the witness only in that case.
+Write validation of an unprojected destination does not read its previous
+value; every projected destination still reads an available root while
+resolving its path.
+
+Before reserving any index or slice loan, MIR emits a read-mode
+`ValidatePlaces` terminator with a normal successor and the current cleanup
+successor. It evaluates each already-materialized index/bound exactly once and
+turns bounds or zero-step failure into the ordinary language-panic path. An
+earlier argument reservation is cleared by unwind if a later validation fails,
+so no partial loan reaches the callee. Static callees remain callable operands
+instead of being erased into ordinary
 temporaries, preserving the selected declaration, receiver mode, generic
 specialization, and variadic argument association. Source-trait calls retain
 their specialized trait member;
@@ -286,8 +300,8 @@ as a VM intrinsic.
 
 The current admitted bootstrap subset forms only `cursor[own,C]`. Typed HIR
 already retains `cursor[ref,C]` and its closed capabilities, but keeps that body
-incomplete until BORROW-002 and BORROW-004 can prove the shared collection
-region; it is never approximated with a collection copy.
+incomplete until its runtime-selected region and loop-spanning lifetime are
+proved; it is never approximated with a collection copy.
 
 Map construction is an `Invoke` carrying the HIR-selected duplicate policy, so
 `P0009` has an ordinary unwind edge and last-write-wins is never an implicit VM

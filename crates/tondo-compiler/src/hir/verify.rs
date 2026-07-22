@@ -208,6 +208,10 @@ impl Verifier<'_> {
                         .expect("loan conflicts retain their reservation")
                         .range()
                 ),
+                AvailabilityFindingKind::DeferredCollectionConflict => format!(
+                    "{local} requires a runtime collection-overlap proof at {}",
+                    finding.use_span().range()
+                ),
             };
             return Err(HirInvariantError::new("ownership availability", message));
         }

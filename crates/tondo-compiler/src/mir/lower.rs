@@ -201,15 +201,12 @@ enum MatchBindingPhase {
     Body,
 }
 
-fn assignment_target_contains_slice(target: &LoweredAssignmentTarget) -> bool {
+fn assignment_target_contains_place(target: &LoweredAssignmentTarget) -> bool {
     match target {
-        LoweredAssignmentTarget::Place { place, .. } => matches!(
-            place.projections.last().map(MirProjection::kind),
-            Some(MirProjectionKind::Slice { .. })
-        ),
+        LoweredAssignmentTarget::Place { .. } => true,
         LoweredAssignmentTarget::Discard => false,
         LoweredAssignmentTarget::Tuple { items, .. } => {
-            items.iter().any(assignment_target_contains_slice)
+            items.iter().any(assignment_target_contains_place)
         }
     }
 }
@@ -1501,21 +1498,18 @@ impl<'a> FunctionBuilder<'a> {
     ) -> Result<(), MirError> {
         match target {
             LoweredAssignmentTarget::Place { place, coercion } => {
-                let slice = matches!(
-                    place.projections.last().map(MirProjection::kind),
-                    Some(MirProjectionKind::Slice { .. })
-                );
-                let replacement = if for_write && slice {
+                let replacement = if for_write {
                     if *coercion != crate::types::Assignability::Exact {
                         return Err(MirError::Construction {
                             span,
-                            message: "slice assignment cannot defer a contextual coercion".into(),
+                            message: "validated assignment cannot defer a contextual coercion"
+                                .into(),
                         });
                     }
                     Some(self.borrow_operand(
                         replacement.ok_or_else(|| MirError::Construction {
                             span,
-                            message: "slice write validation has no replacement value".into(),
+                            message: "write validation has no replacement value".into(),
                         })?,
                         span,
                     )?)
@@ -1528,10 +1522,10 @@ impl<'a> FunctionBuilder<'a> {
             LoweredAssignmentTarget::Discard => {}
             LoweredAssignmentTarget::Tuple { ty, items } => {
                 for (index, item) in items.iter().enumerate() {
-                    let projected = if for_write && assignment_target_contains_slice(item) {
+                    let projected = if for_write && assignment_target_contains_place(item) {
                         let value = replacement.ok_or_else(|| MirError::Construction {
                             span,
-                            message: "tuple slice write validation has no replacement value".into(),
+                            message: "tuple write validation has no replacement value".into(),
                         })?;
                         Some(self.project_operand(
                             value,
@@ -2201,7 +2195,9 @@ impl<'a> FunctionBuilder<'a> {
     ) -> Result<Option<(MirBlockId, MirOperand)>, MirError> {
         let expression_node = self.expression(expression)?.clone();
         let span = expression_node.span();
-        let (block, place) = if expression_node.category() == HirValueCategory::Place {
+        let place_like = expression_node.category() == HirValueCategory::Place
+            || matches!(expression_node.kind(), HirExpressionKind::Slice { .. });
+        let (block, place) = if place_like {
             let Some((block, place)) = self.lower_place(expression, block)? else {
                 return Ok(None);
             };
@@ -2220,8 +2216,38 @@ impl<'a> FunctionBuilder<'a> {
             };
             (block, place)
         };
+        let block = self.validate_loan_place(&place, block, span)?;
         let loan = self.reserve_loan(block, span, mode, place)?;
         Ok(Some((block, loan)))
+    }
+
+    fn validate_loan_place(
+        &mut self,
+        place: &MirPlace,
+        block: MirBlockId,
+        span: Span,
+    ) -> Result<MirBlockId, MirError> {
+        if !place.projections.iter().any(|projection| {
+            matches!(
+                projection.kind(),
+                MirProjectionKind::Index { .. } | MirProjectionKind::Slice { .. }
+            )
+        }) {
+            return Ok(block);
+        }
+        let target = self.allocate_block(MirBlockKind::Normal)?;
+        self.terminate(
+            block,
+            span,
+            MirTerminatorKind::ValidatePlaces {
+                places: vec![place.clone()],
+                replacements: vec![None],
+                for_write: false,
+                target,
+                unwind: self.unwind,
+            },
+        )?;
+        Ok(target)
     }
 
     fn lower_callee(

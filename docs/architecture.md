@@ -285,8 +285,9 @@ may move independently, overlapping paths cannot be reused, writes restore
 only a proved subtree, and joins conservatively union moved paths. The loan
 verifier propagates exact active sets across that same CFG, rejects incompatible
 fixed-place overlap and illegal reborrows, and confines each loan operand to its
-call. Later ownership steps add last-use and collection regions, confirmed
-borrowed replacement, and populated cleanup actions; async later adds
+call. Last-use pattern regions and static collection-region disjunction use the
+same paths; later ownership steps add runtime-dependent overlap checks,
+confirmed borrowed replacement, and populated cleanup actions; async later adds
 suspension, resume, cancellation, and frame-state edges without moving source
 semantic decisions into a backend.
 

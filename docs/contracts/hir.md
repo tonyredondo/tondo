@@ -66,8 +66,8 @@ iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   coercion. Concrete external implementations, effectful invocation, `await`,
   `spawn`, unsafe-region proofs and raw
   operations, async liveness/`Send` analysis, string interpolation through
-  `Display`, `defer`, collection-region disjunction, suspension-crossing loans,
-  confirmed borrowed replacement, and
+  `Display`, `defer`, runtime-dependent collection-overlap checks,
+  suspension-crossing loans, confirmed borrowed replacement, and
   terminal scope cleanup remain explicit later boundaries rather than receiving
   provisional semantics. Persistent source-visible partial owner
   states are deliberately absent from Tondo 0.1; OWN-005 implements the typed
@@ -806,15 +806,23 @@ a root overlaps every descendant. `E1407` reports a `mut` or `var` argument
 whose value category or place permission is too weak.
 
 These loans are not first-class values. They cannot be bound, stored, returned,
-captured, placed in an aggregate, or passed through a value parameter. Index
-and slice projections remain deliberately incomplete because their disjunction
-may depend on runtime data. An explicit `mut` slice is therefore a valid
-fixed-extent argument shape but still an incomplete collection-region snapshot;
-`var` rejects that same partial place with `E1407`. HIR may retain an error-free
-partial snapshot for tooling, but it does not admit the body to MIR until
-BORROW-004 and BORROW-005 provide the static and dynamic region proof.
-Fixed-place pattern regions are admitted as described below; BORROW-006 owns
-suspension boundaries.
+captured, placed in an aggregate, or passed through a value parameter. BORROW-004
+gives every index, slice, array-pattern element, and array-pattern rest one
+canonical collection region. Non-negative integer literals and evaluated
+integer constants become static indices or bounds; all other index and slice
+inputs remain dynamic. The availability pass admits a lone region and any set
+of overlapping shared regions. For an incompatible pair it emits `E1403` when
+overlap is inevitable, admits the pair when interval or stride arithmetic proves
+it disjoint, and retains an error-free but incomplete snapshot when the answer
+depends on runtime data. Only that last case remains behind BORROW-005. This is
+an implementation staging boundary, not a source-language restriction.
+
+Resolving a later region of the same owner walks its place and evaluates each
+index or bound without reading the whole collection through an earlier
+exclusive reservation. Equal exact projections may be followed to deeper
+fields or elements; a root still overlaps every descendant. `var` rejects a
+partial slice or region with `E1407`, independently of disjunction. BORROW-006
+owns suspension boundaries.
 
 ## Pattern `ref` last-use regions
 
@@ -839,10 +847,13 @@ a join or on a loop backedge keeps it active on every path that can reach that
 use. Ordered call arguments still retain their call-local loans, so a later
 argument cannot mutate the source of an earlier `ref` argument.
 
-Array-pattern `ref` bindings and intrinsic `for ref` remain error-free but
-incomplete. Their backing collection must stay stable across runtime-selected
-elements and therefore belongs to BORROW-004/005 rather than this fixed-place
-region proof.
+Array-pattern `ref` bindings now use exact prefix-index and rest-region
+projections. A prefix element is statically disjoint from a later prefix element
+and from a rest beginning after it; the same proof remains attached through a
+call-local reborrow. Data-dependent rest/slice relationships remain incomplete
+for BORROW-005. Intrinsic `for ref` is still error-free but incomplete because
+its runtime-selected element loan spans iterator control flow rather than one
+ordinary call.
 
 ## Declaration ordering
 

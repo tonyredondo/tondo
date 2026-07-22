@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.43
+**Versión del tracker:** 0.44
 
 **Última actualización:** 2026-07-22
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar disjunción estática de regiones de colección
-(BORROW-004).
+**Objetivo inmediato:** insertar checks runtime para solapamientos de regiones
+dependientes de datos (BORROW-005).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1318,9 +1318,9 @@ lifetimes escritos por el usuario.
 - [x] **BORROW-001 — Implementar préstamos `ref`, `mut` y `var` sobre MIR.**
   HIR valida permisos, reborrowing y reservas en orden, acepta temporales solo
   para `ref`, diagnostica conflictos con `E1403` y lvalues exclusivos inválidos
-  con `E1407`, y mantiene index/slice incompletos para BORROW-004/005. MIR y
-  bytecode poseen tablas densas de loans, `ReserveLoan`, `Loan` y
-  `ReleaseLoan`; sus verificadores propagan el conjunto activo exacto por CFG,
+  con `E1407`. MIR y bytecode poseen tablas densas de loans, `ReserveLoan`,
+  `Loan` y `ReleaseLoan`; sus verificadores propagan el conjunto activo exacto
+  por CFG,
   exigen consumo por la llamada o liberación explícita, rechazan escapes,
   accesos solapados y permisos crecientes. La VM normaliza identidad de
   frame/slot/proyección, ejecuta lectura y escritura a través del lender,
@@ -1338,8 +1338,9 @@ lifetimes escritos por el usuario.
   y bytecode vuelven a probar identidad, contención, orden acíclico, actividad
   y cierre exacto padre-hijo, y la VM defiende la cadena activa en cada acceso.
   Los usos inalcanzables no prolongan regiones y `break`/`continue` conservan la
-  liveness específica de su destino. Patrones de array y cursores `for ref`
-  permanecen incompletos para BORROW-004/005.
+  liveness específica de su destino. BORROW-004 extiende estas regiones a
+  elementos y restos de patrones de array; los cursores `for ref` permanecen
+  incompletos para la prueba dinámica y de fronteras posterior.
 
 - [x] **BORROW-003 — Distinguir observación compartida, mutación de extensión
   fija y mutación estructural.** HIR clasifica cada escritura como reemplazo o
@@ -1350,7 +1351,16 @@ lifetimes escritos por el usuario.
   elevar una reborrow `mut` a `var` únicamente sobre un sublugar estricto,
   completo y estructuralmente reemplazable.
 
-- [ ] **BORROW-004 — Implementar disjunción estática de regiones de colección.**
+- [x] **BORROW-004 — Implementar disjunción estática de regiones de colección.**
+  HIR representa índices, slices, elementos de patrón y restos con una región
+  canónica, reconoce índices y bounds constantes no negativos, y decide
+  disjunción por intervalos, congruencias de stride y posiciones de patrón. Un
+  préstamo de región aislado y cualquier conjunto solo `ref` son ejecutables;
+  un solapamiento incompatible inevitable produce `E1403`; únicamente una
+  pareja incompatible dependiente de datos conserva HIR parcial para
+  BORROW-005. MIR y bytecode recuperan constantes desde temporales de definición
+  única y rederivan la misma prueba. `ValidatePlaces` comprueba bounds y step
+  antes de reservar, y la VM vuelve a comparar las rutas normalizadas reales.
 
 - [ ] **BORROW-005 — Insertar checks runtime únicamente cuando el solapamiento
   dependa de datos.**
@@ -1943,14 +1953,44 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es BORROW-004: probar disjunción estática entre
-regiones de colección cuando índices, rangos y patrones constantes permiten
-decidir el solapamiento sin checks runtime. Los casos dependientes de datos
-permanecen honestamente incompletos para BORROW-005.
+La siguiente acción activa es BORROW-005: materializar una comprobación conjunta
+de solapamiento para las parejas incompatibles cuyo resultado depende de datos,
+después de evaluar y validar todas sus regiones y antes de entrar en el callee.
+La ruta estática de BORROW-004 debe seguir sin ese check normativo; la VM conserva
+su defensa de invariantes en ambos casos.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.44 — 2026-07-22
+
+- Se completa BORROW-004 con una representación canónica de regiones para
+  índices y slices de array, elementos prefijo y restos de patrón. Literales y
+  constantes enteras no negativas alimentan una prueba conservadora de
+  intervalos y progresiones; bounds negativos o dinámicos se reservan para el
+  check normativo de BORROW-005.
+- HIR distingue `Disjoint`, `Overlap` y `Runtime`: admite regiones incompatibles
+  demostrablemente disjuntas, diagnostica con `E1403` el solapamiento inevitable
+  y deja incompleta únicamente la pareja incompatible dependiente de datos. Un
+  préstamo dinámico aislado y regiones dinámicas exclusivamente `ref` ya cruzan
+  la frontera ejecutable.
+- MIR valida bounds y step mediante CFG con unwind antes de cada reserva. Sus
+  move paths y los del bytecode recuperan constantes solo desde temporales de
+  definición única y vuelven a probar la disjunción sin confiar ciegamente en
+  HIR. El verificador rechaza bytecode forjado que convierte regiones disjuntas
+  en solapadas.
+- La VM ejecuta escrituras a través de índices, slices contiguos o strided y
+  regiones nacidas de patrones. Toda validación de escritura transporta un
+  testigo prestado del reemplazo, de modo que también puede comprobar la forma
+  cuando un parámetro aparentemente raíz oculta un slice del caller. Bounds y
+  step cero conservan sus pánicos de lenguaje antes de entrar en el callee.
+- Las regresiones cubren índices, intervalos, residuos de stride, índice frente
+  a slice, regiones dinámicas aisladas, shared/shared dinámico, prefijos/restos
+  de patrón, escritura efectiva, unwind y bytecode adversarial.
+- El gate acumulado pasa 497 tests, incluidos 447 tests de la librería del
+  compilador; también pasan `git diff --check`, formatter check, check y build
+  de todos los targets, Clippy y Rustdoc con warnings denegados.
 
 ### 0.43 — 2026-07-22
 

@@ -251,14 +251,19 @@ from a complete strict projection of `mut`. `BytecodePlace` owns the canonical
 structural-replacement classification shared by verification and execution: a
 root, slice, array rest, potential map entry, or opaque projection cannot
 perform that upgrade, while a fixed aggregate payload or existing array element
-can. Record fields and tuple slots may be proved disjoint. Loan metadata
-containing an index or slice projection is invalid until BORROW-004 and
-BORROW-005 define collection-region proof.
+can. Record fields and tuple slots may be proved disjoint. BORROW-004 admits
+loan metadata containing index, slice, array-pattern element, and array-pattern
+rest projections. The verifier recovers integer constants only from
+single-definition temporary slots and independently rederives interval, stride,
+and pattern-region disjunction. Any incompatible relation it cannot prove
+disjoint remains invalid until BORROW-005 has emitted explicit runtime-overlap
+validation.
+
 `Borrow` remains a separate non-storable form admitted only for equality,
 membership, length, discriminant branches, index/slice collection bases,
 indirect shared/exclusive callees, intrinsic ref-cursor construction, and the
-replacement inspected before a slice write. Stores, aggregates, returns, every
-call argument, and unrelated operations reject it.
+replacement witness attached to write validation. Stores, aggregates, returns,
+every call argument, and unrelated operations reject it.
 
 The bootstrap `Call` operation is deliberately synchronous and safe. Its
 signature must have both effect bits clear; the verifier rejects a forged async
@@ -278,11 +283,13 @@ normal destination/target and cleanup target. This includes checked arithmetic,
 map construction, indexing, slicing, calls, `assert`, and `panic`. Other
 terminators cover direct branches, boolean and discriminant dispatch,
 iterator-next, atomic destination validation, return, panic resumption, and
-unreachable code. A write validation aligns each destination with an optional
-borrowed replacement; a slice write must include an `Array` replacement of the
-place type, allowing the VM to raise `P0006` before the first store without
-consuming the later write operand. Missing or misaligned metadata is invalid
-bytecode.
+unreachable code. A read validation aligns each destination with no replacement;
+a write validation requires one borrowed replacement witness of exactly the
+place type. If the normalized effective path ends in a slice, including when
+that slice is hidden behind a borrowed callee parameter, the VM compares its
+length with the witnessed `Array` and can raise `P0006` before the first store
+without consuming the later write operand. Missing or misaligned metadata is
+invalid bytecode.
 
 Places start at one slot and carry typed projections. Projections include
 record/newtype fields, tuple positions, enum/option/result/union payloads,

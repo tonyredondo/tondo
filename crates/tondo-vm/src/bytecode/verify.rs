@@ -1894,17 +1894,6 @@ impl Verifier<'_> {
                 ));
             }
             self.verify_place(function, &loan.place, &loan_context)?;
-            if loan.place.projections.iter().any(|projection| {
-                matches!(
-                    projection.kind,
-                    BytecodeProjectionKind::Index { .. } | BytecodeProjectionKind::Slice { .. }
-                )
-            }) {
-                return Err(BytecodeVerificationError::new(
-                    &loan_context,
-                    "collection-region loans require BORROW-004 region proof",
-                ));
-            }
         }
         if function.entry == function.unwind
             || self.block(function, function.entry, &context)?.kind != BytecodeBlockKind::Normal
@@ -3582,13 +3571,9 @@ impl Verifier<'_> {
                         return Err(terminator_error(context));
                     }
                     unique.push(place.clone());
-                    let slice = matches!(
-                        place.projections.last().map(|projection| &projection.kind),
-                        Some(BytecodeProjectionKind::Slice { .. })
-                    );
-                    match (*for_write, slice, replacement) {
-                        (false, _, None) | (true, false, None) => {}
-                        (true, true, Some(replacement)) => {
+                    match (*for_write, replacement) {
+                        (false, None) => {}
+                        (true, Some(replacement)) => {
                             self.verify_operand(function, replacement, context)?;
                             if replacement.ty != place.ty
                                 || !matches!(replacement.kind, BytecodeOperandKind::Borrow(_))
@@ -3796,6 +3781,7 @@ impl Verifier<'_> {
             .iter()
             .map(|block| bytecode_loan_events(function, block))
             .collect::<Vec<_>>();
+        let static_integers = static_integer_slots(self.program, function);
         let mut reservations = vec![0_u32; function.loans.len()];
         let mut consumptions = vec![0_u32; function.loans.len()];
         for block_events in &events {
@@ -3854,7 +3840,13 @@ impl Verifier<'_> {
                 .expect("queued loan-flow blocks have an incoming state");
             let block_context = format!("{context} block#{}", block_id.index());
             for event in &events[block_id.index() as usize] {
-                self.apply_loan_event(function, &mut state, event, &block_context)?;
+                self.apply_loan_event(
+                    function,
+                    &static_integers,
+                    &mut state,
+                    event,
+                    &block_context,
+                )?;
             }
             let block = &function.blocks[block_id.index() as usize];
             let mut propagate = |target: BytecodeBlockId,
@@ -3909,6 +3901,7 @@ impl Verifier<'_> {
                         if let Some(destination) = destination {
                             self.verify_loan_local_access(
                                 function,
+                                &static_integers,
                                 &normal,
                                 &LocalEvent::Write(LocalAccess::from_place(destination)),
                                 &block_context,
@@ -3928,6 +3921,7 @@ impl Verifier<'_> {
                     let has_value_state = state.clone();
                     self.verify_loan_local_access(
                         function,
+                        &static_integers,
                         &has_value_state,
                         &LocalEvent::Write(LocalAccess::from_place(destination)),
                         &block_context,
@@ -3957,13 +3951,14 @@ impl Verifier<'_> {
     fn apply_loan_event(
         &self,
         function: &BytecodeFunction,
+        static_integers: &BTreeMap<BytecodeSlotId, u64>,
         state: &mut BTreeSet<BytecodeLoanId>,
         event: &LoanEvent,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
         match event {
             LoanEvent::Local(event) => {
-                self.verify_loan_local_access(function, state, event, context)
+                self.verify_loan_local_access(function, static_integers, state, event, context)
             }
             LoanEvent::Reserve(id) => {
                 let loan = self.loan(function, *id, context)?;
@@ -3979,7 +3974,7 @@ impl Verifier<'_> {
                     let existing = self.loan(function, active, context)?;
                     let existing_access = LocalAccess::from_place(&existing.place);
                     if access.slot == existing_access.slot
-                        && move_paths_overlap(&access.path, &existing_access.path)
+                        && loan_paths_overlap(&access.path, &existing_access.path, static_integers)
                         && !(loan.mode == BytecodeParameterMode::Ref
                             && existing.mode == BytecodeParameterMode::Ref)
                     {
@@ -4080,6 +4075,7 @@ impl Verifier<'_> {
     fn verify_loan_local_access(
         &self,
         function: &BytecodeFunction,
+        static_integers: &BTreeMap<BytecodeSlotId, u64>,
         state: &BTreeSet<BytecodeLoanId>,
         event: &LocalEvent,
         context: &str,
@@ -4096,6 +4092,7 @@ impl Verifier<'_> {
                 };
                 return self.verify_active_loan_access(
                     function,
+                    static_integers,
                     state,
                     &access,
                     "storage change",
@@ -4119,7 +4116,14 @@ impl Verifier<'_> {
                 ));
             }
         }
-        self.verify_active_loan_access(function, state, access, access_kind, context)
+        self.verify_active_loan_access(
+            function,
+            static_integers,
+            state,
+            access,
+            access_kind,
+            context,
+        )
     }
 
     fn verify_source_loan_access(
@@ -4170,6 +4174,7 @@ impl Verifier<'_> {
     fn verify_active_loan_access(
         &self,
         function: &BytecodeFunction,
+        static_integers: &BTreeMap<BytecodeSlotId, u64>,
         state: &BTreeSet<BytecodeLoanId>,
         access: &LocalAccess,
         access_kind: &str,
@@ -4179,7 +4184,7 @@ impl Verifier<'_> {
             let loan = self.loan(function, active, context)?;
             let loan_access = LocalAccess::from_place(&loan.place);
             if access.slot == loan_access.slot
-                && move_paths_overlap(&access.path, &loan_access.path)
+                && loan_paths_overlap(&access.path, &loan_access.path, static_integers)
                 && !(access_kind == "read" && loan.mode == BytecodeParameterMode::Ref)
             {
                 return Err(BytecodeVerificationError::new(
@@ -5507,6 +5512,344 @@ fn move_paths_overlap(left: &[MovePathComponent], right: &[MovePathComponent]) -
         .all(|(left, right)| !move_path_components_are_disjoint(left, right))
 }
 
+fn loan_paths_overlap(
+    left: &[MovePathComponent],
+    right: &[MovePathComponent],
+    static_integers: &BTreeMap<BytecodeSlotId, u64>,
+) -> bool {
+    for (left, right) in left.iter().zip(right) {
+        if left == right {
+            continue;
+        }
+        match (
+            collection_region(left, static_integers),
+            collection_region(right, static_integers),
+        ) {
+            (CollectionComponent::Static(left), CollectionComponent::Static(right)) => {
+                return static_collection_relation(left, right) != StaticRegionRelation::Disjoint;
+            }
+            (CollectionComponent::None, CollectionComponent::None) => {
+                if move_path_components_are_disjoint(left, right) {
+                    return false;
+                }
+            }
+            (CollectionComponent::Dynamic, _)
+            | (_, CollectionComponent::Dynamic)
+            | (CollectionComponent::Static(_), CollectionComponent::None)
+            | (CollectionComponent::None, CollectionComponent::Static(_)) => return true,
+        }
+    }
+    true
+}
+
+#[derive(Clone, Copy)]
+enum CollectionComponent {
+    None,
+    Static(StaticCollectionRegion),
+    Dynamic,
+}
+
+fn collection_region(
+    component: &MovePathComponent,
+    static_integers: &BTreeMap<BytecodeSlotId, u64>,
+) -> CollectionComponent {
+    match component {
+        MovePathComponent::ArrayPatternIndex(index) => {
+            CollectionComponent::Static(StaticCollectionRegion::PatternIndex(*index))
+        }
+        MovePathComponent::ArrayPatternRest { start, suffix } => {
+            CollectionComponent::Static(StaticCollectionRegion::PatternRest {
+                start: *start,
+                suffix: *suffix,
+            })
+        }
+        MovePathComponent::Index(index) => static_integers
+            .get(index)
+            .map_or(CollectionComponent::Dynamic, |index| {
+                CollectionComponent::Static(StaticCollectionRegion::Index(*index))
+            }),
+        MovePathComponent::Slice { start, end, step } => {
+            let Some(start) = static_optional_bound(*start, static_integers) else {
+                return CollectionComponent::Dynamic;
+            };
+            let Some(end) = static_optional_bound(*end, static_integers) else {
+                return CollectionComponent::Dynamic;
+            };
+            let Some(step) = static_optional_bound(*step, static_integers) else {
+                return CollectionComponent::Dynamic;
+            };
+            CollectionComponent::Static(StaticCollectionRegion::Slice(StaticSlice {
+                start,
+                end,
+                step,
+            }))
+        }
+        MovePathComponent::ClosureCapture(_, _)
+        | MovePathComponent::Field(_)
+        | MovePathComponent::TupleField(_)
+        | MovePathComponent::NewtypeValue
+        | MovePathComponent::VariantTuple(_, _)
+        | MovePathComponent::VariantField(_, _)
+        | MovePathComponent::OptionValue
+        | MovePathComponent::ResultOkValue
+        | MovePathComponent::ResultErrValue
+        | MovePathComponent::UnionValue(_) => CollectionComponent::None,
+    }
+}
+
+fn static_optional_bound(
+    slot: Option<BytecodeSlotId>,
+    static_integers: &BTreeMap<BytecodeSlotId, u64>,
+) -> Option<Option<u64>> {
+    match slot {
+        Some(slot) => Some(Some(*static_integers.get(&slot)?)),
+        None => Some(None),
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct StaticSlice {
+    start: Option<u64>,
+    end: Option<u64>,
+    step: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StaticCollectionRegion {
+    Index(u64),
+    Slice(StaticSlice),
+    PatternIndex(u32),
+    PatternRest { start: u32, suffix: u32 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StaticRegionRelation {
+    Disjoint,
+    Overlap,
+    Runtime,
+}
+
+fn static_collection_relation(
+    left: StaticCollectionRegion,
+    right: StaticCollectionRegion,
+) -> StaticRegionRelation {
+    use StaticCollectionRegion::{Index, PatternIndex, PatternRest, Slice};
+
+    match (left, right) {
+        (Index(left), Index(right)) => index_relation(left, right),
+        (PatternIndex(left), PatternIndex(right)) => {
+            index_relation(u64::from(left), u64::from(right))
+        }
+        (Index(left), PatternIndex(right)) | (PatternIndex(right), Index(left)) => {
+            index_relation(left, u64::from(right))
+        }
+        (Index(index), Slice(slice)) | (Slice(slice), Index(index)) => {
+            index_slice_relation(index, slice)
+        }
+        (PatternIndex(index), Slice(slice)) | (Slice(slice), PatternIndex(index)) => {
+            index_slice_relation(u64::from(index), slice)
+        }
+        (Slice(left), Slice(right)) => slice_relation(left, right),
+        (PatternIndex(index), PatternRest { start, suffix })
+        | (PatternRest { start, suffix }, PatternIndex(index)) => {
+            rest_index_relation(u64::from(index), start, suffix)
+        }
+        (Index(index), PatternRest { start, suffix })
+        | (PatternRest { start, suffix }, Index(index)) => {
+            rest_index_relation(index, start, suffix)
+        }
+        (PatternRest { .. }, PatternRest { .. })
+        | (Slice(_), PatternRest { .. })
+        | (PatternRest { .. }, Slice(_)) => StaticRegionRelation::Runtime,
+    }
+}
+
+fn index_relation(left: u64, right: u64) -> StaticRegionRelation {
+    if left == right {
+        StaticRegionRelation::Overlap
+    } else {
+        StaticRegionRelation::Disjoint
+    }
+}
+
+fn rest_index_relation(index: u64, start: u32, suffix: u32) -> StaticRegionRelation {
+    if index < u64::from(start) {
+        StaticRegionRelation::Disjoint
+    } else if suffix == 0 {
+        StaticRegionRelation::Overlap
+    } else {
+        StaticRegionRelation::Runtime
+    }
+}
+
+fn index_slice_relation(index: u64, slice: StaticSlice) -> StaticRegionRelation {
+    if slice_contains(slice, index) {
+        StaticRegionRelation::Overlap
+    } else {
+        StaticRegionRelation::Disjoint
+    }
+}
+
+fn slice_relation(left: StaticSlice, right: StaticSlice) -> StaticRegionRelation {
+    let Some(left) = positive_progression(left) else {
+        return StaticRegionRelation::Disjoint;
+    };
+    let Some(right) = positive_progression(right) else {
+        return StaticRegionRelation::Disjoint;
+    };
+    if left.end.is_some_and(|end| end <= right.start)
+        || right.end.is_some_and(|end| end <= left.start)
+    {
+        return StaticRegionRelation::Disjoint;
+    }
+    let divisor = greatest_common_divisor(left.step, right.step);
+    if left.start % divisor != right.start % divisor {
+        return StaticRegionRelation::Disjoint;
+    }
+    StaticRegionRelation::Runtime
+}
+
+fn slice_contains(slice: StaticSlice, index: u64) -> bool {
+    let Some(slice) = positive_progression(slice) else {
+        return false;
+    };
+    index >= slice.start
+        && slice.end.is_none_or(|end| index < end)
+        && (index - slice.start).is_multiple_of(slice.step)
+}
+
+#[derive(Clone, Copy)]
+struct PositiveProgression {
+    start: u64,
+    end: Option<u64>,
+    step: u64,
+}
+
+fn positive_progression(slice: StaticSlice) -> Option<PositiveProgression> {
+    let start = slice.start.unwrap_or(0);
+    let step = slice.step.unwrap_or(1);
+    if step == 0 || slice.end.is_some_and(|end| end <= start) {
+        return None;
+    }
+    Some(PositiveProgression {
+        start,
+        end: slice.end,
+        step,
+    })
+}
+
+fn greatest_common_divisor(mut left: u64, mut right: u64) -> u64 {
+    while right != 0 {
+        (left, right) = (right, left % right);
+    }
+    left
+}
+
+fn static_integer_slots(
+    program: &BytecodeProgram,
+    function: &BytecodeFunction,
+) -> BTreeMap<BytecodeSlotId, u64> {
+    let mut candidates = BTreeMap::<BytecodeSlotId, Option<u64>>::new();
+    let mut record = |place: &BytecodePlace, value: Option<u64>| {
+        if !place.projections.is_empty()
+            || function.slots[place.slot.index() as usize].kind != BytecodeSlotKind::Temporary
+        {
+            return;
+        }
+        candidates
+            .entry(place.slot)
+            .and_modify(|candidate| *candidate = None)
+            .or_insert(value);
+    };
+    for block in &function.blocks {
+        for instruction in &block.instructions {
+            if let BytecodeInstructionKind::Store { destination, value } = &instruction.kind {
+                record(destination, static_integer_rvalue(program, value));
+            }
+        }
+        match &block.terminator.kind {
+            BytecodeTerminatorKind::Invoke {
+                destination: Some(destination),
+                ..
+            }
+            | BytecodeTerminatorKind::IteratorNext { destination, .. } => record(destination, None),
+            BytecodeTerminatorKind::Goto { .. }
+            | BytecodeTerminatorKind::BranchBool { .. }
+            | BytecodeTerminatorKind::BranchTag { .. }
+            | BytecodeTerminatorKind::Invoke {
+                destination: None, ..
+            }
+            | BytecodeTerminatorKind::ValidatePlaces { .. }
+            | BytecodeTerminatorKind::Return
+            | BytecodeTerminatorKind::ResumePanic
+            | BytecodeTerminatorKind::Unreachable => {}
+        }
+    }
+    candidates
+        .into_iter()
+        .filter_map(|(slot, value)| value.map(|value| (slot, value)))
+        .collect()
+}
+
+fn static_integer_rvalue(program: &BytecodeProgram, value: &BytecodeRvalue) -> Option<u64> {
+    let BytecodeRvalueKind::Use(operand) = &value.kind else {
+        return None;
+    };
+    match &operand.kind {
+        BytecodeOperandKind::Constant(BytecodeConstant::Integer(spelling)) => {
+            parse_nonnegative_integer(spelling)
+        }
+        BytecodeOperandKind::Constant(BytecodeConstant::Named(constant)) => {
+            let BytecodeConstantValueKind::Integer(value) =
+                &program.constants.get(constant.index() as usize)?.value.kind
+            else {
+                return None;
+            };
+            u64::try_from(*value).ok()
+        }
+        BytecodeOperandKind::Constant(
+            BytecodeConstant::Unit
+            | BytecodeConstant::Bool(_)
+            | BytecodeConstant::Float(_)
+            | BytecodeConstant::Char(_)
+            | BytecodeConstant::String(_),
+        )
+        | BytecodeOperandKind::Copy(_)
+        | BytecodeOperandKind::Move(_)
+        | BytecodeOperandKind::Borrow(_)
+        | BytecodeOperandKind::Loan(_)
+        | BytecodeOperandKind::Function { .. } => None,
+    }
+}
+
+fn parse_nonnegative_integer(spelling: &str) -> Option<u64> {
+    let suffix_length = ["i16", "i32", "i64", "u16", "u32", "u64"]
+        .into_iter()
+        .find(|suffix| spelling.ends_with(suffix))
+        .map_or_else(
+            || {
+                ["i8", "u8"]
+                    .into_iter()
+                    .find(|suffix| spelling.ends_with(suffix))
+                    .map_or(0, |suffix| suffix.len())
+            },
+            |suffix| suffix.len(),
+        );
+    let body = &spelling[..spelling.len().checked_sub(suffix_length)?];
+    let (radix, digits) = if let Some(digits) = body.strip_prefix("0b") {
+        (2, digits)
+    } else if let Some(digits) = body.strip_prefix("0o") {
+        (8, digits)
+    } else if let Some(digits) = body.strip_prefix("0x") {
+        (16, digits)
+    } else {
+        (10, body)
+    };
+    u128::from_str_radix(&digits.replace('_', ""), radix)
+        .ok()
+        .and_then(|value| u64::try_from(value).ok())
+}
+
 fn move_path_is_prefix(prefix: &[MovePathComponent], path: &[MovePathComponent]) -> bool {
     prefix.len() <= path.len() && prefix.iter().zip(path).all(|(left, right)| left == right)
 }
@@ -6087,5 +6430,50 @@ fn push_projection_index_events(place: &BytecodePlace, events: &mut Vec<LocalEve
             | BytecodeProjectionKind::ArrayPatternIndex(_)
             | BytecodeProjectionKind::ArrayPatternRest { .. } => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn collection_loan_paths_rederive_static_disjunction() {
+        let split = BytecodeSlotId::new(1);
+        let dynamic = BytecodeSlotId::new(2);
+        let static_integers = BTreeMap::from([(split, 2)]);
+        let left = vec![MovePathComponent::Slice {
+            start: None,
+            end: Some(split),
+            step: None,
+        }];
+        let right = vec![MovePathComponent::Slice {
+            start: Some(split),
+            end: None,
+            step: None,
+        }];
+        assert!(!loan_paths_overlap(&left, &right, &static_integers));
+        assert!(loan_paths_overlap(
+            &left,
+            &[MovePathComponent::Slice {
+                start: None,
+                end: None,
+                step: None,
+            }],
+            &static_integers,
+        ));
+        assert!(loan_paths_overlap(
+            &[MovePathComponent::Index(dynamic)],
+            &[MovePathComponent::Index(split)],
+            &static_integers,
+        ));
+        assert!(!loan_paths_overlap(
+            &[MovePathComponent::ArrayPatternRest {
+                start: 1,
+                suffix: 0,
+            }],
+            &[MovePathComponent::ArrayPatternIndex(0)],
+            &static_integers,
+        ));
     }
 }

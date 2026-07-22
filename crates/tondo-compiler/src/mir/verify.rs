@@ -5,9 +5,11 @@ use std::fmt;
 
 use crate::hir::{
     CapabilityAnalysis, CapabilityAssumptions, HirBinaryOperator, HirCallProtocol, HirCallableId,
-    HirCapability, HirCapabilityStatus, HirClosureProtocols, HirContainmentKind,
-    HirGenericParameter, HirIndexAccess, HirNominalShape, HirPrefixOperator, HirProgram,
-    HirTraitConstructor, HirTypeDeclarationKind, HirVariantPayload,
+    HirCapability, HirCapabilityStatus, HirClosureProtocols, HirConstantValueKind,
+    HirContainmentKind, HirGenericParameter, HirIndexAccess, HirNominalShape, HirPrefixOperator,
+    HirProgram, HirTraitConstructor, HirTypeDeclarationKind, HirVariantPayload,
+    StaticCollectionRegion, StaticRegionRelation, StaticSlice, parse_nonnegative_integer,
+    static_collection_relation,
 };
 use crate::resolve::{MemberKind, MemberOwner, ResolvedProgram, SymbolId};
 use crate::types::{
@@ -16,10 +18,10 @@ use crate::types::{
 };
 
 use super::{
-    MirAggregateKind, MirBasicBlock, MirBlockId, MirBlockKind, MirFunction, MirFunctionId,
-    MirLoanId, MirLoanKind, MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation,
-    MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind, MirRvalue,
-    MirRvalueKind, MirStatementKind, MirTag, MirTerminatorKind,
+    MirAggregateKind, MirBasicBlock, MirBlockId, MirBlockKind, MirConstant, MirFunction,
+    MirFunctionId, MirLoanId, MirLoanKind, MirLocalId, MirLocalKind, MirOperand, MirOperandKind,
+    MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind,
+    MirRvalue, MirRvalueKind, MirStatementKind, MirTag, MirTerminatorKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -604,17 +606,6 @@ impl Verifier<'_> {
                 ));
             }
             self.verify_place(function, &loan.place, &loan_context)?;
-            if loan.place.projections.iter().any(|projection| {
-                matches!(
-                    projection.kind,
-                    MirProjectionKind::Index { .. } | MirProjectionKind::Slice { .. }
-                )
-            }) {
-                return Err(MirInvariantError::new(
-                    &loan_context,
-                    "collection-region loans require BORROW-004 region proof",
-                ));
-            }
         }
         if function.blocks.is_empty() {
             return Err(MirInvariantError::new(
@@ -1034,20 +1025,16 @@ impl Verifier<'_> {
                         ));
                     }
                     unique.push(place);
-                    let slice = matches!(
-                        place.projections().last().map(MirProjection::kind),
-                        Some(MirProjectionKind::Slice { .. })
-                    );
-                    match (*for_write, slice, replacement) {
-                        (false, _, None) | (true, false, None) => {}
-                        (true, true, Some(replacement)) => {
+                    match (*for_write, replacement) {
+                        (false, None) => {}
+                        (true, Some(replacement)) => {
                             self.verify_operand(function, replacement, &context)?;
                             if replacement.ty() != place.ty()
                                 || !matches!(replacement.kind(), MirOperandKind::Borrow(_))
                             {
                                 return Err(MirInvariantError::new(
                                     &context,
-                                    "slice write validation requires a borrowed replacement of the place type",
+                                    "write validation requires a borrowed replacement of the place type",
                                 ));
                             }
                         }
@@ -3519,6 +3506,7 @@ impl Verifier<'_> {
             .iter()
             .map(|block| mir_loan_events(function, block))
             .collect::<Vec<_>>();
+        let static_integers = static_integer_locals(self.hir, function);
         let mut reservations = vec![0_u32; function.loans.len()];
         let mut consumptions = vec![0_u32; function.loans.len()];
         for block_events in &events {
@@ -3574,7 +3562,13 @@ impl Verifier<'_> {
                 .expect("queued loan-flow blocks have an incoming state");
             let block_context = format!("{context} block#{}", block_id.index());
             for event in &events[block_id.index() as usize] {
-                self.apply_loan_event(function, &mut state, event, &block_context)?;
+                self.apply_loan_event(
+                    function,
+                    &static_integers,
+                    &mut state,
+                    event,
+                    &block_context,
+                )?;
             }
             let block = &function.blocks[block_id.index() as usize];
             let mut propagate = |target: MirBlockId,
@@ -3629,6 +3623,7 @@ impl Verifier<'_> {
                         if let Some(destination) = destination {
                             self.verify_loan_local_access(
                                 function,
+                                &static_integers,
                                 &normal,
                                 &LocalEvent::Write(LocalAccess::from_place(destination)),
                                 &block_context,
@@ -3648,6 +3643,7 @@ impl Verifier<'_> {
                     let has_value_state = state.clone();
                     self.verify_loan_local_access(
                         function,
+                        &static_integers,
                         &has_value_state,
                         &LocalEvent::Write(LocalAccess::from_place(destination)),
                         &block_context,
@@ -3677,13 +3673,14 @@ impl Verifier<'_> {
     fn apply_loan_event(
         &self,
         function: &MirFunction,
+        static_integers: &BTreeMap<MirLocalId, u64>,
         state: &mut BTreeSet<MirLoanId>,
         event: &LoanEvent,
         context: &str,
     ) -> Result<(), MirInvariantError> {
         match event {
             LoanEvent::Local(event) => {
-                self.verify_loan_local_access(function, state, event, context)
+                self.verify_loan_local_access(function, static_integers, state, event, context)
             }
             LoanEvent::Reserve(id) => {
                 let loan = self.loan(function, *id, context)?;
@@ -3699,7 +3696,7 @@ impl Verifier<'_> {
                     let existing = self.loan(function, active, context)?;
                     let existing_access = LocalAccess::from_place(existing.place());
                     if access.local == existing_access.local
-                        && move_paths_overlap(&access.path, &existing_access.path)
+                        && loan_paths_overlap(&access.path, &existing_access.path, static_integers)
                         && !(loan.mode() == ParameterMode::Ref
                             && existing.mode() == ParameterMode::Ref)
                     {
@@ -3800,6 +3797,7 @@ impl Verifier<'_> {
     fn verify_loan_local_access(
         &self,
         function: &MirFunction,
+        static_integers: &BTreeMap<MirLocalId, u64>,
         state: &BTreeSet<MirLoanId>,
         event: &LocalEvent,
         context: &str,
@@ -3816,6 +3814,7 @@ impl Verifier<'_> {
                 };
                 return self.verify_active_loan_access(
                     function,
+                    static_integers,
                     state,
                     &access,
                     "storage change",
@@ -3839,7 +3838,14 @@ impl Verifier<'_> {
                 ));
             }
         }
-        self.verify_active_loan_access(function, state, access, access_kind, context)
+        self.verify_active_loan_access(
+            function,
+            static_integers,
+            state,
+            access,
+            access_kind,
+            context,
+        )
     }
 
     fn verify_source_loan_access(
@@ -3890,6 +3896,7 @@ impl Verifier<'_> {
     fn verify_active_loan_access(
         &self,
         function: &MirFunction,
+        static_integers: &BTreeMap<MirLocalId, u64>,
         state: &BTreeSet<MirLoanId>,
         access: &LocalAccess,
         access_kind: &str,
@@ -3899,7 +3906,7 @@ impl Verifier<'_> {
             let loan = self.loan(function, active, context)?;
             let loan_access = LocalAccess::from_place(loan.place());
             if access.local == loan_access.local
-                && move_paths_overlap(&access.path, &loan_access.path)
+                && loan_paths_overlap(&access.path, &loan_access.path, static_integers)
                 && !(access_kind == "read" && loan.mode() == ParameterMode::Ref)
             {
                 return Err(MirInvariantError::new(
@@ -5005,6 +5012,178 @@ fn move_paths_overlap(left: &[MovePathComponent], right: &[MovePathComponent]) -
         .all(|(left, right)| !move_path_components_are_disjoint(left, right))
 }
 
+fn loan_paths_overlap(
+    left: &[MovePathComponent],
+    right: &[MovePathComponent],
+    static_integers: &BTreeMap<MirLocalId, u64>,
+) -> bool {
+    for (left, right) in left.iter().zip(right) {
+        if left == right {
+            continue;
+        }
+        match (
+            collection_region(left, static_integers),
+            collection_region(right, static_integers),
+        ) {
+            (CollectionComponent::Static(left), CollectionComponent::Static(right)) => {
+                if static_collection_relation(left, right) == StaticRegionRelation::Disjoint {
+                    return false;
+                }
+                return true;
+            }
+            (CollectionComponent::None, CollectionComponent::None) => {
+                if move_path_components_are_disjoint(left, right) {
+                    return false;
+                }
+            }
+            (CollectionComponent::Dynamic, _)
+            | (_, CollectionComponent::Dynamic)
+            | (CollectionComponent::Static(_), CollectionComponent::None)
+            | (CollectionComponent::None, CollectionComponent::Static(_)) => return true,
+        }
+    }
+    true
+}
+
+#[derive(Clone, Copy)]
+enum CollectionComponent {
+    None,
+    Static(StaticCollectionRegion),
+    Dynamic,
+}
+
+fn collection_region(
+    component: &MovePathComponent,
+    static_integers: &BTreeMap<MirLocalId, u64>,
+) -> CollectionComponent {
+    match component {
+        MovePathComponent::ArrayPatternIndex(index) => {
+            CollectionComponent::Static(StaticCollectionRegion::PatternIndex(*index))
+        }
+        MovePathComponent::ArrayPatternRest { start, suffix } => {
+            CollectionComponent::Static(StaticCollectionRegion::PatternRest {
+                start: *start,
+                suffix: *suffix,
+            })
+        }
+        MovePathComponent::Index(index) => static_integers
+            .get(index)
+            .map_or(CollectionComponent::Dynamic, |index| {
+                CollectionComponent::Static(StaticCollectionRegion::Index(*index))
+            }),
+        MovePathComponent::Slice { start, end, step } => {
+            let Some(start) = static_optional_bound(*start, static_integers) else {
+                return CollectionComponent::Dynamic;
+            };
+            let Some(end) = static_optional_bound(*end, static_integers) else {
+                return CollectionComponent::Dynamic;
+            };
+            let Some(step) = static_optional_bound(*step, static_integers) else {
+                return CollectionComponent::Dynamic;
+            };
+            CollectionComponent::Static(StaticCollectionRegion::Slice(StaticSlice {
+                start,
+                end,
+                step,
+            }))
+        }
+        MovePathComponent::ClosureCapture(_, _)
+        | MovePathComponent::Field(_)
+        | MovePathComponent::TupleField(_)
+        | MovePathComponent::NewtypeValue
+        | MovePathComponent::VariantTuple(_, _)
+        | MovePathComponent::VariantField(_, _)
+        | MovePathComponent::OptionValue
+        | MovePathComponent::ResultOkValue
+        | MovePathComponent::ResultErrValue
+        | MovePathComponent::UnionValue(_) => CollectionComponent::None,
+    }
+}
+
+fn static_optional_bound(
+    local: Option<MirLocalId>,
+    static_integers: &BTreeMap<MirLocalId, u64>,
+) -> Option<Option<u64>> {
+    match local {
+        Some(local) => Some(Some(*static_integers.get(&local)?)),
+        None => Some(None),
+    }
+}
+
+fn static_integer_locals(hir: &HirProgram, function: &MirFunction) -> BTreeMap<MirLocalId, u64> {
+    let mut candidates = BTreeMap::<MirLocalId, Option<u64>>::new();
+    let mut record = |place: &MirPlace, value: Option<u64>| {
+        if !place.projections.is_empty()
+            || function.locals[place.local.index() as usize].kind != MirLocalKind::Temporary
+        {
+            return;
+        }
+        candidates
+            .entry(place.local)
+            .and_modify(|candidate| *candidate = None)
+            .or_insert(value);
+    };
+    for block in &function.blocks {
+        for statement in &block.statements {
+            if let MirStatementKind::Assign { destination, value } = &statement.kind {
+                record(destination, static_integer_rvalue(hir, value));
+            }
+        }
+        match &block.terminator.kind {
+            MirTerminatorKind::Invoke {
+                destination: Some(destination),
+                ..
+            }
+            | MirTerminatorKind::IteratorNext { destination, .. } => record(destination, None),
+            MirTerminatorKind::Goto { .. }
+            | MirTerminatorKind::SwitchBool { .. }
+            | MirTerminatorKind::SwitchTag { .. }
+            | MirTerminatorKind::Invoke {
+                destination: None, ..
+            }
+            | MirTerminatorKind::ValidatePlaces { .. }
+            | MirTerminatorKind::Return
+            | MirTerminatorKind::ResumePanic
+            | MirTerminatorKind::Unreachable => {}
+        }
+    }
+    candidates
+        .into_iter()
+        .filter_map(|(local, value)| value.map(|value| (local, value)))
+        .collect()
+}
+
+fn static_integer_rvalue(hir: &HirProgram, value: &MirRvalue) -> Option<u64> {
+    let MirRvalueKind::Use(operand) = &value.kind else {
+        return None;
+    };
+    match &operand.kind {
+        MirOperandKind::Constant(MirConstant::Integer(spelling)) => {
+            parse_nonnegative_integer(spelling)
+        }
+        MirOperandKind::Constant(MirConstant::Named(symbol)) => {
+            let HirConstantValueKind::Integer(value) = hir.constant(*symbol)?.evaluated()?.kind()
+            else {
+                return None;
+            };
+            u64::try_from(*value).ok()
+        }
+        MirOperandKind::Constant(
+            MirConstant::Unit
+            | MirConstant::Bool(_)
+            | MirConstant::Float(_)
+            | MirConstant::Char(_)
+            | MirConstant::String(_),
+        )
+        | MirOperandKind::Copy(_)
+        | MirOperandKind::Move(_)
+        | MirOperandKind::Borrow(_)
+        | MirOperandKind::Loan(_)
+        | MirOperandKind::Function { .. }
+        | MirOperandKind::PreludeTraitFunction { .. } => None,
+    }
+}
+
 fn move_path_is_prefix(prefix: &[MovePathComponent], path: &[MovePathComponent]) -> bool {
     prefix.len() <= path.len() && prefix.iter().zip(path).all(|(left, right)| left == right)
 }
@@ -5346,5 +5525,45 @@ mod tests {
                 access: crate::hir::HirIndexAccess::MapEntry,
             }
         )));
+    }
+
+    #[test]
+    fn collection_loan_paths_rederive_static_disjunction() {
+        let split = MirLocalId(1);
+        let dynamic = MirLocalId(2);
+        let static_integers = BTreeMap::from([(split, 2)]);
+        let left = vec![MovePathComponent::Slice {
+            start: None,
+            end: Some(split),
+            step: None,
+        }];
+        let right = vec![MovePathComponent::Slice {
+            start: Some(split),
+            end: None,
+            step: None,
+        }];
+        assert!(!loan_paths_overlap(&left, &right, &static_integers));
+        assert!(loan_paths_overlap(
+            &left,
+            &[MovePathComponent::Slice {
+                start: None,
+                end: None,
+                step: None,
+            }],
+            &static_integers,
+        ));
+        assert!(loan_paths_overlap(
+            &[MovePathComponent::Index(dynamic)],
+            &[MovePathComponent::Index(split)],
+            &static_integers,
+        ));
+        assert!(!loan_paths_overlap(
+            &[MovePathComponent::ArrayPatternRest {
+                start: 1,
+                suffix: 0,
+            }],
+            &[MovePathComponent::ArrayPatternIndex(0)],
+            &static_integers,
+        ));
     }
 }

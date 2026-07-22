@@ -23,6 +23,7 @@ mod capabilities;
 mod check;
 mod const_eval;
 mod lower;
+mod regions;
 mod termination;
 mod traits;
 mod verify;
@@ -33,6 +34,10 @@ pub(crate) use availability::{
 pub(crate) use capabilities::{CapabilityAnalysis, CapabilityAssumptions};
 pub use check::{ExpressionCheckLimits, HirCheckOutput, check_expressions};
 pub use lower::{TypeLoweringLimits, lower_types};
+pub(crate) use regions::{
+    StaticCollectionRegion, StaticRegionRelation, StaticSlice, parse_nonnegative_integer,
+    static_collection_relation, static_nonnegative_integer, static_slice,
+};
 pub(crate) use traits::{TraitQuery, TraitSelectionError, select_implementation};
 pub use verify::HirInvariantError;
 pub(crate) use verify::verify_typed_hir;

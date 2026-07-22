@@ -9,7 +9,8 @@ use super::{
     HirAssignmentTargetKind, HirBinaryOperator, HirCallProtocol, HirCapability,
     HirCapabilityStatus, HirClosureCapture, HirExpressionId, HirExpressionKind, HirForKind,
     HirIterationProtocol, HirLoopId, HirMatchMode, HirPatternId, HirPatternKind, HirProgram,
-    HirStatement, HirValueCategory, HirVariantValue, HirWriteKind,
+    HirStatement, HirValueCategory, HirVariantValue, HirWriteKind, StaticCollectionRegion,
+    StaticRegionRelation, static_collection_relation, static_nonnegative_integer, static_slice,
 };
 
 #[derive(Clone, Debug, Default)]
@@ -27,6 +28,7 @@ pub(crate) enum AvailabilityFindingKind {
     InvalidGuardAccess,
     InvalidMatchMode,
     ConflictingLoan,
+    DeferredCollectionConflict,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -66,7 +68,20 @@ enum PlaceRoot {
 enum PlaceProjection {
     Field(crate::resolve::MemberId),
     TupleField(u32),
-    Collection,
+    Collection(CollectionRegion),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum CollectionRegion {
+    Static(StaticCollectionRegion),
+    Dynamic,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlaceOverlap {
+    Disjoint,
+    Overlap,
+    Runtime,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -577,7 +592,11 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         .normal
                         .as_ref()
                         .map(|state| self.loan_place_in_state(argument.value(), state));
-                    flow = self.then_expression(flow, argument.value(), demand, live_after)?;
+                    flow = if argument.mode() == ParameterMode::Value {
+                        self.then_expression(flow, argument.value(), demand, live_after)?
+                    } else {
+                        self.then_loan_argument(flow, argument.value(), demand, live_after)?
+                    };
                     if argument.mode() != ParameterMode::Value
                         && let Some(state) = &mut flow.normal
                     {
@@ -1299,10 +1318,16 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 place.projections.push(PlaceProjection::TupleField(*index));
                 Ok((flow, place))
             }
-            HirExpressionKind::Index { base, index, .. } => {
+            HirExpressionKind::Index {
+                base,
+                index,
+                access,
+            } => {
                 let (flow, mut place) = self.place_base(*base, state, live_after)?;
                 place.complete_transfer = false;
-                place.projections.push(PlaceProjection::Collection);
+                place.projections.push(PlaceProjection::Collection(
+                    self.index_region(*index, *access),
+                ));
                 Ok((
                     self.then_expression(flow, *index, Demand::Transfer, live_after)?,
                     place,
@@ -1316,7 +1341,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             } => {
                 let (mut flow, mut place) = self.place_base(*base, state, live_after)?;
                 place.complete_transfer = false;
-                place.projections.push(PlaceProjection::Collection);
+                place.projections.push(PlaceProjection::Collection(
+                    self.slice_region(*start, *end, *step),
+                ));
                 for value in start.iter().chain(end).chain(step) {
                     flow = self.then_expression(flow, *value, Demand::Transfer, live_after)?;
                 }
@@ -1486,7 +1513,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 complete_transfer: false,
             };
         };
-        if expression.category() != HirValueCategory::Place {
+        if expression.category() != HirValueCategory::Place
+            && !matches!(expression.kind(), HirExpressionKind::Slice { .. })
+        {
             return PlaceInfo {
                 root: PlaceRoot::Temporary(id),
                 projections: Vec::new(),
@@ -1514,9 +1543,27 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 place.projections.push(PlaceProjection::TupleField(*index));
                 place
             }
-            HirExpressionKind::Index { base, .. } | HirExpressionKind::Slice { base, .. } => {
+            HirExpressionKind::Index {
+                base,
+                index,
+                access,
+            } => {
                 let mut place = self.loan_place(*base);
-                place.projections.push(PlaceProjection::Collection);
+                place.projections.push(PlaceProjection::Collection(
+                    self.index_region(*index, *access),
+                ));
+                place
+            }
+            HirExpressionKind::Slice {
+                base,
+                start,
+                end,
+                step,
+            } => {
+                let mut place = self.loan_place(*base);
+                place.projections.push(PlaceProjection::Collection(
+                    self.slice_region(*start, *end, *step),
+                ));
                 place
             }
             _ => PlaceInfo {
@@ -1549,24 +1596,64 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         mode: ParameterMode,
         span: Span,
     ) {
-        if place.projections.contains(&PlaceProjection::Collection) {
-            return;
-        }
         for active in state.loans.values() {
-            if places_overlap(&active.place, &place)
-                && !(active.mode == ParameterMode::Ref && mode == ParameterMode::Ref)
-            {
-                self.findings.insert(AvailabilityFinding {
-                    kind: AvailabilityFindingKind::ConflictingLoan,
-                    local: place_local(&place),
-                    use_span: span,
-                    move_span: Some(active.span),
-                });
+            if active.mode == ParameterMode::Ref && mode == ParameterMode::Ref {
+                continue;
             }
+            let kind = match places_overlap(&active.place, &place) {
+                PlaceOverlap::Disjoint => continue,
+                PlaceOverlap::Overlap => AvailabilityFindingKind::ConflictingLoan,
+                PlaceOverlap::Runtime => AvailabilityFindingKind::DeferredCollectionConflict,
+            };
+            self.findings.insert(AvailabilityFinding {
+                kind,
+                local: place_local(&place),
+                use_span: span,
+                move_span: Some(active.span),
+            });
         }
         state
             .loans
             .insert(identity, LoanReservation { mode, place, span });
+    }
+
+    fn index_region(
+        &self,
+        index: HirExpressionId,
+        access: super::HirIndexAccess,
+    ) -> CollectionRegion {
+        if access == super::HirIndexAccess::Array
+            && let Some(index) = static_nonnegative_integer(self.program, index)
+        {
+            CollectionRegion::Static(StaticCollectionRegion::Index(index))
+        } else {
+            CollectionRegion::Dynamic
+        }
+    }
+
+    fn slice_region(
+        &self,
+        start: Option<HirExpressionId>,
+        end: Option<HirExpressionId>,
+        step: Option<HirExpressionId>,
+    ) -> CollectionRegion {
+        static_slice(self.program, start, end, step).map_or(CollectionRegion::Dynamic, |slice| {
+            CollectionRegion::Static(StaticCollectionRegion::Slice(slice))
+        })
+    }
+
+    fn record_loan_conflict(&mut self, active: &LoanReservation, place: &PlaceInfo, span: Span) {
+        let kind = match places_overlap(&active.place, place) {
+            PlaceOverlap::Disjoint => return,
+            PlaceOverlap::Overlap => AvailabilityFindingKind::ConflictingLoan,
+            PlaceOverlap::Runtime => AvailabilityFindingKind::DeferredCollectionConflict,
+        };
+        self.findings.insert(AvailabilityFinding {
+            kind,
+            local: place_local(place),
+            use_span: span,
+            move_span: Some(active.span),
+        });
     }
 
     fn check_loan_access(
@@ -1577,18 +1664,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         span: Span,
     ) {
         for active in state.loans.values() {
-            if !places_overlap(&active.place, place) {
+            if access == LoanAccess::Read && active.mode == ParameterMode::Ref {
                 continue;
             }
-            let compatible = access == LoanAccess::Read && active.mode == ParameterMode::Ref;
-            if !compatible {
-                self.findings.insert(AvailabilityFinding {
-                    kind: AvailabilityFindingKind::ConflictingLoan,
-                    local: place_local(place),
-                    use_span: span,
-                    move_span: Some(active.span),
-                });
-            }
+            self.record_loan_conflict(active, place, span);
         }
     }
 
@@ -1800,11 +1879,26 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 }
             }
             HirPatternKind::Array { prefix, rest } => {
-                for item in prefix.iter().copied().chain(*rest) {
+                for (index, item) in prefix.iter().copied().enumerate() {
                     let mut projected = source.clone();
-                    projected.projections.push(PlaceProjection::Collection);
+                    projected.projections.push(PlaceProjection::Collection(
+                        CollectionRegion::Static(StaticCollectionRegion::PatternIndex(
+                            index as u32,
+                        )),
+                    ));
                     projected.complete_transfer = false;
                     self.introduce_match_pattern(item, &projected, state, locals);
+                }
+                if let Some(rest) = rest {
+                    let mut projected = source.clone();
+                    projected.projections.push(PlaceProjection::Collection(
+                        CollectionRegion::Static(StaticCollectionRegion::PatternRest {
+                            start: prefix.len() as u32,
+                            suffix: 0,
+                        }),
+                    ));
+                    projected.complete_transfer = false;
+                    self.introduce_match_pattern(*rest, &projected, state, locals);
                 }
             }
         }
@@ -1837,6 +1931,31 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             return Ok(flow);
         };
         flow.merge(self.expression(expression, state, demand, live_after)?);
+        Ok(flow)
+    }
+
+    fn then_loan_argument(
+        &mut self,
+        mut flow: AvailabilityFlow,
+        expression: HirExpressionId,
+        demand: Demand,
+        live_after: &BTreeSet<LocalId>,
+    ) -> Result<AvailabilityFlow, TypeError> {
+        let Some(state) = flow.normal.take() else {
+            return Ok(flow);
+        };
+        let expression_node = self
+            .program
+            .expression(expression)
+            .expect("loan arguments retain verified expressions");
+        let argument = if expression_node.category() == HirValueCategory::Place
+            || matches!(expression_node.kind(), HirExpressionKind::Slice { .. })
+        {
+            self.place(expression, state, demand, live_after)?
+        } else {
+            self.expression(expression, state, demand, live_after)?
+        };
+        flow.merge(argument);
         Ok(flow)
     }
 
@@ -2465,21 +2584,75 @@ fn place_local(place: &PlaceInfo) -> Option<LocalId> {
     }
 }
 
-fn places_overlap(left: &PlaceInfo, right: &PlaceInfo) -> bool {
+fn places_overlap(left: &PlaceInfo, right: &PlaceInfo) -> PlaceOverlap {
     if left.root != right.root {
-        return false;
+        return PlaceOverlap::Disjoint;
     }
-    left.projections
-        .iter()
-        .zip(&right.projections)
-        .all(|(left, right)| match (left, right) {
-            (PlaceProjection::Field(left), PlaceProjection::Field(right)) => left == right,
-            (PlaceProjection::TupleField(left), PlaceProjection::TupleField(right)) => {
-                left == right
+    let mut overlap = PlaceOverlap::Overlap;
+    for (left, right) in left.projections.iter().zip(&right.projections) {
+        match (left, right) {
+            (PlaceProjection::Field(left), PlaceProjection::Field(right)) => {
+                if left != right {
+                    return PlaceOverlap::Disjoint;
+                }
             }
-            (PlaceProjection::Collection, _) | (_, PlaceProjection::Collection) => true,
-            _ => true,
-        })
+            (PlaceProjection::TupleField(left), PlaceProjection::TupleField(right)) => {
+                if left != right {
+                    return PlaceOverlap::Disjoint;
+                }
+            }
+            (
+                PlaceProjection::Collection(CollectionRegion::Static(left)),
+                PlaceProjection::Collection(CollectionRegion::Static(right)),
+            ) => {
+                let relation = static_collection_relation(*left, *right);
+                if relation == StaticRegionRelation::Disjoint {
+                    return PlaceOverlap::Disjoint;
+                }
+                if static_regions_are_identical(*left, *right) {
+                    overlap = match relation {
+                        StaticRegionRelation::Overlap => PlaceOverlap::Overlap,
+                        StaticRegionRelation::Runtime => PlaceOverlap::Runtime,
+                        StaticRegionRelation::Disjoint => unreachable!(
+                            "disjoint identical regions returned before structural descent"
+                        ),
+                    };
+                    continue;
+                }
+                return match relation {
+                    StaticRegionRelation::Overlap => PlaceOverlap::Overlap,
+                    StaticRegionRelation::Runtime => PlaceOverlap::Runtime,
+                    StaticRegionRelation::Disjoint => {
+                        unreachable!("disjoint collection regions returned before this branch")
+                    }
+                };
+            }
+            (PlaceProjection::Collection(_), PlaceProjection::Collection(_)) => {
+                return PlaceOverlap::Runtime;
+            }
+            _ => return PlaceOverlap::Overlap,
+        }
+    }
+    overlap
+}
+
+fn static_regions_are_identical(
+    left: StaticCollectionRegion,
+    right: StaticCollectionRegion,
+) -> bool {
+    if left == right {
+        return true;
+    }
+    matches!(
+        (left, right),
+        (
+            StaticCollectionRegion::Index(left),
+            StaticCollectionRegion::PatternIndex(right)
+        ) | (
+            StaticCollectionRegion::PatternIndex(right),
+            StaticCollectionRegion::Index(left)
+        ) if left == u64::from(right)
+    )
 }
 
 fn collect_written_places(target: &HirAssignmentTarget, output: &mut Vec<(HirExpressionId, Span)>) {

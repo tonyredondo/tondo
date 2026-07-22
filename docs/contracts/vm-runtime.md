@@ -5,7 +5,9 @@ invocation, CALL-004 effectful-environment retention with execution guards,
 OWN-001 intrinsic cursor value semantics, and OWN-002 affine moves/immediate
 observations, OWN-003 flow availability, and OWN-004 complete-slot
 reinitialization, OWN-005 typed move paths, OWN-006 affine closure captures,
-OWN-007 terminal capture obligations, and BORROW-001 call-local loan execution
+OWN-007 terminal capture obligations, BORROW-001 call-local loan execution,
+BORROW-002 last-use regions, BORROW-003 fixed versus structural mutation, and
+BORROW-004 static collection-region disjunction
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -105,6 +107,15 @@ runtime through the same `BytecodePlace` classification. In particular, a
 `var` reborrow from `mut` must end in a complete structurally replaceable
 subplace; roots, slices, array rests, potential map entries, and opaque
 projections are rejected before a reservation is installed.
+
+An index or slice loan reaches `ReserveLoan` only after a checked
+`ValidatePlaces` edge has normalized its bounds and step. The verified static
+proof may admit disjoint index, interval, stride, array-prefix, and array-rest
+paths without an overlap opcode. Execution still resolves the actual path and
+defensively compares it with every active reservation, so malformed metadata
+cannot turn the proof into aliasing. Bounds and zero-step failures enter normal
+language unwind before the callee starts; any earlier argument reservations in
+that frame are discarded during propagation.
 
 `ReleaseLoan` removes a reservation when later argument evaluation takes an
 early control transfer. Normal return rejects any reservation left active.
@@ -218,18 +229,22 @@ bodies while their runtime contexts remain unimplemented.
 
 Loan regressions execute shared temporaries, root and projected exclusive
 write-through, nested and closure-capture reborrows, statically disjoint fields,
-and reservations that remain active across a nested call. Early `?`, `break`,
-and `continue` paths prove explicit release, while a nested-loop transfer proves
-that it cannot release an outer reservation. Mutated MIR and bytecode reject
-duplicate reservation, inactive release, conflicting access, and a loan operand
-outside its call.
+indices, contiguous and strided slices, array-pattern prefixes and rests, and
+reservations that remain active across a nested call. Dynamic single-region
+loans exercise checked bounds without inventing an overlap check. Early `?`,
+`break`, and `continue` paths prove explicit release, while a nested-loop
+transfer proves that it cannot release an outer reservation. Mutated MIR and
+bytecode reject duplicate reservation, inactive release, conflicting access,
+forged overlapping collection paths, and a loan operand outside its call.
 
 Slice assignment materializes the complete RHS before its write validation.
 The validation terminator carries aligned destination/replacement metadata,
 checks normalized lengths and all destination overlap before the first store,
 and produces `P0006` for a shape mismatch. The bytecode verifier rejects a
-slice-write validation whose borrowed replacement is absent or has the wrong
-type or access form.
+write validation whose borrowed replacement witness is absent or has the wrong
+type or access form. The witness exists for every write because a plain callee
+parameter can resolve to a caller slice; execution reads it only when the
+normalized effective path actually ends in a slice.
 
 Map construction carries its duplicate policy explicitly through HIR, MIR, and
 bytecode. Values satisfying `Discard` use ordered last-write-wins replacement

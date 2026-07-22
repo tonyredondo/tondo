@@ -1207,6 +1207,9 @@ impl<'a> ExpressionChecker<'a> {
                     )],
                     None,
                 )?,
+                AvailabilityFindingKind::DeferredCollectionConflict => {
+                    self.complete = false;
+                }
             }
         }
         Ok(())
@@ -9761,39 +9764,6 @@ impl<'a> ExpressionChecker<'a> {
         false
     }
 
-    fn pattern_contains_collection_borrow(&self, root: HirPatternId) -> bool {
-        let Some(pattern) = self.program.pattern(root) else {
-            return false;
-        };
-        match pattern.kind() {
-            HirPatternKind::Array { prefix, rest } => prefix
-                .iter()
-                .copied()
-                .chain(*rest)
-                .any(|pattern| self.pattern_contains_borrow(pattern)),
-            HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => items
-                .iter()
-                .copied()
-                .any(|pattern| self.pattern_contains_collection_borrow(pattern)),
-            HirPatternKind::OptionSome(item)
-            | HirPatternKind::ResultOk(item)
-            | HirPatternKind::ResultErr(item)
-            | HirPatternKind::Newtype { value: item, .. }
-            | HirPatternKind::UnionMember { pattern: item, .. } => {
-                self.pattern_contains_collection_borrow(*item)
-            }
-            HirPatternKind::Record { fields, .. } => fields
-                .iter()
-                .any(|field| self.pattern_contains_collection_borrow(field.pattern())),
-            HirPatternKind::Recovery
-            | HirPatternKind::Wildcard
-            | HirPatternKind::Binding(_)
-            | HirPatternKind::BorrowBinding(_)
-            | HirPatternKind::Literal(_)
-            | HirPatternKind::OptionNone => false,
-        }
-    }
-
     fn pattern_requires_affine_ownership(
         &mut self,
         root: HirPatternId,
@@ -10219,13 +10189,6 @@ impl<'a> ExpressionChecker<'a> {
             .iter()
             .copied()
             .any(|pattern| self.pattern_contains_borrow(pattern));
-        if pattern_ids
-            .iter()
-            .copied()
-            .any(|pattern| self.pattern_contains_collection_borrow(pattern))
-        {
-            self.complete = false;
-        }
         let mut requires_affine_ownership = false;
         for pattern in pattern_ids {
             requires_affine_ownership |=
@@ -13677,7 +13640,6 @@ impl<'a> ExpressionChecker<'a> {
                 Some(receiver_parameter.ty)
             };
             self.check_method_receiver(receiver, receiver_mode, resolved_expected, context)?;
-            self.defer_collection_loan(receiver, receiver_mode);
             arguments.push(HirCallArgument {
                 label: None,
                 mode: receiver_mode,
@@ -13909,7 +13871,6 @@ impl<'a> ExpressionChecker<'a> {
             }
             if let Some(receiver_mode) = receiver_mode {
                 self.check_method_receiver(value, receiver_mode, None, context)?;
-                self.defer_collection_loan(value, receiver_mode);
             } else if mode == expected_mode && target != HirCallArgumentTarget::Invalid {
                 self.check_loan_argument(value, mode, context)?;
             }
@@ -14384,32 +14345,7 @@ impl<'a> ExpressionChecker<'a> {
             )?;
         }
 
-        // BORROW-004 and BORROW-005 own collection-region disjointness and
-        // its data-dependent runtime proof. Keep the accepted HIR available to
-        // tooling, but do not admit an executable body until those projections
-        // can be represented without approximating a view as an owned value.
-        self.defer_collection_loan(argument, mode);
         Ok(())
-    }
-
-    fn defer_collection_loan(&mut self, argument: HirExpressionId, mode: ParameterMode) {
-        if mode != ParameterMode::Value && self.loan_has_collection_projection(argument) {
-            self.complete = false;
-        }
-    }
-
-    fn loan_has_collection_projection(&self, mut expression: HirExpressionId) -> bool {
-        loop {
-            let Some(node) = self.program.expression(expression) else {
-                return false;
-            };
-            match node.kind() {
-                HirExpressionKind::Index { .. } | HirExpressionKind::Slice { .. } => return true,
-                HirExpressionKind::Field { base, .. }
-                | HirExpressionKind::TupleField { base, .. } => expression = *base,
-                _ => return false,
-            }
-        }
     }
 
     fn expression_place_permission(
@@ -20470,7 +20406,7 @@ mod tests {
     }
 
     #[test]
-    fn collection_region_loans_remain_incomplete_until_region_analysis() {
+    fn collection_region_loans_classify_static_and_runtime_overlap() {
         let (_, _, output) = check(
             "fn update(left: mut Int, right: mut Int) {\n\
                  left += 1\n\
@@ -20485,7 +20421,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
 
         let (_, _, slice) = check(
             "fn scale(values: mut Array[Int]) {\n\
@@ -20496,7 +20432,126 @@ mod tests {
              }\n",
         );
         assert!(slice.diagnostics().is_empty(), "{:#?}", slice.diagnostics());
-        assert!(!slice.is_complete());
+        assert!(slice.is_complete());
+
+        let (_, _, disjoint_slices) = check(
+            "fn process(left: mut Array[Int], right: mut Array[Int]) {}\n\
+             fn main(values: var Array[Int]) {\n\
+                 process(mut values[:2], mut values[2:])\n\
+             }\n",
+        );
+        assert!(
+            disjoint_slices.diagnostics().is_empty(),
+            "{:#?}",
+            disjoint_slices.diagnostics()
+        );
+        assert!(disjoint_slices.is_complete());
+
+        let (_, _, disjoint_stride) = check(
+            "fn process(left: mut Array[Int], right: mut Array[Int]) {}\n\
+             fn main(values: var Array[Int]) {\n\
+                 process(mut values[::2], mut values[1::2])\n\
+             }\n",
+        );
+        assert!(
+            disjoint_stride.diagnostics().is_empty(),
+            "{:#?}",
+            disjoint_stride.diagnostics()
+        );
+        assert!(disjoint_stride.is_complete());
+
+        let (_, _, pattern_regions) = check(
+            "fn update(value: mut Int) {}\n\
+             fn inspect(value: ref Int) {}\n\
+             fn inspectArray(values: ref Array[Int]) {}\n\
+             fn prefix(values: var Array[Int]) {\n\
+                 match values {\n\
+                     [] => ()\n\
+                     [ref first, ..] => {\n\
+                         update(mut values[1])\n\
+                         inspect(ref first)\n\
+                     }\n\
+                 }\n\
+             }\n\
+             fn rest(values: var Array[Int]) {\n\
+                 match values {\n\
+                     [] => ()\n\
+                     [first, ..ref tail] => {\n\
+                         update(mut values[0])\n\
+                         inspectArray(ref tail)\n\
+                     }\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            pattern_regions.diagnostics().is_empty(),
+            "{:#?}",
+            pattern_regions.diagnostics()
+        );
+        assert!(pattern_regions.is_complete());
+
+        let (_, _, overlapping_index) = check(
+            "fn update(left: mut Int, right: mut Int) {}\n\
+             fn invalid(values: var Array[Int]) {\n\
+                 update(mut values[0], mut values[0])\n\
+             }\n",
+        );
+        assert_eq!(codes(&overlapping_index), ["E1403"]);
+
+        let (_, _, overlapping_index_slice) = check(
+            "fn process(item: mut Int, region: mut Array[Int]) {}\n\
+             fn invalid(values: var Array[Int]) {\n\
+                 process(mut values[1], mut values[:2])\n\
+             }\n",
+        );
+        assert_eq!(codes(&overlapping_index_slice), ["E1403"]);
+
+        let (_, _, overlapping_pattern) = check(
+            "fn update(value: mut Int) {}\n\
+             fn inspect(value: ref Int) {}\n\
+             fn invalid(values: var Array[Int]) {\n\
+                 match values {\n\
+                     [] => ()\n\
+                     [ref first, ..] => {\n\
+                         update(mut values[0])\n\
+                         inspect(ref first)\n\
+                     }\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&overlapping_pattern), ["E1403"]);
+
+        for source in [
+            "fn update(left: mut Int, right: mut Int) {}\n\
+             fn deferred(values: var Array[Int], left: Int, right: Int) {\n\
+                 update(mut values[left], mut values[right])\n\
+             }\n",
+            "fn process(left: mut Array[Int], right: mut Array[Int]) {}\n\
+             fn deferred(values: var Array[Int]) {\n\
+                 process(mut values[:2], mut values[1:3])\n\
+             }\n",
+        ] {
+            let (_, _, deferred) = check(source);
+            assert!(
+                deferred.diagnostics().is_empty(),
+                "{source}\n{:#?}",
+                deferred.diagnostics()
+            );
+            assert!(!deferred.is_complete(), "{source}");
+        }
+
+        let (_, _, shared_dynamic) = check(
+            "fn inspect(left: ref Int, right: ref Int) {}\n\
+             fn valid(values: Array[Int], left: Int, right: Int) {\n\
+                 inspect(ref values[left], ref values[right])\n\
+             }\n",
+        );
+        assert!(
+            shared_dynamic.diagnostics().is_empty(),
+            "{:#?}",
+            shared_dynamic.diagnostics()
+        );
+        assert!(shared_dynamic.is_complete());
 
         let (_, _, structural_slice) = check(
             "fn resize(values: var Array[Int]) {}\n\
@@ -21733,7 +21788,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
 
         let remaining = resolved
             .locals()

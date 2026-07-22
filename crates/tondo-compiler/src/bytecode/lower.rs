@@ -5185,6 +5185,39 @@ mod tests {
                 RuntimeValue::Integer(33),
             ])
         );
+
+        let indices = "fn update(left: mut Int, right: mut Int) {\n\
+                           left += 10\n\
+                           right *= 2\n\
+                       }\n\
+                       fn execute(): Array[Int] {\n\
+                           var values = [1, 2]\n\
+                           update(mut values[0], mut values[1])\n\
+                           values\n\
+                       }\n";
+        assert_eq!(
+            execute_function(indices, "execute"),
+            RuntimeValue::Array(vec![RuntimeValue::Integer(11), RuntimeValue::Integer(4),])
+        );
+
+        let strided = "fn update(left: mut Array[Int], right: mut Array[Int]) {\n\
+                           left += 10\n\
+                           right += 20\n\
+                       }\n\
+                       fn execute(): Array[Int] {\n\
+                           var values = [1, 2, 3, 4]\n\
+                           update(mut values[::2], mut values[1::2])\n\
+                           values\n\
+                       }\n";
+        assert_eq!(
+            execute_function(strided, "execute"),
+            RuntimeValue::Array(vec![
+                RuntimeValue::Integer(11),
+                RuntimeValue::Integer(22),
+                RuntimeValue::Integer(13),
+                RuntimeValue::Integer(24),
+            ])
+        );
         assert_eq!(execute_function(source, "early"), RuntimeValue::OptionNone);
         assert_eq!(
             execute_function(source, "captured"),
@@ -5227,6 +5260,94 @@ mod tests {
             panic!("loaned call should propagate its language panic")
         };
         assert_eq!(panic.code, PanicCode::ExplicitPanic);
+    }
+
+    #[test]
+    fn collection_region_loans_validate_and_execute_disjoint_views() {
+        let source = "const Split: Int = 2\n\
+                      fn update(left: mut Array[Int], right: mut Array[Int]) {\n\
+                          left += 10\n\
+                          right *= 2\n\
+                      }\n\
+                      fn execute(): Array[Int] {\n\
+                          var values = [1, 2, 3, 4]\n\
+                          update(mut values[:Split], mut values[Split:])\n\
+                          values\n\
+                      }\n";
+        assert_eq!(
+            execute_function(source, "execute"),
+            RuntimeValue::Array(vec![
+                RuntimeValue::Integer(11),
+                RuntimeValue::Integer(12),
+                RuntimeValue::Integer(6),
+                RuntimeValue::Integer(8),
+            ])
+        );
+
+        let dynamic = "fn scale(values: mut Array[Int]) {\n\
+                           values *= 3\n\
+                       }\n\
+                       fn execute(): Array[Int] {\n\
+                           var values = [1, 2, 3, 4]\n\
+                           let start = 1\n\
+                           let end = 3\n\
+                           scale(mut values[start:end])\n\
+                           values\n\
+                       }\n";
+        assert_eq!(
+            execute_function(dynamic, "execute"),
+            RuntimeValue::Array(vec![
+                RuntimeValue::Integer(1),
+                RuntimeValue::Integer(6),
+                RuntimeValue::Integer(9),
+                RuntimeValue::Integer(4),
+            ])
+        );
+
+        for (source, expected) in [
+            (
+                "fn update(value: mut Int) {\n\
+                 }\n\
+                 fn explode() {\n\
+                     var values = [1]\n\
+                     update(mut values[2])\n\
+                 }\n",
+                PanicCode::Bounds,
+            ),
+            (
+                "fn update(values: mut Array[Int]) {\n\
+                 }\n\
+                 fn explode() {\n\
+                     var values = [1]\n\
+                     update(mut values[::0])\n\
+                 }\n",
+                PanicCode::ZeroSliceStep,
+            ),
+        ] {
+            let VmOutcome::Panicked(panic) = execute_outcome(source, "explode") else {
+                panic!("collection loan should produce {expected:?}")
+            };
+            assert_eq!(panic.code, expected);
+        }
+
+        let mut forged = lowered(source);
+        let function = function_id(&forged, "execute");
+        let second = forged.functions[function.index() as usize]
+            .loans
+            .iter_mut()
+            .filter(|loan| loan.kind == bc::BytecodeLoanKind::CallLocal)
+            .nth(1)
+            .expect("the disjoint call has two collection loans");
+        let Some(bc::BytecodeProjection {
+            kind: bc::BytecodeProjectionKind::Slice { start, .. },
+            ..
+        }) = second.place.projections.last_mut()
+        else {
+            panic!("the second collection loan keeps its slice projection")
+        };
+        *start = None;
+        let error = bc::verify_bytecode(&forged).unwrap_err();
+        assert!(error.message().contains("overlaps active loan"), "{error}");
     }
 
     #[test]
@@ -5436,6 +5557,32 @@ mod tests {
                               }\n\
                           }\n\
                           pair.left\n\
+                      }\n\
+                      fn update(value: mut Int) {\n\
+                          value += 1\n\
+                      }\n\
+                      fn inspectArray(values: ref Array[Int]) {}\n\
+                      fn executeArrayPrefix(): Int {\n\
+                          var values = [1, 2, 3]\n\
+                          match values {\n\
+                              [] => 0\n\
+                              [ref first, ..] => {\n\
+                                  update(mut values[1])\n\
+                                  inspect(ref first)\n\
+                                  values[0] + values[1]\n\
+                              }\n\
+                          }\n\
+                      }\n\
+                      fn executeArrayRest(): Int {\n\
+                          var values = [1, 2, 3]\n\
+                          match values {\n\
+                              [] => 0\n\
+                              [first, ..ref tail] => {\n\
+                                  update(mut values[0])\n\
+                                  inspectArray(ref tail)\n\
+                                  values[0] + values[1]\n\
+                              }\n\
+                          }\n\
                       }\n";
         let program = lowered(source);
         let function_id = program
@@ -5508,6 +5655,14 @@ mod tests {
         assert_eq!(
             execute_function(source, "execute"),
             RuntimeValue::Integer(7)
+        );
+        assert_eq!(
+            execute_function(source, "executeArrayPrefix"),
+            RuntimeValue::Integer(4)
+        );
+        assert_eq!(
+            execute_function(source, "executeArrayRest"),
+            RuntimeValue::Integer(4)
         );
 
         let mut forged = lowered(source);

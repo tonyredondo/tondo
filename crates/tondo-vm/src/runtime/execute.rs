@@ -2329,6 +2329,20 @@ impl Engine<'_, '_> {
         let mut paths = Vec::with_capacity(places.len());
         for (place, replacement) in places.iter().zip(replacements) {
             let path = self.validate_place(frame, place, for_write)?;
+            let replacement = match (for_write, replacement) {
+                (true, Some(replacement)) => Some(replacement),
+                (false, None) => None,
+                (true, None) => {
+                    return Err(PlaceFailure::Vm(VmError::invariant(
+                        "write validation has no replacement operand",
+                    )));
+                }
+                (false, Some(_)) => {
+                    return Err(PlaceFailure::Vm(VmError::invariant(
+                        "read validation has a replacement operand",
+                    )));
+                }
+            };
             if for_write && matches!(path.components.last(), Some(PlaceComponent::Slice(_))) {
                 let replacement = replacement.as_ref().ok_or_else(|| {
                     PlaceFailure::Vm(VmError::invariant(
@@ -2362,10 +2376,6 @@ impl Engine<'_, '_> {
                         ),
                     ));
                 }
-            } else if replacement.is_some() {
-                return Err(PlaceFailure::Vm(VmError::invariant(
-                    "non-slice place validation has a replacement operand",
-                )));
             }
             paths.push(path);
         }
