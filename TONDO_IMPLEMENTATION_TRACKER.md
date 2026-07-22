@@ -1,11 +1,14 @@
 # Tondo: tracker de implementación
 
 **Estado:** activo  
-**Versión del tracker:** 0.33
-**Última actualización:** 2026-07-21  
+
+**Versión del tracker:** 0.34
+
+**Última actualización:** 2026-07-22
+
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
-**Objetivo inmediato:** cerrar la derivación de `Copy` y `Discard` para tipos
-compuestos (OWN-001).
+
+**Objetivo inmediato:** implementar moves de valores no `Copy` (OWN-002).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1182,9 +1185,10 @@ CAP-001 y CALL-001 a CALL-004:
   produce `E1108`.
 - El admission verifier HIR vuelve a derivar protocolos, selección de cada call
   y erasures. MIR crea un cuerpo `MirFunctionId::Closure` con entorno oculto en
-  el parámetro cero, proyecta capturas y confina `Borrow` al callee inmediato;
-  el verifier MIR repite firma, protocolo y forma de acceso. Los tres verifiers
-  rechazan una firma async o unsafe en la operación de llamada síncrona segura.
+  el parámetro cero, proyecta capturas y confina el `Borrow` de cierre al callee
+  inmediato; el verifier MIR repite firma, protocolo y forma de acceso. Los tres
+  verifiers rechazan una firma async o unsafe en la operación de llamada
+  síncrona segura.
 - La monomorfización crea instancias de callable para closures, incluidos bodies
   genéricos, y las carga al mismo presupuesto `T0002`. El catálogo bytecode
   contiene identidad, entorno, esquema, protocolos y body; su verifier deriva
@@ -1232,7 +1236,14 @@ lifetimes escritos por el usuario.
 
 ### 10.1 Valores y disponibilidad
 
-- [ ] **OWN-001 — Derivar `Copy` y `Discard` para tipos compuestos.**
+- [x] **OWN-001 — Derivar `Copy` y `Discard` para tipos compuestos.** HIR y
+  bytecode usan el mismo contrato estructural cerrado para escalares,
+  funciones, tuples, unions, options, results, nominales recursivos, genéricos,
+  opacos, colecciones, references, pointers, closures y cursores intrínsecos.
+  Los cursores conservan ahora un tipo interno explícito
+  `cursor[own,C]`/`cursor[ref,C]`; MIR y bytecode no pueden confundirlo con
+  `C`, y la VM realiza una copia lógica independiente cuando el contrato la
+  permite.
 
 - [ ] **OWN-002 — Implementar moves de valores no `Copy`.**
 
@@ -1850,13 +1861,37 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es OWN-001: auditar y completar la derivación de
-`Copy` y `Discard` para tipos compuestos antes de introducir moves y
-disponibilidad por flujo.
+La siguiente acción activa es OWN-002: introducir operands de movimiento para
+valores no `Copy` sin adelantar todavía el análisis de disponibilidad por flujo
+de OWN-003.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.34 — 2026-07-22
+
+- Se completa OWN-001 auditando la derivación cerrada ya compartida por
+  escalares, estructuras, colecciones, nominales recursivos, genéricos, opacos
+  y closures, y eliminando la última forma diferida: los cursores intrínsecos.
+- Cada `for` intrínseco conserva en HIR un tipo exacto
+  `cursor[own,C]`/`cursor[ref,C]`. MIR y bytecode separan la colección fuente
+  del estado de recorrido y sus verificadores rechazan forma, modo o colección
+  falsificados.
+- Un cursor propio deriva `Copy`, `Discard`, `Send` y `Share` de `C`; uno de
+  observación siempre es `Copy + Discard` y exige `C: Send + Share` para las
+  dos capacidades concurrentes. Ninguno es `Equatable` ni `Key`.
+- HIR conserva ya el modo `ref`, pero su formación ejecutable permanece detrás
+  de BORROW-001: MIR/bytecode exigirán un operando `Borrow` real y nunca lo
+  aproximan copiando la colección.
+- La VM duplica de forma eager el estado lógico de un cursor copiable en un
+  objeto de avance independiente: copia el origen propio o conserva el préstamo
+  compartido. Las regresiones cubren matrices positivas y negativas, recursión,
+  genéricos, modos own/ref, mutación defensiva y ejecución real.
+- El gate acumulado pasa 447 tests, `cargo check`, build de todos los targets,
+  formatter check, Clippy con warnings denegados y Rustdoc con warnings
+  denegados.
+- La cola avanza a OWN-002 para introducir moves afines sobre esta base.
 
 ### 0.33 — 2026-07-21
 

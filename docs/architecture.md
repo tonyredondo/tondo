@@ -188,6 +188,9 @@ and diagnoses unreachable evaluation boundaries with a top-down HIR worklist.
 Explicit discard is distinct from assignment and carries a structural
 `Discard` proof. The same coinductive symbolic nominal summaries derive all six
 closed capabilities without recursively expanding nominal type families.
+Intrinsic loops retain a distinct `cursor[own,C]` or `cursor[ref,C]` state type,
+so capability derivation and later ownership analysis never confuse mutable
+iteration state with its source collection.
 Constants are then evaluated from typed HIR by a closed, non-executing
 worklist. Dependency SCCs and their topological order use stable symbol
 identities; normalized values remain in HIR for later MIR/bytecode lowering,

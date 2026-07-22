@@ -122,6 +122,13 @@ struct LoopTargets {
     continue_target: MirBlockId,
 }
 
+#[derive(Clone, Copy)]
+struct IntrinsicIteration {
+    pattern: HirPatternId,
+    source: HirExpressionId,
+    cursor: TypeId,
+}
+
 enum LoweredAssignmentTarget {
     Place {
         place: MirPlace,
@@ -1565,9 +1572,17 @@ impl<'a> FunctionBuilder<'a> {
                 source,
                 protocol,
             } => match protocol {
-                HirIterationProtocol::Intrinsic => {
-                    self.lower_intrinsic_iterating_for(span, id, *pattern, *source, body, block)
-                }
+                HirIterationProtocol::Intrinsic { cursor } => self.lower_intrinsic_iterating_for(
+                    span,
+                    id,
+                    IntrinsicIteration {
+                        pattern: *pattern,
+                        source: *source,
+                        cursor: *cursor,
+                    },
+                    body,
+                    block,
+                ),
                 HirIterationProtocol::Trait {
                     element,
                     function_type,
@@ -1666,26 +1681,24 @@ impl<'a> FunctionBuilder<'a> {
         &mut self,
         span: Span,
         id: HirLoopId,
-        pattern: HirPatternId,
-        source: HirExpressionId,
+        iteration: IntrinsicIteration,
         body: HirExpressionId,
         block: MirBlockId,
     ) -> Result<Option<MirBlockId>, MirError> {
-        let Some((block, source)) = self.lower_value(source, block)? else {
+        let Some((block, source)) = self.lower_value(iteration.source, block)? else {
             return Ok(None);
         };
-        let source_type = source.ty;
-        let state = self.allocate_temporary(source_type, span, block)?;
+        let state = self.allocate_temporary(iteration.cursor, span, block)?;
         self.assign(
             block,
             span,
             self.local_place(state),
             MirRvalue {
-                ty: source.ty,
+                ty: iteration.cursor,
                 kind: MirRvalueKind::IteratorState { source },
             },
         )?;
-        let item = self.allocate_temporary(self.pattern_type(pattern)?, span, block)?;
+        let item = self.allocate_temporary(self.pattern_type(iteration.pattern)?, span, block)?;
         let header = self.allocate_block(MirBlockKind::Normal)?;
         let body_start = self.allocate_block(MirBlockKind::Normal)?;
         let exit = self.allocate_block(MirBlockKind::Normal)?;
@@ -1704,7 +1717,7 @@ impl<'a> FunctionBuilder<'a> {
         self.finish_iterating_for(
             span,
             id,
-            pattern,
+            iteration.pattern,
             self.copy_local(item),
             body,
             header,
@@ -3519,6 +3532,20 @@ mod tests {
                 .count(),
             5
         );
+        for state in loops.blocks().filter_map(|block| {
+            let MirTerminatorKind::IteratorNext { state, .. } = block.terminator().kind() else {
+                return None;
+            };
+            Some(state)
+        }) {
+            assert!(matches!(
+                hir.interner().kind(state.ty()).unwrap(),
+                TypeKind::Cursor {
+                    mode: crate::types::CursorMode::Own,
+                    ..
+                }
+            ));
+        }
         assert!(loops.blocks().any(|block| matches!(
             block.terminator().kind(),
             MirTerminatorKind::SwitchBool { .. }

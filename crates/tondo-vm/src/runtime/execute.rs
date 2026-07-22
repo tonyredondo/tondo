@@ -4,13 +4,14 @@ use crate::bytecode::{
     BytecodeAggregateKind, BytecodeBinaryOperator, BytecodeBlockId, BytecodeBootstrapHostFunction,
     BytecodeCallArgument, BytecodeCallArgumentTarget, BytecodeCoercion, BytecodeConstant,
     BytecodeConstantValue, BytecodeConstantValueKind, BytecodeConstantVariantValue,
-    BytecodeContainmentKind, BytecodeFunctionId, BytecodeIndexAccess, BytecodeInstruction,
-    BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeNumericConversion, BytecodeOperand,
-    BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode,
-    BytecodePlace, BytecodePrefixOperator, BytecodeProgram, BytecodeProjection,
-    BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind,
-    BytecodeScalarType, BytecodeSpan, BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind,
-    BytecodeTypeId, BytecodeTypeKind, BytecodeVerificationLimits, verify_bytecode_with_limits,
+    BytecodeContainmentKind, BytecodeCursorMode, BytecodeFunctionId, BytecodeIndexAccess,
+    BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeNumericConversion,
+    BytecodeOperand, BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind,
+    BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator, BytecodeProgram,
+    BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
+    BytecodeRvalueKind, BytecodeScalarType, BytecodeSpan, BytecodeTag, BytecodeTerminator,
+    BytecodeTerminatorKind, BytecodeTypeId, BytecodeTypeKind, BytecodeVerificationLimits,
+    verify_bytecode_with_limits,
 };
 
 use super::heap::{Heap, HeapHandle, HeapObject};
@@ -889,9 +890,14 @@ impl Engine<'_, '_> {
         let object = self.heap.get(*handle)?.clone();
         match object {
             HeapObject::String(_) | HeapObject::Ref(_) => Ok(value.clone()),
-            HeapObject::Iterator { .. } => Err(VmError::invariant(
-                "verified bytecode attempted to copy an affine iterator",
-            )),
+            HeapObject::Iterator { mode, source, next } => {
+                let source = match mode {
+                    BytecodeCursorMode::Own => self.copy_optional_value(&source)?,
+                    BytecodeCursorMode::Ref => source,
+                };
+                let roots = source.iter().cloned().collect::<Vec<_>>();
+                self.allocate(HeapObject::Iterator { mode, source, next }, &roots)
+            }
             HeapObject::Tuple(values) => {
                 let values = self.copy_optional_values(&values)?;
                 self.allocate(HeapObject::Tuple(values), &[])
@@ -1145,9 +1151,20 @@ impl Engine<'_, '_> {
                 Ok(Value::Integer(self.length(&value)? as i128))
             }
             BytecodeRvalueKind::IteratorState(value) => {
+                let BytecodeTypeKind::Cursor { mode, .. } = self
+                    .program
+                    .ty(rvalue.ty)
+                    .ok_or_else(|| VmError::invariant("iterator state type is missing"))?
+                    .kind
+                else {
+                    return Err(VmError::invariant(
+                        "iterator state result is not a concrete cursor",
+                    ));
+                };
                 let value = self.evaluate_operand(frame, value)?;
                 self.allocate(
                     HeapObject::Iterator {
+                        mode,
                         source: Some(value.clone()),
                         next: 0,
                     },
@@ -2950,7 +2967,7 @@ impl Engine<'_, '_> {
         let Value::Heap(handle) = iterator else {
             return Err(VmError::invariant("iterator state is not managed"));
         };
-        let HeapObject::Iterator { source, next } = self.heap.get(handle)?.clone() else {
+        let HeapObject::Iterator { mode, source, next } = self.heap.get(handle)?.clone() else {
             return Err(VmError::invariant(
                 "iterator state has the wrong heap shape",
             ));
@@ -2963,6 +2980,7 @@ impl Engine<'_, '_> {
         self.replace_object(
             handle,
             HeapObject::Iterator {
+                mode,
                 source: Some(source.clone()),
                 next: next_index,
             },

@@ -5,8 +5,8 @@ use std::fmt;
 use crate::package::{ModuleId, SymbolIdentity};
 use crate::resolve::{LocalKind, MemberKind, MemberOwner, ResolvedProgram, SymbolKind};
 use crate::types::{
-    FunctionParameter, FunctionType, GeneratedTypeKind, IntrinsicType, ParameterMode, ScalarType,
-    TypeId, TypeInterner, TypeKind, TypeSubstitution,
+    CursorMode, FunctionParameter, FunctionType, GeneratedTypeKind, IntrinsicType, ParameterMode,
+    ScalarType, TypeId, TypeInterner, TypeKind, TypeSubstitution,
 };
 
 use super::capabilities::{CapabilityAnalysis, CapabilityAssumptions, bounds_imply};
@@ -655,22 +655,22 @@ impl Verifier<'_> {
                 }
             }
             HirStatement::For {
-                kind:
-                    HirForKind::Iterate {
-                        protocol:
-                            HirIterationProtocol::Trait {
-                                element,
-                                function_type,
-                            },
-                        ..
-                    },
+                kind: HirForKind::Iterate { protocol, .. },
                 ..
-            } => self.verify_type_formations(
-                analysis,
-                [*element, *function_type],
-                assumptions,
-                context,
-            )?,
+            } => match protocol {
+                HirIterationProtocol::Intrinsic { cursor } => {
+                    self.verify_type_formations(analysis, [*cursor], assumptions, context)?
+                }
+                HirIterationProtocol::Trait {
+                    element,
+                    function_type,
+                } => self.verify_type_formations(
+                    analysis,
+                    [*element, *function_type],
+                    assumptions,
+                    context,
+                )?,
+            },
             HirStatement::Binding {
                 declared_type: None,
                 ..
@@ -3550,40 +3550,60 @@ impl Verifier<'_> {
             return Ok(());
         };
         let source = self.expression(*source, context)?;
-        let pattern = self.program.pattern(*pattern).ok_or_else(|| {
+        let pattern_id = *pattern;
+        let pattern = self.program.pattern(pattern_id).ok_or_else(|| {
             HirInvariantError::new(
                 context,
-                format!("iterator references unknown pattern#{}", pattern.index()),
+                format!("iterator references unknown pattern#{}", pattern_id.index()),
             )
         })?;
         let expected_element = match protocol {
-            HirIterationProtocol::Intrinsic => match self.program.interner.kind(source.ty) {
-                Ok(TypeKind::Intrinsic {
-                    constructor: IntrinsicType::Array | IntrinsicType::Set | IntrinsicType::Range,
-                    arguments,
-                }) => Some(arguments[0]),
-                Ok(TypeKind::Intrinsic {
-                    constructor: IntrinsicType::Map,
-                    arguments,
-                }) => {
-                    let mut interner = self.program.interner.clone();
-                    Some(
-                        interner
-                            .tuple(arguments.clone())
-                            .map_err(|error| HirInvariantError::new(context, error.to_string()))?,
-                    )
+            HirIterationProtocol::Intrinsic { cursor } => {
+                self.verify_type(*cursor, format!("{context} intrinsic cursor"))?;
+                let expected_mode = if self.pattern_contains_borrow(pattern_id, context)? {
+                    CursorMode::Ref
+                } else {
+                    CursorMode::Own
+                };
+                match self.program.interner.kind(*cursor) {
+                    Ok(TypeKind::Cursor { mode, collection })
+                        if *mode == expected_mode && *collection == source.ty => {}
+                    Ok(_) | Err(_) => {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "intrinsic iterator protocol has an inconsistent concrete cursor",
+                        ));
+                    }
                 }
-                Ok(TypeKind::Scalar(ScalarType::String)) => {
-                    Some(self.program.interner.scalar(ScalarType::Char))
+                match self.program.interner.kind(source.ty) {
+                    Ok(TypeKind::Intrinsic {
+                        constructor:
+                            IntrinsicType::Array | IntrinsicType::Set | IntrinsicType::Range,
+                        arguments,
+                    }) => Some(arguments[0]),
+                    Ok(TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Map,
+                        arguments,
+                    }) => {
+                        let mut interner = self.program.interner.clone();
+                        Some(
+                            interner.tuple(arguments.clone()).map_err(|error| {
+                                HirInvariantError::new(context, error.to_string())
+                            })?,
+                        )
+                    }
+                    Ok(TypeKind::Scalar(ScalarType::String)) => {
+                        Some(self.program.interner.scalar(ScalarType::Char))
+                    }
+                    Ok(TypeKind::Error) => None,
+                    Ok(_) | Err(_) => {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "intrinsic iterator protocol has a non-intrinsic source",
+                        ));
+                    }
                 }
-                Ok(TypeKind::Error) => None,
-                Ok(_) | Err(_) => {
-                    return Err(HirInvariantError::new(
-                        context,
-                        "intrinsic iterator protocol has a non-intrinsic source",
-                    ));
-                }
-            },
+            }
             HirIterationProtocol::Trait {
                 element,
                 function_type,
@@ -3613,6 +3633,27 @@ impl Verifier<'_> {
             ));
         }
         Ok(())
+    }
+
+    fn pattern_contains_borrow(
+        &self,
+        root: HirPatternId,
+        context: &str,
+    ) -> Result<bool, HirInvariantError> {
+        let mut pending = vec![root];
+        while let Some(id) = pending.pop() {
+            let pattern = self.program.pattern(id).ok_or_else(|| {
+                HirInvariantError::new(
+                    context,
+                    format!("iterator references unknown pattern#{}", id.index()),
+                )
+            })?;
+            if matches!(pattern.kind(), HirPatternKind::BorrowBinding(_)) {
+                return Ok(true);
+            }
+            pending.extend(pattern_children(pattern));
+        }
+        Ok(false)
     }
 
     fn verify_record_field_values(
@@ -5095,6 +5136,11 @@ mod tests {
                  for value in cursor {\n\
                      _ = value\n\
                  }\n\
+             }\n\
+             fn intrinsic(values: Array[Int]) {\n\
+                 for value in values {\n\
+                     _ = value\n\
+                 }\n\
              }\n";
         let (resolved, program) = checked_program_from(SOURCE);
         verify_typed_hir(&resolved, &program).unwrap();
@@ -5127,6 +5173,35 @@ mod tests {
         *protocol = unit;
         let error = verify_typed_hir(&resolved, &invalid).unwrap_err();
         assert!(error.message().contains("Iterator.next contract"));
+
+        let (resolved, mut wrong_intrinsic_cursor) = checked_program_from(SOURCE);
+        let unit = wrong_intrinsic_cursor.interner.scalar(ScalarType::Unit);
+        let cursor = wrong_intrinsic_cursor
+            .expressions
+            .iter_mut()
+            .find_map(|expression| {
+                let HirExpressionKind::Block { statements, .. } = &mut expression.kind else {
+                    return None;
+                };
+                statements.iter_mut().find_map(|statement| {
+                    let HirStatement::For {
+                        kind:
+                            HirForKind::Iterate {
+                                protocol: HirIterationProtocol::Intrinsic { cursor },
+                                ..
+                            },
+                        ..
+                    } = statement
+                    else {
+                        return None;
+                    };
+                    Some(cursor)
+                })
+            })
+            .expect("the ordinary loop retains its own cursor type");
+        *cursor = unit;
+        let error = verify_typed_hir(&resolved, &wrong_intrinsic_cursor).unwrap_err();
+        assert!(error.message().contains("concrete cursor"), "{error}");
     }
 
     #[test]

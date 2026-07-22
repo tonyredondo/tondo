@@ -2,7 +2,8 @@
 
 **Status:** M3 typed CFG plus M4 uniform function values, four effect-preserving
 Copy closure forms, executable synchronous-safe closure calls, static-trait and
-opaque-result lowering, and verification implemented
+opaque-result lowering, OWN-001 intrinsic cursor state, and verification
+implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -45,8 +46,9 @@ An admitted program guarantees:
 - every ordinary named-function operand is either intrinsically non-generic or
   carries one complete specialization whose exact substituted signature is its
   operand type;
-- every iterator loop records either a valid intrinsic source or one exact
-  `Iterator[T]` contract whose element matches its binding pattern;
+- every iterator loop records either a valid intrinsic source plus its exact
+  `cursor[own,C]`/`cursor[ref,C]` state type, or one exact `Iterator[T]`
+  contract whose element matches its binding pattern;
 - every opaque result has one verified declaration contract and finite witness,
   and every representation seal relates that exact witness to its opaque family;
 - loop IDs are unique, transfers and break summaries target existing loops,
@@ -125,8 +127,10 @@ updates observe the original environment; `CallMut` additionally requires the
 source place to be writable. `CallOnce` uses the ordinary Copy or Move operand
 selected by source access. In the M4 Copy-only subset an immutable fallback is a
 logical copy, while M5 will make affine consumption and availability explicit.
-`Borrow` is not a general MIR loan and is valid only as the immediate callee of
-an indirect call. The ordinary MIR call operation rejects an `async` or
+`Borrow` is not a general MIR loan. It is valid as the immediate callee of an
+indirect call and, once BORROW-001 admits the source body, as the checked source
+of `IteratorState` for exactly one `cursor[ref,C]`; no other rvalue may retain
+it. The ordinary MIR call operation rejects an `async` or
 `unsafe` function signature. M7 and M9 must introduce and verify their own
 effect-aware initiation/context forms rather than weakening that operation.
 
@@ -160,13 +164,21 @@ seal auditable across the typed CFG. For a fallible function the ordinary
 `Result` construction and propagation remain outside that success seal, so the
 visible error channel is unchanged.
 
-Intrinsic `for` sources use the existing iterator-state rvalue and
-`IteratorNext` terminator. A user `Iterator[T]` source is evaluated once into a
-state local; each header invokes the typed `Iterator.next` operand with its
+Intrinsic `for` sources use an iterator-state rvalue whose operand is the
+collection `C` and whose result is the distinct concrete
+`cursor[own,C]`/`cursor[ref,C]` local consumed by `IteratorNext`. The verifier
+rejects both a cursor disguised as its collection and a cursor whose mode or
+collection differs from typed HIR. A user `Iterator[T]` source is evaluated once
+into a state local; each header invokes the typed `Iterator.next` operand with its
 mutable receiver, branches on the returned `T?`, projects the dominated
 `Option` payload, and then binds the irrefutable loop pattern. The MIR shape
 therefore exposes every evaluation and edge without treating a user iterator
 as a VM intrinsic.
+
+The current admitted bootstrap subset forms only `cursor[own,C]`. Typed HIR
+already retains `cursor[ref,C]` and its closed capabilities, but keeps that body
+incomplete until BORROW-001 can lower the source as a real shared `Borrow`
+operand and prove its region; it is never approximated with a collection copy.
 
 Map construction is an `Invoke` carrying the HIR-selected duplicate policy, so
 `P0009` has an ordinary unwind edge and last-write-wins is never an implicit VM
@@ -226,9 +238,9 @@ The structural verifier introduced in M3 proves at minimum:
   hidden parameter zero, exact explicit parameters, capture projections, and
   outcome, while no ordinary function may forge that shape; all four effect
   signatures are retained unchanged;
-- `Borrow` appears only as an immediate indirect-call callee, agrees with
-  `Call`/`CallMut`, and never escapes into storage, arguments, or arbitrary
-  rvalues; `CallOnce` never uses it;
+- `Borrow` appears only as an immediate indirect-call callee agreeing with
+  `Call`/`CallMut`, or as the exact source of `cursor[ref,C]`; it never escapes
+  into storage, arguments, or arbitrary rvalues, and `CallOnce` never uses it;
 - equality, collection membership, and map lookup satisfy the `Equatable`,
   `Key`, or `Copy` requirement recorded and independently verified in HIR;
 - a variant, union, option, or result payload is read only on an edge dominated

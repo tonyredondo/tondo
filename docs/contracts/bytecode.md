@@ -4,7 +4,8 @@
 dispatch, TRAIT-006 opaque results, CAP-001 closed capabilities, CALL-001
 uniform named function values, CALL-002 concrete closure environments, CALL-003
 closure protocols and synchronous-safe invocation, CALL-004 effect-preserving
-closure callables, and the M3 VM admission path implemented
+closure callables, OWN-001 intrinsic cursor capabilities, and the M3 VM
+admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -157,7 +158,11 @@ return place have function-wide storage.
 Ordinary instructions perform storage lifetime changes or one typed store from
 a pure rvalue. Rvalues cover loads, copies/moves, constants, pure arithmetic,
 construction, record update, coercion, total conversion, range, membership,
-length, and iterator-state creation.
+length, and iterator-state creation. The latter accepts an intrinsic collection
+`C` and produces only its distinct `cursor[own,C]` or `cursor[ref,C]` type;
+`IteratorNext` accepts that cursor rather than a collection-shaped alias. A ref
+cursor additionally requires a `Borrow` source operand, while an own cursor
+rejects one, so a backend cannot silently replace observation with a copy.
 
 A closure construction is an ordinary managed aggregate whose result is a
 concrete generated type. Its shape names one concrete closure callable; that
@@ -249,8 +254,9 @@ Before execution, the verifier proves:
 - a generic or opaque callable resolves to one concrete named function or
   closure with the same signature, while a callable erasure preserves the
   concrete closure value and exact uniform function signature;
-- `Borrow` is confined to the immediate callee of an indirect call and cannot
-  escape into slots, arguments, aggregates, or unrelated operations;
+- `Borrow` is confined to the immediate callee of an indirect call or the exact
+  source of `cursor[ref,C]`, and cannot escape into slots, arguments,
+  aggregates, or unrelated operations;
 - normal edges remain in normal code, unwind edges enter cleanup code, and the
   distinguished unwind block resumes panic;
 - all reachable reads have a dominating live definition, edge-produced values
@@ -269,7 +275,10 @@ code.
 These capability checks are derived again from the bytecode type graph and
 generic nominal layout summaries; generated closure types derive `Copy`,
 `Discard`, `Send`, and `Share` componentwise from their capture schema and never
-derive `Equatable` or `Key`. The VM does not trust the HIR status table or
+derive `Equatable` or `Key`. Owned intrinsic cursors derive those same four
+capabilities from their collection. Ref cursors always derive `Copy + Discard`
+and derive both `Send` and `Share` only from `C: Send + Share`; neither cursor
+mode derives `Equatable` or `Key`. The VM does not trust the HIR status table or
 receive runtime capability objects. Generic template parameters are admitted
 only because HIR has already proved their contextual bounds, and every reached
 executable specialization is closed before this verifier consumes it.

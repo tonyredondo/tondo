@@ -191,7 +191,7 @@ fn snapshot_object(
         },
         HeapObject::Iterator { .. } => {
             return Err(VmError::invariant(
-                "an affine iterator state escaped through the VM boundary",
+                "an internal iterator state escaped through the VM boundary",
             ));
         }
         HeapObject::Ref(value) => RuntimeValue::Ref(

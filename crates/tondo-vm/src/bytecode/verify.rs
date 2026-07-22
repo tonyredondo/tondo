@@ -273,7 +273,9 @@ impl CapabilityAnalysis {
                 dependent_capability(vec![(*witness, capability)])
             }
             BytecodeTypeKind::Generated { .. } => generated_capability(program, ty, capability),
-            BytecodeTypeKind::Cursor { .. } => fixed_capability(false),
+            BytecodeTypeKind::Cursor { mode, collection } => {
+                cursor_capability(*mode, *collection, capability)
+            }
         };
         Ok(node)
     }
@@ -356,7 +358,11 @@ fn capability_requirement(
                 requirement.possible &= node.possible;
                 pending.extend(node.dependencies);
             }
-            BytecodeTypeKind::Cursor { .. } => requirement.possible = false,
+            BytecodeTypeKind::Cursor { mode, collection } => {
+                let node = cursor_capability(*mode, *collection, capability);
+                requirement.possible &= node.possible;
+                pending.extend(node.dependencies);
+            }
         }
     }
     Ok(requirement)
@@ -443,6 +449,28 @@ fn function_capability(capability: ClosedCapability) -> bool {
             | ClosedCapability::Send
             | ClosedCapability::Share
     )
+}
+
+fn cursor_capability(
+    mode: BytecodeCursorMode,
+    collection: BytecodeTypeId,
+    capability: ClosedCapability,
+) -> CapabilityNode {
+    match (mode, capability) {
+        (_, ClosedCapability::Equatable | ClosedCapability::Key) => fixed_capability(false),
+        (BytecodeCursorMode::Ref, ClosedCapability::Copy | ClosedCapability::Discard) => {
+            fixed_capability(true)
+        }
+        (BytecodeCursorMode::Ref, ClosedCapability::Send | ClosedCapability::Share) => {
+            dependent_capability(vec![
+                (collection, ClosedCapability::Send),
+                (collection, ClosedCapability::Share),
+            ])
+        }
+        (BytecodeCursorMode::Own, capability) => {
+            dependent_capability(vec![(collection, capability)])
+        }
+    }
 }
 
 fn intrinsic_capability(
@@ -2124,7 +2152,18 @@ impl Verifier<'_> {
             }
             BytecodeRvalueKind::IteratorState(source) => {
                 self.verify_operand(function, source, context)?;
-                if source.ty != value.ty || self.iterated_item_type(source.ty, context)?.is_none() {
+                let BytecodeTypeKind::Cursor { mode, collection } =
+                    &self.ty(value.ty, context)?.kind
+                else {
+                    return Err(rvalue_error(context));
+                };
+                let borrows = matches!(source.kind, BytecodeOperandKind::Borrow(_));
+                if *collection != source.ty
+                    || (*mode == BytecodeCursorMode::Ref) != borrows
+                    || self
+                        .iterated_collection_item_type(source.ty, context)?
+                        .is_none()
+                {
                     return Err(rvalue_error(context));
                 }
             }
@@ -2713,10 +2752,21 @@ impl Verifier<'_> {
 
     fn iterated_item_type(
         &self,
-        source: BytecodeTypeId,
+        cursor: BytecodeTypeId,
         context: &str,
     ) -> Result<Option<BytecodeTypeId>, BytecodeVerificationError> {
-        let result = match &self.ty(source, context)?.kind {
+        let BytecodeTypeKind::Cursor { collection, .. } = self.ty(cursor, context)?.kind else {
+            return Ok(None);
+        };
+        self.iterated_collection_item_type(collection, context)
+    }
+
+    fn iterated_collection_item_type(
+        &self,
+        collection: BytecodeTypeId,
+        context: &str,
+    ) -> Result<Option<BytecodeTypeId>, BytecodeVerificationError> {
+        let result = match &self.ty(collection, context)?.kind {
             BytecodeTypeKind::Intrinsic {
                 constructor:
                     BytecodeIntrinsicType::Array
@@ -4095,10 +4145,10 @@ fn rvalue_contains_borrow(value: &BytecodeRvalue) -> bool {
     match &value.kind {
         BytecodeRvalueKind::Use(value)
         | BytecodeRvalueKind::Length(value)
-        | BytecodeRvalueKind::IteratorState(value)
         | BytecodeRvalueKind::Prefix { operand: value, .. }
         | BytecodeRvalueKind::Coerce { value, .. }
         | BytecodeRvalueKind::NumericConversion { value, .. } => operand_is_borrow(value),
+        BytecodeRvalueKind::IteratorState(_) => false,
         BytecodeRvalueKind::Binary { left, right, .. }
         | BytecodeRvalueKind::Range {
             start: left,

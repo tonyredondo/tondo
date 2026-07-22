@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 use std::mem;
 
-use crate::bytecode::{BytecodeCallableId, BytecodeNominalId, BytecodeRangeKind, BytecodeTypeId};
+use crate::bytecode::{
+    BytecodeCallableId, BytecodeCursorMode, BytecodeNominalId, BytecodeRangeKind, BytecodeTypeId,
+};
 
 use super::value::{AggregatePayload, Value};
 use super::{VmError, VmLimits, VmStatistics};
@@ -56,6 +58,7 @@ pub(super) enum HeapObject {
         end: Option<Value>,
     },
     Iterator {
+        mode: BytecodeCursorMode,
         source: Option<Value>,
         next: usize,
     },

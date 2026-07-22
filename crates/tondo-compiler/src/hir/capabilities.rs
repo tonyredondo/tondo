@@ -3,7 +3,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::package::SymbolIdentity;
 use crate::resolve::{ResolvedProgram, SymbolId};
 use crate::types::{
-    IntrinsicType, ScalarType, TypeError, TypeId, TypeInterner, TypeKind, TypeSubstitution,
+    CursorMode, IntrinsicType, ScalarType, TypeError, TypeId, TypeInterner, TypeKind,
+    TypeSubstitution,
 };
 
 use super::{
@@ -317,9 +318,8 @@ impl CapabilityAnalysis {
                     satisfied(dependencies)
                 }
             }
-            TypeKind::Inference(_) | TypeKind::Cursor { .. } => {
-                fixed(HirCapabilityStatus::Deferred)
-            }
+            TypeKind::Cursor { mode, collection } => cursor_node(mode, collection, capability),
+            TypeKind::Inference(_) => fixed(HirCapabilityStatus::Deferred),
         };
         Ok(node)
     }
@@ -509,7 +509,12 @@ fn capability_requirement(
                     requirement.floor = requirement.floor.max(HirCapabilityStatus::Unsatisfied);
                 }
             }
-            TypeKind::Inference(_) | TypeKind::Generated { .. } | TypeKind::Cursor { .. } => {
+            TypeKind::Cursor { mode, collection } => {
+                let node = cursor_node(mode, collection, capability);
+                requirement.floor = requirement.floor.max(node.floor);
+                pending.extend(node.dependencies);
+            }
+            TypeKind::Inference(_) | TypeKind::Generated { .. } => {
                 requirement.floor = requirement.floor.max(HirCapabilityStatus::Deferred);
             }
         }
@@ -534,6 +539,26 @@ fn function_status(capability: HirCapability) -> HirCapabilityStatus {
         HirCapabilityStatus::Satisfied
     } else {
         HirCapabilityStatus::Unsatisfied
+    }
+}
+
+fn cursor_node(mode: CursorMode, collection: TypeId, capability: HirCapability) -> CapabilityNode {
+    let satisfied = |dependencies| CapabilityNode {
+        floor: HirCapabilityStatus::Satisfied,
+        dependencies,
+    };
+    let unsatisfied = || CapabilityNode {
+        floor: HirCapabilityStatus::Unsatisfied,
+        dependencies: Vec::new(),
+    };
+    match (mode, capability) {
+        (_, HirCapability::Equatable | HirCapability::Key) => unsatisfied(),
+        (CursorMode::Ref, HirCapability::Copy | HirCapability::Discard) => satisfied(Vec::new()),
+        (CursorMode::Ref, HirCapability::Send | HirCapability::Share) => satisfied(vec![
+            (collection, HirCapability::Send),
+            (collection, HirCapability::Share),
+        ]),
+        (CursorMode::Own, capability) => satisfied(vec![(collection, capability)]),
     }
 }
 

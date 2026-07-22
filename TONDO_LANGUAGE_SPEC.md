@@ -1634,6 +1634,9 @@ Cumplen `Copy` automáticamente:
 - Tuplas, records, enums, options, results y uniones cuando todos sus componentes son `Copy`.
 - Arrays, maps y sets cuando sus elementos almacenados son `Copy`.
 - `Range[T]` cuando `T: Copy`.
+- El cursor intrínseco `cursor[own,C]` cuando `C: Copy`, y todo
+  `cursor[ref,C]`; copiar cualquiera conserva la misma posición inicial pero
+  crea un avance lógico independiente.
 - Cierres concretos cuando todas sus capturas son `Copy`, según 11.8.
 - Los planes inertes `Command` y `Pipeline`.
 - Newtypes cuyo valor sea `Copy`.
@@ -1657,6 +1660,9 @@ terminal:
 - Newtypes, tuples, records, enums, options, results, uniones y colecciones la
   derivan cuando ninguno de sus componentes posibles conserva una obligación.
 - Los cierres concretos la derivan de todas sus capturas según 11.8.
+- `cursor[own,C]` la cumple exactamente cuando `C: Discard`;
+  `cursor[ref,C]` siempre la cumple porque solo libera su préstamo compartido y
+  su posición local.
 - Implementar `Iterator[T]` no altera la derivación del cursor: sus campos y su
   contrato opaco deciden si cumple `Discard`. `Join[T, E]` nunca la cumple.
 - Un tipo opaco la declara como parte de su contrato. Declarar `Discard` y una
@@ -2788,6 +2794,23 @@ expresión ya es el cursor. Los adaptadores de librería también devuelven tipo
 cursor concretos: nominales cuando exponen cleanup o identidad, y opcionalmente
 resultados `impl Iterator[T] + Discard` cuando pueden ocultarse. Nunca borran sus
 capacidades detrás de un valor `Iterator[T]`.
+
+Los cursores de las cinco fuentes intrínsecas tienen una representación de tipo
+interna que no puede escribirse en fuente:
+
+- `cursor[own,C]` conserva en propiedad una colección `C` y su posición. Deriva
+  `Copy`, `Discard`, `Send` y `Share` de la capacidad homónima de `C`.
+- `cursor[ref,C]` conserva un préstamo compartido de `C` y su posición. Siempre
+  cumple `Copy + Discard`; cumple tanto `Send` como `Share` únicamente cuando
+  `C: Send + Share`, sin que eso permita al préstamo escapar de las regiones
+  autorizadas por 16.13.
+- Ninguna de las dos formas cumple `Equatable` ni `Key`: la igualdad observable
+  de un estado mutable de recorrido no forma parte del lenguaje.
+
+Una copia admitida comienza en la misma posición y avanza de forma
+independiente. Copiar `cursor[own,C]` realiza la copia lógica de `C`; copiar
+`cursor[ref,C]` duplica el préstamo compartido, nunca la colección ni su
+ownership. Descartar un cursor no consume ni oculta obligaciones que no posea.
 
 `for pattern in expression` evalúa `expression` exactamente una vez, transfiere
 el cursor concreto a un propietario interno y llama a `Iterator.next` hasta

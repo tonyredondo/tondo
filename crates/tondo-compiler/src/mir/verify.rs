@@ -10,7 +10,7 @@ use crate::hir::{
 };
 use crate::resolve::{MemberKind, MemberOwner, ResolvedProgram, SymbolId};
 use crate::types::{
-    Assignability, IntrinsicType, NumericConversion, ScalarType, TypeId, TypeKind,
+    Assignability, CursorMode, IntrinsicType, NumericConversion, ScalarType, TypeId, TypeKind,
     TypeSubstitution, numeric_conversion,
 };
 
@@ -171,10 +171,10 @@ fn mir_rvalue_contains_borrow(value: &MirRvalue) -> bool {
     match &value.kind {
         MirRvalueKind::Use(value)
         | MirRvalueKind::Length(value)
-        | MirRvalueKind::IteratorState { source: value }
         | MirRvalueKind::Prefix { operand: value, .. }
         | MirRvalueKind::Coerce { value, .. }
         | MirRvalueKind::NumericConversion { value, .. } => mir_operand_is_borrow(value),
+        MirRvalueKind::IteratorState { .. } => false,
         MirRvalueKind::Binary { left, right, .. }
         | MirRvalueKind::Range {
             start: left,
@@ -866,10 +866,20 @@ impl Verifier<'_> {
             }
             MirRvalueKind::IteratorState { source } => {
                 self.verify_operand(function, source, context)?;
-                if source.ty != value.ty || self.iterated_item_type(source.ty).is_none() {
+                let TypeKind::Cursor { mode, collection } = self.kind(value.ty, context)? else {
                     return Err(MirInvariantError::new(
                         context,
-                        "iterator state does not preserve an iterable source type",
+                        "iterator state result is not a concrete intrinsic cursor",
+                    ));
+                };
+                let borrows = matches!(source.kind, MirOperandKind::Borrow(_));
+                if *collection != source.ty
+                    || (*mode == CursorMode::Ref) != borrows
+                    || self.iterated_item_type(source.ty).is_none()
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "iterator state does not wrap exactly one iterable source type",
                     ));
                 }
             }
@@ -2403,7 +2413,13 @@ impl Verifier<'_> {
         destination: TypeId,
         context: &str,
     ) -> Result<(), MirInvariantError> {
-        let valid = match self.kind(state, context)? {
+        let TypeKind::Cursor { collection, .. } = self.kind(state, context)? else {
+            return Err(MirInvariantError::new(
+                context,
+                "iterator state is not a concrete intrinsic cursor",
+            ));
+        };
+        let valid = match self.kind(*collection, context)? {
             TypeKind::Intrinsic {
                 constructor: IntrinsicType::Array | IntrinsicType::Set | IntrinsicType::Range,
                 arguments,

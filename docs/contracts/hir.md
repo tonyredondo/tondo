@@ -4,7 +4,8 @@
 uniform named function values, Copy closures with four exact effect identities,
 closed call protocols and synchronous-safe invocation, static trait selection,
 declaration-owned opaque results, patterns, assignment, discard, structured
-control flow, calls, semantic occurrences, and verified MIR admission
+control flow, explicit intrinsic cursor state, calls, semantic occurrences, and
+verified MIR admission
 implemented
 
 ## Boundary
@@ -38,6 +39,8 @@ The output owns:
   expression;
 - one independently derived `Call`/`CallMut`/`CallOnce` row for every closure,
   plus the exact signature and selected protocol on every indirect call;
+- one exact `cursor[own,C]` or `cursor[ref,C]` state type for every intrinsic
+  iterator loop;
 - a static type, value category, source span, and resolved identity for every
   expression in the implemented subset;
 - a bottom-up normal-completion summary and reachable loop-transfer targets for
@@ -624,6 +627,8 @@ Its source-level matrix is:
 | `Map[K, V]` | `Copy` when `K: Key` and `V: Copy`; `Discard`, `Equatable`, `Send`, and `Share` componentwise; never `Key` |
 | `Set[K]` | `Copy` when `K: Key`; other non-`Key` capabilities componentwise; never `Key` |
 | `Range[T]` | Componentwise `Copy`, `Discard`, `Send`, and `Share`; not `Equatable` or `Key` |
+| `cursor[own,C]` | Componentwise `Copy`, `Discard`, `Send`, and `Share`; not `Equatable` or `Key` |
+| `cursor[ref,C]` | Always `Copy` and `Discard`; `Send` and `Share` both require `C: Send + Share`; not `Equatable` or `Key` |
 | `Ref[T]` | Always `Copy`, `Discard`, `Equatable`, and `Key` once well formed; `Send` and `Share` both require `T: Send + Share` |
 | `Pointer[T]` | `Copy` and `Discard` only |
 | `Join[T, E]` | None of the six |
@@ -636,8 +641,10 @@ arguments are inspected. This handles mutual recursion and recursive argument
 transformations without expanding an infinite family of type instances. An
 opaque result exposes only capabilities published or implied by its bounds; its
 private witness cannot leak extra facts to callers. Generated closure
-environments and cursors remain `Deferred` until their owning tasks publish
-their concrete contracts. A source-less nominal is likewise deferred.
+environments derive their four structural capabilities from captures. Intrinsic
+cursors derive the published row above from their owned collection or shared
+loan state. An unknown generated identity or source-less nominal remains
+deferred.
 
 The checker stores `Satisfied`, `Unsatisfied`, or `Deferred` for all six columns
 of every interned type in an arena aligned with the type interner. The HIR
@@ -818,7 +825,8 @@ bounds, constraint forwarding, obligation budgets, and public-driver `E1105`
 propagation. Capability regressions cover the complete intrinsic matrix,
 implication forwarding, recursive nominal equality and keys, opaque bounds,
 async-trait `Self: Send`, collection and reference formation, equality,
-membership, map lookup, and order-insensitive map/set runtime equality.
+membership, map lookup, explicit own/ref cursor modes and capabilities, and
+order-insensitive map/set runtime equality.
 Closure regressions cover distinct generated identities, inherited generic
 binders, exact and inferred outcomes, nested free-use propagation, mutable
 snapshot metadata, modes, variadics, borrowed-capture rejection, deferred

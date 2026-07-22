@@ -11,9 +11,10 @@ use crate::source::{FileId, SourceDatabase, Span, TextRange};
 use crate::syntax::ast::{Expression as AstExpression, Pattern as AstPattern};
 use crate::syntax::{Parsed, SyntaxElement, SyntaxKind, SyntaxNodeRef, SyntaxTokenRef, TokenKind};
 use crate::types::{
-    Assignability, FunctionParameter, FunctionType, GeneratedTypeIdentity, GeneratedTypeKind,
-    InferenceContext, InferenceError, InferenceId, IntrinsicType, NumericConversion, ParameterMode,
-    ScalarType, TypeId, TypeKind, TypeSubstitution, numeric_conversion,
+    Assignability, CursorMode, FunctionParameter, FunctionType, GeneratedTypeIdentity,
+    GeneratedTypeKind, InferenceContext, InferenceError, InferenceId, IntrinsicType,
+    NumericConversion, ParameterMode, ScalarType, TypeId, TypeKind, TypeSubstitution,
+    numeric_conversion,
 };
 
 use super::capabilities::{CapabilityAnalysis, CapabilityAssumptions};
@@ -9524,7 +9525,7 @@ impl<'a> ExpressionChecker<'a> {
                 let source_type = self.expression_type(source);
                 let element = self.iteration_element_type(source_type)?;
                 let (element, protocol) = if let Some(element) = element {
-                    (element, HirIterationProtocol::Intrinsic)
+                    (element, None)
                 } else if let Some(query) = self.iterator_trait_query(
                     source_type,
                     self.sources.span(file, source_node.range())?,
@@ -9542,16 +9543,13 @@ impl<'a> ExpressionChecker<'a> {
                             .expect("Iterator.next has one trait argument and Self");
                         (
                             element,
-                            HirIterationProtocol::Trait {
+                            Some(HirIterationProtocol::Trait {
                                 element,
                                 function_type,
-                            },
+                            }),
                         )
                     } else {
-                        (
-                            self.program.interner.error(),
-                            HirIterationProtocol::Intrinsic,
-                        )
+                        (self.program.interner.error(), None)
                     }
                 } else {
                     if source_type != self.program.interner.error() {
@@ -9566,10 +9564,7 @@ impl<'a> ExpressionChecker<'a> {
                             None,
                         )?;
                     }
-                    (
-                        self.program.interner.error(),
-                        HirIterationProtocol::Intrinsic,
-                    )
+                    (self.program.interner.error(), None)
                 };
                 let pattern = self.check_binding_pattern(
                     file,
@@ -9578,6 +9573,25 @@ impl<'a> ExpressionChecker<'a> {
                     &mut body_context,
                     PatternContext::For,
                 )?;
+                let protocol = if let Some(protocol) = protocol {
+                    protocol
+                } else {
+                    let borrows = self.pattern_contains_borrow(pattern);
+                    if borrows {
+                        // BORROW-001 lowers this as a shared loan. Retain its
+                        // exact cursor type now without admitting Copy-based
+                        // bootstrap lowering for borrowed iteration.
+                        self.complete = false;
+                    }
+                    let mode = if borrows {
+                        CursorMode::Ref
+                    } else {
+                        CursorMode::Own
+                    };
+                    HirIterationProtocol::Intrinsic {
+                        cursor: self.program.interner.cursor(mode, source_type)?,
+                    }
+                };
                 HirForKind::Iterate {
                     pattern,
                     source,
@@ -9623,6 +9637,39 @@ impl<'a> ExpressionChecker<'a> {
             _ => None,
         };
         Ok(element)
+    }
+
+    fn pattern_contains_borrow(&self, root: HirPatternId) -> bool {
+        let mut pending = vec![root];
+        while let Some(id) = pending.pop() {
+            let Some(pattern) = self.program.pattern(id) else {
+                continue;
+            };
+            match pattern.kind() {
+                HirPatternKind::BorrowBinding(_) => return true,
+                HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
+                    pending.extend(items.iter().copied());
+                }
+                HirPatternKind::OptionSome(item)
+                | HirPatternKind::ResultOk(item)
+                | HirPatternKind::ResultErr(item)
+                | HirPatternKind::Newtype { value: item, .. }
+                | HirPatternKind::UnionMember { pattern: item, .. } => pending.push(*item),
+                HirPatternKind::Record { fields, .. } => {
+                    pending.extend(fields.iter().map(HirPatternField::pattern));
+                }
+                HirPatternKind::Array { prefix, rest } => {
+                    pending.extend(prefix.iter().copied());
+                    pending.extend(*rest);
+                }
+                HirPatternKind::Recovery
+                | HirPatternKind::Wildcard
+                | HirPatternKind::Binding(_)
+                | HirPatternKind::Literal(_)
+                | HirPatternKind::OptionNone => {}
+            }
+        }
+        false
     }
 
     fn iterator_trait_query(
@@ -15363,17 +15410,19 @@ fn collect_statement_type_roots(statement: &HirStatement, roots: &mut BTreeSet<T
             collect_assignment_target_type_roots(target, roots);
         }
         HirStatement::For { kind, .. } => {
-            if let HirForKind::Iterate {
-                protocol:
+            if let HirForKind::Iterate { protocol, .. } = kind {
+                match protocol {
+                    HirIterationProtocol::Intrinsic { cursor } => {
+                        roots.insert(*cursor);
+                    }
                     HirIterationProtocol::Trait {
                         element,
                         function_type,
-                    },
-                ..
-            } = kind
-            {
-                roots.insert(*element);
-                roots.insert(*function_type);
+                    } => {
+                        roots.insert(*element);
+                        roots.insert(*function_type);
+                    }
+                }
             }
         }
         HirStatement::Expression { .. } | HirStatement::Discard { .. } => {}
@@ -15431,17 +15480,19 @@ fn rewrite_statement_types(statement: &mut HirStatement, replacements: &BTreeMap
             rewrite_assignment_target_types(target, replacements);
         }
         HirStatement::For { kind, .. } => {
-            if let HirForKind::Iterate {
-                protocol:
+            if let HirForKind::Iterate { protocol, .. } = kind {
+                match protocol {
+                    HirIterationProtocol::Intrinsic { cursor } => {
+                        *cursor = replaced_type(*cursor, replacements);
+                    }
                     HirIterationProtocol::Trait {
                         element,
                         function_type,
-                    },
-                ..
-            } = kind
-            {
-                *element = replaced_type(*element, replacements);
-                *function_type = replaced_type(*function_type, replacements);
+                    } => {
+                        *element = replaced_type(*element, replacements);
+                        *function_type = replaced_type(*function_type, replacements);
+                    }
+                }
             }
         }
         HirStatement::Expression { .. } | HirStatement::Discard { .. } => {}
@@ -17818,6 +17869,69 @@ mod tests {
         satisfied("Join[Int, Never]", &[]);
         satisfied("Command", &transferable);
         satisfied("Pipeline", &transferable);
+    }
+
+    #[test]
+    fn intrinsic_cursors_have_explicit_modes_and_derive_closed_capabilities_from_state() {
+        let (_, _, output) = check(
+            "fn iterate(values: Array[Int]) {\n\
+                 for value in values {\n\
+                     _ = value\n\
+                 }\n\
+             }\n\
+             fn observe(values: ref Array[Join[Int, Never]]) {\n\
+                 for ref value in values {}\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(!output.is_complete());
+
+        let status = |name: &str, capability: HirCapability| {
+            let ty = output
+                .program()
+                .interner()
+                .ids()
+                .find(|ty| {
+                    output
+                        .program()
+                        .interner()
+                        .canonical(*ty)
+                        .is_ok_and(|actual| actual == name)
+                })
+                .unwrap_or_else(|| panic!("missing interned type `{name}`"));
+            output.program().capability_status(ty, capability).unwrap()
+        };
+        let assert_matrix = |name: &str, satisfied: &[HirCapability]| {
+            for capability in HirCapability::ALL {
+                assert_eq!(
+                    status(name, capability),
+                    if satisfied.contains(&capability) {
+                        HirCapabilityStatus::Satisfied
+                    } else {
+                        HirCapabilityStatus::Unsatisfied
+                    },
+                    "unexpected {} status for {name}",
+                    capability.as_str()
+                );
+            }
+        };
+        assert_matrix(
+            "cursor[own,Array[Int]]",
+            &[
+                HirCapability::Copy,
+                HirCapability::Discard,
+                HirCapability::Send,
+                HirCapability::Share,
+            ],
+        );
+        assert_matrix(
+            "cursor[ref,Array[Join[Int, Never]]]",
+            &[HirCapability::Copy, HirCapability::Discard],
+        );
     }
 
     #[test]

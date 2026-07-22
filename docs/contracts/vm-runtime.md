@@ -1,7 +1,8 @@
 # Bootstrap VM object and execution contract
 
 **Status:** implemented M3 baseline plus CALL-003 synchronous Copy closure
-invocation and CALL-004 effectful-environment retention with execution guards
+invocation, CALL-004 effectful-environment retention with execution guards, and
+OWN-001 intrinsic cursor value semantics
 **Language baseline:** Tondo 0.1-draft.8
 
 This contract fixes the bootstrap object model selected by DEC-006. It is an
@@ -43,8 +44,10 @@ checks prevent an absent field from being observed as a value.
 Tondo value semantics do not expose physical sharing. The bootstrap therefore
 copies compound `Copy` values eagerly. Immutable strings and identity-bearing
 `Ref[T]` cells may share their managed object because that sharing preserves
-the language contract. COW and compact representations require differential
-tests against this baseline.
+the language contract. Copying an admitted intrinsic cursor recursively copies
+its owned source (or duplicates its shared reference), preserves the current
+index, and allocates an independently advancing iterator object. COW and compact
+representations require differential tests against this baseline.
 
 ## Frames and roots
 

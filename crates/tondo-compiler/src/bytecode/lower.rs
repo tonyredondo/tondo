@@ -4727,6 +4727,193 @@ mod tests {
     }
 
     #[test]
+    fn intrinsic_cursor_state_is_explicit_verified_and_logically_copyable() {
+        const SOURCE: &str = "fn sum(): Int {\n\
+             var total = 0\n\
+             for value in [1, 2, 3, 4] {\n\
+                 total += value\n\
+             }\n\
+             total\n\
+         }\n";
+
+        let mut forged = lowered(SOURCE);
+        let entry = function_id(&forged, "sum");
+        let (block_index, instruction_index, state, collection) = {
+            let function = forged.function(entry).unwrap();
+            function
+                .blocks
+                .iter()
+                .enumerate()
+                .find_map(|(block_index, block)| {
+                    block.instructions.iter().enumerate().find_map(
+                        |(instruction_index, instruction)| {
+                            let bc::BytecodeInstructionKind::Store {
+                                destination,
+                                value:
+                                    bc::BytecodeRvalue {
+                                        kind: bc::BytecodeRvalueKind::IteratorState(source),
+                                        ..
+                                    },
+                            } = &instruction.kind
+                            else {
+                                return None;
+                            };
+                            Some((
+                                block_index,
+                                instruction_index,
+                                destination.clone(),
+                                source.ty,
+                            ))
+                        },
+                    )
+                })
+                .expect("the intrinsic loop constructs one cursor state")
+        };
+        assert!(matches!(
+            forged.types[state.ty.index() as usize].kind,
+            bc::BytecodeTypeKind::Cursor {
+                mode: bc::BytecodeCursorMode::Own,
+                collection: actual,
+            } if actual == collection
+        ));
+
+        {
+            let function = &mut forged.functions[entry.index() as usize];
+            function.slots[state.slot.index() as usize].ty = collection;
+            let bc::BytecodeInstructionKind::Store { destination, value } =
+                &mut function.blocks[block_index].instructions[instruction_index].kind
+            else {
+                unreachable!()
+            };
+            destination.ty = collection;
+            value.ty = collection;
+        }
+        let error = bc::verify_bytecode(&forged).unwrap_err();
+        assert!(error.message().contains("rvalue"), "{error}");
+
+        let mut copyable = lowered(SOURCE);
+        let entry = function_id(&copyable, "sum");
+        let (block_index, instruction_index, span, state) = {
+            let function = copyable.function(entry).unwrap();
+            function
+                .blocks
+                .iter()
+                .enumerate()
+                .find_map(|(block_index, block)| {
+                    block.instructions.iter().enumerate().find_map(
+                        |(instruction_index, instruction)| {
+                            let bc::BytecodeInstructionKind::Store {
+                                destination,
+                                value:
+                                    bc::BytecodeRvalue {
+                                        kind: bc::BytecodeRvalueKind::IteratorState(_),
+                                        ..
+                                    },
+                            } = &instruction.kind
+                            else {
+                                return None;
+                            };
+                            Some((
+                                block_index,
+                                instruction_index,
+                                instruction.span,
+                                destination.clone(),
+                            ))
+                        },
+                    )
+                })
+                .expect("the intrinsic loop constructs one cursor state")
+        };
+        let function = &mut copyable.functions[entry.index() as usize];
+        let duplicate = bc::BytecodeSlotId::new(function.slots.len() as u32);
+        function.slots.push(bc::BytecodeSlot {
+            ty: state.ty,
+            span: function.slots[state.slot.index() as usize].span,
+            kind: bc::BytecodeSlotKind::Temporary,
+        });
+        let instructions = &mut function.blocks[block_index].instructions;
+        instructions.splice(
+            instruction_index + 1..instruction_index + 1,
+            [
+                bc::BytecodeInstruction {
+                    span,
+                    kind: bc::BytecodeInstructionKind::StorageLive(duplicate),
+                },
+                bc::BytecodeInstruction {
+                    span,
+                    kind: bc::BytecodeInstructionKind::Store {
+                        destination: bc::BytecodePlace {
+                            slot: duplicate,
+                            ty: state.ty,
+                            projections: Vec::new(),
+                        },
+                        value: bc::BytecodeRvalue {
+                            ty: state.ty,
+                            kind: bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                                ty: state.ty,
+                                kind: bc::BytecodeOperandKind::Copy(state.clone()),
+                            }),
+                        },
+                    },
+                },
+                bc::BytecodeInstruction {
+                    span,
+                    kind: bc::BytecodeInstructionKind::StorageDead(duplicate),
+                },
+            ],
+        );
+        bc::verify_bytecode(&copyable).unwrap();
+        let mut host = RejectingHost;
+        let execution = execute(&copyable, entry, &mut host).unwrap();
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(10))
+        );
+
+        let mut wrong_borrow_access = copyable.clone();
+        let bc::BytecodeTypeKind::Cursor { mode, .. } =
+            &mut wrong_borrow_access.types[state.ty.index() as usize].kind
+        else {
+            unreachable!()
+        };
+        *mode = bc::BytecodeCursorMode::Ref;
+        let error = bc::verify_bytecode(&wrong_borrow_access).unwrap_err();
+        assert!(error.message().contains("rvalue"), "{error}");
+
+        let mut borrowed_copyable = wrong_borrow_access;
+        let source = borrowed_copyable.functions[entry.index() as usize]
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instructions)
+            .find_map(|instruction| {
+                let bc::BytecodeInstructionKind::Store {
+                    value:
+                        bc::BytecodeRvalue {
+                            kind: bc::BytecodeRvalueKind::IteratorState(source),
+                            ..
+                        },
+                    ..
+                } = &mut instruction.kind
+                else {
+                    return None;
+                };
+                Some(source)
+            })
+            .expect("the intrinsic loop retains its cursor source");
+        let bc::BytecodeOperandKind::Copy(source_place) = source.kind.clone() else {
+            panic!("the Copy bootstrap should read the iterable temporary")
+        };
+        source.kind = bc::BytecodeOperandKind::Borrow(source_place);
+        bc::verify_bytecode(&borrowed_copyable).unwrap();
+        let mut host = RejectingHost;
+        let execution = execute(&borrowed_copyable, entry, &mut host).unwrap();
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(10))
+        );
+    }
+
+    #[test]
     fn verified_bytecode_executes_real_frames_calls_and_checked_arithmetic() {
         let value = execute_function(
             "fn add(left: Int, right: Int): Int { left + right }\n\

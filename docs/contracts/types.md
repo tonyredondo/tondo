@@ -86,7 +86,8 @@ closure types use their exact effect kind (`closure`, `unsafe-closure`,
 and starting byte; captured generic arguments follow as a canonical
 application. The kind's async/unsafe bits must equal the structural function
 signature retained by HIR. Cursor types use the exact `cursor[own,T]` or
-`cursor[ref,T]` form.
+`cursor[ref,T]` form. They are compiler-internal concrete state types for the
+five intrinsic iteration sources and cannot be named in source.
 
 ## Inference and errors
 

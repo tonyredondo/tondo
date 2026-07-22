@@ -2010,7 +2010,9 @@ pub enum HirForKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HirIterationProtocol {
-    Intrinsic,
+    Intrinsic {
+        cursor: TypeId,
+    },
     Trait {
         element: TypeId,
         function_type: TypeId,
