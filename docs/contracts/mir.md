@@ -6,7 +6,8 @@ opaque-result lowering, OWN-001 intrinsic cursor state, OWN-002 affine
 transfers, OWN-003 flow availability, OWN-004 complete `var` reinitialization,
 OWN-005 typed move paths and uniform match ownership modes, OWN-006 contextual
 Copy/Move closure captures, OWN-007 all-exit terminal capture obligations, and
-BORROW-001 call-local loans with explicit reservation/release and verification
+BORROW-001 call-local loans plus BORROW-002 inferred pattern regions with
+explicit reservation/release and verification
 implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
@@ -70,7 +71,7 @@ They remain queryable but can never be lowered or executed.
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
 | Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, selected synchronous-safe call access, value/place category, pattern coverage, source evaluation order, and source-level control targets |
 | MIR construction (M3/M4/M5) | Typed locals and temporaries, explicit CFG, places, synchronous-safe calls, effect-preserving closure bodies with a hidden environment, contextual Copy/Move closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
-| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, and call-local `ref`/`mut`/`var` loans; later M5 steps add last-use and collection regions, confirmed borrowed transfers, and cleanup actions |
+| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, call-local `ref`/`mut`/`var` loans, and inferred fixed-place pattern regions; later M5 steps add collection regions, confirmed borrowed transfers, and cleanup actions |
 | Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
 
@@ -94,7 +95,8 @@ temporaries before a place uses them. This preserves the HIR rule that an
 assignment resolves every destination once before evaluating its RHS.
 
 Operands distinguish constants, copy reads, move reads, immediate borrows, and
-call-local loan identities.
+call-local loan identities. Places may additionally name the shared region loan
+that authorizes their projected source access.
 OWN-002 chooses `Copy` or `Move` from the HIR capability graph under the exact
 generic bounds of each body. A `T: Copy` body copies; an unbounded or merely
 `T: Discard` body moves. The decision is cached per body and type, retained
@@ -136,7 +138,8 @@ stable place or compiler-owned temporary. Copy bindings needed by a guard are
 materialized before it; affine bindings move only after the guard succeeds in
 the selected arm. A false guard therefore cannot consume a payload needed by a
 later arm. Pattern `ref` aliases exist only while constructing MIR and lower to
-their real projected place; no duplicate alias table survives in `MirFunction`.
+their real projected place. The resulting place retains only a `source_loan`
+identity, not a duplicate source local or first-class reference value.
 
 Branches use block IDs, not nested expression nodes. `Never`, `return`, `fail`,
 `break`, `continue`, propagation, and panic paths end in terminators without an
@@ -183,34 +186,50 @@ write. It may never be stored, returned, inserted into an aggregate, passed as
 a value argument, or used by an unrelated operation. It is not the
 representation of a non-value call argument.
 
-BORROW-001 gives each function a dense loan table. Every entry records one
-`ref`, `mut`, or `var` mode and one fully evaluated place. `ReserveLoan(id)` is
-emitted after that argument's place has been resolved; `Loan(id)` is the only
-valid operand for the matching non-value call argument. The call consumes its
-own loan operands as one terminator event. `ReleaseLoan(id)` closes a
-reservation on a path that leaves during evaluation of a later argument.
-Releases are emitted in reverse reservation order for `return`, `fail`, `?`,
-`break`, and `continue`; loop targets retain the reservation depth present when
-the loop began, so a transfer from a nested loop cannot release an outer call's
-loan. Panic edges enter unwind with an empty loan set because runtime unwinding
-invalidates every reservation in the abandoned caller frame.
-Cleanup blocks therefore cannot contain `ReserveLoan` or `ReleaseLoan`.
+BORROW-001 and BORROW-002 give each function one dense loan table. Every entry
+has a `CallLocal` or `Region` kind, one non-value mode, and one fully evaluated
+place. A call-local entry is reserved after its argument place has been
+resolved; `Loan(id)` is the only valid operand for the matching non-value call
+argument, and the call consumes it as one terminator event. Explicit releases
+close reservations abandoned during evaluation of a later argument.
+
+A pattern `ref` binding instead creates one shared `Region` entry. The alias
+place carries that region as `source_loan`; a nested pattern region or
+call-local reborrow points to the immediately enclosing region while retaining
+the same owner path. Once the original CFG is complete, MIR runs backward
+liveness over normal successors. Anchored place uses and loan operands retain
+their complete region dependency chain. A last statement use receives an
+immediate `ReleaseLoan`; branch-specific last uses split only the affected
+normal edge into a release bridge. Releasing an abandoned call-local reborrow
+also counts as a use of its source chain. Releases use reverse loan order so a
+call-local child or nested region always closes before its sources. No source
+lifetime or reference-shaped local is introduced.
 
 The verifier propagates the exact active-loan set over the CFG and requires all
-predecessors of a join to agree. Shared reservations may overlap only other
-shared reservations; exclusive reservations reject every overlapping access
-or reservation while later arguments execute. Fixed record fields and tuple
-slots may be disjoint. Reborrowing permits `ref` from any borrowed source,
-`mut` from `mut`/`var`, and `var` from `var` or from a strict projection of
-`mut`. Moves out of borrowed parameters and writes through `ref` are invalid.
-Index and slice loan projections are rejected until BORROW-004 and BORROW-005
-provide collection-region proof. A loan operand has no valid use outside its
-consuming call and cannot reach a branch condition, rvalue, aggregate, host
-boundary, return, or storage.
+predecessors of a join to agree. It independently proves that region metadata
+is shared `ref`, source chains are earlier and acyclic, anchored places remain
+inside the reserved source path, and every anchored access has its complete
+source chain active. A source region cannot close while any transitive child
+reservation remains active. Shared reservations may overlap only other shared
+reservations; exclusive reservations reject every overlapping access or
+reservation. Fixed record fields and tuple slots may be disjoint. Reborrowing
+permits `ref` from any borrowed source, `mut` from `mut`/`var`, and `var` from
+`var` or from a strict projection of `mut`. Moves out of borrowed parameters
+and writes through `ref` are invalid. A `Region` can never be consumed as a
+call operand; a `CallLocal` may be consumed at most once.
+
+Releases remain explicit on `return`, `fail`, `?`, `break`, `continue`, and
+ordinary last-use edges. Panic edges enter unwind with an empty loan set because
+runtime unwinding invalidates every reservation in the abandoned caller frame;
+cleanup blocks therefore contain no loan manipulation. Index and slice loan
+projections are rejected until BORROW-004 and BORROW-005 provide
+collection-region proof. A loan operand has no valid use outside its consuming
+call and cannot reach a branch condition, rvalue, aggregate, host boundary,
+return, or storage.
 
 User `Iterator.next` calls use the same explicit call-local `mut` loan for
 their state receiver. A `cursor[ref,C]` source is a longer observation region
-and remains incomplete for BORROW-002 plus the collection-region work; it is
+and remains incomplete for the collection-region work; it is
 never approximated by copying `C`. The ordinary MIR call operation rejects an
 `async` or `unsafe` function signature. M7 and M9 must introduce and verify
 their own effect-aware initiation/context forms rather than weakening that
@@ -280,9 +299,9 @@ Every call or checked operation that may panic has an explicit unwind target.
 Normal scope exits and transfers route through cleanup blocks, even when the
 M3 cleanup chain is empty and collapses to a direct edge. Cleanup blocks are
 marked so verification can reject an edge that re-enters ordinary execution.
-Call-local loan release is already explicit on normal control transfers and
-early function exits; an unwind edge closes the abandoned frame's reservations
-as part of panic propagation.
+Loan release is already explicit on normal last-use edges, control transfers,
+and early function exits; an unwind edge closes the abandoned frame's
+reservations as part of panic propagation.
 
 M5 populates those blocks with terminal fallback, guard, `defer`, and confirmed
 handoff operations. The representation enforces one armed action per terminal
@@ -337,10 +356,11 @@ The structural verifier introduced in M3 proves at minimum:
   `Call`/`CallMut` callee, or as the exact source of `cursor[ref,C]`; it never
   escapes into storage, call arguments, aggregates, returns, or arbitrary
   rvalues, and `CallOnce` never uses it;
-- every non-value argument consumes one matching `Loan` identity after an
-  explicit reservation; active sets agree at CFG joins, incompatible fixed
-  regions cannot overlap, abandoned paths release their reservations exactly
-  once, and no loan escapes its call;
+- every non-value argument consumes one matching call-local `Loan` identity
+  after an explicit reservation; every pattern region is a shared reservation
+  whose anchored accesses occur while its acyclic source chain is active;
+  active sets agree at CFG joins, incompatible fixed regions cannot overlap,
+  abandoned paths release their reservations, and no loan escapes its extent;
 - equality, collection membership, and map lookup satisfy the `Equatable`,
   `Key`, or `Copy` requirement recorded and independently verified in HIR;
 - a variant, union, option, or result payload is read only on an edge dominated
@@ -357,9 +377,9 @@ on their successful edge, and the return place must be initialized on every
 `Return`. Payload refinement is a separate forward analysis so initialization
 alone cannot authorize an invalid projection.
 
-Later M5 and M7 work extends that proof with last-use and collection loan
-regions, confirmed borrowed transfers, downstream terminal tokens, cleanup,
-and suspension invariants. Verification always precedes bytecode lowering.
+Later M5 and M7 work extends that proof with collection loan regions, confirmed
+borrowed transfers, downstream terminal tokens, cleanup, and suspension
+invariants. Verification always precedes bytecode lowering.
 
 ## Determinism and resource limits
 

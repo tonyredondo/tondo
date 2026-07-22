@@ -12,9 +12,9 @@ use crate::hir::{
 };
 use crate::mir::{
     MirAggregateKind, MirBasicBlock, MirBlockKind, MirCallArgument, MirConstant, MirFunction,
-    MirLocalKind, MirOperand, MirOperandKind, MirOperation, MirOperationKind, MirPlace, MirProgram,
-    MirProjection, MirProjectionKind, MirRvalue, MirRvalueKind, MirStatement, MirStatementKind,
-    MirTag, MirTerminator, MirTerminatorKind, verify_mir,
+    MirLoanKind, MirLocalKind, MirOperand, MirOperandKind, MirOperation, MirOperationKind,
+    MirPlace, MirProgram, MirProjection, MirProjectionKind, MirRvalue, MirRvalueKind, MirStatement,
+    MirStatementKind, MirTag, MirTerminator, MirTerminatorKind, verify_mir,
 };
 use crate::resolve::{MemberOwner, ResolvedProgram, SymbolId, SymbolKind};
 use crate::source::Span;
@@ -2452,6 +2452,10 @@ fn lower_function(
         .loans()
         .map(|loan| {
             Ok(bc::BytecodeLoan {
+                kind: match loan.kind() {
+                    MirLoanKind::CallLocal => bc::BytecodeLoanKind::CallLocal,
+                    MirLoanKind::Region => bc::BytecodeLoanKind::Region,
+                },
                 mode: parameter_mode(loan.mode()),
                 place: lower_place(loan.place(), context, type_map)?,
             })
@@ -2680,6 +2684,9 @@ fn lower_place(
             .iter()
             .map(|projection| lower_projection(projection, context, type_map))
             .collect::<Result<_, BytecodeError>>()?,
+        source_loan: place
+            .source_loan()
+            .map(|loan| bc::BytecodeLoanId::new(loan.index())),
     })
 }
 
@@ -5293,7 +5300,7 @@ mod tests {
         assert!(
             error
                 .message()
-                .contains("cleanup block manipulates a call-local loan"),
+                .contains("cleanup block manipulates a loan reservation"),
             "{error}"
         );
 
@@ -5400,6 +5407,166 @@ mod tests {
         condition.kind = bc::BytecodeOperandKind::Loan(bc::BytecodeLoanId::new(0));
         let error = bc::verify_bytecode(&program).unwrap_err();
         assert!(error.message().contains("terminator"), "{error}");
+    }
+
+    #[test]
+    fn borrow_pattern_regions_survive_bytecode_lowering_and_runtime_checks() {
+        let source = "type Pair = { left: Int, right: Int }\n\
+                      fn inspect(value: ref Int) {}\n\
+                      fn abandonBorrow(value: ref Int, after: Unit) {}\n\
+                      fn abandon(pair: var Pair) {\n\
+                          match pair {\n\
+                              Pair { ref left, right: _ } => {\n\
+                                  abandonBorrow(ref left, {\n\
+                                      return\n\
+                                  })\n\
+                              }\n\
+                          }\n\
+                      }\n\
+                      fn execute(): Int {\n\
+                          var pair = Pair { left: 1, right: 2 }\n\
+                          match pair {\n\
+                              Pair { ref left, right: _ } => {\n\
+                                  if pair.right == 2 {\n\
+                                      match left {\n\
+                                          ref nested => inspect(ref nested)\n\
+                                      }\n\
+                                  }\n\
+                                  pair.left = 7\n\
+                              }\n\
+                          }\n\
+                          pair.left\n\
+                      }\n";
+        let program = lowered(source);
+        let function_id = program
+            .callables
+            .iter()
+            .find(|callable| callable.name.ends_with("::value::execute"))
+            .and_then(|callable| callable.implementation)
+            .unwrap();
+        let function = &program.functions[function_id.index() as usize];
+        let regions = function
+            .loans
+            .iter()
+            .enumerate()
+            .filter(|(_, loan)| loan.kind == bc::BytecodeLoanKind::Region)
+            .map(|(index, loan)| (bc::BytecodeLoanId::new(index as u32), loan))
+            .collect::<Vec<_>>();
+        assert_eq!(regions.len(), 2);
+        let (region, region_loan) = regions[0];
+        let (nested_region, nested_loan) = regions[1];
+        assert_eq!(region_loan.mode, bc::BytecodeParameterMode::Ref);
+        assert_eq!(nested_loan.place.source_loan, Some(region));
+        assert!(function.loans.iter().any(|loan| {
+            loan.kind == bc::BytecodeLoanKind::CallLocal
+                && loan.place.source_loan == Some(nested_region)
+        }));
+        assert!(function.blocks.iter().any(|block| {
+            block.instructions.iter().any(|instruction| {
+                matches!(
+                    instruction.kind,
+                    bc::BytecodeInstructionKind::ReleaseLoan(id) if id == region
+                )
+            })
+        }));
+        let abandon = program
+            .callables
+            .iter()
+            .find(|callable| callable.name.ends_with("::value::abandon"))
+            .and_then(|callable| callable.implementation)
+            .map(|function| &program.functions[function.index() as usize])
+            .unwrap();
+        let abandon_region = abandon
+            .loans
+            .iter()
+            .position(|loan| loan.kind == bc::BytecodeLoanKind::Region)
+            .map(|index| bc::BytecodeLoanId::new(index as u32))
+            .unwrap();
+        let abandoned_call = abandon
+            .loans
+            .iter()
+            .position(|loan| {
+                loan.kind == bc::BytecodeLoanKind::CallLocal
+                    && loan.place.source_loan == Some(abandon_region)
+            })
+            .map(|index| bc::BytecodeLoanId::new(index as u32))
+            .unwrap();
+        assert!(abandon.blocks.iter().any(|block| {
+            block.instructions.windows(2).any(|instructions| {
+                matches!(
+                    instructions[0].kind,
+                    bc::BytecodeInstructionKind::ReleaseLoan(id) if id == abandoned_call
+                ) && matches!(
+                    instructions[1].kind,
+                    bc::BytecodeInstructionKind::ReleaseLoan(id) if id == abandon_region
+                )
+            })
+        }));
+        let disassembly = bc::disassemble(&program);
+        assert!(disassembly.contains("Region Ref"));
+        assert!(disassembly.contains(&format!("@l{}", region.index())));
+        assert_eq!(
+            execute_function(source, "execute"),
+            RuntimeValue::Integer(7)
+        );
+
+        let mut forged = lowered(source);
+        let function_id = forged
+            .callables
+            .iter()
+            .find(|callable| callable.name.ends_with("::value::execute"))
+            .and_then(|callable| callable.implementation)
+            .unwrap();
+        let function = &mut forged.functions[function_id.index() as usize];
+        let region = function
+            .loans
+            .iter()
+            .position(|loan| loan.kind == bc::BytecodeLoanKind::Region)
+            .map(|index| bc::BytecodeLoanId::new(index as u32))
+            .unwrap();
+        let nested_region = function
+            .loans
+            .iter()
+            .enumerate()
+            .find(|(_, loan)| {
+                loan.kind == bc::BytecodeLoanKind::Region && loan.place.source_loan == Some(region)
+            })
+            .map(|(index, _)| bc::BytecodeLoanId::new(index as u32))
+            .unwrap();
+        for block in &mut function.blocks {
+            block.instructions.retain(|instruction| {
+                !matches!(
+                    instruction.kind,
+                    bc::BytecodeInstructionKind::ReleaseLoan(id) if id == region
+                )
+            });
+        }
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.instructions
+                    .iter()
+                    .position(|instruction| {
+                        matches!(
+                            instruction.kind,
+                            bc::BytecodeInstructionKind::ReserveLoan(id) if id == nested_region
+                        )
+                    })
+                    .map(|index| (block, index))
+            })
+            .unwrap();
+        let span = function.blocks[block].instructions[index].span;
+        function.blocks[block].instructions.insert(
+            index + 1,
+            bc::BytecodeInstruction {
+                span,
+                kind: bc::BytecodeInstructionKind::ReleaseLoan(region),
+            },
+        );
+        let error = bc::verify_bytecode(&forged).unwrap_err();
+        assert!(error.message().contains("dependent loan"), "{error}");
     }
 
     #[test]
@@ -5687,6 +5854,7 @@ mod tests {
                             slot: duplicate,
                             ty: state.ty,
                             projections: Vec::new(),
+                            source_loan: None,
                         },
                         value: bc::BytecodeRvalue {
                             ty: state.ty,
@@ -5929,6 +6097,7 @@ mod tests {
                 slot: left_slot,
                 ty: function_type,
                 projections: Vec::new(),
+                source_loan: None,
             }),
         };
         *right = bc::BytecodeOperand {
@@ -5937,6 +6106,7 @@ mod tests {
                 slot: right_slot,
                 ty: function_type,
                 projections: Vec::new(),
+                source_loan: None,
             }),
         };
         let error = bc::verify_bytecode(&operation).unwrap_err();

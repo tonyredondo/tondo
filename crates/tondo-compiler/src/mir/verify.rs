@@ -17,7 +17,7 @@ use crate::types::{
 
 use super::{
     MirAggregateKind, MirBasicBlock, MirBlockId, MirBlockKind, MirFunction, MirFunctionId,
-    MirLoanId, MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation,
+    MirLoanId, MirLoanKind, MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation,
     MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind, MirRvalue,
     MirRvalueKind, MirStatementKind, MirTag, MirTerminatorKind,
 };
@@ -193,6 +193,7 @@ enum LoanEvent {
 struct LocalAccess {
     local: MirLocalId,
     path: Vec<MovePathComponent>,
+    source_loan: Option<MirLoanId>,
 }
 
 impl LocalAccess {
@@ -204,6 +205,7 @@ impl LocalAccess {
                 .iter()
                 .map(MovePathComponent::from_projection)
                 .collect(),
+            source_loan: place.source_loan,
         }
     }
 }
@@ -583,6 +585,24 @@ impl Verifier<'_> {
                     "loan metadata uses the owning value mode",
                 ));
             }
+            match loan.kind {
+                MirLoanKind::CallLocal => {}
+                MirLoanKind::Region if loan.mode == ParameterMode::Ref => {}
+                MirLoanKind::Region => {
+                    return Err(MirInvariantError::new(
+                        &loan_context,
+                        "region loan is not a shared `ref` reservation",
+                    ));
+                }
+            }
+            if let Some(source) = loan.place.source_loan
+                && source.index() as usize >= index
+            {
+                return Err(MirInvariantError::new(
+                    &loan_context,
+                    "loan source region is not an earlier acyclic reservation",
+                ));
+            }
             self.verify_place(function, &loan.place, &loan_context)?;
             if loan.place.projections.iter().any(|projection| {
                 matches!(
@@ -827,7 +847,7 @@ impl Verifier<'_> {
                     if block.kind != MirBlockKind::Normal {
                         return Err(MirInvariantError::new(
                             &context,
-                            "cleanup block manipulates a call-local loan",
+                            "cleanup block manipulates a loan reservation",
                         ));
                     }
                     self.loan(function, *loan, &context)?;
@@ -1717,6 +1737,12 @@ impl Verifier<'_> {
             }
             MirOperandKind::Loan(loan) => {
                 let loan = self.loan(function, *loan, context)?;
+                if loan.kind != MirLoanKind::CallLocal {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "region loan cannot be consumed as a call argument",
+                    ));
+                }
                 if loan.place.ty != operand.ty {
                     return Err(MirInvariantError::new(
                         context,
@@ -1882,6 +1908,23 @@ impl Verifier<'_> {
                     place.ty
                 ),
             ));
+        }
+        if let Some(source) = place.source_loan {
+            let source = self.loan(function, source, context)?;
+            if source.kind != MirLoanKind::Region || source.mode != ParameterMode::Ref {
+                return Err(MirInvariantError::new(
+                    context,
+                    "place source is not a shared region loan",
+                ));
+            }
+            let source = LocalAccess::from_place(&source.place);
+            let access = LocalAccess::from_place(place);
+            if source.local != access.local || !move_path_is_prefix(&source.path, &access.path) {
+                return Err(MirInvariantError::new(
+                    context,
+                    "place escapes the source region's reserved path",
+                ));
+            }
         }
         Ok(())
     }
@@ -3502,12 +3545,17 @@ impl Verifier<'_> {
             }
         }
         for index in 0..function.loans.len() {
-            if reservations[index] != 1 || consumptions[index] > 1 {
+            let loan = &function.loans[index];
+            let valid_consumptions = match loan.kind {
+                MirLoanKind::CallLocal => consumptions[index] <= 1,
+                MirLoanKind::Region => consumptions[index] == 0,
+            };
+            if reservations[index] != 1 || !valid_consumptions {
                 return Err(MirInvariantError::new(
                     format!("{context} loan#{index}"),
                     format!(
-                        "has {} reservations and {} call consumptions; expected exactly one reservation and at most one call consumption",
-                        reservations[index], consumptions[index]
+                        "has {} reservations and {} call consumptions, which violates its {:?} contract",
+                        reservations[index], consumptions[index], loan.kind
                     ),
                 ));
             }
@@ -3540,7 +3588,7 @@ impl Verifier<'_> {
                     Some(existing) if existing != &edge_state => {
                         return Err(MirInvariantError::new(
                             format!("{context} block#{}", target.index()),
-                            "control-flow predecessors disagree about active call-local loans",
+                            "control-flow predecessors disagree about active loans",
                         ));
                     }
                     Some(_) => {}
@@ -3669,18 +3717,44 @@ impl Verifier<'_> {
                 Ok(())
             }
             LoanEvent::Release(loan) => {
-                if state.remove(loan) {
-                    Ok(())
-                } else {
-                    Err(MirInvariantError::new(
+                if !state.contains(loan) {
+                    return Err(MirInvariantError::new(
                         context,
                         format!("releases inactive loan#{}", loan.index()),
-                    ))
+                    ));
                 }
+                if let Some(dependent) =
+                    self.active_dependent_loan(function, state, *loan, context)?
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        format!(
+                            "releases source region loan#{} while dependent loan#{} remains active",
+                            loan.index(),
+                            dependent.index()
+                        ),
+                    ));
+                }
+                state.remove(loan);
+                Ok(())
             }
             LoanEvent::Consume(loans) => {
                 let mut seen = BTreeSet::new();
                 for loan in loans {
+                    let metadata = self.loan(function, *loan, context)?;
+                    if metadata.kind != MirLoanKind::CallLocal {
+                        return Err(MirInvariantError::new(
+                            context,
+                            format!("call consumes region loan#{}", loan.index()),
+                        ));
+                    }
+                    self.verify_source_loan_access(
+                        function,
+                        state,
+                        &LocalAccess::from_place(&metadata.place),
+                        "read",
+                        context,
+                    )?;
                     if !seen.insert(*loan) || !state.remove(loan) {
                         return Err(MirInvariantError::new(
                             context,
@@ -3691,6 +3765,36 @@ impl Verifier<'_> {
                 Ok(())
             }
         }
+    }
+
+    fn active_dependent_loan(
+        &self,
+        function: &MirFunction,
+        state: &BTreeSet<MirLoanId>,
+        source: MirLoanId,
+        context: &str,
+    ) -> Result<Option<MirLoanId>, MirInvariantError> {
+        for candidate in state
+            .iter()
+            .copied()
+            .filter(|candidate| *candidate != source)
+        {
+            let mut parent = self.loan(function, candidate, context)?.place.source_loan;
+            let mut seen = BTreeSet::new();
+            while let Some(id) = parent {
+                if id == source {
+                    return Ok(Some(candidate));
+                }
+                if !seen.insert(id) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "loan source region chain contains a cycle",
+                    ));
+                }
+                parent = self.loan(function, id, context)?.place.source_loan;
+            }
+        }
+        Ok(None)
     }
 
     fn verify_loan_local_access(
@@ -3708,6 +3812,7 @@ impl Verifier<'_> {
                 let access = LocalAccess {
                     local: *local,
                     path: Vec::new(),
+                    source_loan: None,
                 };
                 return self.verify_active_loan_access(
                     function,
@@ -3719,6 +3824,7 @@ impl Verifier<'_> {
             }
         };
         let access = access.expect("access events carry a place");
+        self.verify_source_loan_access(function, state, access, access_kind, context)?;
         if let Some(mode) = self.parameter_mode(function, access.local, context)? {
             if access_kind == "move" && mode != ParameterMode::Value {
                 return Err(MirInvariantError::new(
@@ -3734,6 +3840,51 @@ impl Verifier<'_> {
             }
         }
         self.verify_active_loan_access(function, state, access, access_kind, context)
+    }
+
+    fn verify_source_loan_access(
+        &self,
+        function: &MirFunction,
+        state: &BTreeSet<MirLoanId>,
+        access: &LocalAccess,
+        access_kind: &str,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let Some(mut source) = access.source_loan else {
+            return Ok(());
+        };
+        if access_kind != "read" {
+            return Err(MirInvariantError::new(
+                context,
+                format!("{access_kind} uses a shared region reference"),
+            ));
+        }
+        let mut seen = BTreeSet::new();
+        loop {
+            if !seen.insert(source) {
+                return Err(MirInvariantError::new(
+                    context,
+                    "place source region chain contains a cycle",
+                ));
+            }
+            if !state.contains(&source) {
+                return Err(MirInvariantError::new(
+                    context,
+                    format!("read uses inactive source region loan#{}", source.index()),
+                ));
+            }
+            let loan = self.loan(function, source, context)?;
+            if loan.kind != MirLoanKind::Region || loan.mode != ParameterMode::Ref {
+                return Err(MirInvariantError::new(
+                    context,
+                    "place source is not a shared region loan",
+                ));
+            }
+            let Some(parent) = loan.place.source_loan else {
+                return Ok(());
+            };
+            source = parent;
+        }
     }
 
     fn verify_active_loan_access(
@@ -3798,6 +3949,16 @@ impl Verifier<'_> {
         loan: &super::MirLoan,
         context: &str,
     ) -> Result<Option<ParameterMode>, MirInvariantError> {
+        if let Some(source) = loan.place().source_loan() {
+            let source = self.loan(function, source, context)?;
+            if source.kind() != MirLoanKind::Region {
+                return Err(MirInvariantError::new(
+                    context,
+                    "reborrow source is not a region loan",
+                ));
+            }
+            return Ok(Some(source.mode()));
+        }
         if let MirFunctionId::Closure(closure_id) = function.id
             && function.parameters.first() == Some(&loan.place().local())
             && let Some(MirProjectionKind::ClosureCapture { closure, index }) =
@@ -4220,6 +4381,7 @@ impl Verifier<'_> {
             MirTerminatorKind::Return => events.push(LocalEvent::Read(LocalAccess {
                 local: function.return_local,
                 path: Vec::new(),
+                source_loan: None,
             })),
         }
         events
@@ -4359,6 +4521,7 @@ fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEve
         MirTerminatorKind::Return => local.push(LocalEvent::Read(LocalAccess {
             local: function.return_local,
             path: Vec::new(),
+            source_loan: None,
         })),
     }
     events.extend(local.into_iter().map(LoanEvent::Local));
@@ -4603,6 +4766,7 @@ fn push_tag_place(
                     place.projections[index - 1].ty
                 },
                 projections: place.projections[..index].to_vec(),
+                source_loan: place.source_loan,
             };
             events.push(TagEvent::Require(TagFact { place: base, tag }));
         }
@@ -5049,12 +5213,14 @@ fn push_projection_index_events(place: &MirPlace, events: &mut Vec<LocalEvent>) 
             MirProjectionKind::Index { index, .. } => events.push(LocalEvent::Read(LocalAccess {
                 local: *index,
                 path: Vec::new(),
+                source_loan: None,
             })),
             MirProjectionKind::Slice { start, end, step } => {
                 events.extend(start.iter().chain(end).chain(step).copied().map(|local| {
                     LocalEvent::Read(LocalAccess {
                         local,
                         path: Vec::new(),
+                        source_loan: None,
                     })
                 }));
             }

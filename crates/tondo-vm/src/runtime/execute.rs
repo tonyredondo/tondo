@@ -6,12 +6,12 @@ use crate::bytecode::{
     BytecodeConstantValue, BytecodeConstantValueKind, BytecodeConstantVariantValue,
     BytecodeContainmentKind, BytecodeCursorMode, BytecodeFunctionId, BytecodeIndexAccess,
     BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeLoanId,
-    BytecodeNumericConversion, BytecodeOperand, BytecodeOperandKind, BytecodeOperation,
-    BytecodeOperationKind, BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator,
-    BytecodeProgram, BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
-    BytecodeRvalueKind, BytecodeScalarType, BytecodeSpan, BytecodeTag, BytecodeTerminator,
-    BytecodeTerminatorKind, BytecodeTypeId, BytecodeTypeKind, BytecodeVerificationLimits,
-    verify_bytecode_with_limits,
+    BytecodeLoanKind, BytecodeNumericConversion, BytecodeOperand, BytecodeOperandKind,
+    BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode, BytecodePlace,
+    BytecodePrefixOperator, BytecodeProgram, BytecodeProjection, BytecodeProjectionKind,
+    BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind, BytecodeScalarType, BytecodeSpan,
+    BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind, BytecodeTypeId, BytecodeTypeKind,
+    BytecodeVerificationLimits, verify_bytecode_with_limits,
 };
 
 use super::heap::{Heap, HeapHandle, HeapObject};
@@ -374,17 +374,29 @@ impl<'program, 'host> Engine<'program, 'host> {
                 "ReserveLoan uses the owning value parameter mode",
             ));
         }
-        if let Some(source) = self.root_loan(frame, loan.place.slot)? {
+        if loan.kind == BytecodeLoanKind::Region && loan.mode != BytecodeParameterMode::Ref {
+            return Err(VmError::invariant(
+                "a region reservation is not shared `ref`",
+            ));
+        }
+        let source_mode =
+            if let Some(mode) = self.validate_source_regions(frame, &loan.place, true)? {
+                Some(mode)
+            } else {
+                self.root_loan(frame, loan.place.slot)?
+                    .map(|source| source.mode)
+            };
+        if let Some(source) = source_mode {
             let compatible = match loan.mode {
                 BytecodeParameterMode::Value => false,
                 BytecodeParameterMode::Ref => true,
                 BytecodeParameterMode::Mut => matches!(
-                    source.mode,
+                    source,
                     BytecodeParameterMode::Mut | BytecodeParameterMode::Var
                 ),
                 BytecodeParameterMode::Var => {
-                    source.mode == BytecodeParameterMode::Var
-                        || source.mode == BytecodeParameterMode::Mut
+                    source == BytecodeParameterMode::Var
+                        || source == BytecodeParameterMode::Mut
                             && !loan.place.projections.is_empty()
                 }
             };
@@ -432,6 +444,59 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn release_loan(&mut self, frame: usize, id: BytecodeLoanId) -> Result<(), VmError> {
+        let dependent = {
+            let frame = self
+                .frames
+                .get(frame)
+                .ok_or_else(|| VmError::invariant("ReleaseLoan escaped the current frame"))?;
+            let function = self
+                .program
+                .function(frame.function)
+                .ok_or_else(|| VmError::invariant("loan frame has an invalid function"))?;
+            let mut dependent = None;
+            for (index, reservation) in frame.loans.iter().enumerate() {
+                if reservation.is_none() || index == id.index() as usize {
+                    continue;
+                }
+                let candidate = BytecodeLoanId::new(index as u32);
+                let mut parent = function
+                    .loans
+                    .get(index)
+                    .ok_or_else(|| VmError::invariant("active loan has no metadata"))?
+                    .place
+                    .source_loan;
+                let mut remaining = function.loans.len();
+                while let Some(source) = parent {
+                    if source == id {
+                        dependent = Some(candidate);
+                        break;
+                    }
+                    if remaining == 0 {
+                        return Err(VmError::invariant(
+                            "loan source region chain contains a cycle",
+                        ));
+                    }
+                    remaining -= 1;
+                    parent = function
+                        .loans
+                        .get(source.index() as usize)
+                        .ok_or_else(|| VmError::invariant("loan source region is invalid"))?
+                        .place
+                        .source_loan;
+                }
+                if dependent.is_some() {
+                    break;
+                }
+            }
+            dependent
+        };
+        if let Some(dependent) = dependent {
+            return Err(VmError::invariant(format!(
+                "ReleaseLoan closes source loan#{} while dependent loan#{} remains active",
+                id.index(),
+                dependent.index()
+            )));
+        }
         let reservation = self
             .frames
             .get_mut(frame)
@@ -728,6 +793,68 @@ impl<'program, 'host> Engine<'program, 'host> {
                 Ok(None)
             }
             None => Err(VmError::invariant("read from an invalid frame slot")),
+        }
+    }
+
+    fn validate_source_regions(
+        &self,
+        frame: usize,
+        place: &BytecodePlace,
+        read_only: bool,
+    ) -> Result<Option<BytecodeParameterMode>, VmError> {
+        let Some(mut source) = place.source_loan else {
+            return Ok(None);
+        };
+        if !read_only {
+            return Err(VmError::invariant(
+                "a move or write attempted to use a shared region reference",
+            ));
+        }
+        let function_id = self
+            .frames
+            .get(frame)
+            .ok_or_else(|| VmError::invariant("region access escaped the current frame"))?
+            .function;
+        let function = self
+            .program
+            .function(function_id)
+            .ok_or_else(|| VmError::invariant("region frame has an invalid function"))?;
+        let first_mode = function
+            .loans
+            .get(source.index() as usize)
+            .map(|loan| loan.mode)
+            .ok_or_else(|| VmError::invariant("place references an invalid source region"))?;
+        let mut visited = Vec::new();
+        loop {
+            if visited.contains(&source) {
+                return Err(VmError::invariant(
+                    "place source region chain contains a cycle",
+                ));
+            }
+            visited.push(source);
+            let loan = function
+                .loans
+                .get(source.index() as usize)
+                .ok_or_else(|| VmError::invariant("place references an invalid source region"))?;
+            if loan.kind != BytecodeLoanKind::Region || loan.mode != BytecodeParameterMode::Ref {
+                return Err(VmError::invariant(
+                    "place source is not a shared region reservation",
+                ));
+            }
+            let reservation = self.frames[frame]
+                .loans
+                .get(source.index() as usize)
+                .and_then(Option::as_ref)
+                .ok_or_else(|| VmError::invariant("place uses an inactive source region"))?;
+            if reservation.mode != loan.mode {
+                return Err(VmError::invariant(
+                    "source region metadata differs from its active reservation",
+                ));
+            }
+            let Some(parent) = loan.place.source_loan else {
+                return Ok(Some(first_mode));
+            };
+            source = parent;
         }
     }
 
@@ -1772,6 +1899,7 @@ impl Engine<'_, '_> {
 
 impl Engine<'_, '_> {
     fn read_place(&mut self, frame: usize, place: &BytecodePlace) -> Result<Value, VmError> {
+        self.validate_source_regions(frame, place, true)?;
         let mut value = self.read_slot(frame, place.slot)?.clone();
         if let Value::Loan(loan) = value {
             value = self.read_place(loan.frame, &loan.place)?;
@@ -1783,6 +1911,7 @@ impl Engine<'_, '_> {
     }
 
     fn take_place(&mut self, frame: usize, place: &BytecodePlace) -> Result<Value, VmError> {
+        self.validate_source_regions(frame, place, false)?;
         if self.root_loan(frame, place.slot)?.is_some() {
             return Err(VmError::invariant(
                 "a move attempted to transfer borrowed content",
@@ -1804,6 +1933,7 @@ impl Engine<'_, '_> {
         place: &BytecodePlace,
         value: Value,
     ) -> Result<(), VmError> {
+        self.validate_source_regions(frame, place, false)?;
         if let Some(loan) = self.root_loan(frame, place.slot)? {
             if loan.mode == BytecodeParameterMode::Ref {
                 return Err(VmError::invariant(
@@ -2258,6 +2388,7 @@ impl Engine<'_, '_> {
         place: &BytecodePlace,
         for_write: bool,
     ) -> Result<ResolvedPlacePath, PlaceFailure> {
+        self.validate_source_regions(frame, place, !for_write)?;
         let root_loan = self.root_loan(frame, place.slot)?;
         let mut path = if let Some(loan) = &root_loan {
             if for_write && loan.mode == BytecodeParameterMode::Ref {
@@ -3040,6 +3171,12 @@ impl Engine<'_, '_> {
                                 VmError::invariant("call references an invalid loan operand")
                             })?
                     };
+                    if loan.kind != BytecodeLoanKind::CallLocal {
+                        return Err(VmError::invariant(
+                            "a call attempted to consume a region reservation",
+                        ));
+                    }
+                    self.validate_source_regions(frame, &loan.place, true)?;
                     let reservation = self.frames[frame]
                         .loans
                         .get(id.index() as usize)

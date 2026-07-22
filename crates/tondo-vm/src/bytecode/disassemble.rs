@@ -74,7 +74,8 @@ pub fn disassemble(program: &BytecodeProgram) -> String {
         for (loan_index, loan) in function.loans.iter().enumerate() {
             writeln!(
                 output,
-                "  loan l{loan_index}: {:?} {}",
+                "  loan l{loan_index}: {:?} {:?} {}",
+                loan.kind,
                 loan.mode,
                 place_text(&loan.place)
             )
@@ -183,12 +184,17 @@ fn terminator_text(terminator: &BytecodeTerminatorKind) -> String {
 }
 
 fn place_text(place: &BytecodePlace) -> String {
+    let source = place
+        .source_loan
+        .map(|loan| format!("@l{}", loan.index()))
+        .unwrap_or_default();
     if place.projections.is_empty() {
-        format!("s{}:t{}", place.slot.index(), place.ty.index())
+        format!("s{}{}:t{}", place.slot.index(), source, place.ty.index())
     } else {
         format!(
-            "s{}{:?}:t{}",
+            "s{}{}{:?}:t{}",
             place.slot.index(),
+            source,
             place
                 .projections
                 .iter()

@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::hir::{
     CapabilityAnalysis, CapabilityAssumptions, HirAssignmentOperator, HirAssignmentTarget,
@@ -16,10 +16,10 @@ use crate::types::{ScalarType, TypeId, TypeKind};
 use super::{
     MirAggregateKind, MirAssertMessagePart, MirBasicBlock, MirBlockId, MirBlockKind,
     MirBootstrapHostFunction, MirCallArgument, MirConstant, MirError, MirFunction, MirFunctionId,
-    MirLoan, MirLoanId, MirLocal, MirLocalId, MirLocalKind, MirOperand, MirOperandKind,
-    MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind,
-    MirRvalue, MirRvalueKind, MirStatement, MirStatementKind, MirTag, MirTerminator,
-    MirTerminatorKind, MirVerificationLimits, verify_mir_with_capability_analysis,
+    MirLoan, MirLoanId, MirLoanKind, MirLocal, MirLocalId, MirLocalKind, MirOperand,
+    MirOperandKind, MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection,
+    MirProjectionKind, MirRvalue, MirRvalueKind, MirStatement, MirStatementKind, MirTag,
+    MirTerminator, MirTerminatorKind, MirVerificationLimits, verify_mir_with_capability_analysis,
     verify_mir_with_limits,
 };
 
@@ -378,6 +378,7 @@ impl<'a> FunctionBuilder<'a> {
             let span = self.expression(root)?.span();
             self.terminate(end, span, MirTerminatorKind::Return)?;
         }
+        self.infer_region_releases()?;
         let mut blocks = Vec::with_capacity(self.blocks.len());
         for block in self.blocks {
             let terminator = block.terminator.ok_or_else(|| MirError::Construction {
@@ -2735,13 +2736,23 @@ impl<'a> FunctionBuilder<'a> {
             }
             HirPatternKind::BorrowBinding(local) => {
                 let place = self.operand_place(source, span)?;
-                if let Some(previous) = self.borrow_aliases.insert(*local, place.clone())
-                    && previous != place
-                {
-                    return Err(MirError::Construction {
-                        span,
-                        message: "borrow pattern local changed its projected source".into(),
-                    });
+                if let Some(previous) = self.borrow_aliases.get(local) {
+                    let loan = previous
+                        .source_loan
+                        .and_then(|loan| self.loans.get(loan.index() as usize))
+                        .ok_or_else(|| MirError::Construction {
+                            span,
+                            message: "borrow pattern local lost its inferred region".into(),
+                        })?;
+                    if loan.kind != MirLoanKind::Region || loan.place != place {
+                        return Err(MirError::Construction {
+                            span,
+                            message: "borrow pattern local changed its projected source".into(),
+                        });
+                    }
+                } else {
+                    let borrowed = self.reserve_region_loan(block, span, place)?;
+                    self.borrow_aliases.insert(*local, borrowed);
                 }
             }
             HirPatternKind::Tuple(items) => {
@@ -3515,6 +3526,41 @@ impl<'a> FunctionBuilder<'a> {
                 message: "a value parameter cannot reserve a loan".into(),
             });
         }
+        let ty = place.ty;
+        let id = self.allocate_loan(span, MirLoanKind::CallLocal, mode, place)?;
+        self.push_statement(block, span, MirStatementKind::ReserveLoan(id))?;
+        self.active_loans.push(id);
+        Ok(MirOperand {
+            ty,
+            kind: MirOperandKind::Loan(id),
+        })
+    }
+
+    fn reserve_region_loan(
+        &mut self,
+        block: MirBlockId,
+        span: Span,
+        place: MirPlace,
+    ) -> Result<MirPlace, MirError> {
+        let id = self.allocate_loan(
+            span,
+            MirLoanKind::Region,
+            crate::types::ParameterMode::Ref,
+            place.clone(),
+        )?;
+        self.push_statement(block, span, MirStatementKind::ReserveLoan(id))?;
+        let mut borrowed = place;
+        borrowed.source_loan = Some(id);
+        Ok(borrowed)
+    }
+
+    fn allocate_loan(
+        &mut self,
+        span: Span,
+        kind: MirLoanKind,
+        mode: crate::types::ParameterMode,
+        place: MirPlace,
+    ) -> Result<MirLoanId, MirError> {
         if self.loans.len() >= self.limits.max_locals_per_function as usize {
             return Err(MirError::NodeLimit {
                 span,
@@ -3527,14 +3573,8 @@ impl<'a> FunctionBuilder<'a> {
                 resource: "loan",
             })?,
         );
-        let ty = place.ty;
-        self.loans.push(MirLoan { mode, place });
-        self.push_statement(block, span, MirStatementKind::ReserveLoan(id))?;
-        self.active_loans.push(id);
-        Ok(MirOperand {
-            ty,
-            kind: MirOperandKind::Loan(id),
-        })
+        self.loans.push(MirLoan { kind, mode, place });
+        Ok(id)
     }
 
     fn release_loans_from(
@@ -3590,6 +3630,261 @@ impl<'a> FunctionBuilder<'a> {
             });
         }
         Ok(())
+    }
+
+    fn infer_region_releases(&mut self) -> Result<(), MirError> {
+        let regions = self
+            .loans
+            .iter()
+            .enumerate()
+            .filter_map(|(index, loan)| {
+                (loan.kind == MirLoanKind::Region).then_some(MirLoanId(index as u32))
+            })
+            .collect::<BTreeSet<_>>();
+        if regions.is_empty() {
+            return Ok(());
+        }
+
+        let original_blocks = self.blocks.len();
+        let successors = (0..original_blocks)
+            .map(|index| {
+                normal_successors(
+                    &self.blocks[index]
+                        .terminator
+                        .as_ref()
+                        .expect("region inference runs after MIR termination")
+                        .kind,
+                )
+            })
+            .collect::<Vec<_>>();
+        let mut predecessors = vec![Vec::new(); original_blocks];
+        for (source, targets) in successors.iter().enumerate() {
+            for target in targets {
+                predecessors[target.index() as usize].push(source);
+            }
+        }
+
+        let mut live_in = vec![BTreeSet::<MirLoanId>::new(); original_blocks];
+        let mut queue = VecDeque::from_iter(0..original_blocks);
+        let mut queued = vec![true; original_blocks];
+        while let Some(index) = queue.pop_front() {
+            queued[index] = false;
+            let mut live = successors[index]
+                .iter()
+                .flat_map(|target| live_in[target.index() as usize].iter().copied())
+                .collect::<BTreeSet<_>>();
+            let block = &self.blocks[index];
+            collect_terminator_region_uses(
+                &block
+                    .terminator
+                    .as_ref()
+                    .expect("region inference runs after MIR termination")
+                    .kind,
+                &self.loans,
+                &mut live,
+            );
+            for statement in block.statements.iter().rev() {
+                transfer_region_liveness(statement, &self.loans, &regions, &mut live);
+            }
+            if live != live_in[index] {
+                live_in[index] = live;
+                for predecessor in &predecessors[index] {
+                    if !queued[*predecessor] {
+                        queued[*predecessor] = true;
+                        queue.push_back(*predecessor);
+                    }
+                }
+            }
+        }
+
+        for (index, block_successors) in successors.iter().enumerate().take(original_blocks) {
+            let (terminator_span, terminator_kind) = {
+                let terminator = self.blocks[index]
+                    .terminator
+                    .as_ref()
+                    .expect("region inference runs after MIR termination");
+                (terminator.span, terminator.kind.clone())
+            };
+            let mut live_after_terminator = block_successors
+                .iter()
+                .flat_map(|target| live_in[target.index() as usize].iter().copied())
+                .collect::<BTreeSet<_>>();
+            let mut terminator_uses = BTreeSet::new();
+            collect_terminator_region_uses(&terminator_kind, &self.loans, &mut terminator_uses);
+            let mut live_before_terminator = live_after_terminator.clone();
+            live_before_terminator.extend(terminator_uses);
+
+            let statements = &self.blocks[index].statements;
+            let mut live_after_statements = vec![BTreeSet::new(); statements.len()];
+            let mut live = std::mem::take(&mut live_after_terminator);
+            live.extend(collect_terminator_region_use_set(
+                &terminator_kind,
+                &self.loans,
+            ));
+            for (statement_index, statement) in statements.iter().enumerate().rev() {
+                live_after_statements[statement_index] = live.clone();
+                transfer_region_liveness(statement, &self.loans, &regions, &mut live);
+            }
+
+            let old = std::mem::take(&mut self.blocks[index].statements);
+            let mut rebuilt = Vec::with_capacity(old.len());
+            for (statement_index, statement) in old.into_iter().enumerate() {
+                let mut uses = BTreeSet::new();
+                collect_statement_region_uses(&statement.kind, &self.loans, &mut uses);
+                let mut releases = uses
+                    .difference(&live_after_statements[statement_index])
+                    .copied()
+                    .collect::<BTreeSet<_>>();
+                if let MirStatementKind::ReserveLoan(id) = &statement.kind
+                    && regions.contains(id)
+                    && !live_after_statements[statement_index].contains(id)
+                {
+                    releases.insert(*id);
+                }
+                let span = statement.span;
+                rebuilt.push(statement);
+                for loan in releases.iter().rev().copied() {
+                    rebuilt.push(MirStatement {
+                        span,
+                        kind: MirStatementKind::ReleaseLoan(loan),
+                    });
+                    self.statement_count =
+                        self.statement_count
+                            .checked_add(1)
+                            .ok_or(MirError::NodeLimit {
+                                span,
+                                resource: "statement",
+                            })?;
+                    if self.statement_count > self.limits.max_statements_per_function {
+                        return Err(MirError::NodeLimit {
+                            span,
+                            resource: "statement",
+                        });
+                    }
+                }
+            }
+            self.blocks[index].statements = rebuilt;
+
+            let rewritten = self.rewrite_region_release_edges(
+                terminator_kind,
+                terminator_span,
+                &live_before_terminator,
+                &live_in,
+            )?;
+            self.blocks[index]
+                .terminator
+                .as_mut()
+                .expect("region inference retains every terminator")
+                .kind = rewritten;
+        }
+        Ok(())
+    }
+
+    fn rewrite_region_release_edges(
+        &mut self,
+        kind: MirTerminatorKind,
+        span: Span,
+        live: &BTreeSet<MirLoanId>,
+        live_in: &[BTreeSet<MirLoanId>],
+    ) -> Result<MirTerminatorKind, MirError> {
+        let target = |builder: &mut Self, target: MirBlockId| {
+            let releases = live
+                .difference(&live_in[target.index() as usize])
+                .copied()
+                .collect::<BTreeSet<_>>();
+            builder.region_release_edge(target, &releases, span)
+        };
+        Ok(match kind {
+            MirTerminatorKind::Goto { target: next } => MirTerminatorKind::Goto {
+                target: target(self, next)?,
+            },
+            MirTerminatorKind::SwitchBool {
+                condition,
+                if_true,
+                if_false,
+            } => MirTerminatorKind::SwitchBool {
+                condition,
+                if_true: target(self, if_true)?,
+                if_false: target(self, if_false)?,
+            },
+            MirTerminatorKind::SwitchTag {
+                value,
+                cases,
+                otherwise,
+            } => MirTerminatorKind::SwitchTag {
+                value,
+                cases: cases
+                    .into_iter()
+                    .map(|(tag, next)| Ok((tag, target(self, next)?)))
+                    .collect::<Result<_, MirError>>()?,
+                otherwise: target(self, otherwise)?,
+            },
+            MirTerminatorKind::Invoke {
+                operation,
+                destination,
+                target: next,
+                unwind,
+            } => MirTerminatorKind::Invoke {
+                operation,
+                destination,
+                target: next.map(|next| target(self, next)).transpose()?,
+                unwind,
+            },
+            MirTerminatorKind::IteratorNext {
+                state,
+                destination,
+                has_value,
+                exhausted,
+                unwind,
+            } => MirTerminatorKind::IteratorNext {
+                state,
+                destination,
+                has_value: target(self, has_value)?,
+                exhausted: target(self, exhausted)?,
+                unwind,
+            },
+            MirTerminatorKind::ValidatePlaces {
+                places,
+                replacements,
+                for_write,
+                target: next,
+                unwind,
+            } => MirTerminatorKind::ValidatePlaces {
+                places,
+                replacements,
+                for_write,
+                target: target(self, next)?,
+                unwind,
+            },
+            MirTerminatorKind::Return => {
+                if !live.is_empty() {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "a region loan reached return without a last-use release".into(),
+                    });
+                }
+                MirTerminatorKind::Return
+            }
+            MirTerminatorKind::ResumePanic => MirTerminatorKind::ResumePanic,
+            MirTerminatorKind::Unreachable => MirTerminatorKind::Unreachable,
+        })
+    }
+
+    fn region_release_edge(
+        &mut self,
+        target: MirBlockId,
+        releases: &BTreeSet<MirLoanId>,
+        span: Span,
+    ) -> Result<MirBlockId, MirError> {
+        if releases.is_empty() {
+            return Ok(target);
+        }
+        let bridge = self.allocate_block(MirBlockKind::Normal)?;
+        for loan in releases.iter().rev().copied() {
+            self.push_statement(bridge, span, MirStatementKind::ReleaseLoan(loan))?;
+        }
+        self.terminate(bridge, span, MirTerminatorKind::Goto { target })?;
+        Ok(bridge)
     }
 
     fn allocate_block(&mut self, kind: MirBlockKind) -> Result<MirBlockId, MirError> {
@@ -3732,6 +4027,7 @@ impl<'a> FunctionBuilder<'a> {
             local,
             ty: self.locals[local.0 as usize].ty,
             projections: Vec::new(),
+            source_loan: None,
         }
     }
 
@@ -3872,6 +4168,271 @@ impl<'a> FunctionBuilder<'a> {
                 span: self.span,
                 message: format!("missing verified expression#{}", id.index()),
             })
+    }
+}
+
+fn normal_successors(terminator: &MirTerminatorKind) -> Vec<MirBlockId> {
+    match terminator {
+        MirTerminatorKind::Goto { target } => vec![*target],
+        MirTerminatorKind::SwitchBool {
+            if_true, if_false, ..
+        } => vec![*if_true, *if_false],
+        MirTerminatorKind::SwitchTag {
+            cases, otherwise, ..
+        } => cases
+            .iter()
+            .map(|(_, target)| *target)
+            .chain([*otherwise])
+            .collect(),
+        MirTerminatorKind::Invoke { target, .. } => target.iter().copied().collect(),
+        MirTerminatorKind::IteratorNext {
+            has_value,
+            exhausted,
+            ..
+        } => vec![*has_value, *exhausted],
+        MirTerminatorKind::ValidatePlaces { target, .. } => vec![*target],
+        MirTerminatorKind::Return
+        | MirTerminatorKind::ResumePanic
+        | MirTerminatorKind::Unreachable => Vec::new(),
+    }
+}
+
+fn transfer_region_liveness(
+    statement: &MirStatement,
+    loans: &[MirLoan],
+    regions: &BTreeSet<MirLoanId>,
+    live: &mut BTreeSet<MirLoanId>,
+) {
+    if let MirStatementKind::ReserveLoan(id) = statement.kind
+        && regions.contains(&id)
+    {
+        live.remove(&id);
+    }
+    collect_statement_region_uses(&statement.kind, loans, live);
+}
+
+fn collect_statement_region_uses(
+    statement: &MirStatementKind,
+    loans: &[MirLoan],
+    output: &mut BTreeSet<MirLoanId>,
+) {
+    match statement {
+        MirStatementKind::StorageLive(_) | MirStatementKind::StorageDead(_) => {}
+        MirStatementKind::ReserveLoan(id) => {
+            if let Some(loan) = loans.get(id.index() as usize) {
+                collect_place_region_uses(&loan.place, loans, output);
+            }
+        }
+        MirStatementKind::ReleaseLoan(id) => collect_loan_region_uses(*id, loans, output),
+        MirStatementKind::Assign { destination, value } => {
+            collect_rvalue_region_uses(value, loans, output);
+            collect_place_region_uses(destination, loans, output);
+        }
+    }
+}
+
+fn collect_terminator_region_use_set(
+    terminator: &MirTerminatorKind,
+    loans: &[MirLoan],
+) -> BTreeSet<MirLoanId> {
+    let mut output = BTreeSet::new();
+    collect_terminator_region_uses(terminator, loans, &mut output);
+    output
+}
+
+fn collect_terminator_region_uses(
+    terminator: &MirTerminatorKind,
+    loans: &[MirLoan],
+    output: &mut BTreeSet<MirLoanId>,
+) {
+    match terminator {
+        MirTerminatorKind::Goto { .. }
+        | MirTerminatorKind::Return
+        | MirTerminatorKind::ResumePanic
+        | MirTerminatorKind::Unreachable => {}
+        MirTerminatorKind::SwitchBool { condition, .. } => {
+            collect_operand_region_uses(condition, loans, output);
+        }
+        MirTerminatorKind::SwitchTag { value, .. } => {
+            collect_operand_region_uses(value, loans, output);
+        }
+        MirTerminatorKind::Invoke {
+            operation,
+            destination,
+            ..
+        } => {
+            collect_operation_region_uses(operation, loans, output);
+            if let Some(destination) = destination {
+                collect_place_region_uses(destination, loans, output);
+            }
+        }
+        MirTerminatorKind::IteratorNext {
+            state, destination, ..
+        } => {
+            collect_place_region_uses(state, loans, output);
+            collect_place_region_uses(destination, loans, output);
+        }
+        MirTerminatorKind::ValidatePlaces {
+            places,
+            replacements,
+            ..
+        } => {
+            for place in places {
+                collect_place_region_uses(place, loans, output);
+            }
+            for replacement in replacements.iter().flatten() {
+                collect_operand_region_uses(replacement, loans, output);
+            }
+        }
+    }
+}
+
+fn collect_rvalue_region_uses(
+    value: &MirRvalue,
+    loans: &[MirLoan],
+    output: &mut BTreeSet<MirLoanId>,
+) {
+    match &value.kind {
+        MirRvalueKind::Use(operand)
+        | MirRvalueKind::Prefix { operand, .. }
+        | MirRvalueKind::Coerce { value: operand, .. }
+        | MirRvalueKind::NumericConversion { value: operand, .. }
+        | MirRvalueKind::Length(operand)
+        | MirRvalueKind::IteratorState { source: operand } => {
+            collect_operand_region_uses(operand, loans, output);
+        }
+        MirRvalueKind::Binary { left, right, .. }
+        | MirRvalueKind::Range {
+            start: left,
+            end: right,
+            ..
+        }
+        | MirRvalueKind::Contains {
+            item: left,
+            container: right,
+            ..
+        } => {
+            collect_operand_region_uses(left, loans, output);
+            collect_operand_region_uses(right, loans, output);
+        }
+        MirRvalueKind::Aggregate { values, .. } => {
+            for operand in values {
+                collect_operand_region_uses(operand, loans, output);
+            }
+        }
+        MirRvalueKind::RecordUpdate { base, fields } => {
+            collect_operand_region_uses(base, loans, output);
+            for (_, operand) in fields {
+                collect_operand_region_uses(operand, loans, output);
+            }
+        }
+    }
+}
+
+fn collect_operation_region_uses(
+    operation: &MirOperation,
+    loans: &[MirLoan],
+    output: &mut BTreeSet<MirLoanId>,
+) {
+    match &operation.kind {
+        MirOperationKind::CheckedPrefix { operand, .. }
+        | MirOperationKind::ExplicitPanic { message: operand } => {
+            collect_operand_region_uses(operand, loans, output);
+        }
+        MirOperationKind::CheckedBinary { left, right, .. } => {
+            collect_operand_region_uses(left, loans, output);
+            collect_operand_region_uses(right, loans, output);
+        }
+        MirOperationKind::BuildMap { entries, .. } => {
+            for (key, value) in entries {
+                collect_operand_region_uses(key, loans, output);
+                collect_operand_region_uses(value, loans, output);
+            }
+        }
+        MirOperationKind::Index { base, index, .. } => {
+            collect_operand_region_uses(base, loans, output);
+            collect_operand_region_uses(index, loans, output);
+        }
+        MirOperationKind::Slice {
+            base,
+            start,
+            end,
+            step,
+        } => {
+            collect_operand_region_uses(base, loans, output);
+            for bound in start.iter().chain(end).chain(step) {
+                collect_operand_region_uses(bound, loans, output);
+            }
+        }
+        MirOperationKind::Call {
+            callee, arguments, ..
+        } => {
+            collect_operand_region_uses(callee, loans, output);
+            for argument in arguments {
+                collect_operand_region_uses(&argument.value, loans, output);
+            }
+        }
+        MirOperationKind::Assert {
+            condition,
+            message_parts,
+            ..
+        } => {
+            collect_operand_region_uses(condition, loans, output);
+            for part in message_parts {
+                collect_operand_region_uses(&part.value, loans, output);
+            }
+        }
+        MirOperationKind::BootstrapHostCall { arguments, .. } => {
+            for argument in arguments {
+                collect_operand_region_uses(argument, loans, output);
+            }
+        }
+    }
+}
+
+fn collect_operand_region_uses(
+    operand: &MirOperand,
+    loans: &[MirLoan],
+    output: &mut BTreeSet<MirLoanId>,
+) {
+    match &operand.kind {
+        MirOperandKind::Copy(place)
+        | MirOperandKind::Move(place)
+        | MirOperandKind::Borrow(place) => collect_place_region_uses(place, loans, output),
+        MirOperandKind::Loan(loan) => collect_loan_region_uses(*loan, loans, output),
+        MirOperandKind::Constant(_)
+        | MirOperandKind::Function { .. }
+        | MirOperandKind::PreludeTraitFunction { .. } => {}
+    }
+}
+
+fn collect_place_region_uses(
+    place: &MirPlace,
+    loans: &[MirLoan],
+    output: &mut BTreeSet<MirLoanId>,
+) {
+    if let Some(loan) = place.source_loan {
+        collect_loan_region_uses(loan, loans, output);
+    }
+}
+
+fn collect_loan_region_uses(
+    mut loan: MirLoanId,
+    loans: &[MirLoan],
+    output: &mut BTreeSet<MirLoanId>,
+) {
+    let mut visited = BTreeSet::new();
+    while visited.insert(loan) {
+        let Some(metadata) = loans.get(loan.index() as usize) else {
+            return;
+        };
+        if metadata.kind == MirLoanKind::Region {
+            output.insert(loan);
+        }
+        let Some(source) = metadata.place.source_loan else {
+            return;
+        };
+        loan = source;
     }
 }
 
@@ -5857,7 +6418,7 @@ mod tests {
         assert!(
             error
                 .message()
-                .contains("cleanup block manipulates a call-local loan"),
+                .contains("cleanup block manipulates a loan reservation"),
             "{error}"
         );
 
@@ -5954,6 +6515,128 @@ mod tests {
         condition.kind = MirOperandKind::Loan(MirLoanId(0));
         let error = verify_mir(&branch_resolved, &branch_hir, &forged).unwrap_err();
         assert!(error.message().contains("materialized Bool"), "{error}");
+    }
+
+    #[test]
+    fn borrow_pattern_regions_are_explicit_and_end_before_later_writes() {
+        let source = "type Pair = { left: Int, right: Int }\n\
+                      fn inspect(value: ref Int) {}\n\
+                      fn abandonBorrow(value: ref Int, after: Unit) {}\n\
+                      fn abandon(pair: var Pair) {\n\
+                          match pair {\n\
+                              Pair { ref left, right: _ } => {\n\
+                                  abandonBorrow(ref left, {\n\
+                                      return\n\
+                                  })\n\
+                              }\n\
+                          }\n\
+                      }\n\
+                      fn execute(): Int {\n\
+                          var pair = Pair { left: 1, right: 2 }\n\
+                          match pair {\n\
+                              Pair { ref left, right: _ } => {\n\
+                                  if pair.right == 2 {\n\
+                                      match left {\n\
+                                          ref nested => inspect(ref nested)\n\
+                                      }\n\
+                                  }\n\
+                                  pair.left = 7\n\
+                              }\n\
+                          }\n\
+                          pair.left\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let execute = mir.function(function_id(&resolved, "execute")).unwrap();
+        let regions = execute
+            .loans()
+            .enumerate()
+            .filter(|(_, loan)| loan.kind() == MirLoanKind::Region)
+            .map(|(index, loan)| (MirLoanId(index as u32), loan))
+            .collect::<Vec<_>>();
+        assert_eq!(regions.len(), 2);
+        let (region, region_loan) = regions[0];
+        let (nested_region, nested_loan) = regions[1];
+        assert_eq!(region_loan.mode(), crate::types::ParameterMode::Ref);
+        assert!(region_loan.place().source_loan().is_none());
+        assert_eq!(nested_loan.place().source_loan(), Some(region));
+        assert!(execute.loans().any(|loan| {
+            loan.kind() == MirLoanKind::CallLocal
+                && loan.place().source_loan() == Some(nested_region)
+        }));
+        assert!(execute.blocks().any(|block| {
+            block.statements().iter().any(|statement| {
+                matches!(statement.kind(), MirStatementKind::ReserveLoan(id) if *id == region)
+            })
+        }));
+        assert!(execute.blocks().any(|block| {
+            block.statements().iter().any(|statement| {
+                matches!(statement.kind(), MirStatementKind::ReleaseLoan(id) if *id == region)
+            })
+        }));
+
+        let abandon = mir.function(function_id(&resolved, "abandon")).unwrap();
+        let abandon_region = abandon
+            .loans()
+            .enumerate()
+            .find(|(_, loan)| loan.kind() == MirLoanKind::Region)
+            .map(|(index, _)| MirLoanId(index as u32))
+            .unwrap();
+        let abandoned_call = abandon
+            .loans()
+            .enumerate()
+            .find(|(_, loan)| {
+                loan.kind() == MirLoanKind::CallLocal
+                    && loan.place().source_loan() == Some(abandon_region)
+            })
+            .map(|(index, _)| MirLoanId(index as u32))
+            .unwrap();
+        assert!(abandon.blocks().any(|block| {
+            block.statements().windows(2).any(|statements| {
+                matches!(
+                    statements[0].kind(),
+                    MirStatementKind::ReleaseLoan(id) if *id == abandoned_call
+                ) && matches!(
+                    statements[1].kind(),
+                    MirStatementKind::ReleaseLoan(id) if *id == abandon_region
+                )
+            })
+        }));
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let mut forged = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = forged
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "execute")))
+            .unwrap();
+        for block in &mut function.blocks {
+            block.statements.retain(|statement| {
+                !matches!(statement.kind, MirStatementKind::ReleaseLoan(id) if id == region)
+            });
+        }
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.statements
+                    .iter()
+                    .position(|statement| {
+                        matches!(statement.kind, MirStatementKind::ReserveLoan(id) if id == nested_region)
+                    })
+                    .map(|index| (block, index))
+            })
+            .unwrap();
+        let span = function.blocks[block].statements[index].span;
+        function.blocks[block].statements.insert(
+            index + 1,
+            MirStatement {
+                span,
+                kind: MirStatementKind::ReleaseLoan(region),
+            },
+        );
+        let error = verify_mir(&resolved, &hir, &forged).unwrap_err();
+        assert!(error.message().contains("dependent loan"), "{error}");
     }
 
     #[test]

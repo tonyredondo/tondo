@@ -9764,6 +9764,39 @@ impl<'a> ExpressionChecker<'a> {
         false
     }
 
+    fn pattern_contains_collection_borrow(&self, root: HirPatternId) -> bool {
+        let Some(pattern) = self.program.pattern(root) else {
+            return false;
+        };
+        match pattern.kind() {
+            HirPatternKind::Array { prefix, rest } => prefix
+                .iter()
+                .copied()
+                .chain(*rest)
+                .any(|pattern| self.pattern_contains_borrow(pattern)),
+            HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => items
+                .iter()
+                .copied()
+                .any(|pattern| self.pattern_contains_collection_borrow(pattern)),
+            HirPatternKind::OptionSome(item)
+            | HirPatternKind::ResultOk(item)
+            | HirPatternKind::ResultErr(item)
+            | HirPatternKind::Newtype { value: item, .. }
+            | HirPatternKind::UnionMember { pattern: item, .. } => {
+                self.pattern_contains_collection_borrow(*item)
+            }
+            HirPatternKind::Record { fields, .. } => fields
+                .iter()
+                .any(|field| self.pattern_contains_collection_borrow(field.pattern())),
+            HirPatternKind::Recovery
+            | HirPatternKind::Wildcard
+            | HirPatternKind::Binding(_)
+            | HirPatternKind::BorrowBinding(_)
+            | HirPatternKind::Literal(_)
+            | HirPatternKind::OptionNone => false,
+        }
+    }
+
     fn pattern_requires_affine_ownership(
         &mut self,
         root: HirPatternId,
@@ -10189,6 +10222,13 @@ impl<'a> ExpressionChecker<'a> {
             .iter()
             .copied()
             .any(|pattern| self.pattern_contains_borrow(pattern));
+        if pattern_ids
+            .iter()
+            .copied()
+            .any(|pattern| self.pattern_contains_collection_borrow(pattern))
+        {
+            self.complete = false;
+        }
         let mut requires_affine_ownership = false;
         for pattern in pattern_ids {
             requires_affine_ownership |=
@@ -17192,6 +17232,45 @@ mod tests {
         );
         assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
         assert!(valid.is_complete());
+
+        let (_, _, unreachable) = check(
+            "type Pair = { left: Int, right: Int }\n\
+             fn inspect(value: ref Int) {}\n\
+             fn validReturn(pair: var Pair) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } => {\n\
+                         return {\n\
+                             pair.left = 2\n\
+                         }\n\
+                         inspect(ref left)\n\
+                     }\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&unreachable), ["W1006"]);
+
+        let (_, _, nested_break) = check(
+            "type Pair = { left: Int, right: Int }\n\
+             fn inspect(value: ref Int) {}\n\
+             fn validBreak(pair: var Pair, repeat: Bool) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } => {\n\
+                         for repeat {\n\
+                             inspect(ref left)\n\
+                             return {\n\
+                                 pair.left = 2\n\
+                                 break\n\
+                             }\n\
+                         }\n\
+                     }\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            nested_break.diagnostics().is_empty(),
+            "{:#?}",
+            nested_break.diagnostics()
+        );
     }
 
     #[test]
@@ -20410,6 +20489,164 @@ mod tests {
     }
 
     #[test]
+    fn borrow_pattern_regions_end_at_control_flow_last_use() {
+        let (_, _, valid) = check(
+            "type Pair = { left: Int, right: Int }\n\
+             enum Choice { Left, Right }\n\
+             fn inspect(value: ref Int) {}\n\
+             fn useValues(first: Bool, second: Unit) {}\n\
+             fn validBranch(pair: var Pair, chooseLeft: Bool) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } => {\n\
+                         if chooseLeft {\n\
+                             inspect(ref left)\n\
+                         } else {\n\
+                             pair.left = 2\n\
+                         }\n\
+                     }\n\
+                 }\n\
+             }\n\
+             fn validLoop(pair: var Pair, repeat: Bool) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } => {\n\
+                         for repeat {\n\
+                             inspect(ref left)\n\
+                             break\n\
+                         }\n\
+                         pair.left = 3\n\
+                     }\n\
+                 }\n\
+             }\n\
+             fn validArgumentOrder(pair: var Pair) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } => {\n\
+                         useValues(left == 1, {\n\
+                             pair.left = 4\n\
+                         })\n\
+                     }\n\
+                 }\n\
+             }\n\
+             fn validArmSpecific(pair: var Pair, choice: Choice) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } => {\n\
+                         match choice {\n\
+                             Choice.Left => inspect(ref left)\n\
+                             Choice.Right => {\n\
+                                 pair.left = 5\n\
+                             }\n\
+                         }\n\
+                     }\n\
+                 }\n\
+             }\n\
+             fn validNested(pair: var Pair) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } => {\n\
+                         match left {\n\
+                             ref nested => inspect(ref nested)\n\
+                         }\n\
+                         pair.left = 6\n\
+                     }\n\
+                 }\n\
+             }\n\
+             fn validGuard(pair: var Pair, chooseLeft: Bool) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } if chooseLeft and left == 1 => {\n\
+                         inspect(ref left)\n\
+                     }\n\
+                     Pair { left: _, right: _ } => {\n\
+                         pair.left = 8\n\
+                     }\n\
+                 }\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        let (_, _, sequential) = check(
+            "type Pair = { left: Int, right: Int }\n\
+             fn inspect(value: ref Int) {}\n\
+             fn invalid(pair: var Pair) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } => {\n\
+                         pair.left = 2\n\
+                         inspect(ref left)\n\
+                     }\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&sequential), ["E1403"]);
+
+        let (_, _, branch) = check(
+            "type Pair = { left: Int, right: Int }\n\
+             fn inspect(value: ref Int) {}\n\
+             fn invalid(pair: var Pair, chooseLeft: Bool) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } => {\n\
+                         if chooseLeft {\n\
+                             inspect(ref left)\n\
+                         } else {\n\
+                             pair.left = 2\n\
+                         }\n\
+                         inspect(ref left)\n\
+                     }\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&branch), ["E1403"]);
+
+        let (_, _, loop_conflict) = check(
+            "type Pair = { left: Int, right: Int }\n\
+             fn inspect(value: ref Int) {}\n\
+             fn invalid(pair: var Pair, repeat: Bool) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } => {\n\
+                         for repeat {\n\
+                             pair.left = 2\n\
+                             inspect(ref left)\n\
+                             break\n\
+                         }\n\
+                     }\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&loop_conflict), ["E1403"]);
+
+        let (_, _, call_conflict) = check(
+            "type Pair = { left: Int, right: Int }\n\
+             fn useBorrow(first: ref Int, second: Unit) {}\n\
+             fn invalid(pair: var Pair) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } => {\n\
+                         useBorrow(ref left, {\n\
+                             pair.left = 4\n\
+                         })\n\
+                     }\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&call_conflict), ["E1403"]);
+
+        let (_, _, nested_continue) = check(
+            "type Pair = { left: Int, right: Int }\n\
+             fn inspect(value: ref Int) {}\n\
+             fn invalid(pair: var Pair, repeat: Bool) {\n\
+                 match pair {\n\
+                     Pair { ref left, right: _ } => {\n\
+                         for repeat {\n\
+                             inspect(ref left)\n\
+                             return {\n\
+                                 pair.left = 2\n\
+                                 continue\n\
+                             }\n\
+                         }\n\
+                     }\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&nested_continue), ["E1403"]);
+    }
+
+    #[test]
     fn unproved_mut_extent_replacement_remains_incomplete() {
         let (_, _, fixed) = check(
             "fn replace(value: mut Int) {\n\
@@ -21456,7 +21693,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(output.is_complete());
+        assert!(!output.is_complete());
 
         let remaining = resolved
             .locals()

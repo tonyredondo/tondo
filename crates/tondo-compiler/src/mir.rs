@@ -279,15 +279,27 @@ pub struct MirPlace {
     local: MirLocalId,
     ty: TypeId,
     projections: Vec<MirProjection>,
+    source_loan: Option<MirLoanId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MirLoanKind {
+    CallLocal,
+    Region,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MirLoan {
+    kind: MirLoanKind,
     mode: ParameterMode,
     place: MirPlace,
 }
 
 impl MirLoan {
+    pub fn kind(&self) -> MirLoanKind {
+        self.kind
+    }
+
     pub fn mode(&self) -> ParameterMode {
         self.mode
     }
@@ -308,6 +320,10 @@ impl MirPlace {
 
     pub fn projections(&self) -> &[MirProjection] {
         &self.projections
+    }
+
+    pub fn source_loan(&self) -> Option<MirLoanId> {
+        self.source_loan
     }
 }
 

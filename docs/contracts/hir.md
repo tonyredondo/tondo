@@ -8,7 +8,7 @@ results, patterns, assignment, discard, structured control flow, explicit
 intrinsic cursor state, calls, flow-sensitive ownership availability with
 complete `var` reinitialization, uniform match ownership modes, affine transfer
 restrictions, ordered call-local `ref`/`mut`/`var` loans, semantic occurrences,
-and verified MIR admission
+BORROW-002 last-use regions for pattern `ref` bindings, and verified MIR admission
 implemented
 
 ## Boundary
@@ -66,8 +66,8 @@ iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   coercion. Concrete external implementations, effectful invocation, `await`,
   `spawn`, unsafe-region proofs and raw
   operations, async liveness/`Send` analysis, string interpolation through
-  `Display`, `defer`, non-call-local loan regions, collection-region
-  disjunction, suspension-crossing loans, confirmed borrowed replacement, and
+  `Display`, `defer`, collection-region disjunction, suspension-crossing loans,
+  confirmed borrowed replacement, and
   terminal scope cleanup remain explicit later boundaries rather than receiving
   provisional semantics. Persistent source-visible partial owner
   states are deliberately absent from Tondo 0.1; OWN-005 implements the typed
@@ -703,7 +703,7 @@ HIR proves the contextual capability facts consumed by OWN-002, including
 generic and opaque `Copy` status and the exact source-generic `CallOnce`
 protocol. MIR records the resulting copy or move. OWN-005 additionally records
 one uniform `Copy`/`Observe`/`Consume` mode per `match`; implicit scope-end
-obligations, non-call-local loan regions, and terminal cleanup remain their
+obligations, collection-backed loan regions, and terminal cleanup remain their
 owning phases' responsibility. Successful capability proof does not fabricate
 those later facts or cleanup.
 
@@ -805,8 +805,36 @@ captured, placed in an aggregate, or passed through a value parameter. Index
 and slice projections remain deliberately incomplete because their disjunction
 may depend on runtime data. HIR may retain that error-free partial snapshot for
 tooling, but it does not admit the body to MIR until BORROW-004 and BORROW-005
-provide the static and dynamic region proof. BORROW-002 owns regions that last
-beyond one synchronous call, and BORROW-006 owns suspension boundaries.
+provide the static and dynamic region proof. Fixed-place pattern regions are
+admitted as described below; BORROW-006 owns suspension boundaries.
+
+## Pattern `ref` last-use regions
+
+BORROW-002 extends the same place-identity model to `ref` bindings introduced
+by `match`. A binding records the exact stable scrutinee projection it aliases;
+an access through the binding is checked against that source place rather than
+against a fictitious owner local. Nested borrowed matches preserve the source
+chain, and a call-local reborrow retains the same canonical owner and
+projection. Pattern bindings remain non-materializable even when their
+component is `Copy`.
+
+The availability pass precomputes reachability-aware local-use and control-target
+facts for the topological HIR arena, then carries a branch-specific live-after
+set through ordered operands, blocks, short-circuit expressions, `if`, match
+guards and arms, loop headers, backedges, `break`, `continue`, `return`, `fail`,
+and `?`. Text after a non-completing expression cannot prolong a loan. Each loop
+maps `break` to its exit liveness and `continue` to its backedge liveness, even
+when the transfer is nested inside another expression. A pattern loan is removed
+immediately after its last possible use on each path. A use in one arm does not
+keep the loan alive in a mutually exclusive later arm, while a future use after
+a join or on a loop backedge keeps it active on every path that can reach that
+use. Ordered call arguments still retain their call-local loans, so a later
+argument cannot mutate the source of an earlier `ref` argument.
+
+Array-pattern `ref` bindings and intrinsic `for ref` remain error-free but
+incomplete. Their backing collection must stay stable across runtime-selected
+elements and therefore belongs to BORROW-004/005 rather than this fixed-place
+region proof.
 
 ## Declaration ordering
 
@@ -973,6 +1001,9 @@ Call-local loan regressions cover shared temporaries, writable and replaceable
 place requirements, permission-preserving reborrow, ordered conflicts, nested
 calls, fixed-field disjunction, mutable closure captures, early exits, and the
 deliberately incomplete collection-projection boundary.
+Pattern-region regressions cover sequential last use, branch-only use, match
+fallthrough, loop exits and backedges, ordered call arguments, nested region
+reborrows, later writes, and collection-pattern incompleteness.
 Closure regressions cover distinct generated identities, inherited generic
 binders, exact and inferred outcomes, nested free-use propagation, mutable
 snapshot metadata, modes, variadics, borrowed-capture rejection, deferred

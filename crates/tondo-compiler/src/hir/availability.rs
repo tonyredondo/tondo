@@ -16,7 +16,7 @@ use super::{
 struct AvailabilityState {
     unavailable: BTreeMap<LocalId, Span>,
     definitely_transferred: BTreeSet<LocalId>,
-    loans: Vec<LoanReservation>,
+    loans: BTreeMap<LoanIdentity, LoanReservation>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -83,6 +83,12 @@ struct LoanReservation {
     span: Span,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum LoanIdentity {
+    Call(HirExpressionId),
+    Pattern(LocalId),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LoanAccess {
     Read,
@@ -134,18 +140,26 @@ impl AvailabilityFlow {
         }
     }
 
-    fn truncate_loans(&mut self, count: usize) {
+    fn retain_loans(&mut self, retained: &BTreeSet<LoanIdentity>) {
         if let Some(state) = &mut self.normal {
-            state.loans.truncate(count);
+            state
+                .loans
+                .retain(|identity, _| retained.contains(identity));
         }
         if let Some(state) = &mut self.exits {
-            state.loans.truncate(count);
+            state
+                .loans
+                .retain(|identity, _| retained.contains(identity));
         }
         for state in self.breaks.values_mut() {
-            state.loans.truncate(count);
+            state
+                .loans
+                .retain(|identity, _| retained.contains(identity));
         }
         for state in self.continues.values_mut() {
-            state.loans.truncate(count);
+            state
+                .loans
+                .retain(|identity, _| retained.contains(identity));
         }
     }
 }
@@ -155,6 +169,7 @@ pub(crate) fn analyze_availability(
     capabilities: &CapabilityAnalysis,
 ) -> Result<Vec<AvailabilityFinding>, TypeError> {
     let mut findings = BTreeSet::new();
+    let liveness = collect_liveness_facts(program);
     for callable in program.callables() {
         let Some(body) = program.body(callable.id()) else {
             continue;
@@ -177,6 +192,7 @@ pub(crate) fn analyze_availability(
             CapabilityAssumptions::from_generics(program, callable.generics()),
             owners,
             borrowed,
+            &liveness,
             &mut findings,
         )
         .analyze_body(body.root())?;
@@ -201,6 +217,7 @@ pub(crate) fn analyze_availability(
             CapabilityAssumptions::from_generics(program, closure.generics()),
             owners,
             borrowed,
+            &liveness,
             &mut findings,
         );
         analyzer.reinitializable.extend(
@@ -249,12 +266,14 @@ pub(crate) fn analyze_closure_captures(
         .map(HirClosureCapture::local)
         .collect::<BTreeSet<_>>();
     let mut findings = BTreeSet::new();
+    let liveness = collect_liveness_facts(program);
     let mut analyzer = Analyzer::new(
         program,
         capabilities,
         assumptions,
         tracked.clone(),
         BTreeSet::new(),
+        &liveness,
         &mut findings,
     );
     analyzer.tracked_transfers = tracked.clone();
@@ -287,6 +306,9 @@ struct Analyzer<'a, 'f> {
     tracked_transfers: BTreeSet<LocalId>,
     transferred: BTreeSet<LocalId>,
     copy_statuses: BTreeMap<TypeId, HirCapabilityStatus>,
+    liveness: &'a LivenessFacts,
+    break_liveness: BTreeMap<HirLoopId, BTreeSet<LocalId>>,
+    continue_liveness: BTreeMap<HirLoopId, BTreeSet<LocalId>>,
     findings: &'f mut BTreeSet<AvailabilityFinding>,
 }
 
@@ -297,6 +319,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         assumptions: CapabilityAssumptions,
         owners: BTreeSet<LocalId>,
         borrowed: BTreeSet<LocalId>,
+        liveness: &'a LivenessFacts,
         findings: &'f mut BTreeSet<AvailabilityFinding>,
     ) -> Self {
         Self {
@@ -311,6 +334,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             tracked_transfers: BTreeSet::new(),
             transferred: BTreeSet::new(),
             copy_statuses: BTreeMap::new(),
+            liveness,
+            break_liveness: BTreeMap::new(),
+            continue_liveness: BTreeMap::new(),
             findings,
         }
     }
@@ -321,7 +347,12 @@ impl<'a, 'f> Analyzer<'a, 'f> {
     }
 
     fn analyze_body_flow(&mut self, root: HirExpressionId) -> Result<AvailabilityFlow, TypeError> {
-        let mut flow = self.expression(root, AvailabilityState::default(), Demand::Transfer)?;
+        let mut flow = self.expression(
+            root,
+            AvailabilityState::default(),
+            Demand::Transfer,
+            &BTreeSet::new(),
+        )?;
         let normal = flow.normal.take();
         merge_optional_state(&mut flow.exits, normal);
         Ok(flow)
@@ -330,16 +361,19 @@ impl<'a, 'f> Analyzer<'a, 'f> {
     fn expression(
         &mut self,
         id: HirExpressionId,
-        state: AvailabilityState,
+        mut state: AvailabilityState,
         demand: Demand,
+        live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
+        let live_within = self.expression_entry_liveness(id, live_after);
+        retain_pattern_loans(&mut state, &live_within);
         let expression = self
             .program
             .expression(id)
             .expect("availability analysis receives verified expression IDs")
             .clone();
         if expression.category() == HirValueCategory::Place {
-            return self.place(id, state, demand);
+            return self.place(id, state, demand, live_after);
         }
 
         let flow = match expression.kind() {
@@ -359,6 +393,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             HirExpressionKind::InterpolatedString { values, .. } => self.sequence(
                 state,
                 values.iter().copied().map(|value| (value, Demand::Observe)),
+                live_after,
             )?,
             HirExpressionKind::Tuple(values)
             | HirExpressionKind::Array(values)
@@ -368,6 +403,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     .iter()
                     .copied()
                     .map(|value| (value, Demand::Transfer)),
+                live_after,
             )?,
             HirExpressionKind::Map { entries, .. } => {
                 let values = entries.iter().flat_map(|entry| {
@@ -376,27 +412,32 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         (entry.value(), Demand::Transfer),
                     ]
                 });
-                self.sequence(state, values)?
+                self.sequence(state, values, live_after)?
             }
             HirExpressionKind::Newtype { value, .. }
             | HirExpressionKind::NumericConversion { value, .. }
             | HirExpressionKind::OptionSome { value }
             | HirExpressionKind::ResultOk { value }
             | HirExpressionKind::Coerce { value, .. } => {
-                self.expression(*value, state, Demand::Transfer)?
+                self.expression(*value, state, Demand::Transfer, live_after)?
             }
             HirExpressionKind::ResultErr { error } => {
-                self.expression(*error, state, Demand::Transfer)?
+                self.expression(*error, state, Demand::Transfer, live_after)?
             }
             HirExpressionKind::Fail { error } => {
-                let mut flow = self.expression(*error, state, Demand::Transfer)?;
-                let exit = flow.normal.take();
+                let mut flow =
+                    self.expression(*error, state, Demand::Transfer, &BTreeSet::new())?;
+                let mut exit = flow.normal.take();
+                if let Some(exit) = &mut exit {
+                    retain_pattern_loans(exit, &BTreeSet::new());
+                }
                 merge_optional_state(&mut flow.exits, exit);
                 flow
             }
             HirExpressionKind::Record { fields, .. } => self.sequence(
                 state,
                 fields.iter().map(|field| (field.value(), Demand::Transfer)),
+                live_after,
             )?,
             HirExpressionKind::Variant { payload, .. } => match payload {
                 HirVariantValue::Unit => AvailabilityFlow::normal(state),
@@ -406,33 +447,39 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         .iter()
                         .copied()
                         .map(|value| (value, Demand::Transfer)),
+                    live_after,
                 )?,
                 HirVariantValue::Record(fields) => self.sequence(
                     state,
                     fields.iter().map(|field| (field.value(), Demand::Transfer)),
+                    live_after,
                 )?,
             },
             HirExpressionKind::RecordUpdate { base, fields } => {
-                let mut flow = self.expression(*base, state, Demand::Transfer)?;
-                for field in fields {
-                    flow = self.then_expression(flow, field.value(), Demand::Transfer)?;
-                }
-                flow
+                let values = std::iter::once((*base, Demand::Transfer))
+                    .chain(fields.iter().map(|field| (field.value(), Demand::Transfer)));
+                self.sequence(state, values, live_after)?
             }
             HirExpressionKind::Block { statements, tail } => {
-                self.block(statements, *tail, state)?
+                self.block(statements, *tail, state, live_after)?
             }
             HirExpressionKind::Prefix { operand, .. } => {
-                self.expression(*operand, state, Demand::Transfer)?
+                self.expression(*operand, state, Demand::Transfer, live_after)?
             }
             HirExpressionKind::Binary {
                 operator: HirBinaryOperator::LogicalAnd | HirBinaryOperator::LogicalOr,
                 left,
                 right,
             } => {
-                let mut left_flow = self.expression(*left, state, Demand::Transfer)?;
+                let right_live = self.expression_entry_liveness(*right, live_after);
+                let right_live = union_sets(&right_live, live_after);
+                let mut left_flow = self.expression(*left, state, Demand::Transfer, &right_live)?;
                 if let Some(right_entry) = left_flow.normal.clone() {
-                    let right_flow = self.expression(*right, right_entry, Demand::Transfer)?;
+                    let right_flow =
+                        self.expression(*right, right_entry, Demand::Transfer, live_after)?;
+                    if let Some(skipped) = &mut left_flow.normal {
+                        retain_pattern_loans(skipped, live_after);
+                    }
                     merge_optional_state(&mut left_flow.normal, right_flow.normal.clone());
                     let mut controls = right_flow;
                     controls.normal = None;
@@ -444,7 +491,11 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 operator: HirBinaryOperator::Equal | HirBinaryOperator::NotEqual,
                 left,
                 right,
-            } => self.sequence(state, [(*left, Demand::Observe), (*right, Demand::Observe)])?,
+            } => self.sequence(
+                state,
+                [(*left, Demand::Observe), (*right, Demand::Observe)],
+                live_after,
+            )?,
             HirExpressionKind::Binary { left, right, .. }
             | HirExpressionKind::Range {
                 start: left,
@@ -453,19 +504,22 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             } => self.sequence(
                 state,
                 [(*left, Demand::Transfer), (*right, Demand::Transfer)],
+                live_after,
             )?,
             HirExpressionKind::Contains {
                 item, container, ..
             } => self.sequence(
                 state,
                 [(*item, Demand::Observe), (*container, Demand::Observe)],
+                live_after,
             )?,
             HirExpressionKind::Field { .. } | HirExpressionKind::TupleField { .. } => {
-                self.place(id, state, demand)?
+                self.place(id, state, demand, live_after)?
             }
             HirExpressionKind::Index { base, index, .. } => self.sequence(
                 state,
                 [(*base, Demand::Observe), (*index, Demand::Transfer)],
+                live_after,
             )?,
             HirExpressionKind::Slice {
                 base,
@@ -477,7 +531,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 values.extend(start.map(|value| (value, Demand::Transfer)));
                 values.extend(end.map(|value| (value, Demand::Transfer)));
                 values.extend(step.map(|value| (value, Demand::Transfer)));
-                self.sequence(state, values)?
+                self.sequence(state, values, live_after)?
             }
             HirExpressionKind::Call {
                 callee,
@@ -490,21 +544,48 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 } else {
                     Demand::Observe
                 };
-                let mut flow = self.expression(*callee, state, callee_demand)?;
-                let loan_depth = flow.normal.as_ref().map_or(0, |state| state.loans.len());
-                for argument in arguments {
+                let invocation_live_after = if self.expression_may_complete(id) {
+                    live_after.clone()
+                } else {
+                    BTreeSet::new()
+                };
+                let argument_values = arguments
+                    .iter()
+                    .map(super::HirCallArgument::value)
+                    .collect::<Vec<_>>();
+                let (argument_live_after, arguments_live) =
+                    self.ordered_live_afters(&argument_values, &invocation_live_after);
+                let callee_live_after = if self.expression_may_complete(*callee) {
+                    arguments_live
+                } else {
+                    BTreeSet::new()
+                };
+                let mut flow =
+                    self.expression(*callee, state, callee_demand, &callee_live_after)?;
+                let retained_loans = flow
+                    .normal
+                    .as_ref()
+                    .map(|state| state.loans.keys().copied().collect::<BTreeSet<_>>())
+                    .unwrap_or_default();
+                for (argument, live_after) in arguments.iter().zip(&argument_live_after) {
                     let demand = if argument.mode() == ParameterMode::Value {
                         Demand::Transfer
                     } else {
                         Demand::Observe
                     };
-                    flow = self.then_expression(flow, argument.value(), demand)?;
+                    let loan_place = flow
+                        .normal
+                        .as_ref()
+                        .map(|state| self.loan_place_in_state(argument.value(), state));
+                    flow = self.then_expression(flow, argument.value(), demand, live_after)?;
                     if argument.mode() != ParameterMode::Value
                         && let Some(state) = &mut flow.normal
                     {
-                        let place = self.loan_place(argument.value());
+                        let place = loan_place
+                            .expect("normal argument flow retains its pre-evaluation loan place");
                         self.reserve_loan(
                             state,
+                            LoanIdentity::Call(argument.value()),
                             place,
                             argument.mode(),
                             self.program
@@ -514,11 +595,12 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         );
                     }
                 }
-                flow.truncate_loans(loan_depth);
+                flow.retain_loans(&retained_loans);
                 flow
             }
             HirExpressionKind::PreludePanic { message } => {
-                let mut flow = self.expression(*message, state, Demand::Transfer)?;
+                let mut flow =
+                    self.expression(*message, state, Demand::Transfer, &BTreeSet::new())?;
                 flow.normal = None;
                 flow
             }
@@ -527,11 +609,12 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 message_parts,
                 ..
             } => {
-                let mut flow = self.expression(*condition, state, Demand::Transfer)?;
-                for part in message_parts {
-                    flow = self.then_expression(flow, part.value(), Demand::Transfer)?;
-                }
-                flow
+                let values = std::iter::once((*condition, Demand::Transfer)).chain(
+                    message_parts
+                        .iter()
+                        .map(|part| (part.value(), Demand::Transfer)),
+                );
+                self.sequence(state, values, live_after)?
             }
             HirExpressionKind::BootstrapHostCall { arguments, .. } => self.sequence(
                 state,
@@ -539,11 +622,15 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     .iter()
                     .copied()
                     .map(|argument| (argument, Demand::Transfer)),
+                live_after,
             )?,
             HirExpressionKind::PropagateOption { value }
             | HirExpressionKind::PropagateResult { value, .. } => {
-                let mut flow = self.expression(*value, state, Demand::Transfer)?;
-                let exit = flow.normal.clone();
+                let mut flow = self.expression(*value, state, Demand::Transfer, live_after)?;
+                let mut exit = flow.normal.clone();
+                if let Some(exit) = &mut exit {
+                    retain_pattern_loans(exit, &BTreeSet::new());
+                }
                 merge_optional_state(&mut flow.exits, exit);
                 flow
             }
@@ -551,19 +638,22 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 condition,
                 then_branch,
                 else_branch,
-            } => self.if_expression(*condition, *then_branch, *else_branch, state)?,
+            } => self.if_expression(*condition, *then_branch, *else_branch, state, live_after)?,
             HirExpressionKind::Match {
                 scrutinee,
                 mode,
                 arms,
-            } => self.match_expression(*scrutinee, *mode, arms, state)?,
+            } => self.match_expression(*scrutinee, *mode, arms, state, live_after)?,
             HirExpressionKind::Return { value } => {
                 let mut flow = if let Some(value) = value {
-                    self.expression(*value, state, Demand::Transfer)?
+                    self.expression(*value, state, Demand::Transfer, &BTreeSet::new())?
                 } else {
                     AvailabilityFlow::normal(state)
                 };
-                let exit = flow.normal.take();
+                let mut exit = flow.normal.take();
+                if let Some(exit) = &mut exit {
+                    retain_pattern_loans(exit, &BTreeSet::new());
+                }
                 merge_optional_state(&mut flow.exits, exit);
                 flow
             }
@@ -582,7 +672,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 flow
             }
         };
-        Ok(self.finish_expression(id, flow))
+        Ok(self.finish_expression(id, flow, live_after))
     }
 
     fn block(
@@ -590,18 +680,29 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         statements: &[HirStatement],
         tail: Option<HirExpressionId>,
         state: AvailabilityState,
+        live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
+        let mut suffix = tail
+            .map(|tail| self.expression_entry_liveness(tail, live_after))
+            .unwrap_or_else(|| live_after.clone());
+        let mut statement_live_after = vec![BTreeSet::new(); statements.len()];
+        for (index, statement) in statements.iter().enumerate().rev() {
+            if statement_may_complete(self.program, statement) {
+                statement_live_after[index] = suffix;
+            }
+            suffix = self.statement_entry_liveness(statement, &statement_live_after[index]);
+        }
         let mut flow = AvailabilityFlow::normal(state);
         let mut locals = Vec::new();
-        for statement in statements {
+        for (statement, live_after) in statements.iter().zip(&statement_live_after) {
             let Some(state) = flow.normal.take() else {
                 break;
             };
-            let next = self.statement(statement, state, &mut locals)?;
+            let next = self.statement(statement, state, &mut locals, live_after)?;
             flow.merge(next);
         }
         if let Some(tail) = tail {
-            flow = self.then_expression(flow, tail, Demand::Transfer)?;
+            flow = self.then_expression(flow, tail, Demand::Transfer, live_after)?;
         }
         flow.strip_locals(&locals);
         Ok(flow)
@@ -612,6 +713,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         statement: &HirStatement,
         state: AvailabilityState,
         block_locals: &mut Vec<LocalId>,
+        live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
         match statement {
             HirStatement::Binding {
@@ -620,22 +722,24 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 value,
                 ..
             } => {
-                let mut flow = self.expression(*value, state, Demand::Transfer)?;
+                let mut flow = self.expression(*value, state, Demand::Transfer, live_after)?;
                 if let Some(state) = &mut flow.normal {
                     self.introduce_pattern(*pattern, state, block_locals, *mutable);
                 }
                 Ok(flow)
             }
             HirStatement::Expression { value, .. } | HirStatement::Discard { value, .. } => {
-                self.expression(*value, state, Demand::Transfer)
+                self.expression(*value, state, Demand::Transfer, live_after)
             }
             HirStatement::Assignment {
                 operator,
                 target,
                 value,
                 ..
-            } => self.assignment(*operator, target, *value, state),
-            HirStatement::For { id, kind, body, .. } => self.for_statement(*id, kind, *body, state),
+            } => self.assignment(*operator, target, *value, state, live_after),
+            HirStatement::For { id, kind, body, .. } => {
+                self.for_statement(*id, kind, *body, state, live_after)
+            }
         }
     }
 
@@ -645,25 +749,45 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         target: &HirAssignmentTarget,
         value: HirExpressionId,
         state: AvailabilityState,
+        live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
         let mut written = Vec::new();
         collect_written_places(target, &mut written);
+        let mut evaluated = Vec::new();
+        collect_assignment_places(target, &mut evaluated);
+        evaluated.push(value);
+        let (evaluated_live_after, _) = self.ordered_live_afters(&evaluated, live_after);
+        let target_live_after = evaluated
+            .iter()
+            .copied()
+            .zip(evaluated_live_after.iter().cloned())
+            .take(evaluated.len().saturating_sub(1))
+            .collect::<BTreeMap<_, _>>();
+        let value_live = self.expression_entry_liveness(value, live_after);
+        let written = written
+            .into_iter()
+            .map(|(place, span)| (self.loan_place_in_state(place, &state), span))
+            .collect::<Vec<_>>();
         let mut direct = Vec::new();
         let target_flow = self.assignment_target(
             target,
             AvailabilityFlow::normal(state),
             &mut direct,
             operator == HirAssignmentOperator::Assign,
+            &target_live_after,
         )?;
         let restorable = if target_flow.normal.is_some() {
             direct
         } else {
             Vec::new()
         };
-        let mut flow = self.then_expression(target_flow, value, Demand::Transfer)?;
+        let mut target_flow = target_flow;
+        if let Some(state) = &mut target_flow.normal {
+            retain_pattern_loans(state, &value_live);
+        }
+        let mut flow = self.then_expression(target_flow, value, Demand::Transfer, live_after)?;
         if let Some(state) = &mut flow.normal {
             for (place, span) in written {
-                let place = self.loan_place(place);
                 self.check_loan_access(state, &place, LoanAccess::Write, span);
             }
             remove_locals(state, &restorable);
@@ -677,6 +801,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         mut flow: AvailabilityFlow,
         direct: &mut Vec<LocalId>,
         may_reinitialize: bool,
+        live_after: &BTreeMap<HirExpressionId, BTreeSet<LocalId>>,
     ) -> Result<AvailabilityFlow, TypeError> {
         match target.kind() {
             HirAssignmentTargetKind::Place { place, write, .. } => {
@@ -688,12 +813,19 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     direct.push(local);
                     return Ok(flow);
                 }
-                self.then_expression(flow, *place, Demand::Observe)
+                let empty = BTreeSet::new();
+                self.then_expression(
+                    flow,
+                    *place,
+                    Demand::Observe,
+                    live_after.get(place).unwrap_or(&empty),
+                )
             }
             HirAssignmentTargetKind::Discard => Ok(flow),
             HirAssignmentTargetKind::Tuple(items) => {
                 for item in items {
-                    flow = self.assignment_target(item, flow, direct, may_reinitialize)?;
+                    flow =
+                        self.assignment_target(item, flow, direct, may_reinitialize, live_after)?;
                 }
                 Ok(flow)
             }
@@ -706,15 +838,34 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         then_branch: HirExpressionId,
         else_branch: Option<HirExpressionId>,
         state: AvailabilityState,
+        live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
-        let mut condition_flow = self.expression(condition, state, Demand::Transfer)?;
+        let mut branch_uses = self.expression_entry_liveness(then_branch, live_after);
+        if let Some(else_branch) = else_branch {
+            branch_uses.extend(
+                self.expression_entry_liveness(else_branch, live_after)
+                    .iter()
+                    .copied(),
+            );
+        } else {
+            branch_uses.extend(live_after.iter().copied());
+        }
+        let mut condition_flow =
+            self.expression(condition, state, Demand::Transfer, &branch_uses)?;
         let Some(branch_entry) = condition_flow.normal.take() else {
             return Ok(condition_flow);
         };
-        let then_flow = self.expression(then_branch, branch_entry.clone(), Demand::Transfer)?;
+        let then_flow = self.expression(
+            then_branch,
+            branch_entry.clone(),
+            Demand::Transfer,
+            live_after,
+        )?;
         let else_flow = if let Some(else_branch) = else_branch {
-            self.expression(else_branch, branch_entry, Demand::Transfer)?
+            self.expression(else_branch, branch_entry, Demand::Transfer, live_after)?
         } else {
+            let mut branch_entry = branch_entry;
+            retain_pattern_loans(&mut branch_entry, live_after);
             AvailabilityFlow::normal(branch_entry)
         };
         condition_flow.merge(then_flow);
@@ -728,6 +879,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         mode: HirMatchMode,
         arms: &[super::HirMatchArm],
         state: AvailabilityState,
+        live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
         let has_borrow = arms
             .iter()
@@ -766,25 +918,56 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         } else {
             Demand::Observe
         };
-        let mut scrutinee_flow = self.expression(scrutinee, state, demand)?;
+        let mut arm_uses = BTreeSet::new();
+        let mut fallthrough_live = vec![BTreeSet::new(); arms.len()];
+        let mut arm_success_live = vec![BTreeSet::new(); arms.len()];
+        for (index, arm) in arms.iter().enumerate().rev() {
+            fallthrough_live[index] = arm_uses.clone();
+            let body_live = self.expression_entry_liveness(arm.body(), live_after);
+            let success_live = if let Some(guard) = arm.guard() {
+                let guard_after = union_sets(&body_live, &fallthrough_live[index]);
+                self.expression_entry_liveness(guard, &guard_after)
+            } else {
+                body_live
+            };
+            arm_success_live[index] = success_live.clone();
+            arm_uses = union_sets(&success_live, &fallthrough_live[index]);
+        }
+        let scrutinee_place = self.loan_place_in_state(scrutinee, &state);
+        let mut scrutinee_flow = self.expression(scrutinee, state, demand, &arm_uses)?;
         let Some(mut next_entry) = scrutinee_flow.normal.take() else {
             return Ok(scrutinee_flow);
         };
         let mut result = scrutinee_flow;
-        for arm in arms {
+        for ((arm, fallthrough_live), arm_success_live) in
+            arms.iter().zip(&fallthrough_live).zip(&arm_success_live)
+        {
             let mut pattern_locals = Vec::new();
             let mut arm_entry = next_entry.clone();
-            self.introduce_pattern(arm.pattern(), &mut arm_entry, &mut pattern_locals, false);
+            retain_pattern_loans(&mut arm_entry, arm_success_live);
+            retain_pattern_loans(&mut next_entry, fallthrough_live);
+            self.introduce_match_pattern(
+                arm.pattern(),
+                &scrutinee_place,
+                &mut arm_entry,
+                &mut pattern_locals,
+            );
             let guarded_entry = if let Some(guard) = arm.guard() {
                 let forbidden = self.affine_pattern_bindings(arm.pattern())?;
                 self.guard_forbidden.extend(forbidden.iter().copied());
-                let guard_flow = self.expression(guard, arm_entry, Demand::Transfer);
+                let body_live = self.expression_entry_liveness(arm.body(), live_after);
+                let guard_live = union_sets(&body_live, fallthrough_live);
+                let guard_flow = self.expression(guard, arm_entry, Demand::Transfer, &guard_live);
                 for local in &forbidden {
                     self.guard_forbidden.remove(local);
                 }
                 let guard_flow = guard_flow?;
-                let body_entry = guard_flow.normal.clone();
+                let mut body_entry = guard_flow.normal.clone();
+                if let Some(body_entry) = &mut body_entry {
+                    retain_pattern_loans(body_entry, &body_live);
+                }
                 if let Some(mut guard_state) = guard_flow.normal.clone() {
+                    retain_pattern_loans(&mut guard_state, fallthrough_live);
                     remove_locals(&mut guard_state, &pattern_locals);
                     merge_state(&mut next_entry, guard_state);
                 }
@@ -799,7 +982,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             let Some(body_entry) = guarded_entry else {
                 continue;
             };
-            let mut body_flow = self.expression(arm.body(), body_entry, Demand::Transfer)?;
+            let mut body_flow =
+                self.expression(arm.body(), body_entry, Demand::Transfer, live_after)?;
             body_flow.strip_locals(&pattern_locals);
             result.merge(body_flow);
         }
@@ -902,11 +1086,12 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         kind: &HirForKind,
         body: HirExpressionId,
         state: AvailabilityState,
+        live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
         match kind {
-            HirForKind::Infinite => self.loop_fixed_point(id, None, None, body, state),
+            HirForKind::Infinite => self.loop_fixed_point(id, None, None, body, state, live_after),
             HirForKind::Conditional { condition } => {
-                self.loop_fixed_point(id, Some(*condition), None, body, state)
+                self.loop_fixed_point(id, Some(*condition), None, body, state, live_after)
             }
             HirForKind::Iterate {
                 pattern,
@@ -929,12 +1114,17 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     }
                     HirIterationProtocol::Trait { .. } => Demand::Transfer,
                 };
-                let mut source_flow = self.expression(*source, state, source_demand)?;
+                let source_live = union_sets(
+                    &self.expression_entry_liveness(body, live_after),
+                    live_after,
+                );
+                let mut source_flow =
+                    self.expression(*source, state, source_demand, &source_live)?;
                 let Some(loop_entry) = source_flow.normal.take() else {
                     return Ok(source_flow);
                 };
                 let loop_flow =
-                    self.loop_fixed_point(id, None, Some(*pattern), body, loop_entry)?;
+                    self.loop_fixed_point(id, None, Some(*pattern), body, loop_entry, live_after)?;
                 source_flow.merge(loop_flow);
                 Ok(source_flow)
             }
@@ -948,17 +1138,65 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         pattern: Option<HirPatternId>,
         body: HirExpressionId,
         initial: AvailabilityState,
+        live_after: &BTreeSet<LocalId>,
+    ) -> Result<AvailabilityFlow, TypeError> {
+        let mut loop_live = self.expression_entry_liveness(body, &BTreeSet::new());
+        if let Some(condition) = condition {
+            loop_live.extend(
+                self.expression_entry_liveness(condition, &BTreeSet::new())
+                    .iter()
+                    .copied(),
+            );
+        }
+        loop_live.extend(live_after.iter().copied());
+        let previous_break = self.break_liveness.insert(id, live_after.clone());
+        let previous_continue = self.continue_liveness.insert(id, loop_live.clone());
+        let result = self.loop_fixed_point_with_liveness(
+            id, condition, pattern, body, initial, live_after, &loop_live,
+        );
+        if let Some(previous) = previous_break {
+            self.break_liveness.insert(id, previous);
+        } else {
+            self.break_liveness.remove(&id);
+        }
+        if let Some(previous) = previous_continue {
+            self.continue_liveness.insert(id, previous);
+        } else {
+            self.continue_liveness.remove(&id);
+        }
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn loop_fixed_point_with_liveness(
+        &mut self,
+        id: HirLoopId,
+        condition: Option<HirExpressionId>,
+        pattern: Option<HirPatternId>,
+        body: HirExpressionId,
+        initial: AvailabilityState,
+        live_after: &BTreeSet<LocalId>,
+        loop_live: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
         let mut header = initial.clone();
-        let limit = self.program.local_types.len().saturating_add(1);
+        let limit = self
+            .program
+            .local_types
+            .len()
+            .saturating_mul(3)
+            .saturating_add(1);
         for _ in 0..=limit {
             let mut iteration = if let Some(condition) = condition {
-                self.expression(condition, header.clone(), Demand::Transfer)?
+                self.expression(condition, header.clone(), Demand::Transfer, loop_live)?
             } else {
                 AvailabilityFlow::normal(header.clone())
             };
             let natural_exit = if condition.is_some() || pattern.is_some() {
-                iteration.normal.clone()
+                let mut exit = iteration.normal.clone();
+                if let Some(exit) = &mut exit {
+                    retain_pattern_loans(exit, live_after);
+                }
+                exit
             } else {
                 None
             };
@@ -967,14 +1205,24 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 if let Some(pattern) = pattern {
                     self.introduce_pattern(pattern, &mut body_entry, &mut pattern_locals, false);
                 }
-                let mut body_flow = self.expression(body, body_entry, Demand::Transfer)?;
+                let mut body_flow =
+                    self.expression(body, body_entry, Demand::Transfer, loop_live)?;
                 body_flow.strip_locals(&pattern_locals);
                 iteration.merge(body_flow);
             }
-            let break_exit = iteration.breaks.remove(&id);
-            let continue_state = iteration.continues.remove(&id);
+            let mut break_exit = iteration.breaks.remove(&id);
+            if let Some(exit) = &mut break_exit {
+                retain_pattern_loans(exit, live_after);
+            }
+            let mut continue_state = iteration.continues.remove(&id);
+            if let Some(state) = &mut continue_state {
+                retain_pattern_loans(state, loop_live);
+            }
             let mut backedge = iteration.normal.take();
             merge_optional_state(&mut backedge, continue_state);
+            if let Some(backedge) = &mut backedge {
+                retain_pattern_loans(backedge, loop_live);
+            }
 
             let mut next_header = initial.clone();
             if let Some(backedge) = backedge {
@@ -988,7 +1236,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             }
             header = next_header;
         }
-        unreachable!("availability loop lattice converges once per owned local")
+        unreachable!("availability loop lattice converges within its finite local-state height")
     }
 
     fn place(
@@ -996,23 +1244,26 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         id: HirExpressionId,
         state: AvailabilityState,
         demand: Demand,
+        live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
+        let live_within = self.expression_entry_liveness(id, live_after);
         let expression = self
             .program
             .expression(id)
             .expect("availability analysis receives verified place IDs")
             .clone();
-        let (mut flow, place) = self.place_components(id, state)?;
+        let (mut flow, place) = self.place_components(id, state, &live_within)?;
         if let Some(state) = &mut flow.normal {
             self.access_place(state, place, expression.span(), expression.ty(), demand)?;
         }
-        Ok(self.finish_expression(id, flow))
+        Ok(self.finish_expression(id, flow, live_after))
     }
 
     fn place_components(
         &mut self,
         id: HirExpressionId,
         state: AvailabilityState,
+        live_after: &BTreeSet<LocalId>,
     ) -> Result<(AvailabilityFlow, PlaceInfo), TypeError> {
         let expression = self
             .program
@@ -1037,22 +1288,25 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 },
             )),
             HirExpressionKind::Field { base, member } => {
-                let (flow, mut place) = self.place_base(*base, state)?;
+                let (flow, mut place) = self.place_base(*base, state, live_after)?;
                 place.complete_transfer &= self.is_newtype(self.expression_type(*base))?;
                 place.projections.push(PlaceProjection::Field(*member));
                 Ok((flow, place))
             }
             HirExpressionKind::TupleField { base, index } => {
-                let (flow, mut place) = self.place_base(*base, state)?;
+                let (flow, mut place) = self.place_base(*base, state, live_after)?;
                 place.complete_transfer = false;
                 place.projections.push(PlaceProjection::TupleField(*index));
                 Ok((flow, place))
             }
             HirExpressionKind::Index { base, index, .. } => {
-                let (flow, mut place) = self.place_base(*base, state)?;
+                let (flow, mut place) = self.place_base(*base, state, live_after)?;
                 place.complete_transfer = false;
                 place.projections.push(PlaceProjection::Collection);
-                Ok((self.then_expression(flow, *index, Demand::Transfer)?, place))
+                Ok((
+                    self.then_expression(flow, *index, Demand::Transfer, live_after)?,
+                    place,
+                ))
             }
             HirExpressionKind::Slice {
                 base,
@@ -1060,11 +1314,11 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 end,
                 step,
             } => {
-                let (mut flow, mut place) = self.place_base(*base, state)?;
+                let (mut flow, mut place) = self.place_base(*base, state, live_after)?;
                 place.complete_transfer = false;
                 place.projections.push(PlaceProjection::Collection);
                 for value in start.iter().chain(end).chain(step) {
-                    flow = self.then_expression(flow, *value, Demand::Transfer)?;
+                    flow = self.then_expression(flow, *value, Demand::Transfer, live_after)?;
                 }
                 Ok((flow, place))
             }
@@ -1088,6 +1342,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         &mut self,
         base: HirExpressionId,
         state: AvailabilityState,
+        live_after: &BTreeSet<LocalId>,
     ) -> Result<(AvailabilityFlow, PlaceInfo), TypeError> {
         if self
             .program
@@ -1096,10 +1351,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             .category()
             == HirValueCategory::Place
         {
-            self.place_components(base, state)
+            self.place_components(base, state, live_after)
         } else {
             Ok((
-                self.expression(base, state, Demand::Transfer)?,
+                self.expression(base, state, Demand::Transfer, live_after)?,
                 PlaceInfo {
                     root: PlaceRoot::Temporary(base),
                     projections: Vec::new(),
@@ -1153,9 +1408,20 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             return Ok(());
         }
         let transfers = demand == Demand::Transfer && !self.is_copy(ty)?;
+        let access_place = local
+            .filter(|local| self.pattern_borrowed.contains(local))
+            .and_then(|local| {
+                state.loans.get(&LoanIdentity::Pattern(local)).map(|loan| {
+                    let mut source = loan.place.clone();
+                    source.projections.extend(place.projections.iter().cloned());
+                    source.complete_transfer = false;
+                    source
+                })
+            })
+            .unwrap_or_else(|| place.clone());
         self.check_loan_access(
             state,
-            &place,
+            &access_place,
             if transfers {
                 LoanAccess::Move
             } else {
@@ -1261,9 +1527,24 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         }
     }
 
+    fn loan_place_in_state(&self, id: HirExpressionId, state: &AvailabilityState) -> PlaceInfo {
+        let place = self.loan_place(id);
+        let PlaceRoot::Local(local) = place.root else {
+            return place;
+        };
+        let Some(source) = state.loans.get(&LoanIdentity::Pattern(local)) else {
+            return place;
+        };
+        let mut resolved = source.place.clone();
+        resolved.projections.extend(place.projections);
+        resolved.complete_transfer = false;
+        resolved
+    }
+
     fn reserve_loan(
         &mut self,
         state: &mut AvailabilityState,
+        identity: LoanIdentity,
         place: PlaceInfo,
         mode: ParameterMode,
         span: Span,
@@ -1271,7 +1552,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         if place.projections.contains(&PlaceProjection::Collection) {
             return;
         }
-        for active in &state.loans {
+        for active in state.loans.values() {
             if places_overlap(&active.place, &place)
                 && !(active.mode == ParameterMode::Ref && mode == ParameterMode::Ref)
             {
@@ -1283,7 +1564,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 });
             }
         }
-        state.loans.push(LoanReservation { mode, place, span });
+        state
+            .loans
+            .insert(identity, LoanReservation { mode, place, span });
     }
 
     fn check_loan_access(
@@ -1293,7 +1576,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         access: LoanAccess,
         span: Span,
     ) {
-        for active in &state.loans {
+        for active in state.loans.values() {
             if !places_overlap(&active.place, place) {
                 continue;
             }
@@ -1452,14 +1735,93 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         }
     }
 
+    fn introduce_match_pattern(
+        &mut self,
+        pattern: HirPatternId,
+        source: &PlaceInfo,
+        state: &mut AvailabilityState,
+        locals: &mut Vec<LocalId>,
+    ) {
+        let pattern = self
+            .program
+            .pattern(pattern)
+            .expect("availability analysis receives verified match patterns")
+            .clone();
+        match pattern.kind() {
+            HirPatternKind::Recovery
+            | HirPatternKind::Wildcard
+            | HirPatternKind::Literal(_)
+            | HirPatternKind::OptionNone => {}
+            HirPatternKind::Binding(local) => {
+                self.owners.insert(*local);
+                remove_local(state, *local);
+                locals.push(*local);
+            }
+            HirPatternKind::BorrowBinding(local) => {
+                self.borrowed.insert(*local);
+                self.pattern_borrowed.insert(*local);
+                remove_local(state, *local);
+                locals.push(*local);
+                self.reserve_loan(
+                    state,
+                    LoanIdentity::Pattern(*local),
+                    source.clone(),
+                    ParameterMode::Ref,
+                    pattern.span(),
+                );
+            }
+            HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
+                for (index, item) in items.iter().enumerate() {
+                    let mut projected = source.clone();
+                    projected
+                        .projections
+                        .push(PlaceProjection::TupleField(index as u32));
+                    projected.complete_transfer = false;
+                    self.introduce_match_pattern(*item, &projected, state, locals);
+                }
+            }
+            HirPatternKind::OptionSome(item)
+            | HirPatternKind::ResultOk(item)
+            | HirPatternKind::ResultErr(item)
+            | HirPatternKind::Newtype { value: item, .. }
+            | HirPatternKind::UnionMember { pattern: item, .. } => {
+                let mut projected = source.clone();
+                projected.complete_transfer = false;
+                self.introduce_match_pattern(*item, &projected, state, locals);
+            }
+            HirPatternKind::Record { fields, .. } => {
+                for field in fields {
+                    let mut projected = source.clone();
+                    projected
+                        .projections
+                        .push(PlaceProjection::Field(field.member()));
+                    projected.complete_transfer = false;
+                    self.introduce_match_pattern(field.pattern(), &projected, state, locals);
+                }
+            }
+            HirPatternKind::Array { prefix, rest } => {
+                for item in prefix.iter().copied().chain(*rest) {
+                    let mut projected = source.clone();
+                    projected.projections.push(PlaceProjection::Collection);
+                    projected.complete_transfer = false;
+                    self.introduce_match_pattern(item, &projected, state, locals);
+                }
+            }
+        }
+    }
+
     fn sequence(
         &mut self,
         state: AvailabilityState,
         values: impl IntoIterator<Item = (HirExpressionId, Demand)>,
+        live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
+        let values = values.into_iter().collect::<Vec<_>>();
+        let ids = values.iter().map(|(value, _)| *value).collect::<Vec<_>>();
+        let (value_live_after, _) = self.ordered_live_afters(&ids, live_after);
         let mut flow = AvailabilityFlow::normal(state);
-        for (value, demand) in values {
-            flow = self.then_expression(flow, value, demand)?;
+        for ((value, demand), live_after) in values.into_iter().zip(&value_live_after) {
+            flow = self.then_expression(flow, value, demand, live_after)?;
         }
         Ok(flow)
     }
@@ -1469,11 +1831,12 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         mut flow: AvailabilityFlow,
         expression: HirExpressionId,
         demand: Demand,
+        live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
         let Some(state) = flow.normal.take() else {
             return Ok(flow);
         };
-        flow.merge(self.expression(expression, state, demand)?);
+        flow.merge(self.expression(expression, state, demand, live_after)?);
         Ok(flow)
     }
 
@@ -1481,6 +1844,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         &self,
         id: HirExpressionId,
         mut flow: AvailabilityFlow,
+        live_after: &BTreeSet<LocalId>,
     ) -> AvailabilityFlow {
         if self
             .program
@@ -1489,7 +1853,89 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         {
             flow.normal = None;
         }
+        if let Some(state) = &mut flow.normal {
+            retain_pattern_loans(state, live_after);
+        }
         flow
+    }
+
+    fn local_uses(&self, id: HirExpressionId) -> &BTreeSet<LocalId> {
+        &self.liveness.local_uses[id.index() as usize]
+    }
+
+    fn expression_may_complete(&self, id: HirExpressionId) -> bool {
+        self.program
+            .expression_flow(id)
+            .expect("availability analysis receives verified expression flow")
+            .may_complete()
+    }
+
+    fn expression_entry_liveness(
+        &self,
+        id: HirExpressionId,
+        normal_after: &BTreeSet<LocalId>,
+    ) -> BTreeSet<LocalId> {
+        let mut live = self.local_uses(id).clone();
+        if self.expression_may_complete(id) {
+            live.extend(normal_after.iter().copied());
+        }
+        if let Some(targets) = self.program.expression_break_targets(id) {
+            for target in targets {
+                if let Some(target_live) = self.break_liveness.get(target) {
+                    live.extend(target_live.iter().copied());
+                }
+            }
+        }
+        for target in &self.liveness.continue_targets[id.index() as usize] {
+            if let Some(target_live) = self.continue_liveness.get(target) {
+                live.extend(target_live.iter().copied());
+            }
+        }
+        live
+    }
+
+    fn statement_entry_liveness(
+        &self,
+        statement: &HirStatement,
+        normal_after: &BTreeSet<LocalId>,
+    ) -> BTreeSet<LocalId> {
+        let facts = statement_liveness_facts(
+            self.program,
+            statement,
+            &self.liveness.local_uses,
+            &self.liveness.continue_targets,
+        );
+        let mut live = facts.uses;
+        if statement_may_complete(self.program, statement) {
+            live.extend(normal_after.iter().copied());
+        }
+        for target in facts.breaks {
+            if let Some(target_live) = self.break_liveness.get(&target) {
+                live.extend(target_live.iter().copied());
+            }
+        }
+        for target in facts.continues {
+            if let Some(target_live) = self.continue_liveness.get(&target) {
+                live.extend(target_live.iter().copied());
+            }
+        }
+        live
+    }
+
+    fn ordered_live_afters(
+        &self,
+        values: &[HirExpressionId],
+        final_after: &BTreeSet<LocalId>,
+    ) -> (Vec<BTreeSet<LocalId>>, BTreeSet<LocalId>) {
+        let mut suffix = final_after.clone();
+        let mut live_afters = vec![BTreeSet::new(); values.len()];
+        for (index, value) in values.iter().enumerate().rev() {
+            if self.expression_may_complete(*value) {
+                live_afters[index] = suffix;
+            }
+            suffix = self.expression_entry_liveness(*value, &live_afters[index]);
+        }
+        (live_afters, suffix)
     }
 
     fn direct_local(&self, expression: HirExpressionId) -> Option<LocalId> {
@@ -1511,6 +1957,464 @@ fn merge_optional_state(target: &mut Option<AvailabilityState>, source: Option<A
     }
 }
 
+#[derive(Default)]
+struct StatementLivenessFacts {
+    uses: BTreeSet<LocalId>,
+    breaks: BTreeSet<HirLoopId>,
+    continues: BTreeSet<HirLoopId>,
+}
+
+struct LivenessFacts {
+    local_uses: Vec<BTreeSet<LocalId>>,
+    continue_targets: Vec<BTreeSet<HirLoopId>>,
+}
+
+fn collect_liveness_facts(program: &HirProgram) -> LivenessFacts {
+    let mut uses = Vec::<BTreeSet<LocalId>>::new();
+    let mut continues = Vec::<BTreeSet<HirLoopId>>::new();
+    for expression in program.expressions() {
+        let mut current = BTreeSet::new();
+        let mut current_continues = BTreeSet::new();
+        if let HirExpressionKind::Local(local) = expression.kind() {
+            current.insert(*local);
+        }
+        if let HirExpressionKind::Continue {
+            target: Some(target),
+        } = expression.kind()
+        {
+            current_continues.insert(*target);
+        }
+        match expression.kind() {
+            HirExpressionKind::Block { statements, tail } => {
+                let mut reachable = true;
+                for statement in statements {
+                    if !reachable {
+                        break;
+                    }
+                    let facts = statement_liveness_facts(program, statement, &uses, &continues);
+                    current.extend(facts.uses);
+                    current_continues.extend(facts.continues);
+                    reachable = statement_may_complete(program, statement);
+                }
+                if reachable && let Some(tail) = tail {
+                    extend_expression_facts(
+                        program,
+                        *tail,
+                        &uses,
+                        &continues,
+                        &mut current,
+                        &mut current_continues,
+                    );
+                }
+            }
+            HirExpressionKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                extend_expression_facts(
+                    program,
+                    *condition,
+                    &uses,
+                    &continues,
+                    &mut current,
+                    &mut current_continues,
+                );
+                if expression_may_complete(program, *condition) {
+                    extend_expression_facts(
+                        program,
+                        *then_branch,
+                        &uses,
+                        &continues,
+                        &mut current,
+                        &mut current_continues,
+                    );
+                    if let Some(else_branch) = else_branch {
+                        extend_expression_facts(
+                            program,
+                            *else_branch,
+                            &uses,
+                            &continues,
+                            &mut current,
+                            &mut current_continues,
+                        );
+                    }
+                }
+            }
+            HirExpressionKind::Match {
+                scrutinee, arms, ..
+            } => {
+                extend_expression_facts(
+                    program,
+                    *scrutinee,
+                    &uses,
+                    &continues,
+                    &mut current,
+                    &mut current_continues,
+                );
+                if expression_may_complete(program, *scrutinee) {
+                    for arm in arms {
+                        let guard_completes = if let Some(guard) = arm.guard() {
+                            extend_expression_facts(
+                                program,
+                                guard,
+                                &uses,
+                                &continues,
+                                &mut current,
+                                &mut current_continues,
+                            );
+                            expression_may_complete(program, guard)
+                        } else {
+                            true
+                        };
+                        if guard_completes {
+                            extend_expression_facts(
+                                program,
+                                arm.body(),
+                                &uses,
+                                &continues,
+                                &mut current,
+                                &mut current_continues,
+                            );
+                        }
+                    }
+                }
+            }
+            _ => extend_expression_sequence_facts(
+                program,
+                expression_children(expression.kind()),
+                &uses,
+                &continues,
+                &mut current,
+                &mut current_continues,
+            ),
+        }
+        uses.push(current);
+        continues.push(current_continues);
+    }
+    LivenessFacts {
+        local_uses: uses,
+        continue_targets: continues,
+    }
+}
+
+fn expression_may_complete(program: &HirProgram, id: HirExpressionId) -> bool {
+    program
+        .expression_flow(id)
+        .expect("liveness facts receive verified expression flow")
+        .may_complete()
+}
+
+fn extend_expression_facts(
+    program: &HirProgram,
+    id: HirExpressionId,
+    local_uses: &[BTreeSet<LocalId>],
+    continue_targets: &[BTreeSet<HirLoopId>],
+    uses: &mut BTreeSet<LocalId>,
+    continues: &mut BTreeSet<HirLoopId>,
+) {
+    debug_assert!(program.expression(id).is_some());
+    let index = id.index() as usize;
+    uses.extend(
+        local_uses
+            .get(index)
+            .expect("HIR expression children precede their parent")
+            .iter()
+            .copied(),
+    );
+    continues.extend(
+        continue_targets
+            .get(index)
+            .expect("HIR expression children retain continue facts")
+            .iter()
+            .copied(),
+    );
+}
+
+fn extend_expression_sequence_facts(
+    program: &HirProgram,
+    values: impl IntoIterator<Item = HirExpressionId>,
+    local_uses: &[BTreeSet<LocalId>],
+    continue_targets: &[BTreeSet<HirLoopId>],
+    uses: &mut BTreeSet<LocalId>,
+    continues: &mut BTreeSet<HirLoopId>,
+) {
+    for value in values {
+        extend_expression_facts(
+            program,
+            value,
+            local_uses,
+            continue_targets,
+            uses,
+            continues,
+        );
+        if !expression_may_complete(program, value) {
+            break;
+        }
+    }
+}
+
+fn statement_liveness_facts(
+    program: &HirProgram,
+    statement: &HirStatement,
+    local_uses: &[BTreeSet<LocalId>],
+    continue_targets: &[BTreeSet<HirLoopId>],
+) -> StatementLivenessFacts {
+    let mut facts = StatementLivenessFacts::default();
+    let mut add = |id| {
+        extend_expression_facts(
+            program,
+            id,
+            local_uses,
+            continue_targets,
+            &mut facts.uses,
+            &mut facts.continues,
+        );
+        if let Some(targets) = program.expression_break_targets(id) {
+            facts.breaks.extend(targets.iter().copied());
+        }
+        expression_may_complete(program, id)
+    };
+    match statement {
+        HirStatement::Binding { value, .. }
+        | HirStatement::Expression { value, .. }
+        | HirStatement::Discard { value, .. } => {
+            add(*value);
+        }
+        HirStatement::Assignment { target, value, .. } => {
+            let mut places = Vec::new();
+            collect_assignment_places(target, &mut places);
+            for place in places {
+                if !add(place) {
+                    return facts;
+                }
+            }
+            add(*value);
+        }
+        HirStatement::For { id, kind, body, .. } => {
+            let header = match kind {
+                HirForKind::Infinite => None,
+                HirForKind::Conditional { condition } => Some(*condition),
+                HirForKind::Iterate { source, .. } => Some(*source),
+            };
+            if header.is_some_and(|header| !add(header)) {
+                return facts;
+            }
+            add(*body);
+            facts.breaks.remove(id);
+            facts.continues.remove(id);
+        }
+    }
+    facts
+}
+
+fn statement_may_complete(program: &HirProgram, statement: &HirStatement) -> bool {
+    match statement {
+        HirStatement::Binding { value, .. }
+        | HirStatement::Expression { value, .. }
+        | HirStatement::Discard { value, .. } => expression_may_complete(program, *value),
+        HirStatement::Assignment { target, value, .. } => {
+            let mut places = Vec::new();
+            collect_assignment_places(target, &mut places);
+            places
+                .into_iter()
+                .all(|place| expression_may_complete(program, place))
+                && expression_may_complete(program, *value)
+        }
+        HirStatement::For { id, kind, body, .. } => {
+            let header_completes = match kind {
+                HirForKind::Infinite => true,
+                HirForKind::Conditional { condition } => {
+                    expression_may_complete(program, *condition)
+                }
+                HirForKind::Iterate { source, .. } => expression_may_complete(program, *source),
+            };
+            header_completes
+                && match kind {
+                    HirForKind::Infinite => program
+                        .expression_break_targets(*body)
+                        .is_some_and(|targets| targets.contains(id)),
+                    HirForKind::Conditional { .. } | HirForKind::Iterate { .. } => true,
+                }
+        }
+    }
+}
+
+fn expression_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
+    let mut children = Vec::new();
+    match kind {
+        HirExpressionKind::Recovery
+        | HirExpressionKind::Literal(_)
+        | HirExpressionKind::Local(_)
+        | HirExpressionKind::Constant(_)
+        | HirExpressionKind::Function(_)
+        | HirExpressionKind::SpecializedFunction { .. }
+        | HirExpressionKind::PreludeTraitFunction { .. }
+        | HirExpressionKind::Closure(_)
+        | HirExpressionKind::Receiver
+        | HirExpressionKind::Break { .. }
+        | HirExpressionKind::Continue { .. } => {}
+        HirExpressionKind::InterpolatedString { values, .. }
+        | HirExpressionKind::Tuple(values)
+        | HirExpressionKind::Array(values)
+        | HirExpressionKind::Set(values) => children.extend(values.iter().copied()),
+        HirExpressionKind::Map { entries, .. } => {
+            for entry in entries {
+                children.push(entry.key());
+                children.push(entry.value());
+            }
+        }
+        HirExpressionKind::Newtype { value, .. }
+        | HirExpressionKind::NumericConversion { value, .. }
+        | HirExpressionKind::OptionSome { value }
+        | HirExpressionKind::ResultOk { value }
+        | HirExpressionKind::PropagateOption { value }
+        | HirExpressionKind::PropagateResult { value, .. }
+        | HirExpressionKind::Coerce { value, .. } => children.push(*value),
+        HirExpressionKind::Record { fields, .. } => {
+            children.extend(fields.iter().map(super::HirRecordFieldValue::value));
+        }
+        HirExpressionKind::Variant { payload, .. } => match payload {
+            HirVariantValue::Unit => {}
+            HirVariantValue::Tuple(values) => children.extend(values.iter().copied()),
+            HirVariantValue::Record(fields) => {
+                children.extend(fields.iter().map(super::HirRecordFieldValue::value));
+            }
+        },
+        HirExpressionKind::RecordUpdate { base, fields } => {
+            children.push(*base);
+            children.extend(fields.iter().map(super::HirRecordFieldValue::value));
+        }
+        HirExpressionKind::Block { statements, tail } => {
+            for statement in statements {
+                children.extend(statement_expressions(statement));
+            }
+            children.extend(*tail);
+        }
+        HirExpressionKind::Prefix { operand, .. } => children.push(*operand),
+        HirExpressionKind::Binary { left, right, .. }
+        | HirExpressionKind::Range {
+            start: left,
+            end: right,
+            ..
+        } => {
+            children.push(*left);
+            children.push(*right);
+        }
+        HirExpressionKind::Contains {
+            item, container, ..
+        } => {
+            children.push(*item);
+            children.push(*container);
+        }
+        HirExpressionKind::Field { base, .. } | HirExpressionKind::TupleField { base, .. } => {
+            children.push(*base)
+        }
+        HirExpressionKind::Index { base, index, .. } => {
+            children.push(*base);
+            children.push(*index);
+        }
+        HirExpressionKind::Slice {
+            base,
+            start,
+            end,
+            step,
+        } => {
+            children.push(*base);
+            children.extend(*start);
+            children.extend(*end);
+            children.extend(*step);
+        }
+        HirExpressionKind::Call {
+            callee, arguments, ..
+        } => {
+            children.push(*callee);
+            children.extend(arguments.iter().map(super::HirCallArgument::value));
+        }
+        HirExpressionKind::PreludePanic { message } => children.push(*message),
+        HirExpressionKind::PreludeAssert {
+            condition,
+            message_parts,
+            ..
+        } => {
+            children.push(*condition);
+            children.extend(message_parts.iter().map(|part| part.value()));
+        }
+        HirExpressionKind::BootstrapHostCall { arguments, .. } => {
+            children.extend(arguments.iter().copied());
+        }
+        HirExpressionKind::ResultErr { error } | HirExpressionKind::Fail { error } => {
+            children.push(*error);
+        }
+        HirExpressionKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            children.push(*condition);
+            children.push(*then_branch);
+            children.extend(*else_branch);
+        }
+        HirExpressionKind::Match {
+            scrutinee, arms, ..
+        } => {
+            children.push(*scrutinee);
+            for arm in arms {
+                children.extend(arm.guard());
+                children.push(arm.body());
+            }
+        }
+        HirExpressionKind::Return { value } => children.extend(*value),
+    }
+    children
+}
+
+fn statement_expressions(statement: &HirStatement) -> Vec<HirExpressionId> {
+    match statement {
+        HirStatement::Binding { value, .. }
+        | HirStatement::Expression { value, .. }
+        | HirStatement::Discard { value, .. } => vec![*value],
+        HirStatement::Assignment { target, value, .. } => {
+            let mut expressions = Vec::new();
+            collect_assignment_places(target, &mut expressions);
+            expressions.push(*value);
+            expressions
+        }
+        HirStatement::For { kind, body, .. } => {
+            let mut expressions = match kind {
+                HirForKind::Infinite => Vec::new(),
+                HirForKind::Conditional { condition } => vec![*condition],
+                HirForKind::Iterate { source, .. } => vec![*source],
+            };
+            expressions.push(*body);
+            expressions
+        }
+    }
+}
+
+fn collect_assignment_places(target: &HirAssignmentTarget, output: &mut Vec<HirExpressionId>) {
+    match target.kind() {
+        HirAssignmentTargetKind::Place { place, .. } => output.push(*place),
+        HirAssignmentTargetKind::Discard => {}
+        HirAssignmentTargetKind::Tuple(items) => {
+            for item in items {
+                collect_assignment_places(item, output);
+            }
+        }
+    }
+}
+
+fn union_sets(left: &BTreeSet<LocalId>, right: &BTreeSet<LocalId>) -> BTreeSet<LocalId> {
+    left.union(right).copied().collect()
+}
+
+fn retain_pattern_loans(state: &mut AvailabilityState, live: &BTreeSet<LocalId>) {
+    state.loans.retain(|identity, _| match identity {
+        LoanIdentity::Call(_) => true,
+        LoanIdentity::Pattern(local) => live.contains(local),
+    });
+}
+
 fn merge_control_states(
     target: &mut BTreeMap<HirLoopId, AvailabilityState>,
     source: BTreeMap<HirLoopId, AvailabilityState>,
@@ -1525,13 +2429,9 @@ fn merge_control_states(
 }
 
 fn merge_state(target: &mut AvailabilityState, source: AvailabilityState) {
-    let common_loans = target
+    target
         .loans
-        .iter()
-        .zip(&source.loans)
-        .take_while(|(left, right)| left == right)
-        .count();
-    target.loans.truncate(common_loans);
+        .retain(|identity, loan| source.loans.get(identity) == Some(loan));
     for (local, origin) in source.unavailable {
         target.unavailable.entry(local).or_insert(origin);
     }
@@ -1555,6 +2455,7 @@ fn state_keys_equal(left: &AvailabilityState, right: &AvailabilityState) -> bool
 fn remove_local(state: &mut AvailabilityState, local: LocalId) {
     state.unavailable.remove(&local);
     state.definitely_transferred.remove(&local);
+    state.loans.remove(&LoanIdentity::Pattern(local));
 }
 
 fn place_local(place: &PlaceInfo) -> Option<LocalId> {

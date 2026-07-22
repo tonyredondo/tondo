@@ -8,7 +8,7 @@ closure callables, OWN-001 intrinsic cursor capabilities, OWN-002 affine
 transfers and immediate observations, OWN-003 flow availability, OWN-004
 complete-slot reinitialization, OWN-005 typed move paths, OWN-006 affine closure
 captures, OWN-007 exact closed `CallOnce` rows, BORROW-001 call-local loans, and
-the M3 VM admission path implemented
+BORROW-002 inferred pattern regions, and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -146,8 +146,8 @@ Each function owns:
 - a sorted, deduplicated source-span table;
 - typed frame slots for the return place, parameters, user locals, and
   temporaries;
-- a dense loan table whose entries retain one non-value parameter mode and one
-  fixed typed place;
+- a dense loan table whose entries retain one call-local/region kind, one
+  non-value parameter mode, and one fixed typed place;
 - parameter, entry, unwind, and return-slot indices; and
 - basic blocks in deterministic MIR order.
 
@@ -168,7 +168,7 @@ return place have function-wide storage.
 ## Instructions and control flow
 
 Ordinary instructions perform storage lifetime changes, reserve/release one
-call-local loan identity, or store one pure typed rvalue. Rvalues cover loads,
+loan identity, or store one pure typed rvalue. Rvalues cover loads,
 copies/moves, constants, pure arithmetic,
 construction, record update, coercion, total conversion, range, membership,
 length, and iterator-state creation. The latter accepts an intrinsic collection
@@ -220,15 +220,31 @@ normalized to the strongest safe concrete specialization without changing
 whether the source operand borrows, copies, or moves.
 Value arguments use copy/move access. Each `ref`, `mut`, or `var` argument uses
 one `Loan(id)` operand whose table entry has the identical mode, type, and fixed
-place. `ReserveLoan(id)` begins its active interval after that argument's place
-is resolved. The call consumes all of its loan operands atomically;
-`ReleaseLoan(id)` closes reservations abandoned while a later argument executes
-`return`, `fail`, `?`, `break`, or `continue`. The verifier propagates the exact
-active set through branches and loops, rejects mismatched joins, duplicate or
-inactive reservation events, overlapping exclusive access, and every use of a
-loan operand outside its consuming call.
+place and `CallLocal` kind. `ReserveLoan(id)` begins its active interval after
+that argument's place is resolved. The call consumes all of its call-local loan
+operands atomically; `ReleaseLoan(id)` closes reservations abandoned while a
+later argument executes `return`, `fail`, `?`, `break`, or `continue`.
+
+A pattern `ref` uses a shared `Region` entry. Every place reached through that
+binding retains a `source_loan` anchor, including nested region bindings and
+call-local reborrows. MIR has already inserted releases at statement or
+edge-specific last uses; bytecode lowers those identities and bridge blocks
+without recomputing source liveness. The bytecode verifier nevertheless proves
+the region kind and mode, acyclic source order, containment within the reserved
+path, active source chains, and the prohibition on consuming a region as a call
+operand. It propagates the exact active set through branches and loops and
+rejects mismatched joins, duplicate or inactive events, and overlapping
+exclusive access. A source region must remain open until every transitive child
+reservation has closed.
+
+Execution defensively repeats the dynamic part of that contract: every read,
+take, write, place validation, reservation, and call reached through an anchored
+place requires its complete shared source-region chain to remain active. A
+write or move through a shared anchor is rejected even if malformed bytecode
+somehow bypasses the admission gate.
+
 Panic unwinding discards every reservation in the abandoned frame, so cleanup
-blocks cannot reserve or release call-local loans.
+blocks cannot reserve or release loans.
 
 Reborrowing preserves the same permission order as HIR/MIR, including `var`
 from a strict fixed projection of `mut`. Record fields and tuple slots may be
@@ -318,10 +334,12 @@ Before execution, the verifier proves:
 - `Borrow` is confined to the enumerated immediate observation positions and
   cannot escape into any call argument, slot, aggregate, return, or unrelated
   operation;
-- each loan has exactly one static reservation and at most one static call
-  consumer; every reachable path consumes or explicitly releases an active
-  reservation, active sets agree at joins, overlapping exclusive regions are
-  rejected, and `Loan` cannot occur outside its matching non-value argument;
+- each loan has exactly one static reservation; a call-local loan has at most
+  one static call consumer while a region has none; every reachable path
+  consumes or explicitly releases an active reservation, anchored places use
+  an active shared source chain, active sets agree at joins, overlapping
+  exclusive regions are rejected, and `Loan` cannot occur outside its matching
+  non-value argument;
 - normal edges remain in normal code, unwind edges enter cleanup code, and the
   distinguished unwind block resumes panic;
 - all reachable reads have a dominating live definition, every root or

@@ -400,10 +400,18 @@ pub struct BytecodePlace {
     pub slot: BytecodeSlotId,
     pub ty: BytecodeTypeId,
     pub projections: Vec<BytecodeProjection>,
+    pub source_loan: Option<BytecodeLoanId>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BytecodeLoanKind {
+    CallLocal,
+    Region,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BytecodeLoan {
+    pub kind: BytecodeLoanKind,
     pub mode: BytecodeParameterMode,
     pub place: BytecodePlace,
 }

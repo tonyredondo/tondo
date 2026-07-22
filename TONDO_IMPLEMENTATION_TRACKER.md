@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.41
+**Versión del tracker:** 0.42
 
 **Última actualización:** 2026-07-22
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** calcular regiones por último uso sin lifetimes de
-fuente (BORROW-002).
+**Objetivo inmediato:** distinguir observación compartida, mutación de extensión
+fija y mutación estructural (BORROW-003).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1328,7 +1328,17 @@ lifetimes escritos por el usuario.
   y unwind. Un reemplazo raíz `mut` cuya extensión aún no puede probarse queda
   incompleto para BORROW-003 en vez de ejecutarse con semántica provisional.
 
-- [ ] **BORROW-002 — Calcular regiones por último uso sin lifetimes de fuente.**
+- [x] **BORROW-002 — Calcular regiones por último uso sin lifetimes de fuente.**
+  Los bindings `ref` de patrones sobre lugares fijos conservan la proyección
+  fuente exacta y una región compartida inferida por último uso. HIR calcula
+  liveness sensible a ramas, joins, orden de evaluación y backedges; MIR
+  materializa reservas, releases en sentencias o edges y cadenas de reborrow
+  sin crear referencias locales ni lifetimes de fuente. Los verificadores MIR
+  y bytecode vuelven a probar identidad, contención, orden acíclico, actividad
+  y cierre exacto padre-hijo, y la VM defiende la cadena activa en cada acceso.
+  Los usos inalcanzables no prolongan regiones y `break`/`continue` conservan la
+  liveness específica de su destino. Patrones de array y cursores `for ref`
+  permanecen incompletos para BORROW-004/005.
 
 - [ ] **BORROW-003 — Distinguir observación compartida, mutación de extensión
   fija y mutación estructural.**
@@ -1926,13 +1936,41 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es BORROW-002: extender el préstamo call-local ya
-verificado a regiones inferidas por último uso, sin introducir lifetimes
-escritos por el usuario ni debilitar la identidad de lugar.
+La siguiente acción activa es BORROW-003: separar de forma verificable la
+observación compartida, la escritura de extensión fija y el reemplazo
+estructural, sin convertir los modos `ref`/`mut`/`var` en sintaxis duplicada ni
+limitar las operaciones seguras sobre agregados y colecciones.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.42 — 2026-07-22
+
+- Se completa BORROW-002 para bindings `ref` de patrones sobre lugares fijos.
+  HIR conserva la identidad fuente real a través de aliases anidados y calcula
+  conjuntos `live-after` por camino para bloques, operandos ordenados,
+  cortocircuito, `if`, guards y arms de `match`, loops y transfers. Los facts de
+  uso excluyen código inalcanzable; `break` toma la salida exacta y `continue`
+  el backedge aunque estén anidados dentro de otra expresión.
+- MIR distingue loans `CallLocal` y `Region`. Los lugares prestados conservan
+  un ancla `source_loan`; un análisis backward inserta releases tras el último
+  uso o en bridges de edges específicos, siempre cerrando primero regiones
+  anidadas y sin exponer lifetimes en el lenguaje fuente.
+- Los verificadores MIR y bytecode rederivan el orden acíclico, la contención
+  del path, el modo compartido, la cadena fuente activa, los joins exactos y la
+  imposibilidad de consumir una región como argumento. La VM repite las
+  defensas dinámicas sobre lectura, move, escritura, validación, reserva y call.
+- Las regresiones cubren liberación secuencial y por rama, joins, backedges,
+  orden de argumentos, regiones anidadas, reborrow call-local, escritura
+  posterior válida, cierre de un hijo abandonado antes de su padre, transfers
+  anidados, código inalcanzable y bytecode forjado con cierre prematuro.
+  Patrones de array y cursores `for ref` siguen honestamente incompletos para
+  BORROW-004/005.
+- El gate acumulado pasa 489 tests, incluidos 441 tests de la librería del
+  compilador; también pasan `git diff --check`, formatter check, check y build
+  de todos los targets, Clippy y Rustdoc con warnings denegados.
+- La cola avanza a BORROW-003.
 
 ### 0.41 — 2026-07-22
 
