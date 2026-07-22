@@ -153,9 +153,11 @@ generated identity and function type. CALL-003 derives `Call`, `CallMut`, and
 `CallOnce` from reachable capture accesses; an async environment write removes
 both shared and exclusive borrowed invocation. Contextual closure-to-`fn(...)`
 erasure requires an exact effect-preserving signature, `Call`, and an
-environment proving `Copy + Send + Share`. The executable M4 subset still
-requires Copy captures and only invokes synchronous-safe signatures; affine
-capture moves remain an M5 boundary, async initiation belongs to M7, and unsafe
+environment proving `Copy + Send + Share`. OWN-006 applies the same contextual
+Copy/Move decision as an ordinary value transfer to every capture, marks an
+affine outer binding unavailable at construction, and derives repeatable call
+protocols from environment writes and moves. Ordinary invocation still accepts
+only synchronous-safe signatures; async initiation belongs to M7, and unsafe
 context validation belongs to M9. Open source/prelude trait obligations use
 coherent static selection. Trait declarations
 carry a sorted method table, contextual `Self`, default-body and async-receiver
@@ -249,10 +251,11 @@ available root. HIR also records and rederives one uniform
 copy/observe/consume mode per `match`, rejects unconfirmed affine projections,
 and delays affine pattern transfers until after a successful guard. Typed move
 paths now live in MIR and bytecode as an internal destructuring mechanism;
-affine captures, loan regions, confirmed borrowed transfers, and terminal
-cleanup remain later analyses. Synchronous Copy closure invocation already
-crosses this boundary with an explicit exact signature and selected call
-protocol.
+closure captures participate in the same whole-owner flow and become typed
+environment move paths. Loan regions, confirmed borrowed transfers, terminal
+closure obligations, and cleanup remain later analyses. Synchronous closure
+invocation crosses this boundary with an explicit exact signature and selected
+call protocol.
 
 Type IDs are request-local interned handles; only canonical recursive type
 strings are observable. Alias expansion, union normalization, nominal identity,
@@ -288,8 +291,10 @@ Before bytecode lowering, the MIR verifier proves:
 - Payload projections are dominated by a compatible discriminant branch.
 - Calls preserve the selected callable, receiver mode, specialization, and
   argument association.
-- Closure aggregates preserve the exact generated type and copy each capture
-  from its declared outer source binding in HIR order.
+- Closure aggregates preserve the exact generated type and contextually copy or
+  move each capture from its declared outer source binding in HIR order.
+- Closure bodies rederive their protocol row from writes and moves of the exact
+  hidden-environment paths.
 - The ordinary call operation carries only a synchronous-safe signature;
   effectful initiation requires the later async or unsafe MIR operation.
 - Capability-sensitive equality, membership, and map lookup agree with the
@@ -329,12 +334,13 @@ Uniform function values stored in locals, aggregates, or constants use the same
 verified indirect-call operation; source-trait values are statically selected
 before entering the constant or operand catalog.
 Concrete closure construction uses an ordinary generated-type aggregate with a
-verified capture schema. Each reached closure specialization also receives one
-real callable and function body with a hidden environment parameter. Calls use
-the ordinary verified indirect-call operation, carrying an exact signature and
-concrete protocol; a shallow borrow is confined to verified immediate
-observation/call positions while `CallOnce` retains ordinary copy/move operand
-semantics.
+verified capture schema and explicit Copy/Move operands. Each reached closure
+specialization also receives one real callable and function body with a hidden
+environment parameter. Calls use the ordinary verified indirect-call operation,
+carrying an exact signature and concrete protocol; a shallow borrow is confined
+to verified immediate observation/call positions while `CallOnce` retains
+ordinary copy/move operand semantics. Bytecode rederives environment writes and
+moves before accepting that protocol row.
 All four closure effect signatures survive in the callable catalog, but the
 ordinary call operation and bytecode verifier reject `async` or `unsafe`
 signatures until their effect-aware instructions exist.
@@ -354,10 +360,12 @@ that must preserve the same tests.
 The implemented synchronous engine uses iterative frames, checked slot states,
 normal/unwind continuations, precise frame and temporary roots, generational
 heap handles, and a stop-the-world mark-and-sweep collector. Closure
-environments trace, snapshot, and copy their capture fields through the same
-managed-value machinery regardless of their effect signature. The VM rejects
-effectful ordinary calls and effectful root entries, so retaining an async or
-unsafe callable cannot activate an unfinished runtime. Its exact object,
+environments trace, snapshot, copy eligible fields, and take moved fields
+through the same managed-value machinery regardless of their effect signature.
+The operation-local root stack protects both copied and moved captures while an
+environment is allocated. The VM rejects effectful ordinary calls and effectful
+root entries, so retaining an async or unsafe callable cannot activate an
+unfinished runtime. Its exact object,
 tracing, panic, host, and admission boundary is recorded in
 `docs/contracts/vm-runtime.md`.
 The sole M3 standard-library bridge, capability-gated

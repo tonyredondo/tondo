@@ -19,7 +19,7 @@ use super::{
     HirIterationProtocol, HirPattern, HirPatternId, HirPatternKind, HirProgram, HirStatement,
     HirTraitConstructor, HirTraitIdentity, HirTraitMethodKey, HirTypeDeclarationKind,
     HirValueCategory, HirVariantPayload, HirVariantValue, TraitQuery, TraitSelectionError,
-    analyze_availability, select_implementation,
+    analyze_availability, analyze_closure_capture_moves, select_implementation,
 };
 
 /// Reports a compiler defect at the boundary between typed HIR and MIR.
@@ -266,16 +266,6 @@ impl Verifier<'_> {
             roots.extend(closure.generics.iter().flat_map(generic_bound_type_roots));
             roots.extend(closure.captures.iter().map(|capture| capture.ty));
             self.verify_type_formations(&analysis, roots, &assumptions, &context)?;
-            for capture in &closure.captures {
-                self.verify_capability_requirement(
-                    &analysis,
-                    capture.ty,
-                    HirCapability::Copy,
-                    &assumptions,
-                    &context,
-                    "M4 closure capture",
-                )?;
-            }
         }
 
         let default_assumptions = CapabilityAssumptions::default();
@@ -1910,6 +1900,10 @@ impl Verifier<'_> {
     }
 
     fn verify_closures(&self) -> Result<(), HirInvariantError> {
+        let capabilities =
+            CapabilityAnalysis::new(self.program, self.resolved).map_err(|error| {
+                HirInvariantError::new("closures", format!("cannot derive capabilities: {error}"))
+            })?;
         let mut identities = BTreeSet::new();
         let mut constructions = BTreeMap::<HirClosureId, (usize, crate::source::Span)>::new();
         for expression in &self.program.expressions {
@@ -2147,15 +2141,12 @@ impl Verifier<'_> {
                     ));
                 }
             }
-            let capture_locals = closure
-                .captures
-                .iter()
-                .map(|capture| capture.local)
-                .collect::<BTreeSet<_>>();
             let expected_protocols = self.derive_closure_protocols(
                 closure.body.root,
-                &capture_locals,
+                &closure.captures,
+                &closure.generics,
                 function.is_async(),
+                &capabilities,
                 &context,
             )?;
             if closure.protocols != expected_protocols {
@@ -2171,14 +2162,29 @@ impl Verifier<'_> {
     fn derive_closure_protocols(
         &self,
         root: HirExpressionId,
-        captures: &BTreeSet<crate::resolve::LocalId>,
+        captures: &[super::HirClosureCapture],
+        generics: &[HirGenericParameter],
         is_async: bool,
+        capabilities: &CapabilityAnalysis,
         context: &str,
     ) -> Result<super::HirClosureProtocols, HirInvariantError> {
-        let writes_capture = self.closure_body_writes_capture(root, captures, context)?;
+        let capture_locals = captures
+            .iter()
+            .map(super::HirClosureCapture::local)
+            .collect::<BTreeSet<_>>();
+        let writes_capture = self.closure_body_writes_capture(root, &capture_locals, context)?;
+        let moves_capture = !analyze_closure_capture_moves(
+            self.program,
+            capabilities,
+            CapabilityAssumptions::from_generics(self.program, generics),
+            captures,
+            root,
+        )
+        .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+        .is_empty();
         Ok(super::HirClosureProtocols::new(
-            !writes_capture,
-            !is_async || !writes_capture,
+            !writes_capture && !moves_capture,
+            !moves_capture && (!is_async || !writes_capture),
             true,
         ))
     }
@@ -5085,30 +5091,25 @@ mod tests {
         wrong_arity.closures[0].generic_arity = 1;
         let error = verify_typed_hir(&resolved, &wrong_arity).unwrap_err();
         assert!(error.message().contains("generic arity"));
+    }
 
-        let (resolved, mut non_copy_capture) = checked_program_from(SOURCE);
-        let join = non_copy_capture
-            .interner
-            .ids()
-            .find(|ty| {
-                matches!(
-                    non_copy_capture.interner.kind(*ty),
-                    Ok(TypeKind::Intrinsic {
-                        constructor: IntrinsicType::Join,
-                        ..
-                    })
-                )
-            })
-            .expect("the source interns its Join parameter type");
-        let closure_type = non_copy_capture.closures[0].ty;
-        let capture_local = non_copy_capture.closures[0].captures[0].local;
-        non_copy_capture.closures[0].captures[0].ty = join;
-        non_copy_capture.local_types.insert(capture_local, join);
-        non_copy_capture.capability_statuses[closure_type.index() as usize] =
-            [HirCapabilityStatus::Unsatisfied; HirCapability::COUNT];
-        let error = verify_typed_hir(&resolved, &non_copy_capture).unwrap_err();
-        assert!(error.message().contains("M4 closure capture"), "{error}");
-        assert!(error.message().contains("Copy"), "{error}");
+    #[test]
+    fn affine_capture_moves_are_reproved_when_verifying_closure_protocols() {
+        const SOURCE: &str = "fn consume[T](input: T): T {\n\
+             let operation = (): T { input }\n\
+             operation()\n\
+         }\n";
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+        assert_eq!(
+            program.closures[0].protocols,
+            crate::hir::HirClosureProtocols::new(false, false, true)
+        );
+
+        let (resolved, mut forged) = checked_program_from(SOURCE);
+        forged.closures[0].protocols = crate::hir::HirClosureProtocols::new(true, true, true);
+        let error = verify_typed_hir(&resolved, &forged).unwrap_err();
+        assert!(error.message().contains("protocols"), "{error}");
     }
 
     #[test]

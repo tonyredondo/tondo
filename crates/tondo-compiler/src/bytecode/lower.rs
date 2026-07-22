@@ -4270,6 +4270,141 @@ mod tests {
     }
 
     #[test]
+    fn affine_closure_captures_retain_moves_and_execute_nested_call_once() {
+        let source = "fn make(value: Int): impl CallOnce[fn(): Int] + Discard {\n\
+                          (): Int { value }\n\
+                      }\n\
+                      fn execute(): Int {\n\
+                          let resource = make(42)\n\
+                          let outer = (): Int { resource() }\n\
+                          outer()\n\
+                      }\n";
+        let program = lowered(source);
+        bc::verify_bytecode(&program).unwrap();
+        let (outer_id, outer_callable, outer) = program
+            .callables
+            .iter()
+            .enumerate()
+            .find_map(|(index, callable)| {
+                callable.closure.as_ref().and_then(|closure| {
+                    (!closure.protocols.call && !closure.protocols.call_mut).then_some((
+                        bc::BytecodeCallableId::new(index as u32),
+                        callable,
+                        closure,
+                    ))
+                })
+            })
+            .expect("the outer closure is a concrete CallOnce environment");
+        assert!(outer.protocols.call_once);
+        let implementation = outer_callable.implementation.unwrap();
+        let body = &program.functions[implementation.index() as usize];
+        assert!(
+            body.blocks.iter().any(
+                |block| block.instructions.iter().any(|instruction| matches!(
+                    &instruction.kind,
+                    bc::BytecodeInstructionKind::Store {
+                        value:
+                            bc::BytecodeRvalue {
+                                kind:
+                                    bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                                        kind: bc::BytecodeOperandKind::Move(place),
+                                        ..
+                                    }),
+                                ..
+                            },
+                        ..
+                    } if matches!(
+                        place.projections.first().map(|projection| &projection.kind),
+                        Some(bc::BytecodeProjectionKind::ClosureCapture {
+                            callable,
+                            ..
+                        }) if *callable == outer_id
+                    )
+                ))
+            )
+        );
+        assert!(program.functions.iter().any(|function| {
+            function.blocks.iter().flat_map(|block| &block.instructions).any(
+                |instruction| matches!(
+                    &instruction.kind,
+                    bc::BytecodeInstructionKind::Store {
+                        value:
+                            bc::BytecodeRvalue {
+                                kind:
+                                    bc::BytecodeRvalueKind::Construct {
+                                        shape: bc::BytecodeAggregateKind::Closure { callable, .. },
+                                        values,
+                                    },
+                                ..
+                            },
+                        ..
+                    } if *callable == outer_id
+                        && matches!(
+                            values.as_slice(),
+                            [bc::BytecodeOperand {
+                                kind: bc::BytecodeOperandKind::Move(_),
+                                ..
+                            }]
+                        )
+                ),
+            )
+        }));
+
+        let mut forged = program.clone();
+        let protocols = &mut forged.callables[outer_id.index() as usize]
+            .closure
+            .as_mut()
+            .unwrap()
+            .protocols;
+        protocols.call = true;
+        protocols.call_mut = true;
+        let error = bc::verify_bytecode(&forged).unwrap_err();
+        assert!(error.message().contains("implementation body"), "{error}");
+
+        let mut host = RejectingHost;
+        let execution = execute(&program, function_id(&program, "execute"), &mut host)
+            .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(42))
+        );
+    }
+
+    #[test]
+    fn affine_closure_capture_temporaries_survive_gc_pressure() {
+        let program = lowered(
+            "fn make(value: Int): impl CallOnce[fn(): Int] + Discard {\n\
+                 (): Int { value }\n\
+             }\n\
+             fn execute(): Int {\n\
+                 let first = make(20)\n\
+                 let second = make(22)\n\
+                 let combined = (): Int { first() + second() }\n\
+                 combined()\n\
+             }\n",
+        );
+        let entry = function_id(&program, "execute");
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            entry,
+            &mut host,
+            VmLimits {
+                max_heap_objects: 16,
+                max_heap_bytes: 64 * 1024,
+                initial_gc_threshold: 1,
+                ..VmLimits::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(42))
+        );
+        assert!(execution.statistics.collections > 0);
+    }
+
+    #[test]
     fn bytecode_preserves_all_closure_effects_and_rederives_async_protocols() {
         let source = "fn build() {\n\
                           let sync: fn(): Int = () { 1 }\n\

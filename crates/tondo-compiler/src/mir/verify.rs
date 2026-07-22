@@ -11,8 +11,8 @@ use crate::hir::{
 };
 use crate::resolve::{MemberKind, MemberOwner, ResolvedProgram, SymbolId};
 use crate::types::{
-    Assignability, CursorMode, IntrinsicType, NumericConversion, ScalarType, TypeId, TypeKind,
-    TypeSubstitution, numeric_conversion,
+    Assignability, CursorMode, IntrinsicType, NumericConversion, ParameterMode, ScalarType, TypeId,
+    TypeKind, TypeSubstitution, numeric_conversion,
 };
 
 use super::{
@@ -267,6 +267,44 @@ struct LocalState {
 
 fn mir_operand_is_borrow(operand: &MirOperand) -> bool {
     matches!(operand.kind, MirOperandKind::Borrow(_))
+}
+
+fn operand_place(operand: &MirOperand) -> Option<&MirPlace> {
+    match &operand.kind {
+        MirOperandKind::Copy(place)
+        | MirOperandKind::Move(place)
+        | MirOperandKind::Borrow(place) => Some(place),
+        MirOperandKind::Constant(_)
+        | MirOperandKind::Function { .. }
+        | MirOperandKind::PreludeTraitFunction { .. } => None,
+    }
+}
+
+fn place_is_closure_capture(
+    function: &MirFunction,
+    closure: crate::hir::HirClosureId,
+    place: &MirPlace,
+) -> bool {
+    function.parameters.first() == Some(&place.local)
+        && matches!(
+            place.projections.first().map(|projection| &projection.kind),
+            Some(MirProjectionKind::ClosureCapture {
+                closure: projected,
+                ..
+            }) if *projected == closure
+        )
+}
+
+fn access_is_closure_capture(
+    function: &MirFunction,
+    closure: crate::hir::HirClosureId,
+    access: &LocalAccess,
+) -> bool {
+    function.parameters.first() == Some(&access.local)
+        && matches!(
+            access.path.first(),
+            Some(MovePathComponent::ClosureCapture(projected, _)) if *projected == closure
+        )
 }
 
 fn mir_rvalue_contains_invalid_borrow(value: &MirRvalue) -> bool {
@@ -529,6 +567,80 @@ impl Verifier<'_> {
             self.verify_block(function, MirBlockId(index as u32), block)?;
         }
         self.verify_control_and_dataflow(function)?;
+        if let MirFunctionId::Closure(closure) = function.id {
+            self.verify_closure_protocols(function, closure, &context)?;
+        }
+        Ok(())
+    }
+
+    fn verify_closure_protocols(
+        &self,
+        function: &MirFunction,
+        closure: crate::hir::HirClosureId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let metadata = self.hir.closure(closure).ok_or_else(|| {
+            MirInvariantError::new(context, "closure body has no typed HIR metadata")
+        })?;
+        let mut writes_capture = false;
+        let mut moves_capture = false;
+        for block in &function.blocks {
+            for event in self.local_events(function, block) {
+                match event {
+                    LocalEvent::Move(access)
+                        if access_is_closure_capture(function, closure, &access) =>
+                    {
+                        moves_capture = true;
+                    }
+                    LocalEvent::Write(access)
+                        if access_is_closure_capture(function, closure, &access) =>
+                    {
+                        writes_capture = true;
+                    }
+                    LocalEvent::Read(_)
+                    | LocalEvent::Move(_)
+                    | LocalEvent::Write(_)
+                    | LocalEvent::WriteAccess(_)
+                    | LocalEvent::StorageLive(_)
+                    | LocalEvent::StorageDead(_) => {}
+                }
+            }
+            if let MirTerminatorKind::Invoke {
+                operation:
+                    MirOperation {
+                        kind:
+                            MirOperationKind::Call {
+                                callee,
+                                arguments,
+                                protocol,
+                                ..
+                            },
+                        ..
+                    },
+                ..
+            } = &block.terminator.kind
+            {
+                writes_capture |= *protocol == HirCallProtocol::CallMut
+                    && operand_place(callee)
+                        .is_some_and(|place| place_is_closure_capture(function, closure, place));
+                writes_capture |= arguments.iter().any(|argument| {
+                    matches!(argument.mode, ParameterMode::Mut | ParameterMode::Var)
+                        && operand_place(&argument.value)
+                            .is_some_and(|place| place_is_closure_capture(function, closure, place))
+                });
+            }
+        }
+        let derived = HirClosureProtocols::new(
+            !writes_capture && !moves_capture,
+            !moves_capture && (!metadata.is_async() || !writes_capture),
+            true,
+        );
+        if metadata.protocols() != derived {
+            return Err(MirInvariantError::new(
+                context,
+                "closure protocols differ from the lowered environment accesses",
+            ));
+        }
         Ok(())
     }
 
@@ -1239,7 +1351,9 @@ impl Verifier<'_> {
                             if value.ty != expected_capture {
                                 return true;
                             }
-                            let MirOperandKind::Copy(place) = &value.kind else {
+                            let (MirOperandKind::Copy(place) | MirOperandKind::Move(place)) =
+                                &value.kind
+                            else {
                                 return true;
                             };
                             !self.place_represents_source_local(function, place, capture.local())

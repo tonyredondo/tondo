@@ -1,11 +1,11 @@
 # Typed HIR to MIR contract
 
 **Status:** M3 typed CFG plus M4 uniform function values, four effect-preserving
-Copy closure forms, executable synchronous-safe closure calls, static-trait and
+closure forms, executable synchronous-safe closure calls, static-trait and
 opaque-result lowering, OWN-001 intrinsic cursor state, OWN-002 affine
 transfers, OWN-003 flow availability, OWN-004 complete `var` reinitialization,
-OWN-005 typed move paths and uniform match ownership modes, and verification
-implemented
+OWN-005 typed move paths and uniform match ownership modes, OWN-006 contextual
+Copy/Move closure captures, and verification implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -67,7 +67,7 @@ They remain queryable but can never be lowered or executed.
 |---|---|
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
 | Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, selected synchronous-safe call access, value/place category, pattern coverage, source evaluation order, and source-level control targets |
-| MIR construction (M3/M4) | Typed locals and temporaries, explicit CFG, places, synchronous-safe calls, effect-preserving closure bodies with a hidden environment, Copy closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
+| MIR construction (M3/M4/M5) | Typed locals and temporaries, explicit CFG, places, synchronous-safe calls, effect-preserving closure bodies with a hidden environment, contextual Copy/Move closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
 | Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, and uniform `match` copy/observe/consume lowering; later M5 steps add regions, confirmed borrowed transfers, and cleanup actions |
 | Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
@@ -148,18 +148,18 @@ propagation. Recovery and incomplete interpolation nodes cannot cross the HIR
 admission boundary and therefore have no executable MIR interpretation.
 
 A concrete closure expression lowers to one aggregate with its `HirClosureId`
-and captures in the exact HIR table order. CALL-002 admits only captures whose
-`Copy` proof is closed, so each operand is an unprojected copy of the MIR local
-that represents that exact outer `LocalId`. The aggregate result retains the
+and captures in the exact HIR table order. Each operand is an unprojected Copy or
+Move of the MIR local for that exact outer `LocalId`, selected under the exact
+inherited generic assumptions. The aggregate result retains the
 effect-specific generated closure type. Its independently rooted body becomes a
 `MirFunctionId::Closure` function. Slot zero is a hidden environment parameter;
 capture references are typed projections from that slot, and explicit source
-parameters follow it in their original order. Construction remains separate
-from body execution. The body and exact function signature may represent sync,
-unsafe, async, or async-unsafe source effects even though only a synchronous-safe
-body can currently be reached by a call operation. OWN-006 later replaces the
-bootstrap Copy-only boundary with availability-checked moves for affine
-captures.
+parameters follow it in their original order. A capture projection may itself
+move, and availability then rejects every overlapping later use on the same CFG
+route. Construction remains separate from body execution. The body and exact
+function signature may represent sync, unsafe, async, or async-unsafe source
+effects even though only a synchronous-safe body can currently be reached by a
+call operation.
 
 An indirect closure call carries the exact protocol selected by HIR. `Call` and
 `CallMut` read a place through a shallow, non-escaping `Borrow` operand so body
@@ -284,12 +284,16 @@ The structural verifier introduced in M3 proves at minimum:
 - aggregate, conversion, iterator, index, slice, range, membership, and tag
   operations have the exact instantiated input and result types;
 - a closure aggregate names existing HIR metadata, has the exact generated
-  result and capture layout, and copies each capture from the corresponding
-  unprojected outer source binding rather than a merely type-compatible value;
+  result and capture layout, and contextually copies or moves each capture from
+  the corresponding unprojected outer source binding rather than a merely
+  type-compatible value;
 - every closure has exactly one body function with its generated environment as
   hidden parameter zero, exact explicit parameters, capture projections, and
   outcome, while no ordinary function may forge that shape; all four effect
   signatures are retained unchanged;
+- each closure protocol row is rederived from writes, exclusive uses, and moves
+  of its typed environment paths, so a moved capture cannot advertise `Call` or
+  `CallMut`;
 - `Borrow` appears only in an enumerated immediate observation, as an indirect
   `Call`/`CallMut` callee, in a non-value call argument, or as the exact source
   of `cursor[ref,C]`; it never escapes into storage, value arguments,

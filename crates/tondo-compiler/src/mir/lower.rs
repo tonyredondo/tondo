@@ -511,10 +511,7 @@ impl<'a> FunctionBuilder<'a> {
                 let mut values = Vec::with_capacity(captures.len());
                 for (local, ty) in captures {
                     let place = self.source_place(local, span)?;
-                    let operand = MirOperand {
-                        ty: place.ty,
-                        kind: MirOperandKind::Copy(place),
-                    };
+                    let operand = self.transfer_place(place, span)?;
                     if operand.ty != ty {
                         return Err(MirError::Construction {
                             span,
@@ -5076,6 +5073,145 @@ mod tests {
             MirOperandKind::Constant(MirConstant::Integer("41".into()));
         let error = verify_mir(&resolved, &hir, &wrong_source).unwrap_err();
         assert!(error.message().contains("source binding"));
+    }
+
+    #[test]
+    fn affine_closure_environments_move_in_and_out_with_verified_protocols() {
+        let source = "fn consume[T](input: T): T {\n\
+                          let operation = (): T { input }\n\
+                          operation()\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+        let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let closure = hir.closures().next().unwrap();
+
+        let construction = mir
+            .functions()
+            .flat_map(|function| function.blocks())
+            .flat_map(|block| block.statements())
+            .find_map(|statement| match statement.kind() {
+                MirStatementKind::Assign {
+                    value:
+                        MirRvalue {
+                            kind:
+                                MirRvalueKind::Aggregate {
+                                    shape: MirAggregateKind::Closure { .. },
+                                    values,
+                                },
+                            ..
+                        },
+                    ..
+                } => values.first(),
+                _ => None,
+            })
+            .expect("closure construction has one capture");
+        assert!(matches!(construction.kind(), MirOperandKind::Move(_)));
+
+        let body = mir.closure_function(closure.id()).unwrap();
+        assert!(
+            body.blocks()
+                .flat_map(MirBasicBlock::statements)
+                .any(|statement| matches!(
+                    statement.kind(),
+                    MirStatementKind::Assign {
+                        value:
+                            MirRvalue {
+                                kind:
+                                    MirRvalueKind::Use(MirOperand {
+                                        kind: MirOperandKind::Move(MirPlace { projections, .. }),
+                                        ..
+                                    }),
+                                ..
+                            },
+                        ..
+                    } if matches!(
+                        projections.first().map(MirProjection::kind),
+                        Some(MirProjectionKind::ClosureCapture { .. })
+                    )
+                ))
+        );
+
+        let captured = mir
+            .functions
+            .values_mut()
+            .flat_map(|function| &mut function.blocks)
+            .flat_map(|block| &mut block.statements)
+            .find_map(|statement| match &mut statement.kind {
+                MirStatementKind::Assign {
+                    value:
+                        MirRvalue {
+                            kind:
+                                MirRvalueKind::Aggregate {
+                                    shape: MirAggregateKind::Closure { .. },
+                                    values,
+                                },
+                            ..
+                        },
+                    ..
+                } => values.first_mut(),
+                _ => None,
+            })
+            .unwrap();
+        let MirOperandKind::Move(place) = &captured.kind else {
+            unreachable!()
+        };
+        captured.kind = MirOperandKind::Copy(place.clone());
+        let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
+        assert!(
+            error.message().contains("contextual Copy status"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn mir_rederives_capture_moves_when_validating_closure_protocols() {
+        let source = "fn compare[T: Equatable + Discard](input: T, other: T): Bool {\n\
+                          let operation = (candidate: T): Bool { input == candidate }\n\
+                          operation(other)\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+        let closure = hir.closures().next().unwrap().id();
+        let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let body = mir
+            .functions
+            .get_mut(&MirFunctionId::Closure(closure))
+            .unwrap();
+        let captured = body
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.statements)
+            .find_map(|statement| match &mut statement.kind {
+                MirStatementKind::Assign {
+                    value:
+                        MirRvalue {
+                            kind: MirRvalueKind::Binary { left, .. },
+                            ..
+                        },
+                    ..
+                } if matches!(
+                    &left.kind,
+                    MirOperandKind::Borrow(MirPlace { projections, .. })
+                        if matches!(
+                            projections.first().map(MirProjection::kind),
+                            Some(MirProjectionKind::ClosureCapture { .. })
+                        )
+                ) =>
+                {
+                    Some(left)
+                }
+                _ => None,
+            })
+            .expect("comparison observes its captured environment slot");
+        let MirOperandKind::Borrow(place) = &captured.kind else {
+            unreachable!()
+        };
+        captured.kind = MirOperandKind::Move(place.clone());
+
+        let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
+        assert!(error.message().contains("protocols differ"), "{error}");
     }
 
     #[test]

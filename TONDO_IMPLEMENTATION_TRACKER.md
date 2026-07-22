@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.38
+**Versión del tracker:** 0.39
 
 **Última actualización:** 2026-07-22
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar captura de closures respetando copia o move
-(OWN-006).
+**Objetivo inmediato:** completar las capacidades derivadas de closures con
+capturas afines (OWN-007).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1156,30 +1156,33 @@ CAP-001 y CALL-001 a CALL-004:
   anidadas conservan problemas de inferencia independientes. Un tipo de función
   esperado debe coincidir también en `async` y `unsafe`, o produce únicamente
   `E1102`; no existe conversión que añada u oculte un efecto.
-- Las capturas conservan `let`/`var`, copian un snapshot owned y propagan free
-  uses de closures anidadas. Préstamos `ref`/`mut`/`var` y el receiver prestado
-  producen `E1402`; parámetros variádicos exigen nombre y conservan elemento en
-  la firma y `Array[T]` dentro del body. Las firmas async rechazan parámetros
-  `mut`/`var` con el diagnóstico normativo `E1609`.
+- Las capturas conservan `let`/`var`, copian un snapshot owned cuando prueban
+  `Copy` y, en caso contrario, mueven el binding exterior al construir el
+  entorno. Los free uses de closures anidadas se propagan. Préstamos
+  `ref`/`mut`/`var` y el receiver prestado producen `E1402`; parámetros
+  variádicos exigen nombre y conservan elemento en la firma y `Array[T]` dentro
+  del body. Las firmas async rechazan parámetros `mut`/`var` con el diagnóstico
+  normativo `E1609`.
 - `Copy`, `Discard`, `Send` y `Share` se derivan componente a componente desde
-  las capturas sustituidas; `Equatable` y `Key` se rechazan. El bootstrap
-  ejecutable permanece deliberadamente limitado a capturas `Copy`; OWN-006 y
-  OWN-007 añadirán moves de captura, disponibilidad dentro del environment y
-  obligaciones afines.
+  las capturas sustituidas; `Equatable` y `Key` se rechazan. OWN-006 elimina la
+  restricción ejecutable de capturas `Copy`; OWN-007 conserva únicamente el
+  cierre de obligaciones terminales requerido para derivar `CallOnce`.
 - El admission verifier exige correspondencia uno-a-uno entre metadata y
   expresión, identidad generada versus efectos de firma, firma/body, ausencia
-  de parámetros async exclusivos, capacidad `Copy` y tipo, mutabilidad y
-  binding de cada captura. MIR sólo admite copias directas del local exterior
-  exacto; bytecode vuelve a comprobar el esquema concreto del entorno.
-- La VM construye, copia, traza y snapshottea entornos gestionados. Una pila de
-  raíces temporales protege capturas compuestas cuando el GC se dispara a mitad
-  de una construcción o copia multi-captura.
+  de parámetros async exclusivos, tipo, mutabilidad y binding de cada captura.
+  HIR vuelve a decidir Copy/Move, MIR sólo admite esa transferencia directa
+  desde el local exterior exacto y bytecode vuelve a comprobar esquema,
+  capacidad y disponibilidad del entorno.
+- La VM construye, mueve, copia, traza y snapshottea entornos gestionados. Una
+  pila de raíces temporales protege capturas compuestas o afines cuando el GC se
+  dispara a mitad de una construcción, move o copia multi-captura.
 - El análisis de cada body alcanzable deriva su fila exacta `Call`/`CallMut`/
   `CallOnce`: una escritura, paso mutable o `CallMut` sobre una captura impide
-  `Call`; los bodies de closures anidadas y código inalcanzable no contaminan la
-  fila exterior. En una closure async, escribir el entorno impide también
-  `CallMut`, por lo que sólo queda `CallOnce`; una closure pura de cualquiera de
-  los cuatro tipos conserva los tres protocolos.
+  `Call`, y un move impide también `CallMut`. Construir una closure anidada no
+  ejecuta su body, pero sí mueve en ese punto las capturas afines que necesita;
+  el código inalcanzable no contamina la fila exterior. En una closure async,
+  escribir el entorno impide también `CallMut`. OWN-007 completará la condición
+  terminal de `CallOnce`.
 - Funciones, closures concretas y callable bounds genéricos u opacos comparten
   una firma estructural exacta. Un contrato ambiguo produce `E1115`, un
   protocolo inaccesible `E1407`, y la coerción contextual a `fn(...)` exige
@@ -1197,9 +1200,11 @@ CAP-001 y CALL-001 a CALL-004:
   otra vez capacidades y protocolos, resuelve testigos opacos y rechaza
   metadata, firmas, accesos o erasures forjados.
 - La VM inserta el entorno como argumento oculto, conserva `Call`/`CallMut` por
-  préstamo superficial y aplica la copia lógica de `CallOnce` en el subset
-  `Copy`. Callee y argumentos permanecen en raíces temporales durante toda la
-  preparación y el GC puede ejecutarse bajo presión sin invalidar el entorno.
+  préstamo superficial y aplica a `CallOnce` la copia o move que ya seleccionó
+  el caller. Un move toma el owner del cierre y los moves del body vacían los
+  fields opcionales correspondientes. Callee y argumentos permanecen en raíces
+  temporales durante toda la preparación y el GC puede ejecutarse bajo presión
+  sin invalidar el entorno.
 - Los cuatro tipos de closure pueden construirse, copiarse, trazarse,
   snapshottearse, descartarse y borrarse a su firma uniforme exacta. El verifier
   bytecode rechaza calls con efectos y la entrada pública de la VM rechaza un
@@ -1210,8 +1215,9 @@ CAP-001 y CALL-001 a CALL-004:
   proyectadas, fallibles y bajo presión de GC; también mutan HIR, MIR y bytecode
   para probar cada frontera defensiva. Fixtures adicionales cubren las cuatro
   identidades, mismatch de efectos, `E1609`, protocolo async stateful y rechazo
-  de llamadas/entries con efectos. Capturas no `Copy` siguen en M5;
-  `await`/`spawn` siguen en M7 y la ejecución unsafe en M9.
+  de llamadas/entries con efectos. OWN-006 añade capturas afines observadas y
+  movidas, propagación anidada, metadata forjada y construcción bajo presión de
+  GC; `await`/`spawn` siguen en M7 y la ejecución unsafe en M9.
 - El gate acumulado pasa 445 tests, `git diff --check`, formatter check, build
   de todos los targets, Clippy con warnings denegados y Rustdoc con warnings
   denegados.
@@ -1222,9 +1228,9 @@ CAP-001 y CALL-001 a CALL-004:
 - La selección de un `impl` es única y determinista.
 - Los casos de overlap, orphan rules y ciclos de constraints tienen sus
   diagnósticos normativos.
-- Closures con capturas `Copy + Discard` y genéricos se ejecutan en la VM a
-  través del bytecode normal; M5 elimina esa restricción bootstrap aplicando
-  moves y obligaciones a capturas afines.
+- El gate original de M4 ejecuta closures con capturas `Copy + Discard` y
+  genéricos a través del bytecode normal; OWN-006 extiende esa misma vertical a
+  capturas afines mediante moves verificados, sin introducir otro runtime.
 - Los cuatro contratos sync/unsafe/async están representados sin conversión de
   efectos; sólo la firma síncrona segura puede usar la operación de llamada M4.
 - La monomorfización tiene límites controlados y no puede divergir.
@@ -1281,10 +1287,16 @@ lifetimes escritos por el usuario.
   subárboles; la VM ejecuta destructuración affine de tuples, records, enums,
   options, arrays con `..rest` y la extracción completa de newtypes.
 
-- [ ] **OWN-006 — Implementar captura de closures respetando copia o move.**
+- [x] **OWN-006 — Implementar captura de closures respetando copia o move.** La
+  construcción aplica la misma prueba contextual que cualquier transferencia:
+  copia una captura `Copy` y mueve la afín, invalidando el binding exterior. El
+  body posee sus slots de entorno, los moves alcanzables reducen la fila a
+  `CallOnce`, y HIR, MIR y bytecode rederivan disponibilidad, operandos y
+  protocolos. La VM toma campos movidos y protege construcciones multi-captura
+  con raíces temporales incluso bajo presión de GC.
 
 - [ ] **OWN-007 — Completar las capacidades derivadas de closures con capturas
-  afines y eliminar la restricción bootstrap de M4.**
+  afines y probar las obligaciones terminales de `CallOnce`.**
 
 ### 10.2 Préstamos
 
@@ -1888,14 +1900,35 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es OWN-006: permitir que cada captura de closure use
-la misma decisión contextual `Copy` o `Move` que un argumento ordinario, y
-actualizar disponibilidad, layout del entorno y verificadores sin introducir
-préstamos implícitos.
+La siguiente acción activa es OWN-007: cerrar la derivación de `CallOnce` frente
+a capacidades terminales y demostrar que cada captura obligatoria se consume o
+transfiere en todas las salidas, sin introducir listas de captura, préstamos
+implícitos ni otra forma de llamada.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.39 — 2026-07-22
+
+- Se completa OWN-006 aplicando a cada captura la decisión contextual única de
+  ownership: un tipo con prueba `Copy` conserva el binding exterior y cualquier
+  otro tipo se mueve al entorno cuando se construye la closure.
+- HIR incorpora construcción de entornos y slots capturados al mismo análisis
+  de disponibilidad. Un move alcanzable desde el entorno elimina `Call` y
+  `CallMut`; una observación afín sigue siendo repetible y construir una closure
+  anidada transfiere sus capturas sin ejecutar su body.
+- MIR conserva operandos Copy/Move exactos, rederiva protocolos desde sus move
+  paths y bytecode repite ambas pruebas antes de ejecución. La VM reutiliza sus
+  campos opcionales y raíces temporales para ejecutar moves de capturas, incluso
+  durante una construcción multi-captura bajo presión de GC.
+- Regresiones HIR, MIR, bytecode y end-to-end cubren invalidación exterior,
+  observación repetible, propagación anidada, metadata falsificada y ejecución
+  de closures opacas afines. El gate acumulado pasa 475 tests, formatter check,
+  `git diff --check`, check y build de todos los targets, Clippy con
+  warnings denegados y Rustdoc con warnings denegados.
+- La cola avanza a OWN-007 para cerrar la prueba de obligaciones terminales de
+  `CallOnce`; no queda otra forma de transferencia de captura pendiente.
 
 ### 0.38 — 2026-07-22
 

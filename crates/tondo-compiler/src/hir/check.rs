@@ -27,12 +27,13 @@ use super::{
     HirCallArgumentTarget, HirCallProtocol, HirCallableId, HirCallableSignature, HirCapability,
     HirCapabilityStatus, HirClosure, HirClosureCapture, HirClosureId, HirClosureProtocols,
     HirContainmentKind, HirError, HirExpression, HirExpressionId, HirExpressionKind, HirField,
-    HirFlow, HirForKind, HirIndexAccess, HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry,
-    HirMatchArm, HirMatchMode, HirMemberReference, HirNominalShape, HirParameter, HirPattern,
-    HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod,
-    HirProgram, HirRangeKind, HirRecordFieldValue, HirStatement, HirTraitConstructor,
-    HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind,
-    TraitQuery, TraitSelectionError, analyze_availability, select_implementation,
+    HirFlow, HirForKind, HirGenericParameter, HirIndexAccess, HirIterationProtocol, HirLiteral,
+    HirLoopId, HirMapEntry, HirMatchArm, HirMatchMode, HirMemberReference, HirNominalShape,
+    HirParameter, HirPattern, HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator,
+    HirPreludeTraitMethod, HirProgram, HirRangeKind, HirRecordFieldValue, HirStatement,
+    HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
+    HirVariantValue, HirWriteKind, TraitQuery, TraitSelectionError, analyze_availability,
+    analyze_closure_capture_moves, select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2582,19 +2583,6 @@ impl<'a> ExpressionChecker<'a> {
                 )?;
             }
         }
-        for capture in &captures {
-            if self.capability_status_with_generics(
-                capture.ty(),
-                HirCapability::Copy,
-                &closure_context.capability_assumptions,
-            )? != HirCapabilityStatus::Satisfied
-            {
-                // M4 executes the closed Copy + Discard subset. M5 replaces
-                // this bootstrap boundary with availability-aware moves.
-                self.complete = false;
-            }
-        }
-
         let source = self.sources.get(file)?;
         let identity = GeneratedTypeIdentity::new(
             GeneratedTypeKind::closure(is_async, is_unsafe),
@@ -2612,7 +2600,8 @@ impl<'a> ExpressionChecker<'a> {
                 file,
                 offset: node.range().start(),
             })?;
-        let protocols = self.derive_closure_protocols(body_root, &captures, is_async);
+        let protocols =
+            self.derive_closure_protocols(body_root, &captures, is_async, &context.generics)?;
         let id = HirClosureId(u32::try_from(self.program.closures.len()).map_err(|_| {
             HirError::NodeLimit {
                 file,
@@ -2648,19 +2637,28 @@ impl<'a> ExpressionChecker<'a> {
         body: HirExpressionId,
         captures: &[HirClosureCapture],
         is_async: bool,
-    ) -> HirClosureProtocols {
-        let captures = captures
+        generics: &[HirGenericParameter],
+    ) -> Result<HirClosureProtocols, HirError> {
+        let capture_locals = captures
             .iter()
             .map(HirClosureCapture::local)
             .collect::<BTreeSet<_>>();
-        let writes_capture = self.closure_body_writes_capture(body, &captures);
+        let writes_capture = self.closure_body_writes_capture(body, &capture_locals);
+        let capabilities = CapabilityAnalysis::new(&self.program, self.resolved)?;
+        let moves_capture = !analyze_closure_capture_moves(
+            &self.program,
+            &capabilities,
+            CapabilityAssumptions::from_generics(&self.program, generics),
+            captures,
+            body,
+        )?
+        .is_empty();
 
-        // M4 admits only Copy captures. Therefore no body operation can move a
-        // value out of the environment yet, and Discard is available for the
-        // closed implication CallMut + Discard => CallOnce. An async body that
-        // writes its environment must own it across suspension, so it cannot
-        // expose CallMut. M5 extends this with availability-aware moves.
-        HirClosureProtocols::new(!writes_capture, !is_async || !writes_capture, true)
+        Ok(HirClosureProtocols::new(
+            !writes_capture && !moves_capture,
+            !moves_capture && (!is_async || !writes_capture),
+            true,
+        ))
     }
 
     fn closure_body_writes_capture(
@@ -16433,6 +16431,101 @@ mod tests {
         assert_eq!(
             closures[1].protocols(),
             HirClosureProtocols::new(false, true, true)
+        );
+    }
+
+    #[test]
+    fn affine_closure_captures_move_at_construction_and_derive_call_once() {
+        let (_, _, output) = check(
+            "fn consume[T](input: T): T {\n\
+                 let operation = (): T { input }\n\
+                 operation()\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let closure = output.program().closures().next().unwrap();
+        assert_eq!(
+            closure.protocols(),
+            HirClosureProtocols::new(false, false, true)
+        );
+        assert!(output.program().expressions().any(|expression| matches!(
+            expression.kind(),
+            HirExpressionKind::Call {
+                protocol: HirCallProtocol::CallOnce,
+                ..
+            }
+        )));
+
+        let (_, _, reused) = check(
+            "fn invalid[T](input: T): T {\n\
+                 let operation = (): T { input }\n\
+                 input\n\
+             }\n",
+        );
+        assert_eq!(codes(&reused), ["E1401"]);
+
+        let (_, _, repeated_capture) = check(
+            "fn invalid[T](input: T): T {\n\
+                 let operation = (): T {\n\
+                     let first = input\n\
+                     input\n\
+                 }\n\
+                 operation()\n\
+             }\n",
+        );
+        assert_eq!(codes(&repeated_capture), ["E1401"]);
+    }
+
+    #[test]
+    fn affine_observed_captures_remain_repeatable_and_nested_moves_propagate() {
+        let (_, _, observed) = check(
+            "fn compareTwice[T: Equatable + Discard](input: T): Bool {\n\
+                 let operation = (): Bool { input == input }\n\
+                 let first = operation()\n\
+                 let second = operation()\n\
+                 first == second\n\
+             }\n",
+        );
+        assert!(
+            observed.diagnostics().is_empty(),
+            "{:#?}",
+            observed.diagnostics()
+        );
+        assert!(observed.is_complete());
+        assert_eq!(
+            observed.program().closures().next().unwrap().protocols(),
+            HirClosureProtocols::new(true, true, true)
+        );
+
+        let (_, _, nested) = check(
+            "fn build[T: Discard](input: T) {\n\
+                 let outer = () {\n\
+                     let inner = () {\n\
+                         _ = input\n\
+                     }\n\
+                     _ = inner\n\
+                 }\n\
+                 _ = outer\n\
+             }\n",
+        );
+        assert!(
+            nested.diagnostics().is_empty(),
+            "{:#?}",
+            nested.diagnostics()
+        );
+        assert!(nested.is_complete());
+        assert_eq!(
+            nested
+                .program()
+                .closures()
+                .map(HirClosure::protocols)
+                .collect::<Vec<_>>(),
+            vec![HirClosureProtocols::new(false, false, true); 2]
         );
     }
 

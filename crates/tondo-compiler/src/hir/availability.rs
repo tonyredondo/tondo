@@ -7,9 +7,9 @@ use crate::types::{CursorMode, ParameterMode, TypeError, TypeId, TypeKind};
 use super::{
     CapabilityAnalysis, CapabilityAssumptions, HirAssignmentOperator, HirAssignmentTarget,
     HirAssignmentTargetKind, HirBinaryOperator, HirCallProtocol, HirCapability,
-    HirCapabilityStatus, HirExpressionId, HirExpressionKind, HirForKind, HirIterationProtocol,
-    HirLoopId, HirMatchMode, HirPatternId, HirPatternKind, HirProgram, HirStatement,
-    HirValueCategory, HirVariantValue, HirWriteKind,
+    HirCapabilityStatus, HirClosureCapture, HirExpressionId, HirExpressionKind, HirForKind,
+    HirIterationProtocol, HirLoopId, HirMatchMode, HirPatternId, HirPatternKind, HirProgram,
+    HirStatement, HirValueCategory, HirVariantValue, HirWriteKind,
 };
 
 type AvailabilityState = BTreeMap<LocalId, Span>;
@@ -134,29 +134,74 @@ pub(crate) fn analyze_availability(
         .analyze_body(body.root())?;
     }
     for closure in program.closures() {
-        let owners = closure
+        let mut owners = closure
             .parameters()
             .iter()
             .filter(|parameter| parameter.mode() == ParameterMode::Value)
             .filter_map(|parameter| parameter.local())
-            .collect();
+            .collect::<BTreeSet<_>>();
+        owners.extend(closure.captures().iter().map(HirClosureCapture::local));
         let borrowed = closure
             .parameters()
             .iter()
             .filter(|parameter| parameter.mode() != ParameterMode::Value)
             .filter_map(|parameter| parameter.local())
             .collect();
-        Analyzer::new(
+        let mut analyzer = Analyzer::new(
             program,
             capabilities,
             CapabilityAssumptions::from_generics(program, closure.generics()),
             owners,
             borrowed,
             &mut findings,
-        )
-        .analyze_body(closure.body().root())?;
+        );
+        analyzer.reinitializable.extend(
+            closure
+                .captures()
+                .iter()
+                .filter(|capture| capture.is_mutable())
+                .map(HirClosureCapture::local),
+        );
+        analyzer.analyze_body(closure.body().root())?;
     }
     Ok(findings.into_iter().collect())
+}
+
+/// Derives which environment slots a closure body transfers by value.
+///
+/// This uses the same contextual `Copy` proof and evaluation demands as the
+/// whole-program availability pass. It intentionally treats only captures as
+/// tracked owners: moving a parameter or a body-local value does not weaken the
+/// protocols of the closure itself.
+pub(crate) fn analyze_closure_capture_moves(
+    program: &HirProgram,
+    capabilities: &CapabilityAnalysis,
+    assumptions: CapabilityAssumptions,
+    captures: &[HirClosureCapture],
+    root: HirExpressionId,
+) -> Result<BTreeSet<LocalId>, TypeError> {
+    let tracked = captures
+        .iter()
+        .map(HirClosureCapture::local)
+        .collect::<BTreeSet<_>>();
+    let mut findings = BTreeSet::new();
+    let mut analyzer = Analyzer::new(
+        program,
+        capabilities,
+        assumptions,
+        tracked.clone(),
+        BTreeSet::new(),
+        &mut findings,
+    );
+    analyzer.tracked_transfers = tracked;
+    analyzer.reinitializable.extend(
+        captures
+            .iter()
+            .filter(|capture| capture.is_mutable())
+            .map(HirClosureCapture::local),
+    );
+    analyzer.analyze_body(root)?;
+    Ok(std::mem::take(&mut analyzer.transferred))
 }
 
 struct Analyzer<'a, 'f> {
@@ -168,6 +213,8 @@ struct Analyzer<'a, 'f> {
     pattern_borrowed: BTreeSet<LocalId>,
     reinitializable: BTreeSet<LocalId>,
     guard_forbidden: BTreeSet<LocalId>,
+    tracked_transfers: BTreeSet<LocalId>,
+    transferred: BTreeSet<LocalId>,
     copy_statuses: BTreeMap<TypeId, HirCapabilityStatus>,
     findings: &'f mut BTreeSet<AvailabilityFinding>,
 }
@@ -190,6 +237,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             pattern_borrowed: BTreeSet::new(),
             reinitializable: BTreeSet::new(),
             guard_forbidden: BTreeSet::new(),
+            tracked_transfers: BTreeSet::new(),
+            transferred: BTreeSet::new(),
             copy_statuses: BTreeMap::new(),
             findings,
         }
@@ -222,8 +271,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             | HirExpressionKind::Function(_)
             | HirExpressionKind::SpecializedFunction { .. }
             | HirExpressionKind::PreludeTraitFunction { .. }
-            | HirExpressionKind::Closure(_)
             | HirExpressionKind::Receiver => AvailabilityFlow::normal(state),
+            HirExpressionKind::Closure(closure) => {
+                self.closure_construction(*closure, expression.span(), state)?
+            }
             HirExpressionKind::Local(_) => {
                 unreachable!("local expressions are place-category values")
             }
@@ -994,6 +1045,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             PlaceRoot::Local(local) if self.owners.contains(&local) => {
                 if place.complete_transfer {
                     state.insert(local, span);
+                    if self.tracked_transfers.contains(&local) {
+                        self.transferred.insert(local);
+                    }
                 } else {
                     self.findings.insert(AvailabilityFinding {
                         kind: AvailabilityFindingKind::InvalidPartialTransfer,
@@ -1030,6 +1084,35 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             PlaceRoot::Local(_) | PlaceRoot::Temporary => {}
         }
         Ok(())
+    }
+
+    fn closure_construction(
+        &mut self,
+        closure: super::HirClosureId,
+        span: Span,
+        mut state: AvailabilityState,
+    ) -> Result<AvailabilityFlow, TypeError> {
+        let captures = self
+            .program
+            .closure(closure)
+            .expect("availability receives verified closure metadata")
+            .captures()
+            .iter()
+            .map(|capture| (capture.local(), capture.ty()))
+            .collect::<Vec<_>>();
+        for (local, ty) in captures {
+            self.access_place(
+                &mut state,
+                PlaceInfo {
+                    root: PlaceRoot::Local(local),
+                    complete_transfer: true,
+                },
+                span,
+                ty,
+                Demand::Transfer,
+            )?;
+        }
+        Ok(AvailabilityFlow::normal(state))
     }
 
     fn expression_type(&self, id: HirExpressionId) -> TypeId {

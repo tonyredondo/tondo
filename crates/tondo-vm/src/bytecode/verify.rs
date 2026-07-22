@@ -1097,9 +1097,18 @@ impl Verifier<'_> {
                     })
             )
         });
+        let moves_capture = function.blocks.iter().any(|block| {
+            local_events(function, block).into_iter().any(|event| {
+                matches!(
+                    event,
+                    LocalEvent::Move(access)
+                        if closure_capture_access(function, callable_id, &access)
+                )
+            })
+        });
         Ok(BytecodeClosureProtocols {
-            call: !writes_capture,
-            call_mut: !is_async || !writes_capture,
+            call: !writes_capture && !moves_capture,
+            call_mut: !moves_capture && (!is_async || !writes_capture),
             call_once: true,
         })
     }
@@ -4259,6 +4268,18 @@ fn closure_capture_place(
                 callable: projected,
                 ..
             }) if *projected == callable
+        )
+}
+
+fn closure_capture_access(
+    function: &BytecodeFunction,
+    callable: BytecodeCallableId,
+    access: &LocalAccess,
+) -> bool {
+    function.parameters.first() == Some(&access.slot)
+        && matches!(
+            access.path.first(),
+            Some(MovePathComponent::ClosureCapture(projected, _)) if *projected == callable
         )
 }
 

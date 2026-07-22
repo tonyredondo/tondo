@@ -6,8 +6,8 @@ uniform named function values, CALL-002 concrete closure environments, CALL-003
 closure protocols and synchronous-safe invocation, CALL-004 effect-preserving
 closure callables, OWN-001 intrinsic cursor capabilities, OWN-002 affine
 transfers and immediate observations, OWN-003 flow availability, OWN-004
-complete-slot reinitialization, OWN-005 typed move paths, and the M3 VM
-admission path implemented
+complete-slot reinitialization, OWN-005 typed move paths, OWN-006 affine closure
+captures, and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -192,8 +192,9 @@ A closure construction is an ordinary managed aggregate whose result is a
 concrete generated type. Its shape names one concrete closure callable; that
 callable owns the identical environment type, ordered capture schema, protocol
 row, effect-exact function signature, and lowered body. Its operands carry the
-corresponding concrete capture values. Verification requires identity, schema,
-signature, and value agreement before allocation. Constructing this aggregate
+corresponding concrete capture values and preserve MIR's contextual Copy or Move
+access. Verification requires identity, schema, signature, value, capability,
+and path-availability agreement before allocation. Constructing this aggregate
 does not invoke its body, including for async or unsafe closure kinds.
 
 A call operation accepts either a direct concrete function operand or a
@@ -269,8 +270,9 @@ Before execution, the verifier proves:
   aggregates and capture projections name that same callable and match every
   operand exactly;
 - closure protocols are rederived from the executable body and cannot be
-  strengthened by forged catalog metadata; an async body that writes its
-  environment cannot advertise `Call` or `CallMut`;
+  strengthened by forged catalog metadata; a body that moves an environment
+  path cannot advertise `Call` or `CallMut`, and an async body that writes its
+  environment cannot advertise either borrowed protocol;
 - async callables have no `mut` or `var` parameter, and the synchronous-safe
   call opcode rejects every async or unsafe function signature;
 - every closed executable `Map[K, V]` and `Set[K]` has `K: Key`, every `Ref[T]`

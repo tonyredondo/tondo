@@ -4,7 +4,8 @@
 invocation, CALL-004 effectful-environment retention with execution guards,
 OWN-001 intrinsic cursor value semantics, and OWN-002 affine moves/immediate
 observations, OWN-003 flow availability, and OWN-004 complete-slot
-reinitialization
+reinitialization, OWN-005 typed move paths, and OWN-006 affine closure captures
+
 **Language baseline:** Tondo 0.1-draft.8
 
 This contract fixes the bootstrap object model selected by DEC-006. It is an
@@ -95,9 +96,10 @@ Managed objects trace only their actual managed children. Iterator state and
 partially moved aggregate fields participate in the same tracing walk. Moving
 an affine array rest takes its contiguous elements into a new owning array,
 leaves holes in the compiler-owned scrutinee, and roots both parent and moved
-children across the allocation. Later
-environments, suspended tasks, and host handles must add explicit root sources;
-they may not rely on conservative stack scanning.
+children across the allocation. Closure construction uses the same temporary
+root stack for Copy and Move capture operands. Later suspended tasks and host
+handles must add explicit root sources; they may not rely on conservative stack
+scanning.
 
 ## Collector
 
@@ -127,8 +129,11 @@ uniform named function selects its direct implementation. A managed closure
 selects the callable stored in its environment and inserts that same environment
 as hidden parameter zero before pushing the body frame. `Borrow` performs a
 shallow read so `Call`/`CallMut` bodies observe the original environment;
-Copy-based `CallOnce` logically clones the environment before invocation. The
-bytecode verifier has already proved the exact signature, protocol, and access
+a Copy-based `CallOnce` logically clones the environment before invocation,
+while a Move-based `CallOnce` takes the closure owner and passes its existing
+environment. Moving an environment capture takes that optional field and leaves
+it absent, exactly like any other verified aggregate projection. The bytecode
+verifier has already proved the exact signature, protocol, access, and move-path
 combination, so runtime dispatch performs no trait selection. Opaque callable
 views and closure-to-`fn` erasure are representation-preserving and still reach
 the same managed closure value.
@@ -179,11 +184,11 @@ returns, branches, loops, pattern dispatch, checked arithmetic, indexing and
 slicing, collections, `assert`, `panic`, and stack traces. Heap tests retain
 reachable graphs, reclaim unreachable cycles, reject stale generations, trace
 and snapshot managed closure captures, and collect during construction, logical
-copy, and invocation. Mutated HIR, MIR, and bytecode fixtures must prove that
-their respective admission gates reject forged closure identity, schema,
-protocol, signature, access, erasure, and effectful ordinary calls before
-execution. Entry tests must also reject async and unsafe callable bodies while
-their runtime contexts remain unimplemented.
+copy, affine multi-capture moves, and invocation. Mutated HIR, MIR, and bytecode
+fixtures must prove that their respective admission gates reject forged closure
+identity, schema, protocol, signature, access, erasure, and effectful ordinary
+calls before execution. Entry tests must also reject async and unsafe callable
+bodies while their runtime contexts remain unimplemented.
 
 Slice assignment materializes the complete RHS before its write validation.
 The validation terminator carries aligned destination/replacement metadata,

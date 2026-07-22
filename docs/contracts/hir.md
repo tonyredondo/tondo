@@ -1,13 +1,14 @@
 # Semantic and typed HIR contract
 
 **Status:** bootstrap declarations, typed expressions, generic specialization,
-uniform named function values, Copy closures with four exact effect identities,
-closed call protocols and synchronous-safe invocation, static trait selection,
-declaration-owned opaque results, patterns, assignment, discard, structured
-control flow, explicit intrinsic cursor state, calls, flow-sensitive ownership
-availability with complete `var` reinitialization, uniform match ownership
-modes and affine-transfer restrictions, semantic occurrences, and verified MIR
-admission implemented
+uniform named function values, by-value closures with contextual Copy/Move
+captures and four exact effect identities, closed call protocols and
+synchronous-safe invocation, static trait selection, declaration-owned opaque
+results, patterns, assignment, discard, structured control flow, explicit
+intrinsic cursor state, calls, flow-sensitive ownership availability with
+complete `var` reinitialization, uniform match ownership modes, affine transfer
+restrictions, semantic occurrences, and verified MIR admission
+implemented
 
 ## Boundary
 
@@ -245,11 +246,13 @@ liveness requirements for shared parameters and values crossing suspension.
 Captures are the sorted unique outer locals referenced anywhere in the closure
 body, including nested closure bodies. Symbols, constants, types, modules,
 generic parameters, and locals declared inside the closure are not environment
-fields. Each admitted CALL-002 capture is a logical `Copy` of the owned outer
-binding at construction time; its metadata preserves whether that binding was
-`let` or `var`, so later invocation can map writes to the private environment.
-A `ref`, `mut`, or `var` loan and a borrowed receiver produce `E1402` rather
-than an implicit lifetime or reference capture.
+fields. Every capture transfers the owned outer binding at construction time:
+it is a logical copy when the exact contextual capability proof satisfies
+`Copy`, and otherwise a move that makes the outer binding unavailable. Capture
+metadata preserves whether that binding was `let` or `var`, so later invocation
+can map writes and reinitialization to the private environment. A `ref`, `mut`,
+or `var` loan and a borrowed receiver produce `E1402` rather than an implicit
+lifetime or reference capture.
 
 The generated type derives `Copy`, `Discard`, `Send`, and `Share`
 componentwise from the substituted capture types. It never derives
@@ -257,12 +260,12 @@ componentwise from the substituted capture types. It never derives
 proofs while the request-wide capability row remains `Deferred` when the same
 fact depends on an open binder.
 
-The M4 bootstrap admits an executable closure only when every capture has a
-proved `Copy` capability. An affine capture keeps expression checking
-incomplete until OWN-006/OWN-007 add capture moves and extend availability into
-closure environments. CALL-003 implements invocation and contextual
-concrete-to-uniform conversion for this closed subset. A direct expected
-function type may supply the closure signature;
+OWN-006 applies the ordinary contextual Copy/Move decision to every capture.
+Closure construction participates in the enclosing body's availability flow,
+and each captured binding becomes an owned environment slot for the closure
+body's independent flow analysis. CALL-003 implements invocation and contextual
+concrete-to-uniform conversion. A direct expected function type may supply the
+closure signature;
 the conversion then requires that exact signature, `Call`, and an environment
 that proves `Copy + Send + Share`, otherwise it emits `E1108`. CALL-004 permits
 all four effect kinds to be constructed, copied, discarded, and converted to an
@@ -274,14 +277,16 @@ Protocol derivation walks only reachable operations in the closure's own body.
 An assignment rooted in a captured place, a `CallMut` through a captured
 callable, or passing a capture as `mut`/`var` prevents `Call`. Constructing a
 nested closure does not execute its independently rooted body, and operations
-after a diverging transfer do not weaken the enclosing protocol. Because the
-current executable subset has only Copy captures, no body can move a capture
-out. A synchronous closure that writes a capture therefore retains `CallMut`
-and `CallOnce`. An async closure that writes a capture retains only `CallOnce`,
-because it must own its environment across suspension and cannot expose a
-hidden exclusive borrow. Pure closures of every effect kind retain all three
-protocols. OWN-006/OWN-007 will extend the existing path-sensitive rules to
-affine environments.
+after a diverging transfer do not weaken the enclosing protocol. Any reachable
+move from an environment slot prevents both `Call` and `CallMut`; this includes
+moving a capture into a nested closure at that nested construction site. Merely
+observing a non-`Copy` capture does not weaken either repeatable protocol. A
+synchronous closure that writes but never moves a capture therefore retains
+`CallMut` and `CallOnce`. An async closure that writes a capture retains only
+`CallOnce`, because it must own its environment across suspension and cannot
+expose a hidden exclusive borrow. `CallOnce` remains provisionally available in
+executable metadata until OWN-007 adds the path-sensitive terminal-obligation
+proof; it must not be interpreted as completion of that future contract.
 
 For a synchronous safe signature, an ordinary call chooses the first available
 protocol in the order `Call`, `CallMut`, `CallOnce`. `CallMut` requires a
@@ -298,8 +303,9 @@ closure table entry, a generated kind that exactly matches the signature's
 `async`/`unsafe` bits and source position, a complete signature/body agreement,
 no exclusive async parameter, canonical inherited generics, exact parameter
 locals, and sorted owned capture locals whose types, mutability, and CALL-002
-`Copy` proof are rederived from their bindings and inherited bounds. It
-independently rederives the effect-sensitive body protocol row, every
+contextual Copy/Move decision are rederived from their bindings and inherited
+bounds. It independently rederives the effect-sensitive, move-sensitive body
+protocol row, every
 synchronous-safe call's exact signature and access-selected protocol, and every
 callable-erasure precondition. A forged effectful ordinary call is rejected.
 No recovery closure crosses into MIR.
@@ -736,8 +742,10 @@ their underlying component is `Copy`.
 
 MIR and bytecode independently rederive path availability for the internal
 component moves; HIR rederives the recorded match mode before admitting MIR.
-Affine closure construction remains excluded by the existing Copy-only
-admission boundary and belongs to OWN-006/OWN-007.
+Affine closure construction uses the same whole-owner transfer rule: a capture
+copies or moves the complete outer binding, and closure-body capture projections
+become typed environment move paths. OWN-007 adds terminal-obligation closure,
+not another capture transfer form.
 
 ## Declaration ordering
 
