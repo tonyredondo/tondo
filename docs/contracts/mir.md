@@ -4,7 +4,8 @@
 Copy closure forms, executable synchronous-safe closure calls, static-trait and
 opaque-result lowering, OWN-001 intrinsic cursor state, OWN-002 affine
 transfers, OWN-003 flow availability, OWN-004 complete `var` reinitialization,
-and verification implemented
+OWN-005 typed move paths and uniform match ownership modes, and verification
+implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -67,7 +68,7 @@ They remain queryable but can never be lowered or executed.
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
 | Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, selected synchronous-safe call access, value/place category, pattern coverage, source evaluation order, and source-level control targets |
 | MIR construction (M3/M4) | Typed locals and temporaries, explicit CFG, places, synchronous-safe calls, effect-preserving closure bodies with a hidden environment, Copy closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
-| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, and whole-local flow availability; later M5 steps add regions, partial moves, confirmed transfers, cleanup actions, and dynamic overlap checks |
+| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, and uniform `match` copy/observe/consume lowering; later M5 steps add regions, confirmed borrowed transfers, and cleanup actions |
 | Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
 
@@ -98,23 +99,41 @@ through monomorphization, and rederived by the MIR verifier. OWN-003 adds the
 flow fact that a moved place is unavailable afterwards. A backend never decides
 between copy and move from runtime representation alone.
 
-OWN-003 proves source-local availability in HIR and rederives its whole-local
-backend invariant over the MIR CFG. An unprojected `Move` requires a live,
-initialized local and then makes it uninitialized. `Copy`, `Borrow`, and every
-other read require that same local to remain initialized. A complete write
-initializes its destination. At a CFG join the initialized bit is intersected,
-so a local is available only on every reachable predecessor; the bounded
-worklist applies the same rule to loop backedges and edge-defined results.
+OWN-003 proves source-local availability in HIR. OWN-005 keeps that source model
+deliberately small: Tondo does not expose a persistent partially moved owner.
+Standalone transfer of a non-`Copy` field, tuple slot, array element, slice, or
+borrowed location is rejected with `E1406`. Full destructuring first consumes
+the complete owner and only then transfers selected components inside the
+compiler-owned operation. The intrinsic `.value` projection of a newtype is
+the one complete-owner projection and consumes its owning binding, ordinary
+value parameter, or movable temporary.
 
-Projected moves deliberately remain ordinary reads in this verifier until
-OWN-005 replaces the whole-local bit with place-granular move paths. The HIR
-analysis conservatively invalidates their owner today, but that source-level
-restriction is not misrepresented as a complete backend proof of partial
-moves. OWN-004 now grants source permission only to plain assignment of a
-direct `var` binding. MIR needs no special recovery instruction: the RHS move
-occurs first and the subsequent unprojected destination write creates the new
-definition. If RHS evaluation or validation unwinds, that write is unreachable
-and the binding remains unavailable on the abandoned path.
+MIR independently represents availability as a live-storage bit plus a
+canonical set of unavailable typed move paths. Paths cover closure captures,
+record and tuple fields, newtype values, enum/option/result/union payloads,
+array-pattern indices and rests, dynamic indices, and slices. A read or move is
+valid only when its path overlaps no unavailable ancestor, descendant, or same
+path. Statically distinct fields, tuple slots, variant payloads, and disjoint
+array-pattern regions may move independently; dynamic indices and slices are
+conservatively overlapping unless their disjunction is proved elsewhere.
+
+A move inserts its path and subsumes unavailable descendants. A complete write
+clears every unavailable path. A projected write requires an available parent
+and restores exactly its subtree, which is needed for compiler-internal atomic
+transformations but does not grant source-level partial reinitialization. At a
+CFG join the unavailable sets are unioned and storage liveness is intersected,
+including loop backedges. `Invoke` and `IteratorNext` define their destination
+only on the successful edge. OWN-004 therefore still needs no recovery
+instruction: the RHS completes before a direct `var` write creates the new root
+definition, while an unwind edge observes no such write.
+
+Every HIR `match` records one `Copy`, `Observe`, or `Consume` mode and the HIR
+verifier rederives it. Tests, tags, shape checks, and guards borrow from one
+stable place or compiler-owned temporary. Copy bindings needed by a guard are
+materialized before it; affine bindings move only after the guard succeeds in
+the selected arm. A false guard therefore cannot consume a payload needed by a
+later arm. Pattern `ref` aliases exist only while constructing MIR and lower to
+their real projected place; no duplicate alias table survives in `MirFunction`.
 
 Branches use block IDs, not nested expression nodes. `Never`, `return`, `fail`,
 `break`, `continue`, propagation, and panic paths end in terminators without an
@@ -245,9 +264,9 @@ The structural verifier introduced in M3 proves at minimum:
 - every block has one valid terminator and every successor exists;
 - local, field, variant, function, and constant indices are in range;
 - every operand and destination agrees with the declared local/type table;
-- every use is dominated by a definition, every unprojected move consumes that
-  definition exactly once on every path, and no local is accessed outside its
-  declared storage lifetime;
+- every use is dominated by an available typed path, every root or projected
+  move consumes that path exactly once on every CFG route, and no local is
+  accessed outside its declared storage lifetime;
 - place projections are legal for their base type;
 - call arity, modes, argument types, and outcome agree with the selected
   callable, and every indirect call repeats the exact HIR signature/protocol
@@ -284,16 +303,16 @@ The structural verifier introduced in M3 proves at minimum:
 - source spans remain attached to locals and every executable operation, and
   stay within the function's source file.
 
-Definite initialization, whole-local move availability, and storage lifetime
-are forward dataflow properties, not assumptions made by bytecode generation.
+Definite initialization, typed move-path availability, and storage lifetime are
+forward dataflow properties, not assumptions made by bytecode generation.
 Parameters are initialized at entry, edge-specific results are initialized only
 on their successful edge, and the return place must be initialized on every
 `Return`. Payload refinement is a separate forward analysis so initialization
 alone cannot authorize an invalid projection.
 
-Later M5 and M7 work extends that proof with partial ownership, regions,
-terminal tokens, and suspension invariants. Verification always precedes
-bytecode lowering.
+Later M5 and M7 work extends that proof with loan regions, confirmed borrowed
+transfers, terminal tokens, and suspension invariants. Verification always
+precedes bytecode lowering.
 
 ## Determinism and resource limits
 

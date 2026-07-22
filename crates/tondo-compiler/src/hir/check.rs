@@ -22,17 +22,17 @@ use super::const_eval::{
     ConstantEvaluationError, evaluate, has_unavailable_input, is_nan, values_equal,
 };
 use super::{
-    HirAssertMessagePart, HirAssignmentOperator, HirAssignmentTarget, HirAssignmentTargetKind,
-    HirBinaryOperator, HirBody, HirBootstrapHostFunction, HirCallArgument, HirCallArgumentTarget,
-    HirCallProtocol, HirCallableId, HirCallableSignature, HirCapability, HirCapabilityStatus,
-    HirClosure, HirClosureCapture, HirClosureId, HirClosureProtocols, HirContainmentKind, HirError,
-    HirExpression, HirExpressionId, HirExpressionKind, HirField, HirFlow, HirForKind,
-    HirIndexAccess, HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry, HirMatchArm,
-    HirMemberReference, HirNominalShape, HirParameter, HirPattern, HirPatternField, HirPatternId,
-    HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod, HirProgram, HirRangeKind,
-    HirRecordFieldValue, HirStatement, HirTraitConstructor, HirTypeDeclarationKind,
-    HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind, TraitQuery,
-    TraitSelectionError, analyze_availability, select_implementation,
+    AvailabilityFindingKind, HirAssertMessagePart, HirAssignmentOperator, HirAssignmentTarget,
+    HirAssignmentTargetKind, HirBinaryOperator, HirBody, HirBootstrapHostFunction, HirCallArgument,
+    HirCallArgumentTarget, HirCallProtocol, HirCallableId, HirCallableSignature, HirCapability,
+    HirCapabilityStatus, HirClosure, HirClosureCapture, HirClosureId, HirClosureProtocols,
+    HirContainmentKind, HirError, HirExpression, HirExpressionId, HirExpressionKind, HirField,
+    HirFlow, HirForKind, HirIndexAccess, HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry,
+    HirMatchArm, HirMatchMode, HirMemberReference, HirNominalShape, HirParameter, HirPattern,
+    HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod,
+    HirProgram, HirRangeKind, HirRecordFieldValue, HirStatement, HirTraitConstructor,
+    HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind,
+    TraitQuery, TraitSelectionError, analyze_availability, select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1144,18 +1144,57 @@ impl<'a> ExpressionChecker<'a> {
         let capabilities = CapabilityAnalysis::new(&self.program, self.resolved)?;
         let findings = analyze_availability(&self.program, &capabilities)?;
         for finding in findings {
-            let name = self
-                .resolved
-                .local(finding.local())
-                .map(|local| local.name().to_string())
-                .unwrap_or_else(|| format!("local#{}", finding.local().index()));
-            self.emit(
-                finding.use_span(),
-                "E1401",
-                format!("binding `{name}` is unavailable because its value was moved"),
-                vec![("value moved here", finding.move_span())],
-                None,
-            )?;
+            let name = finding.local().map(|local| {
+                self.resolved
+                    .local(local)
+                    .map(|local| local.name().to_string())
+                    .unwrap_or_else(|| format!("local#{}", local.index()))
+            });
+            match finding.kind() {
+                AvailabilityFindingKind::UseAfterMove => self.emit(
+                    finding.use_span(),
+                    "E1401",
+                    format!(
+                        "binding `{}` is unavailable because its value was moved",
+                        name.expect("use-after-move findings name an owned binding")
+                    ),
+                    vec![(
+                        "value moved here",
+                        finding
+                            .move_span()
+                            .expect("use-after-move findings retain the move origin"),
+                    )],
+                    None,
+                )?,
+                AvailabilityFindingKind::InvalidPartialTransfer => self.emit(
+                    finding.use_span(),
+                    "E1406",
+                    "a non-`Copy` projection cannot be moved independently; destructure its owner or use an atomic replacement operation",
+                    Vec::new(),
+                    None,
+                )?,
+                AvailabilityFindingKind::InvalidBorrowedTransfer => self.emit(
+                    finding.use_span(),
+                    "E1406",
+                    "a borrowed location cannot transfer ownership without a confirmed atomic replacement",
+                    Vec::new(),
+                    None,
+                )?,
+                AvailabilityFindingKind::InvalidGuardAccess => self.emit(
+                    finding.use_span(),
+                    "E1406",
+                    "a match guard cannot access an affine value binding; use `ref` or move it in the selected arm body",
+                    Vec::new(),
+                    None,
+                )?,
+                AvailabilityFindingKind::InvalidMatchMode => self.emit(
+                    finding.use_span(),
+                    "E1406",
+                    "match ownership mode is inconsistent with its scrutinee and bindings",
+                    Vec::new(),
+                    None,
+                )?,
+            }
         }
         Ok(())
     }
@@ -1903,7 +1942,9 @@ impl<'a> ExpressionChecker<'a> {
                         }
                     }
                 }
-                HirExpressionKind::Match { scrutinee, arms } => {
+                HirExpressionKind::Match {
+                    scrutinee, arms, ..
+                } => {
                     pending.push(*scrutinee);
                     if self.expression_flow(*scrutinee).may_complete() {
                         for arm in arms {
@@ -9693,6 +9734,70 @@ impl<'a> ExpressionChecker<'a> {
         false
     }
 
+    fn pattern_requires_affine_ownership(
+        &mut self,
+        root: HirPatternId,
+        assumptions: &CapabilityAssumptions,
+    ) -> Result<bool, HirError> {
+        let mut pending = vec![root];
+        while let Some(id) = pending.pop() {
+            let pattern = self
+                .program
+                .pattern(id)
+                .expect("checked match patterns retain every child")
+                .clone();
+            match pattern.kind() {
+                HirPatternKind::Binding(_) => {
+                    if self.capability_status_with_generics(
+                        pattern.ty(),
+                        HirCapability::Copy,
+                        assumptions,
+                    )? != HirCapabilityStatus::Satisfied
+                    {
+                        return Ok(true);
+                    }
+                }
+                HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
+                    pending.extend(items.iter().copied());
+                }
+                HirPatternKind::OptionSome(item)
+                | HirPatternKind::ResultOk(item)
+                | HirPatternKind::ResultErr(item)
+                | HirPatternKind::Newtype { value: item, .. }
+                | HirPatternKind::UnionMember { pattern: item, .. } => pending.push(*item),
+                HirPatternKind::Record { fields, .. } => {
+                    pending.extend(fields.iter().map(HirPatternField::pattern));
+                }
+                HirPatternKind::Array { prefix, rest } => {
+                    pending.extend(prefix.iter().copied());
+                    pending.extend(*rest);
+                }
+                HirPatternKind::Recovery
+                | HirPatternKind::Wildcard
+                | HirPatternKind::BorrowBinding(_)
+                | HirPatternKind::Literal(_)
+                | HirPatternKind::OptionNone => {}
+            }
+        }
+        Ok(false)
+    }
+
+    fn match_scrutinee_is_stable(&self, id: HirExpressionId) -> bool {
+        let Some(expression) = self.program.expression(id) else {
+            return false;
+        };
+        if expression.category() != HirValueCategory::Place {
+            return false;
+        }
+        match expression.kind() {
+            HirExpressionKind::Local(_) | HirExpressionKind::Receiver => true,
+            HirExpressionKind::Field { base, .. }
+            | HirExpressionKind::TupleField { base, .. }
+            | HirExpressionKind::Index { base, .. } => self.match_scrutinee_is_stable(*base),
+            _ => false,
+        }
+    }
+
     fn iterator_trait_query(
         &mut self,
         source: TypeId,
@@ -10049,6 +10154,33 @@ impl<'a> ExpressionChecker<'a> {
             )?;
         }
 
+        let pattern_ids = arms.iter().map(HirMatchArm::pattern).collect::<Vec<_>>();
+        let has_borrow = pattern_ids
+            .iter()
+            .copied()
+            .any(|pattern| self.pattern_contains_borrow(pattern));
+        let mut requires_affine_ownership = false;
+        for pattern in pattern_ids {
+            requires_affine_ownership |=
+                self.pattern_requires_affine_ownership(pattern, &context.capability_assumptions)?;
+        }
+        let scrutinee_is_copy = self.capability_status_with_generics(
+            scrutinee_type,
+            HirCapability::Copy,
+            &context.capability_assumptions,
+        )? == HirCapabilityStatus::Satisfied;
+        let stable = self.match_scrutinee_is_stable(scrutinee);
+        let mode = if scrutinee_is_copy {
+            if has_borrow && stable {
+                HirMatchMode::Observe
+            } else {
+                HirMatchMode::Copy
+            }
+        } else if stable && !requires_affine_ownership {
+            HirMatchMode::Observe
+        } else {
+            HirMatchMode::Consume
+        };
         let diverges = !self.expression_flow(scrutinee).may_complete()
             || !arms.iter().any(|arm| {
                 arm.guard
@@ -10066,7 +10198,11 @@ impl<'a> ExpressionChecker<'a> {
             span: self.sources.span(file, node.range())?,
             ty,
             category: HirValueCategory::Value,
-            kind: HirExpressionKind::Match { scrutinee, arms },
+            kind: HirExpressionKind::Match {
+                scrutinee,
+                mode,
+                arms,
+            },
         })
     }
 
@@ -14505,7 +14641,9 @@ impl<'a> ExpressionChecker<'a> {
                 }
                 condition
             }
-            HirExpressionKind::Match { scrutinee, arms } => {
+            HirExpressionKind::Match {
+                scrutinee, arms, ..
+            } => {
                 let mut summary = self.expression_summary(*scrutinee);
                 if !summary.flow.may_complete() {
                     return summary;
@@ -14959,7 +15097,9 @@ fn closure_protocol_expression_children(kind: &HirExpressionKind) -> Vec<HirExpr
             children.push(*then_branch);
             children.extend(else_branch);
         }
-        HirExpressionKind::Match { scrutinee, arms } => {
+        HirExpressionKind::Match {
+            scrutinee, arms, ..
+        } => {
             children.push(*scrutinee);
             for arm in arms {
                 children.extend(arm.guard());
@@ -16516,6 +16656,152 @@ mod tests {
             output.diagnostics()
         );
         assert!(output.is_complete());
+    }
+
+    #[test]
+    fn match_records_one_uniform_copy_observe_or_consume_mode() {
+        let (_, _, output) = check(
+            "fn copied(value: Int): Int {\n\
+                 match value {\n\
+                     item => item\n\
+                 }\n\
+             }\n\
+             fn observed[T: Discard](value: T): Int {\n\
+                 match value {\n\
+                     _ => 1\n\
+                 }\n\
+             }\n\
+             fn consumed[T](value: T): T {\n\
+                 match value {\n\
+                     item => item\n\
+                 }\n\
+             }\n\
+             fn mixed[T](value: T, useBorrow: Bool): T {\n\
+                 match value {\n\
+                     ref borrowed if useBorrow => panic(\"selected borrowed arm\")\n\
+                     item => item\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let modes = output
+            .program()
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::Match { mode, .. } => Some(*mode),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            modes
+                .iter()
+                .filter(|mode| **mode == HirMatchMode::Copy)
+                .count(),
+            1
+        );
+        assert_eq!(
+            modes
+                .iter()
+                .filter(|mode| **mode == HirMatchMode::Observe)
+                .count(),
+            1
+        );
+        assert_eq!(
+            modes
+                .iter()
+                .filter(|mode| **mode == HirMatchMode::Consume)
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn affine_projection_and_borrowed_pattern_transfers_are_rejected() {
+        let (_, _, field) = check(
+            "type Box[T] = { value: T }\n\
+             fn invalid[T](box: Box[T]): T { box.value }\n",
+        );
+        assert_eq!(codes(&field), ["E1406"]);
+
+        let (_, _, index) = check("fn invalid[T](values: Array[T]): T { values[0] }\n");
+        assert_eq!(codes(&index), ["E1406"]);
+
+        let (_, _, receiver) = check(
+            "type Box[T] = { value: T }\n\
+             fn Box[T].invalid(self): T { self.value }\n",
+        );
+        assert_eq!(codes(&receiver), ["E1406"]);
+
+        let (_, _, borrowed_match) = check(
+            "fn invalid[T](value: ref T): T {\n\
+                 match value {\n\
+                     item => item\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&borrowed_match), ["E1406"]);
+
+        let (_, _, partial_match) = check(
+            "type Box[T] = { value: T }\n\
+             fn invalid[T](box: Box[T]): T {\n\
+                 match box.value {\n\
+                     item => item\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&partial_match), ["E1406"]);
+
+        let (_, _, borrowed) = check(
+            "fn invalid[T: Discard](value: T): T {\n\
+                 match value {\n\
+                     ref item => item\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&borrowed), ["E1406"]);
+
+        let (_, _, borrowed_copy) = check(
+            "fn invalid(value: Int): Int {\n\
+                 match value {\n\
+                     ref item => item + 1\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&borrowed_copy), ["E1406"]);
+    }
+
+    #[test]
+    fn match_guards_observe_only_copy_or_ref_bindings() {
+        let (_, _, invalid) = check(
+            "fn inspect[T](value: ref T): Bool { true }\n\
+             fn invalid[T: Discard](value: T?): Int {\n\
+                 match value {\n\
+                     some(item) if inspect(ref item) => 1\n\
+                     some(_) => 2\n\
+                     none => 0\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&invalid), ["E1406"]);
+
+        let (_, _, valid) = check(
+            "fn inspect[T](value: ref T): Bool { true }\n\
+             fn valid[T: Discard](value: T?): Int {\n\
+                 match value {\n\
+                     some(ref item) if inspect(ref item) => 1\n\
+                     some(_) => 2\n\
+                     none => 0\n\
+                 }\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
     }
 
     #[test]
@@ -19102,7 +19388,7 @@ mod tests {
             "type Box[T] = { value: T }\n\
              fn Box[T].wrap(value: T): Box[T] { Box { value } }\n\
              fn Box[T].convert[U](value: U): U { value }\n\
-             fn Box[T].read(self): T { self.value }\n\
+             fn Box[T: Copy].read(self): T { self.value }\n\
              fn use(): Int {\n\
                  let inferred_owner: fn(Int): Box[Int] = Box.wrap\n\
                  let fixed_owner = Box[Int].wrap\n\
@@ -21182,7 +21468,7 @@ mod tests {
     fn inherent_and_associated_opaque_results_own_distinct_generic_families() {
         let (_, _, output) = check(
             "type Box[T] = { value: T }\n\
-             fn Box[T: Discard].hide(self): impl Discard { self.value }\n\
+             fn Box[T: Copy].hide(self): impl Discard { self.value }\n\
              fn Box[T: Discard].make(value: T): impl Discard { value }\n",
         );
         assert!(

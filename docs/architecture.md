@@ -245,9 +245,14 @@ bounds, and async receiver implementations consume the same proof. HIR now
 adds a deterministic flow proof that an owned binding is available on every
 path reaching a use. A plain assignment to a direct `var` may create a new
 definition after its RHS completes; every other target still requires an
-available root. Partial move paths, affine captures, loans, and terminal cleanup
-remain later analyses. Synchronous Copy closure invocation already crosses this
-boundary with an explicit exact signature and selected call protocol.
+available root. HIR also records and rederives one uniform
+copy/observe/consume mode per `match`, rejects unconfirmed affine projections,
+and delays affine pattern transfers until after a successful guard. Typed move
+paths now live in MIR and bytecode as an internal destructuring mechanism;
+affine captures, loan regions, confirmed borrowed transfers, and terminal
+cleanup remain later analyses. Synchronous Copy closure invocation already
+crosses this boundary with an explicit exact signature and selected call
+protocol.
 
 Type IDs are request-local interned handles; only canonical recursive type
 strings are observable. Alias expansion, union normalization, nominal identity,
@@ -261,11 +266,15 @@ moves, storage lifetimes, checked-operation unwind edges, and reserved cleanup
 blocks. AST shape is no longer required to execute or analyze the program.
 OWN-002 selects explicit copy/move operands under each body's generic bounds
 and uses non-escaping borrows for immediate observations and non-value call
-arguments. OWN-003 makes each unprojected move consume the local's available
-definition and intersects that fact at CFG joins and loop backedges. OWN-004
+arguments. OWN-003 first made each root move consume the local's available
+definition and joined that fact across CFG edges and loop backedges. OWN-004
 uses the existing unprojected write as the new definition for a reinitialized
-`var`, only after RHS evaluation and validation. Later ownership steps add
-regions, partial moves and populated cleanup actions; async later adds
+`var`, only after RHS evaluation and validation. OWN-005 replaces the backend
+whole-local bit with typed unavailable paths: disjoint destructured components
+may move independently, overlapping paths cannot be reused, writes restore
+only a proved subtree, and joins conservatively union moved paths. Later
+ownership steps add regions, confirmed borrowed replacement and populated
+cleanup actions; async later adds
 suspension, resume, cancellation, and frame-state edges without moving source
 semantic decisions into a backend.
 
@@ -273,8 +282,8 @@ Before bytecode lowering, the MIR verifier proves:
 
 - Every block terminates correctly.
 - Every operand and destination has a compatible type.
-- Every use is dominated by an available definition and an unprojected move
-  consumes that definition exactly once per path.
+- Every use is dominated by an available typed path and each root or projected
+  move consumes that path exactly once per CFG route.
 - Cleanup edges are well formed.
 - Payload projections are dominated by a compatible discriminant branch.
 - Calls preserve the selected callable, receiver mode, specialization, and

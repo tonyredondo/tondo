@@ -1862,6 +1862,27 @@ impl Engine<'_, '_> {
             (BytecodeProjectionKind::ArrayPatternIndex(index), HeapObject::Array(values)) => {
                 take_index(values, *index, "array pattern item")?
             }
+            (
+                BytecodeProjectionKind::ArrayPatternRest { start, suffix },
+                HeapObject::Array(values),
+            ) => {
+                let start = *start as usize;
+                let end = values.len().checked_sub(*suffix as usize).ok_or_else(|| {
+                    VmError::invariant("array rest projection suffix exceeds length")
+                })?;
+                if start > end {
+                    return Err(VmError::invariant(
+                        "array rest projection prefix exceeds remaining length",
+                    ));
+                }
+                let mut output = Vec::with_capacity(end - start);
+                for value in &mut values[start..end] {
+                    output.push(Some(take_option(value, "array rest item")?));
+                }
+                let mut roots = output.iter().flatten().cloned().collect::<Vec<_>>();
+                roots.push(Value::Heap(handle));
+                self.allocate(HeapObject::Array(output), &roots)?
+            }
             (BytecodeProjectionKind::Index { index, access }, HeapObject::Array(values))
                 if *access == BytecodeIndexAccess::Array =>
             {

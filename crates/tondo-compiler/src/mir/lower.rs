@@ -6,10 +6,10 @@ use crate::hir::{
     HirAssignmentTargetKind, HirBinaryOperator, HirBootstrapHostFunction, HirCallProtocol,
     HirCallableSignature, HirCapability, HirCapabilityStatus, HirClosure, HirExpression,
     HirExpressionId, HirExpressionKind, HirForKind, HirIterationProtocol, HirLiteral, HirLoopId,
-    HirNominalShape, HirPatternId, HirPatternKind, HirPreludeTraitMethod, HirProgram, HirStatement,
-    HirValueCategory, HirVariantPayload, HirVariantValue, verify_typed_hir,
+    HirMatchMode, HirNominalShape, HirPatternId, HirPatternKind, HirPreludeTraitMethod, HirProgram,
+    HirStatement, HirValueCategory, HirVariantPayload, HirVariantValue, verify_typed_hir,
 };
-use crate::resolve::{LocalId, ResolvedProgram};
+use crate::resolve::{LocalId, MemberKind, ResolvedProgram};
 use crate::source::Span;
 use crate::types::{ScalarType, TypeId, TypeKind};
 
@@ -74,6 +74,7 @@ pub fn lower_to_mir(
             });
         }
         let function = FunctionBuilder::new(
+            resolved,
             hir,
             capability_analysis
                 .as_ref()
@@ -92,6 +93,7 @@ pub fn lower_to_mir(
             });
         }
         let function = FunctionBuilder::new_closure(
+            resolved,
             hir,
             capability_analysis
                 .as_ref()
@@ -141,6 +143,7 @@ struct OpenBlock {
 }
 
 struct FunctionBuilder<'a> {
+    resolved: &'a ResolvedProgram,
     hir: &'a HirProgram,
     capability_analysis: &'a CapabilityAnalysis,
     capability_assumptions: CapabilityAssumptions,
@@ -154,6 +157,7 @@ struct FunctionBuilder<'a> {
     parameters: Vec<MirLocalId>,
     source_locals: BTreeMap<LocalId, MirLocalId>,
     capture_places: BTreeMap<LocalId, MirPlace>,
+    borrow_aliases: BTreeMap<LocalId, MirPlace>,
     loops: BTreeMap<HirLoopId, LoopTargets>,
     receiver: Option<MirLocalId>,
     return_local: MirLocalId,
@@ -187,6 +191,12 @@ enum LoweredAssignmentTarget {
     },
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MatchBindingPhase {
+    Guard,
+    Body,
+}
+
 fn assignment_target_contains_slice(target: &LoweredAssignmentTarget) -> bool {
     match target {
         LoweredAssignmentTarget::Place { place, .. } => matches!(
@@ -202,6 +212,7 @@ fn assignment_target_contains_slice(target: &LoweredAssignmentTarget) -> bool {
 
 impl<'a> FunctionBuilder<'a> {
     fn new(
+        resolved: &'a ResolvedProgram,
         hir: &'a HirProgram,
         capability_analysis: &'a CapabilityAnalysis,
         callable: &HirCallableSignature,
@@ -210,6 +221,7 @@ impl<'a> FunctionBuilder<'a> {
         let id = MirFunctionId::Callable(callable.id());
         let span = callable.span();
         let mut builder = Self {
+            resolved,
             hir,
             capability_analysis,
             capability_assumptions: CapabilityAssumptions::from_generics(hir, callable.generics()),
@@ -223,6 +235,7 @@ impl<'a> FunctionBuilder<'a> {
             parameters: Vec::new(),
             source_locals: BTreeMap::new(),
             capture_places: BTreeMap::new(),
+            borrow_aliases: BTreeMap::new(),
             loops: BTreeMap::new(),
             receiver: None,
             return_local: MirLocalId(0),
@@ -255,6 +268,7 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn new_closure(
+        resolved: &'a ResolvedProgram,
         hir: &'a HirProgram,
         capability_analysis: &'a CapabilityAnalysis,
         closure: &HirClosure,
@@ -275,6 +289,7 @@ impl<'a> FunctionBuilder<'a> {
         };
         let span = closure.span();
         let mut builder = Self {
+            resolved,
             hir,
             capability_analysis,
             capability_assumptions: CapabilityAssumptions::from_generics(hir, closure.generics()),
@@ -288,6 +303,7 @@ impl<'a> FunctionBuilder<'a> {
             parameters: Vec::new(),
             source_locals: BTreeMap::new(),
             capture_places: BTreeMap::new(),
+            borrow_aliases: BTreeMap::new(),
             loops: BTreeMap::new(),
             receiver: None,
             return_local: MirLocalId(0),
@@ -1122,9 +1138,11 @@ impl<'a> FunctionBuilder<'a> {
                 destination,
                 block,
             ),
-            HirExpressionKind::Match { scrutinee, arms } => {
-                self.lower_match(*scrutinee, arms, span, destination, block)
-            }
+            HirExpressionKind::Match {
+                scrutinee,
+                mode,
+                arms,
+            } => self.lower_match(*scrutinee, *mode, arms, span, destination, block),
             HirExpressionKind::Return { value } => {
                 let return_place = self.local_place(self.return_local);
                 let end = if let Some(value) = value {
@@ -2522,13 +2540,22 @@ impl<'a> FunctionBuilder<'a> {
     fn lower_match(
         &mut self,
         scrutinee: HirExpressionId,
+        mode: HirMatchMode,
         arms: &[crate::hir::HirMatchArm],
         span: Span,
         destination: MirPlace,
         block: MirBlockId,
     ) -> Result<Option<MirBlockId>, MirError> {
-        let Some((block, scrutinee)) = self.lower_value(scrutinee, block)? else {
-            return Ok(None);
+        let (block, scrutinee) = if mode == HirMatchMode::Observe {
+            let Some((block, place)) = self.lower_place(scrutinee, block)? else {
+                return Ok(None);
+            };
+            (block, self.borrow_place(place))
+        } else {
+            let Some((block, value)) = self.lower_value(scrutinee, block)? else {
+                return Ok(None);
+            };
+            (block, self.borrow_operand(&value, span)?)
         };
         let failure = self.allocate_block(MirBlockKind::Normal)?;
         let mut next_pattern = block;
@@ -2548,6 +2575,13 @@ impl<'a> FunctionBuilder<'a> {
                 next,
             )?;
             let body_start = if let Some(guard) = arm.guard() {
+                self.bind_match_pattern(
+                    arm.pattern(),
+                    &scrutinee,
+                    mode,
+                    MatchBindingPhase::Guard,
+                    matched,
+                )?;
                 let Some((guard_end, condition)) = self.lower_value(guard, matched)? else {
                     next_pattern = next;
                     continue;
@@ -2562,8 +2596,22 @@ impl<'a> FunctionBuilder<'a> {
                         if_false: next,
                     },
                 )?;
+                self.bind_match_pattern(
+                    arm.pattern(),
+                    &scrutinee,
+                    mode,
+                    MatchBindingPhase::Body,
+                    body,
+                )?;
                 body
             } else {
+                self.bind_match_pattern(
+                    arm.pattern(),
+                    &scrutinee,
+                    mode,
+                    MatchBindingPhase::Body,
+                    matched,
+                )?;
                 matched
             };
             if let Some(end) = self.lower_expression(arm.body(), destination.clone(), body_start)? {
@@ -2580,6 +2628,186 @@ impl<'a> FunctionBuilder<'a> {
             self.terminate(end, span, MirTerminatorKind::Goto { target: join })?;
         }
         Ok(Some(join))
+    }
+
+    fn bind_match_pattern(
+        &mut self,
+        pattern: HirPatternId,
+        source: &MirOperand,
+        mode: HirMatchMode,
+        phase: MatchBindingPhase,
+        block: MirBlockId,
+    ) -> Result<(), MirError> {
+        let pattern = self
+            .hir
+            .pattern(pattern)
+            .ok_or_else(|| MirError::Construction {
+                span: self.span,
+                message: format!("missing verified pattern#{}", pattern.index()),
+            })?
+            .clone();
+        let span = pattern.span();
+        match pattern.kind() {
+            HirPatternKind::Binding(source_local) => {
+                if self.source_locals.contains_key(source_local) {
+                    return Ok(());
+                }
+                let place = self.operand_place(source, span)?;
+                let transfer = self.transfer_kind(place.clone(), span)?;
+                let affine = matches!(transfer, MirOperandKind::Move(_));
+                if phase == MatchBindingPhase::Guard && affine {
+                    return Ok(());
+                }
+                if mode != HirMatchMode::Consume && affine {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "non-consuming match mode contains an affine value binding".into(),
+                    });
+                }
+                let local = self.allocate_user_local(*source_local, pattern.ty(), span, block)?;
+                self.assign_operand(
+                    block,
+                    span,
+                    self.local_place(local),
+                    MirOperand {
+                        ty: place.ty,
+                        kind: transfer,
+                    },
+                )?;
+            }
+            HirPatternKind::BorrowBinding(local) => {
+                let place = self.operand_place(source, span)?;
+                if let Some(previous) = self.borrow_aliases.insert(*local, place.clone())
+                    && previous != place
+                {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "borrow pattern local changed its projected source".into(),
+                    });
+                }
+            }
+            HirPatternKind::Tuple(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    let projected = self.project_operand(
+                        source,
+                        MirProjection {
+                            ty: self.pattern_type(*item)?,
+                            kind: MirProjectionKind::TupleField(index as u32),
+                        },
+                        span,
+                    )?;
+                    self.bind_match_pattern(*item, &projected, mode, phase, block)?;
+                }
+            }
+            HirPatternKind::OptionSome(item) => {
+                let projected = self.project_operand(
+                    source,
+                    MirProjection {
+                        ty: self.pattern_type(*item)?,
+                        kind: MirProjectionKind::OptionValue,
+                    },
+                    span,
+                )?;
+                self.bind_match_pattern(*item, &projected, mode, phase, block)?;
+            }
+            HirPatternKind::ResultOk(item) | HirPatternKind::ResultErr(item) => {
+                let kind = if matches!(pattern.kind(), HirPatternKind::ResultOk(_)) {
+                    MirProjectionKind::ResultOkValue
+                } else {
+                    MirProjectionKind::ResultErrValue
+                };
+                let projected = self.project_operand(
+                    source,
+                    MirProjection {
+                        ty: self.pattern_type(*item)?,
+                        kind,
+                    },
+                    span,
+                )?;
+                self.bind_match_pattern(*item, &projected, mode, phase, block)?;
+            }
+            HirPatternKind::Newtype { value, .. } => {
+                let projected = self.project_operand(
+                    source,
+                    MirProjection {
+                        ty: self.pattern_type(*value)?,
+                        kind: MirProjectionKind::NewtypeValue,
+                    },
+                    span,
+                )?;
+                self.bind_match_pattern(*value, &projected, mode, phase, block)?;
+            }
+            HirPatternKind::Variant { variant, fields } => {
+                let projections = self.variant_pattern_projections(*variant, fields, span)?;
+                for (field, kind) in fields.iter().zip(projections) {
+                    let projected = self.project_operand(
+                        source,
+                        MirProjection {
+                            ty: self.pattern_type(*field)?,
+                            kind,
+                        },
+                        span,
+                    )?;
+                    self.bind_match_pattern(*field, &projected, mode, phase, block)?;
+                }
+            }
+            HirPatternKind::Record { fields, .. } => {
+                for field in fields {
+                    let projected = self.project_operand(
+                        source,
+                        MirProjection {
+                            ty: self.pattern_type(field.pattern())?,
+                            kind: MirProjectionKind::Field(field.member()),
+                        },
+                        span,
+                    )?;
+                    self.bind_match_pattern(field.pattern(), &projected, mode, phase, block)?;
+                }
+            }
+            HirPatternKind::UnionMember { member, pattern } => {
+                let projected = self.project_operand(
+                    source,
+                    MirProjection {
+                        ty: self.pattern_type(*pattern)?,
+                        kind: MirProjectionKind::UnionValue(*member),
+                    },
+                    span,
+                )?;
+                self.bind_match_pattern(*pattern, &projected, mode, phase, block)?;
+            }
+            HirPatternKind::Array { prefix, rest } => {
+                for (index, pattern) in prefix.iter().enumerate() {
+                    let projected = self.project_operand(
+                        source,
+                        MirProjection {
+                            ty: self.pattern_type(*pattern)?,
+                            kind: MirProjectionKind::ArrayPatternIndex(index as u32),
+                        },
+                        span,
+                    )?;
+                    self.bind_match_pattern(*pattern, &projected, mode, phase, block)?;
+                }
+                if let Some(rest) = rest {
+                    let projected = self.project_operand(
+                        source,
+                        MirProjection {
+                            ty: self.pattern_type(*rest)?,
+                            kind: MirProjectionKind::ArrayPatternRest {
+                                start: prefix.len() as u32,
+                                suffix: 0,
+                            },
+                        },
+                        span,
+                    )?;
+                    self.bind_match_pattern(*rest, &projected, mode, phase, block)?;
+                }
+            }
+            HirPatternKind::Recovery
+            | HirPatternKind::Wildcard
+            | HirPatternKind::Literal(_)
+            | HirPatternKind::OptionNone => {}
+        }
+        Ok(())
     }
 
     fn lower_pattern_test(
@@ -2603,9 +2831,7 @@ impl<'a> FunctionBuilder<'a> {
             HirPatternKind::Wildcard => {
                 self.terminate(block, span, MirTerminatorKind::Goto { target: matched })
             }
-            HirPatternKind::Binding(local) | HirPatternKind::BorrowBinding(local) => {
-                let local = self.allocate_user_local(*local, pattern.ty(), span, block)?;
-                self.assign_operand(block, span, self.local_place(local), value)?;
+            HirPatternKind::Binding(_) | HirPatternKind::BorrowBinding(_) => {
                 self.terminate(block, span, MirTerminatorKind::Goto { target: matched })
             }
             HirPatternKind::Literal(literal) => {
@@ -2977,9 +3203,20 @@ impl<'a> FunctionBuilder<'a> {
                 let Some((block, mut place)) = self.lower_place_base(*base, block)? else {
                     return Ok(None);
                 };
+                let member_kind =
+                    self.resolved
+                        .member(*member)
+                        .ok_or_else(|| MirError::Construction {
+                            span,
+                            message: format!("missing verified member#{}", member.index()),
+                        })?;
                 place.projections.push(MirProjection {
                     ty: expression.ty(),
-                    kind: MirProjectionKind::Field(*member),
+                    kind: if member_kind.kind() == MemberKind::NewtypeValue {
+                        MirProjectionKind::NewtypeValue
+                    } else {
+                        MirProjectionKind::Field(*member)
+                    },
                 });
                 place.ty = expression.ty();
                 Ok(Some((block, place)))
@@ -3096,15 +3333,22 @@ impl<'a> FunctionBuilder<'a> {
         let mut place = self.operand_place(operand, span)?;
         place.ty = projection.ty;
         place.projections.push(projection);
+        let borrowed = matches!(operand.kind, MirOperandKind::Borrow(_));
         Ok(MirOperand {
             ty: place.ty,
-            kind: self.transfer_kind(place, span)?,
+            kind: if borrowed {
+                MirOperandKind::Borrow(place)
+            } else {
+                self.transfer_kind(place, span)?
+            },
         })
     }
 
     fn operand_place(&self, operand: &MirOperand, span: Span) -> Result<MirPlace, MirError> {
         match &operand.kind {
-            MirOperandKind::Copy(place) | MirOperandKind::Move(place) => Ok(place.clone()),
+            MirOperandKind::Copy(place)
+            | MirOperandKind::Move(place)
+            | MirOperandKind::Borrow(place) => Ok(place.clone()),
             _ => Err(MirError::Construction {
                 span,
                 message: "aggregate projection operand was not materialized in a local".into(),
@@ -3144,6 +3388,9 @@ impl<'a> FunctionBuilder<'a> {
     }
 
     fn source_place(&self, local: LocalId, span: Span) -> Result<MirPlace, MirError> {
+        if let Some(place) = self.borrow_aliases.get(&local) {
+            return Ok(place.clone());
+        }
         if let Some(place) = self.capture_places.get(&local) {
             return Ok(place.clone());
         }
@@ -3914,6 +4161,198 @@ mod tests {
             error
                 .message()
                 .contains("after its value became unavailable")
+        );
+    }
+
+    #[test]
+    fn mir_move_paths_allow_siblings_restore_children_and_reject_root_reuse() {
+        let source = "fn identity[T](value: T): T { value }\n\
+                      fn rebuild[T: Discard](input: (T, T)): (T, T) {\n\
+                          let (left, right) = input\n\
+                          identity((left, right))\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+
+        let mut duplicate = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = duplicate
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "rebuild")))
+            .unwrap();
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.statements
+                    .iter()
+                    .position(|statement| {
+                        matches!(
+                            statement.kind(),
+                            MirStatementKind::Assign {
+                                value: MirRvalue {
+                                    kind: MirRvalueKind::Use(MirOperand {
+                                        kind: MirOperandKind::Move(place),
+                                        ..
+                                    }),
+                                    ..
+                                },
+                                ..
+                            } if matches!(
+                                place.projections(),
+                                [MirProjection {
+                                    kind: MirProjectionKind::TupleField(_),
+                                    ..
+                                }]
+                            )
+                        )
+                    })
+                    .map(|index| (block, index))
+            })
+            .expect("tuple destructuring moves one projected child");
+        let repeated = function.blocks[block].statements[index].clone();
+        function.blocks[block]
+            .statements
+            .insert(index + 1, repeated);
+        let error = verify_mir(&resolved, &hir, &duplicate).unwrap_err();
+        assert!(error.message().contains("unavailable move path"), "{error}");
+
+        let mut restored = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = restored
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "rebuild")))
+            .unwrap();
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.statements
+                    .iter()
+                    .position(|statement| {
+                        matches!(
+                            statement.kind(),
+                            MirStatementKind::Assign {
+                                value: MirRvalue {
+                                    kind: MirRvalueKind::Use(MirOperand {
+                                        kind: MirOperandKind::Move(place),
+                                        ..
+                                    }),
+                                    ..
+                                },
+                                ..
+                            } if matches!(
+                                place.projections(),
+                                [MirProjection {
+                                    kind: MirProjectionKind::TupleField(_),
+                                    ..
+                                }]
+                            )
+                        )
+                    })
+                    .map(|index| (block, index))
+            })
+            .unwrap();
+        let projected_move = function.blocks[block].statements[index].clone();
+        let MirStatementKind::Assign {
+            destination: child_owner,
+            value:
+                MirRvalue {
+                    kind:
+                        MirRvalueKind::Use(MirOperand {
+                            kind: MirOperandKind::Move(child),
+                            ..
+                        }),
+                    ..
+                },
+        } = projected_move.kind()
+        else {
+            unreachable!()
+        };
+        let restore = MirStatement {
+            span: projected_move.span(),
+            kind: MirStatementKind::Assign {
+                destination: child.clone(),
+                value: MirRvalue {
+                    ty: child_owner.ty(),
+                    kind: MirRvalueKind::Use(MirOperand {
+                        ty: child_owner.ty(),
+                        kind: MirOperandKind::Move(child_owner.clone()),
+                    }),
+                },
+            },
+        };
+        function.blocks[block].statements.insert(index + 1, restore);
+        function.blocks[block]
+            .statements
+            .insert(index + 2, projected_move);
+        verify_mir(&resolved, &hir, &restored).unwrap();
+
+        let mut root_reuse = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = root_reuse
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "rebuild")))
+            .unwrap();
+        let (root, root_type) = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .find_map(|statement| match statement.kind() {
+                MirStatementKind::Assign {
+                    value:
+                        MirRvalue {
+                            kind:
+                                MirRvalueKind::Use(MirOperand {
+                                    kind: MirOperandKind::Move(place),
+                                    ..
+                                }),
+                            ..
+                        },
+                    ..
+                } if matches!(
+                    place.projections(),
+                    [MirProjection {
+                        kind: MirProjectionKind::TupleField(_),
+                        ..
+                    }]
+                ) =>
+                {
+                    Some((place.local(), function.local(place.local()).unwrap().ty()))
+                }
+                _ => None,
+            })
+            .unwrap();
+        let call_place = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::Invoke {
+                    operation:
+                        MirOperation {
+                            kind: MirOperationKind::Call { arguments, .. },
+                            ..
+                        },
+                    ..
+                } => arguments
+                    .iter_mut()
+                    .find_map(|argument| match &mut argument.value.kind {
+                        MirOperandKind::Move(place)
+                            if place.projections.is_empty() && place.ty == root_type =>
+                        {
+                            Some(place)
+                        }
+                        _ => None,
+                    }),
+                _ => None,
+            })
+            .expect("the rebuilt tuple is passed by value");
+        call_place.local = root;
+
+        let error = verify_mir(&resolved, &hir, &root_reuse).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("after its value became unavailable"),
+            "{error}"
         );
     }
 

@@ -3894,7 +3894,10 @@ mod tests {
     #[test]
     fn generic_nominals_and_projection_types_are_concrete_per_instance() {
         let source = "type Box[T] = { value: T }\n\
-                      fn unwrap[T](boxed: Box[T]): T { boxed.value }\n\
+                      fn unwrap[T](boxed: Box[T]): T {\n\
+                          let Box { value } = boxed\n\
+                          value\n\
+                      }\n\
                       fn use(): String {\n\
                           let number = unwrap(Box[Int] { value: 42 })\n\
                           assert(number == 42)\n\
@@ -3929,7 +3932,7 @@ mod tests {
 
     #[test]
     fn generic_checked_operations_and_tag_projections_are_specialized() {
-        let source = "fn first[T](values: Array[T]): T { values[0] }\n\
+        let source = "fn first[T: Copy](values: Array[T]): T { values[0] }\n\
                       fn value_or[T](value: T?, fallback: T): T {\n\
                           match value {\n\
                               some(item) => item\n\
@@ -5909,6 +5912,276 @@ mod tests {
             error
                 .message()
                 .contains("after its value became unavailable")
+        );
+    }
+
+    #[test]
+    fn bytecode_move_paths_allow_siblings_restore_children_and_reject_root_reuse() {
+        let source = "fn identity[T](value: T): T { value }\n\
+                      fn rebuild[T: Discard](input: (T, T)): (T, T) {\n\
+                          let (left, right) = input\n\
+                          identity((left, right))\n\
+                      }\n\
+                      fn execute(): (String, String) {\n\
+                          rebuild((\"left\", \"right\"))\n\
+                      }\n";
+
+        let mut duplicate = lowered(source);
+        let (function, block, instruction) = duplicate
+            .functions
+            .iter()
+            .enumerate()
+            .find_map(|(function, body)| {
+                body.blocks.iter().enumerate().find_map(|(block, body)| {
+                    body.instructions
+                        .iter()
+                        .position(|instruction| {
+                            matches!(
+                                &instruction.kind,
+                                bc::BytecodeInstructionKind::Store {
+                                    value: bc::BytecodeRvalue {
+                                        kind: bc::BytecodeRvalueKind::Use(
+                                            bc::BytecodeOperand {
+                                                kind: bc::BytecodeOperandKind::Move(place),
+                                                ..
+                                            }
+                                        ),
+                                        ..
+                                    },
+                                    ..
+                                } if matches!(
+                                    place.projections.as_slice(),
+                                    [bc::BytecodeProjection {
+                                        kind: bc::BytecodeProjectionKind::TupleField(_),
+                                        ..
+                                    }]
+                                )
+                            )
+                        })
+                        .map(|instruction| (function, block, instruction))
+                })
+            })
+            .expect("tuple destructuring moves one projected bytecode child");
+        let repeated =
+            duplicate.functions[function].blocks[block].instructions[instruction].clone();
+        duplicate.functions[function].blocks[block]
+            .instructions
+            .insert(instruction + 1, repeated);
+        let error = bc::verify_bytecode(&duplicate).unwrap_err();
+        assert!(error.message().contains("unavailable move path"), "{error}");
+
+        let mut restored = lowered(source);
+        let (function, block, instruction) = restored
+            .functions
+            .iter()
+            .enumerate()
+            .find_map(|(function, body)| {
+                body.blocks.iter().enumerate().find_map(|(block, body)| {
+                    body.instructions
+                        .iter()
+                        .position(|instruction| {
+                            matches!(
+                                &instruction.kind,
+                                bc::BytecodeInstructionKind::Store {
+                                    value: bc::BytecodeRvalue {
+                                        kind: bc::BytecodeRvalueKind::Use(
+                                            bc::BytecodeOperand {
+                                                kind: bc::BytecodeOperandKind::Move(place),
+                                                ..
+                                            }
+                                        ),
+                                        ..
+                                    },
+                                    ..
+                                } if matches!(
+                                    place.projections.as_slice(),
+                                    [bc::BytecodeProjection {
+                                        kind: bc::BytecodeProjectionKind::TupleField(_),
+                                        ..
+                                    }]
+                                )
+                            )
+                        })
+                        .map(|instruction| (function, block, instruction))
+                })
+            })
+            .unwrap();
+        let projected_move =
+            restored.functions[function].blocks[block].instructions[instruction].clone();
+        let bc::BytecodeInstructionKind::Store {
+            destination: child_owner,
+            value:
+                bc::BytecodeRvalue {
+                    kind:
+                        bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                            kind: bc::BytecodeOperandKind::Move(child),
+                            ..
+                        }),
+                    ..
+                },
+        } = &projected_move.kind
+        else {
+            unreachable!()
+        };
+        let restore = bc::BytecodeInstruction {
+            span: projected_move.span,
+            kind: bc::BytecodeInstructionKind::Store {
+                destination: child.clone(),
+                value: bc::BytecodeRvalue {
+                    ty: child_owner.ty,
+                    kind: bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                        ty: child_owner.ty,
+                        kind: bc::BytecodeOperandKind::Move(child_owner.clone()),
+                    }),
+                },
+            },
+        };
+        restored.functions[function].blocks[block]
+            .instructions
+            .insert(instruction + 1, restore);
+        restored.functions[function].blocks[block]
+            .instructions
+            .insert(instruction + 2, projected_move);
+        bc::verify_bytecode(&restored).unwrap();
+
+        let mut root_reuse = lowered(source);
+        let (function_index, root, root_type) = root_reuse
+            .functions
+            .iter()
+            .enumerate()
+            .find_map(|(function, body)| {
+                body.blocks
+                    .iter()
+                    .flat_map(|block| &block.instructions)
+                    .find_map(|instruction| match &instruction.kind {
+                        bc::BytecodeInstructionKind::Store {
+                            value:
+                                bc::BytecodeRvalue {
+                                    kind:
+                                        bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                                            kind: bc::BytecodeOperandKind::Move(place),
+                                            ..
+                                        }),
+                                    ..
+                                },
+                            ..
+                        } if matches!(
+                            place.projections.as_slice(),
+                            [bc::BytecodeProjection {
+                                kind: bc::BytecodeProjectionKind::TupleField(_),
+                                ..
+                            }]
+                        ) =>
+                        {
+                            Some((
+                                function,
+                                place.slot,
+                                body.slots[place.slot.index() as usize].ty,
+                            ))
+                        }
+                        _ => None,
+                    })
+            })
+            .unwrap();
+        let call_place = root_reuse.functions[function_index]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Call { arguments, .. },
+                            ..
+                        },
+                    ..
+                } => arguments
+                    .iter_mut()
+                    .find_map(|argument| match &mut argument.value.kind {
+                        bc::BytecodeOperandKind::Move(place)
+                            if place.projections.is_empty() && place.ty == root_type =>
+                        {
+                            Some(place)
+                        }
+                        _ => None,
+                    }),
+                _ => None,
+            })
+            .expect("the rebuilt tuple is passed by value");
+        call_place.slot = root;
+
+        let error = bc::verify_bytecode(&root_reuse).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("after its value became unavailable"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn affine_destructuring_observation_and_guarded_consumption_execute() {
+        let source = "type Box[T] = { left: T, right: T }\n\
+                      type Token[T] = T\n\
+                      enum Choice[T] {\n\
+                          First(T)\n\
+                          Second(T)\n\
+                      }\n\
+                      fn swapPair[T: Discard](pair: (T, T)): (T, T) {\n\
+                          let (left, right) = pair\n\
+                          (right, left)\n\
+                      }\n\
+                      fn swapBox[T: Discard](box: Box[T]): (T, T) {\n\
+                          let Box { left, right } = box\n\
+                          (right, left)\n\
+                      }\n\
+                      fn unwrapChoice[T: Discard](choice: Choice[T]): T {\n\
+                          match choice {\n\
+                              Choice.First(item) => item\n\
+                              Choice.Second(item) => item\n\
+                          }\n\
+                      }\n\
+                      fn first[T: Discard](values: Array[T]): T {\n\
+                          match values {\n\
+                              [item, ..rest] => {\n\
+                                  _ = rest\n\
+                                  item\n\
+                              }\n\
+                              [] => panic(\"empty array\")\n\
+                          }\n\
+                      }\n\
+                      fn unwrap[T](token: Token[T]): T { token.value }\n\
+                      fn preserve[T: Discard](value: T): T {\n\
+                          match value {\n\
+                              _ => ()\n\
+                          }\n\
+                          value\n\
+                      }\n\
+                      fn guarded[T: Discard](value: T?): T {\n\
+                          match value {\n\
+                              some(ref item) if false => panic(\"unreachable guard\")\n\
+                              some(item) => item\n\
+                              none => panic(\"missing value\")\n\
+                          }\n\
+                      }\n\
+                      fn execute(): Int {\n\
+                          let pair = swapPair((\"left\", \"right\"))\n\
+                          assert(pair.0 == \"right\")\n\
+                          assert(pair.1 == \"left\")\n\
+                          let box = swapBox(Box[String] { left: \"up\", right: \"down\" })\n\
+                          assert(box.0 == \"down\")\n\
+                          assert(box.1 == \"up\")\n\
+                          assert(unwrapChoice(Choice[String].First(\"choice\")) == \"choice\")\n\
+                          assert(first([\"head\", \"tail\"]) == \"head\")\n\
+                          assert(unwrap(Token[String](\"token\")) == \"token\")\n\
+                          assert(Token[String](\"direct\").value == \"direct\")\n\
+                          assert(preserve(\"preserved\") == \"preserved\")\n\
+                          assert(guarded(some(\"guarded\")) == \"guarded\")\n\
+                          42\n\
+                      }\n";
+
+        assert_eq!(
+            execute_function(source, "execute"),
+            RuntimeValue::Integer(42)
         );
     }
 

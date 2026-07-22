@@ -27,7 +27,7 @@ mod termination;
 mod traits;
 mod verify;
 
-pub(crate) use availability::analyze_availability;
+pub(crate) use availability::{AvailabilityFindingKind, analyze_availability};
 pub(crate) use capabilities::{CapabilityAnalysis, CapabilityAssumptions};
 pub use check::{ExpressionCheckLimits, HirCheckOutput, check_expressions};
 pub use lower::{TypeLoweringLimits, lower_types};
@@ -1596,6 +1596,13 @@ pub enum HirContainmentKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HirMatchMode {
+    Copy,
+    Observe,
+    Consume,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HirAssignmentOperator {
     Assign,
     Add,
@@ -1767,6 +1774,7 @@ pub enum HirExpressionKind {
     },
     Match {
         scrutinee: HirExpressionId,
+        mode: HirMatchMode,
         arms: Vec<HirMatchArm>,
     },
     Return {

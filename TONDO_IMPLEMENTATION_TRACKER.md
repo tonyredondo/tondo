@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.37
+**Versión del tracker:** 0.38
 
 **Última actualización:** 2026-07-22
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar moves parciales y sus restricciones
-(OWN-005).
+**Objetivo inmediato:** implementar captura de closures respetando copia o move
+(OWN-006).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -270,9 +270,9 @@ Estado observado del workspace:
 - Workspace: `tondo-cli`, `tondo-compiler` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada aún no está fijada.
-- Última validación: 2026-07-21, con formatter check, Clippy sin warnings,
-  324 tests, Rustdoc sin warnings, metadatos locked y smoke tests de la CLI
-  correctos.
+- Última validación: 2026-07-22, con formatter check, `cargo check` y build de
+  todos los targets, Clippy sin warnings, 468 tests, Rustdoc sin warnings,
+  metadatos locked y smoke tests de la CLI correctos.
 
 ### 4.1 Ruta crítica
 
@@ -1272,7 +1272,14 @@ lifetimes escritos por el usuario.
   disponible. MIR/bytecode ya materializan el write como definición y la VM
   valida un destino directo sin leer su slot movido.
 
-- [ ] **OWN-005 — Implementar moves parciales y sus restricciones.**
+- [x] **OWN-005 — Implementar moves parciales y sus restricciones.** HIR
+  conserva el modelo fuente de propietario completo, registra y vuelve a probar
+  un modo uniforme `Copy`/`Observe`/`Consume` por `match`, rechaza con `E1406`
+  proyecciones afines o ubicaciones prestadas no transferibles y difiere todo
+  binding afín hasta que su guard haya tenido éxito. MIR y bytecode usan move
+  paths tipados con joins conservadores, siblings disjuntos y reposición de
+  subárboles; la VM ejecuta destructuración affine de tuples, records, enums,
+  options, arrays con `..rest` y la extracción completa de newtypes.
 
 - [ ] **OWN-006 — Implementar captura de closures respetando copia o move.**
 
@@ -1881,13 +1888,40 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es OWN-005: sustituir el bit conservador de raíz por
-move paths tipados que permitan proyecciones afines únicamente cuando las reglas
-de consumo, acceso restante y reposición sean demostrables.
+La siguiente acción activa es OWN-006: permitir que cada captura de closure use
+la misma decisión contextual `Copy` o `Move` que un argumento ordinario, y
+actualizar disponibilidad, layout del entorno y verificadores sin introducir
+préstamos implícitos.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.38 — 2026-07-22
+
+- Se completa OWN-005 sin exponer un estado fuente persistentemente
+  “parcialmente movido”. Una extracción affine ordinaria desde campo, tuple
+  slot, índice, slice, receptor o préstamo produce `E1406`; la destructuración
+  completa consume primero el owner, mientras `.value` de newtype cuenta como
+  proyección completa solo sobre owner o temporal movible.
+- Cada `match` HIR conserva un modo uniforme `Copy`, `Observe` o `Consume`, que
+  el verificador vuelve a derivar. Tags, forma y guards se prueban mediante
+  observación; bindings afines se transfieren únicamente al entrar en el body
+  seleccionado, por lo que un guard falso no vacía payloads usados por arms
+  posteriores. Un binding de patrón `ref` no puede materializarse, ni siquiera
+  cuando su componente cumple `Copy`.
+- MIR y bytecode reemplazan el bit de raíz por conjuntos canónicos de move paths
+  tipados. Detectan moves duplicados, de ancestros, descendientes y paths
+  dinámicos potencialmente solapados; permiten siblings estáticamente disjuntos,
+  unen paths no disponibles en CFG/loops y restauran solo el subárbol escrito
+  cuando su padre sigue disponible.
+- La VM mueve payloads proyectados de forma defensiva y materializa un
+  `..rest` affine tomando sus elementos a un nuevo array propietario, con roots
+  explícitos durante la asignación. Regresiones HIR, MIR, bytecode y end-to-end
+  cubren tuples, records, enums, options, arrays, newtypes, observación y guards.
+- El gate acumulado pasa 468 tests, `git diff --check`, formatter check, check y
+  build de todos los targets, Clippy con warnings denegados y Rustdoc con
+  warnings denegados.
 
 ### 0.37 — 2026-07-22
 

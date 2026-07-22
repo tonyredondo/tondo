@@ -8,21 +8,35 @@ use super::{
     CapabilityAnalysis, CapabilityAssumptions, HirAssignmentOperator, HirAssignmentTarget,
     HirAssignmentTargetKind, HirBinaryOperator, HirCallProtocol, HirCapability,
     HirCapabilityStatus, HirExpressionId, HirExpressionKind, HirForKind, HirIterationProtocol,
-    HirLoopId, HirPatternId, HirPatternKind, HirProgram, HirStatement, HirValueCategory,
-    HirVariantValue, HirWriteKind,
+    HirLoopId, HirMatchMode, HirPatternId, HirPatternKind, HirProgram, HirStatement,
+    HirValueCategory, HirVariantValue, HirWriteKind,
 };
 
 type AvailabilityState = BTreeMap<LocalId, Span>;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum AvailabilityFindingKind {
+    UseAfterMove,
+    InvalidPartialTransfer,
+    InvalidBorrowedTransfer,
+    InvalidGuardAccess,
+    InvalidMatchMode,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) struct AvailabilityFinding {
-    local: LocalId,
+    kind: AvailabilityFindingKind,
+    local: Option<LocalId>,
     use_span: Span,
-    move_span: Span,
+    move_span: Option<Span>,
 }
 
 impl AvailabilityFinding {
-    pub(crate) fn local(self) -> LocalId {
+    pub(crate) fn kind(self) -> AvailabilityFindingKind {
+        self.kind
+    }
+
+    pub(crate) fn local(self) -> Option<LocalId> {
         self.local
     }
 
@@ -30,9 +44,22 @@ impl AvailabilityFinding {
         self.use_span
     }
 
-    pub(crate) fn move_span(self) -> Span {
+    pub(crate) fn move_span(self) -> Option<Span> {
         self.move_span
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlaceRoot {
+    Local(LocalId),
+    Receiver,
+    Temporary,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct PlaceInfo {
+    root: PlaceRoot,
+    complete_transfer: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,11 +117,18 @@ pub(crate) fn analyze_availability(
             .filter(|parameter| parameter.mode() == ParameterMode::Value)
             .filter_map(|parameter| parameter.local())
             .collect();
+        let borrowed = callable
+            .parameters()
+            .iter()
+            .filter(|parameter| parameter.mode() != ParameterMode::Value)
+            .filter_map(|parameter| parameter.local())
+            .collect();
         Analyzer::new(
             program,
             capabilities,
             CapabilityAssumptions::from_generics(program, callable.generics()),
             owners,
+            borrowed,
             &mut findings,
         )
         .analyze_body(body.root())?;
@@ -106,11 +140,18 @@ pub(crate) fn analyze_availability(
             .filter(|parameter| parameter.mode() == ParameterMode::Value)
             .filter_map(|parameter| parameter.local())
             .collect();
+        let borrowed = closure
+            .parameters()
+            .iter()
+            .filter(|parameter| parameter.mode() != ParameterMode::Value)
+            .filter_map(|parameter| parameter.local())
+            .collect();
         Analyzer::new(
             program,
             capabilities,
             CapabilityAssumptions::from_generics(program, closure.generics()),
             owners,
+            borrowed,
             &mut findings,
         )
         .analyze_body(closure.body().root())?;
@@ -123,7 +164,10 @@ struct Analyzer<'a, 'f> {
     capabilities: &'a CapabilityAnalysis,
     assumptions: CapabilityAssumptions,
     owners: BTreeSet<LocalId>,
+    borrowed: BTreeSet<LocalId>,
+    pattern_borrowed: BTreeSet<LocalId>,
     reinitializable: BTreeSet<LocalId>,
+    guard_forbidden: BTreeSet<LocalId>,
     copy_statuses: BTreeMap<TypeId, HirCapabilityStatus>,
     findings: &'f mut BTreeSet<AvailabilityFinding>,
 }
@@ -134,6 +178,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         capabilities: &'a CapabilityAnalysis,
         assumptions: CapabilityAssumptions,
         owners: BTreeSet<LocalId>,
+        borrowed: BTreeSet<LocalId>,
         findings: &'f mut BTreeSet<AvailabilityFinding>,
     ) -> Self {
         Self {
@@ -141,7 +186,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             capabilities,
             assumptions,
             owners,
+            borrowed,
+            pattern_borrowed: BTreeSet::new(),
             reinitializable: BTreeSet::new(),
+            guard_forbidden: BTreeSet::new(),
             copy_statuses: BTreeMap::new(),
             findings,
         }
@@ -354,9 +402,11 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 then_branch,
                 else_branch,
             } => self.if_expression(*condition, *then_branch, *else_branch, state)?,
-            HirExpressionKind::Match { scrutinee, arms } => {
-                self.match_expression(*scrutinee, arms, state)?
-            }
+            HirExpressionKind::Match {
+                scrutinee,
+                mode,
+                arms,
+            } => self.match_expression(*scrutinee, *mode, arms, state)?,
             HirExpressionKind::Return { value } => {
                 let mut flow = if let Some(value) = value {
                     self.expression(*value, state, Demand::Transfer)?
@@ -518,10 +568,48 @@ impl<'a, 'f> Analyzer<'a, 'f> {
     fn match_expression(
         &mut self,
         scrutinee: HirExpressionId,
+        mode: HirMatchMode,
         arms: &[super::HirMatchArm],
         state: AvailabilityState,
     ) -> Result<AvailabilityFlow, TypeError> {
-        let mut scrutinee_flow = self.expression(scrutinee, state, Demand::Transfer)?;
+        let has_borrow = arms
+            .iter()
+            .any(|arm| self.pattern_contains_borrow(arm.pattern()));
+        let mut requires_affine_ownership = false;
+        for arm in arms {
+            requires_affine_ownership |= !self.affine_pattern_bindings(arm.pattern())?.is_empty();
+        }
+        let scrutinee_expression = self
+            .program
+            .expression(scrutinee)
+            .expect("availability match scrutinees exist");
+        let scrutinee_is_copy = self.is_copy(scrutinee_expression.ty())?;
+        let stable = self.match_scrutinee_is_stable(scrutinee);
+        let expected = if scrutinee_is_copy {
+            if has_borrow && stable {
+                HirMatchMode::Observe
+            } else {
+                HirMatchMode::Copy
+            }
+        } else if stable && !requires_affine_ownership {
+            HirMatchMode::Observe
+        } else {
+            HirMatchMode::Consume
+        };
+        if mode != expected {
+            self.findings.insert(AvailabilityFinding {
+                kind: AvailabilityFindingKind::InvalidMatchMode,
+                local: None,
+                use_span: scrutinee_expression.span(),
+                move_span: None,
+            });
+        }
+        let demand = if mode == HirMatchMode::Consume {
+            Demand::Transfer
+        } else {
+            Demand::Observe
+        };
+        let mut scrutinee_flow = self.expression(scrutinee, state, demand)?;
         let Some(mut next_entry) = scrutinee_flow.normal.take() else {
             return Ok(scrutinee_flow);
         };
@@ -531,7 +619,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             let mut arm_entry = next_entry.clone();
             self.introduce_pattern(arm.pattern(), &mut arm_entry, &mut pattern_locals, false);
             let guarded_entry = if let Some(guard) = arm.guard() {
-                let guard_flow = self.expression(guard, arm_entry, Demand::Transfer)?;
+                let forbidden = self.affine_pattern_bindings(arm.pattern())?;
+                self.guard_forbidden.extend(forbidden.iter().copied());
+                let guard_flow = self.expression(guard, arm_entry, Demand::Transfer);
+                for local in &forbidden {
+                    self.guard_forbidden.remove(local);
+                }
+                let guard_flow = guard_flow?;
                 let body_entry = guard_flow.normal.clone();
                 if let Some(mut guard_state) = guard_flow.normal.clone() {
                     remove_locals(&mut guard_state, &pattern_locals);
@@ -553,6 +647,96 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             result.merge(body_flow);
         }
         Ok(result)
+    }
+
+    fn pattern_contains_borrow(&self, root: HirPatternId) -> bool {
+        let mut pending = vec![root];
+        while let Some(id) = pending.pop() {
+            let pattern = self
+                .program
+                .pattern(id)
+                .expect("availability patterns retain their children");
+            match pattern.kind() {
+                HirPatternKind::BorrowBinding(_) => return true,
+                HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
+                    pending.extend(items.iter().copied());
+                }
+                HirPatternKind::OptionSome(item)
+                | HirPatternKind::ResultOk(item)
+                | HirPatternKind::ResultErr(item)
+                | HirPatternKind::Newtype { value: item, .. }
+                | HirPatternKind::UnionMember { pattern: item, .. } => pending.push(*item),
+                HirPatternKind::Record { fields, .. } => {
+                    pending.extend(fields.iter().map(super::HirPatternField::pattern));
+                }
+                HirPatternKind::Array { prefix, rest } => {
+                    pending.extend(prefix.iter().copied());
+                    pending.extend(*rest);
+                }
+                HirPatternKind::Recovery
+                | HirPatternKind::Wildcard
+                | HirPatternKind::Binding(_)
+                | HirPatternKind::Literal(_)
+                | HirPatternKind::OptionNone => {}
+            }
+        }
+        false
+    }
+
+    fn match_scrutinee_is_stable(&self, id: HirExpressionId) -> bool {
+        let Some(expression) = self.program.expression(id) else {
+            return false;
+        };
+        if expression.category() != HirValueCategory::Place {
+            return false;
+        }
+        match expression.kind() {
+            HirExpressionKind::Local(_) | HirExpressionKind::Receiver => true,
+            HirExpressionKind::Field { base, .. }
+            | HirExpressionKind::TupleField { base, .. }
+            | HirExpressionKind::Index { base, .. } => self.match_scrutinee_is_stable(*base),
+            _ => false,
+        }
+    }
+
+    fn affine_pattern_bindings(&mut self, root: HirPatternId) -> Result<Vec<LocalId>, TypeError> {
+        let mut output = Vec::new();
+        let mut pending = vec![root];
+        while let Some(id) = pending.pop() {
+            let pattern = self
+                .program
+                .pattern(id)
+                .expect("availability patterns retain their children")
+                .clone();
+            match pattern.kind() {
+                HirPatternKind::Binding(local) => {
+                    if !self.is_copy(pattern.ty())? {
+                        output.push(*local);
+                    }
+                }
+                HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
+                    pending.extend(items.iter().copied());
+                }
+                HirPatternKind::OptionSome(item)
+                | HirPatternKind::ResultOk(item)
+                | HirPatternKind::ResultErr(item)
+                | HirPatternKind::Newtype { value: item, .. }
+                | HirPatternKind::UnionMember { pattern: item, .. } => pending.push(*item),
+                HirPatternKind::Record { fields, .. } => {
+                    pending.extend(fields.iter().map(super::HirPatternField::pattern));
+                }
+                HirPatternKind::Array { prefix, rest } => {
+                    pending.extend(prefix.iter().copied());
+                    pending.extend(*rest);
+                }
+                HirPatternKind::Recovery
+                | HirPatternKind::Wildcard
+                | HirPatternKind::BorrowBinding(_)
+                | HirPatternKind::Literal(_)
+                | HirPatternKind::OptionNone => {}
+            }
+        }
+        Ok(output)
     }
 
     fn for_statement(
@@ -661,9 +845,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             .expression(id)
             .expect("availability analysis receives verified place IDs")
             .clone();
-        let (mut flow, root) = self.place_components(id, state)?;
-        if let (Some(state), Some(local)) = (&mut flow.normal, root) {
-            self.access_local(state, local, expression.span(), expression.ty(), demand)?;
+        let (mut flow, place) = self.place_components(id, state)?;
+        if let Some(state) = &mut flow.normal {
+            self.access_place(state, place, expression.span(), expression.ty(), demand)?;
         }
         Ok(self.finish_expression(id, flow))
     }
@@ -672,21 +856,41 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         &mut self,
         id: HirExpressionId,
         state: AvailabilityState,
-    ) -> Result<(AvailabilityFlow, Option<LocalId>), TypeError> {
+    ) -> Result<(AvailabilityFlow, PlaceInfo), TypeError> {
         let expression = self
             .program
             .expression(id)
             .expect("availability analysis receives verified place IDs")
             .clone();
         match expression.kind() {
-            HirExpressionKind::Local(local) => Ok((AvailabilityFlow::normal(state), Some(*local))),
-            HirExpressionKind::Receiver => Ok((AvailabilityFlow::normal(state), None)),
-            HirExpressionKind::Field { base, .. } | HirExpressionKind::TupleField { base, .. } => {
-                self.place_base(*base, state)
+            HirExpressionKind::Local(local) => Ok((
+                AvailabilityFlow::normal(state),
+                PlaceInfo {
+                    root: PlaceRoot::Local(*local),
+                    complete_transfer: true,
+                },
+            )),
+            HirExpressionKind::Receiver => Ok((
+                AvailabilityFlow::normal(state),
+                PlaceInfo {
+                    root: PlaceRoot::Receiver,
+                    complete_transfer: true,
+                },
+            )),
+            HirExpressionKind::Field { base, .. } => {
+                let (flow, mut place) = self.place_base(*base, state)?;
+                place.complete_transfer &= self.is_newtype(self.expression_type(*base))?;
+                Ok((flow, place))
+            }
+            HirExpressionKind::TupleField { base, .. } => {
+                let (flow, mut place) = self.place_base(*base, state)?;
+                place.complete_transfer = false;
+                Ok((flow, place))
             }
             HirExpressionKind::Index { base, index, .. } => {
-                let (flow, root) = self.place_base(*base, state)?;
-                Ok((self.then_expression(flow, *index, Demand::Transfer)?, root))
+                let (flow, mut place) = self.place_base(*base, state)?;
+                place.complete_transfer = false;
+                Ok((self.then_expression(flow, *index, Demand::Transfer)?, place))
             }
             HirExpressionKind::Slice {
                 base,
@@ -694,18 +898,25 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 end,
                 step,
             } => {
-                let (mut flow, root) = self.place_base(*base, state)?;
+                let (mut flow, mut place) = self.place_base(*base, state)?;
+                place.complete_transfer = false;
                 for value in start.iter().chain(end).chain(step) {
                     flow = self.then_expression(flow, *value, Demand::Transfer)?;
                 }
-                Ok((flow, root))
+                Ok((flow, place))
             }
             // Expression checking can preserve a recovery value as an invalid
             // assignment target. Earlier diagnostics own that error; the
             // availability pass must remain total over incomplete HIR. The HIR
             // verifier independently rejects a non-place kind marked as a
             // complete place before this analysis is trusted by MIR.
-            _ => Ok((AvailabilityFlow::normal(state), None)),
+            _ => Ok((
+                AvailabilityFlow::normal(state),
+                PlaceInfo {
+                    root: PlaceRoot::Temporary,
+                    complete_transfer: false,
+                },
+            )),
         }
     }
 
@@ -713,7 +924,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         &mut self,
         base: HirExpressionId,
         state: AvailabilityState,
-    ) -> Result<(AvailabilityFlow, Option<LocalId>), TypeError> {
+    ) -> Result<(AvailabilityFlow, PlaceInfo), TypeError> {
         if self
             .program
             .expression(base)
@@ -723,33 +934,133 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         {
             self.place_components(base, state)
         } else {
-            Ok((self.expression(base, state, Demand::Transfer)?, None))
+            Ok((
+                self.expression(base, state, Demand::Transfer)?,
+                PlaceInfo {
+                    root: PlaceRoot::Temporary,
+                    complete_transfer: true,
+                },
+            ))
         }
     }
 
-    fn access_local(
+    fn access_place(
         &mut self,
         state: &mut AvailabilityState,
-        local: LocalId,
+        place: PlaceInfo,
         span: Span,
         ty: TypeId,
         demand: Demand,
     ) -> Result<(), TypeError> {
-        if !self.owners.contains(&local) {
-            return Ok(());
-        }
-        if let Some(move_span) = state.get(&local).copied() {
+        let local = match place.root {
+            PlaceRoot::Local(local) => Some(local),
+            PlaceRoot::Receiver | PlaceRoot::Temporary => None,
+        };
+        if let Some(local) = local.filter(|local| self.owners.contains(local))
+            && let Some(move_span) = state.get(&local).copied()
+        {
             self.findings.insert(AvailabilityFinding {
-                local,
+                kind: AvailabilityFindingKind::UseAfterMove,
+                local: Some(local),
                 use_span: span,
-                move_span,
+                move_span: Some(move_span),
             });
             return Ok(());
         }
-        if demand == Demand::Transfer && !self.is_copy(ty)? {
-            state.insert(local, span);
+        if let Some(local) = local.filter(|local| self.guard_forbidden.contains(local)) {
+            self.findings.insert(AvailabilityFinding {
+                kind: AvailabilityFindingKind::InvalidGuardAccess,
+                local: Some(local),
+                use_span: span,
+                move_span: None,
+            });
+            return Ok(());
+        }
+        if demand == Demand::Transfer
+            && local.is_some_and(|local| self.pattern_borrowed.contains(&local))
+        {
+            self.findings.insert(AvailabilityFinding {
+                kind: AvailabilityFindingKind::InvalidBorrowedTransfer,
+                local,
+                use_span: span,
+                move_span: None,
+            });
+            return Ok(());
+        }
+        if demand != Demand::Transfer || self.is_copy(ty)? {
+            return Ok(());
+        }
+        match place.root {
+            PlaceRoot::Local(local) if self.owners.contains(&local) => {
+                if place.complete_transfer {
+                    state.insert(local, span);
+                } else {
+                    self.findings.insert(AvailabilityFinding {
+                        kind: AvailabilityFindingKind::InvalidPartialTransfer,
+                        local: Some(local),
+                        use_span: span,
+                        move_span: None,
+                    });
+                }
+            }
+            PlaceRoot::Local(local) if self.borrowed.contains(&local) => {
+                self.findings.insert(AvailabilityFinding {
+                    kind: AvailabilityFindingKind::InvalidBorrowedTransfer,
+                    local: Some(local),
+                    use_span: span,
+                    move_span: None,
+                });
+            }
+            PlaceRoot::Receiver => {
+                self.findings.insert(AvailabilityFinding {
+                    kind: AvailabilityFindingKind::InvalidBorrowedTransfer,
+                    local: None,
+                    use_span: span,
+                    move_span: None,
+                });
+            }
+            PlaceRoot::Temporary if !place.complete_transfer => {
+                self.findings.insert(AvailabilityFinding {
+                    kind: AvailabilityFindingKind::InvalidPartialTransfer,
+                    local: None,
+                    use_span: span,
+                    move_span: None,
+                });
+            }
+            PlaceRoot::Local(_) | PlaceRoot::Temporary => {}
         }
         Ok(())
+    }
+
+    fn expression_type(&self, id: HirExpressionId) -> TypeId {
+        self.program
+            .expression(id)
+            .expect("availability expression IDs retain their types")
+            .ty()
+    }
+
+    fn is_newtype(&self, ty: TypeId) -> Result<bool, TypeError> {
+        let TypeKind::Nominal { identity, .. } = self.program.interner().kind(ty)? else {
+            return Ok(false);
+        };
+        for (_, declaration) in self.program.declarations() {
+            let super::HirTypeDeclarationKind::Nominal(nominal) = declaration.kind() else {
+                continue;
+            };
+            let TypeKind::Nominal {
+                identity: candidate,
+                ..
+            } = self.program.interner().kind(nominal.self_type())?
+            else {
+                continue;
+            };
+            if candidate == identity
+                && matches!(nominal.shape(), super::HirNominalShape::Newtype { .. })
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn is_copy(&mut self, ty: TypeId) -> Result<bool, TypeError> {
@@ -794,6 +1105,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 locals.push(*local);
             }
             HirPatternKind::BorrowBinding(local) => {
+                self.borrowed.insert(*local);
+                self.pattern_borrowed.insert(*local);
                 state.remove(local);
                 locals.push(*local);
             }

@@ -3427,11 +3427,11 @@ impl Verifier<'_> {
             .map(|block| successor_edges(&block.terminator.kind))
             .collect::<Vec<_>>();
         let mut predecessors =
-            vec![Vec::<(BytecodeBlockId, Option<BytecodeSlotId>)>::new(); function.blocks.len()];
+            vec![Vec::<(BytecodeBlockId, SuccessorEdge)>::new(); function.blocks.len()];
         for (source, edges) in successors.iter().enumerate() {
             for edge in edges {
                 predecessors[edge.target.index() as usize]
-                    .push((BytecodeBlockId::new(source as u32), edge.defines));
+                    .push((BytecodeBlockId::new(source as u32), edge.clone()));
             }
         }
         if !predecessors[function.entry.index() as usize].is_empty() {
@@ -3470,23 +3470,30 @@ impl Verifier<'_> {
             .flatten()
             .filter_map(|event| match event {
                 LocalEvent::StorageLive(slot) | LocalEvent::StorageDead(slot) => Some(*slot),
-                LocalEvent::Read(_) | LocalEvent::Move(_) | LocalEvent::Write(_) => None,
+                LocalEvent::Read(_)
+                | LocalEvent::Move(_)
+                | LocalEvent::Write(_)
+                | LocalEvent::WriteAccess(_) => None,
             })
             .collect::<BTreeSet<_>>();
         let mut relevant = events
             .iter()
             .flatten()
             .map(|event| match event {
-                LocalEvent::Read(slot)
-                | LocalEvent::Move(slot)
-                | LocalEvent::Write(slot)
-                | LocalEvent::StorageLive(slot)
-                | LocalEvent::StorageDead(slot) => *slot,
+                LocalEvent::Read(access)
+                | LocalEvent::Move(access)
+                | LocalEvent::Write(access)
+                | LocalEvent::WriteAccess(access) => access.slot,
+                LocalEvent::StorageLive(slot) | LocalEvent::StorageDead(slot) => *slot,
             })
             .collect::<BTreeSet<_>>();
         relevant.insert(function.return_slot);
         for edges in &successors {
-            relevant.extend(edges.iter().filter_map(|edge| edge.defines));
+            relevant.extend(
+                edges
+                    .iter()
+                    .filter_map(|edge| edge.writes.as_ref().map(|place| place.slot)),
+            );
         }
         for slot in relevant {
             self.verify_slot_flow(
@@ -3623,7 +3630,7 @@ impl Verifier<'_> {
         slot: BytecodeSlotId,
         events: &[Vec<LocalEvent>],
         successors: &[Vec<SuccessorEdge>],
-        predecessors: &[Vec<(BytecodeBlockId, Option<BytecodeSlotId>)>],
+        predecessors: &[Vec<(BytecodeBlockId, SuccessorEdge)>],
         reachable: &[bool],
         managed_storage: bool,
         context: &str,
@@ -3643,15 +3650,19 @@ impl Verifier<'_> {
                 ),
             ));
         }
+        let mut initial_unavailable = BTreeSet::new();
+        if !matches!(slot_kind, BytecodeSlotKind::Parameter { .. }) {
+            initial_unavailable.insert(Vec::new());
+        }
         let initial = LocalState {
             live: !managed_storage,
-            initialized: matches!(slot_kind, BytecodeSlotKind::Parameter { .. }),
+            unavailable: initial_unavailable,
         };
         let top = LocalState {
             live: true,
-            initialized: true,
+            unavailable: BTreeSet::new(),
         };
-        let mut incoming = vec![top; function.blocks.len()];
+        let mut incoming = vec![top.clone(); function.blocks.len()];
         incoming[function.entry.index() as usize] = initial;
         let mut queue = (0..function.blocks.len())
             .filter(|index| reachable[*index] && *index != function.entry.index() as usize)
@@ -3662,22 +3673,27 @@ impl Verifier<'_> {
         while let Some(block) = queue.pop_front() {
             queued[block.index() as usize] = false;
             self.consume_dataflow_step(context)?;
-            let mut state = top;
+            let mut state = top.clone();
             let mut found = false;
-            for (predecessor, defines) in &predecessors[block.index() as usize] {
+            for (predecessor, edge) in &predecessors[block.index() as usize] {
                 if !reachable[predecessor.index() as usize] {
                     continue;
                 }
                 let mut edge_state = transfer_local(
-                    incoming[predecessor.index() as usize],
+                    incoming[predecessor.index() as usize].clone(),
                     &events[predecessor.index() as usize],
                     slot,
                 );
-                if *defines == Some(slot) && edge_state.live {
-                    edge_state.initialized = true;
+                if let Some(write) = edge.writes.as_ref().filter(|place| place.slot == slot)
+                    && edge_state.live
+                {
+                    write_path_unchecked(
+                        &mut edge_state.unavailable,
+                        &LocalAccess::from_place(write).path,
+                    );
                 }
                 state.live &= edge_state.live;
-                state.initialized &= edge_state.initialized;
+                state.unavailable.extend(edge_state.unavailable);
                 found = true;
             }
             if !found {
@@ -3699,46 +3715,60 @@ impl Verifier<'_> {
             if !reachable[block_index] {
                 continue;
             }
-            let mut state = incoming[block_index];
+            let mut state = incoming[block_index].clone();
             for event in block_events {
-                match *event {
-                    LocalEvent::Read(event_slot) if event_slot == slot => {
-                        if !state.live || !state.initialized {
+                match event {
+                    LocalEvent::Read(access) if access.slot == slot => {
+                        if !state.live || !path_is_available(&state.unavailable, &access.path) {
+                            return Err(BytecodeVerificationError::new(
+                                format!("{context} block#{block_index}"),
+                                unavailable_read_message(slot, &access.path),
+                            ));
+                        }
+                    }
+                    LocalEvent::Move(access) if access.slot == slot => {
+                        if !state.live || !path_is_available(&state.unavailable, &access.path) {
+                            return Err(BytecodeVerificationError::new(
+                                format!("{context} block#{block_index}"),
+                                unavailable_move_message(slot, &access.path),
+                            ));
+                        }
+                        move_path_unchecked(&mut state.unavailable, access.path.clone());
+                    }
+                    LocalEvent::WriteAccess(access) if access.slot == slot => {
+                        if !state.live
+                            || !path_parent_is_available(&state.unavailable, &access.path)
+                        {
                             return Err(BytecodeVerificationError::new(
                                 format!("{context} block#{block_index}"),
                                 format!(
-                                    "reads slot#{} before a dominating live definition",
+                                    "resolves a write through unavailable slot#{}",
                                     slot.index()
                                 ),
                             ));
                         }
                     }
-                    LocalEvent::Move(event_slot) if event_slot == slot => {
-                        if !state.live || !state.initialized {
-                            return Err(BytecodeVerificationError::new(
-                                format!("{context} block#{block_index}"),
-                                format!(
-                                    "moves slot#{} after its value became unavailable",
-                                    slot.index()
-                                ),
-                            ));
-                        }
-                        state.initialized = false;
-                    }
-                    LocalEvent::Write(event_slot) if event_slot == slot => {
+                    LocalEvent::Write(access) if access.slot == slot => {
                         if !state.live {
                             return Err(BytecodeVerificationError::new(
                                 format!("{context} block#{block_index}"),
                                 format!("writes slot#{} outside its lifetime", slot.index()),
                             ));
                         }
-                        state.initialized = true;
+                        if !path_parent_is_available(&state.unavailable, &access.path) {
+                            return Err(BytecodeVerificationError::new(
+                                format!("{context} block#{block_index}"),
+                                format!("writes through unavailable slot#{}", slot.index()),
+                            ));
+                        }
+                        write_path_unchecked(&mut state.unavailable, &access.path);
                     }
-                    LocalEvent::StorageLive(event_slot) if event_slot == slot => {
+                    LocalEvent::StorageLive(event_slot) if *event_slot == slot => {
                         state.live = true;
-                        state.initialized = false;
+                        state.unavailable.clear();
+                        state.unavailable.insert(Vec::new());
                     }
-                    LocalEvent::StorageDead(event_slot) if event_slot == slot => {
+                    LocalEvent::StorageDead(event_slot) if *event_slot == slot => {
                         if !state.live {
                             return Err(BytecodeVerificationError::new(
                                 format!("{context} block#{block_index}"),
@@ -3746,11 +3776,13 @@ impl Verifier<'_> {
                             ));
                         }
                         state.live = false;
-                        state.initialized = false;
+                        state.unavailable.clear();
+                        state.unavailable.insert(Vec::new());
                     }
                     LocalEvent::Read(_)
                     | LocalEvent::Move(_)
                     | LocalEvent::Write(_)
+                    | LocalEvent::WriteAccess(_)
                     | LocalEvent::StorageLive(_)
                     | LocalEvent::StorageDead(_) => {}
                 }
@@ -4230,10 +4262,10 @@ fn closure_capture_place(
         )
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct LocalState {
     live: bool,
-    initialized: bool,
+    unavailable: BTreeSet<Vec<MovePathComponent>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4248,19 +4280,97 @@ enum TagEvent {
     Write(BytecodePlace),
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum LocalEvent {
-    Read(BytecodeSlotId),
-    Move(BytecodeSlotId),
-    Write(BytecodeSlotId),
+    Read(LocalAccess),
+    Move(LocalAccess),
+    Write(LocalAccess),
+    WriteAccess(LocalAccess),
     StorageLive(BytecodeSlotId),
     StorageDead(BytecodeSlotId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct LocalAccess {
+    slot: BytecodeSlotId,
+    path: Vec<MovePathComponent>,
+}
+
+impl LocalAccess {
+    fn from_place(place: &BytecodePlace) -> Self {
+        Self {
+            slot: place.slot,
+            path: place
+                .projections
+                .iter()
+                .map(MovePathComponent::from_projection)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum MovePathComponent {
+    ClosureCapture(BytecodeCallableId, u32),
+    Field(u32),
+    TupleField(u32),
+    NewtypeValue,
+    VariantTuple(u32, u32),
+    VariantField(u32, u32),
+    OptionValue,
+    ResultOkValue,
+    ResultErrValue,
+    UnionValue(BytecodeTypeId),
+    ArrayPatternIndex(u32),
+    ArrayPatternRest {
+        start: u32,
+        suffix: u32,
+    },
+    Index(BytecodeSlotId),
+    Slice {
+        start: Option<BytecodeSlotId>,
+        end: Option<BytecodeSlotId>,
+        step: Option<BytecodeSlotId>,
+    },
+}
+
+impl MovePathComponent {
+    fn from_projection(projection: &BytecodeProjection) -> Self {
+        match &projection.kind {
+            BytecodeProjectionKind::ClosureCapture { callable, index } => {
+                Self::ClosureCapture(*callable, *index)
+            }
+            BytecodeProjectionKind::Field(field) => Self::Field(*field),
+            BytecodeProjectionKind::TupleField(index) => Self::TupleField(*index),
+            BytecodeProjectionKind::NewtypeValue => Self::NewtypeValue,
+            BytecodeProjectionKind::VariantTuple { variant, index } => {
+                Self::VariantTuple(*variant, *index)
+            }
+            BytecodeProjectionKind::VariantField { variant, field } => {
+                Self::VariantField(*variant, *field)
+            }
+            BytecodeProjectionKind::OptionValue => Self::OptionValue,
+            BytecodeProjectionKind::ResultOkValue => Self::ResultOkValue,
+            BytecodeProjectionKind::ResultErrValue => Self::ResultErrValue,
+            BytecodeProjectionKind::UnionValue(member) => Self::UnionValue(*member),
+            BytecodeProjectionKind::ArrayPatternIndex(index) => Self::ArrayPatternIndex(*index),
+            BytecodeProjectionKind::ArrayPatternRest { start, suffix } => Self::ArrayPatternRest {
+                start: *start,
+                suffix: *suffix,
+            },
+            BytecodeProjectionKind::Index { index, .. } => Self::Index(*index),
+            BytecodeProjectionKind::Slice { start, end, step } => Self::Slice {
+                start: *start,
+                end: *end,
+                step: *step,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 struct SuccessorEdge {
     target: BytecodeBlockId,
-    defines: Option<BytecodeSlotId>,
     refinement: Option<TagFact>,
     writes: Option<BytecodePlace>,
 }
@@ -4268,7 +4378,6 @@ struct SuccessorEdge {
 fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
     let edge = |target| SuccessorEdge {
         target,
-        defines: None,
         refinement: None,
         writes: None,
     };
@@ -4292,13 +4401,11 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
                 .iter()
                 .map(|(tag, target)| SuccessorEdge {
                     target: *target,
-                    defines: None,
                     refinement: place.clone().map(|place| TagFact { place, tag: *tag }),
                     writes: None,
                 })
                 .chain(std::iter::once(SuccessorEdge {
                     target: *otherwise,
-                    defines: None,
                     refinement: (cases.len() == 1)
                         .then(|| complementary_tag(cases[0].0))
                         .flatten()
@@ -4316,10 +4423,6 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
             .iter()
             .map(|target| SuccessorEdge {
                 target: *target,
-                defines: destination
-                    .as_ref()
-                    .filter(|place| place.projections.is_empty())
-                    .map(|place| place.slot),
                 refinement: None,
                 writes: destination.clone(),
             })
@@ -4334,10 +4437,6 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
         } => vec![
             SuccessorEdge {
                 target: *has_value,
-                defines: destination
-                    .projections
-                    .is_empty()
-                    .then_some(destination.slot),
                 refinement: None,
                 writes: Some(destination.clone()),
             },
@@ -4356,33 +4455,155 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
 fn transfer_local(state: LocalState, events: &[LocalEvent], slot: BytecodeSlotId) -> LocalState {
     let mut state = state;
     for event in events {
-        match *event {
-            LocalEvent::Write(event_slot) if event_slot == slot => {
+        match event {
+            LocalEvent::Write(access) if access.slot == slot => {
                 if state.live {
-                    state.initialized = true;
+                    write_path_unchecked(&mut state.unavailable, &access.path);
                 }
             }
-            LocalEvent::Move(event_slot) if event_slot == slot => {
-                if state.live && state.initialized {
-                    state.initialized = false;
+            LocalEvent::Move(access) if access.slot == slot => {
+                if state.live {
+                    move_path_unchecked(&mut state.unavailable, access.path.clone());
                 }
             }
-            LocalEvent::StorageLive(event_slot) if event_slot == slot => {
+            LocalEvent::StorageLive(event_slot) if *event_slot == slot => {
                 state.live = true;
-                state.initialized = false;
+                state.unavailable.clear();
+                state.unavailable.insert(Vec::new());
             }
-            LocalEvent::StorageDead(event_slot) if event_slot == slot => {
+            LocalEvent::StorageDead(event_slot) if *event_slot == slot => {
                 state.live = false;
-                state.initialized = false;
+                state.unavailable.clear();
+                state.unavailable.insert(Vec::new());
             }
             LocalEvent::Read(_)
             | LocalEvent::Move(_)
             | LocalEvent::Write(_)
+            | LocalEvent::WriteAccess(_)
             | LocalEvent::StorageLive(_)
             | LocalEvent::StorageDead(_) => {}
         }
     }
     state
+}
+
+fn path_is_available(
+    unavailable: &BTreeSet<Vec<MovePathComponent>>,
+    path: &[MovePathComponent],
+) -> bool {
+    unavailable
+        .iter()
+        .all(|moved| !move_paths_overlap(moved, path))
+}
+
+fn path_parent_is_available(
+    unavailable: &BTreeSet<Vec<MovePathComponent>>,
+    path: &[MovePathComponent],
+) -> bool {
+    unavailable
+        .iter()
+        .all(|moved| !(moved.len() < path.len() && move_path_is_prefix(moved, path)))
+}
+
+fn move_path_unchecked(
+    unavailable: &mut BTreeSet<Vec<MovePathComponent>>,
+    path: Vec<MovePathComponent>,
+) {
+    if path.is_empty() {
+        unavailable.clear();
+    } else if unavailable
+        .iter()
+        .any(|moved| move_path_is_prefix(moved, &path))
+    {
+        return;
+    } else {
+        unavailable.retain(|moved| !move_path_is_prefix(&path, moved));
+    }
+    unavailable.insert(path);
+}
+
+fn write_path_unchecked(
+    unavailable: &mut BTreeSet<Vec<MovePathComponent>>,
+    path: &[MovePathComponent],
+) {
+    unavailable.retain(|moved| !move_path_is_prefix(path, moved));
+}
+
+fn move_paths_overlap(left: &[MovePathComponent], right: &[MovePathComponent]) -> bool {
+    left.iter()
+        .zip(right)
+        .all(|(left, right)| !move_path_components_are_disjoint(left, right))
+}
+
+fn move_path_is_prefix(prefix: &[MovePathComponent], path: &[MovePathComponent]) -> bool {
+    prefix.len() <= path.len() && prefix.iter().zip(path).all(|(left, right)| left == right)
+}
+
+fn move_path_components_are_disjoint(left: &MovePathComponent, right: &MovePathComponent) -> bool {
+    match (left, right) {
+        (
+            MovePathComponent::ClosureCapture(_, left),
+            MovePathComponent::ClosureCapture(_, right),
+        )
+        | (MovePathComponent::TupleField(left), MovePathComponent::TupleField(right))
+        | (
+            MovePathComponent::ArrayPatternIndex(left),
+            MovePathComponent::ArrayPatternIndex(right),
+        ) => left != right,
+        (MovePathComponent::Field(left), MovePathComponent::Field(right)) => left != right,
+        (
+            MovePathComponent::VariantTuple(left_variant, left),
+            MovePathComponent::VariantTuple(right_variant, right),
+        ) => left_variant != right_variant || left != right,
+        (
+            MovePathComponent::VariantField(left_variant, left),
+            MovePathComponent::VariantField(right_variant, right),
+        ) => left_variant != right_variant || left != right,
+        (
+            MovePathComponent::VariantTuple(left, _) | MovePathComponent::VariantField(left, _),
+            MovePathComponent::VariantTuple(right, _) | MovePathComponent::VariantField(right, _),
+        ) => left != right,
+        (MovePathComponent::OptionValue, MovePathComponent::ResultOkValue)
+        | (MovePathComponent::OptionValue, MovePathComponent::ResultErrValue)
+        | (MovePathComponent::ResultOkValue, MovePathComponent::OptionValue)
+        | (MovePathComponent::ResultErrValue, MovePathComponent::OptionValue)
+        | (MovePathComponent::ResultOkValue, MovePathComponent::ResultErrValue)
+        | (MovePathComponent::ResultErrValue, MovePathComponent::ResultOkValue) => true,
+        (MovePathComponent::UnionValue(left), MovePathComponent::UnionValue(right)) => {
+            left != right
+        }
+        (
+            MovePathComponent::ArrayPatternIndex(index),
+            MovePathComponent::ArrayPatternRest { start, suffix: 0 },
+        )
+        | (
+            MovePathComponent::ArrayPatternRest { start, suffix: 0 },
+            MovePathComponent::ArrayPatternIndex(index),
+        ) => index < start,
+        _ => false,
+    }
+}
+
+fn unavailable_read_message(slot: BytecodeSlotId, path: &[MovePathComponent]) -> String {
+    if path.is_empty() {
+        format!(
+            "reads slot#{} before a dominating live definition",
+            slot.index()
+        )
+    } else {
+        format!("reads an unavailable move path of slot#{}", slot.index())
+    }
+}
+
+fn unavailable_move_message(slot: BytecodeSlotId, path: &[MovePathComponent]) -> String {
+    if path.is_empty() {
+        format!(
+            "moves slot#{} after its value became unavailable",
+            slot.index()
+        )
+    } else {
+        format!("moves an unavailable move path of slot#{}", slot.index())
+    }
 }
 
 fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<LocalEvent> {
@@ -4418,28 +4639,32 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
         } => {
             push_operation_events(operation, &mut events);
             if let Some(destination) = destination {
-                push_destination_reads(destination, &mut events);
+                push_destination_reads(destination, true, &mut events);
             }
         }
         BytecodeTerminatorKind::IteratorNext {
             state, destination, ..
         } => {
             push_place_events(state, true, &mut events);
-            push_destination_reads(destination, &mut events);
+            push_destination_reads(destination, true, &mut events);
         }
         BytecodeTerminatorKind::ValidatePlaces {
             places,
             replacements,
+            for_write,
             ..
         } => {
             for place in places {
-                push_destination_reads(place, &mut events);
+                push_destination_reads(place, *for_write, &mut events);
             }
             for replacement in replacements.iter().flatten() {
                 push_operand_events(replacement, &mut events);
             }
         }
-        BytecodeTerminatorKind::Return => events.push(LocalEvent::Read(function.return_slot)),
+        BytecodeTerminatorKind::Return => events.push(LocalEvent::Read(LocalAccess {
+            slot: function.return_slot,
+            path: Vec::new(),
+        })),
     }
     events
 }
@@ -4811,45 +5036,56 @@ fn push_operation_events(operation: &BytecodeOperation, events: &mut Vec<LocalEv
 
 fn push_operand_events(operand: &BytecodeOperand, events: &mut Vec<LocalEvent>) {
     match &operand.kind {
-        BytecodeOperandKind::Move(place) if place.projections.is_empty() => {
-            events.push(LocalEvent::Move(place.slot));
+        BytecodeOperandKind::Move(place) => {
+            push_projection_index_events(place, events);
+            events.push(LocalEvent::Move(LocalAccess::from_place(place)));
         }
-        BytecodeOperandKind::Copy(place)
-        | BytecodeOperandKind::Move(place)
-        | BytecodeOperandKind::Borrow(place) => push_place_events(place, true, events),
+        BytecodeOperandKind::Copy(place) | BytecodeOperandKind::Borrow(place) => {
+            push_projection_index_events(place, events);
+            events.push(LocalEvent::Read(LocalAccess::from_place(place)));
+        }
         BytecodeOperandKind::Constant(_) | BytecodeOperandKind::Function { .. } => {}
     }
 }
 
 fn push_destination_events(place: &BytecodePlace, events: &mut Vec<LocalEvent>) {
-    push_destination_reads(place, events);
-    if place.projections.is_empty() {
-        events.push(LocalEvent::Write(place.slot));
-    }
+    push_projection_index_events(place, events);
+    events.push(LocalEvent::Write(LocalAccess::from_place(place)));
 }
 
-fn push_destination_reads(place: &BytecodePlace, events: &mut Vec<LocalEvent>) {
-    push_place_events(place, false, events);
+fn push_destination_reads(place: &BytecodePlace, for_write: bool, events: &mut Vec<LocalEvent>) {
+    push_projection_index_events(place, events);
+    let access = LocalAccess::from_place(place);
+    if for_write {
+        events.push(LocalEvent::WriteAccess(access));
+    } else {
+        events.push(LocalEvent::Read(access));
+    }
 }
 
 fn push_place_events(place: &BytecodePlace, read_root: bool, events: &mut Vec<LocalEvent>) {
-    if read_root || !place.projections.is_empty() {
-        events.push(LocalEvent::Read(place.slot));
+    push_projection_index_events(place, events);
+    if read_root {
+        events.push(LocalEvent::Read(LocalAccess::from_place(place)));
     }
+}
+
+fn push_projection_index_events(place: &BytecodePlace, events: &mut Vec<LocalEvent>) {
     for projection in &place.projections {
         match &projection.kind {
             BytecodeProjectionKind::Index { index, .. } => {
-                events.push(LocalEvent::Read(*index));
+                events.push(LocalEvent::Read(LocalAccess {
+                    slot: *index,
+                    path: Vec::new(),
+                }));
             }
             BytecodeProjectionKind::Slice { start, end, step } => {
-                events.extend(
-                    start
-                        .iter()
-                        .chain(end)
-                        .chain(step)
-                        .copied()
-                        .map(LocalEvent::Read),
-                );
+                events.extend(start.iter().chain(end).chain(step).copied().map(|slot| {
+                    LocalEvent::Read(LocalAccess {
+                        slot,
+                        path: Vec::new(),
+                    })
+                }));
             }
             BytecodeProjectionKind::ClosureCapture { .. }
             | BytecodeProjectionKind::Field(_)

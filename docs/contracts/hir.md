@@ -5,8 +5,9 @@ uniform named function values, Copy closures with four exact effect identities,
 closed call protocols and synchronous-safe invocation, static trait selection,
 declaration-owned opaque results, patterns, assignment, discard, structured
 control flow, explicit intrinsic cursor state, calls, flow-sensitive ownership
-availability with complete `var` reinitialization, semantic occurrences, and
-verified MIR admission implemented
+availability with complete `var` reinitialization, uniform match ownership
+modes and affine-transfer restrictions, semantic occurrences, and verified MIR
+admission implemented
 
 ## Boundary
 
@@ -63,9 +64,11 @@ iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   coercion. Concrete external implementations, non-`Copy` capture moves,
   effectful invocation, `await`, `spawn`, unsafe-region proofs and raw
   operations, async liveness/`Send` analysis, string interpolation through
-  `Display`, `defer`, general loans, partial moves, affine captures, and
-  terminal cleanup remain explicit later boundaries rather than receiving
-  provisional semantics.
+  `Display`, `defer`, general loan regions, confirmed borrowed replacement,
+  affine captures, and terminal cleanup remain explicit later boundaries rather
+  than receiving provisional semantics. Persistent source-visible partial owner
+  states are deliberately absent from Tondo 0.1; OWN-005 implements the typed
+  internal paths needed by complete destructuring without adding such a state.
 
 ## Typed expression invariants
 
@@ -675,10 +678,11 @@ type only when its `Discard` status is `Satisfied`.
 
 HIR proves the contextual capability facts consumed by OWN-002, including
 generic and opaque `Copy` status and the exact `CallOnce` protocol. MIR records
-the resulting copy or move. Partial moves, implicit scope-end obligations,
-affine captures, and terminal operations remain their owning phases'
-responsibility; successful capability proof does not fabricate those later
-facts or cleanup.
+the resulting copy or move. OWN-005 additionally records one uniform
+`Copy`/`Observe`/`Consume` mode per `match`; implicit scope-end obligations,
+affine captures, loan regions, and terminal operations remain their owning
+phases' responsibility. Successful capability proof does not fabricate those
+later facts or cleanup.
 
 ## Flow-sensitive ownership availability
 
@@ -712,12 +716,28 @@ swaps without a transient double move. A `let`, value parameter, compound
 assignment, or partial destination must still observe an available root and
 cannot be restored by this rule.
 
-Until OWN-005 introduces place-granular state, transferring a non-`Copy`
-projection conservatively makes its owning local unavailable in HIR. MIR and
-bytecode defensively track only unprojected moves at this milestone; they do not
-pretend that a whole-local bit proves the final partial-move rules. Affine
-closure construction remains excluded by the existing Copy-only admission
-boundary and belongs to OWN-006/OWN-007.
+OWN-005 keeps one whole-owner state in source HIR while making the permitted
+forms explicit. A standalone non-`Copy` field, tuple slot, index, slice,
+receiver, or borrowed-location transfer emits `E1406`. Complete irrefutable
+destructuring and consuming `match` move the aggregate root once, then let MIR
+transfer its components through internal typed paths. A newtype `.value` counts
+as complete only when its base is the owned newtype root or a movable temporary;
+the same projection through `self` or a borrowed parameter is rejected.
+
+`match` mode is chosen uniformly before flow analysis. A `Copy` scrutinee uses
+copy mode unless a stable lvalue is explicitly borrowed. A stable non-`Copy`
+lvalue with no affine by-value binding uses observation mode. Every other
+non-`Copy` match consumes the whole scrutinee, and HIR rejects that mode when the
+root is borrowed or only partially owned. Shape and tag tests run before any
+affine transfer. Guards may access only `Copy` bindings or pattern `ref`
+bindings; affine value bindings are transferred only in the selected body.
+Pattern `ref` bindings cannot be stored, returned, or materialized even when
+their underlying component is `Copy`.
+
+MIR and bytecode independently rederive path availability for the internal
+component moves; HIR rederives the recorded match mode before admitting MIR.
+Affine closure construction remains excluded by the existing Copy-only
+admission boundary and belongs to OWN-006/OWN-007.
 
 ## Declaration ordering
 

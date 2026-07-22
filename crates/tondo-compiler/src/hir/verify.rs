@@ -12,13 +12,14 @@ use crate::types::{
 use super::capabilities::{CapabilityAnalysis, CapabilityAssumptions, bounds_imply};
 use super::termination::{TraitTerminationEdge, analyze_trait_termination};
 use super::{
-    HirAssignmentTarget, HirAssignmentTargetKind, HirBinaryOperator, HirCallableId, HirCapability,
-    HirCapabilityStatus, HirClosureId, HirConstantValue, HirConstantValueKind,
-    HirConstantVariantValue, HirContainmentKind, HirExpression, HirExpressionId, HirExpressionKind,
-    HirFlow, HirForKind, HirGenericParameter, HirIndexAccess, HirIterationProtocol, HirPattern,
-    HirPatternId, HirPatternKind, HirProgram, HirStatement, HirTraitConstructor, HirTraitIdentity,
-    HirTraitMethodKey, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
-    HirVariantValue, TraitQuery, TraitSelectionError, analyze_availability, select_implementation,
+    AvailabilityFindingKind, HirAssignmentTarget, HirAssignmentTargetKind, HirBinaryOperator,
+    HirCallableId, HirCapability, HirCapabilityStatus, HirClosureId, HirConstantValue,
+    HirConstantValueKind, HirConstantVariantValue, HirContainmentKind, HirExpression,
+    HirExpressionId, HirExpressionKind, HirFlow, HirForKind, HirGenericParameter, HirIndexAccess,
+    HirIterationProtocol, HirPattern, HirPatternId, HirPatternKind, HirProgram, HirStatement,
+    HirTraitConstructor, HirTraitIdentity, HirTraitMethodKey, HirTypeDeclarationKind,
+    HirValueCategory, HirVariantPayload, HirVariantValue, TraitQuery, TraitSelectionError,
+    analyze_availability, select_implementation,
 };
 
 /// Reports a compiler defect at the boundary between typed HIR and MIR.
@@ -154,15 +155,37 @@ impl Verifier<'_> {
             .into_iter()
             .next()
         {
-            return Err(HirInvariantError::new(
-                "ownership availability",
-                format!(
-                    "local#{} is used at {} after its value moved at {}",
-                    finding.local().index(),
+            let local = finding
+                .local()
+                .map(|local| format!("local#{}", local.index()))
+                .unwrap_or_else(|| "receiver or temporary".into());
+            let message = match finding.kind() {
+                AvailabilityFindingKind::UseAfterMove => format!(
+                    "{local} is used at {} after its value moved at {}",
                     finding.use_span().range(),
-                    finding.move_span().range()
+                    finding
+                        .move_span()
+                        .expect("use-after-move findings retain their origin")
+                        .range()
                 ),
-            ));
+                AvailabilityFindingKind::InvalidPartialTransfer => format!(
+                    "{local} has a non-Copy partial transfer at {}",
+                    finding.use_span().range()
+                ),
+                AvailabilityFindingKind::InvalidBorrowedTransfer => format!(
+                    "{local} transfers ownership through a borrowed location at {}",
+                    finding.use_span().range()
+                ),
+                AvailabilityFindingKind::InvalidGuardAccess => format!(
+                    "{local} is accessed as an affine guard binding at {}",
+                    finding.use_span().range()
+                ),
+                AvailabilityFindingKind::InvalidMatchMode => format!(
+                    "match at {} has an ownership mode inconsistent with its scrutinee and bindings",
+                    finding.use_span().range()
+                ),
+            };
+            return Err(HirInvariantError::new("ownership availability", message));
         }
         Ok(())
     }
@@ -4377,7 +4400,9 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
             children.push(*then_branch);
             children.extend(else_branch);
         }
-        HirExpressionKind::Match { scrutinee, arms } => {
+        HirExpressionKind::Match {
+            scrutinee, arms, ..
+        } => {
             children.push(*scrutinee);
             for arm in arms {
                 children.extend(&arm.guard);
@@ -4519,8 +4544,8 @@ mod tests {
     use std::sync::Arc;
 
     use crate::hir::{
-        ExpressionCheckLimits, HirExpressionKind, HirPrefixOperator, TypeLoweringLimits,
-        check_expressions, lower_types,
+        ExpressionCheckLimits, HirExpressionKind, HirMatchMode, HirPrefixOperator,
+        TypeLoweringLimits, check_expressions, lower_types,
     };
     use crate::package::PackageGraph;
     use crate::resolve::{ResolvedProgram, resolve};
@@ -4658,6 +4683,31 @@ mod tests {
         let error = verify_typed_hir(&resolved, &program).unwrap_err();
         assert_eq!(error.context(), "ownership availability");
         assert!(error.message().contains("after its value moved"));
+    }
+
+    #[test]
+    fn match_ownership_mode_is_reproved_before_mir() {
+        let (resolved, mut program) = checked_program_from(
+            "fn consume[T](value: T): T {\n\
+                 match value {\n\
+                     item => item\n\
+                 }\n\
+             }\n",
+        );
+        let mode = program
+            .expressions
+            .iter_mut()
+            .find_map(|expression| match &mut expression.kind {
+                HirExpressionKind::Match { mode, .. } => Some(mode),
+                _ => None,
+            })
+            .expect("the fixture contains one match");
+        assert_eq!(*mode, HirMatchMode::Consume);
+        *mode = HirMatchMode::Observe;
+
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert_eq!(error.context(), "ownership availability");
+        assert!(error.message().contains("ownership mode"), "{error}");
     }
 
     #[test]

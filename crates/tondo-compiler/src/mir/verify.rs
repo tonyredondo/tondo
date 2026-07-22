@@ -171,19 +171,98 @@ struct Verifier<'a> {
     dataflow_steps: Cell<u64>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum LocalEvent {
-    Read(MirLocalId),
-    Move(MirLocalId),
-    Write(MirLocalId),
+    Read(LocalAccess),
+    Move(LocalAccess),
+    Write(LocalAccess),
+    WriteAccess(LocalAccess),
     StorageLive(MirLocalId),
     StorageDead(MirLocalId),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct LocalAccess {
+    local: MirLocalId,
+    path: Vec<MovePathComponent>,
+}
+
+impl LocalAccess {
+    fn from_place(place: &MirPlace) -> Self {
+        Self {
+            local: place.local,
+            path: place
+                .projections
+                .iter()
+                .map(MovePathComponent::from_projection)
+                .collect(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum MovePathComponent {
+    ClosureCapture(crate::hir::HirClosureId, u32),
+    Field(crate::resolve::MemberId),
+    TupleField(u32),
+    NewtypeValue,
+    VariantTuple(crate::resolve::MemberId, u32),
+    VariantField(crate::resolve::MemberId, crate::resolve::MemberId),
+    OptionValue,
+    ResultOkValue,
+    ResultErrValue,
+    UnionValue(TypeId),
+    ArrayPatternIndex(u32),
+    ArrayPatternRest {
+        start: u32,
+        suffix: u32,
+    },
+    Index(MirLocalId),
+    Slice {
+        start: Option<MirLocalId>,
+        end: Option<MirLocalId>,
+        step: Option<MirLocalId>,
+    },
+}
+
+impl MovePathComponent {
+    fn from_projection(projection: &MirProjection) -> Self {
+        match projection.kind() {
+            MirProjectionKind::ClosureCapture { closure, index } => {
+                Self::ClosureCapture(*closure, *index)
+            }
+            MirProjectionKind::Field(member) => Self::Field(*member),
+            MirProjectionKind::TupleField(index) => Self::TupleField(*index),
+            MirProjectionKind::NewtypeValue => Self::NewtypeValue,
+            MirProjectionKind::VariantTuple { variant, index } => {
+                Self::VariantTuple(*variant, *index)
+            }
+            MirProjectionKind::VariantField { variant, field } => {
+                Self::VariantField(*variant, *field)
+            }
+            MirProjectionKind::OptionValue => Self::OptionValue,
+            MirProjectionKind::ResultOkValue => Self::ResultOkValue,
+            MirProjectionKind::ResultErrValue => Self::ResultErrValue,
+            MirProjectionKind::UnionValue(member) => Self::UnionValue(*member),
+            MirProjectionKind::ArrayPatternIndex(index) => Self::ArrayPatternIndex(*index),
+            MirProjectionKind::ArrayPatternRest { start, suffix } => Self::ArrayPatternRest {
+                start: *start,
+                suffix: *suffix,
+            },
+            MirProjectionKind::Index { index, .. } => Self::Index(*index),
+            MirProjectionKind::Slice { start, end, step } => Self::Slice {
+                start: *start,
+                end: *end,
+                step: *step,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct LocalState {
     live: bool,
-    initialized: bool,
+    unavailable: BTreeSet<Vec<MovePathComponent>>,
 }
 
 fn mir_operand_is_borrow(operand: &MirOperand) -> bool {
@@ -258,7 +337,6 @@ fn mir_operation_contains_invalid_borrow(operation: &MirOperation) -> bool {
 #[derive(Debug, Clone)]
 struct SuccessorEdge {
     target: MirBlockId,
-    defines: Option<MirLocalId>,
     refinement: Option<TagFact>,
     writes: Option<MirPlace>,
 }
@@ -3001,11 +3079,11 @@ impl Verifier<'_> {
             .map(|block| successor_edges(&block.terminator.kind))
             .collect::<Vec<_>>();
         let mut predecessors =
-            vec![Vec::<(MirBlockId, Option<MirLocalId>)>::new(); function.blocks.len()];
+            vec![Vec::<(MirBlockId, SuccessorEdge)>::new(); function.blocks.len()];
         for (source, edges) in successors.iter().enumerate() {
             for edge in edges {
                 predecessors[edge.target.0 as usize]
-                    .push((MirBlockId(source as u32), edge.defines));
+                    .push((MirBlockId(source as u32), edge.clone()));
             }
         }
         if !predecessors[function.entry.0 as usize].is_empty() {
@@ -3046,23 +3124,30 @@ impl Verifier<'_> {
             .flatten()
             .filter_map(|event| match event {
                 LocalEvent::StorageLive(local) | LocalEvent::StorageDead(local) => Some(*local),
-                LocalEvent::Read(_) | LocalEvent::Move(_) | LocalEvent::Write(_) => None,
+                LocalEvent::Read(_)
+                | LocalEvent::Move(_)
+                | LocalEvent::Write(_)
+                | LocalEvent::WriteAccess(_) => None,
             })
             .collect::<BTreeSet<_>>();
         let mut relevant = events
             .iter()
             .flatten()
             .map(|event| match event {
-                LocalEvent::Read(local)
-                | LocalEvent::Move(local)
-                | LocalEvent::Write(local)
-                | LocalEvent::StorageLive(local)
-                | LocalEvent::StorageDead(local) => *local,
+                LocalEvent::Read(access)
+                | LocalEvent::Move(access)
+                | LocalEvent::Write(access)
+                | LocalEvent::WriteAccess(access) => access.local,
+                LocalEvent::StorageLive(local) | LocalEvent::StorageDead(local) => *local,
             })
             .collect::<BTreeSet<_>>();
         relevant.insert(function.return_local);
         for edges in &successors {
-            relevant.extend(edges.iter().filter_map(|edge| edge.defines));
+            relevant.extend(
+                edges
+                    .iter()
+                    .filter_map(|edge| edge.writes.as_ref().map(|place| place.local)),
+            );
         }
         for local in relevant {
             self.verify_local_flow(
@@ -3087,7 +3172,7 @@ impl Verifier<'_> {
         local: MirLocalId,
         events: &[Vec<LocalEvent>],
         successors: &[Vec<SuccessorEdge>],
-        predecessors: &[Vec<(MirBlockId, Option<MirLocalId>)>],
+        predecessors: &[Vec<(MirBlockId, SuccessorEdge)>],
         reachable: &[bool],
         managed_storage: bool,
         context: &str,
@@ -3107,15 +3192,20 @@ impl Verifier<'_> {
                 ),
             ));
         }
+        let root = Vec::new();
+        let mut initial_unavailable = BTreeSet::new();
+        if !matches!(local_kind, MirLocalKind::Parameter { .. }) {
+            initial_unavailable.insert(root.clone());
+        }
         let initial = LocalState {
             live: !managed_storage,
-            initialized: matches!(local_kind, MirLocalKind::Parameter { .. }),
+            unavailable: initial_unavailable,
         };
         let top = LocalState {
             live: true,
-            initialized: true,
+            unavailable: BTreeSet::new(),
         };
-        let mut incoming = vec![top; function.blocks.len()];
+        let mut incoming = vec![top.clone(); function.blocks.len()];
         incoming[function.entry.0 as usize] = initial;
         let mut queue = (0..function.blocks.len())
             .filter(|index| reachable[*index] && *index != function.entry.0 as usize)
@@ -3126,22 +3216,27 @@ impl Verifier<'_> {
         while let Some(block) = queue.pop_front() {
             queued[block.0 as usize] = false;
             self.consume_dataflow_step(context)?;
-            let mut state = top;
+            let mut state = top.clone();
             let mut found = false;
-            for (predecessor, defines) in &predecessors[block.0 as usize] {
+            for (predecessor, edge) in &predecessors[block.0 as usize] {
                 if !reachable[predecessor.0 as usize] {
                     continue;
                 }
                 let mut edge_state = transfer_local(
-                    incoming[predecessor.0 as usize],
+                    incoming[predecessor.0 as usize].clone(),
                     &events[predecessor.0 as usize],
                     local,
                 );
-                if *defines == Some(local) && edge_state.live {
-                    edge_state.initialized = true;
+                if let Some(write) = edge.writes.as_ref().filter(|place| place.local == local)
+                    && edge_state.live
+                {
+                    write_path_unchecked(
+                        &mut edge_state.unavailable,
+                        &LocalAccess::from_place(write).path,
+                    );
                 }
                 state.live &= edge_state.live;
-                state.initialized &= edge_state.initialized;
+                state.unavailable.extend(edge_state.unavailable);
                 found = true;
             }
             if !found {
@@ -3164,33 +3259,40 @@ impl Verifier<'_> {
             if !reachable[block_index] {
                 continue;
             }
-            let mut state = incoming[block_index];
+            let mut state = incoming[block_index].clone();
             for event in block_events {
-                match *event {
-                    LocalEvent::Read(event_local) if event_local == local => {
-                        if !state.live || !state.initialized {
+                match event {
+                    LocalEvent::Read(access) if access.local == local => {
+                        if !state.live || !path_is_available(&state.unavailable, &access.path) {
+                            return Err(MirInvariantError::new(
+                                format!("{context} block#{block_index}"),
+                                unavailable_read_message(local, &access.path),
+                            ));
+                        }
+                    }
+                    LocalEvent::Move(access) if access.local == local => {
+                        if !state.live || !path_is_available(&state.unavailable, &access.path) {
+                            return Err(MirInvariantError::new(
+                                format!("{context} block#{block_index}"),
+                                unavailable_move_message(local, &access.path),
+                            ));
+                        }
+                        move_path_unchecked(&mut state.unavailable, access.path.clone());
+                    }
+                    LocalEvent::WriteAccess(access) if access.local == local => {
+                        if !state.live
+                            || !path_parent_is_available(&state.unavailable, &access.path)
+                        {
                             return Err(MirInvariantError::new(
                                 format!("{context} block#{block_index}"),
                                 format!(
-                                    "reads local#{} before a dominating live definition",
+                                    "resolves a write through unavailable local#{}",
                                     local.index()
                                 ),
                             ));
                         }
                     }
-                    LocalEvent::Move(event_local) if event_local == local => {
-                        if !state.live || !state.initialized {
-                            return Err(MirInvariantError::new(
-                                format!("{context} block#{block_index}"),
-                                format!(
-                                    "moves local#{} after its value became unavailable",
-                                    local.index()
-                                ),
-                            ));
-                        }
-                        state.initialized = false;
-                    }
-                    LocalEvent::Write(event_local) if event_local == local => {
+                    LocalEvent::Write(access) if access.local == local => {
                         if !state.live {
                             return Err(MirInvariantError::new(
                                 format!("{context} block#{block_index}"),
@@ -3200,13 +3302,20 @@ impl Verifier<'_> {
                                 ),
                             ));
                         }
-                        state.initialized = true;
+                        if !path_parent_is_available(&state.unavailable, &access.path) {
+                            return Err(MirInvariantError::new(
+                                format!("{context} block#{block_index}"),
+                                format!("writes through unavailable local#{}", local.index()),
+                            ));
+                        }
+                        write_path_unchecked(&mut state.unavailable, &access.path);
                     }
-                    LocalEvent::StorageLive(event_local) if event_local == local => {
+                    LocalEvent::StorageLive(event_local) if *event_local == local => {
                         state.live = true;
-                        state.initialized = false;
+                        state.unavailable.clear();
+                        state.unavailable.insert(Vec::new());
                     }
-                    LocalEvent::StorageDead(event_local) if event_local == local => {
+                    LocalEvent::StorageDead(event_local) if *event_local == local => {
                         if !state.live {
                             return Err(MirInvariantError::new(
                                 format!("{context} block#{block_index}"),
@@ -3214,11 +3323,13 @@ impl Verifier<'_> {
                             ));
                         }
                         state.live = false;
-                        state.initialized = false;
+                        state.unavailable.clear();
+                        state.unavailable.insert(Vec::new());
                     }
                     LocalEvent::Read(_)
                     | LocalEvent::Move(_)
                     | LocalEvent::Write(_)
+                    | LocalEvent::WriteAccess(_)
                     | LocalEvent::StorageLive(_)
                     | LocalEvent::StorageDead(_) => {}
                 }
@@ -3387,28 +3498,32 @@ impl Verifier<'_> {
             } => {
                 push_operation_events(operation, &mut events);
                 if let Some(destination) = destination {
-                    push_destination_reads(destination, &mut events);
+                    push_destination_reads(destination, true, &mut events);
                 }
             }
             MirTerminatorKind::IteratorNext {
                 state, destination, ..
             } => {
                 push_place_events(state, true, &mut events);
-                push_destination_reads(destination, &mut events);
+                push_destination_reads(destination, true, &mut events);
             }
             MirTerminatorKind::ValidatePlaces {
                 places,
                 replacements,
+                for_write,
                 ..
             } => {
                 for place in places {
-                    push_destination_reads(place, &mut events);
+                    push_destination_reads(place, *for_write, &mut events);
                 }
                 for replacement in replacements.iter().flatten() {
                     push_operand_events(replacement, &mut events);
                 }
             }
-            MirTerminatorKind::Return => events.push(LocalEvent::Read(function.return_local)),
+            MirTerminatorKind::Return => events.push(LocalEvent::Read(LocalAccess {
+                local: function.return_local,
+                path: Vec::new(),
+            })),
         }
         events
     }
@@ -3740,7 +3855,6 @@ fn places_may_overlap(left: &MirPlace, right: &MirPlace) -> bool {
 fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
     let edge = |target| SuccessorEdge {
         target,
-        defines: None,
         refinement: None,
         writes: None,
     };
@@ -3766,13 +3880,11 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
                 .iter()
                 .map(|(tag, target)| SuccessorEdge {
                     target: *target,
-                    defines: None,
                     refinement: place.clone().map(|place| TagFact { place, tag: *tag }),
                     writes: None,
                 })
                 .chain(std::iter::once(SuccessorEdge {
                     target: *otherwise,
-                    defines: None,
                     refinement: (cases.len() == 1)
                         .then(|| complementary_tag(cases[0].0))
                         .flatten()
@@ -3790,10 +3902,6 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
             .iter()
             .map(|target| SuccessorEdge {
                 target: *target,
-                defines: destination
-                    .as_ref()
-                    .filter(|place| place.projections.is_empty())
-                    .map(|place| place.local),
                 refinement: None,
                 writes: destination.clone(),
             })
@@ -3808,10 +3916,6 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
         } => vec![
             SuccessorEdge {
                 target: *has_value,
-                defines: destination
-                    .projections
-                    .is_empty()
-                    .then_some(destination.local),
                 refinement: None,
                 writes: Some(destination.clone()),
             },
@@ -3840,33 +3944,155 @@ fn complementary_tag(tag: MirTag) -> Option<MirTag> {
 fn transfer_local(state: LocalState, events: &[LocalEvent], local: MirLocalId) -> LocalState {
     let mut state = state;
     for event in events {
-        match *event {
-            LocalEvent::Write(event_local) if event_local == local => {
+        match event {
+            LocalEvent::Write(access) if access.local == local => {
                 if state.live {
-                    state.initialized = true;
+                    write_path_unchecked(&mut state.unavailable, &access.path);
                 }
             }
-            LocalEvent::Move(event_local) if event_local == local => {
-                if state.live && state.initialized {
-                    state.initialized = false;
+            LocalEvent::Move(access) if access.local == local => {
+                if state.live {
+                    move_path_unchecked(&mut state.unavailable, access.path.clone());
                 }
             }
-            LocalEvent::StorageLive(event_local) if event_local == local => {
+            LocalEvent::StorageLive(event_local) if *event_local == local => {
                 state.live = true;
-                state.initialized = false;
+                state.unavailable.clear();
+                state.unavailable.insert(Vec::new());
             }
-            LocalEvent::StorageDead(event_local) if event_local == local => {
+            LocalEvent::StorageDead(event_local) if *event_local == local => {
                 state.live = false;
-                state.initialized = false;
+                state.unavailable.clear();
+                state.unavailable.insert(Vec::new());
             }
             LocalEvent::Read(_)
             | LocalEvent::Move(_)
             | LocalEvent::Write(_)
+            | LocalEvent::WriteAccess(_)
             | LocalEvent::StorageLive(_)
             | LocalEvent::StorageDead(_) => {}
         }
     }
     state
+}
+
+fn path_is_available(
+    unavailable: &BTreeSet<Vec<MovePathComponent>>,
+    path: &[MovePathComponent],
+) -> bool {
+    unavailable
+        .iter()
+        .all(|moved| !move_paths_overlap(moved, path))
+}
+
+fn path_parent_is_available(
+    unavailable: &BTreeSet<Vec<MovePathComponent>>,
+    path: &[MovePathComponent],
+) -> bool {
+    unavailable
+        .iter()
+        .all(|moved| !(moved.len() < path.len() && move_path_is_prefix(moved, path)))
+}
+
+fn move_path_unchecked(
+    unavailable: &mut BTreeSet<Vec<MovePathComponent>>,
+    path: Vec<MovePathComponent>,
+) {
+    if path.is_empty() {
+        unavailable.clear();
+    } else if unavailable
+        .iter()
+        .any(|moved| move_path_is_prefix(moved, &path))
+    {
+        return;
+    } else {
+        unavailable.retain(|moved| !move_path_is_prefix(&path, moved));
+    }
+    unavailable.insert(path);
+}
+
+fn write_path_unchecked(
+    unavailable: &mut BTreeSet<Vec<MovePathComponent>>,
+    path: &[MovePathComponent],
+) {
+    unavailable.retain(|moved| !move_path_is_prefix(path, moved));
+}
+
+fn move_paths_overlap(left: &[MovePathComponent], right: &[MovePathComponent]) -> bool {
+    left.iter()
+        .zip(right)
+        .all(|(left, right)| !move_path_components_are_disjoint(left, right))
+}
+
+fn move_path_is_prefix(prefix: &[MovePathComponent], path: &[MovePathComponent]) -> bool {
+    prefix.len() <= path.len() && prefix.iter().zip(path).all(|(left, right)| left == right)
+}
+
+fn move_path_components_are_disjoint(left: &MovePathComponent, right: &MovePathComponent) -> bool {
+    match (left, right) {
+        (
+            MovePathComponent::ClosureCapture(_, left),
+            MovePathComponent::ClosureCapture(_, right),
+        )
+        | (MovePathComponent::TupleField(left), MovePathComponent::TupleField(right))
+        | (
+            MovePathComponent::ArrayPatternIndex(left),
+            MovePathComponent::ArrayPatternIndex(right),
+        ) => left != right,
+        (MovePathComponent::Field(left), MovePathComponent::Field(right)) => left != right,
+        (
+            MovePathComponent::VariantTuple(left_variant, left),
+            MovePathComponent::VariantTuple(right_variant, right),
+        ) => left_variant != right_variant || left != right,
+        (
+            MovePathComponent::VariantField(left_variant, left),
+            MovePathComponent::VariantField(right_variant, right),
+        ) => left_variant != right_variant || left != right,
+        (
+            MovePathComponent::VariantTuple(left, _) | MovePathComponent::VariantField(left, _),
+            MovePathComponent::VariantTuple(right, _) | MovePathComponent::VariantField(right, _),
+        ) => left != right,
+        (MovePathComponent::OptionValue, MovePathComponent::ResultOkValue)
+        | (MovePathComponent::OptionValue, MovePathComponent::ResultErrValue)
+        | (MovePathComponent::ResultOkValue, MovePathComponent::OptionValue)
+        | (MovePathComponent::ResultErrValue, MovePathComponent::OptionValue)
+        | (MovePathComponent::ResultOkValue, MovePathComponent::ResultErrValue)
+        | (MovePathComponent::ResultErrValue, MovePathComponent::ResultOkValue) => true,
+        (MovePathComponent::UnionValue(left), MovePathComponent::UnionValue(right)) => {
+            left != right
+        }
+        (
+            MovePathComponent::ArrayPatternIndex(index),
+            MovePathComponent::ArrayPatternRest { start, suffix: 0 },
+        )
+        | (
+            MovePathComponent::ArrayPatternRest { start, suffix: 0 },
+            MovePathComponent::ArrayPatternIndex(index),
+        ) => index < start,
+        _ => false,
+    }
+}
+
+fn unavailable_read_message(local: MirLocalId, path: &[MovePathComponent]) -> String {
+    if path.is_empty() {
+        format!(
+            "reads local#{} before a dominating live definition",
+            local.index()
+        )
+    } else {
+        format!("reads an unavailable move path of local#{}", local.index())
+    }
+}
+
+fn unavailable_move_message(local: MirLocalId, path: &[MovePathComponent]) -> String {
+    if path.is_empty() {
+        format!(
+            "moves local#{} after its value became unavailable",
+            local.index()
+        )
+    } else {
+        format!("moves an unavailable move path of local#{}", local.index())
+    }
 }
 
 fn push_rvalue_events(value: &MirRvalue, events: &mut Vec<LocalEvent>) {
@@ -3964,12 +4190,14 @@ fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>)
 
 fn push_operand_events(operand: &MirOperand, events: &mut Vec<LocalEvent>) {
     match &operand.kind {
-        MirOperandKind::Move(place) if place.projections.is_empty() => {
-            events.push(LocalEvent::Move(place.local));
+        MirOperandKind::Move(place) => {
+            push_projection_index_events(place, events);
+            events.push(LocalEvent::Move(LocalAccess::from_place(place)));
         }
-        MirOperandKind::Copy(place)
-        | MirOperandKind::Move(place)
-        | MirOperandKind::Borrow(place) => push_place_events(place, true, events),
+        MirOperandKind::Copy(place) | MirOperandKind::Borrow(place) => {
+            push_projection_index_events(place, events);
+            events.push(LocalEvent::Read(LocalAccess::from_place(place)));
+        }
         MirOperandKind::Constant(_)
         | MirOperandKind::Function { .. }
         | MirOperandKind::PreludeTraitFunction { .. } => {}
@@ -3977,32 +4205,41 @@ fn push_operand_events(operand: &MirOperand, events: &mut Vec<LocalEvent>) {
 }
 
 fn push_destination_events(place: &MirPlace, events: &mut Vec<LocalEvent>) {
-    push_destination_reads(place, events);
-    if place.projections.is_empty() {
-        events.push(LocalEvent::Write(place.local));
-    }
+    push_projection_index_events(place, events);
+    events.push(LocalEvent::Write(LocalAccess::from_place(place)));
 }
 
-fn push_destination_reads(place: &MirPlace, events: &mut Vec<LocalEvent>) {
-    push_place_events(place, false, events);
+fn push_destination_reads(place: &MirPlace, for_write: bool, events: &mut Vec<LocalEvent>) {
+    push_projection_index_events(place, events);
+    let access = LocalAccess::from_place(place);
+    if for_write {
+        events.push(LocalEvent::WriteAccess(access));
+    } else {
+        events.push(LocalEvent::Read(access));
+    }
 }
 
 fn push_place_events(place: &MirPlace, read_root: bool, events: &mut Vec<LocalEvent>) {
-    if read_root || !place.projections.is_empty() {
-        events.push(LocalEvent::Read(place.local));
+    push_projection_index_events(place, events);
+    if read_root {
+        events.push(LocalEvent::Read(LocalAccess::from_place(place)));
     }
+}
+
+fn push_projection_index_events(place: &MirPlace, events: &mut Vec<LocalEvent>) {
     for projection in &place.projections {
         match &projection.kind {
-            MirProjectionKind::Index { index, .. } => events.push(LocalEvent::Read(*index)),
+            MirProjectionKind::Index { index, .. } => events.push(LocalEvent::Read(LocalAccess {
+                local: *index,
+                path: Vec::new(),
+            })),
             MirProjectionKind::Slice { start, end, step } => {
-                events.extend(
-                    start
-                        .iter()
-                        .chain(end)
-                        .chain(step)
-                        .copied()
-                        .map(LocalEvent::Read),
-                );
+                events.extend(start.iter().chain(end).chain(step).copied().map(|local| {
+                    LocalEvent::Read(LocalAccess {
+                        local,
+                        path: Vec::new(),
+                    })
+                }));
             }
             MirProjectionKind::ClosureCapture { .. }
             | MirProjectionKind::Field(_)

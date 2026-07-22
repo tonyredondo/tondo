@@ -67,10 +67,12 @@ state even though the bytecode verifier has already proved the same contract.
 `Move` takes the complete value or projected payload from its slot; `Borrow`
 performs a shallow read only in a verifier-approved immediate operation and
 cannot become a stored runtime reference. OWN-003 proves source-level
-whole-binding availability and the bytecode verifier independently rejects a
-repeated unprojected move across sequential, branch, and loop paths. The
-runtime check remains a defensive invariant, including for projected payloads
-whose final static move-path model belongs to OWN-005.
+whole-binding availability. OWN-005 makes the bytecode verifier independently
+track typed unavailable move paths across sequential, branch, and loop paths,
+rejecting repeated, ancestor, descendant, and conservatively overlapping
+moves. The runtime still checks each take defensively and represents a moved
+aggregate component as an absent internal slot that source code can never
+observe directly.
 
 For assignment validation, an unprojected write path consists only of the slot
 identity and can be resolved while that slot is uninitialized after a move. The
@@ -90,7 +92,10 @@ value in every frame plus an explicit stack of operation-local values that have
 not yet been stored. Multi-operand aggregate construction and recursive value
 copy push each completed temporary until its parent object has been allocated.
 Managed objects trace only their actual managed children. Iterator state and
-partially moved aggregate fields participate in the same tracing walk. Later
+partially moved aggregate fields participate in the same tracing walk. Moving
+an affine array rest takes its contiguous elements into a new owning array,
+leaves holes in the compiler-owned scrutinee, and roots both parent and moved
+children across the allocation. Later
 environments, suspended tasks, and host handles must add explicit root sources;
 they may not rely on conservative stack scanning.
 
