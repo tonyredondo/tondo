@@ -13,9 +13,9 @@ use crate::package::{ModuleId, Name, PackageGraphError, SymbolIdentity};
 use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::{FileId, SourceError, Span, TextRange};
 use crate::types::{
-    Assignability, FunctionParameter, FunctionType, GeneratedTypeIdentity, InferenceError,
-    NumericConversion, ParameterMode, ScalarType, TypeError, TypeId, TypeInterner, TypeKind,
-    TypeSubstitution,
+    Assignability, FunctionParameter, FunctionType, GeneratedTypeIdentity, GeneratedTypeKind,
+    InferenceError, NumericConversion, ParameterMode, ScalarType, TypeError, TypeId, TypeInterner,
+    TypeKind, TypeSubstitution,
 };
 
 mod capabilities;
@@ -1324,8 +1324,8 @@ impl HirClosureId {
 /// The static environment and callable signature of one source closure.
 ///
 /// The body remains a separate semantic root: constructing a closure evaluates
-/// its captures, but never executes the body. CALL-003 lowers that root into an
-/// invocable callable after deriving the closed call protocols.
+/// its captures, but never executes the body. Its generated identity and exact
+/// function signature retain synchronous/asynchronous and safe/unsafe effects.
 #[derive(Debug, Clone)]
 pub struct HirClosure {
     id: HirClosureId,
@@ -1348,6 +1348,18 @@ impl HirClosure {
 
     pub fn identity(&self) -> &GeneratedTypeIdentity {
         &self.identity
+    }
+
+    pub fn kind(&self) -> GeneratedTypeKind {
+        self.identity.kind()
+    }
+
+    pub fn is_async(&self) -> bool {
+        self.kind().is_async()
+    }
+
+    pub fn is_unsafe(&self) -> bool {
+        self.kind().is_unsafe()
     }
 
     pub fn span(&self) -> Span {

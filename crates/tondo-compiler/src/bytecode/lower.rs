@@ -4267,6 +4267,147 @@ mod tests {
     }
 
     #[test]
+    fn bytecode_preserves_all_closure_effects_and_rederives_async_protocols() {
+        let source = "fn build() {\n\
+                          let sync: fn(): Int = () { 1 }\n\
+                          let raw: unsafe fn(): Int = unsafe () { 2 }\n\
+                          let later: async fn(): Int = async () { 3 }\n\
+                          let both: async unsafe fn(): Int = async unsafe () { 4 }\n\
+                          _ = sync()\n\
+                          _ = sync\n\
+                          _ = raw\n\
+                          _ = later\n\
+                          _ = both\n\
+                      }\n";
+        let program = lowered(source);
+        bc::verify_bytecode(&program).unwrap();
+        let effects = program
+            .callables
+            .iter()
+            .filter(|callable| callable.closure.is_some())
+            .map(
+                |callable| match &program.types[callable.function_type.index() as usize].kind {
+                    bc::BytecodeTypeKind::Function(function) => {
+                        (function.is_async, function.is_unsafe)
+                    }
+                    _ => panic!("closure callable must retain a function type"),
+                },
+            )
+            .collect::<Vec<_>>();
+        assert_eq!(
+            effects,
+            vec![(false, false), (false, true), (true, false), (true, true)]
+        );
+
+        let async_signature = program
+            .callables
+            .iter()
+            .find(|callable| {
+                callable.closure.is_some()
+                    && matches!(
+                        &program.types[callable.function_type.index() as usize].kind,
+                        bc::BytecodeTypeKind::Function(function)
+                            if function.is_async && !function.is_unsafe
+                    )
+            })
+            .unwrap()
+            .function_type;
+        let mut forged_call = lowered(source);
+        let signature = forged_call
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Call { signature, .. },
+                            ..
+                        },
+                    ..
+                } => Some(signature),
+                _ => None,
+            })
+            .unwrap();
+        *signature = async_signature;
+        let error = bc::verify_bytecode(&forged_call).unwrap_err();
+        assert!(error.message().contains("effectful call"), "{error}");
+
+        let stateful = "fn build() {\n\
+                            var count = 0\n\
+                            let operation = async (): Int {\n\
+                                count += 1\n\
+                                count\n\
+                            }\n\
+                            _ = operation\n\
+                        }\n";
+        let program = lowered(stateful);
+        let closure = program
+            .callables
+            .iter()
+            .find_map(|callable| callable.closure.as_ref())
+            .unwrap();
+        assert_eq!(
+            closure.protocols,
+            bc::BytecodeClosureProtocols {
+                call: false,
+                call_mut: false,
+                call_once: true,
+            }
+        );
+
+        let mut forged_protocol = lowered(stateful);
+        forged_protocol
+            .callables
+            .iter_mut()
+            .find_map(|callable| callable.closure.as_mut())
+            .unwrap()
+            .protocols
+            .call_mut = true;
+        let error = bc::verify_bytecode(&forged_protocol).unwrap_err();
+        assert!(error.message().contains("protocols"));
+
+        let mut forged_parameter = lowered(
+            "fn build() {\n\
+                 let operation = async (value: ref Int) { () }\n\
+                 _ = operation\n\
+             }\n",
+        );
+        let callable = forged_parameter
+            .callables
+            .iter_mut()
+            .find(|callable| callable.closure.is_some())
+            .unwrap();
+        callable.parameters[0].mode = bc::BytecodeParameterMode::Mut;
+        let function_type = callable.function_type;
+        let bc::BytecodeTypeKind::Function(function) =
+            &mut forged_parameter.types[function_type.index() as usize].kind
+        else {
+            unreachable!()
+        };
+        function.parameters[0].mode = bc::BytecodeParameterMode::Mut;
+        let error = bc::verify_bytecode(&forged_parameter).unwrap_err();
+        assert!(error.message().contains("exclusive parameter"));
+    }
+
+    #[test]
+    fn vm_entry_rejects_async_and_unsafe_callable_bodies() {
+        let program = lowered(
+            "async fn later(): Int { 1 }\n\
+             unsafe fn raw(): Int { 2 }\n",
+        );
+        for name in ["later", "raw"] {
+            let mut host = RejectingHost;
+            let error = execute(&program, function_id(&program, name), &mut host).unwrap_err();
+            assert!(matches!(error, VmError::InvalidEntry(_)), "{name}: {error}");
+            assert!(
+                error.to_string().contains("async or unsafe"),
+                "{name}: {error}"
+            );
+        }
+    }
+
+    #[test]
     fn bytecode_verifier_rederives_indirect_call_signature_and_protocol() {
         fn indirect_call(
             program: &mut bc::BytecodeProgram,

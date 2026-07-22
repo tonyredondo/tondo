@@ -228,7 +228,7 @@ impl Verifier<'_> {
                     HirCapability::Copy,
                     &assumptions,
                     &context,
-                    "CALL-002 closure capture",
+                    "M4 closure capture",
                 )?;
             }
         }
@@ -1817,6 +1817,27 @@ impl Verifier<'_> {
             self.verify_generics(&callable.generics, callable.generic_arity, hidden, &context)?;
             self.verify_type(callable.outcome, format!("{context} outcome"))?;
             self.verify_type(callable.function_type, format!("{context} function type"))?;
+            let TypeKind::Function(function) =
+                self.program
+                    .interner
+                    .kind(callable.function_type)
+                    .map_err(|error| HirInvariantError::new(&context, error.to_string()))?
+            else {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "callable signature is not a function type",
+                ));
+            };
+            if function.is_async()
+                && callable.parameters.iter().any(|parameter| {
+                    matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
+                })
+            {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "async callable retains an exclusive parameter across suspension",
+                ));
+            }
             self.verify_opaque_result(callable, &mut opaque_ids, &context)?;
             for (index, parameter) in callable.parameters.iter().enumerate() {
                 self.verify_type(parameter.ty, format!("{context} parameter {index}"))?;
@@ -1873,12 +1894,10 @@ impl Verifier<'_> {
                     "generated closure identity is duplicated",
                 ));
             }
-            if closure.identity.kind() != GeneratedTypeKind::Closure
-                || closure.identity.start_byte() != closure.span.range().start()
-            {
+            if closure.identity.start_byte() != closure.span.range().start() {
                 return Err(HirInvariantError::new(
                     &context,
-                    "generated closure identity has the wrong kind or source position",
+                    "generated closure identity has the wrong source position",
                 ));
             }
             let Some((construction_count, construction_span)) = constructions.get(&id) else {
@@ -1961,10 +1980,12 @@ impl Verifier<'_> {
                     "closure call signature is not a function type",
                 ));
             };
-            if function.is_async() || function.is_unsafe() {
+            let expected_kind =
+                GeneratedTypeKind::closure(function.is_async(), function.is_unsafe());
+            if closure.identity.kind() != expected_kind {
                 return Err(HirInvariantError::new(
                     &context,
-                    "CALL-002 closure carries async or unsafe effects",
+                    "generated closure identity kind differs from its call effects",
                 ));
             }
             let mut fixed = Vec::new();
@@ -1986,6 +2007,14 @@ impl Verifier<'_> {
                     return Err(HirInvariantError::new(
                         &context,
                         format!("closure parameter {parameter_index} has invalid local metadata"),
+                    ));
+                }
+                if function.is_async()
+                    && matches!(parameter.mode, ParameterMode::Mut | ParameterMode::Var)
+                {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        "async closure retains an exclusive parameter across suspension",
                     ));
                 }
                 if let Some(element) = parameter.variadic_element {
@@ -2078,8 +2107,12 @@ impl Verifier<'_> {
                 .iter()
                 .map(|capture| capture.local)
                 .collect::<BTreeSet<_>>();
-            let expected_protocols =
-                self.derive_closure_protocols(closure.body.root, &capture_locals, &context)?;
+            let expected_protocols = self.derive_closure_protocols(
+                closure.body.root,
+                &capture_locals,
+                function.is_async(),
+                &context,
+            )?;
             if closure.protocols != expected_protocols {
                 return Err(HirInvariantError::new(
                     &context,
@@ -2094,10 +2127,15 @@ impl Verifier<'_> {
         &self,
         root: HirExpressionId,
         captures: &BTreeSet<crate::resolve::LocalId>,
+        is_async: bool,
         context: &str,
     ) -> Result<super::HirClosureProtocols, HirInvariantError> {
         let writes_capture = self.closure_body_writes_capture(root, captures, context)?;
-        Ok(super::HirClosureProtocols::new(!writes_capture, true, true))
+        Ok(super::HirClosureProtocols::new(
+            !writes_capture,
+            !is_async || !writes_capture,
+            true,
+        ))
     }
 
     fn closure_body_writes_capture(
@@ -3239,6 +3277,12 @@ impl Verifier<'_> {
                         "call metadata does not carry a function signature",
                     ));
                 };
+                if function.is_async() || function.is_unsafe() {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "effectful call reached the synchronous safe HIR call operation",
+                    ));
+                }
                 if expression.ty != function.outcome() {
                     return Err(HirInvariantError::new(
                         context,
@@ -4895,11 +4939,92 @@ mod tests {
         non_copy_capture.capability_statuses[closure_type.index() as usize] =
             [HirCapabilityStatus::Unsatisfied; HirCapability::COUNT];
         let error = verify_typed_hir(&resolved, &non_copy_capture).unwrap_err();
-        assert!(
-            error.message().contains("CALL-002 closure capture"),
-            "{error}"
-        );
+        assert!(error.message().contains("M4 closure capture"), "{error}");
         assert!(error.message().contains("Copy"), "{error}");
+    }
+
+    #[test]
+    fn async_closure_effects_and_protocols_are_reproved_before_mir() {
+        const SOURCE: &str = "fn build() {\n\
+             let plain = (): Int { 0 }\n\
+             _ = plain()\n\
+             var count = 0\n\
+             let operation = async (): Int {\n\
+                 count += 1\n\
+                 count\n\
+             }\n\
+             _ = plain\n\
+             _ = operation\n\
+         }\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+        let async_closure = program
+            .closures
+            .iter()
+            .find(|closure| closure.is_async())
+            .unwrap();
+        assert_eq!(
+            async_closure.protocols,
+            crate::hir::HirClosureProtocols::new(false, false, true)
+        );
+
+        let (resolved, mut wrong_effect) = checked_program_from(SOURCE);
+        let sync_type = wrong_effect
+            .closures
+            .iter()
+            .find(|closure| !closure.is_async())
+            .unwrap()
+            .function_type;
+        let async_closure = wrong_effect
+            .closures
+            .iter_mut()
+            .find(|closure| closure.is_async())
+            .unwrap();
+        async_closure.function_type = sync_type;
+        let error = verify_typed_hir(&resolved, &wrong_effect).unwrap_err();
+        assert!(error.message().contains("identity kind differs"), "{error}");
+
+        let (resolved, mut wrong_protocols) = checked_program_from(SOURCE);
+        wrong_protocols
+            .closures
+            .iter_mut()
+            .find(|closure| closure.is_async())
+            .unwrap()
+            .protocols = crate::hir::HirClosureProtocols::new(false, true, true);
+        let error = verify_typed_hir(&resolved, &wrong_protocols).unwrap_err();
+        assert!(error.message().contains("protocols"), "{error}");
+
+        let (resolved, mut effectful_call) = checked_program_from(SOURCE);
+        let async_signature = effectful_call
+            .closures
+            .iter()
+            .find(|closure| closure.is_async())
+            .unwrap()
+            .function_type;
+        let signature = effectful_call
+            .expressions
+            .iter_mut()
+            .find_map(|expression| match &mut expression.kind {
+                HirExpressionKind::Call { signature, .. } => Some(signature),
+                _ => None,
+            })
+            .unwrap();
+        *signature = async_signature;
+        let error = verify_typed_hir(&resolved, &effectful_call).unwrap_err();
+        assert!(error.message().contains("effectful call"), "{error}");
+    }
+
+    #[test]
+    fn async_callable_exclusive_parameters_are_rejected_before_mir() {
+        const SOURCE: &str = "async fn inspect(value: ref Int) {}\n";
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut forged) = checked_program_from(SOURCE);
+        forged.callables[0].parameters[0].mode = ParameterMode::Mut;
+        let error = verify_typed_hir(&resolved, &forged).unwrap_err();
+        assert!(error.message().contains("exclusive parameter"), "{error}");
     }
 
     #[test]

@@ -1,10 +1,11 @@
 # Tondo: tracker de implementación
 
 **Estado:** activo  
-**Versión del tracker:** 0.32
+**Versión del tracker:** 0.33
 **Última actualización:** 2026-07-21  
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
-**Objetivo inmediato:** representar closures sync, async y unsafe (CALL-004).
+**Objetivo inmediato:** cerrar la derivación de `Copy` y `Discard` para tipos
+compuestos (OWN-001).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -991,11 +992,11 @@ dinámicos ni dispatch oculto.
 - [x] **CALL-003 — Derivar `Call`, `CallMut` y `CallOnce` desde cuerpo y
   capturas.**
 
-- [ ] **CALL-004 — Implementar closures sync, async y unsafe en la
+- [x] **CALL-004 — Implementar closures sync, async y unsafe en la
   representación semántica, aunque sus runtimes se activen después.**
 
 Evidencia observada el 2026-07-21 para GEN-001, GEN-002, TRAIT-001 a TRAIT-006,
-CAP-001 y CALL-001 a CALL-003:
+CAP-001 y CALL-001 a CALL-004:
 
 - Los bodies genéricos bounded y unbounded se comprueban una sola vez con
   parámetros rígidos. Las llamadas explícitas e inferidas cierran todas las
@@ -1142,40 +1143,48 @@ CAP-001 y CALL-001 a CALL-003:
   también ahí el dispatch estático de traits. La VM ejecuta funciones libres,
   asociadas, de trait, locales, parámetros y constantes sin vtable ni type pack
   runtime.
-- Cada expresión de cierre sync-safe publica un tipo generado distinto, una
-  firma exacta, binders heredados, parámetros completos, un body HIR separado y
-  capturas sintácticas ordenadas por `LocalId`. El outcome se infiere sobre
-  todos los caminos alcanzables y las closures anidadas conservan problemas de
-  inferencia independientes.
+- Cada expresión de cierre publica un tipo generado distinto. CALL-004 elige
+  canónicamente `closure`, `unsafe-closure`, `async-closure` o
+  `async-unsafe-closure`, y conserva los mismos bits en su firma estructural,
+  junto con binders heredados, parámetros completos, body HIR separado y
+  capturas sintácticas ordenadas por `LocalId`.
+- El outcome se infiere sobre todos los caminos alcanzables y las closures
+  anidadas conservan problemas de inferencia independientes. Un tipo de función
+  esperado debe coincidir también en `async` y `unsafe`, o produce únicamente
+  `E1102`; no existe conversión que añada u oculte un efecto.
 - Las capturas conservan `let`/`var`, copian un snapshot owned y propagan free
   uses de closures anidadas. Préstamos `ref`/`mut`/`var` y el receiver prestado
   producen `E1402`; parámetros variádicos exigen nombre y conservan elemento en
-  la firma y `Array[T]` dentro del body.
+  la firma y `Array[T]` dentro del body. Las firmas async rechazan parámetros
+  `mut`/`var` con el diagnóstico normativo `E1609`.
 - `Copy`, `Discard`, `Send` y `Share` se derivan componente a componente desde
   las capturas sustituidas; `Equatable` y `Key` se rechazan. El bootstrap
   ejecutable permanece deliberadamente limitado a capturas `Copy`; OWN-006 y
   OWN-007 añadirán moves, disponibilidad y obligaciones afines.
 - El admission verifier exige correspondencia uno-a-uno entre metadata y
-  expresión, identidad generada, firma/body, capacidad `Copy` y tipo,
-  mutabilidad y binding de cada captura. MIR sólo admite copias directas del
-  local exterior exacto; bytecode vuelve a comprobar el esquema concreto del
-  entorno.
+  expresión, identidad generada versus efectos de firma, firma/body, ausencia
+  de parámetros async exclusivos, capacidad `Copy` y tipo, mutabilidad y
+  binding de cada captura. MIR sólo admite copias directas del local exterior
+  exacto; bytecode vuelve a comprobar el esquema concreto del entorno.
 - La VM construye, copia, traza y snapshottea entornos gestionados. Una pila de
   raíces temporales protege capturas compuestas cuando el GC se dispara a mitad
   de una construcción o copia multi-captura.
 - El análisis de cada body alcanzable deriva su fila exacta `Call`/`CallMut`/
   `CallOnce`: una escritura, paso mutable o `CallMut` sobre una captura impide
   `Call`; los bodies de closures anidadas y código inalcanzable no contaminan la
-  fila exterior. Cada invocación elige el protocolo más fuerte compatible con
-  el acceso real a la expresión callee.
+  fila exterior. En una closure async, escribir el entorno impide también
+  `CallMut`, por lo que sólo queda `CallOnce`; una closure pura de cualquiera de
+  los cuatro tipos conserva los tres protocolos.
 - Funciones, closures concretas y callable bounds genéricos u opacos comparten
   una firma estructural exacta. Un contrato ambiguo produce `E1115`, un
   protocolo inaccesible `E1407`, y la coerción contextual a `fn(...)` exige
-  `Call`, firma idéntica y entorno `Copy + Send + Share`, o produce `E1108`.
+  `Call`, firma idéntica —incluidos efectos— y entorno `Copy + Send + Share`, o
+  produce `E1108`.
 - El admission verifier HIR vuelve a derivar protocolos, selección de cada call
   y erasures. MIR crea un cuerpo `MirFunctionId::Closure` con entorno oculto en
   el parámetro cero, proyecta capturas y confina `Borrow` al callee inmediato;
-  el verifier MIR repite firma, protocolo y forma de acceso.
+  el verifier MIR repite firma, protocolo y forma de acceso. Los tres verifiers
+  rechazan una firma async o unsafe en la operación de llamada síncrona segura.
 - La monomorfización crea instancias de callable para closures, incluidos bodies
   genéricos, y las carga al mismo presupuesto `T0002`. El catálogo bytecode
   contiene identidad, entorno, esquema, protocolos y body; su verifier deriva
@@ -1185,12 +1194,19 @@ CAP-001 y CALL-001 a CALL-003:
   préstamo superficial y aplica la copia lógica de `CallOnce` en el subset
   `Copy`. Callee y argumentos permanecen en raíces temporales durante toda la
   preparación y el GC puede ejecutarse bajo presión sin invalidar el entorno.
+- Los cuatro tipos de closure pueden construirse, copiarse, trazarse,
+  snapshottearse, descartarse y borrarse a su firma uniforme exacta. El verifier
+  bytecode rechaza calls con efectos y la entrada pública de la VM rechaza un
+  body async o unsafe como root, de modo que CALL-004 no activa prematuramente
+  el runtime de M7 ni evita la frontera de M9.
 - Las regresiones públicas y unitarias ejecutan closures puras, mutables,
   `CallOnce`, borradas a `fn`, genéricas, opacas, variádicas, anidadas,
   proyectadas, fallibles y bajo presión de GC; también mutan HIR, MIR y bytecode
-  para probar cada frontera defensiva. Capturas no `Copy` siguen en M5 y los
-  efectos `async`/`unsafe` en CALL-004.
-- El gate acumulado pasa 434 tests, `git diff --check`, formatter check, build
+  para probar cada frontera defensiva. Fixtures adicionales cubren las cuatro
+  identidades, mismatch de efectos, `E1609`, protocolo async stateful y rechazo
+  de llamadas/entries con efectos. Capturas no `Copy` siguen en M5;
+  `await`/`spawn` siguen en M7 y la ejecución unsafe en M9.
+- El gate acumulado pasa 445 tests, `git diff --check`, formatter check, build
   de todos los targets, Clippy con warnings denegados y Rustdoc con warnings
   denegados.
 
@@ -1203,6 +1219,8 @@ CAP-001 y CALL-001 a CALL-003:
 - Closures con capturas `Copy + Discard` y genéricos se ejecutan en la VM a
   través del bytecode normal; M5 elimina esa restricción bootstrap aplicando
   moves y obligaciones a capturas afines.
+- Los cuatro contratos sync/unsafe/async están representados sin conversión de
+  efectos; sólo la firma síncrona segura puede usar la operación de llamada M4.
 - La monomorfización tiene límites controlados y no puede divergir.
 
 ---
@@ -1832,12 +1850,30 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es CALL-004: representar closures sync, async y
-unsafe sin adelantar el runtime asíncrono de M7 ni la validación unsafe de M6.
+La siguiente acción activa es OWN-001: auditar y completar la derivación de
+`Copy` y `Discard` para tipos compuestos antes de introducir moves y
+disponibilidad por flujo.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.33 — 2026-07-21
+
+- Se completa CALL-004 con identidades generadas y firmas estructurales exactas
+  para closures sync, unsafe, async y async-unsafe, sin conversiones implícitas
+  entre efectos.
+- Las firmas async rechazan parámetros `mut`/`var` mediante `E1609`; HIR vuelve
+  a probar identidad, firma y parámetros, y deriva `CallOnce` como único
+  protocolo para una closure async que escribe su entorno.
+- MIR y bytecode conservan cuerpos, entornos y bits de efecto, pero sus
+  operaciones de llamada síncrona segura rechazan firmas con efectos. La VM
+  rechaza además seleccionar un callable async o unsafe como entrada raíz.
+- Las cuatro formas pueden construirse, borrarse a su firma uniforme exacta,
+  copiarse, trazarse y descartarse sin ejecutar su body. `await`/`spawn`
+  continúan en M7, la frontera unsafe en M9 y las capturas afines en M5.
+- El gate acumulado queda en 445 tests, `cargo check`, formatter check, build de
+  todos los targets, Clippy y Rustdoc sin warnings; la cola avanza a OWN-001.
 
 ### 0.32 — 2026-07-21
 

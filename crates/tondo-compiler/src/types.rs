@@ -255,7 +255,24 @@ pub enum GeneratedTypeKind {
 }
 
 impl GeneratedTypeKind {
-    fn as_str(self) -> &'static str {
+    pub(crate) const fn closure(is_async: bool, is_unsafe: bool) -> Self {
+        match (is_async, is_unsafe) {
+            (false, false) => Self::Closure,
+            (false, true) => Self::UnsafeClosure,
+            (true, false) => Self::AsyncClosure,
+            (true, true) => Self::AsyncUnsafeClosure,
+        }
+    }
+
+    pub const fn is_async(self) -> bool {
+        matches!(self, Self::AsyncClosure | Self::AsyncUnsafeClosure)
+    }
+
+    pub const fn is_unsafe(self) -> bool {
+        matches!(self, Self::UnsafeClosure | Self::AsyncUnsafeClosure)
+    }
+
+    pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Closure => "closure",
             Self::UnsafeClosure => "unsafe-closure",
@@ -3252,24 +3269,48 @@ mod tests {
     fn generated_and_cursor_names_are_location_stable() {
         let mut interner = TypeInterner::default();
         let int = interner.scalar(ScalarType::Int);
-        let generated = interner
-            .generated(
-                GeneratedTypeIdentity::new(
-                    GeneratedTypeKind::Closure,
-                    SourceId::new("source:app").unwrap(),
-                    ModulePath::new("main").unwrap(),
-                    LogicalPath::new("src/main.to").unwrap(),
-                    42,
-                ),
-                vec![int],
-            )
-            .unwrap();
+        let mut generated = Vec::new();
+        for (kind, name, effects) in [
+            (GeneratedTypeKind::Closure, "closure", (false, false)),
+            (
+                GeneratedTypeKind::UnsafeClosure,
+                "unsafe-closure",
+                (false, true),
+            ),
+            (
+                GeneratedTypeKind::AsyncClosure,
+                "async-closure",
+                (true, false),
+            ),
+            (
+                GeneratedTypeKind::AsyncUnsafeClosure,
+                "async-unsafe-closure",
+                (true, true),
+            ),
+        ] {
+            assert_eq!((kind.is_async(), kind.is_unsafe()), effects);
+            assert_eq!(GeneratedTypeKind::closure(effects.0, effects.1), kind);
+            let ty = interner
+                .generated(
+                    GeneratedTypeIdentity::new(
+                        kind,
+                        SourceId::new("source:app").unwrap(),
+                        ModulePath::new("main").unwrap(),
+                        LogicalPath::new("src/main.to").unwrap(),
+                        42,
+                    ),
+                    vec![int],
+                )
+                .unwrap();
+            assert_eq!(
+                interner.canonical(ty).unwrap(),
+                format!("generated[\"{name}\",\"source:app\",\"main\",\"src/main.to\",42][Int]")
+            );
+            generated.push(ty);
+        }
+        let generated = generated[0];
         let cursor = interner.cursor(CursorMode::Ref, generated).unwrap();
 
-        assert_eq!(
-            interner.canonical(generated).unwrap(),
-            "generated[\"closure\",\"source:app\",\"main\",\"src/main.to\",42][Int]"
-        );
         assert_eq!(
             interner.canonical(cursor).unwrap(),
             "cursor[ref,generated[\"closure\",\"source:app\",\"main\",\"src/main.to\",42][Int]]"

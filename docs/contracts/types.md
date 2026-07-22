@@ -81,9 +81,12 @@ argument vector. Its canonical constructor is the atom supplied by
 `SymbolIdentity`, followed by canonical generic arguments when present.
 
 Opaque results use the value declaration atom followed by `#result`. Generated
-closure types use their kind, source ID, module, logical file, and starting byte;
-captured generic arguments follow as a canonical application. Cursor types use
-the exact `cursor[own,T]` or `cursor[ref,T]` form.
+closure types use their exact effect kind (`closure`, `unsafe-closure`,
+`async-closure`, or `async-unsafe-closure`), source ID, module, logical file,
+and starting byte; captured generic arguments follow as a canonical
+application. The kind's async/unsafe bits must equal the structural function
+signature retained by HIR. Cursor types use the exact `cursor[own,T]` or
+`cursor[ref,T]` form.
 
 ## Inference and errors
 
@@ -153,7 +156,8 @@ Tests prove scalar synonym identity, resource limits, nominal invariance,
 namespace checks, intrinsic arity, function serialization, option/result
 equivalence, recursive union normalization, substitution and renormalization,
 stable generated identities, exact top-level assignment, the closed numeric
-conversion table, local inference rollback and occurs checks, first-order
+conversion table, all four effect-specific generated closure names, local
+inference rollback and occurs checks, first-order
 generic overlap, independently scoped multi-root coherence, unordered
 alpha-equivalent unions, functional-output comparison, deep graph handling, and
 the prohibition on serializing unresolved inference or recovery types.

@@ -2141,6 +2141,70 @@ mod tests {
     }
 
     #[test]
+    fn closure_effects_cross_the_public_pipeline_without_premature_invocation() {
+        let source = b"fn main() {\n\
+              let sync: fn(): Int = () { 1 }\n\
+              let raw: unsafe fn(): Int = unsafe () { 2 }\n\
+              let later: async fn(): Int = async () { 3 }\n\
+              let both: async unsafe fn(): Int = async unsafe () { 4 }\n\
+              _ = sync\n\
+              _ = raw\n\
+              _ = later\n\
+              _ = both\n\
+          }\n";
+        let checked = execute(operation_request(
+            Operation::Check,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(checked.status(), CompilationStatus::Success);
+        let model = checked.semantic_model().unwrap();
+        assert!(model.expression_check_complete());
+        let closures = model.hir().unwrap().closures().collect::<Vec<_>>();
+        assert_eq!(closures.len(), 4);
+        assert_eq!(
+            closures
+                .iter()
+                .map(|closure| (closure.is_async(), closure.is_unsafe()))
+                .collect::<Vec<_>>(),
+            vec![(false, false), (false, true), (true, false), (true, true)]
+        );
+
+        let run = execute(operation_request(
+            Operation::Run,
+            source,
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            run.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            run.diagnostics().diagnostics()
+        );
+
+        for source in [
+            &b"fn main() {\n    let operation = async (): Int { 1 }\n    _ = operation()\n}\n"[..],
+            &b"fn main() {\n    let operation = unsafe (): Int { 1 }\n    _ = operation()\n}\n"[..],
+            &b"async fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
+            &b"unsafe fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
+        ] {
+            let output = execute(operation_request(
+                Operation::Run,
+                source,
+                SourceForm::Script,
+                ResourceLimits::default(),
+            ))
+            .unwrap();
+            assert_eq!(output.status(), CompilationStatus::Rejected);
+            assert_eq!(output.diagnostics().diagnostics()[0].code(), "T0001");
+        }
+    }
+
+    #[test]
     fn unbounded_generics_infer_invariant_arguments_and_execute() {
         let output = execute(operation_request(
             Operation::Run,

@@ -1241,6 +1241,7 @@ impl<'a> TypeLowerer<'a> {
         node: SyntaxNodeRef<'a>,
         environment: &TypeEnvironment,
     ) -> Result<TypeId, HirError> {
+        let is_async = has_direct_token(node, TokenKind::Async);
         let mut parameters = Vec::new();
         let mut variadic = None;
         if let Some(list) = node
@@ -1275,7 +1276,18 @@ impl<'a> TypeLowerer<'a> {
                     }
                     variadic = Some(ty);
                 } else {
-                    parameters.push(FunctionParameter::new(parameter_mode(*item), ty));
+                    let mode = parameter_mode(*item);
+                    if is_async && matches!(mode, ParameterMode::Mut | ParameterMode::Var) {
+                        self.emit(
+                            file,
+                            item.range(),
+                            "E1609",
+                            "an async function type cannot contain a `mut` or `var` parameter",
+                            None,
+                            None,
+                        )?;
+                    }
+                    parameters.push(FunctionParameter::new(mode, ty));
                 }
             }
         }
@@ -1304,7 +1316,7 @@ impl<'a> TypeLowerer<'a> {
             Ok(self.interner.error())
         } else {
             Ok(self.interner.function(FunctionType::new(
-                has_direct_token(node, TokenKind::Async),
+                is_async,
                 has_direct_token(node, TokenKind::Unsafe),
                 parameters,
                 variadic,
@@ -2732,7 +2744,7 @@ impl<'a> TypeLowerer<'a> {
                         self.emit(
                             file,
                             parameter.range(),
-                            "E1115",
+                            "E1609",
                             "an async callable cannot borrow a mutable receiver",
                             None,
                             None,
@@ -2767,7 +2779,7 @@ impl<'a> TypeLowerer<'a> {
                     self.emit(
                         file,
                         parameter.range(),
-                        "E1115",
+                        "E1609",
                         "an async callable cannot borrow a mutable parameter",
                         None,
                         None,
@@ -3979,6 +3991,17 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn async_signatures_use_the_specific_exclusive_parameter_diagnostic() {
+        let (_, _, output) = lower(
+            "type Counter = { value: Int }\n\
+             async fn update(value: mut Int) {}\n\
+             async fn Counter.change(mut self) {}\n\
+             fn accepts(operation: async fn(var Int)) {}\n",
+        );
+        assert_eq!(codes(&output), ["E1609", "E1609", "E1609"]);
     }
 
     #[test]

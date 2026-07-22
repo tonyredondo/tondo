@@ -2182,16 +2182,12 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
-        if node
+        let is_async = node
             .child_tokens()
-            .any(|token| matches!(token.kind(), TokenKind::Async | TokenKind::Unsafe))
-        {
-            // CALL-004 owns the semantic distinction and the additional safety
-            // contracts. Keeping this surface incomplete avoids inventing a
-            // provisional sync representation for it.
-            self.complete = false;
-            return self.recovery_expression(file, node.range());
-        }
+            .any(|token| token.kind() == TokenKind::Async);
+        let is_unsafe = node
+            .child_tokens()
+            .any(|token| token.kind() == TokenKind::Unsafe);
 
         let span = self.sources.span(file, node.range())?;
         let Some(body_node) = node
@@ -2213,6 +2209,18 @@ impl<'a> ExpressionChecker<'a> {
                 Ok(TypeKind::Function(function)) => Some(function.clone()),
                 _ => None,
             });
+        if expected_function.as_ref().is_some_and(|function| {
+            function.is_async() != is_async || function.is_unsafe() != is_unsafe
+        }) {
+            self.emit(
+                span,
+                "E1102",
+                "closure effects do not match the expected function type",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, node.range());
+        }
         let parameter_nodes = node
             .child_nodes()
             .find(|child| child.kind() == SyntaxKind::ClosureParameterList)
@@ -2311,6 +2319,17 @@ impl<'a> ExpressionChecker<'a> {
                 signature_valid = false;
                 (ParameterMode::Value, self.program.interner.error(), false)
             };
+
+            if is_async && matches!(mode, ParameterMode::Mut | ParameterMode::Var) {
+                self.emit(
+                    parameter_span,
+                    "E1609",
+                    "an async closure cannot keep a `mut` or `var` parameter across suspension",
+                    Vec::new(),
+                    None,
+                )?;
+                signature_valid = false;
+            }
 
             if is_variadic
                 && (variadic.is_some()
@@ -2470,8 +2489,8 @@ impl<'a> ExpressionChecker<'a> {
         let (body_root, outcome) = checked_body?;
 
         let function_type = self.program.interner.function(FunctionType::new(
-            false,
-            false,
+            is_async,
+            is_unsafe,
             function_parameters,
             variadic,
             outcome,
@@ -2486,6 +2505,7 @@ impl<'a> ExpressionChecker<'a> {
                     Vec::new(),
                     None,
                 )?;
+                return self.recovery_expression(file, node.range());
             }
         }
 
@@ -2514,7 +2534,7 @@ impl<'a> ExpressionChecker<'a> {
 
         let source = self.sources.get(file)?;
         let identity = GeneratedTypeIdentity::new(
-            GeneratedTypeKind::Closure,
+            GeneratedTypeKind::closure(is_async, is_unsafe),
             source.source_id().clone(),
             source.module().clone(),
             source.path().clone(),
@@ -2529,7 +2549,7 @@ impl<'a> ExpressionChecker<'a> {
                 file,
                 offset: node.range().start(),
             })?;
-        let protocols = self.derive_closure_protocols(body_root, &captures);
+        let protocols = self.derive_closure_protocols(body_root, &captures, is_async);
         let id = HirClosureId(u32::try_from(self.program.closures.len()).map_err(|_| {
             HirError::NodeLimit {
                 file,
@@ -2564,6 +2584,7 @@ impl<'a> ExpressionChecker<'a> {
         &self,
         body: HirExpressionId,
         captures: &[HirClosureCapture],
+        is_async: bool,
     ) -> HirClosureProtocols {
         let captures = captures
             .iter()
@@ -2571,11 +2592,12 @@ impl<'a> ExpressionChecker<'a> {
             .collect::<BTreeSet<_>>();
         let writes_capture = self.closure_body_writes_capture(body, &captures);
 
-        // CALL-002 admits only Copy captures. Therefore no body operation can
-        // move a value out of the environment yet, and Discard is available
-        // for the closed implication CallMut + Discard => CallOnce. M5 will
-        // extend this analysis with availability-aware moves.
-        HirClosureProtocols::new(!writes_capture, true, true)
+        // M4 admits only Copy captures. Therefore no body operation can move a
+        // value out of the environment yet, and Discard is available for the
+        // closed implication CallMut + Discard => CallOnce. An async body that
+        // writes its environment must own it across suspension, so it cannot
+        // expose CallMut. M5 extends this with availability-aware moves.
+        HirClosureProtocols::new(!writes_capture, !is_async || !writes_capture, true)
     }
 
     fn closure_body_writes_capture(
@@ -13252,6 +13274,13 @@ impl<'a> ExpressionChecker<'a> {
             }
             return self.recovery_expression(file, range);
         };
+        if contract.function.is_async() || contract.function.is_unsafe() {
+            // ASYNC-002 and UNSAFE-001 own the initiating expression and its
+            // context proof. CALL-004 retains the exact callable effects but
+            // must not execute them as an ordinary synchronous safe call.
+            self.complete = false;
+            return self.recovery_expression(file, range);
+        }
         let Some(protocol) =
             self.select_call_protocol(call_span, callee, callee_type, contract.protocols, context)?
         else {
@@ -15854,6 +15883,144 @@ mod tests {
                     Some(HirCapabilityStatus::Unsatisfied)
                 );
             }
+        }
+    }
+
+    #[test]
+    fn closure_effects_have_distinct_generated_kinds_and_exact_function_types() {
+        let (_, _, output) = check(
+            "fn build() {\n\
+                 let sync: fn(Int): Int = (value) { value }\n\
+                 let raw: unsafe fn(Int): Int = unsafe (value) { value }\n\
+                 let later: async fn(Int): Int = async (value) { value }\n\
+                 let both: async unsafe fn(Int): Int = async unsafe (value) { value }\n\
+                 _ = sync\n\
+                 _ = raw\n\
+                 _ = later\n\
+                 _ = both\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let closures = output.program().closures().collect::<Vec<_>>();
+        assert_eq!(closures.len(), 4);
+        assert_eq!(
+            closures
+                .iter()
+                .map(|closure| closure.kind())
+                .collect::<Vec<_>>(),
+            vec![
+                GeneratedTypeKind::Closure,
+                GeneratedTypeKind::UnsafeClosure,
+                GeneratedTypeKind::AsyncClosure,
+                GeneratedTypeKind::AsyncUnsafeClosure,
+            ]
+        );
+        assert_eq!(
+            closures
+                .iter()
+                .map(|closure| (closure.is_async(), closure.is_unsafe()))
+                .collect::<Vec<_>>(),
+            vec![(false, false), (false, true), (true, false), (true, true)]
+        );
+        assert_eq!(
+            closures
+                .iter()
+                .map(|closure| output
+                    .program()
+                    .interner()
+                    .canonical(closure.function_type())
+                    .unwrap())
+                .collect::<Vec<_>>(),
+            vec![
+                "fn(Int): Int",
+                "unsafe fn(Int): Int",
+                "async fn(Int): Int",
+                "async unsafe fn(Int): Int",
+            ]
+        );
+        for closure in closures {
+            let concrete = output.program().interner().canonical(closure.ty()).unwrap();
+            assert!(concrete.contains(closure.kind().as_str()));
+            assert_eq!(
+                closure.protocols(),
+                HirClosureProtocols::new(true, true, true)
+            );
+        }
+    }
+
+    #[test]
+    fn closure_effects_must_match_the_expected_function_type_exactly() {
+        for source in [
+            "fn invalid() {\n    let operation: fn(): Int = async () { 1 }\n    _ = operation\n}\n",
+            "fn invalid() {\n    let operation: async fn(): Int = () { 1 }\n    _ = operation\n}\n",
+            "fn invalid() {\n    let operation: unsafe fn(): Int = async unsafe () { 1 }\n    _ = operation\n}\n",
+            "fn invalid() {\n    let operation: async unsafe fn(): Int = unsafe () { 1 }\n    _ = operation\n}\n",
+        ] {
+            let (_, _, output) = check(source);
+            assert_eq!(codes(&output), ["E1102"], "{source}");
+            assert_eq!(output.program().closures().count(), 0, "{source}");
+        }
+    }
+
+    #[test]
+    fn async_closure_writes_require_owned_call_once_access() {
+        let (_, _, output) = check(
+            "fn build() {\n\
+                 var asyncCount = 0\n\
+                 let later = async (): Int {\n\
+                     asyncCount += 1\n\
+                     asyncCount\n\
+                 }\n\
+                 var unsafeCount = 0\n\
+                 let raw = unsafe (): Int {\n\
+                     unsafeCount += 1\n\
+                     unsafeCount\n\
+                 }\n\
+                 _ = later\n\
+                 _ = raw\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let closures = output.program().closures().collect::<Vec<_>>();
+        assert_eq!(closures.len(), 2);
+        assert_eq!(
+            closures[0].protocols(),
+            HirClosureProtocols::new(false, false, true)
+        );
+        assert_eq!(
+            closures[1].protocols(),
+            HirClosureProtocols::new(false, true, true)
+        );
+    }
+
+    #[test]
+    fn async_closures_reject_exclusive_parameters_and_effectful_calls_stay_deferred() {
+        for source in [
+            "fn invalid() {\n    let operation = async (value: mut Int) { () }\n    _ = operation\n}\n",
+            "fn invalid() {\n    let operation = async (value: var Int) { () }\n    _ = operation\n}\n",
+        ] {
+            let (_, _, output) = check(source);
+            assert_eq!(codes(&output), ["E1609"]);
+        }
+
+        for source in [
+            "fn deferred() {\n    let operation = async (): Int { 1 }\n    _ = operation()\n}\n",
+            "fn deferred() {\n    let operation = unsafe (): Int { 1 }\n    _ = operation()\n}\n",
+        ] {
+            let (_, _, output) = check(source);
+            assert!(output.diagnostics().is_empty(), "{source}");
+            assert!(!output.is_complete(), "{source}");
+            assert_eq!(output.program().closures().count(), 1, "{source}");
         }
     }
 

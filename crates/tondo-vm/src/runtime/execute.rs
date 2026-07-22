@@ -67,7 +67,34 @@ pub fn execute_with_limits(
             max_dataflow_steps: limits.max_verification_steps,
         },
     )?;
+    validate_entry_contract(program, entry)?;
     Engine::new(program, host, limits).run(entry)
+}
+
+fn validate_entry_contract(
+    program: &BytecodeProgram,
+    entry: BytecodeFunctionId,
+) -> Result<(), VmError> {
+    let function = program
+        .function(entry)
+        .ok_or_else(|| VmError::InvalidEntry(format!("unknown function {}", entry.index())))?;
+    let callable = program.callable(function.callable).ok_or_else(|| {
+        VmError::InvalidEntry("the selected function has no callable contract".into())
+    })?;
+    let signature = program.ty(callable.function_type).ok_or_else(|| {
+        VmError::InvalidEntry("the selected callable has no function type".into())
+    })?;
+    let BytecodeTypeKind::Function(signature) = &signature.kind else {
+        return Err(VmError::InvalidEntry(
+            "the selected callable contract is not a function".into(),
+        ));
+    };
+    if signature.is_async || signature.is_unsafe {
+        return Err(VmError::InvalidEntry(
+            "the selected callable requires an async or unsafe execution context".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_limits(limits: VmLimits) -> Result<(), VmError> {

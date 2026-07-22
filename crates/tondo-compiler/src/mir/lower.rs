@@ -4130,6 +4130,81 @@ mod tests {
     }
 
     #[test]
+    fn all_closure_effect_kinds_keep_their_hidden_environment_in_mir() {
+        let source = "fn build() {\n\
+                          let sync: fn(): Int = () { 1 }\n\
+                          let raw: unsafe fn(): Int = unsafe () { 2 }\n\
+                          let later: async fn(): Int = async () { 3 }\n\
+                          let both: async unsafe fn(): Int = async unsafe () { 4 }\n\
+                          _ = sync()\n\
+                          _ = sync\n\
+                          _ = raw\n\
+                          _ = later\n\
+                          _ = both\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        assert_eq!(hir.closures().count(), 4);
+        assert_eq!(mir.functions().len(), 5);
+        for closure in hir.closures() {
+            let body = mir
+                .closure_function(closure.id())
+                .expect("each effectful closure keeps a MIR body");
+            assert_eq!(body.parameters().len(), 1);
+            assert_eq!(body.local(body.parameters()[0]).unwrap().ty(), closure.ty());
+        }
+        let aggregates = mir
+            .functions()
+            .flat_map(|function| function.blocks())
+            .flat_map(|block| block.statements())
+            .filter(|statement| {
+                matches!(
+                    statement.kind(),
+                    MirStatementKind::Assign {
+                        value: MirRvalue {
+                            kind: MirRvalueKind::Aggregate {
+                                shape: MirAggregateKind::Closure { .. },
+                                ..
+                            },
+                            ..
+                        },
+                        ..
+                    }
+                )
+            })
+            .count();
+        assert_eq!(aggregates, 4);
+
+        let async_signature = hir
+            .closures()
+            .find(|closure| closure.is_async() && !closure.is_unsafe())
+            .unwrap()
+            .function_type();
+        let mut forged_call = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let signature = forged_call
+            .functions
+            .values_mut()
+            .flat_map(|function| &mut function.blocks)
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::Invoke {
+                    operation:
+                        MirOperation {
+                            kind: MirOperationKind::Call { signature, .. },
+                            ..
+                        },
+                    ..
+                } => Some(signature),
+                _ => None,
+            })
+            .unwrap();
+        *signature = async_signature;
+        let error = verify_mir(&resolved, &hir, &forged_call).unwrap_err();
+        assert!(error.message().contains("effectful call"), "{error}");
+    }
+
+    #[test]
     fn mir_verifier_rejects_an_assert_without_its_condition_representation() {
         let (resolved, hir) = checked("fn check() { assert(true) }\n");
         let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();

@@ -2516,6 +2516,12 @@ impl Verifier<'_> {
                 "call operation signature is not a function",
             ));
         };
+        if call_signature.is_async() || call_signature.is_unsafe() {
+            return Err(MirInvariantError::new(
+                context,
+                "effectful call reached the synchronous safe MIR call operation",
+            ));
+        }
         if call_signature.outcome() != outcome {
             return Err(MirInvariantError::new(
                 context,

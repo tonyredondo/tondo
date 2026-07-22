@@ -3,7 +3,8 @@
 **Status:** BC-001 through BC-005, GEN-002 monomorphization, TRAIT-005 static
 dispatch, TRAIT-006 opaque results, CAP-001 closed capabilities, CALL-001
 uniform named function values, CALL-002 concrete closure environments, CALL-003
-closure protocols and invocation, and the M3 VM admission path implemented
+closure protocols and synchronous-safe invocation, CALL-004 effect-preserving
+closure callables, and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -51,6 +52,9 @@ The VM data model retains receiver position, parameter modes, variadic element
 type, generic arity, outcome, function type, optional implementation, and
 optional concrete-closure metadata. Closure metadata records the generated
 environment type, ordered capture schema, and `Call`/`CallMut`/`CallOnce` row.
+Function entries retain the exact `async` and `unsafe` bits, so sync, unsafe,
+async, and async-unsafe closures remain distinct after compiler `TypeId` values
+have disappeared.
 Compiler-produced executable callable entries are concrete instances: their
 generic arity is zero and their signature types have already been substituted.
 Static function operands name that concrete callable and carry an empty
@@ -158,9 +162,10 @@ length, and iterator-state creation.
 A closure construction is an ordinary managed aggregate whose result is a
 concrete generated type. Its shape names one concrete closure callable; that
 callable owns the identical environment type, ordered capture schema, protocol
-row, and executable body. Its operands carry the corresponding concrete capture
-values. Verification requires identity, schema, and value agreement before
-allocation.
+row, effect-exact function signature, and lowered body. Its operands carry the
+corresponding concrete capture values. Verification requires identity, schema,
+signature, and value agreement before allocation. Constructing this aggregate
+does not invoke its body, including for async or unsafe closure kinds.
 
 A call operation accepts either a direct concrete function operand or a
 borrow/copy/move of a place containing a callable value. The latter is the
@@ -172,6 +177,12 @@ modes, arity, variadic shape, outcome, function signature, protocol support, and
 access form. A source protocol exposed by a generic or opaque contract is
 normalized to the strongest safe concrete specialization without changing
 whether the source operand borrows, copies, or moves.
+
+The bootstrap `Call` operation is deliberately synchronous and safe. Its
+signature must have both effect bits clear; the verifier rejects a forged async
+or unsafe call before execution. Future async and unsafe lowering must add the
+context and control-flow information required by those effects rather than
+reusing this operation.
 
 `BytecodeCoercion::Opaque` and `BytecodeCoercion::CallableErasure` are verified
 runtime no-ops: execution forwards the already materialized value unchanged.
@@ -219,7 +230,10 @@ Before execution, the verifier proves:
   aggregates and capture projections name that same callable and match every
   operand exactly;
 - closure protocols are rederived from the executable body and cannot be
-  strengthened by forged catalog metadata;
+  strengthened by forged catalog metadata; an async body that writes its
+  environment cannot advertise `Call` or `CallMut`;
+- async callables have no `mut` or `var` parameter, and the synchronous-safe
+  call opcode rejects every async or unsafe function signature;
 - every closed executable `Map[K, V]` and `Set[K]` has `K: Key`, every `Ref[T]`
   has `T: Discard`, equality has `T: Equatable`, array membership has an
   equatable element, map/set membership has a key, and map lookup has `V: Copy`;
@@ -230,7 +244,8 @@ Before execution, the verifier proves:
   opaque family;
 - calls have an exact structural signature, matching outcome, complete
   fixed/receiver association, correct modes, valid variadic element or final
-  spread, supported protocol, and protocol-compatible borrow/copy/move access;
+  spread, supported protocol, protocol-compatible borrow/copy/move access, and
+  no unimplemented effect;
 - a generic or opaque callable resolves to one concrete named function or
   closure with the same signature, while a callable erasure preserves the
   concrete closure value and exact uniform function signature;

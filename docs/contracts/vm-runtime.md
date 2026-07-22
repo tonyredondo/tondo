@@ -1,7 +1,7 @@
 # Bootstrap VM object and execution contract
 
 **Status:** implemented M3 baseline plus CALL-003 synchronous Copy closure
-invocation
+invocation and CALL-004 effectful-environment retention with execution guards
 **Language baseline:** Tondo 0.1-draft.8
 
 This contract fixes the bootstrap object model selected by DEC-006. It is an
@@ -32,7 +32,9 @@ closure value in a frame, another object, or the operation-local root stack.
 Logical copy recursively copies the environment and every Copy capture;
 immutable strings and `Ref[T]` retain their ordinary sharing rule. Snapshotting
 produces the detached callable identity plus detached capture values for
-tooling.
+tooling. Sync, unsafe, async, and async-unsafe closures share this storage
+machinery; their exact effects remain in callable type metadata, not object
+layout.
 
 Compound payload fields are individually optional internally. Absence records
 a logical move and is never a Tondo `none`. Bytecode verification and runtime
@@ -101,6 +103,13 @@ combination, so runtime dispatch performs no trait selection. Opaque callable
 views and closure-to-`fn` erasure are representation-preserving and still reach
 the same managed closure value.
 
+This call path admits only signatures with neither `async` nor `unsafe`. The
+bytecode verifier rejects an effectful ordinary call, and the public execution
+entry rejects selecting an async or unsafe callable body as the root frame.
+Effectful closures can therefore be constructed, copied, traced, snapshotted,
+erased to the identical effect-preserving function type, and discarded without
+activating an unfinished async runtime or bypassing an unsafe context proof.
+
 A panic stores its normative `P` code, stable name, message, primary source
 span, and a canonical innermost-first call stack. Cleanup blocks execute while
 the pending panic crosses frames. Tondo 0.1 cannot catch it. `assert` evaluates
@@ -142,7 +151,9 @@ reachable graphs, reclaim unreachable cycles, reject stale generations, trace
 and snapshot managed closure captures, and collect during construction, logical
 copy, and invocation. Mutated HIR, MIR, and bytecode fixtures must prove that
 their respective admission gates reject forged closure identity, schema,
-protocol, signature, access, and erasure before execution.
+protocol, signature, access, erasure, and effectful ordinary calls before
+execution. Entry tests must also reject async and unsafe callable bodies while
+their runtime contexts remain unimplemented.
 
 Slice assignment materializes the complete RHS before its write validation.
 The validation terminator carries aligned destination/replacement metadata,

@@ -976,6 +976,19 @@ impl Verifier<'_> {
                     "callable function type has excess parameters",
                 ));
             }
+            if function.is_async
+                && callable.parameters.iter().any(|parameter| {
+                    matches!(
+                        parameter.mode,
+                        BytecodeParameterMode::Mut | BytecodeParameterMode::Var
+                    )
+                })
+            {
+                return Err(BytecodeVerificationError::new(
+                    &context,
+                    "async callable has an exclusive parameter",
+                ));
+            }
             if let Some(function) = callable.implementation {
                 self.function(function, &context)?;
             }
@@ -998,6 +1011,7 @@ impl Verifier<'_> {
                 let derived = self.derive_closure_protocols(
                     BytecodeCallableId::new(index as u32),
                     callable,
+                    function.is_async,
                     &context,
                 )?;
                 if closure.protocols != derived {
@@ -1015,6 +1029,7 @@ impl Verifier<'_> {
         &self,
         callable_id: BytecodeCallableId,
         callable: &BytecodeCallable,
+        is_async: bool,
         context: &str,
     ) -> Result<BytecodeClosureProtocols, BytecodeVerificationError> {
         let implementation = callable
@@ -1056,7 +1071,7 @@ impl Verifier<'_> {
         });
         Ok(BytecodeClosureProtocols {
             call: !writes_capture,
-            call_mut: true,
+            call_mut: !is_async || !writes_capture,
             call_once: true,
         })
     }
@@ -2930,6 +2945,12 @@ impl Verifier<'_> {
         let BytecodeTypeKind::Function(function) = &self.ty(signature, context)?.kind else {
             return Err(operation_error(context));
         };
+        if function.is_async || function.is_unsafe {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "effectful call reached the synchronous safe bytecode call operation",
+            ));
+        }
         if function.outcome != outcome {
             return Err(operation_error(context));
         }
