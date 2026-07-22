@@ -3470,7 +3470,7 @@ impl Verifier<'_> {
             .flatten()
             .filter_map(|event| match event {
                 LocalEvent::StorageLive(slot) | LocalEvent::StorageDead(slot) => Some(*slot),
-                LocalEvent::Read(_) | LocalEvent::Write(_) => None,
+                LocalEvent::Read(_) | LocalEvent::Move(_) | LocalEvent::Write(_) => None,
             })
             .collect::<BTreeSet<_>>();
         let mut relevant = events
@@ -3478,6 +3478,7 @@ impl Verifier<'_> {
             .flatten()
             .map(|event| match event {
                 LocalEvent::Read(slot)
+                | LocalEvent::Move(slot)
                 | LocalEvent::Write(slot)
                 | LocalEvent::StorageLive(slot)
                 | LocalEvent::StorageDead(slot) => *slot,
@@ -3712,6 +3713,18 @@ impl Verifier<'_> {
                             ));
                         }
                     }
+                    LocalEvent::Move(event_slot) if event_slot == slot => {
+                        if !state.live || !state.initialized {
+                            return Err(BytecodeVerificationError::new(
+                                format!("{context} block#{block_index}"),
+                                format!(
+                                    "moves slot#{} after its value became unavailable",
+                                    slot.index()
+                                ),
+                            ));
+                        }
+                        state.initialized = false;
+                    }
                     LocalEvent::Write(event_slot) if event_slot == slot => {
                         if !state.live {
                             return Err(BytecodeVerificationError::new(
@@ -3736,6 +3749,7 @@ impl Verifier<'_> {
                         state.initialized = false;
                     }
                     LocalEvent::Read(_)
+                    | LocalEvent::Move(_)
                     | LocalEvent::Write(_)
                     | LocalEvent::StorageLive(_)
                     | LocalEvent::StorageDead(_) => {}
@@ -4237,6 +4251,7 @@ enum TagEvent {
 #[derive(Debug, Clone, Copy)]
 enum LocalEvent {
     Read(BytecodeSlotId),
+    Move(BytecodeSlotId),
     Write(BytecodeSlotId),
     StorageLive(BytecodeSlotId),
     StorageDead(BytecodeSlotId),
@@ -4347,6 +4362,11 @@ fn transfer_local(state: LocalState, events: &[LocalEvent], slot: BytecodeSlotId
                     state.initialized = true;
                 }
             }
+            LocalEvent::Move(event_slot) if event_slot == slot => {
+                if state.live && state.initialized {
+                    state.initialized = false;
+                }
+            }
             LocalEvent::StorageLive(event_slot) if event_slot == slot => {
                 state.live = true;
                 state.initialized = false;
@@ -4356,6 +4376,7 @@ fn transfer_local(state: LocalState, events: &[LocalEvent], slot: BytecodeSlotId
                 state.initialized = false;
             }
             LocalEvent::Read(_)
+            | LocalEvent::Move(_)
             | LocalEvent::Write(_)
             | LocalEvent::StorageLive(_)
             | LocalEvent::StorageDead(_) => {}
@@ -4789,11 +4810,14 @@ fn push_operation_events(operation: &BytecodeOperation, events: &mut Vec<LocalEv
 }
 
 fn push_operand_events(operand: &BytecodeOperand, events: &mut Vec<LocalEvent>) {
-    if let BytecodeOperandKind::Copy(place)
-    | BytecodeOperandKind::Move(place)
-    | BytecodeOperandKind::Borrow(place) = &operand.kind
-    {
-        push_place_events(place, true, events);
+    match &operand.kind {
+        BytecodeOperandKind::Move(place) if place.projections.is_empty() => {
+            events.push(LocalEvent::Move(place.slot));
+        }
+        BytecodeOperandKind::Copy(place)
+        | BytecodeOperandKind::Move(place)
+        | BytecodeOperandKind::Borrow(place) => push_place_events(place, true, events),
+        BytecodeOperandKind::Constant(_) | BytecodeOperandKind::Function { .. } => {}
     }
 }
 

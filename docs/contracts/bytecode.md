@@ -5,7 +5,8 @@ dispatch, TRAIT-006 opaque results, CAP-001 closed capabilities, CALL-001
 uniform named function values, CALL-002 concrete closure environments, CALL-003
 closure protocols and synchronous-safe invocation, CALL-004 effect-preserving
 closure callables, OWN-001 intrinsic cursor capabilities, OWN-002 affine
-transfers and immediate observations, and the M3 VM admission path implemented
+transfers and immediate observations, OWN-003 whole-slot flow availability, and
+the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -169,6 +170,15 @@ move even when one concrete instantiation happens to substitute a `Copy` type.
 The VM verifier independently rejects every forged `Copy` whose closed concrete
 type lacks `Copy`.
 
+An unprojected `Move` also consumes the slot's current definition. The verifier
+requires that definition to be live and initialized, marks it unavailable after
+the move, and intersects availability across every normal, unwind, and loop
+predecessor. A subsequent read or move therefore cannot rely on a value present
+on only some incoming paths. A complete store creates a new slot definition.
+Projected moves remain read-only events in this whole-slot analysis until
+OWN-005 introduces verified move paths; HIR conservatively invalidates their
+source owner in the meantime.
+
 A closure construction is an ordinary managed aggregate whose result is a
 concrete generated type. Its shape names one concrete closure callable; that
 callable owns the identical environment type, ordered capture schema, protocol
@@ -274,18 +284,19 @@ Before execution, the verifier proves:
   aggregates, returns, or unrelated operations;
 - normal edges remain in normal code, unwind edges enter cleanup code, and the
   distinguished unwind block resumes panic;
-- all reachable reads have a dominating live definition, edge-produced values
-  exist only on their successful edge, and the return slot is initialized;
+- all reachable reads have a dominating live definition, every unprojected move
+  consumes it at most once on each path, edge-produced values exist only on
+  their successful edge, and the return slot is initialized;
 - payload projections are dominated by their matching discriminant edge and a
   potentially overlapping write invalidates that refinement; and
 - every `assert` retains a nonempty condition representation for its default
   runtime message; and
 - unreachable retained blocks contain no executable bytecode.
 
-Initialization/lifetime and discriminant refinement are separate forward
-dataflow analyses with an explicit shared step budget. Exhaustion is a resource
-limit, not malformed source and not permission to execute partially verified
-code.
+Initialization, whole-slot move availability, and lifetime share one forward
+dataflow analysis; discriminant refinement remains separate. Both have an
+explicit shared step budget. Exhaustion is a resource limit, not malformed
+source and not permission to execute partially verified code.
 
 These capability checks are derived again from the bytecode type graph and
 generic nominal layout summaries; generated closure types derive `Copy`,

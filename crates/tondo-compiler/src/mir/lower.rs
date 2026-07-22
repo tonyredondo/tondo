@@ -3792,6 +3792,132 @@ mod tests {
     }
 
     #[test]
+    fn mir_verifier_rejects_repeated_and_joined_affine_moves() {
+        let (resolved, hir) = checked("fn consume[T: Discard](input: T) {\n    _ = input\n}\n");
+        let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = mir
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "consume")))
+            .unwrap();
+        let (block, index) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.statements
+                    .iter()
+                    .position(|statement| {
+                        matches!(
+                            statement.kind(),
+                            MirStatementKind::Assign {
+                                value: MirRvalue {
+                                    kind: MirRvalueKind::Use(MirOperand {
+                                        kind: MirOperandKind::Move(place),
+                                        ..
+                                    }),
+                                    ..
+                                },
+                                ..
+                            } if place.projections().is_empty()
+                        )
+                    })
+                    .map(|index| (block, index))
+            })
+            .expect("affine input is transferred by one direct move");
+        let duplicate = function.blocks[block].statements[index].clone();
+        function.blocks[block]
+            .statements
+            .insert(index + 1, duplicate);
+
+        let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("after its value became unavailable")
+        );
+
+        let (resolved, hir) = checked(
+            "fn consume[T: Discard](input: T, flag: Bool) {\n\
+                 if flag {\n\
+                     _ = input\n\
+                     return\n\
+                 }\n\
+                 _ = input\n\
+             }\n",
+        );
+        let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = mir
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "consume")))
+            .unwrap();
+        let input = function
+            .locals
+            .iter()
+            .position(|local| {
+                matches!(
+                    local.kind,
+                    MirLocalKind::Parameter {
+                        index: 0,
+                        source: Some(_)
+                    }
+                )
+            })
+            .map(|index| MirLocalId(index as u32))
+            .expect("input is the first source parameter");
+        let move_blocks = function
+            .blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(index, block)| {
+                block
+                    .statements
+                    .iter()
+                    .any(|statement| {
+                        matches!(
+                            &statement.kind,
+                            MirStatementKind::Assign {
+                                value: MirRvalue {
+                                    kind: MirRvalueKind::Use(MirOperand {
+                                        kind: MirOperandKind::Move(place),
+                                        ..
+                                    }),
+                                    ..
+                                },
+                                ..
+                            } if place.local == input && place.projections.is_empty()
+                        )
+                    })
+                    .then_some(index)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(move_blocks.len(), 2);
+        let returning = move_blocks
+            .iter()
+            .copied()
+            .find(|index| {
+                matches!(
+                    function.blocks[*index].terminator.kind,
+                    MirTerminatorKind::Return
+                )
+            })
+            .expect("the first move originally diverges");
+        let joined = move_blocks
+            .into_iter()
+            .find(|index| *index != returning)
+            .unwrap();
+        function.blocks[returning].terminator.kind = MirTerminatorKind::Goto {
+            target: MirBlockId(joined as u32),
+        };
+
+        let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("after its value became unavailable")
+        );
+    }
+
+    #[test]
     fn if_and_short_circuit_lower_to_explicit_deterministic_cfg() {
         let source = "fn choose(flag: Bool): Int {\n    if flag and true {\n        1\n    } else {\n        2\n    }\n}\n";
         let (resolved, hir) = checked(source);

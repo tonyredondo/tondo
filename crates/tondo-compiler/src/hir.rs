@@ -18,6 +18,7 @@ use crate::types::{
     TypeKind, TypeSubstitution,
 };
 
+mod availability;
 mod capabilities;
 mod check;
 mod const_eval;
@@ -26,6 +27,7 @@ mod termination;
 mod traits;
 mod verify;
 
+pub(crate) use availability::analyze_availability;
 pub(crate) use capabilities::{CapabilityAnalysis, CapabilityAssumptions};
 pub use check::{ExpressionCheckLimits, HirCheckOutput, check_expressions};
 pub use lower::{TypeLoweringLimits, lower_types};

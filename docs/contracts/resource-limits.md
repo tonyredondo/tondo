@@ -64,6 +64,10 @@ bound request still consumes the trait-obligation budget. Concrete closure
 signatures and environments are bounded by the existing syntax, type, and HIR
 budgets. Callable-protocol derivation performs a bounded traversal over the
 already topological HIR arenas and does not add recursive source traversal.
+Ownership availability traverses those same bounded arenas; each loop state
+grows monotonically over the finite local table and therefore reaches a fixed
+point without an open-ended runtime heuristic. Source nesting remains bounded
+by the parser's process-safety ceiling.
 
 MIR and bytecode construction bound every request-local table before growth;
 their initialization, lifetime, and tag-refinement analyses share independent

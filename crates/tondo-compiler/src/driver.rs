@@ -1857,6 +1857,10 @@ mod tests {
                 "E1407",
             ),
             (
+                &b"fn invalid[T: Discard](value: T) {\n    _ = value\n    _ = value\n}\n"[..],
+                "E1401",
+            ),
+            (
                 &b"fn source(): Int ! String { 1 }\nfn invalid(): Int { source()? }\n"[..],
                 "E1301",
             ),

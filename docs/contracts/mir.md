@@ -3,7 +3,7 @@
 **Status:** M3 typed CFG plus M4 uniform function values, four effect-preserving
 Copy closure forms, executable synchronous-safe closure calls, static-trait and
 opaque-result lowering, OWN-001 intrinsic cursor state, OWN-002 affine
-transfers, and verification implemented
+transfers, OWN-003 flow availability, and verification implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -66,7 +66,7 @@ They remain queryable but can never be lowered or executed.
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
 | Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, selected synchronous-safe call access, value/place category, pattern coverage, source evaluation order, and source-level control targets |
 | MIR construction (M3/M4) | Typed locals and temporaries, explicit CFG, places, synchronous-safe calls, effect-preserving closure bodies with a hidden environment, Copy closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
-| Ownership MIR (M5) | Contextual `Copy` versus `Move` and immediate non-escaping observations; later M5 steps add availability, regions, confirmed transfers, cleanup actions, and dynamic overlap checks |
+| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, and whole-local flow availability; later M5 steps add regions, partial moves, confirmed transfers, cleanup actions, and dynamic overlap checks |
 | Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
 
@@ -96,6 +96,22 @@ generic bounds of each body. A `T: Copy` body copies; an unbounded or merely
 through monomorphization, and rederived by the MIR verifier. OWN-003 adds the
 flow fact that a moved place is unavailable afterwards. A backend never decides
 between copy and move from runtime representation alone.
+
+OWN-003 proves source-local availability in HIR and rederives its whole-local
+backend invariant over the MIR CFG. An unprojected `Move` requires a live,
+initialized local and then makes it uninitialized. `Copy`, `Borrow`, and every
+other read require that same local to remain initialized. A complete write
+initializes its destination. At a CFG join the initialized bit is intersected,
+so a local is available only on every reachable predecessor; the bounded
+worklist applies the same rule to loop backedges and edge-defined results.
+
+Projected moves deliberately remain ordinary reads in this verifier until
+OWN-005 replaces the whole-local bit with place-granular move paths. The HIR
+analysis conservatively invalidates their owner today, but that source-level
+restriction is not misrepresented as a complete backend proof of partial
+moves. OWN-004 separately owns source permission to reinitialize an already
+moved `var`; MIR writes are already modeled as definitions so that later phase
+does not require a CFG redesign.
 
 Branches use block IDs, not nested expression nodes. `Never`, `return`, `fail`,
 `break`, `continue`, propagation, and panic paths end in terminators without an
@@ -223,7 +239,8 @@ The structural verifier introduced in M3 proves at minimum:
 - every block has one valid terminator and every successor exists;
 - local, field, variant, function, and constant indices are in range;
 - every operand and destination agrees with the declared local/type table;
-- every use is dominated by a definition and no local is read outside its
+- every use is dominated by a definition, every unprojected move consumes that
+  definition exactly once on every path, and no local is accessed outside its
   declared storage lifetime;
 - place projections are legal for their base type;
 - call arity, modes, argument types, and outcome agree with the selected
@@ -261,15 +278,16 @@ The structural verifier introduced in M3 proves at minimum:
 - source spans remain attached to locals and every executable operation, and
   stay within the function's source file.
 
-Definite initialization and storage lifetime are forward dataflow properties,
-not assumptions made by bytecode generation. Parameters are initialized at
-entry, edge-specific results are initialized only on their successful edge,
-and the return place must be initialized on every `Return`. Payload refinement
-is a separate forward analysis so initialization alone cannot authorize an
-invalid projection.
+Definite initialization, whole-local move availability, and storage lifetime
+are forward dataflow properties, not assumptions made by bytecode generation.
+Parameters are initialized at entry, edge-specific results are initialized only
+on their successful edge, and the return place must be initialized on every
+`Return`. Payload refinement is a separate forward analysis so initialization
+alone cannot authorize an invalid projection.
 
-M5 and M7 extend that proof with ownership, region, terminal-token, and
-suspension invariants. Verification always precedes bytecode lowering.
+Later M5 and M7 work extends that proof with partial ownership, regions,
+terminal tokens, and suspension invariants. Verification always precedes
+bytecode lowering.
 
 ## Determinism and resource limits
 

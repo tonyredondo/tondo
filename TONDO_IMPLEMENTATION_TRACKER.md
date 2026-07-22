@@ -2,13 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.35
+**Versión del tracker:** 0.36
 
 **Última actualización:** 2026-07-22
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar disponibilidad por flujo (OWN-003).
+**Objetivo inmediato:** permitir reposición completa de un `var` movido
+(OWN-004).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1163,7 +1164,8 @@ CAP-001 y CALL-001 a CALL-004:
 - `Copy`, `Discard`, `Send` y `Share` se derivan componente a componente desde
   las capturas sustituidas; `Equatable` y `Key` se rechazan. El bootstrap
   ejecutable permanece deliberadamente limitado a capturas `Copy`; OWN-006 y
-  OWN-007 añadirán moves, disponibilidad y obligaciones afines.
+  OWN-007 añadirán moves de captura, disponibilidad dentro del environment y
+  obligaciones afines.
 - El admission verifier exige correspondencia uno-a-uno entre metadata y
   expresión, identidad generada versus efectos de firma, firma/body, ausencia
   de parámetros async exclusivos, capacidad `Copy` y tipo, mutabilidad y
@@ -1251,11 +1253,16 @@ lifetimes escritos por el usuario.
   Parámetros, locals, retornos, argumentos por valor, agregados, cursores own y
   callees `CallOnce` transfieren ya valores afines. Las observaciones inmediatas
   y argumentos `ref`/`mut`/`var` usan un `Borrow` no almacenable en vez de una
-  copia ficticia. OWN-003 sigue siendo dueño de rechazar usos posteriores y
-  joins inconsistentes.
+  copia ficticia. OWN-003 rechaza ya sus usos posteriores y joins
+  inconsistentes.
 
-- [ ] **OWN-003 — Implementar disponibilidad por flujo.** Un binding debe estar
-  disponible en todos los caminos que llegan a cada uso.
+- [x] **OWN-003 — Implementar disponibilidad por flujo.** HIR conserva el span
+  del primer move, emite `E1401` al reutilizar un owner no disponible y une
+  ramas con disponibilidad en todos los predecesores. Bucles, `break`,
+  `continue`, divergencia, patterns y scopes participan en un fixed point
+  determinista. Los verificadores HIR, MIR y bytecode vuelven a probar el
+  contrato; MIR/bytecode invalidan locals/slots completos tras un `Move` y
+  OWN-005 conserva la granularidad de proyecciones.
 
 - [ ] **OWN-004 — Permitir reposición completa de un `var` movido.**
 
@@ -1868,13 +1875,36 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es OWN-003: convertir los `Move` ya explícitos en un
-análisis de disponibilidad por flujo que exija presencia en todos los caminos
-de entrada a cada uso.
+La siguiente acción activa es OWN-004: permitir que una asignación completa a
+un `var` movido cree una nueva definición disponible, sin extender ese permiso
+a `let`, parámetros propietarios ni destinos parciales.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.36 — 2026-07-22
+
+- Se completa OWN-003 con un análisis estructurado por body que clasifica cada
+  acceso como observación o transferencia bajo los bounds `Copy` exactos. El
+  estado conserva el primer span de move y produce `E1401` con ubicación
+  relacionada para todo uso posterior.
+- Los joins unen bindings no disponibles, por lo que un owner solo está
+  disponible si lo está en todos los predecesores que completan. `return`,
+  `fail` y pánico no contaminan el camino normal; `break`, `continue`, loops
+  condicionales, iteradores y cortocircuitos convergen mediante un fixed point
+  monotónico.
+- La asignación múltiple conserva su semántica atómica: resuelve destinos,
+  materializa el RHS completo y restaura destinos directos que estaban
+  disponibles. La reposición de un `var` previamente movido permanece aislada
+  en OWN-004.
+- El admission verifier de HIR repite el análisis. MIR y bytecode tratan un
+  `Move` no proyectado como consumo de la definición, intersectan disponibilidad
+  en ramas y backedges, y rechazan bytecode mutado antes de ejecutarlo. Los move
+  paths proyectados permanecen explícitamente en OWN-005.
+- El gate acumulado pasa 459 tests, `git diff --check`, formatter check, check y
+  build de todos los targets, Clippy con warnings denegados y Rustdoc con
+  warnings denegados.
 
 ### 0.35 — 2026-07-22
 

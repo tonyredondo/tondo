@@ -174,6 +174,7 @@ struct Verifier<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LocalEvent {
     Read(MirLocalId),
+    Move(MirLocalId),
     Write(MirLocalId),
     StorageLive(MirLocalId),
     StorageDead(MirLocalId),
@@ -3045,7 +3046,7 @@ impl Verifier<'_> {
             .flatten()
             .filter_map(|event| match event {
                 LocalEvent::StorageLive(local) | LocalEvent::StorageDead(local) => Some(*local),
-                LocalEvent::Read(_) | LocalEvent::Write(_) => None,
+                LocalEvent::Read(_) | LocalEvent::Move(_) | LocalEvent::Write(_) => None,
             })
             .collect::<BTreeSet<_>>();
         let mut relevant = events
@@ -3053,6 +3054,7 @@ impl Verifier<'_> {
             .flatten()
             .map(|event| match event {
                 LocalEvent::Read(local)
+                | LocalEvent::Move(local)
                 | LocalEvent::Write(local)
                 | LocalEvent::StorageLive(local)
                 | LocalEvent::StorageDead(local) => *local,
@@ -3176,6 +3178,18 @@ impl Verifier<'_> {
                             ));
                         }
                     }
+                    LocalEvent::Move(event_local) if event_local == local => {
+                        if !state.live || !state.initialized {
+                            return Err(MirInvariantError::new(
+                                format!("{context} block#{block_index}"),
+                                format!(
+                                    "moves local#{} after its value became unavailable",
+                                    local.index()
+                                ),
+                            ));
+                        }
+                        state.initialized = false;
+                    }
                     LocalEvent::Write(event_local) if event_local == local => {
                         if !state.live {
                             return Err(MirInvariantError::new(
@@ -3203,6 +3217,7 @@ impl Verifier<'_> {
                         state.initialized = false;
                     }
                     LocalEvent::Read(_)
+                    | LocalEvent::Move(_)
                     | LocalEvent::Write(_)
                     | LocalEvent::StorageLive(_)
                     | LocalEvent::StorageDead(_) => {}
@@ -3831,6 +3846,11 @@ fn transfer_local(state: LocalState, events: &[LocalEvent], local: MirLocalId) -
                     state.initialized = true;
                 }
             }
+            LocalEvent::Move(event_local) if event_local == local => {
+                if state.live && state.initialized {
+                    state.initialized = false;
+                }
+            }
             LocalEvent::StorageLive(event_local) if event_local == local => {
                 state.live = true;
                 state.initialized = false;
@@ -3840,6 +3860,7 @@ fn transfer_local(state: LocalState, events: &[LocalEvent], local: MirLocalId) -
                 state.initialized = false;
             }
             LocalEvent::Read(_)
+            | LocalEvent::Move(_)
             | LocalEvent::Write(_)
             | LocalEvent::StorageLive(_)
             | LocalEvent::StorageDead(_) => {}
@@ -3942,11 +3963,16 @@ fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>)
 }
 
 fn push_operand_events(operand: &MirOperand, events: &mut Vec<LocalEvent>) {
-    if let MirOperandKind::Copy(place)
-    | MirOperandKind::Move(place)
-    | MirOperandKind::Borrow(place) = &operand.kind
-    {
-        push_place_events(place, true, events);
+    match &operand.kind {
+        MirOperandKind::Move(place) if place.projections.is_empty() => {
+            events.push(LocalEvent::Move(place.local));
+        }
+        MirOperandKind::Copy(place)
+        | MirOperandKind::Move(place)
+        | MirOperandKind::Borrow(place) => push_place_events(place, true, events),
+        MirOperandKind::Constant(_)
+        | MirOperandKind::Function { .. }
+        | MirOperandKind::PreludeTraitFunction { .. } => {}
     }
 }
 

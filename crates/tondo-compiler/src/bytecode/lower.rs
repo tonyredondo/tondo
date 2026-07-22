@@ -5771,6 +5771,132 @@ mod tests {
     }
 
     #[test]
+    fn bytecode_verifier_rejects_repeated_and_joined_affine_moves() {
+        let mut program = lowered(
+            "fn consume[T: Discard](input: T) {\n\
+                 _ = input\n\
+             }\n\
+             fn execute() {\n\
+                 consume(42)\n\
+             }\n",
+        );
+        let (function, block, instruction) = program
+            .functions
+            .iter()
+            .enumerate()
+            .find_map(|(function, body)| {
+                body.blocks.iter().enumerate().find_map(|(block, body)| {
+                    body.instructions
+                        .iter()
+                        .position(|instruction| {
+                            matches!(
+                                &instruction.kind,
+                                bc::BytecodeInstructionKind::Store {
+                                    value: bc::BytecodeRvalue {
+                                        kind: bc::BytecodeRvalueKind::Use(
+                                            bc::BytecodeOperand {
+                                                kind: bc::BytecodeOperandKind::Move(place),
+                                                ..
+                                            }
+                                        ),
+                                        ..
+                                    },
+                                    ..
+                                } if place.projections.is_empty()
+                            )
+                        })
+                        .map(|instruction| (function, block, instruction))
+                })
+            })
+            .expect("generic source transfer remains one direct bytecode move");
+        let duplicate = program.functions[function].blocks[block].instructions[instruction].clone();
+        program.functions[function].blocks[block]
+            .instructions
+            .insert(instruction + 1, duplicate);
+
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("after its value became unavailable")
+        );
+
+        let mut program = lowered(
+            "fn consume[T: Discard](input: T, flag: Bool) {\n\
+                 if flag {\n\
+                     _ = input\n\
+                     return\n\
+                 }\n\
+                 _ = input\n\
+             }\n\
+             fn execute() { consume(42, true) }\n",
+        );
+        let (function_index, returning, joined) = program
+            .functions
+            .iter()
+            .enumerate()
+            .find_map(|(function_index, function)| {
+                function.slots.iter().enumerate().find_map(|(slot, info)| {
+                    if !matches!(info.kind, bc::BytecodeSlotKind::Parameter { index: 0 }) {
+                        return None;
+                    }
+                    let slot = bc::BytecodeSlotId::new(slot as u32);
+                    let move_blocks = function
+                        .blocks
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(block, body)| {
+                            body.instructions
+                                .iter()
+                                .any(|instruction| {
+                                    matches!(
+                                        &instruction.kind,
+                                        bc::BytecodeInstructionKind::Store {
+                                            value: bc::BytecodeRvalue {
+                                                kind: bc::BytecodeRvalueKind::Use(
+                                                    bc::BytecodeOperand {
+                                                        kind: bc::BytecodeOperandKind::Move(place),
+                                                        ..
+                                                    }
+                                                ),
+                                                ..
+                                            },
+                                            ..
+                                        } if place.slot == slot && place.projections.is_empty()
+                                    )
+                                })
+                                .then_some(block)
+                        })
+                        .collect::<Vec<_>>();
+                    if move_blocks.len() != 2 {
+                        return None;
+                    }
+                    let returning = move_blocks.iter().copied().find(|block| {
+                        matches!(
+                            function.blocks[*block].terminator.kind,
+                            bc::BytecodeTerminatorKind::Return
+                        )
+                    })?;
+                    let joined = move_blocks.into_iter().find(|block| *block != returning)?;
+                    Some((function_index, returning, joined))
+                })
+            })
+            .expect("the specialized generic body has two path-exclusive moves");
+        program.functions[function_index].blocks[returning]
+            .terminator
+            .kind = bc::BytecodeTerminatorKind::Goto {
+            target: bc::BytecodeBlockId::new(joined as u32),
+        };
+
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("after its value became unavailable")
+        );
+    }
+
+    #[test]
     fn borrowed_closure_environments_remain_rooted_during_argument_gc_pressure() {
         let program = lowered(
             "fn execute(): Int {\n\

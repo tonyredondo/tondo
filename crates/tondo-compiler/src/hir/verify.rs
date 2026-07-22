@@ -18,7 +18,7 @@ use super::{
     HirFlow, HirForKind, HirGenericParameter, HirIndexAccess, HirIterationProtocol, HirPattern,
     HirPatternId, HirPatternKind, HirProgram, HirStatement, HirTraitConstructor, HirTraitIdentity,
     HirTraitMethodKey, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
-    HirVariantValue, TraitQuery, TraitSelectionError, select_implementation,
+    HirVariantValue, TraitQuery, TraitSelectionError, analyze_availability, select_implementation,
 };
 
 /// Reports a compiler defect at the boundary between typed HIR and MIR.
@@ -142,6 +142,28 @@ impl Verifier<'_> {
         self.verify_expressions(&loops)?;
         self.verify_call_protocol_contracts()?;
         self.verify_bodies()?;
+        self.verify_availability()?;
+        Ok(())
+    }
+
+    fn verify_availability(&self) -> Result<(), HirInvariantError> {
+        let capabilities = CapabilityAnalysis::new(self.program, self.resolved)
+            .map_err(|error| HirInvariantError::new("ownership availability", error.to_string()))?;
+        if let Some(finding) = analyze_availability(self.program, &capabilities)
+            .map_err(|error| HirInvariantError::new("ownership availability", error.to_string()))?
+            .into_iter()
+            .next()
+        {
+            return Err(HirInvariantError::new(
+                "ownership availability",
+                format!(
+                    "local#{} is used at {} after its value moved at {}",
+                    finding.local().index(),
+                    finding.use_span().range(),
+                    finding.move_span().range()
+                ),
+            ));
+        }
         Ok(())
     }
 
@@ -4576,6 +4598,39 @@ mod tests {
     fn complete_checked_hir_satisfies_the_mir_entry_contract() {
         let (resolved, program) = checked_program();
         verify_typed_hir(&resolved, &program).unwrap();
+    }
+
+    #[test]
+    fn availability_is_reproved_before_mir() {
+        let (resolved, mut program) = checked_program_from(
+            "fn valid[T: Discard](value: T, other: T, flag: Bool) {\n\
+                 if flag {\n\
+                     _ = value\n\
+                 }\n\
+                 _ = other\n\
+             }\n",
+        );
+        let local = |name: &str| {
+            resolved
+                .locals()
+                .find(|local| local.name().as_str() == name)
+                .unwrap()
+                .id()
+        };
+        let value = local("value");
+        let other = local("other");
+        let expression = program
+            .expressions
+            .iter_mut()
+            .find(|expression| {
+                matches!(expression.kind, HirExpressionKind::Local(local) if local == other)
+            })
+            .unwrap();
+        expression.kind = HirExpressionKind::Local(value);
+
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert_eq!(error.context(), "ownership availability");
+        assert!(error.message().contains("after its value moved"));
     }
 
     #[test]

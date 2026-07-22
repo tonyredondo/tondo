@@ -4,8 +4,8 @@
 uniform named function values, Copy closures with four exact effect identities,
 closed call protocols and synchronous-safe invocation, static trait selection,
 declaration-owned opaque results, patterns, assignment, discard, structured
-control flow, explicit intrinsic cursor state, calls, semantic occurrences, and
-verified MIR admission
+control flow, explicit intrinsic cursor state, calls, flow-sensitive ownership
+availability, semantic occurrences, and verified MIR admission
 implemented
 
 ## Boundary
@@ -63,8 +63,9 @@ iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   coercion. Concrete external implementations, non-`Copy` capture moves,
   effectful invocation, `await`, `spawn`, unsafe-region proofs and raw
   operations, async liveness/`Send` analysis, string interpolation through
-  `Display`, `defer`, and ownership availability remain explicit later
-  boundaries rather than receiving provisional semantics.
+  `Display`, `defer`, general loans, partial moves, affine captures, and
+  terminal cleanup remain explicit later boundaries rather than receiving
+  provisional semantics.
 
 ## Typed expression invariants
 
@@ -255,9 +256,10 @@ fact depends on an open binder.
 
 The M4 bootstrap admits an executable closure only when every capture has a
 proved `Copy` capability. An affine capture keeps expression checking
-incomplete until OWN-006/OWN-007 add move and availability analysis. CALL-003
-implements invocation and contextual concrete-to-uniform conversion for this
-closed subset. A direct expected function type may supply the closure signature;
+incomplete until OWN-006/OWN-007 add capture moves and extend availability into
+closure environments. CALL-003 implements invocation and contextual
+concrete-to-uniform conversion for this closed subset. A direct expected
+function type may supply the closure signature;
 the conversion then requires that exact signature, `Call`, and an environment
 that proves `Copy + Send + Share`, otherwise it emits `E1108`. CALL-004 permits
 all four effect kinds to be constructed, copied, discarded, and converted to an
@@ -275,7 +277,8 @@ out. A synchronous closure that writes a capture therefore retains `CallMut`
 and `CallOnce`. An async closure that writes a capture retains only `CallOnce`,
 because it must own its environment across suspension and cannot expose a
 hidden exclusive borrow. Pure closures of every effect kind retain all three
-protocols. M5 will add the path-sensitive affine rules.
+protocols. OWN-006/OWN-007 will extend the existing path-sensitive rules to
+affine environments.
 
 For a synchronous safe signature, an ordinary call chooses the first available
 protocol in the order `Call`, `CallMut`, `CallOnce`. `CallMut` requires a
@@ -672,10 +675,48 @@ type only when its `Discard` status is `Satisfied`.
 
 HIR proves the contextual capability facts consumed by OWN-002, including
 generic and opaque `Copy` status and the exact `CallOnce` protocol. MIR records
-the resulting copy or move. Flow-sensitive availability, partial moves,
-implicit scope-end obligations, affine captures, and terminal operations remain
-their owning phases' responsibility; successful capability proof does not
-fabricate those later facts or cleanup.
+the resulting copy or move. Partial moves, implicit scope-end obligations,
+affine captures, and terminal operations remain their owning phases'
+responsibility; successful capability proof does not fabricate those later
+facts or cleanup.
+
+## Flow-sensitive ownership availability
+
+OWN-003 runs one structured availability analysis after every callable and
+closure body has been checked. Its owners are value parameters and ordinary
+pattern bindings. Borrowed parameters, borrowed pattern bindings, and every
+receiver remain locations observed through a loan rather than owner bindings.
+The `Copy` decision is derived under the exact generic assumptions of the body,
+using the same closed capability engine as MIR lowering.
+
+The state maps each unavailable owner to the source span of its first move. A
+value transfer from a non-`Copy` owner inserts that fact; a copy or immediate
+observation leaves the state unchanged. A later read, observation, or transfer
+of the owner emits `E1401` at the use and relates the diagnostic to the move
+origin. Findings are deterministic and a failed use never replaces the first
+origin.
+
+Sequential expressions follow source evaluation order. A control-flow join
+uses the union of unavailable owners, so a binding is available only when it is
+available on every completing predecessor. Diverging paths do not reach the
+join. `break` and `continue` carry state to their resolved loop target, and a
+monotone fixed point incorporates every loop backedge before accepting a use at
+the header or an exit. Lexically introduced pattern locals are removed from
+normal and control-transfer states when their region ends.
+
+Assignment preserves the already specified atomic order: every destination is
+observed first, the complete RHS is then evaluated, and direct destinations
+that remain available after destination resolution are available after the
+write. This admits affine swaps without a transient double move. Reinitializing
+a `var` that was already moved remains OWN-004; a `let`, value parameter, or
+partial destination cannot be restored by this rule.
+
+Until OWN-005 introduces place-granular state, transferring a non-`Copy`
+projection conservatively makes its owning local unavailable in HIR. MIR and
+bytecode defensively track only unprojected moves at this milestone; they do not
+pretend that a whole-local bit proves the final partial-move rules. Affine
+closure construction remains excluded by the existing Copy-only admission
+boundary and belongs to OWN-006/OWN-007.
 
 ## Declaration ordering
 
@@ -829,7 +870,12 @@ propagation. Capability regressions cover the complete intrinsic matrix,
 implication forwarding, recursive nominal equality and keys, opaque bounds,
 async-trait `Self: Send`, collection and reference formation, equality,
 membership, map lookup, explicit own/ref cursor modes and capabilities, and
-order-insensitive map/set runtime equality.
+order-insensitive map/set runtime equality. Ownership-availability regressions
+cover sequential and `CallOnce` moves, Copy and immediate-observation
+preservation, `if`/`match`/short-circuit joins, diverging paths, conditional and
+iterator loop backedges, `break`/`continue`, atomic multiple assignment, stable
+move origins, public-driver `E1401` propagation, and a mutated-HIR admission
+failure.
 Closure regressions cover distinct generated identities, inherited generic
 binders, exact and inferred outcomes, nested free-use propagation, mutable
 snapshot metadata, modes, variadics, borrowed-capture rejection, deferred

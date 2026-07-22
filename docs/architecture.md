@@ -241,10 +241,12 @@ Standalone discard and discard leaves are also explicit. MIR receives a
 six-column capability decision for every interned type and never turns `_` into
 a hidden write. Type formation rejects `Map[K, V]` and `Set[K]` without `K: Key`
 and `Ref[T]` without `T: Discard`; equality, membership, map lookup, opaque
-bounds, and async receiver implementations consume the same proof. Full
-ownership availability and terminal cleanup remain later analyses. Synchronous
-Copy closure invocation already crosses this boundary with an explicit exact
-signature and selected call protocol.
+bounds, and async receiver implementations consume the same proof. HIR now
+adds a deterministic flow proof that an owned binding is available on every
+path reaching a use; partial move paths, affine captures, loans, and terminal
+cleanup remain later analyses. Synchronous Copy closure invocation already
+crosses this boundary with an explicit exact signature and selected call
+protocol.
 
 Type IDs are request-local interned handles; only canonical recursive type
 strings are observable. Alias expansion, union normalization, nominal identity,
@@ -258,16 +260,18 @@ moves, storage lifetimes, checked-operation unwind edges, and reserved cleanup
 blocks. AST shape is no longer required to execute or analyze the program.
 OWN-002 selects explicit copy/move operands under each body's generic bounds
 and uses non-escaping borrows for immediate observations and non-value call
-arguments. Later ownership steps add availability, regions, partial moves and
-populated cleanup actions; async later adds
-suspension, resume, cancellation, and frame-state edges without moving source
-semantic decisions into a backend.
+arguments. OWN-003 makes each unprojected move consume the local's available
+definition and intersects that fact at CFG joins and loop backedges. Later
+ownership steps add regions, partial moves and populated cleanup actions; async
+later adds suspension, resume, cancellation, and frame-state edges without
+moving source semantic decisions into a backend.
 
 Before bytecode lowering, the MIR verifier proves:
 
 - Every block terminates correctly.
 - Every operand and destination has a compatible type.
-- Every use is dominated by an available definition.
+- Every use is dominated by an available definition and an unprojected move
+  consumes that definition exactly once per path.
 - Cleanup edges are well formed.
 - Payload projections are dominated by a compatible discriminant branch.
 - Calls preserve the selected callable, receiver mode, specialization, and

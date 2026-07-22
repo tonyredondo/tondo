@@ -3,7 +3,7 @@
 **Status:** implemented M3 baseline plus CALL-003 synchronous closure
 invocation, CALL-004 effectful-environment retention with execution guards,
 OWN-001 intrinsic cursor value semantics, and OWN-002 affine moves/immediate
-observations
+observations plus OWN-003 flow availability
 **Language baseline:** Tondo 0.1-draft.8
 
 This contract fixes the bootstrap object model selected by DEC-006. It is an
@@ -65,9 +65,11 @@ function-wide slots start live. Reads, writes, and moves check their runtime
 state even though the bytecode verifier has already proved the same contract.
 `Move` takes the complete value or projected payload from its slot; `Borrow`
 performs a shallow read only in a verifier-approved immediate operation and
-cannot become a stored runtime reference. OWN-003 will make moved-state
-rejection a complete source-level flow proof; the runtime check remains a
-defensive invariant.
+cannot become a stored runtime reference. OWN-003 proves source-level
+whole-binding availability and the bytecode verifier independently rejects a
+repeated unprojected move across sequential, branch, and loop paths. The
+runtime check remains a defensive invariant, including for projected payloads
+whose final static move-path model belongs to OWN-005.
 
 The immediate observation subset executes equality, membership, length,
 discriminant, index/slice-base, indirect-callee, and slice-shape borrows.

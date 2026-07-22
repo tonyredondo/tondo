@@ -73,9 +73,12 @@ is stopped by an explicit request limit. `tondo run` executes a synchronous
 explicit `main` in an iterative VM with checked operations,
 normative panics, precise generational mark-and-sweep collection, defensive
 limits, and a provisional capability-gated `std.console.print` host shim. Async
-entry points, implicit script bodies, ownership analysis, and later language
-milestones remain under construction, so the workspace identifies itself as a
-bootstrap and does not claim full Tondo conformance.
+entry points and implicit script bodies remain under construction. Ownership
+already distinguishes contextual copies, affine moves, immediate observations,
+and whole-binding availability across branches and loops; reinitialization,
+partial moves, affine captures, general loans, and terminal cleanup remain later
+milestones. The workspace therefore identifies itself as a bootstrap and does
+not claim full Tondo conformance.
 
 ## Project documentation
 

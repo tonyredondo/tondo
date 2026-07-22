@@ -32,7 +32,7 @@ use super::{
     HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod, HirProgram, HirRangeKind,
     HirRecordFieldValue, HirStatement, HirTraitConstructor, HirTypeDeclarationKind,
     HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind, TraitQuery,
-    TraitSelectionError, select_implementation,
+    TraitSelectionError, analyze_availability, select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -102,6 +102,7 @@ pub fn check_expressions<'a>(
     checker.check_discard_parameters()?;
     checker.check_constants()?;
     checker.check_callables()?;
+    checker.check_ownership_availability()?;
     checker.check_constant_collection_diagnostics()?;
     checker.check_reachability_warnings()?;
     let types = checker.program.interner.ids().collect::<Vec<_>>();
@@ -1136,6 +1137,26 @@ impl<'a> ExpressionChecker<'a> {
         }
         self.validate_opaque_reachable_witnesses()?;
         self.validate_opaque_witness_cycles()?;
+        Ok(())
+    }
+
+    fn check_ownership_availability(&mut self) -> Result<(), HirError> {
+        let capabilities = CapabilityAnalysis::new(&self.program, self.resolved)?;
+        let findings = analyze_availability(&self.program, &capabilities)?;
+        for finding in findings {
+            let name = self
+                .resolved
+                .local(finding.local())
+                .map(|local| local.name().to_string())
+                .unwrap_or_else(|| format!("local#{}", finding.local().index()));
+            self.emit(
+                finding.use_span(),
+                "E1401",
+                format!("binding `{name}` is unavailable because its value was moved"),
+                vec![("value moved here", finding.move_span())],
+                None,
+            )?;
+        }
         Ok(())
     }
 
@@ -16454,6 +16475,146 @@ mod tests {
     }
 
     #[test]
+    fn affine_availability_rejects_sequential_and_call_once_reuse() {
+        let (_, _, sequential) = check(
+            "fn invalid[T](value: T): T {\n\
+                 let moved = value\n\
+                 value\n\
+             }\n",
+        );
+        assert_eq!(codes(&sequential), ["E1401"]);
+
+        let (_, _, call_once) = check(
+            "fn twice[F: Discard + CallOnce[fn(Int): Int]](\n\
+                 operation: F,\n\
+             ): Int {\n\
+                 _ = operation(1)\n\
+                 operation(2)\n\
+             }\n",
+        );
+        assert_eq!(codes(&call_once), ["E1401"]);
+    }
+
+    #[test]
+    fn copy_and_immediate_observations_preserve_availability() {
+        let (_, _, output) = check(
+            "fn duplicate[T: Copy](value: T): (T, T) { (value, value) }\n\
+             fn observe[T](value: ref T) {}\n\
+             fn borrowed[T: Discard](value: T) {\n\
+                 observe(ref value)\n\
+                 _ = value\n\
+             }\n\
+             fn equal[T: Equatable + Discard](value: T): Bool {\n\
+                 let same = value == value\n\
+                 _ = value\n\
+                 same\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+    }
+
+    #[test]
+    fn availability_joins_branches_and_loop_backedges() {
+        let (_, _, branch) = check(
+            "fn invalid[T: Discard](value: T, flag: Bool) {\n\
+                 if flag {\n\
+                     _ = value\n\
+                 }\n\
+                 _ = value\n\
+             }\n",
+        );
+        assert_eq!(codes(&branch), ["E1401"]);
+
+        let (_, _, loop_backedge) = check(
+            "fn invalid[T: Discard](value: T, keepGoing: Bool) {\n\
+                 for keepGoing {\n\
+                     _ = value\n\
+                     continue\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&loop_backedge), ["E1401"]);
+
+        let (_, _, iterated_source) = check(
+            "fn invalid[T: Discard](values: Array[T]) {\n\
+                 for value in values {\n\
+                     _ = value\n\
+                 }\n\
+                 _ = values\n\
+             }\n",
+        );
+        assert_eq!(codes(&iterated_source), ["E1401"]);
+    }
+
+    #[test]
+    fn availability_tracks_match_short_circuit_and_break_edges() {
+        let (_, _, matched) = check(
+            "fn invalid[T: Discard](value: T, flag: Bool) {\n\
+                 match flag {\n\
+                     true => {\n\
+                         _ = value\n\
+                     }\n\
+                     false => {}\n\
+                 }\n\
+                 _ = value\n\
+             }\n",
+        );
+        assert_eq!(codes(&matched), ["E1401"]);
+
+        let (_, _, short_circuit) = check(
+            "fn invalid[T: Discard](value: T, flag: Bool) {\n\
+                 _ = flag and {\n\
+                     _ = value\n\
+                     true\n\
+                 }\n\
+                 _ = value\n\
+             }\n",
+        );
+        assert_eq!(codes(&short_circuit), ["E1401"]);
+
+        let (_, _, break_edge) = check(
+            "fn invalid[T: Discard](value: T) {\n\
+                 for {\n\
+                     _ = value\n\
+                     break\n\
+                 }\n\
+                 _ = value\n\
+             }\n",
+        );
+        assert_eq!(codes(&break_edge), ["E1401"]);
+    }
+
+    #[test]
+    fn diverging_paths_and_atomic_multiple_assignment_remain_valid() {
+        let (_, _, output) = check(
+            "fn choose[T](value: T, flag: Bool): T {\n\
+                 if flag {\n\
+                     return value\n\
+                 }\n\
+                 value\n\
+             }\n\
+             fn swap[T: Discard](first: T, second: T) {\n\
+                 var left = first\n\
+                 var right = second\n\
+                 (left, right) = (right, left)\n\
+                 _ = left\n\
+                 _ = right\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+    }
+
+    #[test]
     fn opaque_call_bounds_preserve_signature_and_protocol() {
         let (_, _, output) = check(
             "fn make(offset: Int): impl Call[fn(Int): Int] + Discard {\n\
@@ -18045,8 +18206,8 @@ mod tests {
              fn needDiscard[T: Discard](value: T) {}\n\
              fn needEquatable[T: Equatable](value: T) {}\n\
              fn needKey[T: Key](value: T) {}\n\
-             fn needSend[T: Send](value: T) {}\n\
-             fn needShare[T: Share](value: T) {}\n\
+             fn needSend[T: Send](value: ref T) {}\n\
+             fn needShare[T: Share](value: ref T) {}\n\
              fn keyImplications[T: Key](value: T) {\n\
                  needCopy(value)\n\
                  needDiscard(value)\n\
@@ -18054,8 +18215,8 @@ mod tests {
                  needKey(value)\n\
              }\n\
              fn concurrency[T: Send + Share](value: T) {\n\
-                 needSend(value)\n\
-                 needShare(value)\n\
+                 needSend(ref value)\n\
+                 needShare(ref value)\n\
              }\n\
              fn hidden[T: Key](value: T): impl Copy + Discard + Equatable { value }\n",
         );
