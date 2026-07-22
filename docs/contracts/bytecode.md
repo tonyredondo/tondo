@@ -7,7 +7,8 @@ closure protocols and synchronous-safe invocation, CALL-004 effect-preserving
 closure callables, OWN-001 intrinsic cursor capabilities, OWN-002 affine
 transfers and immediate observations, OWN-003 flow availability, OWN-004
 complete-slot reinitialization, OWN-005 typed move paths, OWN-006 affine closure
-captures, and the M3 VM admission path implemented
+captures, OWN-007 exact closed `CallOnce` rows, and the M3 VM admission path
+implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -109,6 +110,13 @@ the shared generic-instantiation budget is exhausted. A generic closure body
 consumes its own unique instance from that same budget. The same failure rule
 applies if substitution exhausts the interned specialized-type budget. No
 partial program crosses the verifier boundary.
+
+Source-generic protocols are not silently treated as a closed answer. Once the
+capture schema is concrete, lowering rederives `Discard` from the bytecode type
+and nominal graph and specializes `CallOnce`. This may safely strengthen an
+open HIR row when, for example, an unconstrained `T` becomes `Int`; `Call` and
+`CallMut` remain fixed by the emitted body operations. The bytecode verifier
+then derives the complete row independently from the concrete CFG.
 
 For each reached function, lowering builds a complete template-to-concrete map
 covering its signature, locals, places, projections, operands, rvalues,
@@ -272,7 +280,9 @@ Before execution, the verifier proves:
 - closure protocols are rederived from the executable body and cannot be
   strengthened by forged catalog metadata; a body that moves an environment
   path cannot advertise `Call` or `CallMut`, and an async body that writes its
-  environment cannot advertise either borrowed protocol;
+  environment cannot advertise either borrowed protocol; `CallOnce` requires
+  every non-`Discard` capture to be completely moved on every reachable normal
+  return, with branch states intersected rather than unioned;
 - async callables have no `mut` or `var` parameter, and the synchronous-safe
   call opcode rejects every async or unsafe function signature;
 - every closed executable `Map[K, V]` and `Set[K]` has `K: Key`, every `Ref[T]`

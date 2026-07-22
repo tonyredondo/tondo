@@ -33,7 +33,7 @@ use super::{
     HirPreludeTraitMethod, HirProgram, HirRangeKind, HirRecordFieldValue, HirStatement,
     HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
     HirVariantValue, HirWriteKind, TraitQuery, TraitSelectionError, analyze_availability,
-    analyze_closure_capture_moves, select_implementation,
+    analyze_closure_captures, select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2645,19 +2645,33 @@ impl<'a> ExpressionChecker<'a> {
             .collect::<BTreeSet<_>>();
         let writes_capture = self.closure_body_writes_capture(body, &capture_locals);
         let capabilities = CapabilityAnalysis::new(&self.program, self.resolved)?;
-        let moves_capture = !analyze_closure_capture_moves(
+        let assumptions = CapabilityAssumptions::from_generics(&self.program, generics);
+        let capture_analysis = analyze_closure_captures(
             &self.program,
             &capabilities,
-            CapabilityAssumptions::from_generics(&self.program, generics),
+            assumptions.clone(),
             captures,
             body,
-        )?
-        .is_empty();
+        )?;
+        let moves_capture = !capture_analysis.transferred().is_empty();
+        let mut call_once = true;
+        for capture in captures {
+            let discard = capabilities.status(
+                &self.program,
+                capture.ty(),
+                HirCapability::Discard,
+                &assumptions,
+            )?;
+            call_once &= discard == HirCapabilityStatus::Satisfied
+                || capture_analysis
+                    .transferred_on_all_exits()
+                    .contains(&capture.local());
+        }
 
         Ok(HirClosureProtocols::new(
             !writes_capture && !moves_capture,
             !moves_capture && (!is_async || !writes_capture),
-            true,
+            call_once,
         ))
     }
 
@@ -16526,6 +16540,153 @@ mod tests {
                 .map(HirClosure::protocols)
                 .collect::<Vec<_>>(),
             vec![HirClosureProtocols::new(false, false, true); 2]
+        );
+    }
+
+    #[test]
+    fn call_once_requires_discard_or_capture_transfer_on_every_exit() {
+        let (_, _, observed) = check(
+            "fn inspect[T: Equatable](input: T): Bool {\n\
+                 let operation = (): Bool { input == input }\n\
+                 operation()\n\
+             }\n",
+        );
+        assert!(
+            observed.diagnostics().is_empty(),
+            "{:#?}",
+            observed.diagnostics()
+        );
+        assert_eq!(
+            observed.program().closures().next().unwrap().protocols(),
+            HirClosureProtocols::new(true, true, false)
+        );
+
+        let (_, _, transferred) = check(
+            "fn consume[T](input: T, choose: Bool): T {\n\
+                 let operation = (): T {\n\
+                     if choose {\n\
+                         return input\n\
+                     }\n\
+                     input\n\
+                 }\n\
+                 operation()\n\
+             }\n",
+        );
+        assert!(
+            transferred.diagnostics().is_empty(),
+            "{:#?}",
+            transferred.diagnostics()
+        );
+        assert_eq!(
+            transferred.program().closures().next().unwrap().protocols(),
+            HirClosureProtocols::new(false, false, true)
+        );
+
+        let (_, _, partial) = check(
+            "fn build[T](input: T, choose: Bool) {\n\
+                 let operation = (): T? {\n\
+                     if choose {\n\
+                         return some(input)\n\
+                     }\n\
+                     none\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            partial.diagnostics().is_empty(),
+            "{:#?}",
+            partial.diagnostics()
+        );
+        assert_eq!(
+            partial.program().closures().next().unwrap().protocols(),
+            HirClosureProtocols::new(false, false, false)
+        );
+    }
+
+    #[test]
+    fn call_once_accounts_for_fail_and_propagation_exits() {
+        let (_, _, failed) = check(
+            "fn build[T](input: T, choose: Bool) {\n\
+                 let operation = (): Unit ! T {\n\
+                     if choose {\n\
+                         fail input\n\
+                     }\n\
+                     fail input\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            failed.diagnostics().is_empty(),
+            "{:#?}",
+            failed.diagnostics()
+        );
+        assert_eq!(
+            failed.program().closures().next().unwrap().protocols(),
+            HirClosureProtocols::new(false, false, true)
+        );
+
+        let (_, _, partial_fail) = check(
+            "fn build[T](input: T, choose: Bool) {\n\
+                 let operation = (): Unit ! T {\n\
+                     if choose {\n\
+                         fail input\n\
+                     }\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            partial_fail.diagnostics().is_empty(),
+            "{:#?}",
+            partial_fail.diagnostics()
+        );
+        assert_eq!(
+            partial_fail
+                .program()
+                .closures()
+                .next()
+                .unwrap()
+                .protocols(),
+            HirClosureProtocols::new(false, false, false)
+        );
+
+        let (_, _, propagated) = check(
+            "fn build[T](input: Int ! T) {\n\
+                 let operation = (): Int ! T { input? }\n\
+             }\n",
+        );
+        assert!(
+            propagated.diagnostics().is_empty(),
+            "{:#?}",
+            propagated.diagnostics()
+        );
+        assert_eq!(
+            propagated.program().closures().next().unwrap().protocols(),
+            HirClosureProtocols::new(false, false, true)
+        );
+
+        let (_, _, partial_propagation) = check(
+            "fn build[T](input: Int ! T, choose: Bool) {\n\
+                 let operation = (): Int ! T {\n\
+                     if choose {\n\
+                         return input?\n\
+                     }\n\
+                     0\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            partial_propagation.diagnostics().is_empty(),
+            "{:#?}",
+            partial_propagation.diagnostics()
+        );
+        assert_eq!(
+            partial_propagation
+                .program()
+                .closures()
+                .next()
+                .unwrap()
+                .protocols(),
+            HirClosureProtocols::new(false, false, false)
         );
     }
 

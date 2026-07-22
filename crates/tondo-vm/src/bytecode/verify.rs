@@ -84,6 +84,21 @@ pub fn verify_bytecode_with_limits(
     .verify()
 }
 
+/// Derives `Discard` for closed bytecode types from the same structural graph
+/// used by verification. The compiler uses this after monomorphization so a
+/// closure protocol row reflects concrete captures rather than open HIR
+/// binders. Full bytecode verification remains the admission boundary.
+pub fn derive_discard_capabilities(
+    program: &BytecodeProgram,
+    types: &[BytecodeTypeId],
+) -> Result<Vec<bool>, BytecodeVerificationError> {
+    let analysis = CapabilityAnalysis::new(program)?;
+    types
+        .iter()
+        .map(|ty| analysis.status(program, *ty, ClosedCapability::Discard))
+        .collect()
+}
+
 struct Verifier<'a> {
     program: &'a BytecodeProgram,
     limits: BytecodeVerificationLimits,
@@ -255,7 +270,12 @@ impl CapabilityAnalysis {
                 let Some(nominal) = nominal else {
                     return Ok(fixed_capability(false));
                 };
-                let requirement = &self.summaries[&(*nominal, capability)];
+                let requirement = self.summaries.get(&(*nominal, capability)).ok_or_else(|| {
+                    BytecodeVerificationError::new(
+                        "capability graph",
+                        format!("references unknown nominal#{}", nominal.index()),
+                    )
+                })?;
                 let mut dependencies = Vec::with_capacity(requirement.parameters.len());
                 for (position, required) in &requirement.parameters {
                     let Some(argument) = arguments.get(*position as usize) else {
@@ -337,7 +357,12 @@ fn capability_requirement(
                     requirement.possible = false;
                     continue;
                 };
-                let summary = &summaries[&(*nominal, capability)];
+                let summary = summaries.get(&(*nominal, capability)).ok_or_else(|| {
+                    BytecodeVerificationError::new(
+                        "capability graph",
+                        format!("references unknown nominal#{}", nominal.index()),
+                    )
+                })?;
                 requirement.possible &= summary.possible;
                 for (position, required) in &summary.parameters {
                     if let Some(argument) = arguments.get(*position as usize) {
@@ -1021,6 +1046,8 @@ impl Verifier<'_> {
                 self.function(function, &context)?;
             }
             if let Some(closure) = &callable.closure {
+                let discard =
+                    self.capability(closure.environment, ClosedCapability::Discard, &context)?;
                 if callable.implementation.is_none()
                     || !closure_environments.insert(closure.environment)
                     || !matches!(
@@ -1028,7 +1055,7 @@ impl Verifier<'_> {
                         BytecodeTypeKind::Generated { .. }
                     )
                     || (closure.protocols.call && !closure.protocols.call_mut)
-                    || (closure.protocols.call_mut && !closure.protocols.call_once)
+                    || (discard && closure.protocols.call_mut && !closure.protocols.call_once)
                 {
                     return Err(BytecodeVerificationError::new(
                         &context,
@@ -1106,11 +1133,120 @@ impl Verifier<'_> {
                 )
             })
         });
+        let mut required_transfers = BTreeSet::new();
+        let closure = callable
+            .closure
+            .as_ref()
+            .expect("closure protocol derivation receives closure metadata");
+        for (index, capture) in closure.captures.iter().enumerate() {
+            if !self.capability(*capture, ClosedCapability::Discard, context)? {
+                required_transfers.insert(u32::try_from(index).map_err(|_| {
+                    BytecodeVerificationError::new(
+                        context,
+                        "closure capture index exceeds bytecode limits",
+                    )
+                })?);
+            }
+        }
+        let transferred_on_all_returns = self.closure_captures_transferred_on_all_returns(
+            function,
+            callable_id,
+            closure.captures.len(),
+            context,
+        )?;
         Ok(BytecodeClosureProtocols {
             call: !writes_capture && !moves_capture,
             call_mut: !moves_capture && (!is_async || !writes_capture),
-            call_once: true,
+            call_once: required_transfers.is_subset(&transferred_on_all_returns),
         })
+    }
+
+    fn closure_captures_transferred_on_all_returns(
+        &self,
+        function: &BytecodeFunction,
+        callable: BytecodeCallableId,
+        capture_count: usize,
+        context: &str,
+    ) -> Result<BTreeSet<u32>, BytecodeVerificationError> {
+        let all = (0..capture_count)
+            .map(|index| {
+                u32::try_from(index).map_err(|_| {
+                    BytecodeVerificationError::new(
+                        context,
+                        "closure capture index exceeds bytecode limits",
+                    )
+                })
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let mut incoming = vec![None::<BTreeSet<u32>>; function.blocks.len()];
+        incoming[function.entry.index() as usize] = Some(BTreeSet::new());
+        let mut queue = VecDeque::from([function.entry]);
+        let mut queued = vec![false; function.blocks.len()];
+        queued[function.entry.index() as usize] = true;
+        let mut returns = None::<BTreeSet<u32>>;
+
+        while let Some(block_id) = queue.pop_front() {
+            queued[block_id.index() as usize] = false;
+            self.consume_dataflow_step(context)?;
+            let Some(mut state) = incoming[block_id.index() as usize].clone() else {
+                continue;
+            };
+            let block = &function.blocks[block_id.index() as usize];
+            if block.kind != BytecodeBlockKind::Normal {
+                continue;
+            }
+            for event in local_events(function, block) {
+                match event {
+                    LocalEvent::Move(access) => {
+                        if let Some(index) =
+                            closure_capture_transfer_index(function, callable, &access)
+                        {
+                            state.insert(index);
+                        }
+                    }
+                    LocalEvent::Write(access) => {
+                        if let Some(index) =
+                            closure_capture_access_index(function, callable, &access)
+                        {
+                            state.remove(&index);
+                        }
+                    }
+                    LocalEvent::Read(_)
+                    | LocalEvent::WriteAccess(_)
+                    | LocalEvent::StorageLive(_)
+                    | LocalEvent::StorageDead(_) => {}
+                }
+            }
+            if matches!(block.terminator.kind, BytecodeTerminatorKind::Return) {
+                intersect_optional_capture_set(&mut returns, state);
+                continue;
+            }
+            for edge in successor_edges(&block.terminator.kind) {
+                if function.blocks[edge.target.index() as usize].kind != BytecodeBlockKind::Normal {
+                    continue;
+                }
+                let mut edge_state = state.clone();
+                if let Some(index) = edge.writes.as_ref().and_then(|place| {
+                    closure_capture_access_index(
+                        function,
+                        callable,
+                        &LocalAccess::from_place(place),
+                    )
+                }) {
+                    edge_state.remove(&index);
+                }
+                let changed = intersect_incoming_capture_set(
+                    &mut incoming[edge.target.index() as usize],
+                    edge_state,
+                );
+                if changed && !queued[edge.target.index() as usize] {
+                    queued[edge.target.index() as usize] = true;
+                    queue.push_back(edge.target);
+                }
+            }
+        }
+
+        Ok(returns.unwrap_or(all))
     }
 
     fn verify_constants(&self) -> Result<(), BytecodeVerificationError> {
@@ -4276,11 +4412,34 @@ fn closure_capture_access(
     callable: BytecodeCallableId,
     access: &LocalAccess,
 ) -> bool {
-    function.parameters.first() == Some(&access.slot)
-        && matches!(
-            access.path.first(),
-            Some(MovePathComponent::ClosureCapture(projected, _)) if *projected == callable
-        )
+    closure_capture_access_index(function, callable, access).is_some()
+}
+
+fn closure_capture_access_index(
+    function: &BytecodeFunction,
+    callable: BytecodeCallableId,
+    access: &LocalAccess,
+) -> Option<u32> {
+    (function.parameters.first() == Some(&access.slot))
+        .then(|| match access.path.first() {
+            Some(MovePathComponent::ClosureCapture(projected, index)) if *projected == callable => {
+                Some(*index)
+            }
+            _ => None,
+        })
+        .flatten()
+}
+
+fn closure_capture_transfer_index(
+    function: &BytecodeFunction,
+    callable: BytecodeCallableId,
+    access: &LocalAccess,
+) -> Option<u32> {
+    let index = closure_capture_access_index(function, callable, access)?;
+    access.path[1..]
+        .iter()
+        .all(|component| matches!(component, MovePathComponent::NewtypeValue))
+        .then_some(index)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4471,6 +4630,23 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
         | BytecodeTerminatorKind::ResumePanic
         | BytecodeTerminatorKind::Unreachable => Vec::new(),
     }
+}
+
+fn intersect_optional_capture_set(target: &mut Option<BTreeSet<u32>>, source: BTreeSet<u32>) {
+    let _ = intersect_incoming_capture_set(target, source);
+}
+
+fn intersect_incoming_capture_set(
+    target: &mut Option<BTreeSet<u32>>,
+    source: BTreeSet<u32>,
+) -> bool {
+    let Some(target) = target else {
+        *target = Some(source);
+        return true;
+    };
+    let previous = target.len();
+    target.retain(|value| source.contains(value));
+    target.len() != previous
 }
 
 fn transfer_local(state: LocalState, events: &[LocalEvent], slot: BytecodeSlotId) -> LocalState {

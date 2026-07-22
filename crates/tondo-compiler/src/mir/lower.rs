@@ -5215,6 +5215,54 @@ mod tests {
     }
 
     #[test]
+    fn mir_rederives_call_once_from_capture_transfers_on_every_return() {
+        let complete = "fn consume[T](input: T, choose: Bool): T {\n\
+                            let operation = (): T {\n\
+                                if choose {\n\
+                                    return input\n\
+                                }\n\
+                                input\n\
+                            }\n\
+                            operation()\n\
+                        }\n";
+        let (resolved, hir) = checked(complete);
+        assert_eq!(
+            hir.closures().next().unwrap().protocols(),
+            crate::hir::HirClosureProtocols::new(false, false, true)
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let partial = "fn build[T](input: T, choose: Bool) {\n\
+                           let operation = (): T? {\n\
+                               if choose {\n\
+                                   return some(input)\n\
+                               }\n\
+                               none\n\
+                           }\n\
+                       }\n";
+        let (resolved, hir) = checked(partial);
+        assert_eq!(
+            hir.closures().next().unwrap().protocols(),
+            crate::hir::HirClosureProtocols::new(false, false, false)
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let newtype = "type Wrapped = Join[Int, String]\n\
+                       fn build(input: Wrapped) {\n\
+                           let operation = (): Join[Int, String] { input.value }\n\
+                       }\n";
+        let (resolved, hir) = checked(newtype);
+        assert_eq!(
+            hir.closures().next().unwrap().protocols(),
+            crate::hir::HirClosureProtocols::new(false, false, true)
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
     fn all_closure_effect_kinds_keep_their_hidden_environment_in_mir() {
         let source = "fn build() {\n\
                           let sync: fn(): Int = () { 1 }\n\

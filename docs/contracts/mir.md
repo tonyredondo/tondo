@@ -5,7 +5,8 @@ closure forms, executable synchronous-safe closure calls, static-trait and
 opaque-result lowering, OWN-001 intrinsic cursor state, OWN-002 affine
 transfers, OWN-003 flow availability, OWN-004 complete `var` reinitialization,
 OWN-005 typed move paths and uniform match ownership modes, OWN-006 contextual
-Copy/Move closure captures, and verification implemented
+Copy/Move closure captures, OWN-007 all-exit terminal capture obligations, and
+verification implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -166,6 +167,11 @@ An indirect closure call carries the exact protocol selected by HIR. `Call` and
 updates observe the original environment; `CallMut` additionally requires the
 source place to be writable. `CallOnce` uses the ordinary Copy or Move operand
 selected by source access, including a non-`Copy` generic or opaque callable.
+Its protocol row is valid only when every non-`Discard` capture path is moved on
+every reachable normal `Return`. The verifier computes that fact as a CFG
+must-analysis: predecessor states intersect, a complete capture or chained
+newtype-value move inserts the capture, and any later write removes it. Cleanup,
+panic, and unreachable blocks do not create normal return obligations.
 
 `Borrow` is not yet a general MIR loan. OWN-002 uses it only where one operation
 must observe a place without transferring ownership: equality, membership,
@@ -293,7 +299,8 @@ The structural verifier introduced in M3 proves at minimum:
   signatures are retained unchanged;
 - each closure protocol row is rederived from writes, exclusive uses, and moves
   of its typed environment paths, so a moved capture cannot advertise `Call` or
-  `CallMut`;
+  `CallMut`; `CallOnce` additionally requires every non-`Discard` capture to be
+  completely transferred on every reachable normal return;
 - `Borrow` appears only in an enumerated immediate observation, as an indirect
   `Call`/`CallMut` callee, in a non-value call argument, or as the exact source
   of `cursor[ref,C]`; it never escapes into storage, value arguments,
@@ -315,8 +322,8 @@ on their successful edge, and the return place must be initialized on every
 alone cannot authorize an invalid projection.
 
 Later M5 and M7 work extends that proof with loan regions, confirmed borrowed
-transfers, terminal tokens, and suspension invariants. Verification always
-precedes bytecode lowering.
+transfers, downstream terminal tokens, cleanup, and suspension invariants.
+Verification always precedes bytecode lowering.
 
 ## Determinism and resource limits
 

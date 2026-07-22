@@ -19,7 +19,7 @@ use super::{
     HirIterationProtocol, HirPattern, HirPatternId, HirPatternKind, HirProgram, HirStatement,
     HirTraitConstructor, HirTraitIdentity, HirTraitMethodKey, HirTypeDeclarationKind,
     HirValueCategory, HirVariantPayload, HirVariantValue, TraitQuery, TraitSelectionError,
-    analyze_availability, analyze_closure_capture_moves, select_implementation,
+    analyze_availability, analyze_closure_captures, select_implementation,
 };
 
 /// Reports a compiler defect at the boundary between typed HIR and MIR.
@@ -2173,19 +2173,35 @@ impl Verifier<'_> {
             .map(super::HirClosureCapture::local)
             .collect::<BTreeSet<_>>();
         let writes_capture = self.closure_body_writes_capture(root, &capture_locals, context)?;
-        let moves_capture = !analyze_closure_capture_moves(
+        let assumptions = CapabilityAssumptions::from_generics(self.program, generics);
+        let capture_analysis = analyze_closure_captures(
             self.program,
             capabilities,
-            CapabilityAssumptions::from_generics(self.program, generics),
+            assumptions.clone(),
             captures,
             root,
         )
-        .map_err(|error| HirInvariantError::new(context, error.to_string()))?
-        .is_empty();
+        .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
+        let moves_capture = !capture_analysis.transferred().is_empty();
+        let mut call_once = true;
+        for capture in captures {
+            let discard = capabilities
+                .status(
+                    self.program,
+                    capture.ty(),
+                    HirCapability::Discard,
+                    &assumptions,
+                )
+                .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
+            call_once &= discard == HirCapabilityStatus::Satisfied
+                || capture_analysis
+                    .transferred_on_all_exits()
+                    .contains(&capture.local());
+        }
         Ok(super::HirClosureProtocols::new(
             !writes_capture && !moves_capture,
             !moves_capture && (!is_async || !writes_capture),
-            true,
+            call_once,
         ))
     }
 
@@ -5105,6 +5121,25 @@ mod tests {
             program.closures[0].protocols,
             crate::hir::HirClosureProtocols::new(false, false, true)
         );
+
+        let (resolved, mut forged) = checked_program_from(SOURCE);
+        forged.closures[0].protocols = crate::hir::HirClosureProtocols::new(true, true, true);
+        let error = verify_typed_hir(&resolved, &forged).unwrap_err();
+        assert!(error.message().contains("protocols"), "{error}");
+    }
+
+    #[test]
+    fn call_once_terminal_preconditions_are_reproved_before_mir() {
+        const SOURCE: &str = "fn inspect[T: Equatable](input: T): Bool {\n\
+             let operation = (): Bool { input == input }\n\
+             operation()\n\
+         }\n";
+        let (resolved, program) = checked_program_from(SOURCE);
+        assert_eq!(
+            program.closures[0].protocols,
+            crate::hir::HirClosureProtocols::new(true, true, false)
+        );
+        verify_typed_hir(&resolved, &program).unwrap();
 
         let (resolved, mut forged) = checked_program_from(SOURCE);
         forged.closures[0].protocols = crate::hir::HirClosureProtocols::new(true, true, true);

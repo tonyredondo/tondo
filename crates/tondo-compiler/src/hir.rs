@@ -28,7 +28,7 @@ mod traits;
 mod verify;
 
 pub(crate) use availability::{
-    AvailabilityFindingKind, analyze_availability, analyze_closure_capture_moves,
+    AvailabilityFindingKind, analyze_availability, analyze_closure_captures,
 };
 pub(crate) use capabilities::{CapabilityAnalysis, CapabilityAssumptions};
 pub use check::{ExpressionCheckLimits, HirCheckOutput, check_expressions};

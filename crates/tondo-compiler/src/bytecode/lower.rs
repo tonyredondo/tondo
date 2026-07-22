@@ -4,10 +4,11 @@ use tondo_vm::bytecode as bc;
 
 use super::{BytecodeError, BytecodeLoweringLimits};
 use crate::hir::{
-    HirCallProtocol, HirCallableId, HirClosureId, HirConstantValue, HirConstantValueKind,
-    HirConstantVariantValue, HirNominalShape, HirPreludeTraitMethod, HirProgram,
-    HirTraitConstructor, HirTraitMethodKey, HirTypeDeclarationKind, HirVariantPayload, TraitQuery,
-    TraitSelectionError, select_implementation,
+    CapabilityAnalysis, CapabilityAssumptions, HirCallProtocol, HirCallableId, HirClosureId,
+    HirConstantValue, HirConstantValueKind, HirConstantVariantValue, HirNominalShape,
+    HirPreludeTraitMethod, HirProgram, HirTraitConstructor, HirTraitMethodKey,
+    HirTypeDeclarationKind, HirVariantPayload, TraitQuery, TraitSelectionError,
+    analyze_closure_captures, select_implementation,
 };
 use crate::mir::{
     MirAggregateKind, MirBasicBlock, MirBlockKind, MirCallArgument, MirConstant, MirFunction,
@@ -156,13 +157,20 @@ pub fn lower_to_bytecode(
             .collect::<Result<Vec<_>, _>>()?
     };
 
-    let program = bc::BytecodeProgram {
+    let mut program = bc::BytecodeProgram {
         types: catalog.types,
         nominals,
         callables,
         constants,
         functions,
     };
+    specialize_closure_call_once(
+        resolved,
+        hir,
+        &monomorphization,
+        &callable_ids,
+        &mut program,
+    )?;
     match bc::verify_bytecode_with_limits(
         &program,
         bc::BytecodeVerificationLimits {
@@ -175,6 +183,128 @@ pub fn lower_to_bytecode(
         }),
         Err(error) => Err(BytecodeError::Invariant(error)),
     }
+}
+
+fn specialize_closure_call_once(
+    resolved: &ResolvedProgram,
+    hir: &HirProgram,
+    monomorphization: &Monomorphization,
+    callable_ids: &BTreeMap<ExecutableInstance, bc::BytecodeCallableId>,
+    program: &mut bc::BytecodeProgram,
+) -> Result<(), BytecodeError> {
+    let capture_types = program
+        .callables
+        .iter()
+        .flat_map(|callable| {
+            callable
+                .closure
+                .iter()
+                .flat_map(|closure| closure.captures.iter().copied())
+        })
+        .collect::<Vec<_>>();
+    let discard = bc::derive_discard_capabilities(program, &capture_types)
+        .map_err(BytecodeError::Invariant)?;
+    let mut discard_by_callable = vec![None; program.callables.len()];
+    let mut next = 0usize;
+    for (index, callable) in program.callables.iter().enumerate() {
+        let Some(closure) = &callable.closure else {
+            continue;
+        };
+        let end = next.checked_add(closure.captures.len()).ok_or_else(|| {
+            BytecodeError::construction("closure protocols", "capture count overflow")
+        })?;
+        discard_by_callable[index] = Some(
+            discard
+                .get(next..end)
+                .ok_or_else(|| {
+                    BytecodeError::construction(
+                        "closure protocols",
+                        "concrete capture capability table is incomplete",
+                    )
+                })?
+                .to_vec(),
+        );
+        next = end;
+    }
+
+    let capabilities = CapabilityAnalysis::new(hir, resolved)
+        .map_err(|error| monomorphization_type_error(error, None, "concrete closure protocols"))?;
+    let mut transferred_on_all_exits = BTreeMap::new();
+    for instance in &monomorphization.callables {
+        let ExecutableInstance::Closure(instance) = instance else {
+            continue;
+        };
+        if transferred_on_all_exits.contains_key(&instance.closure) {
+            continue;
+        }
+        let closure = hir.closure(instance.closure).ok_or_else(|| {
+            BytecodeError::construction("closure protocols", "missing HIR closure metadata")
+        })?;
+        let analysis = analyze_closure_captures(
+            hir,
+            &capabilities,
+            CapabilityAssumptions::from_generics(hir, closure.generics()),
+            closure.captures(),
+            closure.body().root(),
+        )
+        .map_err(|error| {
+            monomorphization_type_error(error, Some(closure.span()), "concrete closure protocols")
+        })?;
+        transferred_on_all_exits.insert(
+            instance.closure,
+            analysis.transferred_on_all_exits().clone(),
+        );
+    }
+
+    let mut rows = Vec::new();
+    for instance in &monomorphization.callables {
+        let ExecutableInstance::Closure(closure_instance) = instance else {
+            continue;
+        };
+        let closure = hir.closure(closure_instance.closure).ok_or_else(|| {
+            BytecodeError::construction("closure protocols", "missing HIR closure metadata")
+        })?;
+        let callable = callable_ids.get(instance).copied().ok_or_else(|| {
+            BytecodeError::construction("closure protocols", "missing bytecode callable ID")
+        })?;
+        let concrete_discard = discard_by_callable[callable.index() as usize]
+            .as_ref()
+            .ok_or_else(|| {
+                BytecodeError::construction(
+                    "closure protocols",
+                    "closure callable has no concrete capture capabilities",
+                )
+            })?;
+        if concrete_discard.len() != closure.captures().len() {
+            return Err(BytecodeError::construction(
+                "closure protocols",
+                "concrete capture capability row has the wrong length",
+            ));
+        }
+        let transferred = transferred_on_all_exits
+            .get(&closure_instance.closure)
+            .ok_or_else(|| {
+                BytecodeError::construction(
+                    "closure protocols",
+                    "closure has no all-exit transfer analysis",
+                )
+            })?;
+        let call_once = closure
+            .captures()
+            .iter()
+            .zip(concrete_discard)
+            .all(|(capture, discard)| *discard || transferred.contains(&capture.local()));
+        rows.push((callable, call_once));
+    }
+    for (callable, call_once) in rows {
+        program.callables[callable.index() as usize]
+            .closure
+            .as_mut()
+            .expect("closure instances retain closure metadata")
+            .protocols
+            .call_once = call_once;
+    }
+    Ok(())
 }
 
 fn monomorphize(
@@ -4402,6 +4532,146 @@ mod tests {
             VmOutcome::Returned(RuntimeValue::Integer(42))
         );
         assert!(execution.statistics.collections > 0);
+    }
+
+    #[test]
+    fn bytecode_rederives_call_once_for_a_terminal_closure_environment() {
+        let source = "fn observe(value: ref Join[Int, String]) {}\n\
+                      fn build(input: Join[Int, String]) {\n\
+                          let operation = () { observe(ref input) }\n\
+                      }\n";
+        let program = lowered(source);
+        let (callable_id, closure) = program
+            .callables
+            .iter()
+            .enumerate()
+            .find_map(|(index, callable)| {
+                callable.closure.as_ref().and_then(|closure| {
+                    (closure.protocols.call
+                        && closure.protocols.call_mut
+                        && !closure.protocols.call_once)
+                        .then_some((bc::BytecodeCallableId::new(index as u32), closure))
+                })
+            })
+            .expect("the Join environment is repeatable but cannot be consumed");
+        assert_eq!(closure.captures.len(), 1);
+        bc::verify_bytecode(&program).unwrap();
+
+        let mut forged = program;
+        forged.callables[callable_id.index() as usize]
+            .closure
+            .as_mut()
+            .unwrap()
+            .protocols
+            .call_once = true;
+        let error = bc::verify_bytecode(&forged).unwrap_err();
+        assert!(error.message().contains("implementation body"), "{error}");
+
+        let complete = lowered(
+            "fn build(input: Join[Int, String], choose: Bool) {\n\
+                 let operation = (): Join[Int, String] {\n\
+                     if choose {\n\
+                         return input\n\
+                     }\n\
+                     input\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(
+            complete
+                .callables
+                .iter()
+                .find_map(|callable| callable.closure.as_ref())
+                .unwrap()
+                .protocols,
+            bc::BytecodeClosureProtocols {
+                call: false,
+                call_mut: false,
+                call_once: true,
+            }
+        );
+        bc::verify_bytecode(&complete).unwrap();
+
+        let complete_newtype = lowered(
+            "type Wrapped = Join[Int, String]\n\
+             fn build(input: Wrapped) {\n\
+                 let operation = (): Join[Int, String] { input.value }\n\
+             }\n",
+        );
+        assert_eq!(
+            complete_newtype
+                .callables
+                .iter()
+                .find_map(|callable| callable.closure.as_ref())
+                .unwrap()
+                .protocols,
+            bc::BytecodeClosureProtocols {
+                call: false,
+                call_mut: false,
+                call_once: true,
+            }
+        );
+        bc::verify_bytecode(&complete_newtype).unwrap();
+
+        let partial = lowered(
+            "fn build(input: Join[Int, String], choose: Bool) {\n\
+                 let operation = (): Join[Int, String]? {\n\
+                     if choose {\n\
+                         return some(input)\n\
+                     }\n\
+                     none\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(
+            partial
+                .callables
+                .iter()
+                .find_map(|callable| callable.closure.as_ref())
+                .unwrap()
+                .protocols,
+            bc::BytecodeClosureProtocols {
+                call: false,
+                call_mut: false,
+                call_once: false,
+            }
+        );
+        bc::verify_bytecode(&partial).unwrap();
+
+        let specialized = lowered(
+            "fn observe[T](value: ref T) {}\n\
+             fn inspect[T](input: T) {\n\
+                 let operation = () { observe(ref input) }\n\
+                 operation()\n\
+             }\n\
+             fn execute(value: Join[Int, String]) {\n\
+                 inspect(1)\n\
+                 inspect(value)\n\
+             }\n",
+        );
+        let mut specialized_rows = specialized
+            .callables
+            .iter()
+            .filter_map(|callable| callable.closure.as_ref())
+            .map(|closure| closure.protocols)
+            .collect::<Vec<_>>();
+        specialized_rows.sort_by_key(|protocols| protocols.call_once);
+        assert_eq!(
+            specialized_rows,
+            vec![
+                bc::BytecodeClosureProtocols {
+                    call: true,
+                    call_mut: true,
+                    call_once: false,
+                },
+                bc::BytecodeClosureProtocols {
+                    call: true,
+                    call_mut: true,
+                    call_once: true,
+                },
+            ]
+        );
+        bc::verify_bytecode(&specialized).unwrap();
     }
 
     #[test]

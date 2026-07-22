@@ -156,10 +156,12 @@ erasure requires an exact effect-preserving signature, `Call`, and an
 environment proving `Copy + Send + Share`. OWN-006 applies the same contextual
 Copy/Move decision as an ordinary value transfer to every capture, marks an
 affine outer binding unavailable at construction, and derives repeatable call
-protocols from environment writes and moves. Ordinary invocation still accepts
-only synchronous-safe signatures; async initiation belongs to M7, and unsafe
-context validation belongs to M9. Open source/prelude trait obligations use
-coherent static selection. Trait declarations
+protocols from environment writes and moves. OWN-007 derives `CallOnce` only
+when every capture is `Discard` or leaves its environment slot on every normal,
+return, failure, and propagation exit. Ordinary invocation still accepts only
+synchronous-safe signatures; async initiation belongs to M7, and unsafe context
+validation belongs to M9. Open source/prelude trait obligations use coherent
+static selection. Trait declarations
 carry a sorted method table, contextual `Self`, default-body and async-receiver
 requirements. Default bodies are checked once with rigid trait binders; calls to
 another receiver method of the same trait resolve locally and both inferred and
@@ -252,10 +254,11 @@ copy/observe/consume mode per `match`, rejects unconfirmed affine projections,
 and delays affine pattern transfers until after a successful guard. Typed move
 paths now live in MIR and bytecode as an internal destructuring mechanism;
 closure captures participate in the same whole-owner flow and become typed
-environment move paths. Loan regions, confirmed borrowed transfers, terminal
-closure obligations, and cleanup remain later analyses. Synchronous closure
-invocation crosses this boundary with an explicit exact signature and selected
-call protocol.
+environment move paths. Closure terminal obligations are intersected across all
+normal exits; loan regions, confirmed borrowed transfers, downstream terminal
+owners, and cleanup remain later analyses. Synchronous closure invocation
+crosses this boundary with an explicit exact signature and selected call
+protocol.
 
 Type IDs are request-local interned handles; only canonical recursive type
 strings are observable. Alias expansion, union normalization, nominal identity,
@@ -340,7 +343,10 @@ environment parameter. Calls use the ordinary verified indirect-call operation,
 carrying an exact signature and concrete protocol; a shallow borrow is confined
 to verified immediate observation/call positions while `CallOnce` retains
 ordinary copy/move operand semantics. Bytecode rederives environment writes and
-moves before accepting that protocol row.
+moves before accepting that protocol row, and accepts `CallOnce` only when each
+non-`Discard` capture is completely transferred on every reachable return.
+Monomorphization specializes the source-generic row against concrete `Discard`
+facts before that independent verification.
 All four closure effect signatures survive in the callable catalog, but the
 ordinary call operation and bytecode verifier reject `async` or `unsafe`
 signatures until their effect-aware instructions exist.

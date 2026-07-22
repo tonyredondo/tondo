@@ -300,11 +300,34 @@ fn access_is_closure_capture(
     closure: crate::hir::HirClosureId,
     access: &LocalAccess,
 ) -> bool {
-    function.parameters.first() == Some(&access.local)
-        && matches!(
-            access.path.first(),
-            Some(MovePathComponent::ClosureCapture(projected, _)) if *projected == closure
-        )
+    closure_capture_access_index(function, closure, access).is_some()
+}
+
+fn closure_capture_access_index(
+    function: &MirFunction,
+    closure: crate::hir::HirClosureId,
+    access: &LocalAccess,
+) -> Option<u32> {
+    (function.parameters.first() == Some(&access.local))
+        .then(|| match access.path.first() {
+            Some(MovePathComponent::ClosureCapture(projected, index)) if *projected == closure => {
+                Some(*index)
+            }
+            _ => None,
+        })
+        .flatten()
+}
+
+fn closure_capture_transfer_index(
+    function: &MirFunction,
+    closure: crate::hir::HirClosureId,
+    access: &LocalAccess,
+) -> Option<u32> {
+    let index = closure_capture_access_index(function, closure, access)?;
+    access.path[1..]
+        .iter()
+        .all(|component| matches!(component, MovePathComponent::NewtypeValue))
+        .then_some(index)
 }
 
 fn mir_rvalue_contains_invalid_borrow(value: &MirRvalue) -> bool {
@@ -630,10 +653,22 @@ impl Verifier<'_> {
                 });
             }
         }
+        let mut required_transfers = BTreeSet::new();
+        for (index, capture) in metadata.captures().iter().enumerate() {
+            if self.capability_status(function.id, capture.ty(), HirCapability::Discard, context)?
+                != HirCapabilityStatus::Satisfied
+            {
+                required_transfers.insert(u32::try_from(index).map_err(|_| {
+                    MirInvariantError::new(context, "closure capture index exceeds MIR limits")
+                })?);
+            }
+        }
+        let transferred_on_all_returns =
+            self.closure_captures_transferred_on_all_returns(function, closure, context)?;
         let derived = HirClosureProtocols::new(
             !writes_capture && !moves_capture,
             !moves_capture && (!metadata.is_async() || !writes_capture),
-            true,
+            required_transfers.is_subset(&transferred_on_all_returns),
         );
         if metadata.protocols() != derived {
             return Err(MirInvariantError::new(
@@ -642,6 +677,90 @@ impl Verifier<'_> {
             ));
         }
         Ok(())
+    }
+
+    fn closure_captures_transferred_on_all_returns(
+        &self,
+        function: &MirFunction,
+        closure: crate::hir::HirClosureId,
+        context: &str,
+    ) -> Result<BTreeSet<u32>, MirInvariantError> {
+        let all = self
+            .hir
+            .closure(closure)
+            .expect("closure protocol verification has HIR metadata")
+            .captures()
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                u32::try_from(index).map_err(|_| {
+                    MirInvariantError::new(context, "closure capture index exceeds MIR limits")
+                })
+            })
+            .collect::<Result<BTreeSet<_>, _>>()?;
+        let mut incoming = vec![None::<BTreeSet<u32>>; function.blocks.len()];
+        incoming[function.entry.index() as usize] = Some(BTreeSet::new());
+        let mut queue = VecDeque::from([function.entry]);
+        let mut queued = vec![false; function.blocks.len()];
+        queued[function.entry.index() as usize] = true;
+        let mut returns = None::<BTreeSet<u32>>;
+
+        while let Some(block_id) = queue.pop_front() {
+            queued[block_id.index() as usize] = false;
+            self.consume_dataflow_step(context)?;
+            let Some(mut state) = incoming[block_id.index() as usize].clone() else {
+                continue;
+            };
+            let block = &function.blocks[block_id.index() as usize];
+            if block.kind != MirBlockKind::Normal {
+                continue;
+            }
+            for event in self.local_events(function, block) {
+                match event {
+                    LocalEvent::Move(access) => {
+                        if let Some(index) =
+                            closure_capture_transfer_index(function, closure, &access)
+                        {
+                            state.insert(index);
+                        }
+                    }
+                    LocalEvent::Write(access) => {
+                        if let Some(index) =
+                            closure_capture_access_index(function, closure, &access)
+                        {
+                            state.remove(&index);
+                        }
+                    }
+                    LocalEvent::Read(_)
+                    | LocalEvent::WriteAccess(_)
+                    | LocalEvent::StorageLive(_)
+                    | LocalEvent::StorageDead(_) => {}
+                }
+            }
+            if matches!(block.terminator.kind, MirTerminatorKind::Return) {
+                intersect_optional_set(&mut returns, state);
+                continue;
+            }
+            for edge in successor_edges(&block.terminator.kind) {
+                if function.blocks[edge.target.index() as usize].kind != MirBlockKind::Normal {
+                    continue;
+                }
+                let mut edge_state = state.clone();
+                if let Some(index) = edge.writes.as_ref().and_then(|place| {
+                    closure_capture_access_index(function, closure, &LocalAccess::from_place(place))
+                }) {
+                    edge_state.remove(&index);
+                }
+                let changed =
+                    intersect_incoming_set(&mut incoming[edge.target.index() as usize], edge_state);
+                if changed && !queued[edge.target.index() as usize] {
+                    queued[edge.target.index() as usize] = true;
+                    queue.push_back(edge.target);
+                }
+            }
+        }
+
+        Ok(returns.unwrap_or(all))
     }
 
     fn verify_block(
@@ -4043,6 +4162,20 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => Vec::new(),
     }
+}
+
+fn intersect_optional_set(target: &mut Option<BTreeSet<u32>>, source: BTreeSet<u32>) {
+    let _ = intersect_incoming_set(target, source);
+}
+
+fn intersect_incoming_set(target: &mut Option<BTreeSet<u32>>, source: BTreeSet<u32>) -> bool {
+    let Some(target) = target else {
+        *target = Some(source);
+        return true;
+    };
+    let previous = target.len();
+    target.retain(|value| source.contains(value));
+    target.len() != previous
 }
 
 fn complementary_tag(tag: MirTag) -> Option<MirTag> {

@@ -12,7 +12,11 @@ use super::{
     HirStatement, HirValueCategory, HirVariantValue, HirWriteKind,
 };
 
-type AvailabilityState = BTreeMap<LocalId, Span>;
+#[derive(Clone, Debug, Default)]
+struct AvailabilityState {
+    unavailable: BTreeMap<LocalId, Span>,
+    definitely_transferred: BTreeSet<LocalId>,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum AvailabilityFindingKind {
@@ -71,6 +75,7 @@ enum Demand {
 #[derive(Clone, Debug, Default)]
 struct AvailabilityFlow {
     normal: Option<AvailabilityState>,
+    exits: Option<AvailabilityState>,
     breaks: BTreeMap<HirLoopId, AvailabilityState>,
     continues: BTreeMap<HirLoopId, AvailabilityState>,
 }
@@ -85,12 +90,16 @@ impl AvailabilityFlow {
 
     fn merge(&mut self, other: Self) {
         merge_optional_state(&mut self.normal, other.normal);
+        merge_optional_state(&mut self.exits, other.exits);
         merge_control_states(&mut self.breaks, other.breaks);
         merge_control_states(&mut self.continues, other.continues);
     }
 
     fn strip_locals(&mut self, locals: &[LocalId]) {
         if let Some(state) = &mut self.normal {
+            remove_locals(state, locals);
+        }
+        if let Some(state) = &mut self.exits {
             remove_locals(state, locals);
         }
         for state in self.breaks.values_mut() {
@@ -173,13 +182,29 @@ pub(crate) fn analyze_availability(
 /// whole-program availability pass. It intentionally treats only captures as
 /// tracked owners: moving a parameter or a body-local value does not weaken the
 /// protocols of the closure itself.
-pub(crate) fn analyze_closure_capture_moves(
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ClosureCaptureAnalysis {
+    transferred: BTreeSet<LocalId>,
+    transferred_on_all_exits: BTreeSet<LocalId>,
+}
+
+impl ClosureCaptureAnalysis {
+    pub(crate) fn transferred(&self) -> &BTreeSet<LocalId> {
+        &self.transferred
+    }
+
+    pub(crate) fn transferred_on_all_exits(&self) -> &BTreeSet<LocalId> {
+        &self.transferred_on_all_exits
+    }
+}
+
+pub(crate) fn analyze_closure_captures(
     program: &HirProgram,
     capabilities: &CapabilityAnalysis,
     assumptions: CapabilityAssumptions,
     captures: &[HirClosureCapture],
     root: HirExpressionId,
-) -> Result<BTreeSet<LocalId>, TypeError> {
+) -> Result<ClosureCaptureAnalysis, TypeError> {
     let tracked = captures
         .iter()
         .map(HirClosureCapture::local)
@@ -193,15 +218,22 @@ pub(crate) fn analyze_closure_capture_moves(
         BTreeSet::new(),
         &mut findings,
     );
-    analyzer.tracked_transfers = tracked;
+    analyzer.tracked_transfers = tracked.clone();
     analyzer.reinitializable.extend(
         captures
             .iter()
             .filter(|capture| capture.is_mutable())
             .map(HirClosureCapture::local),
     );
-    analyzer.analyze_body(root)?;
-    Ok(std::mem::take(&mut analyzer.transferred))
+    let flow = analyzer.analyze_body_flow(root)?;
+    let transferred_on_all_exits = flow
+        .exits
+        .map(|state| state.definitely_transferred)
+        .unwrap_or(tracked);
+    Ok(ClosureCaptureAnalysis {
+        transferred: std::mem::take(&mut analyzer.transferred),
+        transferred_on_all_exits,
+    })
 }
 
 struct Analyzer<'a, 'f> {
@@ -245,8 +277,15 @@ impl<'a, 'f> Analyzer<'a, 'f> {
     }
 
     fn analyze_body(&mut self, root: HirExpressionId) -> Result<(), TypeError> {
-        let _ = self.expression(root, AvailabilityState::new(), Demand::Transfer)?;
+        let _ = self.analyze_body_flow(root)?;
         Ok(())
+    }
+
+    fn analyze_body_flow(&mut self, root: HirExpressionId) -> Result<AvailabilityFlow, TypeError> {
+        let mut flow = self.expression(root, AvailabilityState::default(), Demand::Transfer)?;
+        let normal = flow.normal.take();
+        merge_optional_state(&mut flow.exits, normal);
+        Ok(flow)
     }
 
     fn expression(
@@ -307,11 +346,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             | HirExpressionKind::Coerce { value, .. } => {
                 self.expression(*value, state, Demand::Transfer)?
             }
-            HirExpressionKind::ResultErr { error } | HirExpressionKind::Fail { error } => {
+            HirExpressionKind::ResultErr { error } => {
+                self.expression(*error, state, Demand::Transfer)?
+            }
+            HirExpressionKind::Fail { error } => {
                 let mut flow = self.expression(*error, state, Demand::Transfer)?;
-                if matches!(expression.kind(), HirExpressionKind::Fail { .. }) {
-                    flow.normal = None;
-                }
+                let exit = flow.normal.take();
+                merge_optional_state(&mut flow.exits, exit);
                 flow
             }
             HirExpressionKind::Record { fields, .. } => self.sequence(
@@ -446,7 +487,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             )?,
             HirExpressionKind::PropagateOption { value }
             | HirExpressionKind::PropagateResult { value, .. } => {
-                self.expression(*value, state, Demand::Transfer)?
+                let mut flow = self.expression(*value, state, Demand::Transfer)?;
+                let exit = flow.normal.clone();
+                merge_optional_state(&mut flow.exits, exit);
+                flow
             }
             HirExpressionKind::If {
                 condition,
@@ -464,7 +508,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 } else {
                     AvailabilityFlow::normal(state)
                 };
-                flow.normal = None;
+                let exit = flow.normal.take();
+                merge_optional_state(&mut flow.exits, exit);
                 flow
             }
             HirExpressionKind::Break { target } => {
@@ -1008,7 +1053,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             PlaceRoot::Receiver | PlaceRoot::Temporary => None,
         };
         if let Some(local) = local.filter(|local| self.owners.contains(local))
-            && let Some(move_span) = state.get(&local).copied()
+            && let Some(move_span) = state.unavailable.get(&local).copied()
         {
             self.findings.insert(AvailabilityFinding {
                 kind: AvailabilityFindingKind::UseAfterMove,
@@ -1044,9 +1089,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         match place.root {
             PlaceRoot::Local(local) if self.owners.contains(&local) => {
                 if place.complete_transfer {
-                    state.insert(local, span);
+                    state.unavailable.insert(local, span);
                     if self.tracked_transfers.contains(&local) {
                         self.transferred.insert(local);
+                        state.definitely_transferred.insert(local);
                     }
                 } else {
                     self.findings.insert(AvailabilityFinding {
@@ -1184,13 +1230,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 if mutable {
                     self.reinitializable.insert(*local);
                 }
-                state.remove(local);
+                remove_local(state, *local);
                 locals.push(*local);
             }
             HirPatternKind::BorrowBinding(local) => {
                 self.borrowed.insert(*local);
                 self.pattern_borrowed.insert(*local);
-                state.remove(local);
+                remove_local(state, *local);
                 locals.push(*local);
             }
             HirPatternKind::Tuple(items) => {
@@ -1301,17 +1347,26 @@ fn merge_control_states(
 }
 
 fn merge_state(target: &mut AvailabilityState, source: AvailabilityState) {
-    for (local, origin) in source {
-        target.entry(local).or_insert(origin);
+    for (local, origin) in source.unavailable {
+        target.unavailable.entry(local).or_insert(origin);
     }
+    target
+        .definitely_transferred
+        .retain(|local| source.definitely_transferred.contains(local));
 }
 
 fn remove_locals(state: &mut AvailabilityState, locals: &[LocalId]) {
     for local in locals {
-        state.remove(local);
+        remove_local(state, *local);
     }
 }
 
 fn state_keys_equal(left: &AvailabilityState, right: &AvailabilityState) -> bool {
-    left.keys().eq(right.keys())
+    left.unavailable.keys().eq(right.unavailable.keys())
+        && left.definitely_transferred == right.definitely_transferred
+}
+
+fn remove_local(state: &mut AvailabilityState, local: LocalId) {
+    state.unavailable.remove(&local);
+    state.definitely_transferred.remove(&local);
 }

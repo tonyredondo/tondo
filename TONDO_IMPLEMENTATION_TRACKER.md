@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.39
+**Versión del tracker:** 0.40
 
 **Última actualización:** 2026-07-22
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** completar las capacidades derivadas de closures con
-capturas afines (OWN-007).
+**Objetivo inmediato:** implementar préstamos `ref`, `mut` y `var` sobre MIR
+(BORROW-001).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1165,8 +1165,8 @@ CAP-001 y CALL-001 a CALL-004:
   normativo `E1609`.
 - `Copy`, `Discard`, `Send` y `Share` se derivan componente a componente desde
   las capturas sustituidas; `Equatable` y `Key` se rechazan. OWN-006 elimina la
-  restricción ejecutable de capturas `Copy`; OWN-007 conserva únicamente el
-  cierre de obligaciones terminales requerido para derivar `CallOnce`.
+  restricción ejecutable de capturas `Copy`; OWN-007 deriva `CallOnce` mediante
+  descarte estructural o transferencia completa en todas las salidas normales.
 - El admission verifier exige correspondencia uno-a-uno entre metadata y
   expresión, identidad generada versus efectos de firma, firma/body, ausencia
   de parámetros async exclusivos, tipo, mutabilidad y binding de cada captura.
@@ -1181,8 +1181,10 @@ CAP-001 y CALL-001 a CALL-004:
   `Call`, y un move impide también `CallMut`. Construir una closure anidada no
   ejecuta su body, pero sí mueve en ese punto las capturas afines que necesita;
   el código inalcanzable no contamina la fila exterior. En una closure async,
-  escribir el entorno impide también `CallMut`. OWN-007 completará la condición
-  terminal de `CallOnce`.
+  escribir el entorno impide también `CallMut`. `CallOnce` exige que cada
+  captura pruebe `Discard` o abandone su slot de entorno en toda terminación
+  normal, `return`, `fail` y salida fallida de `?`; los joins intersectan esa
+  prueba y una reposición vuelve a armar la obligación.
 - Funciones, closures concretas y callable bounds genéricos u opacos comparten
   una firma estructural exacta. Un contrato ambiguo produce `E1115`, un
   protocolo inaccesible `E1407`, y la coerción contextual a `fn(...)` exige
@@ -1198,7 +1200,9 @@ CAP-001 y CALL-001 a CALL-004:
   genéricos, y las carga al mismo presupuesto `T0002`. El catálogo bytecode
   contiene identidad, entorno, esquema, protocolos y body; su verifier deriva
   otra vez capacidades y protocolos, resuelve testigos opacos y rechaza
-  metadata, firmas, accesos o erasures forjados.
+  metadata, firmas, accesos o erasures forjados. Tras sustituir binders, el
+  lowering especializa `CallOnce` con el `Discard` concreto sin cambiar los
+  moves decididos por el body genérico.
 - La VM inserta el entorno como argumento oculto, conserva `Call`/`CallMut` por
   préstamo superficial y aplica a `CallOnce` la copia o move que ya seleccionó
   el caller. Un move toma el owner del cierre y los moves del body vacían los
@@ -1217,8 +1221,10 @@ CAP-001 y CALL-001 a CALL-004:
   identidades, mismatch de efectos, `E1609`, protocolo async stateful y rechazo
   de llamadas/entries con efectos. OWN-006 añade capturas afines observadas y
   movidas, propagación anidada, metadata forjada y construcción bajo presión de
-  GC; `await`/`spawn` siguen en M7 y la ejecución unsafe en M9.
-- El gate acumulado pasa 445 tests, `git diff --check`, formatter check, build
+  GC; OWN-007 añade observación terminal, transferencia total frente a parcial,
+  `return`, `fail`, `?`, extracción completa de newtypes y especialización
+  monomorfizada; `await`/`spawn` siguen en M7 y la ejecución unsafe en M9.
+- El gate acumulado pasa 480 tests, `git diff --check`, formatter check, build
   de todos los targets, Clippy con warnings denegados y Rustdoc con warnings
   denegados.
 
@@ -1295,8 +1301,17 @@ lifetimes escritos por el usuario.
   protocolos. La VM toma campos movidos y protege construcciones multi-captura
   con raíces temporales incluso bajo presión de GC.
 
-- [ ] **OWN-007 — Completar las capacidades derivadas de closures con capturas
-  afines y probar las obligaciones terminales de `CallOnce`.**
+- [x] **OWN-007 — Completar las capacidades derivadas de closures con capturas
+  afines y probar las obligaciones terminales de `CallOnce`.** HIR conserva una
+  unión de owners no disponibles y, en paralelo, la intersección de capturas
+  transferidas sobre toda salida normal, `return`, `fail` y `?`. Una captura
+  `Discard` no añade obligación; cualquier otra debe salir completamente del
+  entorno, incluida la extracción `.value` de newtype, y una escritura posterior
+  rearma la prueba. MIR y bytecode repiten el must-analysis sobre sus CFG
+  normales. Bytecode especializa además el `Discard` concreto de closures
+  genéricas y opacas antes de verificar la fila ejecutable exacta. TERM-002
+  seguirá el owner receptor después de un handoff interno y rechazará su
+  abandono posterior.
 
 ### 10.2 Préstamos
 
@@ -1900,14 +1915,35 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es OWN-007: cerrar la derivación de `CallOnce` frente
-a capacidades terminales y demostrar que cada captura obligatoria se consume o
-transfiere en todas las salidas, sin introducir listas de captura, préstamos
-implícitos ni otra forma de llamada.
+La siguiente acción activa es BORROW-001: convertir los `Borrow` inmediatos ya
+tipados en préstamos MIR explícitos para `ref`, `mut` y `var`, conservando su
+identidad de lugar y sin introducir lifetimes escritos por el usuario.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.40 — 2026-07-22
+
+- Se completa OWN-007 con una prueba must-transfer separada de la unión de
+  disponibilidad: `CallOnce` exige `Discard` o transferencia completa de cada
+  captura en toda salida normal, `return`, `fail` y propagación `?`; panic y
+  divergencia no fabrican una salida normal.
+- HIR vuelve a derivar la prueba con bounds abiertos. MIR y bytecode la repiten
+  por intersección sobre el CFG normal, distinguen moves parciales de una
+  extracción completa de newtype y eliminan la prueba si el slot se repone.
+- La frontera monomorfizada reevalúa `Discard` sobre tipos, nominales, closures y
+  testigos opacos concretos. Así una closure genérica conservadora puede ganar
+  `CallOnce` para `T = Int` sin alterar sus decisiones de Copy/Move ni confiar en
+  metadata HIR.
+- Las regresiones cubren capturas terminales observadas, transferencia en todas
+  frente a solo algunas ramas, `fail`, `?`, newtypes, metadata HIR falsificada,
+  rederivación MIR/bytecode y especialización genérica concreta. El gate
+  acumulado pasa 480 tests, formatter check, `git diff --check`, check y build de
+  todos los targets, Clippy y Rustdoc con warnings denegados.
+- La cola avanza a BORROW-001. TERM-002 conserva la obligación posterior de
+  seguir un recurso transferido a otro owner y rechazar su abandono al salir de
+  scope.
 
 ### 0.39 — 2026-07-22
 

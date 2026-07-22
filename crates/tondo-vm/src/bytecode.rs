@@ -9,8 +9,8 @@ mod verify;
 
 pub use disassemble::disassemble;
 pub use verify::{
-    BytecodeVerificationError, BytecodeVerificationLimits, verify_bytecode,
-    verify_bytecode_with_limits,
+    BytecodeVerificationError, BytecodeVerificationLimits, derive_discard_capabilities,
+    verify_bytecode, verify_bytecode_with_limits,
 };
 
 macro_rules! index_type {

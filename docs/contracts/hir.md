@@ -62,12 +62,12 @@ results, trait default bodies, exact implementation bodies, trait-provided
 iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   `Key`, `Send`, and `Share`, all four closure effect identities and exact
   signatures, synchronous-safe closure invocation, and exact closure-to-`fn`
-  coercion. Concrete external implementations, non-`Copy` capture moves,
-  effectful invocation, `await`, `spawn`, unsafe-region proofs and raw
+  coercion. Concrete external implementations, effectful invocation, `await`,
+  `spawn`, unsafe-region proofs and raw
   operations, async liveness/`Send` analysis, string interpolation through
   `Display`, `defer`, general loan regions, confirmed borrowed replacement,
-  affine captures, and terminal cleanup remain explicit later boundaries rather
-  than receiving provisional semantics. Persistent source-visible partial owner
+  and terminal scope cleanup remain explicit later boundaries rather than
+  receiving provisional semantics. Persistent source-visible partial owner
   states are deliberately absent from Tondo 0.1; OWN-005 implements the typed
   internal paths needed by complete destructuring without adding such a state.
 
@@ -282,11 +282,26 @@ move from an environment slot prevents both `Call` and `CallMut`; this includes
 moving a capture into a nested closure at that nested construction site. Merely
 observing a non-`Copy` capture does not weaken either repeatable protocol. A
 synchronous closure that writes but never moves a capture therefore retains
-`CallMut` and `CallOnce`. An async closure that writes a capture retains only
-`CallOnce`, because it must own its environment across suspension and cannot
-expose a hidden exclusive borrow. `CallOnce` remains provisionally available in
-executable metadata until OWN-007 adds the path-sensitive terminal-obligation
-proof; it must not be interpreted as completion of that future contract.
+`CallMut`; whether it also retains `CallOnce` is decided by the terminal rule
+below. An async closure that writes a capture loses both borrowed protocols,
+because it must own its environment across suspension and cannot expose a
+hidden exclusive borrow.
+
+OWN-007 derives `CallOnce` by a second path-sensitive fact. Every capture must
+either prove `Discard` under the closure's exact generic assumptions or be
+transferred out of its environment slot on every reachable normal completion,
+explicit `return`, `fail`, and failing `?` exit. Branch joins intersect this
+must-transfer set. Reinitializing a moved `var` capture clears the fact until
+the replacement is transferred, and a move through the complete `.value`
+projection of a newtype counts as a complete-owner transfer. Panic and
+divergence have no normal exit and therefore add no path to the intersection.
+Consequently `Call` still implies `CallMut`, while `CallMut` implies `CallOnce`
+only when the complete environment is `Discard`; a non-`Discard` environment
+can derive `CallOnce` independently through the all-exit transfer proof.
+
+This proof closes the obligation of each environment slot. TERM-002 remains
+responsible for following a terminal value after an internal handoff and
+rejecting any later scope exit that abandons the destination owner.
 
 For a synchronous safe signature, an ordinary call chooses the first available
 protocol in the order `Call`, `CallMut`, `CallOnce`. `CallMut` requires a
@@ -303,9 +318,9 @@ closure table entry, a generated kind that exactly matches the signature's
 `async`/`unsafe` bits and source position, a complete signature/body agreement,
 no exclusive async parameter, canonical inherited generics, exact parameter
 locals, and sorted owned capture locals whose types, mutability, and CALL-002
-contextual Copy/Move decision are rederived from their bindings and inherited
-bounds. It independently rederives the effect-sensitive, move-sensitive body
-protocol row, every
+  contextual Copy/Move decision are rederived from their bindings and inherited
+  bounds. It independently rederives the effect-sensitive, move-sensitive and
+  all-normal-exit terminal body protocol row, every
 synchronous-safe call's exact signature and access-selected protocol, and every
 callable-erasure precondition. A forged effectful ordinary call is rejected.
 No recovery closure crosses into MIR.
@@ -683,12 +698,12 @@ their borrow contract. In particular, a hosted fallible `main` admits its error
 type only when its `Discard` status is `Satisfied`.
 
 HIR proves the contextual capability facts consumed by OWN-002, including
-generic and opaque `Copy` status and the exact `CallOnce` protocol. MIR records
-the resulting copy or move. OWN-005 additionally records one uniform
-`Copy`/`Observe`/`Consume` mode per `match`; implicit scope-end obligations,
-affine captures, loan regions, and terminal operations remain their owning
-phases' responsibility. Successful capability proof does not fabricate those
-later facts or cleanup.
+generic and opaque `Copy` status and the exact source-generic `CallOnce`
+protocol. MIR records the resulting copy or move. OWN-005 additionally records
+one uniform `Copy`/`Observe`/`Consume` mode per `match`; implicit scope-end
+obligations, loan regions, and terminal cleanup remain their owning phases'
+responsibility. Successful capability proof does not fabricate those later
+facts or cleanup.
 
 ## Flow-sensitive ownership availability
 
@@ -704,7 +719,9 @@ value transfer from a non-`Copy` owner inserts that fact; a copy or immediate
 observation leaves the state unchanged. A later read, observation, or transfer
 of the owner emits `E1401` at the use and relates the diagnostic to the move
 origin. Findings are deterministic and a failed use never replaces the first
-origin.
+origin. Closure-body analysis carries, alongside this may-unavailable union, a
+must-transfer set intersected at every branch and loop join and accumulated
+across normal, return, failure, and propagation exits for `CallOnce`.
 
 Sequential expressions follow source evaluation order. A control-flow join
 uses the union of unavailable owners, so a binding is available only when it is
@@ -744,8 +761,9 @@ MIR and bytecode independently rederive path availability for the internal
 component moves; HIR rederives the recorded match mode before admitting MIR.
 Affine closure construction uses the same whole-owner transfer rule: a capture
 copies or moves the complete outer binding, and closure-body capture projections
-become typed environment move paths. OWN-007 adds terminal-obligation closure,
-not another capture transfer form.
+become typed environment move paths. OWN-007 intersects complete environment
+transfers across all normal exits; it adds no capture list, implicit loan, or
+second transfer form.
 
 ## Declaration ordering
 
@@ -913,7 +931,9 @@ binders, exact and inferred outcomes, nested free-use propagation, mutable
 snapshot metadata, modes, variadics, borrowed-capture rejection, deferred
 contextual coercion, all six structural capabilities, all four effect kinds,
 exact effect-preserving function conversion, `E1609`, async stateful protocols,
-and executable synchronous-safe Copy environments. Mutated HIR proves that
+executable synchronous-safe Copy environments, terminal observation, all- versus
+partial-return transfer, `fail`, `?`, and complete newtype extraction. Mutated
+HIR proves that
 capture type, mutability, construction correspondence, generated kind versus
 signature effects, protocol rows, exclusive async parameters, effectful-call
 exclusion, and the bootstrap `Copy` admission proof are independently rechecked.
