@@ -1711,10 +1711,16 @@ fn collect_terminator_types(terminator: &MirTerminator, types: &mut BTreeSet<Typ
             }
         }
         MirTerminatorKind::IteratorNext {
-            state, destination, ..
+            state,
+            destination,
+            borrowed_source,
+            ..
         } => {
             collect_place_types(state, types);
             collect_place_types(destination, types);
+            if let Some(source) = borrowed_source {
+                collect_place_types(source, types);
+            }
         }
         MirTerminatorKind::ValidatePlaces {
             places,
@@ -2629,12 +2635,17 @@ fn lower_terminator(
         MirTerminatorKind::IteratorNext {
             state,
             destination,
+            borrowed_source,
             has_value,
             exhausted,
             unwind,
         } => bc::BytecodeTerminatorKind::IteratorNext {
             state: lower_place(state, context, type_map)?,
             destination: lower_place(destination, context, type_map)?,
+            borrowed_source: borrowed_source
+                .as_ref()
+                .map(|place| lower_place(place, context, type_map))
+                .transpose()?,
             has_value: block_id(*has_value),
             exhausted: block_id(*exhausted),
             unwind: block_id(*unwind),
@@ -2756,6 +2767,11 @@ fn lower_projection(
             bc::BytecodeProjectionKind::ArrayPatternRest {
                 start: *start,
                 suffix: *suffix,
+            }
+        }
+        MirProjectionKind::IteratorElement { index } => {
+            bc::BytecodeProjectionKind::IteratorElement {
+                index: bc::BytecodeSlotId::new(index.index()),
             }
         }
         MirProjectionKind::Index { index, access } => bc::BytecodeProjectionKind::Index {
@@ -6443,8 +6459,8 @@ mod tests {
         let error = bc::verify_bytecode(&wrong_borrow_access).unwrap_err();
         assert!(error.message().contains("rvalue"), "{error}");
 
-        let mut borrowed_copyable = wrong_borrow_access;
-        let source = borrowed_copyable.functions[entry.index() as usize]
+        let mut borrowed_forgery = wrong_borrow_access;
+        let source = borrowed_forgery.functions[entry.index() as usize]
             .blocks
             .iter_mut()
             .flat_map(|block| &mut block.instructions)
@@ -6467,12 +6483,265 @@ mod tests {
             panic!("the Copy bootstrap should read the iterable temporary")
         };
         source.kind = bc::BytecodeOperandKind::Borrow(source_place);
-        bc::verify_bytecode(&borrowed_copyable).unwrap();
-        let mut host = RejectingHost;
-        let execution = execute(&borrowed_copyable, entry, &mut host).unwrap();
-        assert_eq!(
-            execution.outcome,
-            VmOutcome::Returned(RuntimeValue::Integer(10))
+        let error = bc::verify_bytecode(&borrowed_forgery).unwrap_err();
+        assert!(error.message().contains("terminator"), "{error}");
+    }
+
+    #[test]
+    fn borrowed_intrinsic_iteration_executes_without_consuming_collection_elements() {
+        let array = execute_function(
+            "fn read(value: ref Int): Int { value }\n\
+             fn arraySum(): Int {\n\
+                 let values = [1, 2, 3, 4]\n\
+                 var total = 0\n\
+                 for ref value in values {\n\
+                     if value == 2 {\n\
+                         continue\n\
+                     }\n\
+                     total += read(ref value)\n\
+                     if value == 3 {\n\
+                         break\n\
+                     }\n\
+                 }\n\
+                 total + values[0]\n\
+             }\n",
+            "arraySum",
+        );
+        assert_eq!(array, RuntimeValue::Integer(5));
+
+        let mutation_after = execute_function(
+            "fn mutationAfter(): Int {\n\
+                 var values = [1, 2]\n\
+                 for ref value in values {\n\
+                     _ = value\n\
+                 }\n\
+                 values[0] = 9\n\
+                 values[0]\n\
+             }\n",
+            "mutationAfter",
+        );
+        assert_eq!(mutation_after, RuntimeValue::Integer(9));
+
+        let reborrow = execute_function(
+            "fn sum(values: ref Array[Int]): Int {\n\
+                 var total = 0\n\
+                 for ref value in values {\n\
+                     total += value\n\
+                 }\n\
+                 total\n\
+             }\n\
+             fn reborrow(): Int {\n\
+                 let values = [4, 5, 6]\n\
+                 sum(ref values) + values[0]\n\
+             }\n",
+            "reborrow",
+        );
+        assert_eq!(reborrow, RuntimeValue::Integer(19));
+
+        let return_from_loop = execute_function(
+            "fn first(values: ref Array[Int]): Int {\n\
+                 for ref value in values {\n\
+                     return value\n\
+                 }\n\
+                 0\n\
+             }\n\
+             fn returnFromLoop(): Int {\n\
+                 let values = [7, 8]\n\
+                 first(ref values) + values[1]\n\
+             }\n",
+            "returnFromLoop",
+        );
+        assert_eq!(return_from_loop, RuntimeValue::Integer(15));
+
+        let map = execute_function(
+            "fn mapSum(): Int {\n\
+                 let entries = [\"one\": 1, \"two\": 2]\n\
+                 var total = 0\n\
+                 for (ref key, ref value) in entries {\n\
+                     _ = key\n\
+                     total += value\n\
+                 }\n\
+                 if \"one\" in entries { total } else { 0 }\n\
+             }\n",
+            "mapSum",
+        );
+        assert_eq!(map, RuntimeValue::Integer(3));
+
+        let mixed = execute_function(
+            "fn mixedMapSum(): Int {\n\
+                 let entries = [\"one\": 1, \"two\": 2]\n\
+                 var total = 0\n\
+                 for (ref key, value) in entries {\n\
+                     _ = key\n\
+                     total += value\n\
+                 }\n\
+                 total\n\
+             }\n",
+            "mixedMapSum",
+        );
+        assert_eq!(mixed, RuntimeValue::Integer(3));
+
+        let nested = execute_function(
+            "fn nestedSum(): Int {\n\
+                 let groups = [[1, 2], [3, 4]]\n\
+                 var total = 0\n\
+                 for ref value in groups[0] {\n\
+                     total += value\n\
+                 }\n\
+                 total + groups[0][0]\n\
+             }\n",
+            "nestedSum",
+        );
+        assert_eq!(nested, RuntimeValue::Integer(4));
+
+        let frozen_source = execute_function(
+            "fn frozenSource(): Int {\n\
+                 let groups = [[1, 2], [10, 20]]\n\
+                 var selected = 0\n\
+                 var total = 0\n\
+                 for ref value in groups[selected] {\n\
+                     total += value\n\
+                     selected = 1\n\
+                 }\n\
+                 total\n\
+             }\n",
+            "frozenSource",
+        );
+        assert_eq!(frozen_source, RuntimeValue::Integer(3));
+
+        let set = execute_function(
+            "fn setSum(): Int {\n\
+                 let values = Set[1, 2, 3]\n\
+                 var total = 0\n\
+                 for ref value in values {\n\
+                     total += value\n\
+                 }\n\
+                 if 1 in values { total } else { 0 }\n\
+             }\n",
+            "setSum",
+        );
+        assert_eq!(set, RuntimeValue::Integer(6));
+    }
+
+    #[test]
+    fn bytecode_rederives_borrowed_iterator_origins_and_boundary_loans() {
+        const SOURCE: &str = "fn observe(values: ref Array[Int]) {\n\
+             let marker = 0\n\
+             for ref value in values {\n\
+                 _ = value + marker\n\
+             }\n\
+         }\n";
+        let program = lowered(SOURCE);
+        bc::verify_bytecode(&program).unwrap();
+        let entry = function_id(&program, "observe");
+
+        let mut missing_source = program.clone();
+        let source = missing_source.functions[entry.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::IteratorNext {
+                    borrowed_source, ..
+                } => Some(borrowed_source),
+                _ => None,
+            })
+            .unwrap();
+        *source = None;
+        let error = bc::verify_bytecode(&missing_source).unwrap_err();
+        assert!(
+            error.message().contains("projection") || error.message().contains("terminator"),
+            "{error}"
+        );
+
+        let mut forged_position = program.clone();
+        let function = &mut forged_position.functions[entry.index() as usize];
+        let marker = function
+            .slots
+            .iter()
+            .enumerate()
+            .find_map(|(index, slot)| {
+                matches!(slot.kind, bc::BytecodeSlotKind::User { .. })
+                    .then_some(bc::BytecodeSlotId::new(index as u32))
+            })
+            .unwrap();
+        let projection = function
+            .loans
+            .iter_mut()
+            .flat_map(|loan| &mut loan.place.projections)
+            .find(|projection| {
+                matches!(
+                    projection.kind,
+                    bc::BytecodeProjectionKind::IteratorElement { .. }
+                )
+            })
+            .unwrap();
+        projection.kind = bc::BytecodeProjectionKind::IteratorElement { index: marker };
+        let error = bc::verify_bytecode(&forged_position).unwrap_err();
+        assert!(error.message().contains("projection"), "{error}");
+
+        let mut overwritten_position = program.clone();
+        let function = &mut overwritten_position.functions[entry.index() as usize];
+        let position = function
+            .blocks
+            .iter()
+            .find_map(|block| match &block.terminator.kind {
+                bc::BytecodeTerminatorKind::IteratorNext { destination, .. } => {
+                    Some(destination.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        let span = function.blocks[function.entry.index() as usize]
+            .terminator
+            .span;
+        function.blocks[function.entry.index() as usize]
+            .instructions
+            .push(bc::BytecodeInstruction {
+                span,
+                kind: bc::BytecodeInstructionKind::Store {
+                    destination: position.clone(),
+                    value: bc::BytecodeRvalue {
+                        ty: position.ty,
+                        kind: bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                            ty: position.ty,
+                            kind: bc::BytecodeOperandKind::Constant(bc::BytecodeConstant::Integer(
+                                "0".into(),
+                            )),
+                        }),
+                    },
+                },
+            });
+        let error = bc::verify_bytecode(&overwritten_position).unwrap_err();
+        assert!(error.message().contains("terminator"), "{error}");
+
+        let mut crossing_call_loan = program;
+        let function = &mut crossing_call_loan.functions[entry.index() as usize];
+        let place = function
+            .loans
+            .iter()
+            .find(|loan| loan.kind == bc::BytecodeLoanKind::Region)
+            .unwrap()
+            .place
+            .clone();
+        let loan = bc::BytecodeLoanId::new(function.loans.len() as u32);
+        function.loans.push(bc::BytecodeLoan {
+            kind: bc::BytecodeLoanKind::CallLocal,
+            mode: bc::BytecodeParameterMode::Ref,
+            place,
+        });
+        let span = function.blocks[function.entry.index() as usize]
+            .terminator
+            .span;
+        function.blocks[function.entry.index() as usize]
+            .instructions
+            .push(bc::BytecodeInstruction {
+                span,
+                kind: bc::BytecodeInstructionKind::ReserveLoan(loan),
+            });
+        let error = bc::verify_bytecode(&crossing_call_loan).unwrap_err();
+        assert!(
+            error.message().contains("only shared region loans"),
+            "{error}"
         );
     }
 

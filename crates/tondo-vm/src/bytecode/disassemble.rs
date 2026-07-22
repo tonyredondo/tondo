@@ -160,12 +160,17 @@ fn terminator_text(terminator: &BytecodeTerminatorKind) -> String {
             unwind.index()
         ),
         BytecodeTerminatorKind::IteratorNext {
+            state,
+            destination,
+            borrowed_source,
             has_value,
             exhausted,
             unwind,
-            ..
         } => format!(
-            "iterator_next -> b{}, b{} unwind b{}",
+            "iterator_next {:?} -> {:?} borrowed={:?}; b{}, b{} unwind b{}",
+            state,
+            destination,
+            borrowed_source,
             has_value.index(),
             exhausted.index(),
             unwind.index()

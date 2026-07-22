@@ -370,6 +370,9 @@ pub enum MirProjectionKind {
         start: u32,
         suffix: u32,
     },
+    IteratorElement {
+        index: MirLocalId,
+    },
     Index {
         index: MirLocalId,
         access: crate::hir::HirIndexAccess,
@@ -677,6 +680,7 @@ pub enum MirTerminatorKind {
     IteratorNext {
         state: MirPlace,
         destination: MirPlace,
+        borrowed_source: Option<MirPlace>,
         has_value: MirBlockId,
         exhausted: MirBlockId,
         unwind: MirBlockId,

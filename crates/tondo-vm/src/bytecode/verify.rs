@@ -1973,8 +1973,17 @@ impl Verifier<'_> {
     ) -> Result<(), BytecodeVerificationError> {
         self.function_type(function, place.ty, context)?;
         let mut current = self.slot(function, place.slot, context)?.ty;
-        for projection in &place.projections {
+        for (position, projection) in place.projections.iter().enumerate() {
             self.function_type(function, projection.ty, context)?;
+            if let BytecodeProjectionKind::IteratorElement { index } = &projection.kind {
+                let base = BytecodePlace {
+                    slot: place.slot,
+                    ty: current,
+                    projections: place.projections[..position].to_vec(),
+                    source_loan: place.source_loan,
+                };
+                self.verify_iterator_element_origin(function, &base, *index, context)?;
+            }
             let expected = match &projection.kind {
                 BytecodeProjectionKind::ClosureCapture { callable, index } => {
                     let callable = self.callable(*callable, context)?;
@@ -2111,6 +2120,19 @@ impl Verifier<'_> {
                     let _ =
                         self.intrinsic_argument(current, BytecodeIntrinsicType::Array, 0, context)?;
                     current
+                }
+                BytecodeProjectionKind::IteratorElement { index } => {
+                    let slot = self.slot(function, *index, context)?;
+                    if !self.is_scalar(slot.ty, BytecodeScalarType::Int) {
+                        return Err(projection_error(context));
+                    }
+                    let expected = self
+                        .borrowed_collection_item_type(current, context)?
+                        .ok_or_else(|| projection_error(context))?;
+                    if expected != projection.ty {
+                        return Err(projection_error(context));
+                    }
+                    expected
                 }
                 BytecodeProjectionKind::Index { index, access } => {
                     let index = self.slot(function, *index, context)?.ty;
@@ -3003,6 +3025,200 @@ impl Verifier<'_> {
         self.iterated_collection_item_type(collection, context)
     }
 
+    fn borrowed_collection_item_type(
+        &self,
+        collection: BytecodeTypeId,
+        context: &str,
+    ) -> Result<Option<BytecodeTypeId>, BytecodeVerificationError> {
+        let item = match &self.ty(collection, context)?.kind {
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Array | BytecodeIntrinsicType::Set,
+                arguments,
+            } => arguments.first().copied(),
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Map,
+                arguments,
+            } => Some(self.find_type(
+                |kind| matches!(kind, BytecodeTypeKind::Tuple(items) if items == arguments),
+                context,
+            )?),
+            _ => None,
+        };
+        Ok(item)
+    }
+
+    fn verify_borrowed_iterator_origin(
+        &self,
+        function: &BytecodeFunction,
+        state: &BytecodePlace,
+        destination: &BytecodePlace,
+        source: &BytecodePlace,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        if !state.projections.is_empty()
+            || state.source_loan.is_some()
+            || !destination.projections.is_empty()
+            || destination.source_loan.is_some()
+            || self.slot(function, state.slot, context)?.kind != BytecodeSlotKind::Temporary
+            || self.slot(function, destination.slot, context)?.kind != BytecodeSlotKind::Temporary
+        {
+            return Err(terminator_error(context));
+        }
+        let loan = self.loan(
+            function,
+            source
+                .source_loan
+                .ok_or_else(|| terminator_error(context))?,
+            context,
+        )?;
+        if loan.kind != BytecodeLoanKind::Region
+            || loan.mode != BytecodeParameterMode::Ref
+            || !same_place_path(&loan.place, source)
+        {
+            return Err(terminator_error(context));
+        }
+        let mut state_definitions = 0_u32;
+        let mut position_definitions = 0_u32;
+        for block in &function.blocks {
+            self.consume_dataflow_step(context)?;
+            for instruction in &block.instructions {
+                self.consume_dataflow_step(context)?;
+                let BytecodeInstructionKind::Store {
+                    destination: assigned,
+                    value,
+                } = &instruction.kind
+                else {
+                    continue;
+                };
+                if assigned.slot == destination.slot {
+                    return Err(terminator_error(context));
+                }
+                if assigned.slot == state.slot {
+                    let matches_origin = assigned.projections.is_empty()
+                        && assigned.source_loan.is_none()
+                        && matches!(
+                            &value.kind,
+                            BytecodeRvalueKind::IteratorState(BytecodeOperand {
+                                kind: BytecodeOperandKind::Borrow(origin),
+                                ..
+                            }) if origin == source
+                        );
+                    if !matches_origin {
+                        return Err(terminator_error(context));
+                    }
+                    state_definitions = state_definitions.saturating_add(1);
+                }
+            }
+            match &block.terminator.kind {
+                BytecodeTerminatorKind::IteratorNext {
+                    state: candidate_state,
+                    destination: assigned,
+                    borrowed_source: Some(candidate_source),
+                    ..
+                } if assigned.slot == destination.slot => {
+                    if candidate_state != state
+                        || assigned != destination
+                        || candidate_source != source
+                    {
+                        return Err(terminator_error(context));
+                    }
+                    position_definitions = position_definitions.saturating_add(1);
+                }
+                BytecodeTerminatorKind::IteratorNext {
+                    destination: assigned,
+                    ..
+                }
+                | BytecodeTerminatorKind::Invoke {
+                    destination: Some(assigned),
+                    ..
+                } if assigned.slot == destination.slot => {
+                    return Err(terminator_error(context));
+                }
+                BytecodeTerminatorKind::IteratorNext {
+                    destination: assigned,
+                    ..
+                }
+                | BytecodeTerminatorKind::Invoke {
+                    destination: Some(assigned),
+                    ..
+                } if assigned.slot == state.slot => {
+                    return Err(terminator_error(context));
+                }
+                _ => {}
+            }
+        }
+        if state_definitions != 1 || position_definitions != 1 {
+            return Err(terminator_error(context));
+        }
+        Ok(())
+    }
+
+    fn verify_iterator_element_origin(
+        &self,
+        function: &BytecodeFunction,
+        base: &BytecodePlace,
+        index: BytecodeSlotId,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let origin_loan = base.source_loan.ok_or_else(|| projection_error(context))?;
+        let mut producers = 0_usize;
+        for block in &function.blocks {
+            self.consume_dataflow_step(context)?;
+            let BytecodeTerminatorKind::IteratorNext {
+                destination,
+                borrowed_source: Some(source),
+                ..
+            } = &block.terminator.kind
+            else {
+                continue;
+            };
+            if destination.slot == index
+                && destination.projections.is_empty()
+                && destination.source_loan.is_none()
+                && same_place_path(base, source)
+            {
+                let expected_loan = source
+                    .source_loan
+                    .ok_or_else(|| projection_error(context))?;
+                if !self.region_loan_descends_from(function, origin_loan, expected_loan, context)? {
+                    return Err(projection_error(context));
+                }
+                producers = producers.saturating_add(1);
+            }
+        }
+        if producers != 1 {
+            return Err(projection_error(context));
+        }
+        Ok(())
+    }
+
+    fn region_loan_descends_from(
+        &self,
+        function: &BytecodeFunction,
+        mut candidate: BytecodeLoanId,
+        ancestor: BytecodeLoanId,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        let mut seen = BTreeSet::new();
+        loop {
+            self.consume_dataflow_step(context)?;
+            if candidate == ancestor {
+                return Ok(true);
+            }
+            if !seen.insert(candidate) {
+                return Err(projection_error(context));
+            }
+            let loan = self.loan(function, candidate, context)?;
+            if loan.kind != BytecodeLoanKind::Region {
+                return Ok(false);
+            }
+            let Some(parent) = loan.place.source_loan else {
+                return Ok(false);
+            };
+            candidate = parent;
+        }
+    }
+
     fn iterated_collection_item_type(
         &self,
         collection: BytecodeTypeId,
@@ -3540,6 +3756,7 @@ impl Verifier<'_> {
             BytecodeTerminatorKind::IteratorNext {
                 state,
                 destination,
+                borrowed_source,
                 has_value,
                 exhausted,
                 unwind,
@@ -3549,8 +3766,41 @@ impl Verifier<'_> {
                 }
                 self.verify_place(function, state, context)?;
                 self.verify_place(function, destination, context)?;
-                if self.iterated_item_type(state.ty, context)? != Some(destination.ty) {
+                let BytecodeTypeKind::Cursor { mode, collection } =
+                    self.ty(state.ty, context)?.kind
+                else {
                     return Err(terminator_error(context));
+                };
+                match mode {
+                    BytecodeCursorMode::Own => {
+                        if borrowed_source.is_some()
+                            || self.iterated_item_type(state.ty, context)? != Some(destination.ty)
+                        {
+                            return Err(terminator_error(context));
+                        }
+                    }
+                    BytecodeCursorMode::Ref => {
+                        let source = borrowed_source
+                            .as_ref()
+                            .ok_or_else(|| terminator_error(context))?;
+                        self.verify_place(function, source, context)?;
+                        if source.ty != collection
+                            || !self.is_scalar(destination.ty, BytecodeScalarType::Int)
+                            || source.source_loan.is_none()
+                            || self
+                                .borrowed_collection_item_type(collection, context)?
+                                .is_none()
+                        {
+                            return Err(terminator_error(context));
+                        }
+                        self.verify_borrowed_iterator_origin(
+                            function,
+                            state,
+                            destination,
+                            source,
+                            context,
+                        )?;
+                    }
                 }
                 self.normal_target(function, *has_value, context)?;
                 self.normal_target(function, *exhausted, context)?;
@@ -4008,6 +4258,17 @@ impl Verifier<'_> {
                     unwind,
                     ..
                 } => {
+                    for loan in &state.active {
+                        let loan = self.loan(function, *loan, &block_context)?;
+                        if loan.kind != BytecodeLoanKind::Region
+                            || loan.mode != BytecodeParameterMode::Ref
+                        {
+                            return Err(BytecodeVerificationError::new(
+                                &block_context,
+                                "only shared region loans may cross an iterator boundary",
+                            ));
+                        }
+                    }
                     let has_value_state = state.clone();
                     self.verify_loan_local_access(
                         function,
@@ -5616,6 +5877,9 @@ enum MovePathComponent {
         start: u32,
         suffix: u32,
     },
+    IteratorElement {
+        index: BytecodeSlotId,
+    },
     Index {
         index: BytecodeSlotId,
         access: BytecodeIndexAccess,
@@ -5651,6 +5915,9 @@ impl MovePathComponent {
                 start: *start,
                 suffix: *suffix,
             },
+            BytecodeProjectionKind::IteratorElement { index } => {
+                Self::IteratorElement { index: *index }
+            }
             BytecodeProjectionKind::Index { index, access } => Self::Index {
                 index: *index,
                 access: *access,
@@ -5796,8 +6063,15 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
                 push_operation_events(operation, &mut local);
             }
         }
-        BytecodeTerminatorKind::IteratorNext { state, .. } => {
+        BytecodeTerminatorKind::IteratorNext {
+            state,
+            borrowed_source,
+            ..
+        } => {
             push_destination_reads(state, true, &mut local);
+            if let Some(source) = borrowed_source {
+                push_place_events(source, true, &mut local);
+            }
         }
         BytecodeTerminatorKind::ValidatePlaces {
             places,
@@ -6111,6 +6385,7 @@ fn move_path_runtime_inputs(
     path.iter().flat_map(|component| {
         let inputs = match component {
             MovePathComponent::Index { index, .. } => [Some(*index), None, None],
+            MovePathComponent::IteratorElement { index } => [Some(*index), None, None],
             MovePathComponent::Slice { start, end, step } => [*start, *end, *step],
             MovePathComponent::ClosureCapture(_, _)
             | MovePathComponent::Field(_)
@@ -6180,7 +6455,8 @@ fn collection_region(
         MovePathComponent::Index {
             access: BytecodeIndexAccess::MapLookup | BytecodeIndexAccess::MapEntry,
             ..
-        } => CollectionComponent::Dynamic,
+        }
+        | MovePathComponent::IteratorElement { .. } => CollectionComponent::Dynamic,
         MovePathComponent::Slice { start, end, step } => {
             let Some(start) = static_optional_bound(*start, static_integers) else {
                 return CollectionComponent::Dynamic;
@@ -6578,10 +6854,16 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
             }
         }
         BytecodeTerminatorKind::IteratorNext {
-            state, destination, ..
+            state,
+            destination,
+            borrowed_source,
+            ..
         } => {
             push_place_events(state, true, &mut events);
             push_destination_reads(destination, true, &mut events);
+            if let Some(source) = borrowed_source {
+                push_place_events(source, true, &mut events);
+            }
         }
         BytecodeTerminatorKind::ValidatePlaces {
             places,
@@ -6808,6 +7090,7 @@ fn push_tag_place(
             | BytecodeProjectionKind::NewtypeValue
             | BytecodeProjectionKind::ArrayPatternIndex(_)
             | BytecodeProjectionKind::ArrayPatternRest { .. }
+            | BytecodeProjectionKind::IteratorElement { .. }
             | BytecodeProjectionKind::Index { .. }
             | BytecodeProjectionKind::Slice { .. } => None,
         };
@@ -6872,6 +7155,10 @@ fn places_may_overlap(left: &BytecodePlace, right: &BytecodePlace) -> bool {
         };
     }
     true
+}
+
+fn same_place_path(left: &BytecodePlace, right: &BytecodePlace) -> bool {
+    left.slot == right.slot && left.ty == right.ty && left.projections == right.projections
 }
 
 fn complementary_tag(tag: BytecodeTag) -> Option<BytecodeTag> {
@@ -7021,6 +7308,13 @@ fn push_projection_index_events(place: &BytecodePlace, events: &mut Vec<LocalEve
     for projection in &place.projections {
         match &projection.kind {
             BytecodeProjectionKind::Index { index, .. } => {
+                events.push(LocalEvent::Read(LocalAccess {
+                    slot: *index,
+                    path: Vec::new(),
+                    source_loan: None,
+                }));
+            }
+            BytecodeProjectionKind::IteratorElement { index } => {
                 events.push(LocalEvent::Read(LocalAccess {
                     slot: *index,
                     path: Vec::new(),

@@ -103,6 +103,7 @@ struct LoanReservation {
 enum LoanIdentity {
     Call(HirExpressionId),
     Pattern(LocalId),
+    Iteration(HirLoopId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1143,8 +1144,50 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 let Some(loop_entry) = source_flow.normal.take() else {
                     return Ok(source_flow);
                 };
-                let loop_flow =
-                    self.loop_fixed_point(id, None, Some(*pattern), body, loop_entry, live_after)?;
+                let borrowed = matches!(
+                    protocol,
+                    HirIterationProtocol::Intrinsic { cursor }
+                        if matches!(
+                            self.program.interner().kind(*cursor)?,
+                            TypeKind::Cursor {
+                                mode: CursorMode::Ref,
+                                ..
+                            }
+                        )
+                );
+                let (loop_entry, pattern_source) = if borrowed {
+                    let mut loop_entry = loop_entry;
+                    let source_place = self.loan_place_in_state(*source, &loop_entry);
+                    self.reserve_loan(
+                        &mut loop_entry,
+                        LoanIdentity::Iteration(id),
+                        source_place.clone(),
+                        ParameterMode::Ref,
+                        self.program
+                            .expression(*source)
+                            .expect("verified iterator sources remain indexed")
+                            .span(),
+                    );
+                    let mut item = source_place;
+                    item.projections
+                        .push(PlaceProjection::Collection(CollectionRegion::Dynamic));
+                    item.complete_transfer = false;
+                    (loop_entry, Some(item))
+                } else {
+                    (loop_entry, None)
+                };
+                let mut loop_flow = self.loop_fixed_point_with_pattern_source(
+                    id,
+                    None,
+                    Some(*pattern),
+                    pattern_source.as_ref(),
+                    body,
+                    loop_entry,
+                    live_after,
+                )?;
+                if borrowed {
+                    remove_loan_from_flow(&mut loop_flow, LoanIdentity::Iteration(id));
+                }
                 source_flow.merge(loop_flow);
                 Ok(source_flow)
             }
@@ -1156,6 +1199,22 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         id: HirLoopId,
         condition: Option<HirExpressionId>,
         pattern: Option<HirPatternId>,
+        body: HirExpressionId,
+        initial: AvailabilityState,
+        live_after: &BTreeSet<LocalId>,
+    ) -> Result<AvailabilityFlow, TypeError> {
+        self.loop_fixed_point_with_pattern_source(
+            id, condition, pattern, None, body, initial, live_after,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn loop_fixed_point_with_pattern_source(
+        &mut self,
+        id: HirLoopId,
+        condition: Option<HirExpressionId>,
+        pattern: Option<HirPatternId>,
+        pattern_source: Option<&PlaceInfo>,
         body: HirExpressionId,
         initial: AvailabilityState,
         live_after: &BTreeSet<LocalId>,
@@ -1172,7 +1231,14 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         let previous_break = self.break_liveness.insert(id, live_after.clone());
         let previous_continue = self.continue_liveness.insert(id, loop_live.clone());
         let result = self.loop_fixed_point_with_liveness(
-            id, condition, pattern, body, initial, live_after, &loop_live,
+            id,
+            condition,
+            pattern,
+            pattern_source,
+            body,
+            initial,
+            live_after,
+            &loop_live,
         );
         if let Some(previous) = previous_break {
             self.break_liveness.insert(id, previous);
@@ -1193,6 +1259,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         id: HirLoopId,
         condition: Option<HirExpressionId>,
         pattern: Option<HirPatternId>,
+        pattern_source: Option<&PlaceInfo>,
         body: HirExpressionId,
         initial: AvailabilityState,
         live_after: &BTreeSet<LocalId>,
@@ -1223,7 +1290,21 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             if let Some(mut body_entry) = iteration.normal.take() {
                 let mut pattern_locals = Vec::new();
                 if let Some(pattern) = pattern {
-                    self.introduce_pattern(pattern, &mut body_entry, &mut pattern_locals, false);
+                    if let Some(source) = pattern_source {
+                        self.introduce_match_pattern(
+                            pattern,
+                            source,
+                            &mut body_entry,
+                            &mut pattern_locals,
+                        );
+                    } else {
+                        self.introduce_pattern(
+                            pattern,
+                            &mut body_entry,
+                            &mut pattern_locals,
+                            false,
+                        );
+                    }
                 }
                 let mut body_flow =
                     self.expression(body, body_entry, Demand::Transfer, loop_live)?;
@@ -1459,9 +1540,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             });
             return Ok(());
         }
-        if demand == Demand::Transfer
-            && local.is_some_and(|local| self.pattern_borrowed.contains(&local))
-        {
+        let transfers = demand == Demand::Transfer && !self.is_copy(ty)?;
+        if transfers && local.is_some_and(|local| self.pattern_borrowed.contains(&local)) {
             self.findings.insert(AvailabilityFinding {
                 kind: AvailabilityFindingKind::InvalidBorrowedTransfer,
                 local,
@@ -1470,7 +1550,6 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             });
             return Ok(());
         }
-        let transfers = demand == Demand::Transfer && !self.is_copy(ty)?;
         let access_place = local
             .filter(|local| self.pattern_borrowed.contains(local))
             .and_then(|local| {
@@ -2568,9 +2647,21 @@ fn union_sets(left: &BTreeSet<LocalId>, right: &BTreeSet<LocalId>) -> BTreeSet<L
 
 fn retain_pattern_loans(state: &mut AvailabilityState, live: &BTreeSet<LocalId>) {
     state.loans.retain(|identity, _| match identity {
-        LoanIdentity::Call(_) => true,
+        LoanIdentity::Call(_) | LoanIdentity::Iteration(_) => true,
         LoanIdentity::Pattern(local) => live.contains(local),
     });
+}
+
+fn remove_loan_from_flow(flow: &mut AvailabilityFlow, identity: LoanIdentity) {
+    if let Some(state) = &mut flow.normal {
+        state.loans.remove(&identity);
+    }
+    if let Some(state) = &mut flow.exits {
+        state.loans.remove(&identity);
+    }
+    for state in flow.breaks.values_mut().chain(flow.continues.values_mut()) {
+        state.loans.remove(&identity);
+    }
 }
 
 fn merge_control_states(

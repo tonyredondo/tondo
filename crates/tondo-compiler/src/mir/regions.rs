@@ -87,7 +87,8 @@ fn collection_region(
         MirProjectionKind::Index {
             access: HirIndexAccess::MapLookup | HirIndexAccess::MapEntry,
             ..
-        } => CollectionComponent::Dynamic,
+        }
+        | MirProjectionKind::IteratorElement { .. } => CollectionComponent::Dynamic,
         MirProjectionKind::Slice { start, end, step } => {
             let Some(start) = static_optional_bound(*start, static_integers) else {
                 return CollectionComponent::Dynamic;

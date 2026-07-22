@@ -10,7 +10,8 @@ complete `var` reinitialization, uniform match ownership modes, affine transfer
 restrictions, ordered call-local `ref`/`mut`/`var` loans, semantic occurrences,
 BORROW-002 last-use regions for pattern `ref` bindings, BORROW-003 fixed-extent
 permissions, BORROW-004 static collection regions, BORROW-005 deferred runtime
-overlap obligations, and verified MIR admission implemented
+overlap obligations, BORROW-006 borrowed-iteration regions and boundary policy,
+and verified MIR admission implemented
 
 ## Boundary
 
@@ -67,8 +68,7 @@ iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   coercion. Concrete external implementations, effectful invocation, `await`,
   `spawn`, unsafe-region proofs and raw
   operations, async liveness/`Send` analysis, string interpolation through
-  `Display`, `defer`, runtime-dependent collection-overlap checks,
-  suspension-crossing loans, confirmed borrowed replacement, and
+  `Display`, `defer`, concrete suspension nodes, confirmed borrowed replacement, and
   terminal scope cleanup remain explicit later boundaries rather than receiving
   provisional semantics. Persistent source-visible partial owner
   states are deliberately absent from Tondo 0.1; OWN-005 implements the typed
@@ -825,8 +825,19 @@ Resolving a later region of the same owner walks its place and evaluates each
 index or bound without reading the whole collection through an earlier
 exclusive reservation. Equal exact projections may be followed to deeper
 fields or elements; a root still overlaps every descendant. `var` rejects a
-partial slice or region with `E1407`, independently of disjunction. BORROW-006
-owns suspension boundaries.
+partial slice or region with `E1407`, independently of disjunction.
+
+BORROW-006 applies the exact same active-loan model to intrinsic borrowed
+iteration. `for ref` accepts only a stable `Array`, `Map`, or `Set` place; a
+temporary, `Range`, `String`, or user `Iterator` receives `E1402`. The source
+has one shared reservation for the whole loop, and every `ref` pattern binding
+has a child region limited to the current iteration. A non-`ref` binding in the
+same pattern must prove `Copy`, otherwise it receives `E1406`. Reads through a
+`Copy` borrowed binding are observations rather than ownership transfers.
+The source place is evaluated once; later changes to an index expression do not
+redirect an active cursor. Mutation, replacement, or movement of the source
+remains an ordinary `E1403` conflict until every loop exit closes the
+reservation.
 
 ## Pattern `ref` last-use regions
 
@@ -851,14 +862,17 @@ a join or on a loop backedge keeps it active on every path that can reach that
 use. Ordered call arguments still retain their call-local loans, so a later
 argument cannot mutate the source of an earlier `ref` argument.
 
-Array-pattern `ref` bindings now use exact prefix-index and rest-region
+Array-pattern `ref` bindings use exact prefix-index and rest-region
 projections. A prefix element is statically disjoint from a later prefix element
 and from a rest beginning after it; the same proof remains attached through a
 call-local reborrow. Data-dependent pattern/index and pattern/slice relationships
 use the same deferred runtime proof as call-local collection loans and ordinary
-accesses. Intrinsic `for ref` is still error-free but incomplete because its
-runtime-selected element loan spans iterator control flow rather than one
-ordinary call; BORROW-006 owns that suspension-capable boundary.
+accesses. Intrinsic `for ref` uses a dynamic element projection tied to the
+cursor's canonical position and source reservation. `break`, `continue`,
+`return`, `fail`, propagation, and panic paths all end the appropriate child
+and collection regions. Actual `await` remains an M7 surface: HIR continues to
+reject it as incomplete until an explicit suspension node can apply the same
+BORROW-006 active-loan policy together with frame and `Send` checks.
 
 ## Declaration ordering
 

@@ -8,8 +8,8 @@ OWN-005 typed move paths and uniform match ownership modes, OWN-006 contextual
 Copy/Move closure captures, OWN-007 all-exit terminal capture obligations, and
 BORROW-001 call-local loans plus BORROW-002 inferred pattern regions with
 explicit reservation/release, BORROW-003 permission-preserving reborrows,
-BORROW-004 static collection disjunction, and BORROW-005 runtime overlap proofs
-implemented
+BORROW-004 static collection disjunction, BORROW-005 runtime overlap proofs,
+and BORROW-006 borrowed-iteration boundary verification implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -72,7 +72,7 @@ They remain queryable but can never be lowered or executed.
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
 | Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, selected synchronous-safe call access, value/place category, pattern coverage, source evaluation order, and source-level control targets |
 | MIR construction (M3/M4/M5) | Typed locals and temporaries, explicit CFG, places, synchronous-safe calls, effect-preserving closure bodies with a hidden environment, contextual Copy/Move closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
-| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, call-local `ref`/`mut`/`var` loans, inferred last-use pattern regions, and static collection-region disjunction; later M5 steps add runtime-dependent overlap checks, confirmed borrowed transfers, and cleanup actions |
+| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, call-local `ref`/`mut`/`var` loans, inferred last-use pattern regions, static and runtime-checked collection regions, and canonical borrowed-iterator boundaries; later M5 steps add confirmed borrowed transfers and cleanup actions |
 | Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
 
@@ -239,9 +239,25 @@ A loan operand has no valid use outside its consuming call and cannot reach a
 branch condition, rvalue, aggregate, host boundary, return, or storage.
 
 User `Iterator.next` calls use the same explicit call-local `mut` loan for
-their state receiver. A `cursor[ref,C]` source is a longer observation region
-and remains incomplete for runtime-selected loop regions and suspension
-boundaries; it is never approximated by copying `C`. The ordinary MIR call operation rejects an
+their state receiver. A `cursor[ref,C]` is instead restricted to `Array`, `Map`,
+or `Set`. Its source is one shared `Region` loan held for the whole loop;
+`IteratorNext` writes only a checked integer position, and
+`IteratorElement { index }` projects the current item directly from that
+borrowed source. Dynamic indices that select a nested source are copied into
+single-assignment temporaries before the region is reserved, so the cursor's
+identity cannot change during the loop. The terminator records the source place
+explicitly. The verifier ties cursor construction, source loan, position
+destination, and every element projection to one canonical origin, so a forged
+cursor cannot redirect a loan or turn borrowed iteration into an element copy.
+Per-pattern `ref` children are reserved inside the body and released on every
+backedge or exit.
+
+`IteratorNext` is a verified loan boundary: its exact incoming set may contain
+only shared `Region` loans. Call-local or exclusive loans are rejected, and its
+unwind edge starts with an empty set. This closes every boundary currently
+representable before M7; actual suspension still requires M7's explicit
+terminator and must reuse the same active-set rule rather than infer loans from
+frame layout. The ordinary MIR call operation rejects an
 `async` or `unsafe` function signature. M7 and M9 must introduce and verify
 their own effect-aware initiation/context forms rather than weakening that
 operation.
@@ -343,8 +359,9 @@ does not synthesize destructor behavior.
 M7 represents `await` and structured teardown with a suspension terminator.
 Its successors distinguish resume, cancellation, and panic/unwind. Values live
 across that terminator become explicit frame locals. An exclusive loan may not
-be live there, and all surviving values must satisfy the required `Send`
-contract before bytecode generation.
+be live there; the BORROW-006 boundary check is reused for the exact active set,
+and all surviving values must satisfy the required `Send` contract before
+bytecode generation.
 
 ## MIR verification layers
 
@@ -393,6 +410,9 @@ The structural verifier introduced in M3 proves at minimum:
   whose anchored accesses occur while its acyclic source chain is active;
   active sets agree at CFG joins, incompatible fixed regions cannot overlap,
   abandoned paths release their reservations, and no loan escapes its extent;
+- every borrowed iterator has one stable source-region origin, one canonical
+  position producer, and only shared region loans crossing its advance
+  boundary;
 - equality, collection membership, and map lookup satisfy the `Equatable`,
   `Key`, or `Copy` requirement recorded and independently verified in HIR;
 - a variant, union, option, or result payload is read only on an edge dominated
@@ -409,8 +429,9 @@ on their successful edge, and the return place must be initialized on every
 `Return`. Payload refinement is a separate forward analysis so initialization
 alone cannot authorize an invalid projection.
 
-Later M7 work extends that proof with suspension invariants, terminal tokens,
-and their cleanup interaction. Verification always precedes bytecode lowering.
+Later M7 work adds concrete suspension/frame/`Send` invariants and terminal
+tokens while reusing the existing BORROW-006 loan-boundary proof. Verification
+always precedes bytecode lowering.
 
 ## Determinism and resource limits
 

@@ -473,6 +473,9 @@ pub enum BytecodeProjectionKind {
         start: u32,
         suffix: u32,
     },
+    IteratorElement {
+        index: BytecodeSlotId,
+    },
     Index {
         index: BytecodeSlotId,
         access: BytecodeIndexAccess,
@@ -788,6 +791,7 @@ pub enum BytecodeTerminatorKind {
     IteratorNext {
         state: BytecodePlace,
         destination: BytecodePlace,
+        borrowed_source: Option<BytecodePlace>,
         has_value: BytecodeBlockId,
         exhausted: BytecodeBlockId,
         unwind: BytecodeBlockId,

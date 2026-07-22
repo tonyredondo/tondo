@@ -81,9 +81,11 @@ captures with all-exit `CallOnce` obligations. Synchronous `ref`, `mut`, and
 `var` arguments now use verified call-local loans with ordered reservation,
 alias rejection, reborrowing, VM write-through, and explicit release on
 abandoned argument paths. General last-use regions, collection-view loans,
-fixed-versus-structural mutation enforcement, suspension safety, and terminal
-cleanup remain later milestones. The workspace therefore identifies itself as
-a bootstrap and does not claim full Tondo conformance.
+fixed-versus-structural mutation enforcement, runtime overlap proofs, and
+borrowed `for ref` iteration over `Array`, `Map`, and `Set` are also verified
+through the VM. Concrete `await` frame/`Send` safety and terminal cleanup remain
+later milestones. The workspace therefore identifies itself as a bootstrap and
+does not claim full Tondo conformance.
 
 ## Project documentation
 

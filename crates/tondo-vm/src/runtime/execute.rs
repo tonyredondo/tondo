@@ -578,15 +578,28 @@ impl<'program, 'host> Engine<'program, 'host> {
             BytecodeTerminatorKind::IteratorNext {
                 state,
                 destination,
+                borrowed_source,
                 has_value,
                 exhausted,
                 unwind,
             } => {
                 let span = self.resolve_span(frame, terminator.span)?;
-                match self.iterator_next(frame, state, span)? {
-                    Ok(Some(value)) => {
+                match self.iterator_next(frame, state, borrowed_source.as_ref(), span)? {
+                    Ok(Some(IteratorStep::Value(value))) if borrowed_source.is_none() => {
                         self.write_place(frame, destination, value)?;
                         self.jump(frame, *has_value);
+                    }
+                    Ok(Some(IteratorStep::Position(position))) if borrowed_source.is_some() => {
+                        let position = i128::try_from(position).map_err(|_| {
+                            VmError::invariant("iterator position exceeds the Int domain")
+                        })?;
+                        self.write_place(frame, destination, Value::Integer(position))?;
+                        self.jump(frame, *has_value);
+                    }
+                    Ok(Some(_)) => {
+                        return Err(VmError::invariant(
+                            "iterator mode and terminator destination disagree",
+                        ));
                     }
                     Ok(None) => self.jump(frame, *exhausted),
                     Err((code, message)) => {
@@ -929,6 +942,11 @@ enum OperationResult {
         arguments: Vec<Value>,
     },
     Panic(PanicCode, String),
+}
+
+enum IteratorStep {
+    Value(Value),
+    Position(usize),
 }
 
 enum PlaceFailure {
@@ -2064,6 +2082,35 @@ impl Engine<'_, '_> {
                 }
                 self.allocate(HeapObject::Array(output), &[])
             }
+            (
+                BytecodeProjectionKind::IteratorElement { index },
+                HeapObject::Array(values) | HeapObject::Set(values),
+            ) => {
+                let index = usize::try_from(self.integer_slot(frame, *index)?).map_err(|_| {
+                    VmError::invariant("borrowed iterator position is negative or too large")
+                })?;
+                present(
+                    values.get(index).ok_or_else(|| {
+                        VmError::invariant("borrowed iterator position is out of bounds")
+                    })?,
+                    "borrowed iterator item",
+                )
+                .cloned()
+            }
+            (BytecodeProjectionKind::IteratorElement { index }, HeapObject::Map(entries)) => {
+                let index = usize::try_from(self.integer_slot(frame, *index)?).map_err(|_| {
+                    VmError::invariant("borrowed iterator position is negative or too large")
+                })?;
+                let (key, value) = entries.get(index).ok_or_else(|| {
+                    VmError::invariant("borrowed map iterator position is out of bounds")
+                })?;
+                let key = present(key, "borrowed map iterator key")?.clone();
+                let value = present(value, "borrowed map iterator value")?.clone();
+                self.allocate(
+                    HeapObject::Tuple(vec![Some(key.clone()), Some(value.clone())]),
+                    &[key, value],
+                )
+            }
             (BytecodeProjectionKind::Index { index, access }, HeapObject::Array(values))
                 if *access == BytecodeIndexAccess::Array =>
             {
@@ -2613,6 +2660,46 @@ impl Engine<'_, '_> {
                     )));
                 }
                 PlaceComponent::Slice((*start as usize..end).collect())
+            }
+            (
+                BytecodeProjectionKind::IteratorElement { index },
+                HeapObject::Array(values) | HeapObject::Set(values),
+            ) => {
+                let index = usize::try_from(self.integer_slot(frame, *index)?).map_err(|_| {
+                    PlaceFailure::Vm(VmError::invariant(
+                        "borrowed iterator position is negative or too large",
+                    ))
+                })?;
+                if index >= values.len() {
+                    return Err(PlaceFailure::Vm(VmError::invariant(
+                        "borrowed iterator position is out of bounds",
+                    )));
+                }
+                PlaceComponent::Index(index as i128)
+            }
+            (BytecodeProjectionKind::IteratorElement { index }, HeapObject::Map(entries)) => {
+                let index = usize::try_from(self.integer_slot(frame, *index)?).map_err(|_| {
+                    PlaceFailure::Vm(VmError::invariant(
+                        "borrowed iterator position is negative or too large",
+                    ))
+                })?;
+                let key = present(
+                    &entries
+                        .get(index)
+                        .ok_or_else(|| {
+                            PlaceFailure::Vm(VmError::invariant(
+                                "borrowed map iterator position is out of bounds",
+                            ))
+                        })?
+                        .0,
+                    "borrowed map iterator key",
+                )?;
+                PlaceComponent::MapKey(snapshot_value(
+                    key,
+                    &self.heap,
+                    &self.callable_names,
+                    &self.nominal_names,
+                )?)
             }
             (BytecodeProjectionKind::Index { index, access }, HeapObject::Array(values))
                 if *access == BytecodeIndexAccess::Array =>
@@ -3532,8 +3619,9 @@ impl Engine<'_, '_> {
         &mut self,
         frame: usize,
         state: &BytecodePlace,
+        borrowed_source: Option<&BytecodePlace>,
         _span: BytecodeSpan,
-    ) -> Result<Result<Option<Value>, (PanicCode, String)>, VmError> {
+    ) -> Result<Result<Option<IteratorStep>, (PanicCode, String)>, VmError> {
         let iterator = self.read_place(frame, state)?;
         let Value::Heap(handle) = iterator else {
             return Err(VmError::invariant("iterator state is not managed"));
@@ -3547,7 +3635,35 @@ impl Engine<'_, '_> {
             return Ok(Ok(None));
         }
         let source = present(&source, "iterator source")?.clone();
-        let (item, next_index) = self.iterator_item(&source, next)?;
+        let (item, next_index) = match mode {
+            BytecodeCursorMode::Own => {
+                if borrowed_source.is_some() {
+                    return Err(VmError::invariant(
+                        "owning iterator received a borrowed source",
+                    ));
+                }
+                let (item, next_index) = self.iterator_item(&source, next)?;
+                (item.map(IteratorStep::Value), next_index)
+            }
+            BytecodeCursorMode::Ref => {
+                let borrowed_source = borrowed_source
+                    .ok_or_else(|| VmError::invariant("borrowed iterator has no source place"))?;
+                if self.read_place(frame, borrowed_source)? != source {
+                    return Err(VmError::invariant(
+                        "borrowed iterator source differs from its cursor",
+                    ));
+                }
+                let has_item = self.borrowed_iterator_has_item(&source, next)?;
+                (
+                    has_item.then_some(IteratorStep::Position(next)),
+                    if has_item {
+                        next.saturating_add(1)
+                    } else {
+                        usize::MAX
+                    },
+                )
+            }
+        };
         self.replace_object(
             handle,
             HeapObject::Iterator {
@@ -3558,6 +3674,21 @@ impl Engine<'_, '_> {
             &[source],
         )?;
         Ok(Ok(item))
+    }
+
+    fn borrowed_iterator_has_item(&self, source: &Value, next: usize) -> Result<bool, VmError> {
+        let Value::Heap(handle) = source else {
+            return Err(VmError::invariant(
+                "borrowed iterator source is not managed",
+            ));
+        };
+        match self.heap.get(*handle)? {
+            HeapObject::Array(values) | HeapObject::Set(values) => Ok(next < values.len()),
+            HeapObject::Map(entries) => Ok(next < entries.len()),
+            _ => Err(VmError::invariant(
+                "borrowed iterator source is not Array, Map, or Set",
+            )),
+        }
     }
 
     fn iterator_item(

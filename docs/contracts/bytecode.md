@@ -9,8 +9,8 @@ transfers and immediate observations, OWN-003 flow availability, OWN-004
 complete-slot reinitialization, OWN-005 typed move paths, OWN-006 affine closure
 captures, OWN-007 exact closed `CallOnce` rows, BORROW-001 call-local loans, and
 BORROW-002 inferred pattern regions, BORROW-003 reborrow permissions, BORROW-004
-static collection disjunction, BORROW-005 runtime overlap proofs, and the M3 VM
-admission path implemented
+static collection disjunction, BORROW-005 runtime overlap proofs, BORROW-006
+borrowed-iterator boundaries, and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -178,6 +178,13 @@ length, and iterator-state creation. The latter accepts an intrinsic collection
 `IteratorNext` accepts that cursor rather than a collection-shaped alias. A ref
 cursor additionally requires a `Borrow` source operand, while an own cursor
 rejects one, so a backend cannot silently replace observation with a copy.
+For a ref cursor, `IteratorNext` writes an `Int` position rather than an owned
+item and carries the exact borrowed source place. `IteratorElement { index }`
+then resolves that position against the original `Array`, `Map`, or `Set`.
+Array and set elements remain in their collection; map tuple fields are views
+of the stored key/value pair rather than ownership transfers. The verifier
+requires one canonical cursor definition, source region, position producer,
+and matching element projection.
 Copy and move forms come directly from verified MIR. Monomorphization preserves
 that source-generic decision: a move selected in a `T: Discard` body remains a
 move even when one concrete instantiation happens to substitute a `Copy` type.
@@ -263,6 +270,15 @@ as explicit, canonical conflict IDs: `ValidateLoan` protects a reservation;
 `ValidatePlaces` entry has one aligned list protecting its following read or
 write. Statically disjoint relations carry no conflict ID, while inevitable
 overlap remains invalid bytecode.
+
+BORROW-006 treats `IteratorNext` as an explicit loan boundary. The verifier
+allows only shared `Region` loans in its incoming active set, rejects
+call-local or exclusive reservations, preserves that set on both normal
+successors, and clears it on unwind. The VM advances a ref cursor by position
+without calling the owning copy path, checks that its runtime source is the
+terminator's anchored collection, and resolves each element under the active
+region chain. Bytecode has no suspension instruction yet; M7 must reuse this
+boundary proof when it adds resume, cancellation, and frame state.
 
 `Borrow` remains a separate non-storable form admitted only for equality,
 membership, length, discriminant branches, index/slice collection bases,

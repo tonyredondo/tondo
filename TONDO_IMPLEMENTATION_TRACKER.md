@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.45
+**Versión del tracker:** 0.46
 
 **Última actualización:** 2026-07-22
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** rechazar préstamos que crucen suspensión o fronteras no
-permitidas (BORROW-006).
+**Objetivo inmediato:** implementar el registro cerrado de tipos terminales
+(TERM-001).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1339,8 +1339,8 @@ lifetimes escritos por el usuario.
   y cierre exacto padre-hijo, y la VM defiende la cadena activa en cada acceso.
   Los usos inalcanzables no prolongan regiones y `break`/`continue` conservan la
   liveness específica de su destino. BORROW-004 extiende estas regiones a
-  elementos y restos de patrones de array; los cursores `for ref` permanecen
-  incompletos para la prueba dinámica y de fronteras posterior.
+  elementos y restos de patrones de array, y BORROW-006 cierra los cursores
+  `for ref` con regiones dinámicas y fronteras verificadas.
 
 - [x] **BORROW-003 — Distinguir observación compartida, mutación de extensión
   fija y mutación estructural.** HIR clasifica cada escritura como reemplazo o
@@ -1373,8 +1373,19 @@ lifetimes escritos por el usuario.
   claves, eleva `P0004` únicamente si las rutas reales intersectan, preserva
   bounds/step y limpia reservas por unwind antes de entrar en el callee.
 
-- [ ] **BORROW-006 — Rechazar préstamos que crucen suspensión o fronteras no
-  permitidas.**
+- [x] **BORROW-006 — Rechazar préstamos que crucen suspensión o fronteras no
+  permitidas.** `for ref` acepta únicamente lugares estables `Array`, `Map` o
+  `Set`, mantiene un préstamo compartido de la colección durante todo el bucle
+  y limita cada binding `ref` a su iteración; los bindings por valor deben ser
+  `Copy`. MIR congela una sola vez los índices que identifican una fuente
+  anidada, representa el avance sin copia mediante una posición `Int` y
+  `IteratorElement`, enlaza cursor, origen, región y posición de forma
+  canónica, y libera hijos y colección en backedges, salidas, retorno y
+  unwind. `IteratorNext` es una frontera explícita que admite solo préstamos
+  `Region ref`; los verificadores MIR y bytecode rechazan préstamos call-local
+  o exclusivos y la VM comprueba el origen antes de proyectar. M7 añadirá el
+  terminador concreto de suspensión y reutilizará esta regla junto con frames
+  y `Send`; `await` continúa rechazado honestamente hasta entonces.
 
 ### 10.3 Recursos terminales y cleanup
 
@@ -1961,15 +1972,37 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es BORROW-006: fijar qué préstamos pueden existir en
-un punto de suspensión y rechazar los que crucen `await`, selección, cancelación
-o cualquier frontera no permitida. La solución debe partir del conjunto exacto
-de préstamos vivos que ya propagan MIR y bytecode, sin convertir referencias en
-valores almacenables ni anticipar el diseño completo del scheduler.
+La siguiente acción activa es TERM-001: introducir el registro cerrado de tipos
+terminales sin añadir destrucción implícita ni adelantar `defer`. BORROW-006 deja
+preparada la regla exacta de préstamos para que M7 la aplique cuando existan
+terminadores reales de suspensión, selección y cancelación.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.46 — 2026-07-22
+
+- Se completa BORROW-006. HIR admite `for ref` solo sobre lugares estables
+  `Array`, `Map` y `Set`, conserva la colección como región compartida durante
+  todo el bucle, exige `Copy` a los bindings por valor y diagnostica fuentes
+  temporales, protocolos de usuario, movimiento o mutación solapada.
+- MIR y bytecode representan el avance prestado con una posición y una
+  proyección `IteratorElement`, nunca copiando el elemento para construir el
+  cursor. Los índices de fuentes anidadas se congelan al entrar al bucle. Ambos
+  verificadores rederivan el origen único, la cadena de regiones, el productor
+  de posición y la frontera que permite solo `Region ref`.
+- La VM ejecuta arrays, maps y sets prestados, incluidos reborrows, patrones de
+  map, `break`, `continue` y uso posterior del dueño. El unwind elimina las
+  reservas del frame abandonado y el runtime valida que el cursor y la
+  colección anclada conservan la misma identidad.
+- Las regresiones incluyen diagnósticos HIR, HIR/MIR/bytecode adversarial y
+  ejecución end-to-end. La política de suspensión queda cerrada sin fingir M7:
+  `await` sigue siendo una superficie incompleta hasta que tenga terminador,
+  frame y análisis `Send` explícitos.
+- El gate acumulado pasa 507 tests, incluidos 457 tests de la librería del
+  compilador; también pasan `git diff --check`, formatter check, check y build
+  de todos los targets, Clippy y Rustdoc con warnings denegados.
 
 ### 0.45 — 2026-07-22
 

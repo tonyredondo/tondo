@@ -726,11 +726,42 @@ impl Verifier<'_> {
                 }
             }
             HirStatement::For {
-                kind: HirForKind::Iterate { protocol, .. },
+                kind:
+                    HirForKind::Iterate {
+                        pattern, protocol, ..
+                    },
                 ..
             } => match protocol {
                 HirIterationProtocol::Intrinsic { cursor } => {
-                    self.verify_type_formations(analysis, [*cursor], assumptions, context)?
+                    self.verify_type_formations(analysis, [*cursor], assumptions, context)?;
+                    if matches!(
+                        self.program.interner.kind(*cursor),
+                        Ok(TypeKind::Cursor {
+                            mode: CursorMode::Ref,
+                            ..
+                        })
+                    ) {
+                        let mut pending = vec![*pattern];
+                        while let Some(id) = pending.pop() {
+                            let pattern = self.program.pattern(id).ok_or_else(|| {
+                                HirInvariantError::new(
+                                    context,
+                                    format!("iterator references unknown pattern#{}", id.index()),
+                                )
+                            })?;
+                            if matches!(pattern.kind(), HirPatternKind::Binding(_)) {
+                                self.verify_capability_requirement(
+                                    analysis,
+                                    pattern.ty(),
+                                    HirCapability::Copy,
+                                    assumptions,
+                                    context,
+                                    "non-ref borrowed iterator binding",
+                                )?;
+                            }
+                            pending.extend(pattern_children(pattern));
+                        }
+                    }
                 }
                 HirIterationProtocol::Trait {
                     element,
@@ -3652,7 +3683,8 @@ impl Verifier<'_> {
         else {
             return Ok(());
         };
-        let source = self.expression(*source, context)?;
+        let source_id = *source;
+        let source = self.expression(source_id, context)?;
         let pattern_id = *pattern;
         let pattern = self.program.pattern(pattern_id).ok_or_else(|| {
             HirInvariantError::new(
@@ -3663,7 +3695,8 @@ impl Verifier<'_> {
         let expected_element = match protocol {
             HirIterationProtocol::Intrinsic { cursor } => {
                 self.verify_type(*cursor, format!("{context} intrinsic cursor"))?;
-                let expected_mode = if self.pattern_contains_borrow(pattern_id, context)? {
+                let borrows = self.pattern_contains_borrow(pattern_id, context)?;
+                let expected_mode = if borrows {
                     CursorMode::Ref
                 } else {
                     CursorMode::Own
@@ -3677,6 +3710,12 @@ impl Verifier<'_> {
                             "intrinsic iterator protocol has an inconsistent concrete cursor",
                         ));
                     }
+                }
+                if borrows && !self.borrowed_iterator_source_is_stable(source_id, source.ty) {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "borrowed intrinsic iteration requires a stable Array, Map, or Set place",
+                    ));
                 }
                 match self.program.interner.kind(source.ty) {
                     Ok(TypeKind::Intrinsic {
@@ -3711,6 +3750,12 @@ impl Verifier<'_> {
                 element,
                 function_type,
             } => {
+                if self.pattern_contains_borrow(pattern_id, context)? {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "borrowed iteration cannot use a user Iterator protocol",
+                    ));
+                }
                 self.verify_type(*element, format!("{context} iterator element"))?;
                 self.verify_type(*function_type, format!("{context} iterator function"))?;
                 let mut interner = self.program.interner.clone();
@@ -3736,6 +3781,32 @@ impl Verifier<'_> {
             ));
         }
         Ok(())
+    }
+
+    fn borrowed_iterator_source_is_stable(&self, root: HirExpressionId, ty: TypeId) -> bool {
+        matches!(
+            self.program.interner.kind(ty),
+            Ok(TypeKind::Intrinsic {
+                constructor: IntrinsicType::Array | IntrinsicType::Map | IntrinsicType::Set,
+                ..
+            })
+        ) && self.iterator_source_place_is_stable(root)
+    }
+
+    fn iterator_source_place_is_stable(&self, root: HirExpressionId) -> bool {
+        let Some(expression) = self.program.expression(root) else {
+            return false;
+        };
+        if expression.category() != HirValueCategory::Place {
+            return false;
+        }
+        match expression.kind() {
+            HirExpressionKind::Local(_) | HirExpressionKind::Receiver => true,
+            HirExpressionKind::Field { base, .. }
+            | HirExpressionKind::TupleField { base, .. }
+            | HirExpressionKind::Index { base, .. } => self.iterator_source_place_is_stable(*base),
+            _ => false,
+        }
     }
 
     fn pattern_contains_borrow(
@@ -5627,6 +5698,73 @@ mod tests {
         *cursor = unit;
         let error = verify_typed_hir(&resolved, &wrong_intrinsic_cursor).unwrap_err();
         assert!(error.message().contains("concrete cursor"), "{error}");
+    }
+
+    #[test]
+    fn borrowed_iterator_source_and_copy_binding_contracts_are_reproved_before_mir() {
+        const STABLE_SOURCE: &str = "fn observe() {\n\
+             let entries = [\"one\": 1]\n\
+             for (ref key, ref value) in entries {}\n\
+         }\n";
+        const SOURCE: &str = "fn observe(entries: ref Map[String, Join[Int, Never]]) {\n\
+             for (ref key, ref value) in entries {}\n\
+         }\n";
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut unstable) = checked_program_from(STABLE_SOURCE);
+        let replacement = unstable
+            .expressions
+            .iter()
+            .find(|expression| matches!(expression.kind, HirExpressionKind::Map { .. }))
+            .expect("the binding retains its map literal")
+            .clone();
+        let source = unstable
+            .expressions
+            .iter_mut()
+            .find(|expression| {
+                matches!(
+                    expression.kind,
+                    HirExpressionKind::Local(_)
+                        if matches!(
+                            unstable.interner.kind(expression.ty),
+                            Ok(TypeKind::Intrinsic {
+                                constructor: IntrinsicType::Map,
+                                ..
+                            })
+                        )
+                )
+            })
+            .expect("borrowed iteration retains its source expression");
+        source.kind = replacement.kind;
+        source.category = replacement.category;
+        let error = verify_typed_hir(&resolved, &unstable).unwrap_err();
+        assert!(
+            error.message().contains("stable Array, Map, or Set"),
+            "{error}"
+        );
+
+        let (resolved, mut affine_binding) = checked_program_from(SOURCE);
+        let join = affine_binding
+            .patterns
+            .iter_mut()
+            .find(|pattern| {
+                matches!(pattern.kind, HirPatternKind::BorrowBinding(_))
+                    && matches!(
+                        affine_binding.interner.kind(pattern.ty),
+                        Ok(TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Join,
+                            ..
+                        })
+                    )
+            })
+            .expect("the map value has a borrowed binding");
+        let HirPatternKind::BorrowBinding(local) = join.kind else {
+            unreachable!()
+        };
+        join.kind = HirPatternKind::Binding(local);
+        let error = verify_typed_hir(&resolved, &affine_binding).unwrap_err();
+        assert!(error.message().contains("requires Copy"), "{error}");
     }
 
     #[test]

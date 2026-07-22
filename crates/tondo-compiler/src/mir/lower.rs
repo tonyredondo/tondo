@@ -12,7 +12,7 @@ use crate::hir::{
 };
 use crate::resolve::{LocalId, MemberKind, ResolvedProgram};
 use crate::source::Span;
-use crate::types::{ScalarType, TypeId, TypeKind};
+use crate::types::{CursorMode, ScalarType, TypeId, TypeKind};
 
 use super::{
     MirAggregateKind, MirAssertMessagePart, MirBasicBlock, MirBlockId, MirBlockKind,
@@ -1780,8 +1780,45 @@ impl<'a> FunctionBuilder<'a> {
         body: HirExpressionId,
         block: MirBlockId,
     ) -> Result<Option<MirBlockId>, MirError> {
-        let Some((block, source)) = self.lower_value(iteration.source, block)? else {
-            return Ok(None);
+        let mode = match self
+            .hir
+            .interner()
+            .kind(iteration.cursor)
+            .map_err(|error| MirError::Construction {
+                span,
+                message: format!("intrinsic cursor has an invalid type: {error}"),
+            })? {
+            TypeKind::Cursor { mode, .. } => *mode,
+            _ => {
+                return Err(MirError::Construction {
+                    span,
+                    message: "intrinsic iteration has a non-cursor state type".into(),
+                });
+            }
+        };
+        let (block, source, borrowed_source) = match mode {
+            CursorMode::Own => {
+                let Some((block, source)) = self.lower_value(iteration.source, block)? else {
+                    return Ok(None);
+                };
+                (block, source, None)
+            }
+            CursorMode::Ref => {
+                let Some((block, source)) = self.lower_place(iteration.source, block)? else {
+                    return Ok(None);
+                };
+                let (block, source) =
+                    self.freeze_borrowed_iteration_place_inputs(block, span, source)?;
+                let (block, borrowed) = self.reserve_checked_region_loan(block, span, source)?;
+                (
+                    block,
+                    MirOperand {
+                        ty: borrowed.ty,
+                        kind: MirOperandKind::Borrow(borrowed.clone()),
+                    },
+                    Some(borrowed),
+                )
+            }
         };
         let state = self.allocate_temporary(iteration.cursor, span, block)?;
         self.assign(
@@ -1793,7 +1830,13 @@ impl<'a> FunctionBuilder<'a> {
                 kind: MirRvalueKind::IteratorState { source },
             },
         )?;
-        let item = self.allocate_temporary(self.pattern_type(iteration.pattern)?, span, block)?;
+        let item_ty = self.pattern_type(iteration.pattern)?;
+        let destination_ty = if mode == CursorMode::Ref {
+            self.hir.interner().scalar(ScalarType::Int)
+        } else {
+            item_ty
+        };
+        let item = self.allocate_temporary(destination_ty, span, block)?;
         let header = self.allocate_block(MirBlockKind::Normal)?;
         let body_start = self.allocate_block(MirBlockKind::Normal)?;
         let exit = self.allocate_block(MirBlockKind::Normal)?;
@@ -1804,21 +1847,65 @@ impl<'a> FunctionBuilder<'a> {
             MirTerminatorKind::IteratorNext {
                 state: self.local_place(state),
                 destination: self.local_place(item),
+                borrowed_source: borrowed_source.clone(),
                 has_value: body_start,
                 exhausted: exit,
                 unwind: self.unwind,
             },
         )?;
+        let item = if let Some(mut place) = borrowed_source {
+            place.ty = item_ty;
+            place.projections.push(MirProjection {
+                ty: item_ty,
+                kind: MirProjectionKind::IteratorElement { index: item },
+            });
+            MirOperand {
+                ty: item_ty,
+                kind: MirOperandKind::Borrow(place),
+            }
+        } else {
+            self.transfer_local(item, span)?
+        };
         self.finish_iterating_for(
             span,
             id,
             iteration.pattern,
-            self.transfer_local(item, span)?,
+            item,
             body,
             header,
             body_start,
             exit,
         )
+    }
+
+    fn freeze_borrowed_iteration_place_inputs(
+        &mut self,
+        block: MirBlockId,
+        span: Span,
+        mut place: MirPlace,
+    ) -> Result<(MirBlockId, MirPlace), MirError> {
+        for projection in &mut place.projections {
+            let MirProjectionKind::Index { index, .. } = &mut projection.kind else {
+                continue;
+            };
+            let ty = self
+                .locals
+                .get(index.index() as usize)
+                .ok_or_else(|| MirError::Construction {
+                    span,
+                    message: "borrowed iterator source has an unknown index local".into(),
+                })?
+                .ty;
+            let snapshot = self.allocate_temporary(ty, span, block)?;
+            self.assign_operand(
+                block,
+                span,
+                self.local_place(snapshot),
+                self.copy_local(*index),
+            )?;
+            *index = snapshot;
+        }
+        Ok((block, place))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1968,12 +2055,32 @@ impl<'a> FunctionBuilder<'a> {
         let span = pattern.span();
         match pattern.kind() {
             HirPatternKind::Wildcard => Ok(Some(block)),
-            HirPatternKind::Binding(local) | HirPatternKind::BorrowBinding(local) => {
+            HirPatternKind::Binding(local) => {
                 let local = self.allocate_user_local(*local, pattern.ty(), span, block)?;
+                let value = match value.kind {
+                    MirOperandKind::Borrow(place) => MirOperand {
+                        ty: value.ty,
+                        kind: MirOperandKind::Copy(place),
+                    },
+                    _ => value,
+                };
                 self.assign_operand(block, span, self.local_place(local), value)?;
                 Ok(Some(block))
             }
+            HirPatternKind::BorrowBinding(local) => {
+                let MirOperandKind::Borrow(place) = value.kind else {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "borrowed iterator binding did not receive a borrowed place"
+                            .into(),
+                    });
+                };
+                let (block, borrowed) = self.reserve_checked_region_loan(block, span, place)?;
+                self.borrow_aliases.insert(*local, borrowed);
+                Ok(Some(block))
+            }
             HirPatternKind::Tuple(items) => {
+                let mut block = block;
                 for (index, item) in items.iter().enumerate() {
                     let ty = self.pattern_type(*item)?;
                     let projected = self.project_operand(
@@ -1984,7 +2091,10 @@ impl<'a> FunctionBuilder<'a> {
                         },
                         span,
                     )?;
-                    self.bind_irrefutable(*item, projected, block)?;
+                    let Some(next) = self.bind_irrefutable(*item, projected, block)? else {
+                        return Ok(None);
+                    };
+                    block = next;
                 }
                 Ok(Some(block))
             }
@@ -2000,6 +2110,7 @@ impl<'a> FunctionBuilder<'a> {
                 self.bind_irrefutable(*item, projected, block)
             }
             HirPatternKind::Record { fields, .. } => {
+                let mut block = block;
                 for field in fields {
                     let projected = self.project_operand(
                         &value,
@@ -2009,11 +2120,16 @@ impl<'a> FunctionBuilder<'a> {
                         },
                         span,
                     )?;
-                    self.bind_irrefutable(field.pattern(), projected, block)?;
+                    let Some(next) = self.bind_irrefutable(field.pattern(), projected, block)?
+                    else {
+                        return Ok(None);
+                    };
+                    block = next;
                 }
                 Ok(Some(block))
             }
             HirPatternKind::Variant { variant, fields } => {
+                let mut block = block;
                 for (index, field) in fields.iter().enumerate() {
                     let projected = self.project_operand(
                         &value,
@@ -2026,7 +2142,10 @@ impl<'a> FunctionBuilder<'a> {
                         },
                         span,
                     )?;
-                    self.bind_irrefutable(*field, projected, block)?;
+                    let Some(next) = self.bind_irrefutable(*field, projected, block)? else {
+                        return Ok(None);
+                    };
+                    block = next;
                 }
                 Ok(Some(block))
             }
@@ -3600,6 +3719,25 @@ impl<'a> FunctionBuilder<'a> {
         Ok(borrowed)
     }
 
+    fn reserve_checked_region_loan(
+        &mut self,
+        block: MirBlockId,
+        span: Span,
+        place: MirPlace,
+    ) -> Result<(MirBlockId, MirPlace), MirError> {
+        let id = self.allocate_loan(
+            span,
+            MirLoanKind::Region,
+            crate::types::ParameterMode::Ref,
+            place.clone(),
+        )?;
+        let block = self.validate_loan_place(id, block, span)?;
+        self.push_statement(block, span, MirStatementKind::ReserveLoan(id))?;
+        let mut borrowed = place;
+        borrowed.source_loan = Some(id);
+        Ok((block, borrowed))
+    }
+
     fn allocate_loan(
         &mut self,
         span: Span,
@@ -3879,12 +4017,14 @@ impl<'a> FunctionBuilder<'a> {
             MirTerminatorKind::IteratorNext {
                 state,
                 destination,
+                borrowed_source,
                 has_value,
                 exhausted,
                 unwind,
             } => MirTerminatorKind::IteratorNext {
                 state,
                 destination,
+                borrowed_source,
                 has_value: target(self, has_value)?,
                 exhausted: target(self, exhausted)?,
                 unwind,
@@ -4273,8 +4413,10 @@ fn populate_runtime_loan_checks(
                         return Err(MirError::Construction {
                             span: statement.span,
                             message: format!(
-                                "generated MIR releases inactive loan#{}",
-                                loan.index()
+                                "generated MIR block#{} releases inactive loan#{}; active loans: {:?}",
+                                block_id.index(),
+                                loan.index(),
+                                active
                             ),
                         });
                     }
@@ -4722,10 +4864,16 @@ fn collect_terminator_region_uses(
             }
         }
         MirTerminatorKind::IteratorNext {
-            state, destination, ..
+            state,
+            destination,
+            borrowed_source,
+            ..
         } => {
             collect_place_region_uses(state, loans, output);
             collect_place_region_uses(destination, loans, output);
+            if let Some(source) = borrowed_source {
+                collect_place_region_uses(source, loans, output);
+            }
         }
         MirTerminatorKind::ValidatePlaces {
             places,
@@ -4740,7 +4888,12 @@ fn collect_terminator_region_uses(
             }
         }
         MirTerminatorKind::ValidateLoan { loan, against, .. } => {
-            collect_loan_region_uses(*loan, loans, output);
+            // The validated loan is prospective: it becomes live only at the
+            // following ReserveLoan. Its borrowed parent, if any, must already
+            // be live while resolving the place.
+            if let Some(loan) = loans.get(loan.index() as usize) {
+                collect_place_region_uses(&loan.place, loans, output);
+            }
             for loan in against {
                 collect_loan_region_uses(*loan, loans, output);
             }
@@ -5625,6 +5778,170 @@ mod tests {
                 .any(|block| matches!(block.terminator().kind(), MirTerminatorKind::Return))
         );
         verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
+    fn borrowed_iteration_has_canonical_region_positions_and_boundary_rules() {
+        const SOURCE: &str = "fn observe(values: ref Array[Int]) {\n\
+             let marker = 0\n\
+             for ref value in values {\n\
+                 _ = value + marker\n\
+             }\n\
+         }\n";
+        let (resolved, hir) = checked(SOURCE);
+        let id = function_id(&resolved, "observe");
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = mir.function(id).unwrap();
+        let (destination, borrowed_source) = function
+            .blocks()
+            .find_map(|block| {
+                let MirTerminatorKind::IteratorNext {
+                    state,
+                    destination,
+                    borrowed_source: Some(source),
+                    ..
+                } = block.terminator().kind()
+                else {
+                    return None;
+                };
+                assert!(matches!(
+                    hir.interner().kind(state.ty()).unwrap(),
+                    TypeKind::Cursor {
+                        mode: CursorMode::Ref,
+                        ..
+                    }
+                ));
+                Some((destination.clone(), source.clone()))
+            })
+            .expect("borrowed iteration has one ref cursor terminator");
+        assert_eq!(destination.ty(), hir.interner().scalar(ScalarType::Int));
+        assert!(borrowed_source.source_loan().is_some());
+        assert!(function.loans().any(|loan| {
+            loan.place().projections().iter().any(|projection| {
+                matches!(
+                    projection.kind(),
+                    MirProjectionKind::IteratorElement { index } if *index == destination.local()
+                )
+            })
+        }));
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let mut missing_source =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = missing_source
+            .functions
+            .get_mut(&MirFunctionId::Callable(id))
+            .unwrap();
+        let terminator = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::IteratorNext {
+                    borrowed_source, ..
+                } => Some(borrowed_source),
+                _ => None,
+            })
+            .unwrap();
+        *terminator = None;
+        let error = verify_mir(&resolved, &hir, &missing_source).unwrap_err();
+        assert!(
+            error.message().contains("borrowed iterator has no source")
+                || error.message().contains("matching iterator position"),
+            "{error}"
+        );
+
+        let mut forged_position =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = forged_position
+            .functions
+            .get_mut(&MirFunctionId::Callable(id))
+            .unwrap();
+        let marker = function
+            .locals
+            .iter()
+            .enumerate()
+            .find_map(|(index, local)| {
+                matches!(local.kind, MirLocalKind::User(_)).then_some(MirLocalId(index as u32))
+            })
+            .expect("the marker has one user local");
+        let projection = function
+            .loans
+            .iter_mut()
+            .flat_map(|loan| &mut loan.place.projections)
+            .find(|projection| matches!(projection.kind, MirProjectionKind::IteratorElement { .. }))
+            .unwrap();
+        projection.kind = MirProjectionKind::IteratorElement { index: marker };
+        let error = verify_mir(&resolved, &hir, &forged_position).unwrap_err();
+        assert!(
+            error.message().contains("matching iterator position"),
+            "{error}"
+        );
+
+        let mut overwritten_position =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = overwritten_position
+            .functions
+            .get_mut(&MirFunctionId::Callable(id))
+            .unwrap();
+        let position = function
+            .blocks
+            .iter()
+            .find_map(|block| match &block.terminator.kind {
+                MirTerminatorKind::IteratorNext { destination, .. } => Some(destination.clone()),
+                _ => None,
+            })
+            .unwrap();
+        function.blocks[function.entry.index() as usize]
+            .statements
+            .push(MirStatement {
+                span: function.span,
+                kind: MirStatementKind::Assign {
+                    destination: position.clone(),
+                    value: MirRvalue {
+                        ty: position.ty,
+                        kind: MirRvalueKind::Use(MirOperand {
+                            ty: position.ty,
+                            kind: MirOperandKind::Constant(MirConstant::Integer("0".into())),
+                        }),
+                    },
+                },
+            });
+        let error = verify_mir(&resolved, &hir, &overwritten_position).unwrap_err();
+        assert!(
+            error.message().contains("non-canonical definition"),
+            "{error}"
+        );
+
+        let mut crossing_call_loan =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = crossing_call_loan
+            .functions
+            .get_mut(&MirFunctionId::Callable(id))
+            .unwrap();
+        let place = function
+            .loans
+            .iter()
+            .find(|loan| loan.kind == MirLoanKind::Region)
+            .unwrap()
+            .place
+            .clone();
+        let loan = MirLoanId(function.loans.len() as u32);
+        function.loans.push(MirLoan {
+            kind: MirLoanKind::CallLocal,
+            mode: crate::types::ParameterMode::Ref,
+            place,
+        });
+        function.blocks[function.entry.index() as usize]
+            .statements
+            .push(MirStatement {
+                span: function.span,
+                kind: MirStatementKind::ReserveLoan(loan),
+            });
+        let error = verify_mir(&resolved, &hir, &crossing_call_loan).unwrap_err();
+        assert!(
+            error.message().contains("only shared region loans"),
+            "{error}"
+        );
     }
 
     #[test]

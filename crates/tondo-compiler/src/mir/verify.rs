@@ -248,6 +248,9 @@ enum MovePathComponent {
         start: u32,
         suffix: u32,
     },
+    IteratorElement {
+        index: MirLocalId,
+    },
     Index {
         index: MirLocalId,
         access: HirIndexAccess,
@@ -283,6 +286,7 @@ impl MovePathComponent {
                 start: *start,
                 suffix: *suffix,
             },
+            MirProjectionKind::IteratorElement { index } => Self::IteratorElement { index: *index },
             MirProjectionKind::Index { index, access } => Self::Index {
                 index: *index,
                 access: *access,
@@ -1007,6 +1011,7 @@ impl Verifier<'_> {
             MirTerminatorKind::IteratorNext {
                 state,
                 destination,
+                borrowed_source,
                 has_value,
                 exhausted,
                 unwind,
@@ -1019,7 +1024,51 @@ impl Verifier<'_> {
                 }
                 self.verify_place(function, state, &context)?;
                 self.verify_place(function, destination, &context)?;
-                self.verify_iterator(state.ty, destination.ty, &context)?;
+                let TypeKind::Cursor { mode, collection } = self.kind(state.ty, &context)? else {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "iterator state is not a concrete intrinsic cursor",
+                    ));
+                };
+                match mode {
+                    CursorMode::Own => {
+                        if borrowed_source.is_some() {
+                            return Err(MirInvariantError::new(
+                                &context,
+                                "owning iterator carries a borrowed source",
+                            ));
+                        }
+                        self.verify_iterator(state.ty, destination.ty, &context)?;
+                    }
+                    CursorMode::Ref => {
+                        let source = borrowed_source.as_ref().ok_or_else(|| {
+                            MirInvariantError::new(
+                                &context,
+                                "borrowed iterator has no source place",
+                            )
+                        })?;
+                        self.verify_place(function, source, &context)?;
+                        if source.ty != *collection
+                            || destination.ty != self.hir.interner().scalar(ScalarType::Int)
+                            || source.source_loan.is_none()
+                            || self
+                                .iterated_borrowed_item_type(*collection, &context)?
+                                .is_none()
+                        {
+                            return Err(MirInvariantError::new(
+                                &context,
+                                "borrowed iterator source, position, or collection type is inconsistent",
+                            ));
+                        }
+                        self.verify_borrowed_iterator_origin(
+                            function,
+                            state,
+                            destination,
+                            source,
+                            &context,
+                        )?;
+                    }
+                }
                 self.normal_block(function, *has_value, &context)?;
                 self.normal_block(function, *exhausted, &context)?;
                 if self.block(function, *unwind, &context)?.kind != MirBlockKind::Cleanup {
@@ -1971,8 +2020,17 @@ impl Verifier<'_> {
         }
         self.verify_type(place.ty, context)?;
         let mut current = local.ty;
-        for projection in &place.projections {
+        for (position, projection) in place.projections.iter().enumerate() {
             self.verify_type(projection.ty, context)?;
+            if let MirProjectionKind::IteratorElement { index } = projection.kind {
+                let base = MirPlace {
+                    local: place.local,
+                    ty: current,
+                    projections: place.projections[..position].to_vec(),
+                    source_loan: place.source_loan,
+                };
+                self.verify_iterator_element_origin(function, &base, index, context)?;
+            }
             let expected = self.projection_result(function, current, projection, context)?;
             if expected != projection.ty {
                 return Err(MirInvariantError::new(
@@ -2756,6 +2814,31 @@ impl Verifier<'_> {
                 })?;
                 Ok(current)
             }
+            MirProjectionKind::IteratorElement { index } => {
+                if self.local(function, *index, context)?.ty
+                    != self.hir.interner().scalar(ScalarType::Int)
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "borrowed iterator element position is not Int",
+                    ));
+                }
+                let expected = self
+                    .iterated_borrowed_item_type(current, context)?
+                    .ok_or_else(|| {
+                        MirInvariantError::new(
+                            context,
+                            "borrowed iterator element has a non-borrowable collection base",
+                        )
+                    })?;
+                if expected != declared {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "borrowed iterator element declares the wrong item type",
+                    ));
+                }
+                Ok(expected)
+            }
             MirProjectionKind::Index { index, access } => {
                 let index_type = self.local(function, *index, context)?.ty;
                 self.verify_index_result(current, index_type, *access, declared, context)?;
@@ -3021,6 +3104,248 @@ impl Verifier<'_> {
             ));
         }
         Ok(())
+    }
+
+    fn iterated_borrowed_item_type(
+        &self,
+        collection: TypeId,
+        context: &str,
+    ) -> Result<Option<TypeId>, MirInvariantError> {
+        let item = match self.kind(collection, context)? {
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Array | IntrinsicType::Set,
+                arguments,
+            } => arguments.first().copied(),
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Map,
+                arguments,
+            } => {
+                let mut interner = self.hir.interner().clone();
+                Some(
+                    interner
+                        .tuple(arguments.clone())
+                        .map_err(|error| MirInvariantError::new(context, error.to_string()))?,
+                )
+            }
+            _ => None,
+        };
+        Ok(item)
+    }
+
+    fn verify_borrowed_iterator_origin(
+        &self,
+        function: &MirFunction,
+        state: &MirPlace,
+        destination: &MirPlace,
+        source: &MirPlace,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        if !state.projections.is_empty()
+            || state.source_loan.is_some()
+            || !destination.projections.is_empty()
+            || destination.source_loan.is_some()
+            || self.local(function, state.local, context)?.kind() != MirLocalKind::Temporary
+            || self.local(function, destination.local, context)?.kind() != MirLocalKind::Temporary
+        {
+            return Err(MirInvariantError::new(
+                context,
+                "borrowed iterator state and position must be direct temporaries",
+            ));
+        }
+        let source_loan = source.source_loan.ok_or_else(|| {
+            MirInvariantError::new(context, "borrowed iterator source has no region loan")
+        })?;
+        let loan = self.loan(function, source_loan, context)?;
+        if loan.kind != MirLoanKind::Region
+            || loan.mode != ParameterMode::Ref
+            || !same_place_path(&loan.place, source)
+        {
+            return Err(MirInvariantError::new(
+                context,
+                "borrowed iterator source is not backed by its exact shared region loan",
+            ));
+        }
+
+        let mut state_definitions = 0_u32;
+        let mut position_definitions = 0_u32;
+        for block in &function.blocks {
+            self.consume_dataflow_step(context)?;
+            for statement in &block.statements {
+                self.consume_dataflow_step(context)?;
+                let MirStatementKind::Assign {
+                    destination: assigned,
+                    value,
+                } = &statement.kind
+                else {
+                    continue;
+                };
+                if assigned.local == destination.local {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "borrowed iterator position has a non-canonical definition",
+                    ));
+                }
+                if assigned.local == state.local {
+                    let matches_origin = assigned.projections.is_empty()
+                        && assigned.source_loan.is_none()
+                        && matches!(
+                            &value.kind,
+                            MirRvalueKind::IteratorState {
+                                source: MirOperand {
+                                    kind: MirOperandKind::Borrow(origin),
+                                    ..
+                                }
+                            } if origin == source
+                        );
+                    if !matches_origin {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "borrowed iterator state has a non-canonical definition",
+                        ));
+                    }
+                    state_definitions = state_definitions.saturating_add(1);
+                }
+            }
+            match &block.terminator.kind {
+                MirTerminatorKind::IteratorNext {
+                    state: candidate_state,
+                    destination: assigned,
+                    borrowed_source: Some(candidate_source),
+                    ..
+                } if assigned.local == destination.local => {
+                    if candidate_state != state
+                        || assigned != destination
+                        || candidate_source != source
+                    {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "borrowed iterator position has a non-canonical producer",
+                        ));
+                    }
+                    position_definitions = position_definitions.saturating_add(1);
+                }
+                MirTerminatorKind::IteratorNext {
+                    destination: assigned,
+                    ..
+                }
+                | MirTerminatorKind::Invoke {
+                    destination: Some(assigned),
+                    ..
+                } if assigned.local == destination.local => {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "borrowed iterator position has a non-canonical producer",
+                    ));
+                }
+                MirTerminatorKind::IteratorNext {
+                    destination: assigned,
+                    ..
+                }
+                | MirTerminatorKind::Invoke {
+                    destination: Some(assigned),
+                    ..
+                } if assigned.local == state.local => {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "borrowed iterator state has a non-canonical definition",
+                    ));
+                }
+                _ => {}
+            }
+        }
+        if state_definitions != 1 {
+            return Err(MirInvariantError::new(
+                context,
+                "borrowed iterator state must have exactly one canonical definition",
+            ));
+        }
+        if position_definitions != 1 {
+            return Err(MirInvariantError::new(
+                context,
+                "borrowed iterator position must have exactly one canonical producer",
+            ));
+        }
+        Ok(())
+    }
+
+    fn verify_iterator_element_origin(
+        &self,
+        function: &MirFunction,
+        base: &MirPlace,
+        index: MirLocalId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let Some(origin_loan) = base.source_loan else {
+            return Err(MirInvariantError::new(
+                context,
+                "borrowed iterator element has no source region",
+            ));
+        };
+        let mut producers = 0_u32;
+        for block in &function.blocks {
+            self.consume_dataflow_step(context)?;
+            let MirTerminatorKind::IteratorNext {
+                destination,
+                borrowed_source: Some(source),
+                ..
+            } = &block.terminator.kind
+            else {
+                continue;
+            };
+            if destination.local == index
+                && destination.projections.is_empty()
+                && destination.source_loan.is_none()
+                && same_place_path(base, source)
+            {
+                let expected_loan = source.source_loan.ok_or_else(|| {
+                    MirInvariantError::new(context, "borrowed iterator source has no region loan")
+                })?;
+                if !self.region_loan_descends_from(function, origin_loan, expected_loan, context)? {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "borrowed iterator element does not derive from its source region",
+                    ));
+                }
+                producers = producers.saturating_add(1);
+            }
+        }
+        if producers != 1 {
+            return Err(MirInvariantError::new(
+                context,
+                "borrowed iterator element does not have one matching iterator position source",
+            ));
+        }
+        Ok(())
+    }
+
+    fn region_loan_descends_from(
+        &self,
+        function: &MirFunction,
+        mut candidate: MirLoanId,
+        ancestor: MirLoanId,
+        context: &str,
+    ) -> Result<bool, MirInvariantError> {
+        let mut seen = BTreeSet::new();
+        loop {
+            self.consume_dataflow_step(context)?;
+            if candidate == ancestor {
+                return Ok(true);
+            }
+            if !seen.insert(candidate) {
+                return Err(MirInvariantError::new(
+                    context,
+                    "borrowed iterator source region chain contains a cycle",
+                ));
+            }
+            let loan = self.loan(function, candidate, context)?;
+            if loan.kind != MirLoanKind::Region {
+                return Ok(false);
+            }
+            let Some(parent) = loan.place.source_loan else {
+                return Ok(false);
+            };
+            candidate = parent;
+        }
     }
 
     fn iterated_item_type(&self, source: TypeId) -> Option<TypeId> {
@@ -3778,6 +4103,15 @@ impl Verifier<'_> {
                     unwind,
                     ..
                 } => {
+                    for loan in &state.active {
+                        let loan = self.loan(function, *loan, &block_context)?;
+                        if loan.kind != MirLoanKind::Region || loan.mode != ParameterMode::Ref {
+                            return Err(MirInvariantError::new(
+                                &block_context,
+                                "only shared region loans may cross an iterator boundary",
+                            ));
+                        }
+                    }
                     let has_value_state = state.clone();
                     self.verify_loan_local_access(
                         function,
@@ -4795,10 +5129,16 @@ impl Verifier<'_> {
                 }
             }
             MirTerminatorKind::IteratorNext {
-                state, destination, ..
+                state,
+                destination,
+                borrowed_source,
+                ..
             } => {
                 push_place_events(state, true, &mut events);
                 push_destination_reads(destination, true, &mut events);
+                if let Some(source) = borrowed_source {
+                    push_place_events(source, true, &mut events);
+                }
             }
             MirTerminatorKind::ValidatePlaces {
                 places,
@@ -5051,8 +5391,15 @@ fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEve
                 push_operation_events(operation, &mut local);
             }
         }
-        MirTerminatorKind::IteratorNext { state, .. } => {
+        MirTerminatorKind::IteratorNext {
+            state,
+            borrowed_source,
+            ..
+        } => {
             push_destination_reads(state, true, &mut local);
+            if let Some(source) = borrowed_source {
+                push_place_events(source, true, &mut local);
+            }
         }
         MirTerminatorKind::ValidatePlaces {
             places,
@@ -5307,6 +5654,7 @@ fn push_tag_place(
             | MirProjectionKind::NewtypeValue
             | MirProjectionKind::ArrayPatternIndex(_)
             | MirProjectionKind::ArrayPatternRest { .. }
+            | MirProjectionKind::IteratorElement { .. }
             | MirProjectionKind::Index { .. }
             | MirProjectionKind::Slice { .. } => None,
         };
@@ -5368,6 +5716,10 @@ fn places_may_overlap(left: &MirPlace, right: &MirPlace) -> bool {
         };
     }
     true
+}
+
+fn same_place_path(left: &MirPlace, right: &MirPlace) -> bool {
+    left.local == right.local && left.ty == right.ty && left.projections == right.projections
 }
 
 fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
@@ -5614,6 +5966,7 @@ fn move_path_runtime_inputs(path: &[MovePathComponent]) -> impl Iterator<Item = 
     path.iter().flat_map(|component| {
         let inputs = match component {
             MovePathComponent::Index { index, .. } => [Some(*index), None, None],
+            MovePathComponent::IteratorElement { index } => [Some(*index), None, None],
             MovePathComponent::Slice { start, end, step } => [*start, *end, *step],
             MovePathComponent::ClosureCapture(_, _)
             | MovePathComponent::Field(_)
@@ -5683,7 +6036,8 @@ fn collection_region(
         MovePathComponent::Index {
             access: HirIndexAccess::MapLookup | HirIndexAccess::MapEntry,
             ..
-        } => CollectionComponent::Dynamic,
+        }
+        | MovePathComponent::IteratorElement { .. } => CollectionComponent::Dynamic,
         MovePathComponent::Slice { start, end, step } => {
             let Some(start) = static_optional_bound(*start, static_integers) else {
                 return CollectionComponent::Dynamic;
@@ -5934,6 +6288,13 @@ fn push_projection_index_events(place: &MirPlace, events: &mut Vec<LocalEvent>) 
                 path: Vec::new(),
                 source_loan: None,
             })),
+            MirProjectionKind::IteratorElement { index } => {
+                events.push(LocalEvent::Read(LocalAccess {
+                    local: *index,
+                    path: Vec::new(),
+                    source_loan: None,
+                }));
+            }
             MirProjectionKind::Slice { start, end, step } => {
                 events.extend(start.iter().chain(end).chain(step).copied().map(|local| {
                     LocalEvent::Read(LocalAccess {
@@ -5983,6 +6344,7 @@ fn place_is_structurally_replaceable(place: &MirPlace) -> bool {
                 | MirProjectionKind::ResultErrValue
                 | MirProjectionKind::UnionValue(_)
                 | MirProjectionKind::ArrayPatternIndex(_)
+                | MirProjectionKind::IteratorElement { .. }
                 | MirProjectionKind::Index {
                     access: crate::hir::HirIndexAccess::Array,
                     ..

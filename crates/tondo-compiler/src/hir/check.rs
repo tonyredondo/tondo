@@ -9664,16 +9664,18 @@ impl<'a> ExpressionChecker<'a> {
                     &mut body_context,
                     PatternContext::For,
                 )?;
+                let borrows = self.pattern_contains_borrow(pattern);
+                if borrows {
+                    self.validate_borrowed_iteration_source(
+                        source,
+                        source_type,
+                        pattern,
+                        &context.capability_assumptions,
+                    )?;
+                }
                 let protocol = if let Some(protocol) = protocol {
                     protocol
                 } else {
-                    let borrows = self.pattern_contains_borrow(pattern);
-                    if borrows {
-                        // BORROW-001 lowers this as a shared loan. Retain its
-                        // exact cursor type now without admitting Copy-based
-                        // bootstrap lowering for borrowed iteration.
-                        self.complete = false;
-                    }
                     let mode = if borrows {
                         CursorMode::Ref
                     } else {
@@ -9728,6 +9730,84 @@ impl<'a> ExpressionChecker<'a> {
             _ => None,
         };
         Ok(element)
+    }
+
+    fn validate_borrowed_iteration_source(
+        &mut self,
+        source: HirExpressionId,
+        source_type: TypeId,
+        pattern: HirPatternId,
+        assumptions: &CapabilityAssumptions,
+    ) -> Result<(), HirError> {
+        let source_expression = self
+            .program
+            .expression(source)
+            .expect("checked iterator sources remain indexed");
+        let supported = matches!(
+            self.program.interner.kind(source_type)?,
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Array | IntrinsicType::Map | IntrinsicType::Set,
+                ..
+            }
+        );
+        if !supported || !self.match_scrutinee_is_stable(source) {
+            self.emit(
+                source_expression.span(),
+                "E1402",
+                "borrowed iteration requires a stable Array, Map, or Set lvalue",
+                Vec::new(),
+                None,
+            )?;
+        }
+
+        let mut pending = vec![pattern];
+        while let Some(id) = pending.pop() {
+            let pattern = self
+                .program
+                .pattern(id)
+                .expect("checked iterator patterns remain indexed")
+                .clone();
+            match pattern.kind() {
+                HirPatternKind::Binding(_) => {
+                    match self.capability_status_with_generics(
+                        pattern.ty(),
+                        HirCapability::Copy,
+                        assumptions,
+                    )? {
+                        HirCapabilityStatus::Satisfied => {}
+                        HirCapabilityStatus::Deferred => self.complete = false,
+                        HirCapabilityStatus::Unsatisfied => self.emit(
+                            pattern.span(),
+                            "E1406",
+                            "a non-ref binding cannot move affine content out of a borrowed iterator item",
+                            Vec::new(),
+                            None,
+                        )?,
+                    }
+                }
+                HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
+                    pending.extend(items.iter().copied());
+                }
+                HirPatternKind::OptionSome(item)
+                | HirPatternKind::ResultOk(item)
+                | HirPatternKind::ResultErr(item)
+                | HirPatternKind::Newtype { value: item, .. }
+                | HirPatternKind::UnionMember { pattern: item, .. } => pending.push(*item),
+                HirPatternKind::Record { fields, .. } => {
+                    pending.extend(fields.iter().map(HirPatternField::pattern));
+                }
+                HirPatternKind::Array { prefix, rest } => {
+                    pending.extend(prefix.iter().copied());
+                    pending.extend(*rest);
+                }
+                HirPatternKind::Recovery
+                | HirPatternKind::Wildcard
+                | HirPatternKind::BorrowBinding(_)
+                | HirPatternKind::Literal(_)
+                | HirPatternKind::OptionNone => {}
+            }
+        }
+        Ok(())
     }
 
     fn pattern_contains_borrow(&self, root: HirPatternId) -> bool {
@@ -17138,7 +17218,8 @@ mod tests {
                  }\n\
              }\n",
         );
-        assert_eq!(codes(&borrowed_copy), ["E1406"]);
+        assert!(borrowed_copy.diagnostics().is_empty());
+        assert!(borrowed_copy.is_complete());
     }
 
     #[test]
@@ -18841,7 +18922,7 @@ mod tests {
             "{:#?}",
             output.diagnostics()
         );
-        assert!(!output.is_complete());
+        assert!(output.is_complete());
 
         let status = |name: &str, capability: HirCapability| {
             let ty = output
@@ -18885,6 +18966,96 @@ mod tests {
             "cursor[ref,Array[Join[Int, Never]]]",
             &[HirCapability::Copy, HirCapability::Discard],
         );
+    }
+
+    #[test]
+    fn borrowed_iteration_requires_a_stable_collection_and_copy_only_value_bindings() {
+        let (_, _, temporary) = check(
+            "fn invalid() {\n\
+                 for ref value in [1, 2, 3] {}\n\
+             }\n",
+        );
+        assert_eq!(codes(&temporary), ["E1402"]);
+
+        let (_, _, range) = check(
+            "fn invalid() {\n\
+                 let values = 0..3\n\
+                 for ref value in values {}\n\
+             }\n",
+        );
+        assert_eq!(codes(&range), ["E1402"]);
+
+        let (_, _, string) = check(
+            "fn invalid() {\n\
+                 let values = \"abc\"\n\
+                 for ref value in values {}\n\
+             }\n",
+        );
+        assert_eq!(codes(&string), ["E1402"]);
+
+        let (_, _, custom) = check(
+            "type Cursor = { value: Int }\n\
+             impl Iterator[Int] for Cursor {\n\
+                 fn next(mut self): Int? { none }\n\
+             }\n\
+             fn invalid(cursor: Cursor) {\n\
+                 for ref value in cursor {}\n\
+             }\n",
+        );
+        assert_eq!(codes(&custom), ["E1402"]);
+
+        let (_, _, affine_value) = check(
+            "fn invalid(entries: ref Map[String, Join[Int, Never]]) {\n\
+                 for (ref key, value) in entries {}\n\
+             }\n",
+        );
+        assert_eq!(codes(&affine_value), ["E1406"]);
+
+        let (_, _, generic_value) = check(
+            "fn invalid[T](entries: ref Map[Int, T]) {\n\
+                 for (ref key, value) in entries {}\n\
+             }\n",
+        );
+        assert_eq!(codes(&generic_value), ["E1406"]);
+
+        let (_, _, bounded_value) = check(
+            "fn valid[T: Copy](entries: ref Map[Int, T]) {\n\
+                 for (ref key, value) in entries {\n\
+                     _ = key\n\
+                     _ = value\n\
+                 }\n\
+             }\n",
+        );
+        assert!(bounded_value.diagnostics().is_empty());
+        assert!(bounded_value.is_complete());
+    }
+
+    #[test]
+    fn borrowed_iteration_holds_the_collection_loan_only_for_the_loop() {
+        let (_, _, mutation) = check(
+            "fn invalid(values: var Array[Int]) {\n\
+                 for ref value in values {\n\
+                     values[0] = value\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&mutation), ["E1403"]);
+
+        let (_, _, owner_after_loop) = check(
+            "fn valid(values: Array[Int]): Int {\n\
+                 var total = 0\n\
+                 for ref value in values {\n\
+                     total += value\n\
+                 }\n\
+                 total + values[0]\n\
+             }\n",
+        );
+        assert!(
+            owner_after_loop.diagnostics().is_empty(),
+            "{:#?}",
+            owner_after_loop.diagnostics()
+        );
+        assert!(owner_after_loop.is_complete());
     }
 
     #[test]
