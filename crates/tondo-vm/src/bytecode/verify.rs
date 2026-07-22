@@ -4213,7 +4213,8 @@ impl Verifier<'_> {
             ),
             BytecodeParameterMode::Var => {
                 source == BytecodeParameterMode::Var
-                    || source == BytecodeParameterMode::Mut && !loan.place.projections.is_empty()
+                    || source == BytecodeParameterMode::Mut
+                        && loan.place.is_structurally_replaceable()
             }
         };
         if compatible {

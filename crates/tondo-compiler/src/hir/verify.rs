@@ -18,8 +18,8 @@ use super::{
     HirExpressionId, HirExpressionKind, HirFlow, HirForKind, HirGenericParameter, HirIndexAccess,
     HirIterationProtocol, HirPattern, HirPatternId, HirPatternKind, HirProgram, HirStatement,
     HirTraitConstructor, HirTraitIdentity, HirTraitMethodKey, HirTypeDeclarationKind,
-    HirValueCategory, HirVariantPayload, HirVariantValue, TraitQuery, TraitSelectionError,
-    analyze_availability, analyze_closure_captures, select_implementation,
+    HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind, TraitQuery,
+    TraitSelectionError, analyze_availability, analyze_closure_captures, select_implementation,
 };
 
 /// Reports a compiler defect at the boundary between typed HIR and MIR.
@@ -95,6 +95,22 @@ struct OpaqueTraitProof {
     active: BTreeSet<TraitQuery>,
     memo: BTreeMap<TraitQuery, bool>,
     context: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum WritePermission {
+    Immutable,
+    PreserveExtent,
+    Replace,
+}
+
+impl WritePermission {
+    fn projected(self) -> Self {
+        match self {
+            Self::Immutable => Self::Immutable,
+            Self::PreserveExtent | Self::Replace => Self::Replace,
+        }
+    }
 }
 
 impl Verifier<'_> {
@@ -3825,8 +3841,199 @@ impl Verifier<'_> {
                 ));
             }
             self.expression(body.root, &context)?;
+            let parameter_modes = signature
+                .parameters
+                .iter()
+                .filter_map(|parameter| parameter.local.map(|local| (local, parameter.mode)))
+                .collect::<BTreeMap<_, _>>();
+            let receiver_mode = signature
+                .parameters
+                .iter()
+                .find(|parameter| parameter.receiver)
+                .map(|parameter| parameter.mode);
+            self.verify_body_write_contracts(body.root, &parameter_modes, receiver_mode, &context)?;
+        }
+        for closure in &self.program.closures {
+            let context = format!("closure#{} body", closure.id.index());
+            let parameter_modes = closure
+                .parameters
+                .iter()
+                .filter_map(|parameter| parameter.local.map(|local| (local, parameter.mode)))
+                .collect::<BTreeMap<_, _>>();
+            self.verify_body_write_contracts(closure.body.root, &parameter_modes, None, &context)?;
         }
         Ok(())
+    }
+
+    fn verify_body_write_contracts(
+        &self,
+        root: HirExpressionId,
+        parameter_modes: &BTreeMap<crate::resolve::LocalId, ParameterMode>,
+        receiver_mode: Option<ParameterMode>,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        let mut pending = vec![root];
+        let mut visited = BTreeSet::new();
+        while let Some(id) = pending.pop() {
+            if !visited.insert(id) {
+                continue;
+            }
+            let expression = self.expression(id, context)?;
+            if let HirExpressionKind::Block { statements, .. } = &expression.kind {
+                for statement in statements {
+                    if let HirStatement::Assignment {
+                        operator,
+                        target,
+                        value,
+                        ..
+                    } = statement
+                    {
+                        self.verify_assignment_write_contract(
+                            target,
+                            *operator,
+                            self.program.expression_flows[value.0 as usize].may_complete(),
+                            parameter_modes,
+                            receiver_mode,
+                            context,
+                        )?;
+                    }
+                }
+            }
+            pending.extend(expression_children(expression));
+        }
+        Ok(())
+    }
+
+    fn verify_assignment_write_contract(
+        &self,
+        target: &HirAssignmentTarget,
+        operator: super::HirAssignmentOperator,
+        value_may_complete: bool,
+        parameter_modes: &BTreeMap<crate::resolve::LocalId, ParameterMode>,
+        receiver_mode: Option<ParameterMode>,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        match &target.kind {
+            HirAssignmentTargetKind::Discard => Ok(()),
+            HirAssignmentTargetKind::Tuple(items) => {
+                for item in items {
+                    self.verify_assignment_write_contract(
+                        item,
+                        operator,
+                        value_may_complete,
+                        parameter_modes,
+                        receiver_mode,
+                        context,
+                    )?;
+                }
+                Ok(())
+            }
+            HirAssignmentTargetKind::Place { place, write, .. } => {
+                let permission = self.assignment_place_permission(
+                    *place,
+                    parameter_modes,
+                    receiver_mode,
+                    context,
+                )?;
+                let expected = match permission {
+                    WritePermission::Immutable => {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "assignment target is not writable in its body",
+                        ));
+                    }
+                    WritePermission::PreserveExtent => HirWriteKind::PreserveExtent,
+                    WritePermission::Replace => HirWriteKind::Replace,
+                };
+                if *write != expected {
+                    return Err(HirInvariantError::new(
+                        context,
+                        format!(
+                            "assignment records {write:?}, but its place requires {expected:?}"
+                        ),
+                    ));
+                }
+                let is_slice = matches!(
+                    self.expression(*place, context)?.kind,
+                    HirExpressionKind::Slice { .. }
+                );
+                if operator == super::HirAssignmentOperator::Assign
+                    && value_may_complete
+                    && permission == WritePermission::PreserveExtent
+                    && !is_slice
+                    && self.type_requires_structural_replacement(target.ty, context)?
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "a root `mut` replacement lacks a fixed-extent contract",
+                    ));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn assignment_place_permission(
+        &self,
+        expression: HirExpressionId,
+        parameter_modes: &BTreeMap<crate::resolve::LocalId, ParameterMode>,
+        receiver_mode: Option<ParameterMode>,
+        context: &str,
+    ) -> Result<WritePermission, HirInvariantError> {
+        Ok(match &self.expression(expression, context)?.kind {
+            HirExpressionKind::Local(local) => match parameter_modes.get(local).copied() {
+                Some(ParameterMode::Mut) => WritePermission::PreserveExtent,
+                Some(ParameterMode::Var) => WritePermission::Replace,
+                Some(ParameterMode::Value | ParameterMode::Ref) => WritePermission::Immutable,
+                None if self.local_is_mutable_binding(*local) => WritePermission::Replace,
+                None => WritePermission::Immutable,
+            },
+            HirExpressionKind::Receiver => match receiver_mode {
+                Some(ParameterMode::Mut) => WritePermission::PreserveExtent,
+                Some(ParameterMode::Var) => WritePermission::Replace,
+                Some(ParameterMode::Value | ParameterMode::Ref) | None => {
+                    WritePermission::Immutable
+                }
+            },
+            HirExpressionKind::Field { base, .. }
+            | HirExpressionKind::TupleField { base, .. }
+            | HirExpressionKind::Index { base, .. } => self
+                .assignment_place_permission(*base, parameter_modes, receiver_mode, context)?
+                .projected(),
+            HirExpressionKind::Slice { base, .. } => {
+                match self.assignment_place_permission(
+                    *base,
+                    parameter_modes,
+                    receiver_mode,
+                    context,
+                )? {
+                    WritePermission::Immutable => WritePermission::Immutable,
+                    WritePermission::PreserveExtent | WritePermission::Replace => {
+                        WritePermission::PreserveExtent
+                    }
+                }
+            }
+            _ => WritePermission::Immutable,
+        })
+    }
+
+    fn type_requires_structural_replacement(
+        &self,
+        ty: TypeId,
+        context: &str,
+    ) -> Result<bool, HirInvariantError> {
+        Ok(matches!(
+            self.program
+                .interner
+                .kind(ty)
+                .map_err(|error| HirInvariantError::new(context, error.to_string()))?,
+            TypeKind::GenericParameter(_)
+                | TypeKind::OpaqueResult { .. }
+                | TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Array | IntrinsicType::Map | IntrinsicType::Set,
+                    ..
+                }
+        ))
     }
 
     fn verify_call_protocol_contracts(&self) -> Result<(), HirInvariantError> {
@@ -4656,6 +4863,41 @@ mod tests {
     }
 
     #[test]
+    fn assignment_write_permissions_are_rederived_before_mir() {
+        let (resolved, mut program) = checked_program_from(
+            "fn update(value: mut Int) {\n\
+                 value = 2\n\
+             }\n",
+        );
+        let write = program
+            .expressions
+            .iter_mut()
+            .find_map(|expression| {
+                let HirExpressionKind::Block { statements, .. } = &mut expression.kind else {
+                    return None;
+                };
+                statements.iter_mut().find_map(|statement| {
+                    let HirStatement::Assignment { target, .. } = statement else {
+                        return None;
+                    };
+                    let HirAssignmentTargetKind::Place { write, .. } = &mut target.kind else {
+                        return None;
+                    };
+                    Some(write)
+                })
+            })
+            .expect("the fixture contains one assignment write");
+        assert_eq!(*write, HirWriteKind::PreserveExtent);
+        *write = HirWriteKind::Replace;
+
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert!(
+            error.message().contains("requires PreserveExtent"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn availability_and_var_reinitialization_are_reproved_before_mir() {
         let (resolved, mut program) = checked_program_from(
             "fn valid[T: Discard](value: T, other: T, flag: Bool) {\n\
@@ -4711,8 +4953,8 @@ mod tests {
         *mutable = false;
 
         let error = verify_typed_hir(&resolved, &program).unwrap_err();
-        assert_eq!(error.context(), "ownership availability");
-        assert!(error.message().contains("after its value moved"));
+        assert!(error.context().ends_with("body"));
+        assert!(error.message().contains("not writable"));
     }
 
     #[test]

@@ -247,9 +247,13 @@ Panic unwinding discards every reservation in the abandoned frame, so cleanup
 blocks cannot reserve or release loans.
 
 Reborrowing preserves the same permission order as HIR/MIR, including `var`
-from a strict fixed projection of `mut`. Record fields and tuple slots may be
-proved disjoint. Loan metadata containing an index or slice projection is
-invalid until BORROW-004 and BORROW-005 define collection-region proof.
+from a complete strict projection of `mut`. `BytecodePlace` owns the canonical
+structural-replacement classification shared by verification and execution: a
+root, slice, array rest, potential map entry, or opaque projection cannot
+perform that upgrade, while a fixed aggregate payload or existing array element
+can. Record fields and tuple slots may be proved disjoint. Loan metadata
+containing an index or slice projection is invalid until BORROW-004 and
+BORROW-005 define collection-region proof.
 `Borrow` remains a separate non-storable form admitted only for equality,
 membership, length, discriminant branches, index/slice collection bases,
 indirect shared/exclusive callees, intrinsic ref-cursor construction, and the

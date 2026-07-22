@@ -3930,7 +3930,8 @@ impl Verifier<'_> {
             ParameterMode::Mut => matches!(source, ParameterMode::Mut | ParameterMode::Var),
             ParameterMode::Var => {
                 source == ParameterMode::Var
-                    || source == ParameterMode::Mut && !loan.place().projections().is_empty()
+                    || source == ParameterMode::Mut
+                        && place_is_structurally_replaceable(loan.place())
             }
         };
         if compatible {
@@ -5240,6 +5241,29 @@ fn push_projection_index_events(place: &MirPlace, events: &mut Vec<LocalEvent>) 
     }
 }
 
+fn place_is_structurally_replaceable(place: &MirPlace) -> bool {
+    matches!(
+        place.projections.last().map(|projection| &projection.kind),
+        Some(
+            MirProjectionKind::ClosureCapture { .. }
+                | MirProjectionKind::Field(_)
+                | MirProjectionKind::TupleField(_)
+                | MirProjectionKind::NewtypeValue
+                | MirProjectionKind::VariantTuple { .. }
+                | MirProjectionKind::VariantField { .. }
+                | MirProjectionKind::OptionValue
+                | MirProjectionKind::ResultOkValue
+                | MirProjectionKind::ResultErrValue
+                | MirProjectionKind::UnionValue(_)
+                | MirProjectionKind::ArrayPatternIndex(_)
+                | MirProjectionKind::Index {
+                    access: crate::hir::HirIndexAccess::Array,
+                    ..
+                }
+        )
+    )
+}
+
 fn is_integer(scalar: ScalarType) -> bool {
     matches!(
         scalar,
@@ -5275,4 +5299,52 @@ fn is_relational(scalar: ScalarType) -> bool {
             scalar,
             ScalarType::Byte | ScalarType::Char | ScalarType::String
         )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::TypeInterner;
+
+    fn projected_place(kind: MirProjectionKind) -> MirPlace {
+        let ty = TypeInterner::default().scalar(ScalarType::Int);
+        MirPlace {
+            local: MirLocalId(0),
+            ty,
+            projections: vec![MirProjection { ty, kind }],
+            source_loan: None,
+        }
+    }
+
+    #[test]
+    fn structural_reborrows_require_a_complete_strict_subplace() {
+        assert!(place_is_structurally_replaceable(&projected_place(
+            MirProjectionKind::TupleField(0)
+        )));
+        assert!(place_is_structurally_replaceable(&projected_place(
+            MirProjectionKind::Index {
+                index: MirLocalId(1),
+                access: crate::hir::HirIndexAccess::Array,
+            }
+        )));
+        assert!(!place_is_structurally_replaceable(&projected_place(
+            MirProjectionKind::Slice {
+                start: None,
+                end: None,
+                step: None,
+            }
+        )));
+        assert!(!place_is_structurally_replaceable(&projected_place(
+            MirProjectionKind::ArrayPatternRest {
+                start: 0,
+                suffix: 0,
+            }
+        )));
+        assert!(!place_is_structurally_replaceable(&projected_place(
+            MirProjectionKind::Index {
+                index: MirLocalId(1),
+                access: crate::hir::HirIndexAccess::MapEntry,
+            }
+        )));
+    }
 }

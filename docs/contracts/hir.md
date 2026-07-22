@@ -781,16 +781,21 @@ created outside that loop.
 
 `ref` accepts either a stable place or a call-scoped temporary. `mut` requires a
 writable place and records fixed-extent writes, while `var` requires a
-structurally replaceable place. A completing root replacement through `mut`
-remains incomplete for `Array`, `Map`, `Set`, a generic parameter, or an opaque
-type until BORROW-003 can prove that the operation preserves extent; fixed
-scalars and aggregates, projected writes, and already checked slice-shape
-writes do not use a provisional structural rule. Reborrowing follows one
-monotone permission rule: `ref` may
+structurally replaceable place. A completing plain root assignment through
+`mut` is valid only when the outer type statically proves fixed extent. HIR
+emits `E1411` for an `Array`, `Map`, `Set`, generic, or opaque root instead of
+guessing a runtime shape contract; arbitrary root replacement uses `var`, while
+whole-array fixed-shape content replacement remains expressible as a checked
+slice assignment. Fixed scalars and aggregates, strict projected writes,
+compound fixed-shape operations, and methods declared with `mut self` retain
+their fixed-extent contract. The HIR verifier independently rederives each
+assignment's `PreserveExtent` or `Replace` permission before MIR. Reborrowing
+follows one monotone permission rule: `ref` may
 derive from any source; `mut` may derive from `mut` or `var`; `var` may derive
-from `var`, or from a strict fixed projection of `mut`, but never from the
-`mut` root itself. Mutable closure captures are owned replaceable projections
-of their invocation environment and follow the same rule.
+from `var`, or from a complete strict projection of `mut`, but never from the
+`mut` root, a slice, an array rest, or a potentially absent map entry. Mutable
+closure captures are owned replaceable projections of their invocation
+environment and follow the same rule.
 
 The availability analysis retains active reservations in evaluation order.
 Shared loans may overlap only other shared loans. Any read through an active
@@ -803,10 +808,13 @@ whose value category or place permission is too weak.
 These loans are not first-class values. They cannot be bound, stored, returned,
 captured, placed in an aggregate, or passed through a value parameter. Index
 and slice projections remain deliberately incomplete because their disjunction
-may depend on runtime data. HIR may retain that error-free partial snapshot for
-tooling, but it does not admit the body to MIR until BORROW-004 and BORROW-005
-provide the static and dynamic region proof. Fixed-place pattern regions are
-admitted as described below; BORROW-006 owns suspension boundaries.
+may depend on runtime data. An explicit `mut` slice is therefore a valid
+fixed-extent argument shape but still an incomplete collection-region snapshot;
+`var` rejects that same partial place with `E1407`. HIR may retain an error-free
+partial snapshot for tooling, but it does not admit the body to MIR until
+BORROW-004 and BORROW-005 provide the static and dynamic region proof.
+Fixed-place pattern regions are admitted as described below; BORROW-006 owns
+suspension boundaries.
 
 ## Pattern `ref` last-use regions
 

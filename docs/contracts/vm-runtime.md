@@ -101,7 +101,10 @@ the lender place. Writes through `mut` or `var` update that original place,
 including nested reborrows and fixed field/tuple projections; writes through
 `ref` and moves through every borrowed parameter are invariant failures.
 Reborrow strength is checked both by bytecode verification and defensively at
-runtime.
+runtime through the same `BytecodePlace` classification. In particular, a
+`var` reborrow from `mut` must end in a complete structurally replaceable
+subplace; roots, slices, array rests, potential map entries, and opaque
+projections are rejected before a reservation is installed.
 
 `ReleaseLoan` removes a reservation when later argument evaluation takes an
 early control transfer. Normal return rejects any reservation left active.

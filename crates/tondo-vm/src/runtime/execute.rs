@@ -397,7 +397,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 BytecodeParameterMode::Var => {
                     source == BytecodeParameterMode::Var
                         || source == BytecodeParameterMode::Mut
-                            && !loan.place.projections.is_empty()
+                            && loan.place.is_structurally_replaceable()
                 }
             };
             if !compatible {

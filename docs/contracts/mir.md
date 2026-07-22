@@ -214,9 +214,13 @@ reservation remains active. Shared reservations may overlap only other shared
 reservations; exclusive reservations reject every overlapping access or
 reservation. Fixed record fields and tuple slots may be disjoint. Reborrowing
 permits `ref` from any borrowed source, `mut` from `mut`/`var`, and `var` from
-`var` or from a strict projection of `mut`. Moves out of borrowed parameters
-and writes through `ref` are invalid. A `Region` can never be consumed as a
-call operand; a `CallLocal` may be consumed at most once.
+`var` or from a complete strict projection of `mut`. The verifier rederives that
+the latter ends in a field, tuple/newtype/variant payload, closure capture,
+array-pattern element, or existing array element; a root, slice, array rest,
+potential map entry, or opaque projection cannot upgrade `mut` to structural
+access. Moves out of borrowed parameters and writes through `ref` are invalid.
+A `Region` can never be consumed as a call operand; a `CallLocal` may be
+consumed at most once.
 
 Releases remain explicit on `return`, `fail`, `?`, `break`, `continue`, and
 ordinary last-use edges. Panic edges enter unwind with an empty loan set because

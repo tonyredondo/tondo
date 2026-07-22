@@ -5267,6 +5267,18 @@ extensión estructural. Un préstamo `mut T` solo admite operaciones cuyo contra
 demuestre preservación —por ejemplo un método de trait declarado `mut self`—; un
 reemplazo genérico arbitrario utiliza `var T`.
 
+La asignación simple a la raíz de un préstamo, `target = replacement`, solo se
+admite mediante `mut` cuando el tipo exterior demuestra estáticamente una
+extensión fija. Esto incluye escalares, records, enums, tuples y newtypes, pero no
+una raíz `Array`, `Map`, `Set`, un parámetro genérico ni un resultado opaco. En
+esos últimos casos la asignación produce `E1411`; un reemplazo estructural
+arbitrario requiere `var`. La regla no elimina el reemplazo de contenido con
+extensión conocida: `values[:] = replacement` sustituye atómicamente todos los
+elementos de un `Array` después de comprobar que ambas longitudes coinciden, y
+las operaciones o métodos con contrato `mut self` siguen disponibles. Tondo no
+compara silenciosamente la forma dinámica de dos valores para decidir qué
+significa una asignación raíz.
+
 Un parámetro `var` es acceso exclusivo **estructural**. Incluye todas las
 capacidades de `mut` y permite además reasignar sin conservar la extensión,
 redimensionar una colección o cambiar su estructura:

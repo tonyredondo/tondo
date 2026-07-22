@@ -403,6 +403,31 @@ pub struct BytecodePlace {
     pub source_loan: Option<BytecodeLoanId>,
 }
 
+impl BytecodePlace {
+    pub(crate) fn is_structurally_replaceable(&self) -> bool {
+        matches!(
+            self.projections.last().map(|projection| &projection.kind),
+            Some(
+                BytecodeProjectionKind::ClosureCapture { .. }
+                    | BytecodeProjectionKind::Field(_)
+                    | BytecodeProjectionKind::TupleField(_)
+                    | BytecodeProjectionKind::NewtypeValue
+                    | BytecodeProjectionKind::VariantTuple { .. }
+                    | BytecodeProjectionKind::VariantField { .. }
+                    | BytecodeProjectionKind::OptionValue
+                    | BytecodeProjectionKind::ResultOkValue
+                    | BytecodeProjectionKind::ResultErrValue
+                    | BytecodeProjectionKind::UnionValue(_)
+                    | BytecodeProjectionKind::ArrayPatternIndex(_)
+                    | BytecodeProjectionKind::Index {
+                        access: BytecodeIndexAccess::Array,
+                        ..
+                    }
+            )
+        )
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BytecodeLoanKind {
     CallLocal,
@@ -786,6 +811,16 @@ pub enum BytecodeTag {
 mod tests {
     use super::*;
 
+    fn projected_place(kind: BytecodeProjectionKind) -> BytecodePlace {
+        let ty = BytecodeTypeId::new(0);
+        BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty,
+            projections: vec![BytecodeProjection { ty, kind }],
+            source_loan: None,
+        }
+    }
+
     #[test]
     fn indices_are_explicit_and_never_cross_kinds_by_type() {
         let slot = BytecodeSlotId::new(7);
@@ -799,5 +834,41 @@ mod tests {
         assert_eq!(BytecodeIntrinsicType::Map.arity(), 2);
         assert_eq!(BytecodeIntrinsicType::Array.arity(), 1);
         assert_eq!(BytecodeIntrinsicType::Command.arity(), 0);
+    }
+
+    #[test]
+    fn structural_reborrows_require_a_complete_strict_subplace() {
+        assert!(
+            projected_place(BytecodeProjectionKind::TupleField(0)).is_structurally_replaceable()
+        );
+        assert!(
+            projected_place(BytecodeProjectionKind::Index {
+                index: BytecodeSlotId::new(1),
+                access: BytecodeIndexAccess::Array,
+            })
+            .is_structurally_replaceable()
+        );
+        assert!(
+            !projected_place(BytecodeProjectionKind::Slice {
+                start: None,
+                end: None,
+                step: None,
+            })
+            .is_structurally_replaceable()
+        );
+        assert!(
+            !projected_place(BytecodeProjectionKind::ArrayPatternRest {
+                start: 0,
+                suffix: 0,
+            })
+            .is_structurally_replaceable()
+        );
+        assert!(
+            !projected_place(BytecodeProjectionKind::Index {
+                index: BytecodeSlotId::new(1),
+                access: BytecodeIndexAccess::MapEntry,
+            })
+            .is_structurally_replaceable()
+        );
     }
 }

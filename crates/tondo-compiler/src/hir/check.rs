@@ -5878,11 +5878,8 @@ impl<'a> ExpressionChecker<'a> {
                 context,
             )?
         };
-        if operator == HirAssignmentOperator::Assign
-            && self.expression_flow(value).may_complete()
-            && self.assignment_needs_fixed_extent_proof(&checked_target)?
-        {
-            self.complete = false;
+        if operator == HirAssignmentOperator::Assign && self.expression_flow(value).may_complete() {
+            self.reject_unproved_fixed_extent_assignment(&checked_target)?;
         }
         let value_type = self.expression_type(value);
         let target = if operator == HirAssignmentOperator::Assign {
@@ -14292,6 +14289,7 @@ impl<'a> ExpressionChecker<'a> {
             .expect("allocated receiver expressions remain indexed");
         let receiver_span = receiver_expression.span();
         let receiver_type = receiver_expression.ty();
+        let receiver_category = receiver_expression.category();
         if let Some(expected) = expected
             && self
                 .program
@@ -14314,7 +14312,10 @@ impl<'a> ExpressionChecker<'a> {
                 permission,
                 PlacePermission::MutRoot | PlacePermission::Replace
             ),
-            ParameterMode::Var => permission == PlacePermission::Replace,
+            ParameterMode::Var => {
+                receiver_category == HirValueCategory::Place
+                    && permission == PlacePermission::Replace
+            }
         };
         if !allowed {
             self.emit(
@@ -14355,7 +14356,8 @@ impl<'a> ExpressionChecker<'a> {
         let allowed = match mode {
             ParameterMode::Ref => true,
             ParameterMode::Mut => {
-                category == HirValueCategory::Place
+                (category == HirValueCategory::Place
+                    || matches!(expression.kind(), HirExpressionKind::Slice { .. }))
                     && matches!(
                         permission,
                         PlacePermission::MutRoot | PlacePermission::Replace
@@ -14391,13 +14393,7 @@ impl<'a> ExpressionChecker<'a> {
     }
 
     fn defer_collection_loan(&mut self, argument: HirExpressionId, mode: ParameterMode) {
-        if mode != ParameterMode::Value
-            && self
-                .program
-                .expression(argument)
-                .is_some_and(|expression| expression.category() == HirValueCategory::Place)
-            && self.loan_has_collection_projection(argument)
-        {
+        if mode != ParameterMode::Value && self.loan_has_collection_projection(argument) {
             self.complete = false;
         }
     }
@@ -14441,15 +14437,15 @@ impl<'a> ExpressionChecker<'a> {
         }
     }
 
-    fn assignment_needs_fixed_extent_proof(
-        &self,
+    fn reject_unproved_fixed_extent_assignment(
+        &mut self,
         target: &CheckedAssignmentTarget,
-    ) -> Result<bool, HirError> {
+    ) -> Result<(), HirError> {
         match &target.kind {
             CheckedAssignmentTargetKind::Place(place)
                 if place.permission == PlacePermission::MutRoot =>
             {
-                Ok(matches!(
+                if matches!(
                     self.program.interner.kind(place.ty)?,
                     TypeKind::GenericParameter(_)
                         | TypeKind::OpaqueResult { .. }
@@ -14459,20 +14455,24 @@ impl<'a> ExpressionChecker<'a> {
                                 | IntrinsicType::Set,
                             ..
                         }
-                ))
+                ) {
+                    self.emit(
+                        target.span,
+                        "E1411",
+                        "this root replacement cannot prove fixed structural extent through `mut`; use `var` access for an arbitrary replacement",
+                        Vec::new(),
+                        None,
+                    )?;
+                }
             }
-            CheckedAssignmentTargetKind::Place(_) | CheckedAssignmentTargetKind::Discard => {
-                Ok(false)
-            }
+            CheckedAssignmentTargetKind::Place(_) | CheckedAssignmentTargetKind::Discard => {}
             CheckedAssignmentTargetKind::Tuple(items) => {
                 for item in items {
-                    if self.assignment_needs_fixed_extent_proof(item)? {
-                        return Ok(true);
-                    }
+                    self.reject_unproved_fixed_extent_assignment(item)?;
                 }
-                Ok(false)
             }
         }
+        Ok(())
     }
 
     fn contextual_numeric_scalar(
@@ -20486,6 +20486,25 @@ mod tests {
             output.diagnostics()
         );
         assert!(!output.is_complete());
+
+        let (_, _, slice) = check(
+            "fn scale(values: mut Array[Int]) {\n\
+                 values *= 2\n\
+             }\n\
+             fn main(values: var Array[Int]) {\n\
+                 scale(mut values[1:3])\n\
+             }\n",
+        );
+        assert!(slice.diagnostics().is_empty(), "{:#?}", slice.diagnostics());
+        assert!(!slice.is_complete());
+
+        let (_, _, structural_slice) = check(
+            "fn resize(values: var Array[Int]) {}\n\
+             fn invalid(values: var Array[Int]) {\n\
+                 resize(var values[1:3])\n\
+             }\n",
+        );
+        assert_eq!(codes(&structural_slice), ["E1407"]);
     }
 
     #[test]
@@ -20647,7 +20666,7 @@ mod tests {
     }
 
     #[test]
-    fn unproved_mut_extent_replacement_remains_incomplete() {
+    fn mut_root_replacement_requires_a_fixed_extent_contract() {
         let (_, _, fixed) = check(
             "fn replace(value: mut Int) {\n\
                  value = 2\n\
@@ -20658,16 +20677,37 @@ mod tests {
 
         for source in [
             "fn resize(values: mut Array[Int]) {\n    values = [1, 2]\n}\n",
+            "fn replace(entries: mut Map[String, Int]) {\n    entries = [:]\n}\n",
+            "fn replace(values: mut Set[Int]) {\n    values = Set[]\n}\n",
             "fn replace[T](value: mut T, next: T) {\n    value = next\n}\n",
         ] {
             let (_, _, output) = check(source);
-            assert!(
-                output.diagnostics().is_empty(),
+            assert_eq!(
+                codes(&output),
+                ["E1411"],
                 "{source}\n{:#?}",
                 output.diagnostics()
             );
-            assert!(!output.is_complete(), "{source}");
+            assert!(output.is_complete(), "{source}");
         }
+
+        let (_, _, structural) = check(
+            "fn resize(values: var Array[Int]) {\n\
+                 values = [1, 2]\n\
+             }\n\
+             fn replace[T](value: var T, next: T) {\n\
+                 value = next\n\
+             }\n\
+             fn scale(values: mut Array[Int]) {\n\
+                 values *= 2\n\
+             }\n",
+        );
+        assert!(
+            structural.diagnostics().is_empty(),
+            "{:#?}",
+            structural.diagnostics()
+        );
+        assert!(structural.is_complete());
     }
 
     #[test]

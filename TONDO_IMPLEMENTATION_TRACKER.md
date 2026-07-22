@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.42
+**Versión del tracker:** 0.43
 
 **Última actualización:** 2026-07-22
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** distinguir observación compartida, mutación de extensión
-fija y mutación estructural (BORROW-003).
+**Objetivo inmediato:** implementar disjunción estática de regiones de colección
+(BORROW-004).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1325,8 +1325,9 @@ lifetimes escritos por el usuario.
   accesos solapados y permisos crecientes. La VM normaliza identidad de
   frame/slot/proyección, ejecuta lectura y escritura a través del lender,
   soporta reborrow y campos disjuntos, y limpia reservas en transfers tempranos
-  y unwind. Un reemplazo raíz `mut` cuya extensión aún no puede probarse queda
-  incompleto para BORROW-003 en vez de ejecutarse con semántica provisional.
+  y unwind. Un reemplazo raíz `mut` de forma dinámica produce `E1411`: el
+  reemplazo arbitrario usa `var`, mientras las operaciones con contrato de
+  extensión fija siguen disponibles.
 
 - [x] **BORROW-002 — Calcular regiones por último uso sin lifetimes de fuente.**
   Los bindings `ref` de patrones sobre lugares fijos conservan la proyección
@@ -1340,8 +1341,14 @@ lifetimes escritos por el usuario.
   liveness específica de su destino. Patrones de array y cursores `for ref`
   permanecen incompletos para BORROW-004/005.
 
-- [ ] **BORROW-003 — Distinguir observación compartida, mutación de extensión
-  fija y mutación estructural.**
+- [x] **BORROW-003 — Distinguir observación compartida, mutación de extensión
+  fija y mutación estructural.** HIR clasifica cada escritura como reemplazo o
+  preservación de extensión y su verificador rederiva el permiso antes de MIR.
+  La asignación raíz mediante `mut` exige un tipo exterior estáticamente fijo;
+  `Array`, `Map`, `Set`, tipos genéricos y opacos usan `var` para reemplazo
+  arbitrario y reciben `E1411` en caso contrario. MIR, bytecode y VM permiten
+  elevar una reborrow `mut` a `var` únicamente sobre un sublugar estricto,
+  completo y estructuralmente reemplazable.
 
 - [ ] **BORROW-004 — Implementar disjunción estática de regiones de colección.**
 
@@ -1936,14 +1943,39 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es BORROW-003: separar de forma verificable la
-observación compartida, la escritura de extensión fija y el reemplazo
-estructural, sin convertir los modos `ref`/`mut`/`var` en sintaxis duplicada ni
-limitar las operaciones seguras sobre agregados y colecciones.
+La siguiente acción activa es BORROW-004: probar disjunción estática entre
+regiones de colección cuando índices, rangos y patrones constantes permiten
+decidir el solapamiento sin checks runtime. Los casos dependientes de datos
+permanecen honestamente incompletos para BORROW-005.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.43 — 2026-07-22
+
+- Se completa BORROW-003 con una separación verificable entre observación
+  compartida, escritura de extensión fija y reemplazo estructural. Una
+  asignación raíz `mut` solo se admite para formas exteriores estáticamente
+  fijas; las raíces `Array`, `Map`, `Set`, genéricas u opacas producen `E1411`
+  y usan `var` para reemplazo arbitrario. El reemplazo de contenido de igual
+  longitud sigue disponible mediante asignación de slice y las operaciones
+  `mut self` conservan su contrato explícito.
+- HIR registra `PreserveExtent` o `Replace` en cada asignación y su verificador
+  rederiva de forma independiente permisos, proyecciones y forma exterior antes
+  de admitir MIR. Los cuerpos divergentes no fabrican una escritura inexistente.
+- MIR, bytecode y VM exigen que una reborrow `var` nacida de `mut` termine en un
+  sublugar estricto, completo y reemplazable. Campos, slots y elementos de array
+  existentes conservan expresividad; raíces, slices, restos de array, entradas
+  potenciales de map y proyecciones opacas no elevan permisos. Bytecode
+  centraliza esa clasificación para que verificador y ejecutor no diverjan.
+- Las regresiones cubren raíces fijas y dinámicas, genéricos, operaciones
+  in-place, slices `mut`/`var`, HIR forjado y reborrows estructurales válidas e
+  inválidas en MIR y bytecode.
+- El gate acumulado pasa 492 tests, incluidos 443 tests de la librería del
+  compilador; también pasan `git diff --check`, formatter check, check y build
+  de todos los targets, Clippy y Rustdoc con warnings denegados.
+- La cola avanza a BORROW-004.
 
 ### 0.42 — 2026-07-22
 
