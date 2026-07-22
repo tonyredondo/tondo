@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.36
+**Versión del tracker:** 0.37
 
 **Última actualización:** 2026-07-22
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** permitir reposición completa de un `var` movido
-(OWN-004).
+**Objetivo inmediato:** implementar moves parciales y sus restricciones
+(OWN-005).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1264,7 +1264,13 @@ lifetimes escritos por el usuario.
   contrato; MIR/bytecode invalidan locals/slots completos tras un `Move` y
   OWN-005 conserva la granularidad de proyecciones.
 
-- [ ] **OWN-004 — Permitir reposición completa de un `var` movido.**
+- [x] **OWN-004 — Permitir reposición completa de un `var` movido.** Solo una
+  asignación simple al binding directo declarado con `var` crea una nueva
+  definición sin leer el valor anterior. El RHS debe completarse antes de la
+  escritura; ramas y loops conservan la prueba en todos sus caminos. `let`,
+  parámetros, compound assignment y campos/índices siguen exigiendo una raíz
+  disponible. MIR/bytecode ya materializan el write como definición y la VM
+  valida un destino directo sin leer su slot movido.
 
 - [ ] **OWN-005 — Implementar moves parciales y sus restricciones.**
 
@@ -1875,13 +1881,33 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es OWN-004: permitir que una asignación completa a
-un `var` movido cree una nueva definición disponible, sin extender ese permiso
-a `let`, parámetros propietarios ni destinos parciales.
+La siguiente acción activa es OWN-005: sustituir el bit conservador de raíz por
+move paths tipados que permitan proyecciones afines únicamente cuando las reglas
+de consumo, acceso restante y reposición sean demostrables.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.37 — 2026-07-22
+
+- Se completa OWN-004 derivando la capacidad de reposición desde el `mutable`
+  ya retenido por cada binding HIR. Solo `=` sobre un `var` directo evita leer
+  el valor anterior; una asignación compuesta, un destino parcial, un `let` o un
+  parámetro no adquieren ese permiso por accidente.
+- Una escritura que completa elimina el estado movido únicamente en sus caminos
+  normales. Los joins siguen exigiendo definición en todos los predecesores:
+  reponer en una sola rama no basta, mientras que reponer en ambas ramas o en
+  cada backedge de un loop conserva disponibilidad.
+- Regresiones cubren reposición lineal, múltiple y desestructurada, ramas,
+  loops, RHS inválido, targets parciales e inmutables, mutación defensiva de HIR
+  y la ruta pública completa hasta ejecución en VM.
+- La validación runtime de una escritura completa ya no intenta leer el slot
+  movido de un destino directo. Una proyección continúa resolviendo y leyendo
+  su raíz, por lo que no puede reponer parcialmente un agregado no disponible.
+- El gate acumulado pasa 461 tests, `git diff --check`, formatter check, check y
+  build de todos los targets, Clippy con warnings denegados y Rustdoc con
+  warnings denegados.
 
 ### 0.36 — 2026-07-22
 

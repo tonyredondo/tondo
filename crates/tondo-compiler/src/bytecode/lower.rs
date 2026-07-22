@@ -5721,6 +5721,22 @@ mod tests {
     }
 
     #[test]
+    fn affine_vars_reinitialize_after_a_complete_write_and_execute() {
+        let source = "fn replace[T: Discard](first: T, second: T): T {\n\
+                          var value = first\n\
+                          let old = value\n\
+                          value = second\n\
+                          _ = old\n\
+                          value\n\
+                      }\n\
+                      fn execute(): Int { replace(1, 42) }\n";
+        assert_eq!(
+            execute_function(source, "execute"),
+            RuntimeValue::Integer(42)
+        );
+    }
+
+    #[test]
     fn affine_equality_and_membership_borrow_without_consuming_their_inputs() {
         let source = "fn hidden(value: Int): impl Equatable + Discard { value }\n\
                       fn execute(): (Bool, Bool) {\n\

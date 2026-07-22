@@ -2013,7 +2013,7 @@ impl Engine<'_, '_> {
         }
         let mut paths = Vec::with_capacity(places.len());
         for (place, replacement) in places.iter().zip(replacements) {
-            let path = self.validate_place(frame, place)?;
+            let path = self.validate_place(frame, place, for_write)?;
             if for_write && matches!(path.components.last(), Some(PlaceComponent::Slice(_))) {
                 let replacement = replacement.as_ref().ok_or_else(|| {
                     PlaceFailure::Vm(VmError::invariant(
@@ -2071,12 +2071,19 @@ impl Engine<'_, '_> {
         &mut self,
         frame: usize,
         place: &BytecodePlace,
+        for_write: bool,
     ) -> Result<ResolvedPlacePath, PlaceFailure> {
-        let mut value = self.read_slot(frame, place.slot)?.clone();
         let mut path = ResolvedPlacePath {
             root: place.slot.index(),
             components: Vec::with_capacity(place.projections.len()),
         };
+        if place.projections.is_empty() {
+            if !for_write {
+                self.read_slot(frame, place.slot)?;
+            }
+            return Ok(path);
+        }
+        let mut value = self.read_slot(frame, place.slot)?.clone();
         for (index, projection) in place.projections.iter().enumerate() {
             let component = self.resolve_place_component(frame, &value, projection)?;
             path.components.push(component);

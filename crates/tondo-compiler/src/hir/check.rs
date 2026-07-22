@@ -16615,6 +16615,100 @@ mod tests {
     }
 
     #[test]
+    fn moved_vars_are_reinitialized_only_by_complete_assignments() {
+        let (_, _, valid) = check(
+            "fn replace[T: Discard](first: T, second: T): T {\n\
+                 var value = first\n\
+                 _ = value\n\
+                 value = second\n\
+                 value\n\
+             }\n\
+             fn replacePair[T: Discard](\n\
+                 first: T,\n\
+                 second: T,\n\
+                 nextFirst: T,\n\
+                 nextSecond: T,\n\
+             ): (T, T) {\n\
+                 var (left, right) = (first, second)\n\
+                 _ = left\n\
+                 _ = right\n\
+                 (left, right) = (nextFirst, nextSecond)\n\
+                 (left, right)\n\
+             }\n\
+             fn replaceBranch[T: Discard](\n\
+                 first: T,\n\
+                 second: T,\n\
+                 third: T,\n\
+                 flag: Bool,\n\
+             ): T {\n\
+                 var value = first\n\
+                 _ = value\n\
+                 if flag {\n\
+                     value = second\n\
+                 } else {\n\
+                     value = third\n\
+                 }\n\
+                 value\n\
+             }\n\
+             fn refill[T: Discard, F: Call[fn(): T]](\n\
+                 factory: F,\n\
+                 keepGoing: Bool,\n\
+             ) {\n\
+                 var value = factory()\n\
+                 for keepGoing {\n\
+                     _ = value\n\
+                     value = factory()\n\
+                 }\n\
+                 _ = value\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        let (_, _, one_branch) = check(
+            "fn invalid[T: Discard](first: T, second: T, flag: Bool) {\n\
+                 var value = first\n\
+                 _ = value\n\
+                 if flag {\n\
+                     value = second\n\
+                 }\n\
+                 _ = value\n\
+             }\n",
+        );
+        assert_eq!(codes(&one_branch), ["E1401"]);
+
+        let (_, _, partial) = check(
+            "type Box[T] = { item: T }\n\
+             fn invalid[T: Discard](first: T, second: T) {\n\
+                 var box = Box[T] { item: first }\n\
+                 _ = box\n\
+                 box.item = second\n\
+             }\n",
+        );
+        assert_eq!(codes(&partial), ["E1401"]);
+
+        let (_, _, moved_rhs) = check(
+            "fn invalid[T: Discard](first: T) {\n\
+                 var value = first\n\
+                 _ = value\n\
+                 value = value\n\
+             }\n",
+        );
+        assert_eq!(codes(&moved_rhs), ["E1401"]);
+
+        let (_, _, immutable) = check(
+            "fn invalid[T: Discard](first: T, second: T) {\n\
+                 let value = first\n\
+                 _ = value\n\
+                 value = second\n\
+             }\n",
+        );
+        let immutable_codes = codes(&immutable);
+        assert!(immutable_codes.contains(&"E1401"));
+        assert!(immutable_codes.contains(&"E1411"));
+    }
+
+    #[test]
     fn opaque_call_bounds_preserve_signature_and_protocol() {
         let (_, _, output) = check(
             "fn make(offset: Int): impl Call[fn(Int): Int] + Discard {\n\

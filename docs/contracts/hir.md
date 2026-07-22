@@ -5,8 +5,8 @@ uniform named function values, Copy closures with four exact effect identities,
 closed call protocols and synchronous-safe invocation, static trait selection,
 declaration-owned opaque results, patterns, assignment, discard, structured
 control flow, explicit intrinsic cursor state, calls, flow-sensitive ownership
-availability, semantic occurrences, and verified MIR admission
-implemented
+availability with complete `var` reinitialization, semantic occurrences, and
+verified MIR admission implemented
 
 ## Boundary
 
@@ -704,12 +704,13 @@ monotone fixed point incorporates every loop backedge before accepting a use at
 the header or an exit. Lexically introduced pattern locals are removed from
 normal and control-transfer states when their region ends.
 
-Assignment preserves the already specified atomic order: every destination is
-observed first, the complete RHS is then evaluated, and direct destinations
-that remain available after destination resolution are available after the
-write. This admits affine swaps without a transient double move. Reinitializing
-a `var` that was already moved remains OWN-004; a `let`, value parameter, or
-partial destination cannot be restored by this rule.
+Assignment preserves the already specified atomic order. For plain `=`, a
+direct binding declared with `var` is resolved without reading its current
+value, and a completing write removes its unavailable fact after the complete
+RHS has been evaluated. This admits both deliberate reinitialization and affine
+swaps without a transient double move. A `let`, value parameter, compound
+assignment, or partial destination must still observe an available root and
+cannot be restored by this rule.
 
 Until OWN-005 introduces place-granular state, transferring a non-`Copy`
 projection conservatively makes its owning local unavailable in HIR. MIR and
@@ -875,7 +876,10 @@ cover sequential and `CallOnce` moves, Copy and immediate-observation
 preservation, `if`/`match`/short-circuit joins, diverging paths, conditional and
 iterator loop backedges, `break`/`continue`, atomic multiple assignment, stable
 move origins, public-driver `E1401` propagation, and a mutated-HIR admission
-failure.
+failure. OWN-004 regressions add complete direct and destructured `var`
+reinitialization, all-versus-one-branch joins, loop backedges, moved RHS
+rejection, immutable and partial destinations, mutated binding mutability, and
+execution through the public driver and VM.
 Closure regressions cover distinct generated identities, inherited generic
 binders, exact and inferred outcomes, nested free-use propagation, mutable
 snapshot metadata, modes, variadics, borrowed-capture rejection, deferred

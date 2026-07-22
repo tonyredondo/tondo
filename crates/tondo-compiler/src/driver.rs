@@ -2074,6 +2074,29 @@ mod tests {
         assert_eq!(output.exit_code(), 0);
         assert!(output.diagnostics().diagnostics().is_empty());
 
+        let reinitialized = execute(operation_request(
+            Operation::Run,
+            b"fn replace[T: Discard](first: T, second: T): T {\n\
+                  var value = first\n\
+                  _ = value\n\
+                  value = second\n\
+                  value\n\
+              }\n\
+              fn main() {\n\
+                  _ = replace(1, 42)\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            reinitialized.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            reinitialized.diagnostics().diagnostics()
+        );
+        assert_eq!(reinitialized.exit_code(), 0);
+
         for limits in [
             ResourceLimits {
                 max_mir_blocks_per_function: 1,

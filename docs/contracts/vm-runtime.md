@@ -3,7 +3,8 @@
 **Status:** implemented M3 baseline plus CALL-003 synchronous closure
 invocation, CALL-004 effectful-environment retention with execution guards,
 OWN-001 intrinsic cursor value semantics, and OWN-002 affine moves/immediate
-observations plus OWN-003 flow availability
+observations, OWN-003 flow availability, and OWN-004 complete-slot
+reinitialization
 **Language baseline:** Tondo 0.1-draft.8
 
 This contract fixes the bootstrap object model selected by DEC-006. It is an
@@ -70,6 +71,13 @@ whole-binding availability and the bytecode verifier independently rejects a
 repeated unprojected move across sequential, branch, and loop paths. The
 runtime check remains a defensive invariant, including for projected payloads
 whose final static move-path model belongs to OWN-005.
+
+For assignment validation, an unprojected write path consists only of the slot
+identity and can be resolved while that slot is uninitialized after a move. The
+eventual store installs the new value. A projected path still reads and walks
+its aggregate root, so a field, index, or slice write cannot revive a moved
+aggregate. Read validation used by compound assignment also continues to
+require the direct slot's current value.
 
 The immediate observation subset executes equality, membership, length,
 discriminant, index/slice-base, indirect-callee, and slice-shape borrows.

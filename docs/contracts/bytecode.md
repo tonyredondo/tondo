@@ -5,8 +5,8 @@ dispatch, TRAIT-006 opaque results, CAP-001 closed capabilities, CALL-001
 uniform named function values, CALL-002 concrete closure environments, CALL-003
 closure protocols and synchronous-safe invocation, CALL-004 effect-preserving
 closure callables, OWN-001 intrinsic cursor capabilities, OWN-002 affine
-transfers and immediate observations, OWN-003 whole-slot flow availability, and
-the M3 VM admission path implemented
+transfers and immediate observations, OWN-003 whole-slot flow availability,
+OWN-004 complete-slot reinitialization, and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -178,6 +178,14 @@ on only some incoming paths. A complete store creates a new slot definition.
 Projected moves remain read-only events in this whole-slot analysis until
 OWN-005 introduces verified move paths; HIR conservatively invalidates their
 source owner in the meantime.
+
+A direct store defines its destination whether that slot held a value or was
+made unavailable by an earlier verified move. `ValidatePlaces` therefore does
+not emit a root read for an unprojected write destination. A projected write
+does emit that read, because resolving a field, index, or slice requires the
+aggregate root to remain available. This is the backend distinction that lets
+OWN-004 reinitialize a complete `var` without accidentally admitting partial
+reinitialization.
 
 A closure construction is an ordinary managed aggregate whose result is a
 concrete generated type. Its shape names one concrete closure callable; that

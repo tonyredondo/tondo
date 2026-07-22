@@ -4601,7 +4601,7 @@ mod tests {
     }
 
     #[test]
-    fn availability_is_reproved_before_mir() {
+    fn availability_and_var_reinitialization_are_reproved_before_mir() {
         let (resolved, mut program) = checked_program_from(
             "fn valid[T: Discard](value: T, other: T, flag: Bool) {\n\
                  if flag {\n\
@@ -4627,6 +4627,33 @@ mod tests {
             })
             .unwrap();
         expression.kind = HirExpressionKind::Local(value);
+
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert_eq!(error.context(), "ownership availability");
+        assert!(error.message().contains("after its value moved"));
+
+        let (resolved, mut program) = checked_program_from(
+            "fn valid[T: Discard](first: T, second: T): T {\n\
+                 var value = first\n\
+                 _ = value\n\
+                 value = second\n\
+                 value\n\
+             }\n",
+        );
+        let mutable = program
+            .expressions
+            .iter_mut()
+            .find_map(|expression| match &mut expression.kind {
+                HirExpressionKind::Block { statements, .. } => {
+                    statements.iter_mut().find_map(|statement| match statement {
+                        HirStatement::Binding { mutable, .. } if *mutable => Some(mutable),
+                        _ => None,
+                    })
+                }
+                _ => None,
+            })
+            .expect("the fixture contains one var binding");
+        *mutable = false;
 
         let error = verify_typed_hir(&resolved, &program).unwrap_err();
         assert_eq!(error.context(), "ownership availability");

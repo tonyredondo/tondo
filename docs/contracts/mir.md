@@ -3,7 +3,8 @@
 **Status:** M3 typed CFG plus M4 uniform function values, four effect-preserving
 Copy closure forms, executable synchronous-safe closure calls, static-trait and
 opaque-result lowering, OWN-001 intrinsic cursor state, OWN-002 affine
-transfers, OWN-003 flow availability, and verification implemented
+transfers, OWN-003 flow availability, OWN-004 complete `var` reinitialization,
+and verification implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -109,9 +110,11 @@ Projected moves deliberately remain ordinary reads in this verifier until
 OWN-005 replaces the whole-local bit with place-granular move paths. The HIR
 analysis conservatively invalidates their owner today, but that source-level
 restriction is not misrepresented as a complete backend proof of partial
-moves. OWN-004 separately owns source permission to reinitialize an already
-moved `var`; MIR writes are already modeled as definitions so that later phase
-does not require a CFG redesign.
+moves. OWN-004 now grants source permission only to plain assignment of a
+direct `var` binding. MIR needs no special recovery instruction: the RHS move
+occurs first and the subsequent unprojected destination write creates the new
+definition. If RHS evaluation or validation unwinds, that write is unreachable
+and the binding remains unavailable on the abandoned path.
 
 Branches use block IDs, not nested expression nodes. `Never`, `return`, `fail`,
 `break`, `continue`, propagation, and panic paths end in terminators without an
@@ -164,10 +167,13 @@ bypass their bounds/unwind edge. Assignment first resolves all destination
 places, then materializes its complete RHS, then validates overlap, bounds, and
 slice replacement lengths before performing any write. Compound assignment
 uses an access validation before reading its previous value and validates the
-fully computed replacement again before storing it. Static callees remain
-callable operands instead of being erased into ordinary temporaries, preserving
-the selected declaration, receiver mode, generic specialization, and variadic
-argument association. Source-trait calls retain their specialized trait member;
+fully computed replacement again before storing it. Write validation of an
+unprojected destination does not read its previous value; every projected
+destination still reads an available root while resolving its path. Static
+callees remain callable operands instead of being erased into ordinary
+temporaries, preserving the selected declaration, receiver mode, generic
+specialization, and variadic argument association. Source-trait calls retain
+their specialized trait member;
 `Display.display` and `Iterator.next` use a dedicated prelude operand with their
 complete type arguments. These operands carry no vtable or runtime witness and
 are resolved to direct implementation callables during monomorphization.

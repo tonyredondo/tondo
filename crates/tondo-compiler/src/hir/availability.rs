@@ -5,10 +5,11 @@ use crate::source::Span;
 use crate::types::{CursorMode, ParameterMode, TypeError, TypeId, TypeKind};
 
 use super::{
-    CapabilityAnalysis, CapabilityAssumptions, HirAssignmentTarget, HirAssignmentTargetKind,
-    HirBinaryOperator, HirCallProtocol, HirCapability, HirCapabilityStatus, HirExpressionId,
-    HirExpressionKind, HirForKind, HirIterationProtocol, HirLoopId, HirPatternId, HirPatternKind,
-    HirProgram, HirStatement, HirValueCategory, HirVariantValue,
+    CapabilityAnalysis, CapabilityAssumptions, HirAssignmentOperator, HirAssignmentTarget,
+    HirAssignmentTargetKind, HirBinaryOperator, HirCallProtocol, HirCapability,
+    HirCapabilityStatus, HirExpressionId, HirExpressionKind, HirForKind, HirIterationProtocol,
+    HirLoopId, HirPatternId, HirPatternKind, HirProgram, HirStatement, HirValueCategory,
+    HirVariantValue, HirWriteKind,
 };
 
 type AvailabilityState = BTreeMap<LocalId, Span>;
@@ -122,6 +123,7 @@ struct Analyzer<'a, 'f> {
     capabilities: &'a CapabilityAnalysis,
     assumptions: CapabilityAssumptions,
     owners: BTreeSet<LocalId>,
+    reinitializable: BTreeSet<LocalId>,
     copy_statuses: BTreeMap<TypeId, HirCapabilityStatus>,
     findings: &'f mut BTreeSet<AvailabilityFinding>,
 }
@@ -139,6 +141,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             capabilities,
             assumptions,
             owners,
+            reinitializable: BTreeSet::new(),
             copy_statuses: BTreeMap::new(),
             findings,
         }
@@ -410,42 +413,50 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         block_locals: &mut Vec<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
         match statement {
-            HirStatement::Binding { pattern, value, .. } => {
+            HirStatement::Binding {
+                mutable,
+                pattern,
+                value,
+                ..
+            } => {
                 let mut flow = self.expression(*value, state, Demand::Transfer)?;
                 if let Some(state) = &mut flow.normal {
-                    self.introduce_pattern(*pattern, state, block_locals);
+                    self.introduce_pattern(*pattern, state, block_locals, *mutable);
                 }
                 Ok(flow)
             }
             HirStatement::Expression { value, .. } | HirStatement::Discard { value, .. } => {
                 self.expression(*value, state, Demand::Transfer)
             }
-            HirStatement::Assignment { target, value, .. } => {
-                self.assignment(target, *value, state)
-            }
+            HirStatement::Assignment {
+                operator,
+                target,
+                value,
+                ..
+            } => self.assignment(*operator, target, *value, state),
             HirStatement::For { id, kind, body, .. } => self.for_statement(*id, kind, *body, state),
         }
     }
 
     fn assignment(
         &mut self,
+        operator: HirAssignmentOperator,
         target: &HirAssignmentTarget,
         value: HirExpressionId,
         state: AvailabilityState,
     ) -> Result<AvailabilityFlow, TypeError> {
         let mut direct = Vec::new();
-        let target_flow =
-            self.assignment_target(target, AvailabilityFlow::normal(state), &mut direct)?;
-        let restorable = target_flow
-            .normal
-            .as_ref()
-            .map(|state| {
-                direct
-                    .into_iter()
-                    .filter(|local| self.owners.contains(local) && !state.contains_key(local))
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
+        let target_flow = self.assignment_target(
+            target,
+            AvailabilityFlow::normal(state),
+            &mut direct,
+            operator == HirAssignmentOperator::Assign,
+        )?;
+        let restorable = if target_flow.normal.is_some() {
+            direct
+        } else {
+            Vec::new()
+        };
         let mut flow = self.then_expression(target_flow, value, Demand::Transfer)?;
         if let Some(state) = &mut flow.normal {
             remove_locals(state, &restorable);
@@ -458,18 +469,24 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         target: &HirAssignmentTarget,
         mut flow: AvailabilityFlow,
         direct: &mut Vec<LocalId>,
+        may_reinitialize: bool,
     ) -> Result<AvailabilityFlow, TypeError> {
         match target.kind() {
-            HirAssignmentTargetKind::Place { place, .. } => {
-                if let Some(local) = self.direct_local(*place) {
+            HirAssignmentTargetKind::Place { place, write, .. } => {
+                if let Some(local) = self.direct_local(*place)
+                    && may_reinitialize
+                    && *write == HirWriteKind::Replace
+                    && self.reinitializable.contains(&local)
+                {
                     direct.push(local);
+                    return Ok(flow);
                 }
                 self.then_expression(flow, *place, Demand::Observe)
             }
             HirAssignmentTargetKind::Discard => Ok(flow),
             HirAssignmentTargetKind::Tuple(items) => {
                 for item in items {
-                    flow = self.assignment_target(item, flow, direct)?;
+                    flow = self.assignment_target(item, flow, direct, may_reinitialize)?;
                 }
                 Ok(flow)
             }
@@ -512,7 +529,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         for arm in arms {
             let mut pattern_locals = Vec::new();
             let mut arm_entry = next_entry.clone();
-            self.introduce_pattern(arm.pattern(), &mut arm_entry, &mut pattern_locals);
+            self.introduce_pattern(arm.pattern(), &mut arm_entry, &mut pattern_locals, false);
             let guarded_entry = if let Some(guard) = arm.guard() {
                 let guard_flow = self.expression(guard, arm_entry, Demand::Transfer)?;
                 let body_entry = guard_flow.normal.clone();
@@ -607,7 +624,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             if let Some(mut body_entry) = iteration.normal.take() {
                 let mut pattern_locals = Vec::new();
                 if let Some(pattern) = pattern {
-                    self.introduce_pattern(pattern, &mut body_entry, &mut pattern_locals);
+                    self.introduce_pattern(pattern, &mut body_entry, &mut pattern_locals, false);
                 }
                 let mut body_flow = self.expression(body, body_entry, Demand::Transfer)?;
                 body_flow.strip_locals(&pattern_locals);
@@ -756,6 +773,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         pattern: HirPatternId,
         state: &mut AvailabilityState,
         locals: &mut Vec<LocalId>,
+        mutable: bool,
     ) {
         let pattern = self
             .program
@@ -769,6 +787,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             | HirPatternKind::OptionNone => {}
             HirPatternKind::Binding(local) => {
                 self.owners.insert(*local);
+                if mutable {
+                    self.reinitializable.insert(*local);
+                }
                 state.remove(local);
                 locals.push(*local);
             }
@@ -778,34 +799,34 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             }
             HirPatternKind::Tuple(items) => {
                 for item in items {
-                    self.introduce_pattern(*item, state, locals);
+                    self.introduce_pattern(*item, state, locals, mutable);
                 }
             }
             HirPatternKind::OptionSome(item)
             | HirPatternKind::ResultOk(item)
             | HirPatternKind::ResultErr(item)
             | HirPatternKind::UnionMember { pattern: item, .. } => {
-                self.introduce_pattern(*item, state, locals);
+                self.introduce_pattern(*item, state, locals, mutable);
             }
             HirPatternKind::Newtype { value, .. } => {
-                self.introduce_pattern(*value, state, locals);
+                self.introduce_pattern(*value, state, locals, mutable);
             }
             HirPatternKind::Variant { fields, .. } => {
                 for field in fields {
-                    self.introduce_pattern(*field, state, locals);
+                    self.introduce_pattern(*field, state, locals, mutable);
                 }
             }
             HirPatternKind::Record { fields, .. } => {
                 for field in fields {
-                    self.introduce_pattern(field.pattern(), state, locals);
+                    self.introduce_pattern(field.pattern(), state, locals, mutable);
                 }
             }
             HirPatternKind::Array { prefix, rest } => {
                 for item in prefix {
-                    self.introduce_pattern(*item, state, locals);
+                    self.introduce_pattern(*item, state, locals, mutable);
                 }
                 if let Some(rest) = rest {
-                    self.introduce_pattern(*rest, state, locals);
+                    self.introduce_pattern(*rest, state, locals, mutable);
                 }
             }
         }
