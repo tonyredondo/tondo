@@ -88,6 +88,7 @@ pub fn lower_types<'a>(
             closures: Vec::new(),
             local_types: lowerer.generic_types,
             capability_statuses: Vec::new(),
+            terminal_statuses: Vec::new(),
             expression_check_complete: false,
         },
         diagnostics: lowerer.diagnostics,

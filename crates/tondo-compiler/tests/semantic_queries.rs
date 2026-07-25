@@ -5,6 +5,7 @@ use tondo_compiler::driver::{
     BuildTarget, CompilationRequest, DiagnosticFormat, HostProfile, Operation, ResourceLimits,
     SourceForm, execute,
 };
+use tondo_compiler::hir::{HirTerminalOperation, HirTerminalStatus, HirTerminalUnwindAction};
 use tondo_compiler::package::{Edition, PackageGraph};
 use tondo_compiler::semantic::SemanticEntity;
 use tondo_compiler::source::{
@@ -13,7 +14,9 @@ use tondo_compiler::source::{
 
 #[test]
 fn public_driver_output_supports_semantic_queries() {
-    let source = "fn answer(): Int { 42 }\nfn main() {\n    let value = answer()\n}\n";
+    let source = "fn answer(): Int { 42 }\n\
+                  fn inspect(value: ref Join[Int, Never]) {}\n\
+                  fn main() {\n    let value = answer()\n}\n";
     let mut sources = SourceDatabase::new();
     let root = sources
         .add(SourceInput::virtual_file(
@@ -56,4 +59,26 @@ fn public_driver_output_supports_semantic_queries() {
         model.closed_call_errors_at(root, call).unwrap(),
         Some(Vec::new())
     );
+
+    let join = model
+        .interner()
+        .unwrap()
+        .ids()
+        .find(|ty| {
+            model
+                .canonical_type(*ty)
+                .is_ok_and(|name| name.as_deref() == Some("Join[Int, Never]"))
+        })
+        .expect("the terminal parameter interns Join");
+    assert_eq!(
+        model.terminal_status(join),
+        Some(HirTerminalStatus::Present)
+    );
+    let contract = model
+        .direct_terminal_contract(join)
+        .unwrap()
+        .expect("Join has a direct terminal contract");
+    assert_eq!(contract.operation(), HirTerminalOperation::JoinAwait);
+    assert_eq!(contract.unwind(), HirTerminalUnwindAction::JoinTeardown);
+    assert!(contract.unwind_may_suspend());
 }

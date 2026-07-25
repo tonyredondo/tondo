@@ -11,7 +11,8 @@ restrictions, ordered call-local `ref`/`mut`/`var` loans, semantic occurrences,
 BORROW-002 last-use regions for pattern `ref` bindings, BORROW-003 fixed-extent
 permissions, BORROW-004 static collection regions, BORROW-005 deferred runtime
 overlap obligations, BORROW-006 borrowed-iteration regions and boundary policy,
-and verified MIR admission implemented
+TERM-001 closed terminal-type registration and structural status, and verified
+MIR admission implemented
 
 ## Boundary
 
@@ -46,6 +47,9 @@ The output owns:
   plus the exact signature and selected protocol on every indirect call;
 - one exact `cursor[own,C]` or `cursor[ref,C]` state type for every intrinsic
   iterator loop;
+- one `Absent`/`Potential`/`Present` terminal status for every interned type,
+  plus the sealed direct operation and unwind contract of each language-owned
+  terminal root;
 - a static type, value category, source span, and resolved identity for every
   expression in the implemented subset;
 - a bottom-up normal-completion summary and reachable loop-transfer targets for
@@ -68,9 +72,9 @@ iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   coercion. Concrete external implementations, effectful invocation, `await`,
   `spawn`, unsafe-region proofs and raw
   operations, async liveness/`Send` analysis, string interpolation through
-  `Display`, `defer`, concrete suspension nodes, confirmed borrowed replacement, and
-  terminal scope cleanup remain explicit later boundaries rather than receiving
-  provisional semantics. Persistent source-visible partial owner
+  `Display`, `defer`, concrete suspension nodes, confirmed borrowed replacement,
+  terminal consumption flow, and scope cleanup remain explicit later boundaries
+  rather than receiving provisional semantics. Persistent source-visible partial owner
   states are deliberately absent from Tondo 0.1; OWN-005 implements the typed
   internal paths needed by complete destructuring without adding such a state.
 
@@ -683,6 +687,49 @@ and independently rechecks every operation that consumes it. MIR receives the
 verified decision; the bytecode verifier derives the capabilities needed by
 closed executable operations again from its own type and nominal catalogs.
 
+## Closed terminal-type registry
+
+Terminality is not a trait and cannot be implemented by source code. The
+language-owned registry currently contains exactly one direct root:
+
+| Direct root | Visible consuming operation | Closed unwind action | May suspend during unwind |
+| --- | --- | --- | --- |
+| `Join[T, E]` | `await` | structured cancel, wait, and result cleanup | yes |
+
+Every entry contains exactly one visible consuming operation and one fallback
+action. Structural containers do not receive duplicate entries. Their status is
+derived with an existential rule over owned state:
+
+- tuples, unions, options, results, arrays, maps, sets, ranges, source
+  newtypes/records/enums, and generated closure environments are terminal when
+  any owned component is terminal;
+- an own cursor follows its collection, while a ref cursor, `Ref[T]`, and
+  `Pointer[T]` own no `T` terminal token;
+- function types, scalars, `Command`, `Pipeline`, and
+  `NumericConversionError` are non-terminal;
+- opaque `impl Bound` results are non-terminal because their published bounds
+  must prove `Discard`; and
+- a generic without a bound implying `Discard` is `Potential`, while the same
+  type under `T: Discard`, `T: Copy`, or `T: Key` is `Absent`.
+
+Nominal summaries are finite symbolic formulas over generic positions and use a
+least fixed point. Recursive and mutually recursive definitions therefore do
+not require expanding an infinite family. Unknown generated identities,
+unresolved inference, and source-less nominals remain `Potential`; they are
+never guessed non-terminal. A future standard-library interface catalog must
+provide any privileged opaque entries explicitly.
+
+The checker writes the tri-state row into an arena aligned with the type
+interner. HIR admission reconstructs the registry and every nominal summary,
+recomputes all rows, and rejects a present terminal type that is `Copy` or
+`Discard`. `HirProgram` and `SemanticModel` expose the status and the direct
+contract without exposing runtime actions as user-callable values.
+
+TERM-001 intentionally registers and classifies types only. TERM-002 owns
+path-sensitive consumption on normal exits; TERM-003 and TERM-004 populate the
+already reserved cleanup edges with guards and unwind actions. No destructor,
+normal-exit cleanup, or provisional `defer` behavior is synthesized here.
+
 Type formation requires `K: Key` for every `Map[K, V]` and `Set[K]`, and
 `T: Discard` for every `Ref[T]`, including declaration signatures, nominal
 fields, generic definitions, and inferred body-local types. Equality requires
@@ -703,10 +750,11 @@ type only when its `Discard` status is `Satisfied`.
 HIR proves the contextual capability facts consumed by OWN-002, including
 generic and opaque `Copy` status and the exact source-generic `CallOnce`
 protocol. MIR records the resulting copy or move. OWN-005 additionally records
-one uniform `Copy`/`Observe`/`Consume` mode per `match`; implicit scope-end
-obligations, collection-backed loan regions, and terminal cleanup remain their
-owning phases' responsibility. Successful capability proof does not fabricate
-those later facts or cleanup.
+one uniform `Copy`/`Observe`/`Consume` mode per `match`; collection-backed loan
+regions and terminal consumption/cleanup remain their owning phases'
+responsibility. Successful capability proof does not fabricate those later
+facts or cleanup; terminal presence comes from the separate closed registry
+above.
 
 ## Flow-sensitive ownership availability
 

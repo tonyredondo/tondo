@@ -80,6 +80,7 @@ pub fn verify_bytecode_with_limits(
         limits,
         dataflow_steps: Cell::new(0),
         capabilities: OnceCell::new(),
+        terminals: OnceCell::new(),
     }
     .verify()
 }
@@ -99,11 +100,27 @@ pub fn derive_discard_capabilities(
         .collect()
 }
 
+/// Derives the closed terminal status of concrete bytecode types.
+///
+/// This is independent of source HIR metadata so malformed lowering cannot
+/// erase a terminal token before cleanup analysis.
+pub fn derive_terminal_statuses(
+    program: &BytecodeProgram,
+    types: &[BytecodeTypeId],
+) -> Result<Vec<BytecodeTerminalStatus>, BytecodeVerificationError> {
+    let analysis = TerminalAnalysis::new(program)?;
+    types
+        .iter()
+        .map(|ty| analysis.status(program, *ty))
+        .collect()
+}
+
 struct Verifier<'a> {
     program: &'a BytecodeProgram,
     limits: BytecodeVerificationLimits,
     dataflow_steps: Cell<u64>,
     capabilities: OnceCell<CapabilityAnalysis>,
+    terminals: OnceCell<TerminalAnalysis>,
 }
 
 struct CallVerification<'a> {
@@ -178,7 +195,7 @@ impl CapabilityAnalysis {
             let mut changes = Vec::new();
             for (index, nominal) in program.nominals.iter().enumerate() {
                 let nominal_id = BytecodeNominalId::new(index as u32);
-                let roots = nominal_capability_roots(&nominal.shape);
+                let roots = nominal_type_roots(&nominal.shape);
                 for capability in ClosedCapability::ALL {
                     let next = capability_requirement(program, &roots, capability, &summaries)?;
                     if summaries[&(nominal_id, capability)] != next {
@@ -401,7 +418,7 @@ fn capability_requirement(
     Ok(requirement)
 }
 
-fn nominal_capability_roots(shape: &BytecodeNominalShape) -> Vec<BytecodeTypeId> {
+fn nominal_type_roots(shape: &BytecodeNominalShape) -> Vec<BytecodeTypeId> {
     match shape {
         BytecodeNominalShape::Newtype { underlying } => vec![*underlying],
         BytecodeNominalShape::Record { fields } => fields.iter().map(|field| field.ty).collect(),
@@ -578,6 +595,337 @@ fn intrinsic_capability(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TerminalRequirement {
+    floor: BytecodeTerminalStatus,
+    parameters: BTreeSet<u32>,
+}
+
+impl Default for TerminalRequirement {
+    fn default() -> Self {
+        Self {
+            floor: BytecodeTerminalStatus::Absent,
+            parameters: BTreeSet::new(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct TerminalNode {
+    floor: BytecodeTerminalStatus,
+    dependencies: Vec<BytecodeTypeId>,
+}
+
+#[derive(Debug)]
+struct TerminalAnalysis {
+    summaries: BTreeMap<BytecodeNominalId, TerminalRequirement>,
+}
+
+impl TerminalAnalysis {
+    fn new(program: &BytecodeProgram) -> Result<Self, BytecodeVerificationError> {
+        let mut summaries = program
+            .nominals
+            .iter()
+            .enumerate()
+            .map(|(index, _)| {
+                (
+                    BytecodeNominalId::new(index as u32),
+                    TerminalRequirement::default(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        loop {
+            let mut changes = Vec::new();
+            for (index, nominal) in program.nominals.iter().enumerate() {
+                let nominal_id = BytecodeNominalId::new(index as u32);
+                let roots = nominal_type_roots(&nominal.shape);
+                let next = terminal_requirement(program, &roots, &summaries)?;
+                if summaries[&nominal_id] != next {
+                    changes.push((nominal_id, next));
+                }
+            }
+            if changes.is_empty() {
+                break;
+            }
+            for (nominal, requirement) in changes {
+                summaries.insert(nominal, requirement);
+            }
+        }
+        let analysis = Self { summaries };
+        for (index, ty) in program.types.iter().enumerate() {
+            let BytecodeTypeKind::OpaqueResult { witness, .. } = &ty.kind else {
+                continue;
+            };
+            if analysis.status(program, *witness)? != BytecodeTerminalStatus::Absent {
+                return Err(BytecodeVerificationError::new(
+                    format!("type#{index}"),
+                    "opaque result witness retains a terminal obligation",
+                ));
+            }
+        }
+        Ok(analysis)
+    }
+
+    fn status(
+        &self,
+        program: &BytecodeProgram,
+        root: BytecodeTypeId,
+    ) -> Result<BytecodeTerminalStatus, BytecodeVerificationError> {
+        let mut nodes = BTreeMap::new();
+        let mut pending = vec![root];
+        while let Some(ty) = pending.pop() {
+            if nodes.contains_key(&ty) {
+                continue;
+            }
+            let mut node = self.node(program, ty)?;
+            node.dependencies.sort_unstable();
+            node.dependencies.dedup();
+            pending.extend(node.dependencies.iter().copied());
+            nodes.insert(ty, node);
+        }
+        let mut statuses = nodes
+            .iter()
+            .map(|(ty, node)| (*ty, node.floor))
+            .collect::<BTreeMap<_, _>>();
+        let mut users = nodes
+            .keys()
+            .copied()
+            .map(|ty| (ty, Vec::new()))
+            .collect::<BTreeMap<_, Vec<BytecodeTypeId>>>();
+        for (user, node) in &nodes {
+            for dependency in &node.dependencies {
+                users
+                    .get_mut(dependency)
+                    .expect("all bytecode terminal dependencies are indexed")
+                    .push(*user);
+            }
+        }
+        let mut changed = statuses
+            .iter()
+            .filter_map(|(ty, status)| (*status != BytecodeTerminalStatus::Absent).then_some(*ty))
+            .collect::<BTreeSet<_>>();
+        while let Some(dependency) = changed.pop_first() {
+            for user in &users[&dependency] {
+                let node = &nodes[user];
+                let next = node
+                    .dependencies
+                    .iter()
+                    .fold(node.floor, |status, dependency| {
+                        status.max(statuses[dependency])
+                    });
+                let current = statuses
+                    .get_mut(user)
+                    .expect("all bytecode terminal graph users have a status");
+                if next > *current {
+                    *current = next;
+                    changed.insert(*user);
+                }
+            }
+        }
+        Ok(statuses[&root])
+    }
+
+    fn node(
+        &self,
+        program: &BytecodeProgram,
+        ty: BytecodeTypeId,
+    ) -> Result<TerminalNode, BytecodeVerificationError> {
+        let kind = &program
+            .ty(ty)
+            .ok_or_else(|| {
+                BytecodeVerificationError::new(
+                    "terminal graph",
+                    format!("references unknown type#{}", ty.index()),
+                )
+            })?
+            .kind;
+        let node = match kind {
+            BytecodeTypeKind::Scalar(_) | BytecodeTypeKind::Function(_) => {
+                fixed_terminal(BytecodeTerminalStatus::Absent)
+            }
+            BytecodeTypeKind::Tuple(items) | BytecodeTypeKind::Union(items) => {
+                dependent_terminal(items.clone())
+            }
+            BytecodeTypeKind::Option(item) => dependent_terminal(vec![*item]),
+            BytecodeTypeKind::Result { success, error } => {
+                dependent_terminal(vec![*success, *error])
+            }
+            BytecodeTypeKind::Intrinsic {
+                constructor,
+                arguments,
+            } => intrinsic_terminal(*constructor, arguments),
+            BytecodeTypeKind::Nominal {
+                nominal, arguments, ..
+            } => {
+                let Some(nominal) = nominal else {
+                    return Ok(fixed_terminal(BytecodeTerminalStatus::Potential));
+                };
+                let summary = self.summaries.get(nominal).ok_or_else(|| {
+                    BytecodeVerificationError::new(
+                        "terminal graph",
+                        format!("references unknown nominal#{}", nominal.index()),
+                    )
+                })?;
+                let mut dependencies = Vec::with_capacity(summary.parameters.len());
+                for position in &summary.parameters {
+                    let Some(argument) = arguments.get(*position as usize) else {
+                        return Ok(fixed_terminal(BytecodeTerminalStatus::Potential));
+                    };
+                    dependencies.push(*argument);
+                }
+                TerminalNode {
+                    floor: summary.floor,
+                    dependencies,
+                }
+            }
+            BytecodeTypeKind::GenericParameter(_) => {
+                fixed_terminal(BytecodeTerminalStatus::Potential)
+            }
+            BytecodeTypeKind::OpaqueResult { .. } => fixed_terminal(BytecodeTerminalStatus::Absent),
+            BytecodeTypeKind::Generated { .. } => generated_terminal(program, ty),
+            BytecodeTypeKind::Cursor { mode, collection } => match mode {
+                BytecodeCursorMode::Own => dependent_terminal(vec![*collection]),
+                BytecodeCursorMode::Ref => fixed_terminal(BytecodeTerminalStatus::Absent),
+            },
+        };
+        Ok(node)
+    }
+}
+
+fn terminal_requirement(
+    program: &BytecodeProgram,
+    roots: &[BytecodeTypeId],
+    summaries: &BTreeMap<BytecodeNominalId, TerminalRequirement>,
+) -> Result<TerminalRequirement, BytecodeVerificationError> {
+    let mut requirement = TerminalRequirement::default();
+    let mut pending = roots.to_vec();
+    let mut visited = BTreeSet::new();
+    while let Some(ty) = pending.pop() {
+        if !visited.insert(ty) {
+            continue;
+        }
+        let kind = &program
+            .ty(ty)
+            .ok_or_else(|| {
+                BytecodeVerificationError::new(
+                    "terminal graph",
+                    format!("references unknown type#{}", ty.index()),
+                )
+            })?
+            .kind;
+        match kind {
+            BytecodeTypeKind::Scalar(_) | BytecodeTypeKind::Function(_) => {}
+            BytecodeTypeKind::Tuple(items) | BytecodeTypeKind::Union(items) => {
+                pending.extend(items);
+            }
+            BytecodeTypeKind::Option(item) => pending.push(*item),
+            BytecodeTypeKind::Result { success, error } => {
+                pending.push(*success);
+                pending.push(*error);
+            }
+            BytecodeTypeKind::Intrinsic {
+                constructor,
+                arguments,
+            } => {
+                let node = intrinsic_terminal(*constructor, arguments);
+                requirement.floor = requirement.floor.max(node.floor);
+                pending.extend(node.dependencies);
+            }
+            BytecodeTypeKind::Nominal {
+                nominal, arguments, ..
+            } => {
+                let Some(nominal) = nominal else {
+                    requirement.floor = requirement.floor.max(BytecodeTerminalStatus::Potential);
+                    continue;
+                };
+                let summary = summaries.get(nominal).ok_or_else(|| {
+                    BytecodeVerificationError::new(
+                        "terminal graph",
+                        format!("references unknown nominal#{}", nominal.index()),
+                    )
+                })?;
+                requirement.floor = requirement.floor.max(summary.floor);
+                for position in &summary.parameters {
+                    if let Some(argument) = arguments.get(*position as usize) {
+                        pending.push(*argument);
+                    } else {
+                        requirement.floor =
+                            requirement.floor.max(BytecodeTerminalStatus::Potential);
+                    }
+                }
+            }
+            BytecodeTypeKind::GenericParameter(position) => {
+                requirement.parameters.insert(*position);
+            }
+            BytecodeTypeKind::OpaqueResult { .. } => {}
+            BytecodeTypeKind::Generated { .. } => {
+                let node = generated_terminal(program, ty);
+                requirement.floor = requirement.floor.max(node.floor);
+                pending.extend(node.dependencies);
+            }
+            BytecodeTypeKind::Cursor { mode, collection } => {
+                if *mode == BytecodeCursorMode::Own {
+                    pending.push(*collection);
+                }
+            }
+        }
+    }
+    Ok(requirement)
+}
+
+fn intrinsic_terminal(
+    constructor: BytecodeIntrinsicType,
+    arguments: &[BytecodeTypeId],
+) -> TerminalNode {
+    if constructor.terminal_contract().is_some() {
+        return fixed_terminal(BytecodeTerminalStatus::Present);
+    }
+    match constructor {
+        BytecodeIntrinsicType::Array
+        | BytecodeIntrinsicType::Map
+        | BytecodeIntrinsicType::Set
+        | BytecodeIntrinsicType::Range => dependent_terminal(arguments.to_vec()),
+        BytecodeIntrinsicType::Ref
+        | BytecodeIntrinsicType::Pointer
+        | BytecodeIntrinsicType::Command
+        | BytecodeIntrinsicType::Pipeline
+        | BytecodeIntrinsicType::NumericConversionError => {
+            fixed_terminal(BytecodeTerminalStatus::Absent)
+        }
+        BytecodeIntrinsicType::Join => {
+            unreachable!("registered bytecode terminal roots return above")
+        }
+    }
+}
+
+fn generated_terminal(program: &BytecodeProgram, ty: BytecodeTypeId) -> TerminalNode {
+    let captures = program.callables.iter().find_map(|callable| {
+        callable
+            .closure
+            .as_ref()
+            .filter(|closure| closure.environment == ty)
+            .map(|closure| closure.captures.clone())
+    });
+    match captures {
+        Some(captures) => dependent_terminal(captures),
+        None => fixed_terminal(BytecodeTerminalStatus::Potential),
+    }
+}
+
+fn fixed_terminal(floor: BytecodeTerminalStatus) -> TerminalNode {
+    TerminalNode {
+        floor,
+        dependencies: Vec::new(),
+    }
+}
+
+fn dependent_terminal(dependencies: Vec<BytecodeTypeId>) -> TerminalNode {
+    TerminalNode {
+        floor: BytecodeTerminalStatus::Absent,
+        dependencies,
+    }
+}
+
 impl Verifier<'_> {
     fn verify(&self) -> Result<(), BytecodeVerificationError> {
         self.verify_types()?;
@@ -586,6 +934,10 @@ impl Verifier<'_> {
         self.capabilities
             .set(CapabilityAnalysis::new(self.program)?)
             .expect("capability analysis is initialized once");
+        self.terminals
+            .set(TerminalAnalysis::new(self.program)?)
+            .expect("terminal analysis is initialized once");
+        self.verify_terminal_types()?;
         self.verify_type_formations()?;
         self.verify_callables()?;
         self.verify_constants()?;
@@ -607,6 +959,41 @@ impl Verifier<'_> {
             .expect("capabilities are initialized after type verification")
             .status(self.program, ty, capability)
             .map_err(|error| BytecodeVerificationError::new(context, error.message))
+    }
+
+    fn terminal_status(
+        &self,
+        ty: BytecodeTypeId,
+        context: &str,
+    ) -> Result<BytecodeTerminalStatus, BytecodeVerificationError> {
+        self.terminals
+            .get()
+            .expect("terminal analysis is initialized after type verification")
+            .status(self.program, ty)
+            .map_err(|error| BytecodeVerificationError::new(context, error.message))
+    }
+
+    fn verify_terminal_types(&self) -> Result<(), BytecodeVerificationError> {
+        for (index, _) in self.program.types.iter().enumerate() {
+            let id = BytecodeTypeId::new(index as u32);
+            let context = format!("type#{index}");
+            let terminal = self.terminal_status(id, &context)?;
+            if terminal == BytecodeTerminalStatus::Present {
+                if self.capability(id, ClosedCapability::Copy, &context)? {
+                    return Err(BytecodeVerificationError::new(
+                        &context,
+                        "terminal type satisfies Copy",
+                    ));
+                }
+                if self.capability(id, ClosedCapability::Discard, &context)? {
+                    return Err(BytecodeVerificationError::new(
+                        &context,
+                        "terminal type satisfies Discard",
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     fn verify_type_formations(&self) -> Result<(), BytecodeVerificationError> {
@@ -7358,6 +7745,182 @@ fn place_requires_loan_validation(place: &BytecodePlace) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn terminal_program(opaque_witness_terminal: bool) -> BytecodeProgram {
+        let int = BytecodeTypeId::new(0);
+        let never = BytecodeTypeId::new(1);
+        let parameter = BytecodeTypeId::new(2);
+        let join = BytecodeTypeId::new(3);
+        let wrapper_join = BytecodeTypeId::new(5);
+        let option = BytecodeTypeId::new(6);
+        let array = BytecodeTypeId::new(7);
+        BytecodeProgram {
+            types: vec![
+                BytecodeType {
+                    name: "Int".into(),
+                    kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Int),
+                },
+                BytecodeType {
+                    name: "Never".into(),
+                    kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Never),
+                },
+                BytecodeType {
+                    name: "$0".into(),
+                    kind: BytecodeTypeKind::GenericParameter(0),
+                },
+                BytecodeType {
+                    name: "Join[Int,Never]".into(),
+                    kind: BytecodeTypeKind::Intrinsic {
+                        constructor: BytecodeIntrinsicType::Join,
+                        arguments: vec![int, never],
+                    },
+                },
+                BytecodeType {
+                    name: "Wrapper[$0]".into(),
+                    kind: BytecodeTypeKind::Nominal {
+                        nominal: Some(BytecodeNominalId::new(0)),
+                        identity: "test::Wrapper".into(),
+                        arguments: vec![parameter],
+                    },
+                },
+                BytecodeType {
+                    name: "Wrapper[Join]".into(),
+                    kind: BytecodeTypeKind::Nominal {
+                        nominal: Some(BytecodeNominalId::new(0)),
+                        identity: "test::Wrapper".into(),
+                        arguments: vec![join],
+                    },
+                },
+                BytecodeType {
+                    name: "Wrapper[Join]?".into(),
+                    kind: BytecodeTypeKind::Option(wrapper_join),
+                },
+                BytecodeType {
+                    name: "Array[Wrapper[Join]?]".into(),
+                    kind: BytecodeTypeKind::Intrinsic {
+                        constructor: BytecodeIntrinsicType::Array,
+                        arguments: vec![option],
+                    },
+                },
+                BytecodeType {
+                    name: "opaque-result".into(),
+                    kind: BytecodeTypeKind::OpaqueResult {
+                        identity: "test::opaque".into(),
+                        arguments: Vec::new(),
+                        witness: if opaque_witness_terminal { array } else { int },
+                    },
+                },
+            ],
+            nominals: vec![BytecodeNominal {
+                name: "Wrapper".into(),
+                identity: "test::Wrapper".into(),
+                generic_arity: 1,
+                shape: BytecodeNominalShape::Newtype {
+                    underlying: parameter,
+                },
+            }],
+            callables: Vec::new(),
+            constants: Vec::new(),
+            functions: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn terminal_status_is_rederived_from_the_closed_bytecode_catalog() {
+        let program = terminal_program(false);
+        verify_bytecode(&program).unwrap();
+        assert_eq!(
+            derive_terminal_statuses(
+                &program,
+                &[
+                    BytecodeTypeId::new(0),
+                    BytecodeTypeId::new(3),
+                    BytecodeTypeId::new(4),
+                    BytecodeTypeId::new(5),
+                    BytecodeTypeId::new(6),
+                    BytecodeTypeId::new(7),
+                    BytecodeTypeId::new(8),
+                ],
+            )
+            .unwrap(),
+            [
+                BytecodeTerminalStatus::Absent,
+                BytecodeTerminalStatus::Present,
+                BytecodeTerminalStatus::Potential,
+                BytecodeTerminalStatus::Present,
+                BytecodeTerminalStatus::Present,
+                BytecodeTerminalStatus::Present,
+                BytecodeTerminalStatus::Absent,
+            ]
+        );
+    }
+
+    #[test]
+    fn nominal_layouts_follow_generated_closure_captures() {
+        let mut program = terminal_program(false);
+        let environment = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "generated-closure".into(),
+            kind: BytecodeTypeKind::Generated {
+                identity: "test::closure".into(),
+                arguments: Vec::new(),
+            },
+        });
+        program.callables.push(BytecodeCallable {
+            name: "closure".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: BytecodeTypeId::new(0),
+            function_type: BytecodeTypeId::new(0),
+            implementation: None,
+            closure: Some(BytecodeClosure {
+                environment,
+                captures: vec![BytecodeTypeId::new(3)],
+                protocols: BytecodeClosureProtocols {
+                    call: false,
+                    call_mut: false,
+                    call_once: true,
+                },
+            }),
+        });
+        let nominal = BytecodeNominalId::new(program.nominals.len() as u32);
+        program.nominals.push(BytecodeNominal {
+            name: "ClosureBox".into(),
+            identity: "test::ClosureBox".into(),
+            generic_arity: 0,
+            shape: BytecodeNominalShape::Newtype {
+                underlying: environment,
+            },
+        });
+        let wrapper = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "ClosureBox".into(),
+            kind: BytecodeTypeKind::Nominal {
+                nominal: Some(nominal),
+                identity: "test::ClosureBox".into(),
+                arguments: Vec::new(),
+            },
+        });
+
+        assert_eq!(
+            derive_terminal_statuses(&program, &[environment, wrapper]).unwrap(),
+            [
+                BytecodeTerminalStatus::Present,
+                BytecodeTerminalStatus::Present,
+            ]
+        );
+    }
+
+    #[test]
+    fn opaque_bytecode_cannot_hide_a_terminal_witness() {
+        let error = verify_bytecode(&terminal_program(true)).unwrap_err();
+        assert_eq!(error.context(), "type#8");
+        assert!(
+            error
+                .message()
+                .contains("opaque result witness retains a terminal obligation")
+        );
+    }
 
     #[test]
     fn collection_loan_paths_rederive_static_disjunction() {

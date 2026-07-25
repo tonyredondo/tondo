@@ -4,7 +4,7 @@ use std::cmp::Ordering;
 
 use crate::hir::{
     HirCallableId, HirCallableSignature, HirExpression, HirExpressionId, HirExpressionKind,
-    HirNominalShape, HirProgram, HirVariantPayload,
+    HirNominalShape, HirProgram, HirTerminalContract, HirTerminalStatus, HirVariantPayload,
 };
 use crate::package::ModuleId;
 use crate::resolve::{MemberId, ResolvedEntity, ResolvedName, ResolvedProgram};
@@ -152,6 +152,21 @@ impl SemanticModel {
         self.interner()
             .map(|interner| interner.canonical(ty))
             .transpose()
+    }
+
+    pub fn terminal_status(&self, ty: TypeId) -> Option<HirTerminalStatus> {
+        self.hir.as_ref()?.terminal_status(ty)
+    }
+
+    pub fn direct_terminal_contract(
+        &self,
+        ty: TypeId,
+    ) -> Result<Option<HirTerminalContract>, TypeError> {
+        self.hir
+            .as_ref()
+            .map(|hir| hir.direct_terminal_contract(ty))
+            .transpose()
+            .map(Option::flatten)
     }
 
     pub fn type_annotation_at(&self, file: FileId, range: TextRange) -> Option<TypeId> {

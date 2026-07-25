@@ -356,6 +356,11 @@ handoff operations. The representation enforces one armed action per terminal
 token and disarms before execution. Bytecode lowering preserves these edges; it
 does not synthesize destructor behavior.
 
+TERM-001 supplies MIR with a verified closed registry and structural terminal
+status for every HIR type, but deliberately emits no cleanup operation.
+TERM-002 adds normal-path token flow first; only TERM-003 and TERM-004 may
+populate the reserved blocks.
+
 M7 represents `await` and structured teardown with a suspension terminator.
 Its successors distinguish resume, cancellation, and panic/unwind. Values live
 across that terminator become explicit frame locals. An exclusive loan may not

@@ -24,6 +24,7 @@ mod check;
 mod const_eval;
 mod lower;
 mod regions;
+mod terminal;
 mod termination;
 mod traits;
 mod verify;
@@ -37,6 +38,10 @@ pub use lower::{TypeLoweringLimits, lower_types};
 pub(crate) use regions::{
     StaticCollectionRegion, StaticRegionRelation, StaticSlice, parse_nonnegative_integer,
     static_collection_relation, static_nonnegative_integer, static_slice,
+};
+pub(crate) use terminal::TerminalAnalysis;
+pub use terminal::{
+    HirTerminalContract, HirTerminalOperation, HirTerminalStatus, HirTerminalUnwindAction,
 };
 pub(crate) use traits::{TraitQuery, TraitSelectionError, select_implementation};
 pub use verify::HirInvariantError;
@@ -168,6 +173,7 @@ pub struct HirProgram {
     closures: Vec<HirClosure>,
     local_types: BTreeMap<LocalId, TypeId>,
     capability_statuses: Vec<[HirCapabilityStatus; HirCapability::COUNT]>,
+    terminal_statuses: Vec<HirTerminalStatus>,
     expression_check_complete: bool,
 }
 
@@ -535,6 +541,20 @@ impl HirProgram {
 
     pub fn discard_status(&self, ty: TypeId) -> Option<HirCapabilityStatus> {
         self.capability_status(ty, HirCapability::Discard)
+    }
+
+    pub fn terminal_status(&self, ty: TypeId) -> Option<HirTerminalStatus> {
+        self.terminal_statuses.get(ty.index() as usize).copied()
+    }
+
+    pub fn direct_terminal_contract(
+        &self,
+        ty: TypeId,
+    ) -> Result<Option<HirTerminalContract>, TypeError> {
+        let TypeKind::Intrinsic { constructor, .. } = self.interner.kind(ty)? else {
+            return Ok(None);
+        };
+        Ok(terminal::intrinsic_terminal_contract(*constructor))
     }
 
     pub fn expression_check_complete(&self) -> bool {

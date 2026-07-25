@@ -110,7 +110,8 @@ pub fn check_expressions<'a>(
     let analysis = CapabilityAnalysis::new(&checker.program, resolved)?;
     let assumptions = CapabilityAssumptions::default();
     checker.program.capability_statuses = types
-        .into_iter()
+        .iter()
+        .copied()
         .map(|ty| {
             let mut statuses = [HirCapabilityStatus::Satisfied; HirCapability::COUNT];
             for capability in HirCapability::ALL {
@@ -119,6 +120,11 @@ pub fn check_expressions<'a>(
             }
             Ok(statuses)
         })
+        .collect::<Result<_, crate::types::TypeError>>()?;
+    let terminals = super::TerminalAnalysis::new(&checker.program, resolved)?;
+    checker.program.terminal_statuses = types
+        .into_iter()
+        .map(|ty| terminals.status(&checker.program, ty, &assumptions))
         .collect::<Result<_, crate::types::TypeError>>()?;
     checker.program.expression_check_complete = checker.complete;
     if checker.complete
@@ -16024,7 +16030,10 @@ fn strongly_connected_components(
 mod tests {
     use std::sync::Arc;
 
-    use crate::hir::{HirConstant, TypeLoweringLimits, lower_types};
+    use crate::hir::{
+        HirConstant, HirTerminalOperation, HirTerminalStatus, HirTerminalUnwindAction,
+        TerminalAnalysis, TypeLoweringLimits, lower_types,
+    };
     use crate::package::{Edition, PackageAlias, PackageGraph, PackageId, PackageNode};
     use crate::resolve::{ResolvedProgram, resolve};
     use crate::source::{LogicalPath, ModulePath, SourceId, SourceInput};
@@ -18903,6 +18912,185 @@ mod tests {
         satisfied("Join[Int, Never]", &[]);
         satisfied("Command", &transferable);
         satisfied("Pipeline", &transferable);
+    }
+
+    #[test]
+    fn terminal_registry_and_structural_statuses_are_closed_and_queryable() {
+        let (_, resolved, output) = check(
+            "type Wrapped[T] = { value: T? }\n\
+             type Chain[T] = { value: T?, next: Chain[T]? }\n\
+             enum Envelope[T] { Empty, Value(T) }\n\
+             fn inspect[T](\n\
+                 direct: ref Join[Int, Never],\n\
+                 tuple: ref (Int, Join[Int, Never]),\n\
+                 option: ref Join[Int, Never]?,\n\
+                 result: ref Result[Int, Join[Int, Never]],\n\
+                 union: ref Int | Join[Int, Never],\n\
+                 array: ref Array[Join[Int, Never]],\n\
+                 map: ref Map[String, Join[Int, Never]],\n\
+                 wrapped: ref Wrapped[Join[Int, Never]],\n\
+                 recursive: ref Chain[Join[Int, Never]],\n\
+                 envelope: ref Envelope[Join[Int, Never]],\n\
+                 generic: ref Wrapped[T],\n\
+                 plain: ref Wrapped[Int],\n\
+                 command: ref Command,\n\
+             ) {}\n\
+             fn returnJoin(input: Join[Int, Never]): Join[Int, Never] {\n\
+                 let operation = (): Join[Int, Never] { input }\n\
+                 operation()\n\
+             }\n\
+             fn bounded[U: Discard](value: ref Wrapped[U]) {}\n\
+             fn opaque(): impl Discard { 1 }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let status = |name: &str| {
+            let ty = output
+                .program()
+                .interner()
+                .ids()
+                .find(|ty| {
+                    output
+                        .program()
+                        .interner()
+                        .canonical(*ty)
+                        .is_ok_and(|actual| {
+                            actual == name || actual.ends_with(&format!("::{name}"))
+                        })
+                })
+                .unwrap_or_else(|| panic!("missing interned type `{name}`"));
+            (ty, output.program().terminal_status(ty).unwrap())
+        };
+        for name in [
+            "Join[Int, Never]",
+            "(Int, Join[Int, Never])",
+            "Join[Int, Never]?",
+            "Int ! Join[Int, Never]",
+            "Int | Join[Int, Never]",
+            "Array[Join[Int, Never]]",
+            "Map[String, Join[Int, Never]]",
+            "Wrapped[Join[Int, Never]]",
+            "Chain[Join[Int, Never]]",
+            "Envelope[Join[Int, Never]]",
+        ] {
+            assert_eq!(
+                status(name).1,
+                HirTerminalStatus::Present,
+                "unexpected terminal status for {name}"
+            );
+        }
+        assert_eq!(status("Wrapped[$0]").1, HirTerminalStatus::Potential);
+        assert_eq!(status("Wrapped[Int]").1, HirTerminalStatus::Absent);
+        assert_eq!(status("Command").1, HirTerminalStatus::Absent);
+
+        let (join, _) = status("Join[Int, Never]");
+        let contract = output
+            .program()
+            .direct_terminal_contract(join)
+            .unwrap()
+            .expect("Join is the registered intrinsic terminal root");
+        assert_eq!(contract.operation(), HirTerminalOperation::JoinAwait);
+        assert_eq!(contract.unwind(), HirTerminalUnwindAction::JoinTeardown);
+        assert!(contract.unwind_may_suspend());
+        assert!(
+            output
+                .program()
+                .direct_terminal_contract(status("Array[Join[Int, Never]]").0)
+                .unwrap()
+                .is_none(),
+            "structural containers are not direct terminal roots"
+        );
+
+        let closure = output
+            .program()
+            .interner()
+            .ids()
+            .find(|ty| {
+                matches!(
+                    output.program().interner().kind(*ty),
+                    Ok(TypeKind::Generated { .. })
+                )
+            })
+            .expect("fixture contains a closure environment");
+        assert_eq!(
+            output.program().terminal_status(closure),
+            Some(HirTerminalStatus::Present)
+        );
+        let opaque = output
+            .program()
+            .interner()
+            .ids()
+            .find(|ty| {
+                matches!(
+                    output.program().interner().kind(*ty),
+                    Ok(TypeKind::OpaqueResult { .. })
+                )
+            })
+            .expect("fixture contains an opaque result");
+        assert_eq!(
+            output.program().terminal_status(opaque),
+            Some(HirTerminalStatus::Absent)
+        );
+
+        let analysis = TerminalAnalysis::new(output.program(), &resolved).unwrap();
+        let unbounded = output
+            .program()
+            .callables()
+            .find(|callable| {
+                callable.generics().len() == 1 && callable.generics()[0].bounds().is_empty()
+            })
+            .expect("inspect has one unconstrained generic");
+        let unbounded_type = unbounded
+            .parameters()
+            .iter()
+            .find(|parameter| {
+                output
+                    .program()
+                    .interner()
+                    .canonical(parameter.ty())
+                    .is_ok_and(|name| name.ends_with("::Wrapped[$0]"))
+            })
+            .expect("inspect exposes Wrapped[T]")
+            .ty();
+        assert_eq!(
+            analysis
+                .status(
+                    output.program(),
+                    unbounded_type,
+                    &CapabilityAssumptions::from_generics(output.program(), unbounded.generics(),),
+                )
+                .unwrap(),
+            HirTerminalStatus::Potential
+        );
+        let bounded = output
+            .program()
+            .callables()
+            .find(|callable| {
+                callable.generics().iter().any(|parameter| {
+                    parameter.bounds().iter().any(|bound| {
+                        matches!(
+                            bound.constructor(),
+                            HirTraitConstructor::Prelude(name) if name.as_str() == "Discard"
+                        )
+                    })
+                })
+            })
+            .expect("bounded publishes Discard");
+        assert_eq!(
+            analysis
+                .status(
+                    output.program(),
+                    bounded.parameters()[0].ty(),
+                    &CapabilityAssumptions::from_generics(output.program(), bounded.generics()),
+                )
+                .unwrap(),
+            HirTerminalStatus::Absent
+        );
     }
 
     #[test]

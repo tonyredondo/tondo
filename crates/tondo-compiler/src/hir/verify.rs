@@ -17,9 +17,10 @@ use super::{
     HirConstantValueKind, HirConstantVariantValue, HirContainmentKind, HirExpression,
     HirExpressionId, HirExpressionKind, HirFlow, HirForKind, HirGenericParameter, HirIndexAccess,
     HirIterationProtocol, HirPattern, HirPatternId, HirPatternKind, HirProgram, HirStatement,
-    HirTraitConstructor, HirTraitIdentity, HirTraitMethodKey, HirTypeDeclarationKind,
-    HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind, TraitQuery,
-    TraitSelectionError, analyze_availability, analyze_closure_captures, select_implementation,
+    HirTerminalStatus, HirTraitConstructor, HirTraitIdentity, HirTraitMethodKey,
+    HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind,
+    TerminalAnalysis, TraitQuery, TraitSelectionError, analyze_availability,
+    analyze_closure_captures, select_implementation,
 };
 
 /// Reports a compiler defect at the boundary between typed HIR and MIR.
@@ -145,6 +146,17 @@ impl Verifier<'_> {
             ));
         }
         self.verify_capability_statuses()?;
+        if self.program.terminal_statuses.len() != self.program.interner.len() {
+            return Err(HirInvariantError::new(
+                "terminal types",
+                format!(
+                    "{} types and {} terminal rows are not aligned",
+                    self.program.interner.len(),
+                    self.program.terminal_statuses.len()
+                ),
+            ));
+        }
+        self.verify_terminal_statuses()?;
 
         self.verify_declarations()?;
         self.verify_implementations()?;
@@ -258,6 +270,45 @@ impl Verifier<'_> {
                         ),
                     ));
                 }
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_terminal_statuses(&self) -> Result<(), HirInvariantError> {
+        let analysis = TerminalAnalysis::new(self.program, self.resolved)
+            .map_err(|error| HirInvariantError::new("terminal types", error.to_string()))?;
+        let assumptions = CapabilityAssumptions::default();
+        for ty in self.program.interner.ids() {
+            let expected = analysis
+                .status(self.program, ty, &assumptions)
+                .map_err(|error| HirInvariantError::new("terminal types", error.to_string()))?;
+            let actual = self.program.terminal_status(ty).ok_or_else(|| {
+                HirInvariantError::new("terminal types", "terminal table omitted an interned type")
+            })?;
+            if actual != expected {
+                return Err(HirInvariantError::new(
+                    "terminal types",
+                    format!("terminal status for {ty} is {actual:?}, expected {expected:?}"),
+                ));
+            }
+            if actual != HirTerminalStatus::Absent
+                && self.program.capability_status(ty, HirCapability::Discard)
+                    == Some(HirCapabilityStatus::Satisfied)
+            {
+                return Err(HirInvariantError::new(
+                    "terminal types",
+                    format!("{ty} is both terminal and Discard"),
+                ));
+            }
+            if actual == HirTerminalStatus::Present
+                && self.program.capability_status(ty, HirCapability::Copy)
+                    != Some(HirCapabilityStatus::Unsatisfied)
+            {
+                return Err(HirInvariantError::new(
+                    "terminal types",
+                    format!("{ty} contains a terminal token but is not known non-Copy"),
+                ));
             }
         }
         Ok(())
@@ -5877,6 +5928,19 @@ mod tests {
         let error = verify_typed_hir(&resolved, &program).unwrap_err();
         assert_eq!(error.context(), "type capabilities");
         assert!(error.message().contains("Key status"));
+
+        let (resolved, mut program) = checked_program();
+        program.terminal_statuses.pop();
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert_eq!(error.context(), "terminal types");
+        assert!(error.message().contains("terminal rows"));
+
+        let (resolved, mut program) = checked_program();
+        let integer = program.interner.scalar(ScalarType::Int);
+        program.terminal_statuses[integer.index() as usize] = HirTerminalStatus::Present;
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert_eq!(error.context(), "terminal types");
+        assert!(error.message().contains("terminal status"));
     }
 
     #[test]

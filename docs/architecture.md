@@ -257,8 +257,11 @@ closure captures participate in the same whole-owner flow and become typed
 environment move paths. Closure terminal obligations are intersected across all
 normal exits. HIR now also reserves fixed `ref`/`mut`/`var` call arguments in
 source order and rejects overlapping later argument access. Last-use and
-collection loan regions, confirmed borrowed transfers, downstream terminal
-owners, and cleanup remain later analyses. Synchronous closure invocation
+collection loan regions and confirmed borrowed transfers are explicit. A
+separate closed registry classifies direct terminal roots and derives structural
+`Absent`/`Potential`/`Present` status without treating every non-`Discard` value
+as the same resource; downstream terminal owners and cleanup remain later
+analyses. Synchronous closure invocation
 crosses this boundary with an explicit exact signature and selected call
 protocol.
 
@@ -335,7 +338,9 @@ calls, initialization, storage lifetime, tag refinement, and edge shape before
 returning a program to execution. It independently derives the closed
 capabilities needed by type formation, equality, membership, and map lookup
 from the concrete bytecode type graph and nominal layout templates, rather than
-trusting a compiler-produced boolean.
+trusting a compiler-produced boolean. It likewise rederives terminal presence
+from a sealed `Join` contract and the concrete ownership graph, rejecting an
+opaque witness that would hide a terminal token.
 
 Before those tables are allocated, a bounded deterministic worklist
 monomorphizes every generic callable reached from non-generic roots, constants,

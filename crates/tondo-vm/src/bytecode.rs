@@ -10,7 +10,7 @@ mod verify;
 pub use disassemble::disassemble;
 pub use verify::{
     BytecodeVerificationError, BytecodeVerificationLimits, derive_discard_capabilities,
-    verify_bytecode, verify_bytecode_with_limits,
+    derive_terminal_statuses, verify_bytecode, verify_bytecode_with_limits,
 };
 
 macro_rules! index_type {
@@ -146,12 +146,59 @@ pub enum BytecodeIntrinsicType {
     NumericConversionError,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BytecodeTerminalStatus {
+    Absent,
+    Potential,
+    Present,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BytecodeTerminalOperation {
+    JoinAwait,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BytecodeTerminalUnwindAction {
+    JoinTeardown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BytecodeTerminalContract {
+    pub operation: BytecodeTerminalOperation,
+    pub unwind: BytecodeTerminalUnwindAction,
+    pub unwind_may_suspend: bool,
+}
+
 impl BytecodeIntrinsicType {
     pub const fn arity(self) -> usize {
         match self {
             Self::Map | Self::Join => 2,
             Self::Array | Self::Set | Self::Range | Self::Ref | Self::Pointer => 1,
             Self::Command | Self::Pipeline | Self::NumericConversionError => 0,
+        }
+    }
+
+    /// Returns the sealed language contract for a direct terminal root.
+    ///
+    /// Structural containers are deliberately absent here: their terminal
+    /// status is derived from the values they own.
+    pub const fn terminal_contract(self) -> Option<BytecodeTerminalContract> {
+        match self {
+            Self::Join => Some(BytecodeTerminalContract {
+                operation: BytecodeTerminalOperation::JoinAwait,
+                unwind: BytecodeTerminalUnwindAction::JoinTeardown,
+                unwind_may_suspend: true,
+            }),
+            Self::Array
+            | Self::Map
+            | Self::Set
+            | Self::Range
+            | Self::Ref
+            | Self::Pointer
+            | Self::Command
+            | Self::Pipeline
+            | Self::NumericConversionError => None,
         }
     }
 }
@@ -852,6 +899,34 @@ mod tests {
         assert_eq!(BytecodeIntrinsicType::Map.arity(), 2);
         assert_eq!(BytecodeIntrinsicType::Array.arity(), 1);
         assert_eq!(BytecodeIntrinsicType::Command.arity(), 0);
+    }
+
+    #[test]
+    fn intrinsic_terminal_registry_is_sealed_to_join() {
+        let all = [
+            BytecodeIntrinsicType::Array,
+            BytecodeIntrinsicType::Map,
+            BytecodeIntrinsicType::Set,
+            BytecodeIntrinsicType::Range,
+            BytecodeIntrinsicType::Ref,
+            BytecodeIntrinsicType::Pointer,
+            BytecodeIntrinsicType::Join,
+            BytecodeIntrinsicType::Command,
+            BytecodeIntrinsicType::Pipeline,
+            BytecodeIntrinsicType::NumericConversionError,
+        ];
+        let registered = all
+            .into_iter()
+            .filter_map(BytecodeIntrinsicType::terminal_contract)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            registered,
+            [BytecodeTerminalContract {
+                operation: BytecodeTerminalOperation::JoinAwait,
+                unwind: BytecodeTerminalUnwindAction::JoinTeardown,
+                unwind_may_suspend: true,
+            }]
+        );
     }
 
     #[test]

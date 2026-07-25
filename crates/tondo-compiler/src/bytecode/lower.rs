@@ -4646,6 +4646,27 @@ mod tests {
             })
             .expect("the Join environment is repeatable but cannot be consumed");
         assert_eq!(closure.captures.len(), 1);
+        let join = program
+            .types
+            .iter()
+            .position(|ty| {
+                matches!(
+                    ty.kind,
+                    bc::BytecodeTypeKind::Intrinsic {
+                        constructor: bc::BytecodeIntrinsicType::Join,
+                        ..
+                    }
+                )
+            })
+            .map(|index| bc::BytecodeTypeId::new(index as u32))
+            .expect("the terminal capture retains its concrete Join type");
+        assert_eq!(
+            bc::derive_terminal_statuses(&program, &[join, closure.environment]).unwrap(),
+            [
+                bc::BytecodeTerminalStatus::Present,
+                bc::BytecodeTerminalStatus::Present,
+            ]
+        );
         bc::verify_bytecode(&program).unwrap();
 
         let mut forged = program;

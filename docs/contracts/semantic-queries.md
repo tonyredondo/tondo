@@ -75,7 +75,10 @@ The minimal snapshot provides structural queries for:
   callable identity;
 - normalized union members;
 - enum variants and payload shapes; and
-- the closed error set of a checked call.
+- the closed error set of a checked call;
+- the `Absent`/`Potential`/`Present` terminal status of an interned type; and
+- the sealed consuming-operation/unwind contract when that type is itself a
+  direct language-owned terminal root.
 
 References exclude the declaration itself. They are sorted by stable logical
 `source_id`, module, path, start byte, and end byte, independently of source
@@ -100,14 +103,15 @@ A closed call error query returns:
 ## Deliberate later boundaries
 
 CHECK-009 does not fabricate facts outside its deliberately minimal public
-query surface. Borrow regions, ownership state, terminal obligations, dynamic
-overlap checks, iterator cursor proofs, unsafe regions, and complete sugar
-expansion remain the later §22.5 queries associated with their semantic
-milestones. HIR already derives closure protocols and the six closed capability
-statuses and retains opaque-result bounds, but CHECK-009 does not yet expose
-those facts as public structured queries. The same snapshot type can grow those
-views without changing
-source identity or asking an LSP to reinterpret syntax.
+query surface. TERM-001 adds type-level terminal presence and direct registry
+metadata, but not the later owner/token state or consumption path. Borrow
+regions, ownership state, terminal token flow, dynamic overlap checks, iterator
+cursor proofs, unsafe regions, and complete sugar expansion remain the later
+§22.5 queries associated with their semantic milestones. HIR already derives
+closure protocols and the six closed capability statuses and retains
+opaque-result bounds, but CHECK-009 does not yet expose those other facts as
+public structured queries. The same snapshot type can grow those views without
+changing source identity or asking an LSP to reinterpret syntax.
 
 AST formatting remains the formatter's lossless-CST operation. A format request
 does not run semantic analysis merely to populate this model.
@@ -119,5 +123,6 @@ ranges that exclude CST trivia, global and local declarations and references,
 method receiver signatures, namespace ambiguity, field and enum-pattern member
 occurrences, shorthand field/local overlap, generic enum payload templates,
 normalized union members, infallible/single/union/`Never` call error sets,
-partial snapshot availability, half-open boundaries, and logical reference
-ordering across files inserted in a different order.
+terminal status and direct `Join` contract, partial snapshot availability,
+half-open boundaries, and logical reference ordering across files inserted in a
+different order.

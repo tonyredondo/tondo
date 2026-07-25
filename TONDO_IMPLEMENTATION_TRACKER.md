@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.46
+**Versión del tracker:** 0.47
 
-**Última actualización:** 2026-07-22
+**Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar el registro cerrado de tipos terminales
-(TERM-001).
+**Objetivo inmediato:** rastrear obligaciones terminales en todos los caminos
+normales (TERM-002).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1389,7 +1389,14 @@ lifetimes escritos por el usuario.
 
 ### 10.3 Recursos terminales y cleanup
 
-- [ ] **TERM-001 — Implementar el registro cerrado de tipos terminales.**
+- [x] **TERM-001 — Implementar el registro cerrado de tipos terminales.** HIR
+  registra `Join[T, E]` como la única raíz intrínseca actual, con una operación
+  consumidora `await` y una acción cerrada de teardown estructurado. Una
+  derivación existencial separada de `Discard` clasifica cada tipo como
+  `Absent`, `Potential` o `Present` a través de compuestos, nominales recursivos,
+  genéricos, closures y cursores. El admission verifier reconstruye toda la
+  tabla; el verifier bytecode la vuelve a derivar desde su catálogo independiente
+  y rechaza resultados opacos que oculten un token terminal.
 
 - [ ] **TERM-002 — Rastrear obligaciones de consumo en todos los caminos
   normales.**
@@ -1972,14 +1979,39 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es TERM-001: introducir el registro cerrado de tipos
-terminales sin añadir destrucción implícita ni adelantar `defer`. BORROW-006 deja
-preparada la regla exacta de préstamos para que M7 la aplique cuando existan
-terminadores reales de suspensión, selección y cancelación.
+La siguiente acción activa es TERM-002: utilizar el registro ya verificado para
+seguir cada token terminal por movimientos, compuestos, desestructuración,
+llamadas y transferencias de control, y producir `E1404` en toda salida normal
+que lo abandone. TERM-001 no añade destrucción implícita, no ejecuta fallback en
+salidas normales y no adelanta `defer`.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.47 — 2026-07-25
+
+- Se completa TERM-001 con un registro sellado que distingue la raíz terminal
+  intrínseca `Join` de los tipos que solo la contienen estructuralmente. El
+  contrato conserva por separado su operación visible `await`, su fallback de
+  teardown estructurado y la única excepción de unwind que puede suspender.
+- HIR deriva `Absent`, `Potential` o `Present` mediante resúmenes nominales
+  simbólicos de punto fijo. Tuples, unions, options, results, colecciones,
+  nominales y entornos de closure propagan ownership; `Ref`, `Pointer` y cursores
+  prestados no lo adquieren. Un genérico deja de ser potencial únicamente bajo
+  un bound que implique `Discard`.
+- La tabla queda alineada con el interner y se expone mediante `HirProgram` y
+  `SemanticModel`. El admission verifier la recalcula y demuestra que un tipo
+  presente no puede ser `Copy` ni `Discard`.
+- `tondo-vm` conserva su propio registro y análisis sobre tipos concretos,
+  layouts nominales y capturas. El verifier no confía en metadata HIR y rechaza
+  un witness opaco forjado que intente esconder una obligación terminal.
+- TERM-001 no genera cleanup ni consume recursos: TERM-002 conserva la
+  responsabilidad exclusiva del dataflow normal, y TERM-003/004 poblarán
+  después los edges ya reservados.
+- La puerta completa pasa con 513 tests —459 del compilador y 12 de la VM—,
+  `cargo fmt --check`, `cargo check`, `cargo build`, Clippy con warnings como
+  error, rustdoc con warnings como error y `git diff --check`.
 
 ### 0.46 — 2026-07-22
 

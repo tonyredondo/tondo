@@ -10,7 +10,8 @@ complete-slot reinitialization, OWN-005 typed move paths, OWN-006 affine closure
 captures, OWN-007 exact closed `CallOnce` rows, BORROW-001 call-local loans, and
 BORROW-002 inferred pattern regions, BORROW-003 reborrow permissions, BORROW-004
 static collection disjunction, BORROW-005 runtime overlap proofs, BORROW-006
-borrowed-iterator boundaries, and the M3 VM admission path implemented
+borrowed-iterator boundaries, TERM-001 independent terminal classification, and
+the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -367,6 +368,11 @@ Before execution, the verifier proves:
 - each opaque `(identity, concrete arguments)` family occurs once, contains no
   executable generic parameter, has a non-`Never` witness, and participates in
   no direct or mutual representation cycle;
+- the sealed direct terminal registry contains `Join` with its one `await` and
+  structured-teardown contract; terminal presence is rederived structurally
+  through concrete types and nominal templates, every present type is
+  non-`Copy` and non-`Discard`, and an opaque witness cannot hide a terminal
+  token;
 - every opaque coercion seals exactly its catalogued witness into the matching
   opaque family;
 - calls have an exact structural signature, matching outcome, complete
@@ -412,6 +418,16 @@ mode derives `Equatable` or `Key`. The VM does not trust the HIR status table or
 receive runtime capability objects. Generic template parameters are admitted
 only because HIR has already proved their contextual bounds, and every reached
 executable specialization is closed before this verifier consumes it.
+
+Terminal status is derived by a separate existential graph because absence of
+`Discard` is not itself proof of one concrete terminal root. The VM catalog
+uses the same `Absent`/`Potential`/`Present` lattice as HIR, but computes it
+without importing compiler metadata. Nominal summaries retain only the generic
+positions that can carry a token; own cursors and closure environments follow
+owned state, while ref cursors and safe/raw references do not acquire ownership.
+Executable opaque witnesses must be `Absent`. TERM-002 will consume this proof
+when terminal flow operations enter MIR and bytecode; TERM-001 emits no cleanup
+instruction by itself.
 
 ## Determinism, limits, and tooling
 
