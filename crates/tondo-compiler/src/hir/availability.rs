@@ -9,14 +9,17 @@ use super::{
     HirAssignmentTargetKind, HirBinaryOperator, HirCallProtocol, HirCapability,
     HirCapabilityStatus, HirClosureCapture, HirExpressionId, HirExpressionKind, HirForKind,
     HirIterationProtocol, HirLoopId, HirMatchMode, HirPatternId, HirPatternKind, HirProgram,
-    HirStatement, HirValueCategory, HirVariantValue, HirWriteKind, StaticCollectionRegion,
-    StaticRegionRelation, static_collection_relation, static_nonnegative_integer, static_slice,
+    HirStatement, HirTerminalStatus, HirValueCategory, HirVariantValue, HirWriteKind,
+    StaticCollectionRegion, StaticRegionRelation, TerminalAnalysis, static_collection_relation,
+    static_nonnegative_integer, static_slice,
 };
 
 #[derive(Clone, Debug, Default)]
 struct AvailabilityState {
     unavailable: BTreeMap<LocalId, Span>,
     definitely_transferred: BTreeSet<LocalId>,
+    terminal_live: BTreeMap<TerminalOwner, Span>,
+    terminal_reserved: BTreeMap<TerminalOwner, Span>,
     loans: BTreeMap<LoanIdentity, LoanReservation>,
 }
 
@@ -30,6 +33,8 @@ pub(crate) enum AvailabilityFindingKind {
     ConflictingLoan,
     DeferredCollectionLoanConflict,
     DeferredCollectionAccessConflict,
+    TerminalNotConsumed,
+    TerminalOverwrite,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -62,6 +67,14 @@ impl AvailabilityFinding {
 enum PlaceRoot {
     Local(LocalId),
     Receiver,
+    Temporary(HirExpressionId),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum TerminalOwner {
+    Local(LocalId),
+    Iteration(HirLoopId),
+    Pattern(HirPatternId),
     Temporary(HirExpressionId),
 }
 
@@ -184,6 +197,7 @@ impl AvailabilityFlow {
 pub(crate) fn analyze_availability(
     program: &HirProgram,
     capabilities: &CapabilityAnalysis,
+    terminals: &TerminalAnalysis,
 ) -> Result<Vec<AvailabilityFinding>, TypeError> {
     let mut findings = BTreeSet::new();
     let liveness = collect_liveness_facts(program);
@@ -191,12 +205,13 @@ pub(crate) fn analyze_availability(
         let Some(body) = program.body(callable.id()) else {
             continue;
         };
-        let owners = callable
+        let initial_owners = callable
             .parameters()
             .iter()
             .filter(|parameter| parameter.mode() == ParameterMode::Value)
-            .filter_map(|parameter| parameter.local())
-            .collect();
+            .filter_map(|parameter| parameter.local().map(|local| (local, parameter.span())))
+            .collect::<BTreeMap<_, _>>();
+        let owners = initial_owners.keys().copied().collect();
         let borrowed = callable
             .parameters()
             .iter()
@@ -206,22 +221,32 @@ pub(crate) fn analyze_availability(
         Analyzer::new(
             program,
             capabilities,
-            CapabilityAssumptions::from_generics(program, callable.generics()),
-            owners,
-            borrowed,
+            AnalyzerScope {
+                assumptions: CapabilityAssumptions::from_generics(program, callable.generics()),
+                owners,
+                initial_owners,
+                borrowed,
+            },
+            Some(terminals),
             &liveness,
             &mut findings,
         )
         .analyze_body(body.root())?;
     }
     for closure in program.closures() {
-        let mut owners = closure
+        let initial_owners = closure
             .parameters()
             .iter()
             .filter(|parameter| parameter.mode() == ParameterMode::Value)
-            .filter_map(|parameter| parameter.local())
+            .filter_map(|parameter| parameter.local().map(|local| (local, parameter.span())))
+            .collect::<BTreeMap<_, _>>();
+        let environment_owners = closure
+            .captures()
+            .iter()
+            .map(HirClosureCapture::local)
             .collect::<BTreeSet<_>>();
-        owners.extend(closure.captures().iter().map(HirClosureCapture::local));
+        let mut owners = initial_owners.keys().copied().collect::<BTreeSet<_>>();
+        owners.extend(environment_owners.iter().copied());
         let borrowed = closure
             .parameters()
             .iter()
@@ -231,11 +256,30 @@ pub(crate) fn analyze_availability(
         let mut analyzer = Analyzer::new(
             program,
             capabilities,
-            CapabilityAssumptions::from_generics(program, closure.generics()),
-            owners,
-            borrowed,
+            AnalyzerScope {
+                assumptions: CapabilityAssumptions::from_generics(program, closure.generics()),
+                owners,
+                initial_owners,
+                borrowed,
+            },
+            Some(terminals),
             &liveness,
             &mut findings,
+        );
+        let body_span = program
+            .expression(closure.body().root())
+            .expect("closure bodies retain their verified root")
+            .span();
+        // Capture slots participate in path-sensitive moves and overwrite
+        // checks, but a normal invocation returns them to the environment
+        // rather than ending their ownership scope. `Analyzer::new` has
+        // already fixed the separately reported root owners to value
+        // parameters only.
+        analyzer.initial_owners.extend(
+            environment_owners
+                .iter()
+                .copied()
+                .map(|local| (local, body_span)),
         );
         analyzer.reinitializable.extend(
             closure
@@ -287,9 +331,24 @@ pub(crate) fn analyze_closure_captures(
     let mut analyzer = Analyzer::new(
         program,
         capabilities,
-        assumptions,
-        tracked.clone(),
-        BTreeSet::new(),
+        AnalyzerScope {
+            assumptions,
+            owners: tracked.clone(),
+            initial_owners: captures
+                .iter()
+                .map(|capture| {
+                    (
+                        capture.local(),
+                        program
+                            .expression(root)
+                            .expect("capture analysis receives a verified body root")
+                            .span(),
+                    )
+                })
+                .collect(),
+            borrowed: BTreeSet::new(),
+        },
+        None,
         &liveness,
         &mut findings,
     );
@@ -311,11 +370,21 @@ pub(crate) fn analyze_closure_captures(
     })
 }
 
+struct AnalyzerScope {
+    assumptions: CapabilityAssumptions,
+    owners: BTreeSet<LocalId>,
+    initial_owners: BTreeMap<LocalId, Span>,
+    borrowed: BTreeSet<LocalId>,
+}
+
 struct Analyzer<'a, 'f> {
     program: &'a HirProgram,
     capabilities: &'a CapabilityAnalysis,
+    terminals: Option<&'a TerminalAnalysis>,
     assumptions: CapabilityAssumptions,
     owners: BTreeSet<LocalId>,
+    initial_owners: BTreeMap<LocalId, Span>,
+    reported_root_owners: BTreeSet<LocalId>,
     borrowed: BTreeSet<LocalId>,
     pattern_borrowed: BTreeSet<LocalId>,
     reinitializable: BTreeSet<LocalId>,
@@ -323,6 +392,7 @@ struct Analyzer<'a, 'f> {
     tracked_transfers: BTreeSet<LocalId>,
     transferred: BTreeSet<LocalId>,
     copy_statuses: BTreeMap<TypeId, HirCapabilityStatus>,
+    terminal_statuses: BTreeMap<TypeId, HirTerminalStatus>,
     liveness: &'a LivenessFacts,
     break_liveness: BTreeMap<HirLoopId, BTreeSet<LocalId>>,
     continue_liveness: BTreeMap<HirLoopId, BTreeSet<LocalId>>,
@@ -333,24 +403,28 @@ impl<'a, 'f> Analyzer<'a, 'f> {
     fn new(
         program: &'a HirProgram,
         capabilities: &'a CapabilityAnalysis,
-        assumptions: CapabilityAssumptions,
-        owners: BTreeSet<LocalId>,
-        borrowed: BTreeSet<LocalId>,
+        scope: AnalyzerScope,
+        terminals: Option<&'a TerminalAnalysis>,
         liveness: &'a LivenessFacts,
         findings: &'f mut BTreeSet<AvailabilityFinding>,
     ) -> Self {
+        let reported_root_owners = scope.initial_owners.keys().copied().collect();
         Self {
             program,
             capabilities,
-            assumptions,
-            owners,
-            borrowed,
+            terminals,
+            assumptions: scope.assumptions,
+            owners: scope.owners,
+            initial_owners: scope.initial_owners,
+            reported_root_owners,
+            borrowed: scope.borrowed,
             pattern_borrowed: BTreeSet::new(),
             reinitializable: BTreeSet::new(),
             guard_forbidden: BTreeSet::new(),
             tracked_transfers: BTreeSet::new(),
             transferred: BTreeSet::new(),
             copy_statuses: BTreeMap::new(),
+            terminal_statuses: BTreeMap::new(),
             liveness,
             break_liveness: BTreeMap::new(),
             continue_liveness: BTreeMap::new(),
@@ -359,17 +433,26 @@ impl<'a, 'f> Analyzer<'a, 'f> {
     }
 
     fn analyze_body(&mut self, root: HirExpressionId) -> Result<(), TypeError> {
-        let _ = self.analyze_body_flow(root)?;
+        let flow = self.analyze_body_flow(root)?;
+        if self.terminals.is_some() {
+            let owners = self
+                .reported_root_owners
+                .iter()
+                .copied()
+                .collect::<Vec<_>>();
+            self.report_terminal_locals(&flow, &owners);
+        }
         Ok(())
     }
 
     fn analyze_body_flow(&mut self, root: HirExpressionId) -> Result<AvailabilityFlow, TypeError> {
-        let mut flow = self.expression(
-            root,
-            AvailabilityState::default(),
-            Demand::Transfer,
-            &BTreeSet::new(),
-        )?;
+        let mut initial = AvailabilityState::default();
+        for (local, span) in self.initial_owners.clone() {
+            self.activate_terminal_local(&mut initial, local, span)?;
+        }
+        let baseline = reserved_terminal_owners(&initial);
+        let mut flow = self.expression(root, initial, Demand::Transfer, &BTreeSet::new())?;
+        settle_terminal_handoff(&mut flow, &baseline);
         let normal = flow.normal.take();
         merge_optional_state(&mut flow.exits, normal);
         Ok(flow)
@@ -384,13 +467,17 @@ impl<'a, 'f> Analyzer<'a, 'f> {
     ) -> Result<AvailabilityFlow, TypeError> {
         let live_within = self.expression_entry_liveness(id, live_after);
         retain_pattern_loans(&mut state, &live_within);
+        let temporary_baseline = terminal_temporary_owners(&state);
         let expression = self
             .program
             .expression(id)
             .expect("availability analysis receives verified expression IDs")
             .clone();
         if expression.category() == HirValueCategory::Place {
-            return self.place(id, state, demand, live_after);
+            let mut flow = self.place(id, state, demand, live_after)?;
+            self.finish_new_terminal_temporaries(&mut flow, &temporary_baseline);
+            self.activate_projected_terminal_temporary(id, demand, &mut flow)?;
+            return Ok(flow);
         }
 
         let flow = match expression.kind() {
@@ -436,14 +523,16 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             | HirExpressionKind::OptionSome { value }
             | HirExpressionKind::ResultOk { value }
             | HirExpressionKind::Coerce { value, .. } => {
-                self.expression(*value, state, Demand::Transfer, live_after)?
+                self.sequence(state, [(*value, Demand::Transfer)], live_after)?
             }
             HirExpressionKind::ResultErr { error } => {
-                self.expression(*error, state, Demand::Transfer, live_after)?
+                self.sequence(state, [(*error, Demand::Transfer)], live_after)?
             }
             HirExpressionKind::Fail { error } => {
+                let baseline = reserved_terminal_owners(&state);
                 let mut flow =
                     self.expression(*error, state, Demand::Transfer, &BTreeSet::new())?;
+                settle_terminal_handoff(&mut flow, &baseline);
                 let mut exit = flow.normal.take();
                 if let Some(exit) = &mut exit {
                     retain_pattern_loans(exit, &BTreeSet::new());
@@ -475,13 +564,31 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             HirExpressionKind::RecordUpdate { base, fields } => {
                 let values = std::iter::once((*base, Demand::Transfer))
                     .chain(fields.iter().map(|field| (field.value(), Demand::Transfer)));
-                self.sequence(state, values, live_after)?
+                let flow = self.sequence(state, values, live_after)?;
+                if flow.normal.is_some() {
+                    for field in fields {
+                        let value = self
+                            .program
+                            .expression(field.value())
+                            .expect("record update fields retain verified expressions");
+                        let (ty, span) = (value.ty(), value.span());
+                        if self.is_terminal(ty)? {
+                            self.findings.insert(AvailabilityFinding {
+                                kind: AvailabilityFindingKind::TerminalOverwrite,
+                                local: None,
+                                use_span: span,
+                                move_span: None,
+                            });
+                        }
+                    }
+                }
+                flow
             }
             HirExpressionKind::Block { statements, tail } => {
                 self.block(statements, *tail, state, live_after)?
             }
             HirExpressionKind::Prefix { operand, .. } => {
-                self.expression(*operand, state, Demand::Transfer, live_after)?
+                self.sequence(state, [(*operand, Demand::Transfer)], live_after)?
             }
             HirExpressionKind::Binary {
                 operator: HirBinaryOperator::LogicalAnd | HirBinaryOperator::LogicalOr,
@@ -544,11 +651,31 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 end,
                 step,
             } => {
+                let baseline = reserved_terminal_owners(&state);
                 let mut values = vec![(*base, Demand::Observe)];
                 values.extend(start.map(|value| (value, Demand::Transfer)));
                 values.extend(end.map(|value| (value, Demand::Transfer)));
                 values.extend(step.map(|value| (value, Demand::Transfer)));
-                self.sequence(state, values, live_after)?
+                let mut flow = self.sequence_unsettled(state, values, live_after)?;
+                settle_terminal_handoff(&mut flow, &baseline);
+                if flow.normal.is_some() {
+                    let TypeKind::Intrinsic {
+                        constructor: crate::types::IntrinsicType::Array,
+                        arguments,
+                    } = self.program.interner().kind(expression.ty())?.clone()
+                    else {
+                        unreachable!("stored slice results retain their Array type")
+                    };
+                    if !self.is_copy(arguments[0])? {
+                        self.findings.insert(AvailabilityFinding {
+                            kind: AvailabilityFindingKind::InvalidPartialTransfer,
+                            local: None,
+                            use_span: expression.span(),
+                            move_span: None,
+                        });
+                    }
+                }
+                flow
             }
             HirExpressionKind::Call {
                 callee,
@@ -556,6 +683,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 protocol,
                 ..
             } => {
+                let baseline = reserved_terminal_owners(&state);
                 let callee_demand = if *protocol == HirCallProtocol::CallOnce {
                     Demand::Transfer
                 } else {
@@ -617,6 +745,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     }
                 }
                 flow.retain_loans(&retained_loans);
+                settle_terminal_handoff(&mut flow, &baseline);
                 flow
             }
             HirExpressionKind::PreludePanic { message } => {
@@ -647,7 +776,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             )?,
             HirExpressionKind::PropagateOption { value }
             | HirExpressionKind::PropagateResult { value, .. } => {
+                let baseline = reserved_terminal_owners(&state);
                 let mut flow = self.expression(*value, state, Demand::Transfer, live_after)?;
+                settle_terminal_handoff(&mut flow, &baseline);
                 let mut exit = flow.normal.clone();
                 if let Some(exit) = &mut exit {
                     retain_pattern_loans(exit, &BTreeSet::new());
@@ -666,11 +797,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 arms,
             } => self.match_expression(*scrutinee, *mode, arms, state, live_after)?,
             HirExpressionKind::Return { value } => {
+                let baseline = reserved_terminal_owners(&state);
                 let mut flow = if let Some(value) = value {
                     self.expression(*value, state, Demand::Transfer, &BTreeSet::new())?
                 } else {
                     AvailabilityFlow::normal(state)
                 };
+                settle_terminal_handoff(&mut flow, &baseline);
                 let mut exit = flow.normal.take();
                 if let Some(exit) = &mut exit {
                     retain_pattern_loans(exit, &BTreeSet::new());
@@ -693,7 +826,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 flow
             }
         };
-        Ok(self.finish_expression(id, flow, live_after))
+        let mut flow = self.finish_expression(id, flow, live_after);
+        self.finish_new_terminal_temporaries(&mut flow, &temporary_baseline);
+        self.activate_projected_terminal_temporary(id, demand, &mut flow)?;
+        if demand == Demand::Observe && self.is_terminal(expression.ty())? {
+            self.activate_terminal_temporary(&mut flow, id, expression.span());
+        }
+        Ok(flow)
     }
 
     fn block(
@@ -719,13 +858,21 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             let Some(state) = flow.normal.take() else {
                 break;
             };
-            let next = self.statement(statement, state, &mut locals, live_after)?;
+            let temporary_baseline = terminal_temporary_owners(&state);
+            let mut next = self.statement(statement, state, &mut locals, live_after)?;
+            self.finish_new_terminal_temporaries(&mut next, &temporary_baseline);
             flow.merge(next);
         }
         if let Some(tail) = tail {
+            let baseline = flow
+                .normal
+                .as_ref()
+                .map(reserved_terminal_owners)
+                .unwrap_or_default();
             flow = self.then_expression(flow, tail, Demand::Transfer, live_after)?;
+            settle_terminal_handoff(&mut flow, &baseline);
         }
-        flow.strip_locals(&locals);
+        self.finish_terminal_local_scope(&mut flow, &locals);
         Ok(flow)
     }
 
@@ -743,9 +890,20 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 value,
                 ..
             } => {
+                let baseline = reserved_terminal_owners(&state);
                 let mut flow = self.expression(*value, state, Demand::Transfer, live_after)?;
+                settle_terminal_handoff(&mut flow, &baseline);
                 if let Some(state) = &mut flow.normal {
-                    self.introduce_pattern(*pattern, state, block_locals, *mutable);
+                    let mut terminal_owners = Vec::new();
+                    self.introduce_pattern(
+                        *pattern,
+                        state,
+                        block_locals,
+                        &mut terminal_owners,
+                        *mutable,
+                        false,
+                    )?;
+                    debug_assert!(terminal_owners.is_empty());
                 }
                 Ok(flow)
             }
@@ -772,6 +930,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         state: AvailabilityState,
         live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
+        let baseline = reserved_terminal_owners(&state);
         let mut written = Vec::new();
         collect_written_places(target, &mut written);
         let mut evaluated = Vec::new();
@@ -787,7 +946,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         let value_live = self.expression_entry_liveness(value, live_after);
         let written = written
             .into_iter()
-            .map(|(place, span)| (self.loan_place_in_state(place, &state), span))
+            .map(|(place, span)| {
+                (
+                    self.loan_place_in_state(place, &state),
+                    self.expression_type(place),
+                    span,
+                )
+            })
             .collect::<Vec<_>>();
         let mut direct = Vec::new();
         let target_flow = self.assignment_target(
@@ -808,11 +973,17 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         }
         let mut flow = self.then_expression(target_flow, value, Demand::Transfer, live_after)?;
         if let Some(state) = &mut flow.normal {
-            for (place, span) in written {
+            for (place, ty, span) in written {
                 self.check_loan_access(state, &place, LoanAccess::Write, span);
+                self.check_terminal_overwrite(state, &place, ty, span)?;
             }
-            remove_locals(state, &restorable);
+            confirm_new_terminal_reservations(state, &baseline);
+            for (local, span) in restorable {
+                remove_local(state, local);
+                self.activate_terminal_local(state, local, span)?;
+            }
         }
+        restore_new_terminal_reservations_in_controls(&mut flow, &baseline);
         Ok(flow)
     }
 
@@ -820,7 +991,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         &mut self,
         target: &HirAssignmentTarget,
         mut flow: AvailabilityFlow,
-        direct: &mut Vec<LocalId>,
+        direct: &mut Vec<(LocalId, Span)>,
         may_reinitialize: bool,
         live_after: &BTreeMap<HirExpressionId, BTreeSet<LocalId>>,
     ) -> Result<AvailabilityFlow, TypeError> {
@@ -831,7 +1002,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     && *write == HirWriteKind::Replace
                     && self.reinitializable.contains(&local)
                 {
-                    direct.push(local);
+                    direct.push((local, target.span()));
                     return Ok(flow);
                 }
                 let empty = BTreeSet::new();
@@ -902,6 +1073,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         state: AvailabilityState,
         live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
+        let terminal_baseline = reserved_terminal_owners(&state);
         let has_borrow = arms
             .iter()
             .any(|arm| self.pattern_contains_borrow(arm.pattern()));
@@ -957,6 +1129,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         let scrutinee_place = self.loan_place_in_state(scrutinee, &state);
         let mut scrutinee_flow = self.expression(scrutinee, state, demand, &arm_uses)?;
         let Some(mut next_entry) = scrutinee_flow.normal.take() else {
+            restore_new_terminal_reservations_in_controls(&mut scrutinee_flow, &terminal_baseline);
             return Ok(scrutinee_flow);
         };
         let mut result = scrutinee_flow;
@@ -964,15 +1137,23 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             arms.iter().zip(&fallthrough_live).zip(&arm_success_live)
         {
             let mut pattern_locals = Vec::new();
+            let mut pattern_terminal_owners = Vec::new();
             let mut arm_entry = next_entry.clone();
             retain_pattern_loans(&mut arm_entry, arm_success_live);
             retain_pattern_loans(&mut next_entry, fallthrough_live);
+            let guarded = arm.guard().is_some();
+            let activate_terminals = !guarded && mode == HirMatchMode::Consume;
+            if activate_terminals {
+                confirm_new_terminal_reservations(&mut arm_entry, &terminal_baseline);
+            }
             self.introduce_match_pattern(
                 arm.pattern(),
                 &scrutinee_place,
                 &mut arm_entry,
                 &mut pattern_locals,
-            );
+                &mut pattern_terminal_owners,
+                activate_terminals,
+            )?;
             let guarded_entry = if let Some(guard) = arm.guard() {
                 let forbidden = self.affine_pattern_bindings(arm.pattern())?;
                 self.guard_forbidden.extend(forbidden.iter().copied());
@@ -986,6 +1167,14 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 let mut body_entry = guard_flow.normal.clone();
                 if let Some(body_entry) = &mut body_entry {
                     retain_pattern_loans(body_entry, &body_live);
+                    if mode == HirMatchMode::Consume {
+                        confirm_new_terminal_reservations(body_entry, &terminal_baseline);
+                        self.activate_match_pattern_terminals(
+                            arm.pattern(),
+                            body_entry,
+                            &mut pattern_terminal_owners,
+                        )?;
+                    }
                 }
                 if let Some(mut guard_state) = guard_flow.normal.clone() {
                     retain_pattern_loans(&mut guard_state, fallthrough_live);
@@ -994,6 +1183,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 }
                 let mut controls = guard_flow;
                 controls.normal = None;
+                restore_new_terminal_reservations_in_controls(&mut controls, &terminal_baseline);
                 controls.strip_locals(&pattern_locals);
                 result.merge(controls);
                 body_entry
@@ -1003,9 +1193,12 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             let Some(body_entry) = guarded_entry else {
                 continue;
             };
+            let terminal_body_baseline = reserved_terminal_owners(&body_entry);
             let mut body_flow =
                 self.expression(arm.body(), body_entry, Demand::Transfer, live_after)?;
-            body_flow.strip_locals(&pattern_locals);
+            settle_terminal_handoff(&mut body_flow, &terminal_body_baseline);
+            self.finish_terminal_owners_scope(&mut body_flow, &pattern_terminal_owners);
+            self.finish_terminal_local_scope(&mut body_flow, &pattern_locals);
             result.merge(body_flow);
         }
         Ok(result)
@@ -1135,15 +1328,38 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     }
                     HirIterationProtocol::Trait { .. } => Demand::Transfer,
                 };
+                let terminal_type = match protocol {
+                    HirIterationProtocol::Intrinsic { cursor } => *cursor,
+                    HirIterationProtocol::Trait { .. } => self.expression_type(*source),
+                };
+                let terminal_owner = self
+                    .is_terminal(terminal_type)?
+                    .then_some(TerminalOwner::Iteration(id));
+                let terminal_baseline = reserved_terminal_owners(&state);
                 let source_live = union_sets(
                     &self.expression_entry_liveness(body, live_after),
                     live_after,
                 );
                 let mut source_flow =
                     self.expression(*source, state, source_demand, &source_live)?;
-                let Some(loop_entry) = source_flow.normal.take() else {
+                let Some(mut loop_entry) = source_flow.normal.take() else {
+                    restore_new_terminal_reservations_in_controls(
+                        &mut source_flow,
+                        &terminal_baseline,
+                    );
                     return Ok(source_flow);
                 };
+                confirm_new_terminal_reservations(&mut loop_entry, &terminal_baseline);
+                restore_new_terminal_reservations_in_controls(&mut source_flow, &terminal_baseline);
+                if let Some(owner) = terminal_owner {
+                    loop_entry.terminal_live.insert(
+                        owner,
+                        self.program
+                            .expression(*source)
+                            .expect("verified iterator sources remain indexed")
+                            .span(),
+                    );
+                }
                 let borrowed = matches!(
                     protocol,
                     HirIterationProtocol::Intrinsic { cursor }
@@ -1184,9 +1400,25 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     body,
                     loop_entry,
                     live_after,
+                    terminal_owner.filter(|_| {
+                        matches!(
+                            protocol,
+                            HirIterationProtocol::Intrinsic { cursor }
+                                if matches!(
+                                    self.program.interner().kind(*cursor),
+                                    Ok(TypeKind::Cursor {
+                                        mode: CursorMode::Own,
+                                        ..
+                                    })
+                                )
+                        )
+                    }),
                 )?;
                 if borrowed {
                     remove_loan_from_flow(&mut loop_flow, LoanIdentity::Iteration(id));
+                }
+                if let Some(owner) = terminal_owner {
+                    self.finish_terminal_owner_scope(&mut loop_flow, owner);
                 }
                 source_flow.merge(loop_flow);
                 Ok(source_flow)
@@ -1204,7 +1436,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         live_after: &BTreeSet<LocalId>,
     ) -> Result<AvailabilityFlow, TypeError> {
         self.loop_fixed_point_with_pattern_source(
-            id, condition, pattern, None, body, initial, live_after,
+            id, condition, pattern, None, body, initial, live_after, None,
         )
     }
 
@@ -1218,6 +1450,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         body: HirExpressionId,
         initial: AvailabilityState,
         live_after: &BTreeSet<LocalId>,
+        consume_on_exhaustion: Option<TerminalOwner>,
     ) -> Result<AvailabilityFlow, TypeError> {
         let mut loop_live = self.expression_entry_liveness(body, &BTreeSet::new());
         if let Some(condition) = condition {
@@ -1239,6 +1472,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             initial,
             live_after,
             &loop_live,
+            consume_on_exhaustion,
         );
         if let Some(previous) = previous_break {
             self.break_liveness.insert(id, previous);
@@ -1264,13 +1498,14 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         initial: AvailabilityState,
         live_after: &BTreeSet<LocalId>,
         loop_live: &BTreeSet<LocalId>,
+        consume_on_exhaustion: Option<TerminalOwner>,
     ) -> Result<AvailabilityFlow, TypeError> {
         let mut header = initial.clone();
         let limit = self
             .program
             .local_types
             .len()
-            .saturating_mul(3)
+            .saturating_mul(5)
             .saturating_add(1);
         for _ in 0..=limit {
             let mut iteration = if let Some(condition) = condition {
@@ -1282,6 +1517,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 let mut exit = iteration.normal.clone();
                 if let Some(exit) = &mut exit {
                     retain_pattern_loans(exit, live_after);
+                    if let Some(owner) = consume_on_exhaustion {
+                        exit.terminal_live.remove(&owner);
+                        exit.terminal_reserved.remove(&owner);
+                    }
                 }
                 exit
             } else {
@@ -1289,6 +1528,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             };
             if let Some(mut body_entry) = iteration.normal.take() {
                 let mut pattern_locals = Vec::new();
+                let mut pattern_terminal_owners = Vec::new();
                 if let Some(pattern) = pattern {
                     if let Some(source) = pattern_source {
                         self.introduce_match_pattern(
@@ -1296,19 +1536,24 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                             source,
                             &mut body_entry,
                             &mut pattern_locals,
-                        );
+                            &mut pattern_terminal_owners,
+                            false,
+                        )?;
                     } else {
                         self.introduce_pattern(
                             pattern,
                             &mut body_entry,
                             &mut pattern_locals,
+                            &mut pattern_terminal_owners,
                             false,
-                        );
+                            true,
+                        )?;
                     }
                 }
                 let mut body_flow =
                     self.expression(body, body_entry, Demand::Transfer, loop_live)?;
-                body_flow.strip_locals(&pattern_locals);
+                self.finish_terminal_owners_scope(&mut body_flow, &pattern_terminal_owners);
+                self.finish_terminal_local_scope(&mut body_flow, &pattern_locals);
                 iteration.merge(body_flow);
             }
             let mut break_exit = iteration.breaks.remove(&id);
@@ -1391,7 +1636,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 false,
             )?;
         }
-        Ok(self.finish_expression(id, flow, live_after))
+        let mut flow = self.finish_expression(id, flow, live_after);
+        self.activate_projected_terminal_temporary(id, demand, &mut flow)?;
+        Ok(flow)
     }
 
     fn place_components(
@@ -1580,6 +1827,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             PlaceRoot::Local(local) if self.owners.contains(&local) => {
                 if place.complete_transfer {
                     state.unavailable.insert(local, span);
+                    let owner = TerminalOwner::Local(local);
+                    if let Some(origin) = state.terminal_live.remove(&owner) {
+                        state.terminal_reserved.insert(owner, origin);
+                    }
                     if self.tracked_transfers.contains(&local) {
                         self.transferred.insert(local);
                         state.definitely_transferred.insert(local);
@@ -1794,6 +2045,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         span: Span,
         mut state: AvailabilityState,
     ) -> Result<AvailabilityFlow, TypeError> {
+        let terminal_baseline = reserved_terminal_owners(&state);
         let captures = self
             .program
             .closure(closure)
@@ -1816,6 +2068,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 true,
             )?;
         }
+        confirm_new_terminal_reservations(&mut state, &terminal_baseline);
         Ok(AvailabilityFlow::normal(state))
     }
 
@@ -1863,26 +2116,254 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             self.copy_statuses.insert(ty, status);
             status
         };
-        Ok(status != HirCapabilityStatus::Unsatisfied)
+        Ok(status == HirCapabilityStatus::Satisfied)
+    }
+
+    fn is_terminal(&mut self, ty: TypeId) -> Result<bool, TypeError> {
+        let Some(terminals) = self.terminals else {
+            return Ok(false);
+        };
+        let status = if let Some(status) = self.terminal_statuses.get(&ty).copied() {
+            status
+        } else {
+            let status = terminals.status(self.program, ty, &self.assumptions)?;
+            self.terminal_statuses.insert(ty, status);
+            status
+        };
+        Ok(status != HirTerminalStatus::Absent)
+    }
+
+    fn activate_terminal_local(
+        &mut self,
+        state: &mut AvailabilityState,
+        local: LocalId,
+        span: Span,
+    ) -> Result<(), TypeError> {
+        let Some(ty) = self.program.local_type(local) else {
+            return Ok(());
+        };
+        if self.is_terminal(ty)? {
+            let owner = TerminalOwner::Local(local);
+            state.terminal_reserved.remove(&owner);
+            state.terminal_live.insert(owner, span);
+        }
+        Ok(())
+    }
+
+    fn report_terminal_pattern_discard(
+        &mut self,
+        pattern: &super::HirPattern,
+    ) -> Result<(), TypeError> {
+        if self.is_terminal(pattern.ty())? {
+            self.findings.insert(AvailabilityFinding {
+                kind: AvailabilityFindingKind::TerminalNotConsumed,
+                local: None,
+                use_span: pattern.span(),
+                move_span: None,
+            });
+        }
+        Ok(())
+    }
+
+    fn check_terminal_overwrite(
+        &mut self,
+        state: &AvailabilityState,
+        place: &PlaceInfo,
+        ty: TypeId,
+        span: Span,
+    ) -> Result<(), TypeError> {
+        if !self.is_terminal(ty)? {
+            return Ok(());
+        }
+        let origin = match place.root {
+            PlaceRoot::Local(local) if self.owners.contains(&local) => state
+                .terminal_live
+                .get(&TerminalOwner::Local(local))
+                .copied(),
+            PlaceRoot::Local(local) if self.borrowed.contains(&local) => Some(span),
+            PlaceRoot::Receiver | PlaceRoot::Temporary(_) => Some(span),
+            PlaceRoot::Local(_) => None,
+        };
+        if let Some(origin) = origin {
+            self.findings.insert(AvailabilityFinding {
+                kind: AvailabilityFindingKind::TerminalOverwrite,
+                local: place_local(place),
+                use_span: span,
+                move_span: (origin != span).then_some(origin),
+            });
+        }
+        Ok(())
+    }
+
+    fn report_terminal_locals(&mut self, flow: &AvailabilityFlow, locals: &[LocalId]) {
+        for local in locals {
+            self.report_terminal_owner(flow, TerminalOwner::Local(*local));
+        }
+    }
+
+    fn report_terminal_owner(&mut self, flow: &AvailabilityFlow, owner: TerminalOwner) {
+        let mut origin = None;
+        for state in flow
+            .normal
+            .iter()
+            .chain(flow.exits.iter())
+            .chain(flow.breaks.values())
+            .chain(flow.continues.values())
+        {
+            for candidate in [
+                state.terminal_live.get(&owner),
+                state.terminal_reserved.get(&owner),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                origin = Some(origin.map_or(*candidate, |current: Span| current.min(*candidate)));
+            }
+        }
+        let Some(origin) = origin else {
+            return;
+        };
+        self.findings.insert(AvailabilityFinding {
+            kind: AvailabilityFindingKind::TerminalNotConsumed,
+            local: match owner {
+                TerminalOwner::Local(local) => Some(local),
+                TerminalOwner::Iteration(_)
+                | TerminalOwner::Pattern(_)
+                | TerminalOwner::Temporary(_) => None,
+            },
+            use_span: origin,
+            move_span: None,
+        });
+    }
+
+    fn activate_terminal_temporary(
+        &self,
+        flow: &mut AvailabilityFlow,
+        expression: HirExpressionId,
+        span: Span,
+    ) {
+        if let Some(state) = &mut flow.normal {
+            state
+                .terminal_live
+                .entry(TerminalOwner::Temporary(expression))
+                .or_insert(span);
+        }
+    }
+
+    fn activate_projected_terminal_temporary(
+        &mut self,
+        expression: HirExpressionId,
+        demand: Demand,
+        flow: &mut AvailabilityFlow,
+    ) -> Result<(), TypeError> {
+        let Some(base) = self.temporary_place_root(expression) else {
+            return Ok(());
+        };
+        if base == expression {
+            return Ok(());
+        }
+        let result_type = self.expression_type(expression);
+        if demand == Demand::Transfer && !self.is_copy(result_type)? {
+            return Ok(());
+        }
+        let base_expression = self
+            .program
+            .expression(base)
+            .expect("temporary place roots retain their base expression");
+        let (ty, span) = (base_expression.ty(), base_expression.span());
+        if self.is_terminal(ty)? {
+            self.activate_terminal_temporary(flow, base, span);
+        }
+        Ok(())
+    }
+
+    fn temporary_place_root(&self, expression: HirExpressionId) -> Option<HirExpressionId> {
+        let expression_node = self
+            .program
+            .expression(expression)
+            .expect("temporary place analysis receives verified expressions");
+        match expression_node.kind() {
+            HirExpressionKind::Local(_) | HirExpressionKind::Receiver => None,
+            HirExpressionKind::Field { base, .. }
+            | HirExpressionKind::TupleField { base, .. }
+            | HirExpressionKind::Index { base, .. }
+            | HirExpressionKind::Slice { base, .. } => self.temporary_place_root(*base),
+            _ => Some(expression),
+        }
+    }
+
+    fn finish_new_terminal_temporaries(
+        &mut self,
+        flow: &mut AvailabilityFlow,
+        baseline: &BTreeSet<TerminalOwner>,
+    ) {
+        let owners = terminal_owners_in_flow(flow)
+            .into_iter()
+            .filter(|owner| {
+                matches!(owner, TerminalOwner::Temporary(_)) && !baseline.contains(owner)
+            })
+            .collect::<Vec<_>>();
+        self.finish_terminal_owners_scope(flow, &owners);
+    }
+
+    fn finish_terminal_local_scope(&mut self, flow: &mut AvailabilityFlow, locals: &[LocalId]) {
+        self.report_terminal_locals(flow, locals);
+        flow.strip_locals(locals);
+    }
+
+    fn finish_terminal_owner_scope(&mut self, flow: &mut AvailabilityFlow, owner: TerminalOwner) {
+        self.report_terminal_owner(flow, owner);
+        for state in flow
+            .normal
+            .iter_mut()
+            .chain(flow.exits.iter_mut())
+            .chain(flow.breaks.values_mut())
+            .chain(flow.continues.values_mut())
+        {
+            state.terminal_live.remove(&owner);
+            state.terminal_reserved.remove(&owner);
+        }
+    }
+
+    fn finish_terminal_owners_scope(
+        &mut self,
+        flow: &mut AvailabilityFlow,
+        owners: &[TerminalOwner],
+    ) {
+        for owner in owners {
+            self.finish_terminal_owner_scope(flow, *owner);
+        }
     }
 
     fn introduce_pattern(
         &mut self,
-        pattern: HirPatternId,
+        pattern_id: HirPatternId,
         state: &mut AvailabilityState,
         locals: &mut Vec<LocalId>,
+        terminal_owners: &mut Vec<TerminalOwner>,
         mutable: bool,
-    ) {
+        defer_terminal_wildcards: bool,
+    ) -> Result<(), TypeError> {
         let pattern = self
             .program
-            .pattern(pattern)
+            .pattern(pattern_id)
             .expect("availability analysis receives verified pattern IDs")
             .clone();
         match pattern.kind() {
-            HirPatternKind::Recovery
-            | HirPatternKind::Wildcard
-            | HirPatternKind::Literal(_)
-            | HirPatternKind::OptionNone => {}
+            HirPatternKind::Recovery | HirPatternKind::Literal(_) | HirPatternKind::OptionNone => {}
+            HirPatternKind::Wildcard => {
+                if defer_terminal_wildcards {
+                    self.activate_terminal_pattern(
+                        state,
+                        pattern_id,
+                        pattern.ty(),
+                        pattern.span(),
+                        terminal_owners,
+                    )?;
+                } else {
+                    self.report_terminal_pattern_discard(&pattern)?;
+                }
+            }
             HirPatternKind::Binding(local) => {
                 self.owners.insert(*local);
                 if mutable {
@@ -1890,6 +2371,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 }
                 remove_local(state, *local);
                 locals.push(*local);
+                self.activate_terminal_local(state, *local, pattern.span())?;
             }
             HirPatternKind::BorrowBinding(local) => {
                 self.borrowed.insert(*local);
@@ -1899,60 +2381,123 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             }
             HirPatternKind::Tuple(items) => {
                 for item in items {
-                    self.introduce_pattern(*item, state, locals, mutable);
+                    self.introduce_pattern(
+                        *item,
+                        state,
+                        locals,
+                        terminal_owners,
+                        mutable,
+                        defer_terminal_wildcards,
+                    )?;
                 }
             }
             HirPatternKind::OptionSome(item)
             | HirPatternKind::ResultOk(item)
             | HirPatternKind::ResultErr(item)
             | HirPatternKind::UnionMember { pattern: item, .. } => {
-                self.introduce_pattern(*item, state, locals, mutable);
+                self.introduce_pattern(
+                    *item,
+                    state,
+                    locals,
+                    terminal_owners,
+                    mutable,
+                    defer_terminal_wildcards,
+                )?;
             }
             HirPatternKind::Newtype { value, .. } => {
-                self.introduce_pattern(*value, state, locals, mutable);
+                self.introduce_pattern(
+                    *value,
+                    state,
+                    locals,
+                    terminal_owners,
+                    mutable,
+                    defer_terminal_wildcards,
+                )?;
             }
             HirPatternKind::Variant { fields, .. } => {
                 for field in fields {
-                    self.introduce_pattern(*field, state, locals, mutable);
+                    self.introduce_pattern(
+                        *field,
+                        state,
+                        locals,
+                        terminal_owners,
+                        mutable,
+                        defer_terminal_wildcards,
+                    )?;
                 }
             }
             HirPatternKind::Record { fields, .. } => {
                 for field in fields {
-                    self.introduce_pattern(field.pattern(), state, locals, mutable);
+                    self.introduce_pattern(
+                        field.pattern(),
+                        state,
+                        locals,
+                        terminal_owners,
+                        mutable,
+                        defer_terminal_wildcards,
+                    )?;
                 }
             }
             HirPatternKind::Array { prefix, rest } => {
                 for item in prefix {
-                    self.introduce_pattern(*item, state, locals, mutable);
+                    self.introduce_pattern(
+                        *item,
+                        state,
+                        locals,
+                        terminal_owners,
+                        mutable,
+                        defer_terminal_wildcards,
+                    )?;
                 }
                 if let Some(rest) = rest {
-                    self.introduce_pattern(*rest, state, locals, mutable);
+                    self.introduce_pattern(
+                        *rest,
+                        state,
+                        locals,
+                        terminal_owners,
+                        mutable,
+                        defer_terminal_wildcards,
+                    )?;
                 }
             }
         }
+        Ok(())
     }
 
     fn introduce_match_pattern(
         &mut self,
-        pattern: HirPatternId,
+        pattern_id: HirPatternId,
         source: &PlaceInfo,
         state: &mut AvailabilityState,
         locals: &mut Vec<LocalId>,
-    ) {
+        terminal_owners: &mut Vec<TerminalOwner>,
+        activate_terminals: bool,
+    ) -> Result<(), TypeError> {
         let pattern = self
             .program
-            .pattern(pattern)
+            .pattern(pattern_id)
             .expect("availability analysis receives verified match patterns")
             .clone();
         match pattern.kind() {
-            HirPatternKind::Recovery
-            | HirPatternKind::Wildcard
-            | HirPatternKind::Literal(_)
-            | HirPatternKind::OptionNone => {}
+            HirPatternKind::Recovery | HirPatternKind::Literal(_) | HirPatternKind::OptionNone => {}
+            HirPatternKind::Wildcard => {
+                if activate_terminals {
+                    self.activate_terminal_pattern(
+                        state,
+                        pattern_id,
+                        pattern.ty(),
+                        pattern.span(),
+                        terminal_owners,
+                    )?;
+                }
+            }
             HirPatternKind::Binding(local) => {
                 self.owners.insert(*local);
                 remove_local(state, *local);
                 locals.push(*local);
+                if activate_terminals {
+                    self.activate_terminal_local(state, *local, pattern.span())?;
+                }
             }
             HirPatternKind::BorrowBinding(local) => {
                 self.borrowed.insert(*local);
@@ -1966,6 +2511,15 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     ParameterMode::Ref,
                     pattern.span(),
                 );
+                if activate_terminals {
+                    self.activate_terminal_pattern(
+                        state,
+                        pattern_id,
+                        pattern.ty(),
+                        pattern.span(),
+                        terminal_owners,
+                    )?;
+                }
             }
             HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
                 for (index, item) in items.iter().enumerate() {
@@ -1974,7 +2528,14 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         .projections
                         .push(PlaceProjection::TupleField(index as u32));
                     projected.complete_transfer = false;
-                    self.introduce_match_pattern(*item, &projected, state, locals);
+                    self.introduce_match_pattern(
+                        *item,
+                        &projected,
+                        state,
+                        locals,
+                        terminal_owners,
+                        activate_terminals,
+                    )?;
                 }
             }
             HirPatternKind::OptionSome(item)
@@ -1984,7 +2545,14 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             | HirPatternKind::UnionMember { pattern: item, .. } => {
                 let mut projected = source.clone();
                 projected.complete_transfer = false;
-                self.introduce_match_pattern(*item, &projected, state, locals);
+                self.introduce_match_pattern(
+                    *item,
+                    &projected,
+                    state,
+                    locals,
+                    terminal_owners,
+                    activate_terminals,
+                )?;
             }
             HirPatternKind::Record { fields, .. } => {
                 for field in fields {
@@ -1993,7 +2561,14 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         .projections
                         .push(PlaceProjection::Field(field.member()));
                     projected.complete_transfer = false;
-                    self.introduce_match_pattern(field.pattern(), &projected, state, locals);
+                    self.introduce_match_pattern(
+                        field.pattern(),
+                        &projected,
+                        state,
+                        locals,
+                        terminal_owners,
+                        activate_terminals,
+                    )?;
                 }
             }
             HirPatternKind::Array { prefix, rest } => {
@@ -2005,7 +2580,14 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         )),
                     ));
                     projected.complete_transfer = false;
-                    self.introduce_match_pattern(item, &projected, state, locals);
+                    self.introduce_match_pattern(
+                        item,
+                        &projected,
+                        state,
+                        locals,
+                        terminal_owners,
+                        activate_terminals,
+                    )?;
                 }
                 if let Some(rest) = rest {
                     let mut projected = source.clone();
@@ -2016,13 +2598,105 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         }),
                     ));
                     projected.complete_transfer = false;
-                    self.introduce_match_pattern(*rest, &projected, state, locals);
+                    self.introduce_match_pattern(
+                        *rest,
+                        &projected,
+                        state,
+                        locals,
+                        terminal_owners,
+                        activate_terminals,
+                    )?;
                 }
             }
         }
+        Ok(())
+    }
+
+    fn activate_match_pattern_terminals(
+        &mut self,
+        root: HirPatternId,
+        state: &mut AvailabilityState,
+        terminal_owners: &mut Vec<TerminalOwner>,
+    ) -> Result<(), TypeError> {
+        let mut pending = vec![root];
+        while let Some(id) = pending.pop() {
+            let pattern = self
+                .program
+                .pattern(id)
+                .expect("terminal match analysis receives verified pattern IDs")
+                .clone();
+            match pattern.kind() {
+                HirPatternKind::Binding(local) => {
+                    self.activate_terminal_local(state, *local, pattern.span())?;
+                }
+                HirPatternKind::Wildcard => self.activate_terminal_pattern(
+                    state,
+                    id,
+                    pattern.ty(),
+                    pattern.span(),
+                    terminal_owners,
+                )?,
+                HirPatternKind::BorrowBinding(_) => self.activate_terminal_pattern(
+                    state,
+                    id,
+                    pattern.ty(),
+                    pattern.span(),
+                    terminal_owners,
+                )?,
+                HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
+                    pending.extend(items.iter().copied());
+                }
+                HirPatternKind::OptionSome(item)
+                | HirPatternKind::ResultOk(item)
+                | HirPatternKind::ResultErr(item)
+                | HirPatternKind::Newtype { value: item, .. }
+                | HirPatternKind::UnionMember { pattern: item, .. } => pending.push(*item),
+                HirPatternKind::Record { fields, .. } => {
+                    pending.extend(fields.iter().map(super::HirPatternField::pattern));
+                }
+                HirPatternKind::Array { prefix, rest } => {
+                    pending.extend(prefix.iter().copied());
+                    pending.extend(*rest);
+                }
+                HirPatternKind::Recovery
+                | HirPatternKind::Literal(_)
+                | HirPatternKind::OptionNone => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn activate_terminal_pattern(
+        &mut self,
+        state: &mut AvailabilityState,
+        pattern: HirPatternId,
+        ty: TypeId,
+        span: Span,
+        owners: &mut Vec<TerminalOwner>,
+    ) -> Result<(), TypeError> {
+        if self.is_terminal(ty)? {
+            let owner = TerminalOwner::Pattern(pattern);
+            state.terminal_live.insert(owner, span);
+            if !owners.contains(&owner) {
+                owners.push(owner);
+            }
+        }
+        Ok(())
     }
 
     fn sequence(
+        &mut self,
+        state: AvailabilityState,
+        values: impl IntoIterator<Item = (HirExpressionId, Demand)>,
+        live_after: &BTreeSet<LocalId>,
+    ) -> Result<AvailabilityFlow, TypeError> {
+        let baseline = reserved_terminal_owners(&state);
+        let mut flow = self.sequence_unsettled(state, values, live_after)?;
+        settle_terminal_handoff(&mut flow, &baseline);
+        Ok(flow)
+    }
+
+    fn sequence_unsettled(
         &mut self,
         state: AvailabilityState,
         values: impl IntoIterator<Item = (HirExpressionId, Demand)>,
@@ -2192,6 +2866,83 @@ fn merge_optional_state(target: &mut Option<AvailabilityState>, source: Option<A
     } else {
         *target = Some(source);
     }
+}
+
+fn reserved_terminal_owners(state: &AvailabilityState) -> BTreeSet<TerminalOwner> {
+    state.terminal_reserved.keys().copied().collect()
+}
+
+fn terminal_temporary_owners(state: &AvailabilityState) -> BTreeSet<TerminalOwner> {
+    state
+        .terminal_live
+        .keys()
+        .chain(state.terminal_reserved.keys())
+        .filter(|owner| matches!(owner, TerminalOwner::Temporary(_)))
+        .copied()
+        .collect()
+}
+
+fn terminal_owners_in_flow(flow: &AvailabilityFlow) -> BTreeSet<TerminalOwner> {
+    flow.normal
+        .iter()
+        .chain(flow.exits.iter())
+        .chain(flow.breaks.values())
+        .chain(flow.continues.values())
+        .flat_map(|state| {
+            state
+                .terminal_live
+                .keys()
+                .chain(state.terminal_reserved.keys())
+        })
+        .copied()
+        .collect()
+}
+
+fn confirm_new_terminal_reservations(
+    state: &mut AvailabilityState,
+    baseline: &BTreeSet<TerminalOwner>,
+) {
+    state
+        .terminal_reserved
+        .retain(|owner, _| baseline.contains(owner));
+}
+
+fn restore_new_terminal_reservations(
+    state: &mut AvailabilityState,
+    baseline: &BTreeSet<TerminalOwner>,
+) {
+    let restored = state
+        .terminal_reserved
+        .iter()
+        .filter_map(|(owner, span)| (!baseline.contains(owner)).then_some((*owner, *span)))
+        .collect::<Vec<_>>();
+    for (owner, span) in restored {
+        state.terminal_reserved.remove(&owner);
+        state
+            .terminal_live
+            .entry(owner)
+            .and_modify(|current| *current = (*current).min(span))
+            .or_insert(span);
+    }
+}
+
+fn restore_new_terminal_reservations_in_controls(
+    flow: &mut AvailabilityFlow,
+    baseline: &BTreeSet<TerminalOwner>,
+) {
+    if let Some(state) = &mut flow.exits {
+        restore_new_terminal_reservations(state, baseline);
+    }
+    for state in flow.breaks.values_mut().chain(flow.continues.values_mut()) {
+        restore_new_terminal_reservations(state, baseline);
+    }
+}
+
+fn settle_terminal_handoff(flow: &mut AvailabilityFlow, baseline: &BTreeSet<TerminalOwner>) {
+    if let Some(state) = &mut flow.normal {
+        confirm_new_terminal_reservations(state, baseline);
+    }
+    restore_new_terminal_reservations_in_controls(flow, baseline);
 }
 
 #[derive(Default)]
@@ -2687,6 +3438,20 @@ fn merge_state(target: &mut AvailabilityState, source: AvailabilityState) {
     target
         .definitely_transferred
         .retain(|local| source.definitely_transferred.contains(local));
+    for (owner, span) in source.terminal_live {
+        target
+            .terminal_live
+            .entry(owner)
+            .and_modify(|current| *current = (*current).min(span))
+            .or_insert(span);
+    }
+    for (owner, span) in source.terminal_reserved {
+        target
+            .terminal_reserved
+            .entry(owner)
+            .and_modify(|current| *current = (*current).min(span))
+            .or_insert(span);
+    }
 }
 
 fn remove_locals(state: &mut AvailabilityState, locals: &[LocalId]) {
@@ -2698,12 +3463,19 @@ fn remove_locals(state: &mut AvailabilityState, locals: &[LocalId]) {
 fn state_keys_equal(left: &AvailabilityState, right: &AvailabilityState) -> bool {
     left.unavailable.keys().eq(right.unavailable.keys())
         && left.definitely_transferred == right.definitely_transferred
+        && left.terminal_live.keys().eq(right.terminal_live.keys())
+        && left
+            .terminal_reserved
+            .keys()
+            .eq(right.terminal_reserved.keys())
         && left.loans == right.loans
 }
 
 fn remove_local(state: &mut AvailabilityState, local: LocalId) {
     state.unavailable.remove(&local);
     state.definitely_transferred.remove(&local);
+    state.terminal_live.remove(&TerminalOwner::Local(local));
+    state.terminal_reserved.remove(&TerminalOwner::Local(local));
     state.loans.remove(&LoanIdentity::Pattern(local));
 }
 

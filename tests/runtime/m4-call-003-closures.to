@@ -2,7 +2,7 @@ fn increment(value: Int): Int {
     value + 1
 }
 
-fn apply[F: Call[fn(Int): Int]](operation: F, value: Int): Int {
+fn apply[F: Discard + Call[fn(Int): Int]](operation: F, value: Int): Int {
     operation(value)
 }
 

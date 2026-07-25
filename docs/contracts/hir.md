@@ -306,9 +306,9 @@ Consequently `Call` still implies `CallMut`, while `CallMut` implies `CallOnce`
 only when the complete environment is `Discard`; a non-`Discard` environment
 can derive `CallOnce` independently through the all-exit transfer proof.
 
-This proof closes the obligation of each environment slot. TERM-002 remains
-responsible for following a terminal value after an internal handoff and
-rejecting any later scope exit that abandons the destination owner.
+This proof closes the obligation of each environment slot. TERM-002 then
+follows a terminal value after an internal handoff and rejects any later normal
+scope exit that abandons the destination owner.
 
 For a synchronous safe signature, an ordinary call chooses the first available
 protocol in the order `Call`, `CallMut`, `CallOnce`. `CallMut` requires a
@@ -725,10 +725,11 @@ recomputes all rows, and rejects a present terminal type that is `Copy` or
 `Discard`. `HirProgram` and `SemanticModel` expose the status and the direct
 contract without exposing runtime actions as user-callable values.
 
-TERM-001 intentionally registers and classifies types only. TERM-002 owns
-path-sensitive consumption on normal exits; TERM-003 and TERM-004 populate the
-already reserved cleanup edges with guards and unwind actions. No destructor,
-normal-exit cleanup, or provisional `defer` behavior is synthesized here.
+TERM-001 registers and classifies types. TERM-002 consumes that classification
+in the path-sensitive availability proof described below. TERM-003 and TERM-004
+populate the already reserved cleanup edges with guards and unwind actions. No
+destructor, normal-exit cleanup, or provisional `defer` behavior is synthesized
+by either completed phase.
 
 Type formation requires `K: Key` for every `Map[K, V]` and `Set[K]`, and
 `T: Discard` for every `Ref[T]`, including declaration signatures, nominal
@@ -751,10 +752,10 @@ HIR proves the contextual capability facts consumed by OWN-002, including
 generic and opaque `Copy` status and the exact source-generic `CallOnce`
 protocol. MIR records the resulting copy or move. OWN-005 additionally records
 one uniform `Copy`/`Observe`/`Consume` mode per `match`; collection-backed loan
-regions and terminal consumption/cleanup remain their owning phases'
-responsibility. Successful capability proof does not fabricate those later
-facts or cleanup; terminal presence comes from the separate closed registry
-above.
+regions remain their owning phase's responsibility. Terminal presence comes
+from the separate closed registry above and TERM-002 follows its normal-path
+ownership independently from ordinary affine availability. Successful
+capability proof never fabricates terminal consumption or cleanup.
 
 ## Flow-sensitive ownership availability
 
@@ -815,6 +816,67 @@ copies or moves the complete outer binding, and closure-body capture projections
 become typed environment move paths. OWN-007 intersects complete environment
 transfers across all normal exits; it adds no capture list, implicit loan, or
 second transfer form.
+
+## Normal-path terminal obligations
+
+TERM-002 extends the same structured flow with a separate terminal owner state.
+Every owned value whose contextual status is `Present` or `Potential` arms one
+obligation. This includes ordinary value parameters, local pattern bindings,
+structural compounds, own cursors, and closure environments. A generic value
+remains `Potential` unless its exact body assumptions prove `Discard`; a
+`Deferred` `Copy` result is never treated as permission to duplicate it.
+Borrowed parameters, receivers, `ref` pattern bindings, ref cursors, `Ref[T]`,
+and `Pointer[T]` do not acquire the referenced token.
+
+Each owner is either live or reserved. Moving a terminal local reserves its
+token immediately so later operands cannot reuse it. A fully evaluated call,
+aggregate, closure construction, assignment, return value, or other destination
+confirms the handoff and removes the source reservation. If evaluation instead
+leaves through `return`, `fail`, `?`, `break`, or `continue` before confirmation,
+the original local becomes live again. A terminal temporary already constructed
+from that local owns its independent fallback and therefore does not resurrect
+the earlier binding. This is the static half of the confirmed-transfer protocol;
+it emits no runtime cleanup instruction.
+
+An owned terminal temporary used only through an observation or loan remains a
+hidden owner until the containing operation completes. A normal completion then
+produces `E1404`; a diverging operation leaves the future unwind fallback
+responsible. The same rule catches a `Copy` field projected from an otherwise
+terminal temporary. Stored array slices remain a separate owning value and
+therefore require a `Copy` element, while `ref`/`mut` slice arguments keep the
+original owner and loan region instead of duplicating it.
+
+At every lexical end and normal control transfer, a remaining live or reserved
+owner produces `E1404`. Pattern bindings receive the obligations of the
+components they own. A consuming `match` confirms the scrutinee only in the
+selected arm and only after a successful guard; a wildcard or `ref` arm keeps a
+hidden owner for its terminal component until that arm diverges or exits. The
+same hidden-owner rule applies to a wildcard item in consuming iteration, so an
+abnormal body does not fabricate a normal-path error.
+Intrinsic own iteration holds one hidden cursor owner, disarms it on natural
+exhaustion, and still checks every by-value item per iteration. `break` leaves
+that cursor armed, while a ref iteration never acquires it. A trait iterator
+does not gain an intrinsic exhaustion discharge merely by implementing
+`Iterator`.
+
+Closure capture tokens belong to the generated environment in the enclosing
+flow, not to each borrowed invocation of its body. Existing `CallOnce`
+verification still proves that every non-`Discard` capture is transferred on
+all normal closure returns. Capture slots nevertheless remain in the local
+path-state so a conditional move cannot hide a later overwrite. Abandoning the
+environment itself is independently reported as `E1404`. Replacing a live
+terminal local, captured slot, borrowed destination, or terminal field through
+`with` would destroy its previous token and produces `E1408`; moving the old
+value first and then completely reinitializing a `var` remains valid.
+
+Panic and cancellation paths intentionally do not participate in the normal
+exit check: their armed entries are consumed by the closed fallback introduced
+in TERM-004. TERM-002 does not run that fallback on final, `return`, `fail`, `?`,
+`break`, or `continue`, and it does not recognize a provisional `defer`. HIR
+admission reconstructs the terminal registry and reruns the entire availability
+analysis before MIR. MIR and bytecode continue to preserve the resulting
+affine moves and confirmed source availability; TERM-003 and TERM-004 will add
+the executable guard and unwind ledger to their reserved cleanup edges.
 
 ## Call-local loans
 

@@ -103,13 +103,13 @@ A closed call error query returns:
 ## Deliberate later boundaries
 
 CHECK-009 does not fabricate facts outside its deliberately minimal public
-query surface. TERM-001 adds type-level terminal presence and direct registry
-metadata, but not the later owner/token state or consumption path. Borrow
-regions, ownership state, terminal token flow, dynamic overlap checks, iterator
-cursor proofs, unsafe regions, and complete sugar expansion remain the later
-§22.5 queries associated with their semantic milestones. HIR already derives
-closure protocols and the six closed capability statuses and retains
-opaque-result bounds, but CHECK-009 does not yet expose those other facts as
+query surface. TERM-001 exposes type-level terminal presence and direct registry
+metadata. TERM-002 now checks the internal owner/token path, but does not yet
+publish that path as a semantic query. Borrow regions, ownership state,
+terminal token flow, dynamic overlap checks, iterator cursor proofs, unsafe
+regions, and complete sugar expansion remain later §22.5 query surfaces. HIR
+already derives closure protocols and the six closed capability statuses and
+retains opaque-result bounds, but CHECK-009 does not expose those other facts as
 public structured queries. The same snapshot type can grow those views without
 changing source identity or asking an LSP to reinterpret syntax.
 

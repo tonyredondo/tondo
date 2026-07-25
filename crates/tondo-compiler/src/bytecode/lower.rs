@@ -3878,7 +3878,7 @@ mod tests {
                       impl Summary for User {\n\
                           fn summarize(self): String { self.name }\n\
                       }\n\
-                      fn render[T: Summary](value: T): String { value.summarize() }\n\
+                      fn render[T: Discard + Summary](value: T): String { value.summarize() }\n\
                       fn use(): String {\n\
                           let generic = render(User { name: \"generic\" })\n\
                           assert(generic == \"generic\")\n\
@@ -3974,7 +3974,7 @@ mod tests {
                       impl Iterator[Int] for Cursor {\n\
                           fn next(mut self): Int? { none }\n\
                       }\n\
-                      fn render[T: Display](value: T): String { value.display() }\n\
+                      fn render[T: Discard + Display](value: T): String { value.display() }\n\
                       fn use_display(value: Label): String {\n\
                           let generic = render(value)\n\
                           _ = generic\n\
@@ -4154,7 +4154,7 @@ mod tests {
     #[test]
     fn generic_checked_operations_and_tag_projections_are_specialized() {
         let source = "fn first[T: Copy](values: Array[T]): T { values[0] }\n\
-                      fn value_or[T](value: T?, fallback: T): T {\n\
+                      fn value_or[T: Discard](value: T?, fallback: T): T {\n\
                           match value {\n\
                               some(item) => item\n\
                               none => fallback\n\
@@ -4628,8 +4628,10 @@ mod tests {
     #[test]
     fn bytecode_rederives_call_once_for_a_terminal_closure_environment() {
         let source = "fn observe(value: ref Join[Int, String]) {}\n\
-                      fn build(input: Join[Int, String]) {\n\
+                      fn sink[T](value: T): Never { panic(\"stop\") }\n\
+                      fn build(input: Join[Int, String]): Never {\n\
                           let operation = () { observe(ref input) }\n\
+                          sink(operation)\n\
                       }\n";
         let program = lowered(source);
         let (callable_id, closure) = program
@@ -4680,13 +4682,15 @@ mod tests {
         assert!(error.message().contains("implementation body"), "{error}");
 
         let complete = lowered(
-            "fn build(input: Join[Int, String], choose: Bool) {\n\
+            "fn sink[T](value: T): Never { panic(\"stop\") }\n\
+             fn build(input: Join[Int, String], choose: Bool): Never {\n\
                  let operation = (): Join[Int, String] {\n\
                      if choose {\n\
                          return input\n\
                      }\n\
                      input\n\
                  }\n\
+                 sink(operation)\n\
              }\n",
         );
         assert_eq!(
@@ -4706,8 +4710,10 @@ mod tests {
 
         let complete_newtype = lowered(
             "type Wrapped = Join[Int, String]\n\
-             fn build(input: Wrapped) {\n\
+             fn sink[T](value: T): Never { panic(\"stop\") }\n\
+             fn build(input: Wrapped): Never {\n\
                  let operation = (): Join[Int, String] { input.value }\n\
+                 sink(operation)\n\
              }\n",
         );
         assert_eq!(
@@ -4726,13 +4732,15 @@ mod tests {
         bc::verify_bytecode(&complete_newtype).unwrap();
 
         let partial = lowered(
-            "fn build(input: Join[Int, String], choose: Bool) {\n\
+            "fn sink[T](value: T): Never { panic(\"stop\") }\n\
+             fn build(input: Join[Int, String], choose: Bool): Never {\n\
                  let operation = (): Join[Int, String]? {\n\
                      if choose {\n\
                          return some(input)\n\
                      }\n\
                      none\n\
                  }\n\
+                 sink(operation)\n\
              }\n",
         );
         assert_eq!(
@@ -4752,13 +4760,18 @@ mod tests {
 
         let specialized = lowered(
             "fn observe[T](value: ref T) {}\n\
-             fn inspect[T](input: T) {\n\
+             fn sink[T](value: T): Never { panic(\"stop\") }\n\
+             fn inspect[T](input: T): Never {\n\
                  let operation = () { observe(ref input) }\n\
                  operation()\n\
+                 sink(operation)\n\
              }\n\
-             fn execute(value: Join[Int, String]) {\n\
-                 inspect(1)\n\
-                 inspect(value)\n\
+             fn execute(value: Join[Int, String], choose: Bool): Never {\n\
+                 if choose {\n\
+                     inspect(1)\n\
+                 } else {\n\
+                     inspect(value)\n\
+                 }\n\
              }\n",
         );
         let mut specialized_rows = specialized
@@ -7392,7 +7405,7 @@ mod tests {
         assert_eq!(
             execute_function(
                 "fn increment(value: Int): Int { value + 1 }\n\
-                 fn apply[F: Call[fn(Int): Int]](operation: F, value: Int): Int {\n\
+                 fn apply[F: Discard + Call[fn(Int): Int]](operation: F, value: Int): Int {\n\
                      operation(value)\n\
                  }\n\
                  fn execute(): (Int, Int) {\n\
@@ -8385,7 +8398,7 @@ mod tests {
                       fn hiddenCursor(): impl Iterator[Int] + Discard {\n\
                           Cursor { done: false }\n\
                       }\n\
-                      fn render[T: Display](value: T): String { value.display() }\n\
+                      fn render[T: Discard + Display](value: T): String { value.display() }\n\
                       fn consume[I: Discard + Iterator[Int]](cursor: I) {\n\
                           for value in cursor {\n\
                               _ = value\n\

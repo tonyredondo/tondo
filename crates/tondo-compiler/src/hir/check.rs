@@ -32,8 +32,8 @@ use super::{
     HirParameter, HirPattern, HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator,
     HirPreludeTraitMethod, HirProgram, HirRangeKind, HirRecordFieldValue, HirStatement,
     HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
-    HirVariantValue, HirWriteKind, TraitQuery, TraitSelectionError, analyze_availability,
-    analyze_closure_captures, select_implementation,
+    HirVariantValue, HirWriteKind, TerminalAnalysis, TraitQuery, TraitSelectionError,
+    analyze_availability, analyze_closure_captures, select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1149,7 +1149,8 @@ impl<'a> ExpressionChecker<'a> {
 
     fn check_ownership_availability(&mut self) -> Result<(), HirError> {
         let capabilities = CapabilityAnalysis::new(&self.program, self.resolved)?;
-        let findings = analyze_availability(&self.program, &capabilities)?;
+        let terminals = TerminalAnalysis::new(&self.program, self.resolved)?;
+        let findings = analyze_availability(&self.program, &capabilities, &terminals)?;
         for finding in findings {
             let name = finding.local().map(|local| {
                 self.resolved
@@ -1215,6 +1216,23 @@ impl<'a> ExpressionChecker<'a> {
                 )?,
                 AvailabilityFindingKind::DeferredCollectionLoanConflict => {}
                 AvailabilityFindingKind::DeferredCollectionAccessConflict => {}
+                AvailabilityFindingKind::TerminalNotConsumed => self.emit(
+                    finding.use_span(),
+                    "E1404",
+                    "terminal value can reach a normal exit without being consumed or transferred",
+                    Vec::new(),
+                    None,
+                )?,
+                AvailabilityFindingKind::TerminalOverwrite => self.emit(
+                    finding.use_span(),
+                    "E1408",
+                    "write would overwrite a terminal value before it is consumed",
+                    finding
+                        .move_span()
+                        .map(|span| vec![("the pending terminal value is acquired here", span)])
+                        .unwrap_or_default(),
+                    None,
+                )?,
             }
         }
         Ok(())
@@ -16676,7 +16694,7 @@ mod tests {
         )));
 
         let (_, _, reused) = check(
-            "fn invalid[T](input: T): T {\n\
+            "fn invalid[T: Discard](input: T): T {\n\
                  let operation = (): T { input }\n\
                  input\n\
              }\n",
@@ -16684,7 +16702,7 @@ mod tests {
         assert_eq!(codes(&reused), ["E1401"]);
 
         let (_, _, repeated_capture) = check(
-            "fn invalid[T](input: T): T {\n\
+            "fn invalid[T: Discard](input: T): T {\n\
                  let operation = (): T {\n\
                      let first = input\n\
                      input\n\
@@ -16746,9 +16764,11 @@ mod tests {
     #[test]
     fn call_once_requires_discard_or_capture_transfer_on_every_exit() {
         let (_, _, observed) = check(
-            "fn inspect[T: Equatable](input: T): Bool {\n\
+            "fn sink[T](value: T): Never { panic(\"stop\") }\n\
+             fn inspect[T: Equatable](input: T): Never {\n\
                  let operation = (): Bool { input == input }\n\
-                 operation()\n\
+                 _ = operation()\n\
+                 sink(operation)\n\
              }\n",
         );
         assert!(
@@ -16783,13 +16803,15 @@ mod tests {
         );
 
         let (_, _, partial) = check(
-            "fn build[T](input: T, choose: Bool) {\n\
+            "fn sink[U](value: U): Never { panic(\"stop\") }\n\
+             fn build[T](input: T, choose: Bool): Never {\n\
                  let operation = (): T? {\n\
                      if choose {\n\
                          return some(input)\n\
                      }\n\
                      none\n\
                  }\n\
+                 sink(operation)\n\
              }\n",
         );
         assert!(
@@ -16806,13 +16828,15 @@ mod tests {
     #[test]
     fn call_once_accounts_for_fail_and_propagation_exits() {
         let (_, _, failed) = check(
-            "fn build[T](input: T, choose: Bool) {\n\
+            "fn sink[U](value: U): Never { panic(\"stop\") }\n\
+             fn build[T](input: T, choose: Bool): Never {\n\
                  let operation = (): Unit ! T {\n\
                      if choose {\n\
                          fail input\n\
                      }\n\
                      fail input\n\
                  }\n\
+                 sink(operation)\n\
              }\n",
         );
         assert!(
@@ -16826,12 +16850,14 @@ mod tests {
         );
 
         let (_, _, partial_fail) = check(
-            "fn build[T](input: T, choose: Bool) {\n\
+            "fn sink[U](value: U): Never { panic(\"stop\") }\n\
+             fn build[T](input: T, choose: Bool): Never {\n\
                  let operation = (): Unit ! T {\n\
                      if choose {\n\
                          fail input\n\
                      }\n\
                  }\n\
+                 sink(operation)\n\
              }\n",
         );
         assert!(
@@ -16850,8 +16876,10 @@ mod tests {
         );
 
         let (_, _, propagated) = check(
-            "fn build[T](input: Int ! T) {\n\
+            "fn sink[U](value: U): Never { panic(\"stop\") }\n\
+             fn build[T](input: Int ! T): Never {\n\
                  let operation = (): Int ! T { input? }\n\
+                 sink(operation)\n\
              }\n",
         );
         assert!(
@@ -16865,13 +16893,15 @@ mod tests {
         );
 
         let (_, _, partial_propagation) = check(
-            "fn build[T](input: Int ! T, choose: Bool) {\n\
+            "fn sink[U](value: U): Never { panic(\"stop\") }\n\
+             fn build[T](input: Int ! T, choose: Bool): Never {\n\
                  let operation = (): Int ! T {\n\
                      if choose {\n\
                          return input?\n\
                      }\n\
                      0\n\
                  }\n\
+                 sink(operation)\n\
              }\n",
         );
         assert!(
@@ -16995,7 +17025,7 @@ mod tests {
     #[test]
     fn generic_call_bounds_expose_only_their_closed_protocols() {
         let (_, _, output) = check(
-            "fn shared[F: Call[fn(Int): Int]](operation: F, value: Int): Int {\n\
+            "fn shared[F: Discard + Call[fn(Int): Int]](operation: F, value: Int): Int {\n\
                  operation(value)\n\
              }\n\
              fn exclusive[F: CallMut[fn(): Int]](operation: mut F): Int {\n\
@@ -17033,13 +17063,13 @@ mod tests {
         );
 
         let (_, _, inaccessible) = check(
-            "fn invalid[F: CallMut[fn(): Int]](operation: F): Int {\n\
+            "fn invalid[F: CallMut[fn(): Int]](operation: ref F): Int {\n\
                  operation()\n\
              }\n",
         );
         assert_eq!(codes(&inaccessible), ["E1407"]);
 
-        let (_, _, malformed) = check("fn invalid[F: Call[Int]](operation: F) {}\n");
+        let (_, _, malformed) = check("fn invalid[F: Discard + Call[Int]](operation: F) {}\n");
         assert_eq!(codes(&malformed), ["E1115"]);
     }
 
@@ -17071,7 +17101,7 @@ mod tests {
     #[test]
     fn affine_availability_rejects_sequential_and_call_once_reuse() {
         let (_, _, sequential) = check(
-            "fn invalid[T](value: T): T {\n\
+            "fn invalid[T: Discard](value: T): T {\n\
                  let moved = value\n\
                  value\n\
              }\n",
@@ -17179,16 +17209,16 @@ mod tests {
     fn affine_projection_and_borrowed_pattern_transfers_are_rejected() {
         let (_, _, field) = check(
             "type Box[T] = { value: T }\n\
-             fn invalid[T](box: Box[T]): T { box.value }\n",
+             fn invalid[T: Discard](box: Box[T]): T { box.value }\n",
         );
         assert_eq!(codes(&field), ["E1406"]);
 
-        let (_, _, index) = check("fn invalid[T](values: Array[T]): T { values[0] }\n");
+        let (_, _, index) = check("fn invalid[T: Discard](values: Array[T]): T { values[0] }\n");
         assert_eq!(codes(&index), ["E1406"]);
 
         let (_, _, receiver) = check(
             "type Box[T] = { value: T }\n\
-             fn Box[T].invalid(self): T { self.value }\n",
+             fn Box[T: Discard].invalid(self): T { self.value }\n",
         );
         assert_eq!(codes(&receiver), ["E1406"]);
 
@@ -17203,7 +17233,7 @@ mod tests {
 
         let (_, _, partial_match) = check(
             "type Box[T] = { value: T }\n\
-             fn invalid[T](box: Box[T]): T {\n\
+             fn invalid[T: Discard](box: Box[T]): T {\n\
                  match box.value {\n\
                      item => item\n\
                  }\n\
@@ -17430,7 +17460,7 @@ mod tests {
                  }\n\
                  value\n\
              }\n\
-             fn refill[T: Discard, F: Call[fn(): T]](\n\
+             fn refill[T: Discard, F: Discard + Call[fn(): T]](\n\
                  factory: F,\n\
                  keepGoing: Bool,\n\
              ) {\n\
@@ -17732,7 +17762,7 @@ mod tests {
              impl Summary for User {\n\
                  fn summarize(self): String { self.name }\n\
              }\n\
-             fn generic[T: Summary](value: T): String { value.summarize() }\n\
+             fn generic[T: Discard + Summary](value: T): String { value.summarize() }\n\
              fn qualified(value: User): String { Summary.summarize(value) }\n\
              fn main() {\n\
                  let user = User { name: \"Tony\" }\n\
@@ -17795,7 +17825,7 @@ mod tests {
              trait Right {\n\
                  fn label(self): String\n\
              }\n\
-             fn choose[T: Left + Right](value: T): String { value.label() }\n",
+             fn choose[T: Discard + Left + Right](value: T): String { value.label() }\n",
         );
         assert_eq!(codes(&ambiguous), ["E1004"]);
 
@@ -17806,7 +17836,7 @@ mod tests {
              trait Right {\n\
                  fn label(self): String\n\
              }\n\
-             fn choose[T: Left + Right](value: T): String { Left.label(value) }\n",
+             fn choose[T: Discard + Left + Right](value: T): String { Left.label(value) }\n",
         );
         assert!(
             qualified.diagnostics().is_empty(),
@@ -17961,7 +17991,7 @@ mod tests {
                  fn next(mut self): Int? { none }\n\
              }\n\
              fn qualified_display(value: Label): String { Display.display(value) }\n\
-             fn constrained_display[T: Display](value: T): String { value.display() }\n\
+             fn constrained_display[T: Discard + Display](value: T): String { value.display() }\n\
              fn qualified_next(cursor: var Cursor): Int? {\n\
                  Iterator[Int].next(mut cursor)\n\
              }\n\
@@ -18026,7 +18056,7 @@ mod tests {
             "trait CustomDisplay {\n\
                  fn display(self): String\n\
              }\n\
-             fn render[T: Display + CustomDisplay](value: T): String { value.display() }\n",
+             fn render[T: Discard + Display + CustomDisplay](value: T): String { value.display() }\n",
         );
         assert_eq!(codes(&ambiguous), ["E1004"]);
 
@@ -18034,7 +18064,7 @@ mod tests {
             "trait CustomDisplay {\n\
                  fn display(self): String\n\
              }\n\
-             fn render[T: Display + CustomDisplay](value: T): String {\n\
+             fn render[T: Discard + Display + CustomDisplay](value: T): String {\n\
                  Display.display(value)\n\
              }\n",
         );
@@ -18843,7 +18873,7 @@ mod tests {
                  range: Range[Int],\n\
                  reference: Ref[Int],\n\
                  pointer: Pointer[Int],\n\
-                 join: Join[Int, Never],\n\
+                 join: ref Join[Int, Never],\n\
                  command: Command,\n\
                  pipeline: Pipeline,\n\
              ) {}\n",
@@ -19094,6 +19124,360 @@ mod tests {
     }
 
     #[test]
+    fn terminal_obligations_cover_every_normal_function_exit() {
+        let (_, _, unused) = check("fn invalid(task: Join[Int, Never]) {}\n");
+        assert_eq!(codes(&unused), ["E1404"]);
+
+        let (_, _, unbounded) = check("fn invalid[T](value: T) {}\n");
+        assert_eq!(codes(&unbounded), ["E1404"]);
+
+        let (_, _, bounded) = check("fn valid[T: Discard](value: T) {}\n");
+        assert!(
+            bounded.diagnostics().is_empty(),
+            "{:#?}",
+            bounded.diagnostics()
+        );
+        assert!(bounded.is_complete());
+
+        let (_, _, returned) = check(
+            "fn identity[T](value: T): T { value }\n\
+             fn forward(task: Join[Int, Never]): Join[Int, Never] {\n\
+                 identity(task)\n\
+             }\n",
+        );
+        assert!(
+            returned.diagnostics().is_empty(),
+            "{:#?}",
+            returned.diagnostics()
+        );
+        assert!(returned.is_complete());
+
+        let (_, _, partial_branch) = check(
+            "fn invalid(task: Join[Int, Never], choose: Bool): Join[Int, Never]? {\n\
+                 if choose {\n\
+                     return some(task)\n\
+                 }\n\
+                 none\n\
+             }\n",
+        );
+        assert_eq!(codes(&partial_branch), ["E1404"]);
+
+        let (_, _, failed) = check(
+            "fn invalid(task: Join[Int, Never]): Unit ! String {\n\
+                 fail \"stop\"\n\
+             }\n",
+        );
+        assert_eq!(codes(&failed), ["E1404"]);
+
+        let (_, _, panicked) = check(
+            "fn stop(task: Join[Int, Never]): Never {\n\
+                 panic(\"stop\")\n\
+             }\n",
+        );
+        assert!(
+            panicked.diagnostics().is_empty(),
+            "{:#?}",
+            panicked.diagnostics()
+        );
+        assert!(panicked.is_complete());
+    }
+
+    #[test]
+    fn terminal_handoffs_restore_the_owner_when_later_evaluation_exits() {
+        let (_, _, propagated) = check(
+            "fn source(): Int ! String { 1 }\n\
+             fn invalid(task: Join[Int, Never]): (Join[Int, Never], Int) ! String {\n\
+                 (task, source()?)\n\
+             }\n",
+        );
+        assert_eq!(
+            codes(&propagated),
+            ["E1404"],
+            "{:#?}",
+            propagated.diagnostics()
+        );
+
+        let (_, _, aggregate) = check(
+            "fn valid(\n\
+                 first: Join[Int, Never],\n\
+                 second: Join[Int, Never],\n\
+             ): (Join[Int, Never], Join[Int, Never]) {\n\
+                 (first, second)\n\
+             }\n",
+        );
+        assert!(
+            aggregate.diagnostics().is_empty(),
+            "{:#?}",
+            aggregate.diagnostics()
+        );
+        assert!(aggregate.is_complete());
+
+        let (_, _, option) = check(
+            "fn valid(value: Join[Int, Never]?): Join[Int, Never]? {\n\
+                 match value {\n\
+                     some(task) => some(task)\n\
+                     none => none\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            option.diagnostics().is_empty(),
+            "{:#?}",
+            option.diagnostics()
+        );
+        assert!(option.is_complete());
+    }
+
+    #[test]
+    fn terminal_patterns_closures_loops_and_overwrites_preserve_single_ownership() {
+        let (_, _, wildcard) = check(
+            "fn invalid(value: Join[Int, Never]?) {\n\
+                 match value {\n\
+                     some(_) => {}\n\
+                     none => {}\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&wildcard), ["E1404"]);
+
+        let (_, _, divergent_iteration_wildcard) = check(
+            "fn valid(tasks: Array[Join[Int, Never]]) {\n\
+                 for _ in tasks {\n\
+                     panic(\"stop\")\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            divergent_iteration_wildcard.diagnostics().is_empty(),
+            "{:#?}",
+            divergent_iteration_wildcard.diagnostics()
+        );
+        assert!(divergent_iteration_wildcard.is_complete());
+
+        let (_, _, divergent_wildcard) = check(
+            "fn identity(task: Join[Int, Never]): Join[Int, Never] { task }\n\
+             fn valid(task: Join[Int, Never]): Never {\n\
+                 match identity(task) {\n\
+                     _ => panic(\"stop\")\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            divergent_wildcard.diagnostics().is_empty(),
+            "{:#?}",
+            divergent_wildcard.diagnostics()
+        );
+        assert!(divergent_wildcard.is_complete());
+
+        let (_, _, closure) = check(
+            "fn invalid(task: Join[Int, Never]) {\n\
+                 let operation = (): Join[Int, Never] { task }\n\
+             }\n",
+        );
+        assert_eq!(codes(&closure), ["E1404"]);
+
+        let (_, _, transferred_closure) = check(
+            "fn sink[T](value: T): Never { panic(\"stop\") }\n\
+             fn valid(task: Join[Int, Never]): Never {\n\
+                 let operation = (): Join[Int, Never] { task }\n\
+                 sink(operation)\n\
+             }\n",
+        );
+        assert!(
+            transferred_closure.diagnostics().is_empty(),
+            "{:#?}",
+            transferred_closure.diagnostics()
+        );
+        assert!(transferred_closure.is_complete());
+
+        let (_, _, continued) = check(
+            "fn invalid(tasks: Array[Join[Int, Never]]) {\n\
+                 for task in tasks {\n\
+                     continue\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(
+            codes(&continued),
+            ["E1404"],
+            "{:#?}",
+            continued.diagnostics()
+        );
+
+        let (_, _, broken) = check(
+            "fn invalid(tasks: Array[Join[Int, Never]]) {\n\
+                 for task in tasks {\n\
+                     break\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(
+            codes(&broken),
+            ["E1404", "E1404"],
+            "{:#?}",
+            broken.diagnostics()
+        );
+
+        let (_, _, overwritten) = check(
+            "fn invalid(\n\
+                 first: Join[Int, Never],\n\
+                 second: Join[Int, Never],\n\
+             ): Join[Int, Never] {\n\
+                 var current = first\n\
+                 current = second\n\
+                 current\n\
+             }\n",
+        );
+        assert_eq!(
+            codes(&overwritten),
+            ["E1408"],
+            "{:#?}",
+            overwritten.diagnostics()
+        );
+
+        let (_, _, reinitialized) = check(
+            "fn valid(\n\
+                 first: Join[Int, Never],\n\
+                 second: Join[Int, Never],\n\
+             ): (Join[Int, Never], Join[Int, Never]) {\n\
+                 var current = first\n\
+                 let previous = current\n\
+                 current = second\n\
+                 (previous, current)\n\
+             }\n",
+        );
+        assert!(
+            reinitialized.diagnostics().is_empty(),
+            "{:#?}",
+            reinitialized.diagnostics()
+        );
+        assert!(reinitialized.is_complete());
+    }
+
+    #[test]
+    fn terminal_temporaries_record_updates_and_capture_slots_cannot_hide_ownership() {
+        let (_, _, borrowed_temporary) = check(
+            "fn identity(task: Join[Int, Never]): Join[Int, Never] { task }\n\
+             fn inspect(task: ref Join[Int, Never]) {}\n\
+             fn invalid(task: Join[Int, Never]) {\n\
+                 inspect(ref identity(task))\n\
+             }\n",
+        );
+        assert_eq!(
+            codes(&borrowed_temporary),
+            ["E1404"],
+            "{:#?}",
+            borrowed_temporary.diagnostics()
+        );
+
+        let (_, _, divergent_borrow) = check(
+            "fn identity(task: Join[Int, Never]): Join[Int, Never] { task }\n\
+             fn stop(task: ref Join[Int, Never]): Never { panic(\"stop\") }\n\
+             fn valid(task: Join[Int, Never]): Never {\n\
+                 stop(ref identity(task))\n\
+             }\n",
+        );
+        assert!(
+            divergent_borrow.diagnostics().is_empty(),
+            "{:#?}",
+            divergent_borrow.diagnostics()
+        );
+        assert!(divergent_borrow.is_complete());
+
+        let (_, _, projected_temporary) = check(
+            "type Work = { task: Join[Int, Never], version: Int }\n\
+             fn identity(work: Work): Work { work }\n\
+             fn inspect(version: Int) {}\n\
+             fn invalid(work: Work) {\n\
+                 inspect(identity(work).version)\n\
+             }\n",
+        );
+        assert_eq!(
+            codes(&projected_temporary),
+            ["E1404"],
+            "{:#?}",
+            projected_temporary.diagnostics()
+        );
+
+        let (_, _, assigned_temporary) = check(
+            "type Work = { task: Join[Int, Never], version: Int }\n\
+             fn identity(work: Work): Work { work }\n\
+             fn invalid(work: Work): Never {\n\
+                 var version = 0\n\
+                 version = identity(work).version\n\
+                 panic(\"stop\")\n\
+             }\n",
+        );
+        assert_eq!(
+            codes(&assigned_temporary),
+            ["E1404"],
+            "{:#?}",
+            assigned_temporary.diagnostics()
+        );
+
+        let (_, _, record_update) = check(
+            "type Work = { task: Join[Int, Never], version: Int }\n\
+             fn invalid(\n\
+                 work: Work,\n\
+                 next: Join[Int, Never],\n\
+             ): Work {\n\
+                 work with { task: next }\n\
+             }\n",
+        );
+        assert_eq!(
+            codes(&record_update),
+            ["E1408"],
+            "{:#?}",
+            record_update.diagnostics()
+        );
+
+        let (_, _, captured_overwrite) = check(
+            "fn sink[T](value: T): Never { panic(\"stop\") }\n\
+             fn invalid(\n\
+                 first: Join[Int, Never],\n\
+                 second: Join[Int, Never],\n\
+             ): Never {\n\
+                 var current = first\n\
+                 let operation = () {\n\
+                     current = second\n\
+                 }\n\
+                 sink(operation)\n\
+             }\n",
+        );
+        assert_eq!(
+            codes(&captured_overwrite),
+            ["E1408"],
+            "{:#?}",
+            captured_overwrite.diagnostics()
+        );
+    }
+
+    #[test]
+    fn terminal_arrays_cannot_duplicate_ownership_through_stored_slices() {
+        let (_, _, stored) = check(
+            "fn invalid(\n\
+                 values: ref Array[Join[Int, Never]],\n\
+             ): Array[Join[Int, Never]] {\n\
+                 values[:]\n\
+             }\n",
+        );
+        assert_eq!(codes(&stored), ["E1406"], "{:#?}", stored.diagnostics());
+
+        let (_, _, borrowed) = check(
+            "fn inspect(values: ref Array[Join[Int, Never]]) {}\n\
+             fn valid(values: ref Array[Join[Int, Never]]) {\n\
+                 inspect(ref values[:])\n\
+             }\n",
+        );
+        assert!(
+            borrowed.diagnostics().is_empty(),
+            "{:#?}",
+            borrowed.diagnostics()
+        );
+        assert!(borrowed.is_complete());
+    }
+
+    #[test]
     fn intrinsic_cursors_have_explicit_modes_and_derive_closed_capabilities_from_state() {
         let (_, _, output) = check(
             "fn iterate(values: Array[Int]) {\n\
@@ -19283,12 +19667,12 @@ mod tests {
              type Node = { next: Node? }\n\
              fn usersEqual(left: User, right: User): Bool { left == right }\n\
              fn nodesEqual(left: Node, right: Node): Bool { left != right }\n\
-             fn generic[T: Equatable](left: T, right: T): Bool { left == right }\n\
+             fn generic[T: Discard + Equatable](left: T, right: T): Bool { left == right }\n\
              fn keyed[T: Key](left: T, right: T): Bool { left == right }\n\
-             fn contains[T: Equatable](needle: T, values: Array[T]): Bool {\n\
+             fn contains[T: Discard + Equatable](needle: T, values: Array[T]): Bool {\n\
                  needle in values\n\
              }\n\
-             fn mapsEqual[K: Key, V: Equatable](\n\
+             fn mapsEqual[K: Key, V: Discard + Equatable](\n\
                  left: Map[K, V],\n\
                  right: Map[K, V],\n\
              ): Bool { left == right }\n\
@@ -19303,8 +19687,8 @@ mod tests {
             "fn invalid(left: fn(Int): Int, right: fn(Int): Int): Bool { left == right }\n",
             "fn invalid(left: Pointer[Int], right: Pointer[Int]): Bool { left == right }\n",
             "fn invalid(left: Range[Int], right: Range[Int]): Bool { left == right }\n",
-            "fn invalid(left: Array[Join[Int, Never]], right: Array[Join[Int, Never]]): Bool { left == right }\n",
-            "fn invalid[T](left: T, right: T): Bool { left == right }\n",
+            "fn invalid(left: ref Array[Join[Int, Never]], right: ref Array[Join[Int, Never]]): Bool { left == right }\n",
+            "fn invalid[T](left: ref T, right: ref T): Bool { left == right }\n",
             "fn invalid(needle: fn(Int): Int, values: Array[fn(Int): Int]): Bool { needle in values }\n",
         ] {
             let (_, _, invalid) = check(source);
@@ -19323,14 +19707,16 @@ mod tests {
             "fn lookup[K: Key, V: Copy](values: Map[K, V], key: K): V? {\n\
                  values[key]\n\
              }\n\
-             fn store(values: Map[String, Join[Int, Never]]) {}\n",
+             fn store(\n\
+                 values: Map[String, Join[Int, Never]],\n\
+             ): Map[String, Join[Int, Never]] { values }\n",
         );
         assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
         assert!(valid.is_complete());
 
         for source in [
-            "fn invalid(values: Map[String, Join[Int, Never]], key: String): Join[Int, Never]? { values[key] }\n",
-            "fn invalid[K: Key, V](values: Map[K, V], key: K): V? { values[key] }\n",
+            "fn invalid(values: ref Map[String, Join[Int, Never]], key: String): Join[Int, Never]? { values[key] }\n",
+            "fn invalid[K: Key, V](values: ref Map[K, V], key: K): V? { values[key] }\n",
         ] {
             let (_, _, invalid) = check(source);
             assert_eq!(
@@ -19347,7 +19733,7 @@ mod tests {
         let (_, _, valid) = check(
             "fn needCopy[T: Copy](value: T) {}\n\
              fn needDiscard[T: Discard](value: T) {}\n\
-             fn needEquatable[T: Equatable](value: T) {}\n\
+             fn needEquatable[T: Discard + Equatable](value: T) {}\n\
              fn needKey[T: Key](value: T) {}\n\
              fn needSend[T: Send](value: ref T) {}\n\
              fn needShare[T: Share](value: ref T) {}\n\
@@ -19357,7 +19743,7 @@ mod tests {
                  needEquatable(value)\n\
                  needKey(value)\n\
              }\n\
-             fn concurrency[T: Send + Share](value: T) {\n\
+             fn concurrency[T: Discard + Send + Share](value: T) {\n\
                  needSend(ref value)\n\
                  needShare(ref value)\n\
              }\n\
@@ -19369,9 +19755,9 @@ mod tests {
         for source in [
             "fn need[T: Copy](value: T) {}\nfn invalid(value: Join[Int, Never]) { need(value) }\n",
             "fn need[T: Key](value: T) {}\nfn invalid(value: Float) { need(value) }\n",
-            "fn need[T: Equatable](value: T) {}\nfn invalid(value: Pointer[Int]) { need(value) }\n",
-            "fn need[T: Send](value: T) {}\nfn invalid(value: Pointer[Int]) { need(value) }\n",
-            "fn need[T: Share](value: T) {}\nfn invalid(value: Pointer[Int]) { need(value) }\n",
+            "fn need[T: Discard + Equatable](value: T) {}\nfn invalid(value: Pointer[Int]) { need(value) }\n",
+            "fn need[T: Discard + Send](value: T) {}\nfn invalid(value: Pointer[Int]) { need(value) }\n",
+            "fn need[T: Discard + Share](value: T) {}\nfn invalid(value: Pointer[Int]) { need(value) }\n",
         ] {
             let (_, _, invalid) = check(source);
             assert_eq!(
@@ -19396,8 +19782,8 @@ mod tests {
              impl[T: Send] Poll for Worker[T] {\n\
                  async fn poll(self): Bool { true }\n\
              }\n\
-             fn needSend[T: Send](value: T) {}\n\
-             fn inferred[T: Poll](value: T) { needSend(value) }\n\
+             fn needSend[T: Discard + Send](value: T) {}\n\
+             fn inferred[T: Discard + Poll](value: T) { needSend(value) }\n\
              fn hidden(): impl Poll + Discard { Worker[Int] { value: 1 } }\n\
              fn outer(): impl Send + Discard { hidden() }\n\
              fn consumeHidden() {\n\
@@ -19953,7 +20339,7 @@ mod tests {
     #[test]
     fn generic_call_inference_rejects_conflicts_and_ambiguity() {
         let (_, _, conflict) = check(
-            "fn same[T](left: T, right: T): T { left }\n\
+            "fn same[T: Discard](left: T, right: T): T { left }\n\
              fn invalid() {\n\
                  _ = same(1, \"two\")\n\
              }\n",
@@ -19979,7 +20365,7 @@ mod tests {
         assert_eq!(codes(&ambiguous), ["E1101"]);
 
         let (_, _, invalid_body) = check(
-            "fn invalid[T](value: T): Int { value }\n\
+            "fn invalid[T: Discard](value: T): Int { value }\n\
              fn main() {}\n",
         );
         assert_eq!(codes(&invalid_body), ["E1102"]);
@@ -21103,7 +21489,7 @@ mod tests {
             "fn resize(values: mut Array[Int]) {\n    values = [1, 2]\n}\n",
             "fn replace(entries: mut Map[String, Int]) {\n    entries = [:]\n}\n",
             "fn replace(values: mut Set[Int]) {\n    values = Set[]\n}\n",
-            "fn replace[T](value: mut T, next: T) {\n    value = next\n}\n",
+            "fn replace[T: Discard](value: mut T, next: T) {\n    value = next\n}\n",
         ] {
             let (_, _, output) = check(source);
             assert_eq!(
@@ -21119,7 +21505,7 @@ mod tests {
             "fn resize(values: var Array[Int]) {\n\
                  values = [1, 2]\n\
              }\n\
-             fn replace[T](value: var T, next: T) {\n\
+             fn replace[T: Discard](value: var T, next: T) {\n\
                  value = next\n\
              }\n\
              fn scale(values: mut Array[Int]) {\n\
@@ -22571,7 +22957,7 @@ mod tests {
              fn hidden(): impl Summary + Discard {\n\
                  User { name: \"Tony\" }\n\
              }\n\
-             fn generic[T: Summary](value: T): String { value.summarize() }\n\
+             fn generic[T: Discard + Summary](value: T): String { value.summarize() }\n\
              fn direct(): String { hidden().summarize() }\n\
              fn forwarded(): String { generic(hidden()) }\n",
         );

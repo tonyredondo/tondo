@@ -6718,13 +6718,15 @@ mod tests {
         let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
         verify_mir(&resolved, &hir, &mir).unwrap();
 
-        let partial = "fn build[T](input: T, choose: Bool) {\n\
+        let partial = "fn sink[U](value: U): Never { panic(\"stop\") }\n\
+                       fn build[T](input: T, choose: Bool): Never {\n\
                            let operation = (): T? {\n\
                                if choose {\n\
                                    return some(input)\n\
                                }\n\
                                none\n\
                            }\n\
+                           sink(operation)\n\
                        }\n";
         let (resolved, hir) = checked(partial);
         assert_eq!(
@@ -6735,8 +6737,10 @@ mod tests {
         verify_mir(&resolved, &hir, &mir).unwrap();
 
         let newtype = "type Wrapped = Join[Int, String]\n\
-                       fn build(input: Wrapped) {\n\
+                       fn sink[U](value: U): Never { panic(\"stop\") }\n\
+                       fn build(input: Wrapped): Never {\n\
                            let operation = (): Join[Int, String] { input.value }\n\
+                           sink(operation)\n\
                        }\n";
         let (resolved, hir) = checked(newtype);
         assert_eq!(
@@ -6967,7 +6971,7 @@ mod tests {
         }
 
         let (resolved, hir) = checked(
-            "fn apply[F: Call[fn(Int): Int]](operation: F, value: Int): Int {\n\
+            "fn apply[F: Discard + Call[fn(Int): Int]](operation: F, value: Int): Int {\n\
                  operation(value)\n\
              }\n",
         );

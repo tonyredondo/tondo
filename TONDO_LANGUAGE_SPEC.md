@@ -7454,7 +7454,6 @@ oculten un diagnóstico independiente.
 | `E1601` | `async-call-not-awaited` | Llamada async fuera de `await` o `spawn`. |
 | `E1602` | `spawn-outside-scope` | `spawn` no pertenece a un `scope` async válido. |
 | `E1603` | `join-escapes` | Un `Join` sale de su región propietaria. |
-| `E1604` | `unconsumed-join` | Una salida normal conserva un `Join` pendiente. |
 | `E1605` | `non-send-transfer` | Valor no `Send` cruza task/thread o queda vivo a través de `await`. |
 | `E1606` | `non-share-borrow` | Préstamo concurrente exige `Share` y el origen no lo cumple. |
 | `E1607` | `exclusive-borrow-across-await` | Préstamo `mut`/`var` cruza una suspensión prohibida. |
@@ -7796,8 +7795,8 @@ Son errores obligatorios, entre otros:
 - Más de una implementación `Iterator[T]` para el mismo target (`E1113`).
 - Literal de map con una clave constante repetida (`E1116`).
 - Llamada async sin `await` o `spawn` (`E1601`).
-- `Join` que intenta escapar (`E1603`) o alcanza una salida normal sin consumirse
-  (`E1604`).
+- `Join` que intenta escapar de su región estructurada (`E1603`) o conserva su
+  obligación terminal en una salida normal (`E1404`).
 - Uso de un binding después de mover un valor afín (`E1401`).
 - Intento de almacenar, capturar, devolver o prolongar un préstamo fuera de su
   región estructurada (`E1402`).

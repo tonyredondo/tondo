@@ -178,7 +178,9 @@ impl Verifier<'_> {
     fn verify_availability(&self) -> Result<(), HirInvariantError> {
         let capabilities = CapabilityAnalysis::new(self.program, self.resolved)
             .map_err(|error| HirInvariantError::new("ownership availability", error.to_string()))?;
-        if let Some(finding) = analyze_availability(self.program, &capabilities)
+        let terminals = TerminalAnalysis::new(self.program, self.resolved)
+            .map_err(|error| HirInvariantError::new("ownership availability", error.to_string()))?;
+        if let Some(finding) = analyze_availability(self.program, &capabilities, &terminals)
             .map_err(|error| HirInvariantError::new("ownership availability", error.to_string()))?
             .into_iter()
             .find(|finding| {
@@ -231,6 +233,14 @@ impl Verifier<'_> {
                 ),
                 AvailabilityFindingKind::DeferredCollectionAccessConflict => unreachable!(
                     "runtime access conflicts are filtered before HIR invariant reporting"
+                ),
+                AvailabilityFindingKind::TerminalNotConsumed => format!(
+                    "{local} retains a terminal obligation at normal exit from {}",
+                    finding.use_span().range()
+                ),
+                AvailabilityFindingKind::TerminalOverwrite => format!(
+                    "{local} overwrites a live terminal obligation at {}",
+                    finding.use_span().range()
                 ),
             };
             return Err(HirInvariantError::new("ownership availability", message));
@@ -5441,7 +5451,7 @@ mod tests {
 
     #[test]
     fn closure_capture_metadata_is_reproved_before_mir() {
-        const SOURCE: &str = "fn build(task: Join[Int, Int]) {\n\
+        const SOURCE: &str = "fn build(task: ref Join[Int, Int]) {\n\
              let offset = 2\n\
              var count = 0\n\
              let closure = (value: Int): Int {\n\
@@ -5514,9 +5524,11 @@ mod tests {
 
     #[test]
     fn call_once_terminal_preconditions_are_reproved_before_mir() {
-        const SOURCE: &str = "fn inspect[T: Equatable](input: T): Bool {\n\
+        const SOURCE: &str = "fn sink[T](value: T): Never { panic(\"stop\") }\n\
+             fn inspect[T: Equatable](input: T): Never {\n\
              let operation = (): Bool { input == input }\n\
-             operation()\n\
+             _ = operation()\n\
+             sink(operation)\n\
          }\n";
         let (resolved, program) = checked_program_from(SOURCE);
         assert_eq!(
@@ -5617,7 +5629,7 @@ mod tests {
 
     #[test]
     fn generic_call_protocol_selection_is_reproved_before_mir() {
-        const SOURCE: &str = "fn invoke[F: Call[fn(Int): Int]](\n\
+        const SOURCE: &str = "fn invoke[F: Call[fn(Int): Int] + Discard](\n\
              operation: F,\n\
              value: Int,\n\
          ): Int {\n\

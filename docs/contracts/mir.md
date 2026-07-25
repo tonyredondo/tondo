@@ -357,9 +357,11 @@ token and disarms before execution. Bytecode lowering preserves these edges; it
 does not synthesize destructor behavior.
 
 TERM-001 supplies MIR with a verified closed registry and structural terminal
-status for every HIR type, but deliberately emits no cleanup operation.
-TERM-002 adds normal-path token flow first; only TERM-003 and TERM-004 may
-populate the reserved blocks.
+status for every HIR type. TERM-002 now rejects an unconsumed normal-path owner
+at HIR admission and reruns that proof at the HIR-to-MIR boundary. MIR preserves
+the accepted handoffs as its already verified typed copy/move paths, but neither
+phase emits a cleanup operation. Only TERM-003 and TERM-004 may populate the
+reserved blocks with an executable guard and unwind ledger.
 
 M7 represents `await` and structured teardown with a suspension terminator.
 Its successors distinguish resume, cancellation, and panic/unwind. Values live

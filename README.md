@@ -77,8 +77,10 @@ entry points and implicit script bodies remain under construction. Ownership
 already distinguishes contextual copies, affine moves, immediate observations,
 typed internal move paths, whole-binding availability across branches and
 loops, complete reinitialization of moved `var` bindings, and affine closure
-captures with all-exit `CallOnce` obligations. Synchronous `ref`, `mut`, and
-`var` arguments now use verified call-local loans with ordered reservation,
+captures with all-exit `CallOnce` obligations. Terminal owners are also followed
+through confirmed handoffs and rejected with `E1404` on every unconsumed normal
+exit or `E1408` before overwrite. Synchronous `ref`, `mut`, and `var` arguments
+use verified call-local loans with ordered reservation,
 alias rejection, reborrowing, VM write-through, and explicit release on
 abandoned argument paths. General last-use regions, collection-view loans,
 fixed-versus-structural mutation enforcement, runtime overlap proofs, and

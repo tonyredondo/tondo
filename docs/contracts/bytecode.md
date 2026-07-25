@@ -425,9 +425,11 @@ uses the same `Absent`/`Potential`/`Present` lattice as HIR, but computes it
 without importing compiler metadata. Nominal summaries retain only the generic
 positions that can carry a token; own cursors and closure environments follow
 owned state, while ref cursors and safe/raw references do not acquire ownership.
-Executable opaque witnesses must be `Absent`. TERM-002 will consume this proof
-when terminal flow operations enter MIR and bytecode; TERM-001 emits no cleanup
-instruction by itself.
+Executable opaque witnesses must be `Absent`. TERM-002 consumes the corresponding
+HIR proof before executable lowering and the bytecode move verifier preserves
+the admitted handoffs without inventing a terminal discharge. There is still no
+`await`, guard, or fallback opcode: TERM-003 and TERM-004 will add that executable
+ledger and its independent bytecode verification.
 
 ## Determinism, limits, and tooling
 

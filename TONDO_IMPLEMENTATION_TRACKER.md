@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.47
+**Versión del tracker:** 0.48
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** rastrear obligaciones terminales en todos los caminos
-normales (TERM-002).
+**Objetivo inmediato:** implementar `defer` LIFO y guards terminales
+(TERM-003).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1310,7 +1310,7 @@ lifetimes escritos por el usuario.
   rearma la prueba. MIR y bytecode repiten el must-analysis sobre sus CFG
   normales. Bytecode especializa además el `Discard` concreto de closures
   genéricas y opacas antes de verificar la fila ejecutable exacta. TERM-002
-  seguirá el owner receptor después de un handoff interno y rechazará su
+  sigue además el owner receptor después de un handoff interno y rechaza su
   abandono posterior.
 
 ### 10.2 Préstamos
@@ -1398,8 +1398,19 @@ lifetimes escritos por el usuario.
   tabla; el verifier bytecode la vuelve a derivar desde su catálogo independiente
   y rechaza resultados opacos que oculten un token terminal.
 
-- [ ] **TERM-002 — Rastrear obligaciones de consumo en todos los caminos
-  normales.**
+- [x] **TERM-002 — Rastrear obligaciones de consumo en todos los caminos
+  normales.** HIR mantiene owners `live`/`reserved` para todo estado
+  `Present` o `Potential`, incluidos genéricos sin `Discard`, compuestos,
+  temporales observados, slots capturados, patrones, closures y cursores de
+  iteración. Los handoffs se confirman solo al completar destino, llamada,
+  agregado o salida; un control anterior restaura el binding y conserva el
+  fallback del temporal ya construido. `match` y `for` materializan owners
+  ocultos para wildcards y préstamos terminales, la iteración intrínseca propia
+  desarma su cursor solo al agotarse y los slices almacenables exigen elementos
+  `Copy`. Toda salida normal pendiente produce `E1404`; una escritura que
+  perdería el owner anterior —incluidos captura, préstamo y `with`— produce
+  `E1408`. El admission verifier reconstruye registro y dataflow antes de MIR;
+  aún no existen guards, cleanup ni fallback ejecutable.
 
 - [ ] **TERM-003 — Implementar `defer` LIFO y desarme al registrar guards
   terminales.**
@@ -1979,15 +1990,42 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es TERM-002: utilizar el registro ya verificado para
-seguir cada token terminal por movimientos, compuestos, desestructuración,
-llamadas y transferencias de control, y producir `E1404` en toda salida normal
-que lo abandone. TERM-001 no añade destrucción implícita, no ejecuta fallback en
-salidas normales y no adelanta `defer`.
+La siguiente acción activa es TERM-003: bajar `defer` a un ledger LIFO explícito,
+registrar un único guard al reservar consumo terminal, retargetearlo únicamente
+en movimientos locales permitidos y demostrar que guard y fallback nunca están
+armados a la vez. TERM-003 no ejecuta todavía el fallback de pánico o cancelación
+reservado para TERM-004.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.48 — 2026-07-25
+
+- Se completa TERM-002 con un dataflow independiente de disponibilidad afín que
+  clasifica cada owner terminal como vivo o reservado y trata `Potential` de
+  forma conservadora. Un bound `Discard` elimina la obligación; un resultado
+  `Copy` diferido nunca autoriza duplicación.
+- La transferencia confirmada cubre argumentos, agregados, closures,
+  asignaciones, resultados, `return`, `fail`, `?`, `break` y `continue`. Un
+  binding se restaura si el destino no se completa; un temporal ya construido
+  conserva su owner y una observación normal que lo abandonaría emite `E1404`.
+- Patrones y bucles transfieren obligaciones por componente. Wildcards y
+  bindings `ref` de un consumo usan owners ocultos para distinguir salida normal
+  de divergencia; el cursor intrínseco propio se desarma solo al agotarse y un
+  cursor de trait conserva su contrato terminal.
+- Los slots capturados participan en joins y sobrescrituras sin convertirse en
+  una obligación nueva por invocación. `E1408` cubre reemplazos de locals,
+  capturas, destinos prestados y campos terminales mediante `with`; mover antes
+  y reponer completamente un `var` continúa siendo válido.
+- Un slice almacenable exige elementos `Copy`, cerrando la duplicación de
+  ownership, mientras `ref` y `mut` conservan su modelo de préstamo. HIR vuelve
+  a derivar registro y dataflow en admisión; MIR y bytecode preservan los moves
+  aceptados, sin inventar aún guards o cleanup. `E1404` queda como diagnóstico
+  único de salida terminal normal y elimina el solapamiento histórico `E1604`.
+- La puerta completa pasa con 518 tests —464 del compilador y 12 de la VM—,
+  `cargo fmt --check`, `cargo check`, `cargo build`, Clippy con warnings como
+  error, rustdoc con warnings como error y `git diff --check`.
 
 ### 0.47 — 2026-07-25
 

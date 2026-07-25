@@ -260,10 +260,14 @@ source order and rejects overlapping later argument access. Last-use and
 collection loan regions and confirmed borrowed transfers are explicit. A
 separate closed registry classifies direct terminal roots and derives structural
 `Absent`/`Potential`/`Present` status without treating every non-`Discard` value
-as the same resource; downstream terminal owners and cleanup remain later
-analyses. Synchronous closure invocation
-crosses this boundary with an explicit exact signature and selected call
-protocol.
+as the same resource. The availability state follows every non-absent terminal
+owner through bindings, compounds, closures, consuming patterns, calls,
+assignments, observed temporaries, loops, and control transfers. A normal path
+may leave a scope only after a visible consumption or confirmed handoff; panic
+paths deliberately keep the future fallback armed. Synchronous closure
+invocation crosses this boundary with an explicit exact signature and selected
+call protocol. Guard registration, executable cleanup, and unwind actions
+remain later analyses.
 
 Type IDs are request-local interned handles; only canonical recursive type
 strings are observable. Alias expansion, union normalization, nominal identity,
