@@ -55,6 +55,7 @@ pub enum HirError {
     TraitObligationLimit { file: FileId, offset: u32 },
     TraitTerminationInvariant { message: String },
     TraitSelectionInvariant { message: String },
+    TextInvariant { message: String },
     Invariant(HirInvariantError),
     Diagnostic(DiagnosticError),
     Package(PackageGraphError),
@@ -87,6 +88,9 @@ impl fmt::Display for HirError {
             }
             Self::TraitSelectionInvariant { message } => {
                 write!(formatter, "trait selection invariant failed: {message}")
+            }
+            Self::TextInvariant { message } => {
+                write!(formatter, "text invariant failed: {message}")
             }
             Self::Invariant(error) => error.fmt(formatter),
             Self::Diagnostic(error) => error.fmt(formatter),
@@ -1103,6 +1107,36 @@ impl HirPreludeTraitMethod {
             ))
             .map(Some)
     }
+
+    pub(crate) fn has_intrinsic_implementation(
+        self,
+        interner: &TypeInterner,
+        arguments: &[TypeId],
+    ) -> Result<bool, TypeError> {
+        Ok(match (self, arguments) {
+            (Self::Display, [target]) => matches!(
+                interner.kind(*target)?,
+                TypeKind::Scalar(
+                    ScalarType::Bool
+                        | ScalarType::Int
+                        | ScalarType::Float
+                        | ScalarType::Byte
+                        | ScalarType::Char
+                        | ScalarType::String
+                        | ScalarType::Unit
+                        | ScalarType::Int8
+                        | ScalarType::Int16
+                        | ScalarType::Int32
+                        | ScalarType::UInt8
+                        | ScalarType::UInt16
+                        | ScalarType::UInt32
+                        | ScalarType::UInt64
+                        | ScalarType::Float32
+                )
+            ),
+            (Self::Display, _) | (Self::IteratorNext, _) => false,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1692,7 +1726,7 @@ pub enum HirExpressionKind {
     Recovery,
     Literal(HirLiteral),
     InterpolatedString {
-        source: String,
+        segments: Vec<String>,
         values: Vec<HirExpressionId>,
     },
     Local(LocalId),

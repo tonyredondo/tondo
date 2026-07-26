@@ -3552,6 +3552,19 @@ impl Verifier<'_> {
                     return Err(rvalue_error(context));
                 }
             }
+            BytecodeRvalueKind::Interpolate { segments, values } => {
+                if !self.is_scalar(value.ty, BytecodeScalarType::String)
+                    || segments.len() != values.len() + 1
+                {
+                    return Err(rvalue_error(context));
+                }
+                for operand in values {
+                    self.verify_operand(function, operand, context)?;
+                    if !self.is_scalar(operand.ty, BytecodeScalarType::String) {
+                        return Err(rvalue_error(context));
+                    }
+                }
+            }
             BytecodeRvalueKind::Length(operand) => {
                 self.verify_operand(function, operand, context)?;
                 if !self.is_scalar(value.ty, BytecodeScalarType::Int)
@@ -4666,6 +4679,22 @@ impl Verifier<'_> {
                     context,
                 )?;
             }
+            BytecodeOperationKind::Display { argument } => {
+                self.verify_operand(function, &argument.value, context)?;
+                let BytecodeOperandKind::Loan(loan) = argument.value.kind else {
+                    return Err(operation_error(context));
+                };
+                let loan = self.loan(function, loan, context)?;
+                if deferred
+                    || argument.mode != BytecodeParameterMode::Ref
+                    || argument.target != BytecodeCallArgumentTarget::Receiver
+                    || loan.mode != BytecodeParameterMode::Ref
+                    || !self.is_intrinsic_display_type(argument.value.ty)
+                    || !self.is_scalar(operation.ty, BytecodeScalarType::String)
+                {
+                    return Err(operation_error(context));
+                }
+            }
             BytecodeOperationKind::ExplicitPanic { message } => {
                 self.verify_operand(function, message, context)?;
                 if !self.is_scalar(message.ty, BytecodeScalarType::String)
@@ -4911,6 +4940,24 @@ impl Verifier<'_> {
             return Err(operation_error(context));
         }
         Ok(())
+    }
+
+    fn is_intrinsic_display_type(&self, ty: BytecodeTypeId) -> bool {
+        let mut ty = ty;
+        let mut remaining = self.program.types.len();
+        loop {
+            if remaining == 0 {
+                return false;
+            }
+            remaining -= 1;
+            match self.program.ty(ty).map(|ty| &ty.kind) {
+                Some(BytecodeTypeKind::Scalar(scalar)) => {
+                    return *scalar != BytecodeScalarType::Never;
+                }
+                Some(BytecodeTypeKind::OpaqueResult { witness, .. }) => ty = *witness,
+                _ => return false,
+            }
+        }
     }
 
     fn closure_callable_for_type(
@@ -7803,6 +7850,7 @@ fn rvalue_contains_invalid_borrow(value: &BytecodeRvalue) -> bool {
             item, container, ..
         } => operand_is_loan(item) || operand_is_loan(container),
         BytecodeRvalueKind::MapRemove { key, .. } => escapes(key),
+        BytecodeRvalueKind::Interpolate { values, .. } => values.iter().any(escapes),
         BytecodeRvalueKind::Length(operand) | BytecodeRvalueKind::IteratorState(operand) => {
             operand_is_loan(operand)
         }
@@ -7854,6 +7902,9 @@ fn operation_contains_invalid_borrow(operation: &BytecodeOperation) -> bool {
                     }
                 })
         }
+        BytecodeOperationKind::Display { argument } => {
+            argument.mode != BytecodeParameterMode::Ref || !operand_is_loan(&argument.value)
+        }
         BytecodeOperationKind::Assert {
             condition,
             message_parts,
@@ -7898,6 +7949,7 @@ fn operation_operands(operation: &BytecodeOperation) -> Vec<&BytecodeOperand> {
             operands.push(callee);
             operands.extend(arguments.iter().map(|argument| &argument.value));
         }
+        BytecodeOperationKind::Display { argument } => operands.push(&argument.value),
         BytecodeOperationKind::Assert {
             condition,
             message_parts,
@@ -8596,24 +8648,24 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
         })),
     }
     events.extend(local.into_iter().map(LoanEvent::Local));
-    if let BytecodeTerminatorKind::Invoke {
-        operation:
-            BytecodeOperation {
-                kind: BytecodeOperationKind::Call { arguments, .. },
-                ..
-            },
-        ..
-    } = &block.terminator.kind
-    {
-        events.push(LoanEvent::Consume(
-            arguments
+    if let BytecodeTerminatorKind::Invoke { operation, .. } = &block.terminator.kind {
+        let consumed = match &operation.kind {
+            BytecodeOperationKind::Call { arguments, .. } => arguments
                 .iter()
                 .filter_map(|argument| match &argument.value.kind {
                     BytecodeOperandKind::Loan(loan) => Some(*loan),
                     _ => None,
                 })
                 .collect(),
-        ));
+            BytecodeOperationKind::Display { argument } => match argument.value.kind {
+                BytecodeOperandKind::Loan(loan) => vec![loan],
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        };
+        if !consumed.is_empty() {
+            events.push(LoanEvent::Consume(consumed));
+        }
     }
     events
 }
@@ -9587,6 +9639,11 @@ fn push_tag_rvalue(
                 push_tag_operand(function, value, events);
             }
         }
+        BytecodeRvalueKind::Interpolate { values, .. } => {
+            for value in values {
+                push_tag_operand(function, value, events);
+            }
+        }
         BytecodeRvalueKind::RecordUpdate { base, fields } => {
             push_tag_operand(function, base, events);
             for (_, value) in fields {
@@ -9652,6 +9709,9 @@ fn push_tag_operation(
             for argument in arguments {
                 push_tag_operand(function, &argument.value, events);
             }
+        }
+        BytecodeOperationKind::Display { argument } => {
+            push_tag_operand(function, &argument.value, events);
         }
         BytecodeOperationKind::ExplicitPanic { message } => {
             push_tag_operand(function, message, events);
@@ -9810,6 +9870,11 @@ fn push_rvalue_events(value: &BytecodeRvalue, events: &mut Vec<LocalEvent>) {
                 push_operand_events(value, events);
             }
         }
+        BytecodeRvalueKind::Interpolate { values, .. } => {
+            for value in values {
+                push_operand_events(value, events);
+            }
+        }
         BytecodeRvalueKind::RecordUpdate { base, fields } => {
             push_operand_events(base, events);
             for (_, value) in fields {
@@ -9871,6 +9936,9 @@ fn push_operation_events(operation: &BytecodeOperation, events: &mut Vec<LocalEv
             for argument in arguments {
                 push_operand_events(&argument.value, events);
             }
+        }
+        BytecodeOperationKind::Display { argument } => {
+            push_operand_events(&argument.value, events);
         }
         BytecodeOperationKind::ExplicitPanic { message } => {
             push_operand_events(message, events);

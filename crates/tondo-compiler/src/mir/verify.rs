@@ -712,6 +712,7 @@ fn mir_rvalue_contains_invalid_borrow(value: &MirRvalue) -> bool {
             item, container, ..
         } => mir_operand_is_loan(item) || mir_operand_is_loan(container),
         MirRvalueKind::MapRemove { key, .. } => escapes(key),
+        MirRvalueKind::Interpolate { values, .. } => values.iter().any(escapes),
         MirRvalueKind::Length(operand) => mir_operand_is_loan(operand),
         MirRvalueKind::IteratorState { source } => mir_operand_is_loan(source),
         MirRvalueKind::Binary { left, right, .. }
@@ -2020,6 +2021,24 @@ impl Verifier<'_> {
                         context,
                         "Map.remove receiver, key, result, or exclusive region is inconsistent",
                     ));
+                }
+            }
+            MirRvalueKind::Interpolate { segments, values } => {
+                let string = self.hir.interner().scalar(ScalarType::String);
+                if value.ty != string || segments.len() != values.len() + 1 {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "interpolation must produce String with one more segment than value",
+                    ));
+                }
+                for operand in values {
+                    self.verify_operand(function, operand, context)?;
+                    if operand.ty != string {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "interpolation received a non-String Display result",
+                        ));
+                    }
                 }
             }
             MirRvalueKind::Length(operand) => {
@@ -7196,6 +7215,11 @@ fn push_tag_rvalue(function: &MirFunction, value: &MirRvalue, events: &mut Vec<T
                 push_tag_operand(function, value, events);
             }
         }
+        MirRvalueKind::Interpolate { values, .. } => {
+            for value in values {
+                push_tag_operand(function, value, events);
+            }
+        }
         MirRvalueKind::RecordUpdate { base, fields } => {
             push_tag_operand(function, base, events);
             for (_, value) in fields {
@@ -7912,6 +7936,11 @@ fn push_rvalue_events(value: &MirRvalue, events: &mut Vec<LocalEvent>) {
             push_operand_events(right, events);
         }
         MirRvalueKind::Aggregate { values, .. } => {
+            for value in values {
+                push_operand_events(value, events);
+            }
+        }
+        MirRvalueKind::Interpolate { values, .. } => {
             for value in values {
                 push_operand_events(value, events);
             }

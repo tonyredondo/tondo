@@ -671,18 +671,22 @@ fn monomorphize(
                     &mut pending,
                     &mut dispatches,
                 )?,
-                FunctionReference::PreludeTrait { method, .. } => register_prelude_reference(
-                    hir,
-                    mir,
-                    &mut interner,
-                    PreludeTraitInstance { method, arguments },
-                    generic_limit,
-                    &mut generic_count,
-                    &mut callables,
-                    &mut functions,
-                    &mut pending,
-                    &mut prelude_dispatches,
-                )?,
+                FunctionReference::PreludeTrait { method, .. } => {
+                    if !has_intrinsic_prelude_dispatch(hir, &mut interner, method, &arguments)? {
+                        register_prelude_reference(
+                            hir,
+                            mir,
+                            &mut interner,
+                            PreludeTraitInstance { method, arguments },
+                            generic_limit,
+                            &mut generic_count,
+                            &mut callables,
+                            &mut functions,
+                            &mut pending,
+                            &mut prelude_dispatches,
+                        )?;
+                    }
+                }
                 FunctionReference::Closure { closure, .. } => register_instance(
                     hir,
                     mir,
@@ -1878,6 +1882,11 @@ fn collect_rvalue_types(value: &MirRvalue, types: &mut BTreeSet<TypeId>) {
                 collect_operand_types(value, types);
             }
         }
+        MirRvalueKind::Interpolate { values, .. } => {
+            for value in values {
+                collect_operand_types(value, types);
+            }
+        }
         MirRvalueKind::RecordUpdate { base, fields } => {
             collect_operand_types(base, types);
             for (_, value) in fields {
@@ -2098,6 +2107,11 @@ fn collect_rvalue_function_references(value: &MirRvalue, references: &mut Vec<Fu
                     arguments: arguments.clone(),
                 });
             }
+            for value in values {
+                collect_operand_function_references(value, references);
+            }
+        }
+        MirRvalueKind::Interpolate { values, .. } => {
             for value in values {
                 collect_operand_function_references(value, references);
             }
@@ -3355,6 +3369,13 @@ fn lower_rvalue(
             map: lower_place(map, context, type_map)?,
             key: operand(key)?,
         },
+        MirRvalueKind::Interpolate { segments, values } => bc::BytecodeRvalueKind::Interpolate {
+            segments: segments.clone(),
+            values: values
+                .iter()
+                .map(operand)
+                .collect::<Result<_, BytecodeError>>()?,
+        },
         MirRvalueKind::Length(value) => bc::BytecodeRvalueKind::Length(operand(value)?),
         MirRvalueKind::IteratorState { source } => {
             bc::BytecodeRvalueKind::IteratorState(operand(source)?)
@@ -3421,6 +3442,12 @@ fn lower_operation(
     context: &FunctionLoweringContext<'_>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeOperation, BytecodeError> {
+    if let Some(kind) = lower_intrinsic_display_call(operation, deferred, context, type_map)? {
+        return Ok(bc::BytecodeOperation {
+            ty: mapped_catalog_id(operation.ty(), type_map, context.catalog)?,
+            kind,
+        });
+    }
     let operand = |value: &MirOperand| lower_operand(value, context, type_map);
     let kind = match operation.kind() {
         MirOperationKind::CheckedPrefix {
@@ -3548,6 +3575,74 @@ fn lower_operation(
         ty: mapped_catalog_id(operation.ty(), type_map, context.catalog)?,
         kind,
     })
+}
+
+fn lower_intrinsic_display_call(
+    operation: &MirOperation,
+    deferred: bool,
+    context: &FunctionLoweringContext<'_>,
+    type_map: &BTreeMap<TypeId, TypeId>,
+) -> Result<Option<bc::BytecodeOperationKind>, BytecodeError> {
+    let MirOperationKind::Call {
+        callee, arguments, ..
+    } = operation.kind()
+    else {
+        return Ok(None);
+    };
+    let MirOperandKind::PreludeTraitFunction {
+        method: crate::hir::HirPreludeTraitMethod::Display,
+        arguments: display_arguments,
+    } = callee.kind()
+    else {
+        return Ok(None);
+    };
+    let concrete = display_arguments
+        .iter()
+        .map(|argument| mapped_type(*argument, type_map))
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut interner = context.hir.interner().clone();
+    if !has_intrinsic_prelude_dispatch(
+        context.hir,
+        &mut interner,
+        crate::hir::HirPreludeTraitMethod::Display,
+        &concrete,
+    )? {
+        return Ok(None);
+    }
+    if deferred {
+        return Err(BytecodeError::construction(
+            "intrinsic Display lowering",
+            "a String-returning Display call cannot be a deferred Unit action",
+        ));
+    }
+    let [argument] = arguments.as_slice() else {
+        return Err(BytecodeError::construction(
+            "intrinsic Display lowering",
+            "Display call does not contain exactly one receiver argument",
+        ));
+    };
+    Ok(Some(bc::BytecodeOperationKind::Display {
+        argument: lower_call_argument(argument, context, type_map)?,
+    }))
+}
+
+fn has_intrinsic_prelude_dispatch(
+    hir: &HirProgram,
+    interner: &mut TypeInterner,
+    method: crate::hir::HirPreludeTraitMethod,
+    arguments: &[TypeId],
+) -> Result<bool, BytecodeError> {
+    let mut concrete = arguments.to_vec();
+    if matches!(method, crate::hir::HirPreludeTraitMethod::Display)
+        && let [target] = concrete.as_mut_slice()
+    {
+        *target = concrete_trait_target(hir, interner, *target)?;
+    }
+    method
+        .has_intrinsic_implementation(interner, &concrete)
+        .map_err(|error| {
+            BytecodeError::construction("intrinsic prelude dispatch", error.to_string())
+        })
 }
 
 fn normalized_call_protocol(
@@ -5065,6 +5160,126 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
             !callable.name.contains("::type::Display::display")
                 && !callable.name.contains("::type::Iterator::next")
         }));
+    }
+
+    #[test]
+    fn interpolation_uses_static_display_and_survives_gc_pressure() {
+        let source = r#"
+type Label = { text: String }
+
+impl Display for Label {
+    fn display(self): String { self.text }
+}
+
+fn render[T: Discard + Display](value: T): String {
+    "<{value}>"
+}
+
+fn hidden(): impl Display + Discard {
+    9
+}
+
+fn execute(): String {
+    let label = Label { text: "Tondo" }
+    "{render(42)}:{render(label)}:{render(hidden())}"
+}
+"#;
+        let program = lowered(source);
+        let entry = function_id(&program, "execute");
+        assert!(program.functions.iter().any(|function| {
+            function.blocks.iter().any(|block| {
+                matches!(
+                    &block.terminator.kind,
+                    bc::BytecodeTerminatorKind::Invoke {
+                        operation: bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Display { .. },
+                            ..
+                        },
+                        ..
+                    }
+                )
+            })
+        }));
+        assert!(program.functions.iter().any(|function| {
+            function
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .any(|instruction| {
+                    matches!(
+                        &instruction.kind,
+                        bc::BytecodeInstructionKind::Store {
+                            value: bc::BytecodeRvalue {
+                                kind: bc::BytecodeRvalueKind::Interpolate { .. },
+                                ..
+                            },
+                            ..
+                        }
+                    )
+                })
+        }));
+        for limits in [
+            VmLimits::default(),
+            VmLimits {
+                initial_gc_threshold: 1,
+                ..VmLimits::default()
+            },
+        ] {
+            let mut host = RejectingHost;
+            let result = execute_with_limits(&program, entry, &mut host, limits)
+                .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
+            assert_eq!(
+                result.outcome,
+                VmOutcome::Returned(RuntimeValue::String("<42>:<Tondo>:<9>".into()))
+            );
+        }
+    }
+
+    #[test]
+    fn bytecode_verifier_rejects_forged_interpolation_and_display_shapes() {
+        let source = "fn execute(value: Int): String { \"value={value}\" }\n";
+        let program = lowered(source);
+
+        let mut interpolation = program.clone();
+        let value = interpolation
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .flat_map(|block| &mut block.instructions)
+            .find_map(|instruction| match &mut instruction.kind {
+                bc::BytecodeInstructionKind::Store {
+                    value:
+                        bc::BytecodeRvalue {
+                            kind: bc::BytecodeRvalueKind::Interpolate { segments, .. },
+                            ..
+                        },
+                    ..
+                } => Some(segments),
+                _ => None,
+            })
+            .expect("interpolation must lower to one verified rvalue");
+        value.clear();
+        assert!(bc::verify_bytecode(&interpolation).is_err());
+
+        let mut display = program;
+        let argument = display
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Display { argument },
+                            ..
+                        },
+                    ..
+                } => Some(argument),
+                _ => None,
+            })
+            .expect("scalar Display must lower to one verified intrinsic operation");
+        argument.target = bc::BytecodeCallArgumentTarget::Fixed(0);
+        assert!(bc::verify_bytecode(&display).is_err());
     }
 
     #[test]

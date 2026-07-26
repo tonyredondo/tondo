@@ -1355,9 +1355,11 @@ impl Parser<'_> {
             if self.at(TokenKind::InterpolationStart) {
                 self.start(SyntaxKind::Interpolation)?;
                 self.bump();
+                self.eat_newlines();
                 if !self.at(TokenKind::InterpolationEnd) {
                     self.parse_expression()?;
                 }
+                self.eat_newlines();
                 self.expect(TokenKind::InterpolationEnd)?;
                 self.finish();
             } else {
@@ -2940,17 +2942,21 @@ fn after(): Int {
 
     #[test]
     fn interpolation_uses_the_ordinary_expression_parser() {
-        let source = b"fn message(user: User): String {\n    \"hello {user.name + suffix()}\"\n}\n";
-        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
-        assert!(parsed.diagnostics().is_empty(), "{:?}", codes(&parsed));
-        assert!(
-            parsed
-                .cst()
-                .nodes()
-                .iter()
-                .any(|node| node.kind() == SyntaxKind::Interpolation)
-        );
-        assert_lossless(&sources, file, &parsed, source);
+        for source in [
+            &b"fn message(user: User): String {\n    \"hello {user.name + suffix()}\"\n}\n"[..],
+            &b"fn answer(): String {\n    \"\"\"\n        answer: {\n            40 + 2\n        }\n        \"\"\"\n}\n"[..],
+        ] {
+            let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+            assert!(parsed.diagnostics().is_empty(), "{:?}", codes(&parsed));
+            assert!(
+                parsed
+                    .cst()
+                    .nodes()
+                    .iter()
+                    .any(|node| node.kind() == SyntaxKind::Interpolation)
+            );
+            assert_lossless(&sources, file, &parsed, source);
+        }
     }
 
     #[test]

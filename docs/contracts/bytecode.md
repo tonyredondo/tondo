@@ -21,7 +21,7 @@ arithmetic, ARRAY-007 named concatenation/repetition, ITER-001/002 static user
 iterators plus all four intrinsic iteration forms, and the M3 VM admission
 path implemented, plus TEXT-001 immutable UTF-8 strings and TEXT-004 distinct
 text and byte domains, and TEXT-002 Unicode-scalar String length, indexing, and
-slicing
+slicing, plus TEXT-003 intrinsic/static Display dispatch and interpolation
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -515,6 +515,16 @@ every String slice inside a place projection: text is immutable and these
 operations always materialize values. The internal `Length` rvalue accepts only
 `Array` or `String`, returns `Int`, and delegates the concrete count to the
 verified runtime shape.
+
+Monomorphization resolves user `Display` calls to the same concrete callable
+path as every other open prelude trait. A scalar or `String` specialization is
+instead closed to `BytecodeOperationKind::Display`, which consumes exactly one
+active call-local `ref` loan and returns `String`; there is no callable lookup,
+vtable, or runtime type pack. `BytecodeRvalueKind::Interpolate` accepts only
+`String` operands and exactly one more decoded segment than operand. The
+verifier rederives both contracts and accounts for the intrinsic call's loan
+consumption, so forged modes, associations, types, arities, or loan lifetimes
+cannot reach execution.
 
 `BytecodeOperationKind::ArraySequence` preserves the closed `Concat`/`Repeat`
 tag and both ordered operands. Its result and borrowed receiver must be the

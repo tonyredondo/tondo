@@ -476,6 +476,24 @@ impl<'a> FunctionBuilder<'a> {
                 self.assign(block, span, destination, value)?;
                 Ok(Some(block))
             }
+            HirExpressionKind::InterpolatedString { segments, values } => {
+                let Some((block, values)) = self.lower_values(values, block)? else {
+                    return Ok(None);
+                };
+                self.assign(
+                    block,
+                    span,
+                    destination,
+                    MirRvalue {
+                        ty: expression.ty(),
+                        kind: MirRvalueKind::Interpolate {
+                            segments: segments.clone(),
+                            values,
+                        },
+                    },
+                )?;
+                Ok(Some(block))
+            }
             HirExpressionKind::Local(local) => {
                 let place = self.source_place(*local, span)?;
                 let value = self.transfer_place(place, span)?;
@@ -1390,12 +1408,10 @@ impl<'a> FunctionBuilder<'a> {
                 )?;
                 Ok(None)
             }
-            HirExpressionKind::Recovery | HirExpressionKind::InterpolatedString { .. } => {
-                Err(MirError::Construction {
-                    span,
-                    message: "non-executable expression crossed the verified HIR boundary".into(),
-                })
-            }
+            HirExpressionKind::Recovery => Err(MirError::Construction {
+                span,
+                message: "non-executable expression crossed the verified HIR boundary".into(),
+            }),
         }
     }
 
@@ -5628,6 +5644,11 @@ fn collect_rvalue_region_uses(
                 collect_operand_region_uses(operand, loans, output);
             }
         }
+        MirRvalueKind::Interpolate { values, .. } => {
+            for operand in values {
+                collect_operand_region_uses(operand, loans, output);
+            }
+        }
         MirRvalueKind::RecordUpdate { base, fields } => {
             collect_operand_region_uses(base, loans, output);
             for (_, operand) in fields {
@@ -5821,6 +5842,11 @@ fn rvalue_move_places(value: &MirRvalue) -> Vec<MirPlace> {
             collect(right);
         }
         MirRvalueKind::Aggregate { values, .. } => {
+            for operand in values {
+                collect(operand);
+            }
+        }
+        MirRvalueKind::Interpolate { values, .. } => {
             for operand in values {
                 collect(operand);
             }
@@ -9114,6 +9140,34 @@ mod tests {
 
         let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
         assert!(error.message().contains("specialization arity"));
+    }
+
+    #[test]
+    fn interpolation_shape_is_rederived_before_bytecode() {
+        let source = "fn render(value: Int): String { \"value={value}\" }\n";
+        let (resolved, hir) = checked(source);
+        let mut mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let value = mir
+            .functions
+            .values_mut()
+            .flat_map(|function| &mut function.blocks)
+            .flat_map(|block| &mut block.statements)
+            .find_map(|statement| {
+                let MirStatementKind::Assign { value, .. } = &mut statement.kind else {
+                    return None;
+                };
+                let MirRvalueKind::Interpolate { segments, .. } = &mut value.kind else {
+                    return None;
+                };
+                Some(segments)
+            })
+            .expect("the checked string lowers to one interpolation rvalue");
+        value.clear();
+
+        let error = verify_mir(&resolved, &hir, &mir).unwrap_err();
+        assert!(error.message().contains("one more segment"));
     }
 
     #[test]

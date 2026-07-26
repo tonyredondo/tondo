@@ -3537,18 +3537,6 @@ impl<'a> ExpressionChecker<'a> {
             .child_nodes()
             .filter(|child| child.kind() == SyntaxKind::Interpolation)
             .collect::<Vec<_>>();
-        if !interpolations.is_empty() {
-            self.complete = false;
-        }
-        let mut values = Vec::with_capacity(interpolations.len());
-        for interpolation in interpolations {
-            if let Some(expression) = interpolation
-                .child_nodes()
-                .find(|child| AstExpression::cast(*child).is_some())
-            {
-                values.push(self.check_expression(file, expression, None, context)?);
-            }
-        }
         let mut significant = node
             .descendant_tokens()
             .filter(|token| !token.kind().is_trivia());
@@ -3558,6 +3546,21 @@ impl<'a> ExpressionChecker<'a> {
         let last = significant.last().unwrap_or(first);
         let literal_range = TextRange::new(first.range().start(), last.range().end())?;
         let source = self.source_text(file, literal_range)?.to_owned();
+        let mut values = Vec::with_capacity(interpolations.len());
+        for interpolation in &interpolations {
+            if let Some(expression) = interpolation
+                .child_nodes()
+                .find(|child| AstExpression::cast(*child).is_some())
+            {
+                let value = self.check_expression(file, expression, None, context)?;
+                values.push(self.display_interpolation_value(value, context)?);
+            }
+        }
+        let segments = if values.is_empty() {
+            Vec::new()
+        } else {
+            self.decode_interpolation_segments(file, first, last, &interpolations)?
+        };
         self.allocate_expression(HirExpression {
             span: self.sources.span(file, node.range())?,
             ty: self.program.interner.scalar(ScalarType::String),
@@ -3565,9 +3568,102 @@ impl<'a> ExpressionChecker<'a> {
             kind: if values.is_empty() {
                 HirExpressionKind::Literal(HirLiteral::String(source))
             } else {
-                HirExpressionKind::InterpolatedString { source, values }
+                HirExpressionKind::InterpolatedString { segments, values }
             },
         })
+    }
+
+    fn display_interpolation_value(
+        &mut self,
+        value: HirExpressionId,
+        context: &BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        let ty = self.expression_type(value);
+        if matches!(
+            self.program.interner.kind(ty)?,
+            TypeKind::Error | TypeKind::Scalar(ScalarType::Never)
+        ) {
+            return Ok(value);
+        }
+        let span = self.program.expressions[value.0 as usize].span;
+        let method = HirPreludeTraitMethod::Display;
+        let arguments = vec![ty];
+        let query = self.prelude_trait_query(method, &arguments)?;
+        self.require_trait_query(span, query, context, TraitRequirementOrigin::Direct)?;
+        self.check_loan_argument(value, ParameterMode::Ref, context)?;
+        let signature = method
+            .function_type(&mut self.program.interner, &arguments)?
+            .ok_or_else(|| HirError::TextInvariant {
+                message: "Display interpolation has an invalid intrinsic arity".into(),
+            })?;
+        let callee = self.allocate_expression(HirExpression {
+            span,
+            ty: signature,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::PreludeTraitFunction { method, arguments },
+        })?;
+        self.allocate_expression(HirExpression {
+            span,
+            ty: self.program.interner.scalar(ScalarType::String),
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Call {
+                callee,
+                arguments: vec![HirCallArgument {
+                    label: None,
+                    mode: ParameterMode::Ref,
+                    spread: false,
+                    target: HirCallArgumentTarget::Receiver,
+                    value,
+                }],
+                signature,
+                protocol: HirCallProtocol::Call,
+            },
+        })
+    }
+
+    fn decode_interpolation_segments(
+        &self,
+        file: FileId,
+        first: SyntaxTokenRef<'_>,
+        last: SyntaxTokenRef<'_>,
+        interpolations: &[SyntaxNodeRef<'_>],
+    ) -> Result<Vec<String>, HirError> {
+        let body_range = TextRange::new(first.range().end(), last.range().start())?;
+        let body = self.source_text(file, body_range)?;
+        let body_start = body_range.start();
+        let mut masked = String::with_capacity(body.len());
+        let mut cursor = body_start;
+        for interpolation in interpolations {
+            let range = interpolation.range();
+            if range.start() < cursor || range.end() > body_range.end() {
+                return Err(HirError::TextInvariant {
+                    message: "interpolation range is outside its enclosing string".into(),
+                });
+            }
+            masked.push_str(self.source_text(file, TextRange::new(cursor, range.start())?)?);
+            masked.push('\0');
+            cursor = range.end();
+        }
+        masked.push_str(self.source_text(file, TextRange::new(cursor, body_range.end())?)?);
+        let masked = if first.kind() == TokenKind::MultilineStringStart {
+            normalize_multiline_string(&masked)
+        } else {
+            masked
+        };
+        let segments = masked
+            .split('\0')
+            .map(|segment| {
+                decode_escaped_text(segment, true).ok_or_else(|| HirError::TextInvariant {
+                    message: "lexer-admitted interpolation segment has invalid escapes".into(),
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if segments.len() != interpolations.len() + 1 {
+            return Err(HirError::TextInvariant {
+                message: "interpolation segment count does not match its expressions".into(),
+            });
+        }
+        Ok(segments)
     }
 
     fn check_path(
@@ -9542,6 +9638,17 @@ impl<'a> ExpressionChecker<'a> {
             };
             memo.insert(query.clone(), status);
             return Ok(status);
+        }
+
+        if matches!(
+            query.constructor(),
+            HirTraitConstructor::Prelude(name) if name.as_str() == "Display"
+        ) && query.arguments().is_empty()
+            && HirPreludeTraitMethod::Display
+                .has_intrinsic_implementation(&self.program.interner, &[query.target()])?
+        {
+            memo.insert(query.clone(), TraitProofStatus::Satisfied);
+            return Ok(TraitProofStatus::Satisfied);
         }
 
         if let Some(status) = self.concrete_call_trait_status(query)? {

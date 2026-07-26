@@ -20,7 +20,8 @@ ARRAY-002 typed array indexing, ARRAY-003 typed slicing, ARRAY-004 logical slice
 ownership, ARRAY-005 fixed versus structural array mutation, ARRAY-006 closed
 lifted arithmetic, ARRAY-007 named concatenation/repetition, and ITER-001/002
 static user iterators plus all four intrinsic iteration forms, plus TEXT-002
-Unicode-scalar String length, indexing, and slicing implemented
+Unicode-scalar String length, indexing, and slicing, and TEXT-003 decoded
+interpolation with static `Display` implemented
 
 ## Boundary
 
@@ -81,8 +82,8 @@ iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   signatures, synchronous-safe closure invocation, and exact closure-to-`fn`
   coercion. Concrete external implementations, effectful invocation, `await`,
   `spawn`, unsafe-region proofs and raw
-  operations, async liveness/`Send` analysis, string interpolation through
-  `Display`, concrete suspension nodes, confirmed borrowed replacement, closed
+  operations, async liveness/`Send` analysis, concrete suspension nodes,
+  confirmed borrowed replacement, closed
   terminal fallback actions, and cancellation cleanup remain explicit later
   boundaries rather than receiving provisional semantics. Persistent
   source-visible partial owner states are deliberately absent from Tondo 0.1;
@@ -602,6 +603,18 @@ String slicing uses the identical optional `Int` shape and omission rules, but
 its result is an immutable `String` value rather than a projected region.
 Availability proves that result `Copy` directly, so admitting text does not
 weaken the existing affine-element restriction on stored array slices.
+
+An interpolated string retains one decoded UTF-8 segment before, between, and
+after its source-ordered holes. Dedentation of multiline text happens before
+escape and doubled-brace decoding. Every completing hole is immediately wrapped
+in the statically selected `Display.display(ref T): String` call; a `Never`
+hole instead makes the enclosing expression diverge. Scalar and `String`
+queries use the closed language-owned implementation, while every user type
+must select one coherent explicit `impl Display`. The call-local shared loan
+keeps a temporary alive through conversion and prevents interpolation from
+moving an affine value. HIR contains neither a trait object nor reflection, and
+its verifier independently requires exactly one more segment than converted
+`String` value.
 
 `Array.concat` and `Array.repeat` lower directly to one
 `HirExpressionKind::ArraySequence`, not to an unresolved library call or a

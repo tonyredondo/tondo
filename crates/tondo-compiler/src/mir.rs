@@ -506,6 +506,10 @@ pub enum MirRvalueKind {
         map: MirPlace,
         key: MirOperand,
     },
+    Interpolate {
+        segments: Vec<String>,
+        values: Vec<MirOperand>,
+    },
     Length(MirOperand),
     IteratorState {
         source: MirOperand,

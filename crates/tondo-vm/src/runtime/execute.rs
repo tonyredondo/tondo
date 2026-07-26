@@ -2654,6 +2654,10 @@ impl Engine<'_, '_> {
                 engine.retain_temporary(&key);
                 engine.map_remove(rvalue.ty, map, &key)
             }),
+            BytecodeRvalueKind::Interpolate { segments, values } => {
+                let values = self.evaluate_operands(frame, values)?;
+                self.interpolate(rvalue.ty, segments, &values)
+            }
             BytecodeRvalueKind::Length(value) => {
                 let value = self.evaluate_operand(frame, value)?;
                 let length = i128::try_from(self.length(&value)?)
@@ -2838,6 +2842,23 @@ impl Engine<'_, '_> {
         match self.program.ty(ty).map(|ty| &ty.kind) {
             Some(BytecodeTypeKind::Scalar(scalar)) => Ok(*scalar),
             _ => Err(VmError::invariant("verified scalar type is not scalar")),
+        }
+    }
+
+    fn represented_scalar(&self, mut ty: BytecodeTypeId) -> Result<BytecodeScalarType, VmError> {
+        let mut remaining = self.program.types.len();
+        loop {
+            if remaining == 0 {
+                return Err(VmError::invariant(
+                    "verified scalar representation contains an opaque cycle",
+                ));
+            }
+            remaining -= 1;
+            match self.program.ty(ty).map(|ty| &ty.kind) {
+                Some(BytecodeTypeKind::Scalar(scalar)) => return Ok(*scalar),
+                Some(BytecodeTypeKind::OpaqueResult { witness, .. }) => ty = *witness,
+                _ => return Err(VmError::invariant("verified scalar type is not scalar")),
+            }
         }
     }
 
@@ -4490,6 +4511,9 @@ impl Engine<'_, '_> {
                 let callee = self.evaluate_operand(frame, callee)?;
                 self.prepare_call(frame, callee, arguments)
             }
+            BytecodeOperationKind::Display { argument } => Ok(OperationResult::Value(
+                self.intrinsic_display(frame, operation.ty, argument)?,
+            )),
             BytecodeOperationKind::ExplicitPanic { message } => {
                 let message = self.evaluate_operand(frame, message)?;
                 Ok(OperationResult::Panic(
@@ -4543,6 +4567,143 @@ impl Engine<'_, '_> {
                 }
             }
         }
+    }
+
+    fn interpolate(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        segments: &[String],
+        values: &[Value],
+    ) -> Result<Value, VmError> {
+        if segments.len() != values.len() + 1 {
+            return Err(VmError::invariant(
+                "interpolation segment and value counts disagree",
+            ));
+        }
+        let mut byte_length = segments
+            .iter()
+            .try_fold(0usize, |total, segment| total.checked_add(segment.len()));
+        for value in values {
+            let value_length = self.string_value(value)?.len();
+            byte_length = byte_length.and_then(|total| total.checked_add(value_length));
+        }
+        let byte_length = byte_length.ok_or(VmError::ResourceLimit {
+            resource: "String interpolation bytes",
+            limit: self.limits.max_heap_bytes,
+        })?;
+        let requested = u64::try_from(byte_length)
+            .unwrap_or(u64::MAX)
+            .saturating_add(std::mem::size_of::<HeapObject>() as u64);
+        if requested > self.limits.max_heap_bytes {
+            return Err(VmError::ResourceLimit {
+                resource: "String interpolation bytes",
+                limit: self.limits.max_heap_bytes,
+            });
+        }
+        let mut output = String::new();
+        output
+            .try_reserve_exact(byte_length)
+            .map_err(|_| VmError::ResourceLimit {
+                resource: "String interpolation bytes",
+                limit: self.limits.max_heap_bytes,
+            })?;
+        for (index, value) in values.iter().enumerate() {
+            output.push_str(&segments[index]);
+            output.push_str(self.string_value(value)?);
+        }
+        output.push_str(
+            segments
+                .last()
+                .expect("verified interpolation has a trailing segment"),
+        );
+        if !collection_length_fits_int(output.chars().count()) {
+            return Err(VmError::ResourceLimit {
+                resource: "String interpolation scalar length",
+                limit: i64::MAX as u64,
+            });
+        }
+        self.allocate(result_ty, HeapObject::String(output), values)
+    }
+
+    fn intrinsic_display(
+        &mut self,
+        frame: usize,
+        result_ty: BytecodeTypeId,
+        argument: &BytecodeCallArgument,
+    ) -> Result<Value, VmError> {
+        let BytecodeOperandKind::Loan(id) = argument.value.kind else {
+            return Err(VmError::invariant(
+                "intrinsic Display argument is not a loan",
+            ));
+        };
+        let loan = self
+            .program
+            .function(self.frames[frame].function)
+            .and_then(|function| function.loans.get(id.index() as usize))
+            .cloned()
+            .ok_or_else(|| VmError::invariant("intrinsic Display loan is invalid"))?;
+        if loan.kind != BytecodeLoanKind::CallLocal
+            || loan.mode != BytecodeParameterMode::Ref
+            || argument.mode != BytecodeParameterMode::Ref
+            || argument.target != BytecodeCallArgumentTarget::Receiver
+            || loan.place.ty != argument.value.ty
+        {
+            return Err(VmError::invariant(
+                "intrinsic Display loan contract is inconsistent",
+            ));
+        }
+        self.validate_source_regions(frame, &loan.place, true)?;
+        let reservation = self.frames[frame]
+            .loans
+            .get(id.index() as usize)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| VmError::invariant("intrinsic Display loan is inactive"))?;
+        if reservation.mode != BytecodeParameterMode::Ref {
+            return Err(VmError::invariant(
+                "intrinsic Display reservation is not shared",
+            ));
+        }
+        let value = self.read_place(frame, &loan.place)?;
+        self.frames[frame].loans[id.index() as usize] = None;
+        self.display_scalar(result_ty, argument.value.ty, value)
+    }
+
+    fn display_scalar(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        input_ty: BytecodeTypeId,
+        value: Value,
+    ) -> Result<Value, VmError> {
+        let scalar = self.represented_scalar(input_ty)?;
+        if scalar == BytecodeScalarType::String {
+            self.string_value(&value)?;
+            return self.copy_value(&value);
+        }
+        let text = match (scalar, value) {
+            (BytecodeScalarType::Unit, Value::Unit) => "()".to_owned(),
+            (BytecodeScalarType::Bool, Value::Bool(value)) => value.to_string(),
+            (
+                BytecodeScalarType::Int
+                | BytecodeScalarType::Int8
+                | BytecodeScalarType::Int16
+                | BytecodeScalarType::Int32
+                | BytecodeScalarType::UInt8
+                | BytecodeScalarType::UInt16
+                | BytecodeScalarType::UInt32
+                | BytecodeScalarType::UInt64,
+                Value::Integer(value),
+            ) => value.to_string(),
+            (BytecodeScalarType::Float, Value::Float(value)) => value.to_string(),
+            (BytecodeScalarType::Float32, Value::Float(value)) => (value as f32).to_string(),
+            (BytecodeScalarType::Byte, Value::Byte(value)) => value.to_string(),
+            (BytecodeScalarType::Char, Value::Char(value)) => value.to_string(),
+            _ => {
+                return Err(VmError::invariant(
+                    "intrinsic Display value does not match its scalar type",
+                ));
+            }
+        };
+        self.allocate(result_ty, HeapObject::String(text), &[])
     }
 
     fn checked_prefix(

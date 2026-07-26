@@ -800,6 +800,10 @@ pub enum BytecodeRvalueKind {
         map: BytecodePlace,
         key: BytecodeOperand,
     },
+    Interpolate {
+        segments: Vec<String>,
+        values: Vec<BytecodeOperand>,
+    },
     Length(BytecodeOperand),
     IteratorState(BytecodeOperand),
 }
@@ -974,6 +978,9 @@ pub enum BytecodeOperationKind {
         arguments: Vec<BytecodeCallArgument>,
         signature: BytecodeTypeId,
         protocol: BytecodeCallProtocol,
+    },
+    Display {
+        argument: BytecodeCallArgument,
     },
     ExplicitPanic {
         message: BytecodeOperand,

@@ -28,7 +28,8 @@ intrinsic widths, and NUM-002/005 closed numeric conversion with stable
 recoverable errors, NUM-003 fixed-width integer operators, and NUM-004 strict
 IEEE arithmetic at each declared precision, plus TEXT-001 immutable UTF-8
 strings and TEXT-004 distinct text and byte domains, and TEXT-002
-Unicode-scalar String length, indexing, and slicing
+Unicode-scalar String length, indexing, and slicing, plus TEXT-003 static
+Display execution and ordered interpolation
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -106,6 +107,21 @@ selected scalar sequence.
 types with no implicit conversion. The language core has no intrinsic `Bytes`
 type; that name and any explicit text encoding or decoding API belong to the
 future standard library.
+
+Intrinsic scalar `Display` consumes the same verified shared call loan as an
+ordinary implementation. `String` returns its immutable logical copy; `Unit`
+uses `()`, booleans use `true`/`false`, integers and `Byte` use decimal,
+`Char` emits its scalar, and each float uses the shortest spelling for its
+declared IEEE precision. These spellings are the deterministic bootstrap
+formatting bridge; the public formatting API and its final contract belong to
+the core standard-library specification.
+
+Interpolation evaluates all already-converted `String` operands in source
+order, preflights the total UTF-8 byte length, reserves fallibly, validates the
+final Unicode-scalar length, then allocates one valid UTF-8 result. Every
+operand remains a precise temporary GC root through publication. Segment/value
+arity and types were independently verified, and allocation failure is a
+resource error rather than a partial string or language panic.
 
 An array object owns one ordered vector of optional value slots. The vector
 length is the array's runtime length; it is not duplicated in bytecode type

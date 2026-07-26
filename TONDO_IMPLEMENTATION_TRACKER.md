@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.74
+**Versión del tracker:** 0.75
 
 **Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** TEXT-001, TEXT-002 y TEXT-004 cerrados; implementar
-`Char`, escapes e interpolación estática mediante `Display` (TEXT-003).
+**Objetivo inmediato:** familia TEXT cerrada; la siguiente unidad de trabajo,
+cuando se reanude, es el variádico homogéneo final de VARIADIC-001.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1684,8 +1684,14 @@ lifetimes escritos por el usuario.
   normalización negativa, clipping, extremos y pánicos de arrays sin exponer
   offsets UTF-8 ni lugares mutables.
 
-- [ ] **TEXT-003 — Implementar `Char`, escapes e interpolación mediante
-  `Display`.**
+- [x] **TEXT-003 — Implementar `Char`, escapes e interpolación mediante
+  `Display`.** Los segmentos normales y multilínea se dedentan y decodifican
+  una sola vez; los huecos se evalúan de izquierda a derecha y se convierten
+  mediante selección estática. Escalares y `String` usan el intrinsic cerrado
+  del bootstrap; los tipos de usuario llaman su `impl Display` concreto con un
+  préstamo compartido que conserva temporales y valores afines. El formato
+  compuesto de colecciones continúa perteneciendo a la futura core stdlib,
+  como exige la separación normativa entre lenguaje y librería.
 
 - [x] **TEXT-004 — Separar claramente texto y `Byte`; `Bytes` permanece en la
   stdlib.** `String`, `Char`, `Byte` y `Array[Byte]` conservan identidades
@@ -2155,12 +2161,31 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-NUM-001 a NUM-005 y TEXT-001/TEXT-002/TEXT-004 quedan cerrados. La siguiente
-acción es TEXT-003: `Char`, escapes e interpolación estática mediante `Display`.
+NUM-001 a NUM-005 y TEXT-001 a TEXT-004 quedan cerrados. La siguiente acción,
+cuando el trabajo se reanude, es VARIADIC-001; esta entrega se detiene antes de
+iniciarla.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.75 — 2026-07-26
+
+- Se cierra TEXT-003 con interpolación normal y multilínea ejecutable. Los
+  segmentos se dedentan antes de decodificar escapes y llaves duplicadas, y
+  cada hueco completa su conversión `Display` antes de evaluar el siguiente.
+- `Display.display(ref T): String` conserva selección estática: escalares y
+  `String` cierran a una operación intrínseca de bytecode; los tipos de usuario
+  monomorfizan hacia su implementación concreta, sin trait objects, reflection
+  ni type packs.
+- HIR, MIR y bytecode verifican tipos, aridad de segmentos, asociación del
+  receptor y préstamo compartido. La VM consume ese préstamo, mantiene
+  temporales vivos, preflights el tamaño del resultado y publica un único
+  `String` UTF-8 de forma atómica.
+- Los fixtures cubren formatos escalares, `Display` explícito y genérico,
+  temporales, preservación del valor observado, orden de efectos, escapes,
+  llaves, dedentación, `E1105`, bytecode adversarial y GC con umbral inicial
+  uno.
 
 ### 0.74 — 2026-07-26
 

@@ -108,3 +108,28 @@ fn value_copy_observables_are_stable_under_gc_pressure() {
         );
     }
 }
+
+#[test]
+fn text_interpolation_observables_are_stable_under_gc_pressure() {
+    let fixture = discover(FixtureKind::Runtime)
+        .unwrap()
+        .into_iter()
+        .find(|fixture| {
+            fixture
+                .source
+                .file_stem()
+                .is_some_and(|name| name == "m6-text-003-display")
+        })
+        .expect("TEXT-003 runtime fixture must be discoverable");
+    let baseline = fixture.run().unwrap();
+    fixture.assert_matches(&baseline).unwrap();
+
+    let under_pressure = fixture
+        .run_with_limits(ResourceLimits {
+            initial_vm_gc_threshold: 1,
+            ..ResourceLimits::default()
+        })
+        .unwrap();
+    fixture.assert_matches(&under_pressure).unwrap();
+    assert_eq!(under_pressure, baseline);
+}

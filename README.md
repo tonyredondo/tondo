@@ -79,7 +79,12 @@ contraction. Immutable strings retain valid UTF-8, exact scalar equality and
 ordering, linear Unicode-scalar iteration, negative indexing to `Char`, and
 array-compatible scalar slicing back to `String`; `String`, `Char`, `Byte`, and
 `Array[Byte]` remain distinct, while `Bytes` is deliberately reserved for the
-future standard library. Complete HIR lowers through a verified typed MIR and
+future standard library. Normal and multiline interpolation now decodes escapes
+once, evaluates holes from left to right, and resolves the predeclared
+`Display` trait statically. Scalar and `String` display use a closed bootstrap
+intrinsic; user values call their selected implementation through a shared
+receiver, so interpolation neither moves affine values nor introduces vtables.
+Complete HIR lowers through a verified typed MIR and
 then to verified in-memory slot bytecode with source maps. Reached generic
 functions are monomorphized deterministically; equal concrete substitutions
 share one body, direct bytecode calls carry no runtime type pack, and expanding

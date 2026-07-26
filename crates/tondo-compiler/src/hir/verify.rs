@@ -2830,6 +2830,17 @@ impl Verifier<'_> {
             proof.memo.insert(query.clone(), proven);
             return Ok(proven);
         }
+        if matches!(
+            query.constructor(),
+            HirTraitConstructor::Prelude(name) if name.as_str() == "Display"
+        ) && query.arguments().is_empty()
+            && super::HirPreludeTraitMethod::Display
+                .has_intrinsic_implementation(&proof.interner, &[query.target()])
+                .map_err(|error| HirInvariantError::new(&proof.context, error.to_string()))?
+        {
+            proof.memo.insert(query.clone(), true);
+            return Ok(true);
+        }
         if let Some(proven) = self.closed_call_query_proof(query, proof)? {
             proof.memo.insert(query.clone(), proven);
             return Ok(proven);
@@ -3972,9 +3983,57 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            HirExpressionKind::InterpolatedString { segments, values } => {
+                let string = self.program.interner.scalar(ScalarType::String);
+                let never = self.program.interner.scalar(ScalarType::Never);
+                if expression.ty != string || segments.len() != values.len() + 1 {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "interpolation must produce String with one more segment than value",
+                    ));
+                }
+                for value in values {
+                    let converted = self.expression(*value, context)?;
+                    let ty = converted.ty;
+                    if ty != string && ty != never {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "interpolation values must be Display results or Never",
+                        ));
+                    }
+                    if ty == never {
+                        continue;
+                    }
+                    let HirExpressionKind::Call {
+                        callee, arguments, ..
+                    } = &converted.kind
+                    else {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "completing interpolation value is not a Display call",
+                        ));
+                    };
+                    let display = self.expression(*callee, context)?;
+                    if !matches!(
+                        &display.kind,
+                        HirExpressionKind::PreludeTraitFunction {
+                            method: super::HirPreludeTraitMethod::Display,
+                            ..
+                        }
+                    ) || arguments.len() != 1
+                        || arguments[0].mode != crate::types::ParameterMode::Ref
+                        || arguments[0].spread
+                        || arguments[0].target != super::HirCallArgumentTarget::Receiver
+                    {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "interpolation does not use the canonical shared Display receiver",
+                        ));
+                    }
+                }
+            }
             HirExpressionKind::Recovery
             | HirExpressionKind::Literal(_)
-            | HirExpressionKind::InterpolatedString { .. }
             | HirExpressionKind::Receiver
             | HirExpressionKind::Tuple(_)
             | HirExpressionKind::Array(_)
@@ -6109,6 +6168,65 @@ mod tests {
         expression.ty = unit;
         let error = verify_typed_hir(&resolved, &wrong_type).unwrap_err();
         assert!(error.message().contains("closed contract"));
+    }
+
+    #[test]
+    fn interpolation_shape_and_display_conversion_are_verified_before_mir() {
+        const SOURCE: &str = "fn render(value: Int): String {\n\
+             let prefix = \"prefix\"\n\
+             \"{value}\"\n\
+         }\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut wrong_arity) = checked_program_from(SOURCE);
+        let interpolation = wrong_arity
+            .expressions
+            .iter_mut()
+            .find(|expression| {
+                matches!(
+                    expression.kind,
+                    HirExpressionKind::InterpolatedString { .. }
+                )
+            })
+            .expect("the checked string retains its interpolation");
+        let HirExpressionKind::InterpolatedString { segments, .. } = &mut interpolation.kind else {
+            unreachable!()
+        };
+        segments.clear();
+        let error = verify_typed_hir(&resolved, &wrong_arity).unwrap_err();
+        assert!(error.message().contains("one more segment"));
+
+        let (resolved, mut missing_conversion) = checked_program_from(SOURCE);
+        let literal = missing_conversion
+            .expressions
+            .iter()
+            .enumerate()
+            .find_map(|(index, expression)| {
+                matches!(
+                    expression.kind,
+                    HirExpressionKind::Literal(crate::hir::HirLiteral::String(_))
+                )
+                .then_some(HirExpressionId(index as u32))
+            })
+            .expect("the prefix retains one String literal");
+        let interpolation = missing_conversion
+            .expressions
+            .iter_mut()
+            .find(|expression| {
+                matches!(
+                    expression.kind,
+                    HirExpressionKind::InterpolatedString { .. }
+                )
+            })
+            .expect("the checked string retains its interpolation");
+        let HirExpressionKind::InterpolatedString { values, .. } = &mut interpolation.kind else {
+            unreachable!()
+        };
+        values[0] = literal;
+        let error = verify_typed_hir(&resolved, &missing_conversion).unwrap_err();
+        assert!(error.message().contains("not a Display call"));
     }
 
     #[test]

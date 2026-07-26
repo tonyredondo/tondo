@@ -125,6 +125,16 @@ and bytecode independently prove that operation kind, argument signature,
 shared receiver access, and closed capability cannot be forged past their
 admission gates.
 
+## Text interpolation
+
+TEXT-003 fixtures cover scalar and `String` intrinsic display, explicit and
+generic user `Display` implementations, preservation of a generic value after
+observation, temporary receivers, left-to-right side effects, doubled braces,
+escapes, and multiline dedentation. Missing evidence is fixed as `E1105`.
+The same runtime fixture is repeated with an initial GC threshold of one.
+Mutated bytecode separately rejects an interpolation arity mismatch and a
+forged intrinsic Display receiver association.
+
 ## Conformance separation
 
 Implementation fixtures may test private invariants and `T` diagnostics. The

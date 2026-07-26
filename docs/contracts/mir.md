@@ -18,7 +18,8 @@ ARRAY-002 positive/negative checked indexing, ARRAY-003 slicing, ARRAY-004
 logical slice snapshots, ARRAY-005 fixed versus structural array mutation,
 ARRAY-006 closed lifted arithmetic, ARRAY-007 named concatenation/repetition,
 and ITER-001/002 static user iterators plus all four intrinsic iteration forms
-implemented, plus TEXT-002 Unicode-scalar String length, indexing, and slicing
+implemented, plus TEXT-002 Unicode-scalar String length, indexing, and slicing,
+and TEXT-003 static Display calls plus ordered interpolation
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -171,8 +172,8 @@ The M3 lowering covers every expression admitted by complete typed HIR,
 including short-circuit operators, all three loop forms, exhaustive patterns
 and guards, assignment, construction and update, collections, indexing,
 slicing, numeric conversions, calls, and both `Option` and `Result`
-propagation. Recovery and incomplete interpolation nodes cannot cross the HIR
-admission boundary and therefore have no executable MIR interpretation.
+propagation. Recovery nodes cannot cross the HIR admission boundary and
+therefore have no executable MIR interpretation.
 
 Checked numeric conversion produces the exact
 `Result[target, NumericConversionError]` type. The three intrinsic error values
@@ -355,6 +356,12 @@ The verifier instead requires `String + Int -> Char` for an index and
 projections, runtime-overlap metadata, or write validation, preserving text
 immutability independently of HIR construction. `Length` admits only `Array`
 or `String` and always produces `Int`; String execution counts Unicode scalars.
+Display conversion remains an ordinary statically selected call in MIR. Its
+receiver is one call-local shared loan, including when the source value is a
+temporary. Once every hole has produced `String`, one
+`MirRvalueKind::Interpolate` retains the decoded segments and those result
+operands in exact source order. The MIR verifier rejects a non-String result,
+a non-String completing operand, or any segment/value arity mismatch.
 `MirOperationKind::ArraySequence` is likewise always checked. Its shared
 receiver is the sole permitted immediate `Borrow`; its value argument cannot
 contain a borrow or loan. The explicit operand order fixes
