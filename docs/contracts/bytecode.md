@@ -15,8 +15,9 @@ TERM-002 normal-path terminal ownership, TERM-003 explicit defer/guard cleanup,
 TERM-004 closed abnormal fallbacks, TERM-005 exact explicit/fallback exclusion,
 REF-001 managed identity cells/shared projections, REF-002 identity
 equality/keys, ARRAY-001 runtime array length, ARRAY-002 checked array
-indexing, ARRAY-003 checked slicing, ARRAY-004 logical slice snapshots, and the
-M3 VM admission path implemented
+indexing, ARRAY-003 checked slicing, ARRAY-004 logical slice snapshots,
+ARRAY-005 fixed versus structural array mutation, and the M3 VM admission path
+implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -261,6 +262,14 @@ requires an available parent and restores only its typed subtree. This is the
 backend distinction that lets OWN-004 reinitialize a complete `var`, supports
 compiler-internal atomic replacement, and still prevents a source program from
 reviving an owner through an unproved partial write.
+
+The parameter and loan mode remains available at execution. A root store
+reached through `mut Array[T]` is a fixed-extent publication even when its
+lender is a field, element, reborrow, or slice; the VM compares the current and
+replacement lengths before writing. A root store through `var Array[T]` may
+instead replace the complete owner with another length. Bytecode types prove
+both sides are the same `Array[T]`; their runtime lengths are intentionally not
+encoded in the type or instruction stream.
 
 `BytecodeAggregateKind::Ref` constructs one managed identity cell from exactly
 one operand whose type is the target of the result `Ref[T]`.

@@ -3169,6 +3169,10 @@ impl Engine<'_, '_> {
                 ));
             }
             if place.projections.is_empty() {
+                if loan.mode == BytecodeParameterMode::Mut && self.array_element(place.ty).is_some()
+                {
+                    self.ensure_mut_array_extent(loan.frame, &loan.place, &value)?;
+                }
                 return self.write_place(loan.frame, &loan.place, value);
             }
             let mut parent = self.read_place(loan.frame, &loan.place)?;
@@ -3197,6 +3201,27 @@ impl Engine<'_, '_> {
             parent = self.read_projection(frame, parent, projection)?;
         }
         self.write_projection(frame, parent, last, value)
+    }
+
+    fn ensure_mut_array_extent(
+        &mut self,
+        frame: usize,
+        place: &BytecodePlace,
+        replacement: &Value,
+    ) -> Result<(), VmError> {
+        let marker = self.temporary_roots.len();
+        self.retain_temporary(replacement);
+        let result = (|| {
+            let current = self.read_place(frame, place)?;
+            if self.array_length(&current)? != self.array_length(replacement)? {
+                return Err(VmError::invariant(
+                    "mut Array write changed structural extent",
+                ));
+            }
+            Ok(())
+        })();
+        self.temporary_roots.truncate(marker);
+        result
     }
 
     fn read_projection(
@@ -4633,6 +4658,16 @@ impl Engine<'_, '_> {
         };
         match self.heap.get(*handle)? {
             HeapObject::Array(values) => Ok(values.clone()),
+            _ => Err(VmError::invariant("Array value has the wrong heap shape")),
+        }
+    }
+
+    fn array_length(&self, value: &Value) -> Result<usize, VmError> {
+        let Value::Heap(handle) = value else {
+            return Err(VmError::invariant("Array value is not managed"));
+        };
+        match self.heap.get(*handle)? {
+            HeapObject::Array(values) => Ok(values.len()),
             _ => Err(VmError::invariant("Array value has the wrong heap shape")),
         }
     }

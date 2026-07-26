@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.62
+**Versión del tracker:** 0.63
 
-**Última actualización:** 2026-07-25
+**Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** cerrar la distinción entre mutación `mut` de extensión
-fija y mutación estructural `var` de arrays (ARRAY-005).
+**Objetivo inmediato:** implementar aritmética cerrada array-array y
+array-escalar con forma exacta (ARRAY-006).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1561,8 +1561,14 @@ lifetimes escritos por el usuario.
   las proyecciones `ref`/`mut` pueden cubrir elementos afines sin crear otro
   propietario. El corpus black-box fija estos observables sin comprometer COW.
 
-- [ ] **ARRAY-005 — Implementar mutación `mut` de extensión fija y `var`
-  estructural.**
+- [x] **ARRAY-005 — Implementar mutación `mut` de extensión fija y `var`
+  estructural.** HIR conserva la separación introducida por BORROW-003:
+  `mut Array[T]` admite índices, slices y operaciones in-place sin cambiar
+  longitud; `var Array[T]` puede reemplazar el propietario completo, y ninguna
+  región parcial puede obtener `var`. La VM defiende además el postcontrato
+  dinámico de toda escritura raíz a través de `mut`: compara ambas longitudes
+  antes de publicar, mantiene el reemplazo como root durante una posible
+  materialización y deja `var` como único permiso que puede redimensionar.
 
 - [ ] **ARRAY-006 — Implementar aritmética array-array y array-escalar con
   reglas de forma exactas.**
@@ -2078,14 +2084,38 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es ARRAY-005: auditar todos los caminos de escritura
-de arrays, cerrar `mut` como permiso de extensión fija y `var` como permiso
-estructural, y demostrar que slices y préstamos nunca adquieren por accidente
-capacidad de cambiar longitud.
+La siguiente acción activa es ARRAY-006: cerrar la matriz de aritmética
+array-array y array-escalar, demostrar forma exacta antes de la primera
+operación elemental y conservar tipos, orden, pánicos y atomicidad sin duplicar
+la implementación escalar.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.63 — 2026-07-26
+
+- Se cierra ARRAY-005 reutilizando una sola jerarquía de permisos:
+  `ref < mut < var`. No se añade una segunda clase de array, un tipo slice ni
+  sintaxis estructural paralela.
+- El fixture público `m6-array-005-mutation` demuestra escritura de longitud
+  fija sobre propietario y slice, reemplazo `var` que cambia longitud y
+  reborrow `var` de un elemento completo dentro de un `mut Array[Array[T]]`.
+- El fixture compile-fail `m6-array-005-permissions` fija `E1411` para el
+  reemplazo raíz de un `mut Array[T]` y `E1407` para intentar prestar un slice
+  como `var`.
+- La VM ejecuta `ensure_mut_array_extent` antes de toda escritura raíz a través
+  de un préstamo `mut Array[T]`. El reemplazo permanece en la pila temporal de
+  roots mientras una región pueda materializarse; una longitud distinta
+  produce un error de invariante antes de cualquier escritura.
+- Una mutación adversarial de bytecode sustituye el resultado in-place por un
+  `Array` de otra longitud: el programa continúa siendo tipado y verificable,
+  pero la defensa runtime impide publicar el cambio. El mismo camino pasa bajo
+  umbral inicial de GC igual a uno.
+- La puerta completa pasa con 575 tests —505 del núcleo del compilador, 27 de
+  la VM y 43 de CLI/integración—, formatter canónico de los nuevos fixtures,
+  `cargo fmt --check`, `cargo check`, `cargo build`, Clippy y rustdoc con
+  warnings como error, y `git diff --check`.
 
 ### 0.62 — 2026-07-25
 

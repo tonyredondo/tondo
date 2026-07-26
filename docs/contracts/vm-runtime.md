@@ -16,8 +16,8 @@ pre-exhaustion collection and atomic publication, REF-001 managed identity
 construction/shared content projection, and REF-002 equality and collection
 keys by identity, VALUE-001 exhaustive eager logical copies, and VALUE-002
 representation-independent copy observations, plus ARRAY-001 runtime array
-length, ARRAY-002 checked array indexing, ARRAY-003 checked slicing, and
-ARRAY-004 logical slice snapshots
+length, ARRAY-002 checked array indexing, ARRAY-003 checked slicing, ARRAY-004
+logical slice snapshots, and ARRAY-005 fixed versus structural array mutation
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -174,6 +174,12 @@ carrier in the callee's corresponding parameter slot. Reads recursively reach
 the lender place. Writes through `mut` or `var` update that original place,
 including nested reborrows and fixed field/tuple projections; writes through
 `ref` and moves through every borrowed parameter are invariant failures.
+Before a root write through `mut Array[T]`, `ensure_mut_array_extent` reads the
+effective lender, compares its logical length with the replacement, and
+publishes only when they match. It roots the replacement across that read
+because a sliced lender may allocate an eager snapshot and trigger GC.
+`var Array[T]` bypasses this equality check and may change the length of a
+complete owner; a slice can never supply that mode.
 Reborrow strength is checked both by bytecode verification and defensively at
 runtime through the same `BytecodePlace` classification. In particular, a
 `var` reborrow from `mut` must end in a complete structurally replaceable
@@ -456,6 +462,14 @@ slice loan mutates only the source region. The complete public observation must
 remain identical with a GC threshold of one. Bytecode mutation must also prove
 that a materialized non-`Copy` slice is rejected while an affine borrowed slice
 remains valid.
+
+Array-mutation regressions must execute fixed-length changes through both a
+complete `mut` owner and a sliced lender, structural replacement through a
+complete `var` owner, and structural replacement of a complete nested element
+without changing its outer array. Source fixtures reject a `mut` root
+replacement and a `var` slice. A verified bytecode mutation then attempts a
+different-length root store through a sliced `mut Array[T]`; ordinary execution
+and a GC threshold of one must both reject it before publication.
 
 Loan regressions execute shared temporaries, root and projected exclusive
 write-through, nested and closure-capture reborrows, statically disjoint fields,

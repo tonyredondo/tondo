@@ -16,8 +16,8 @@ normal-path terminal ownership, TERM-003 checked synchronous `defer` actions
 and affine guards, TERM-004 downstream closed-fallback admission, and verified
 MIR admission, REF-001 safe identity construction and shared content
 projection, REF-002 identity equality/key admission, ARRAY-001 runtime length,
-ARRAY-002 typed array indexing, ARRAY-003 typed slicing, and ARRAY-004 logical
-slice ownership implemented
+ARRAY-002 typed array indexing, ARRAY-003 typed slicing, ARRAY-004 logical slice
+ownership, and ARRAY-005 fixed versus structural array mutation implemented
 
 ## Boundary
 

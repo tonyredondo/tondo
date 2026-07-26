@@ -95,6 +95,20 @@ on an object or byte count. A future COW candidate must execute this corpus
 unchanged; if eager and COW implementations coexist, their adapters compare
 this same observation type directly.
 
+## Array mutation permissions
+
+Array-mutation regressions distinguish four cases: fixed-length mutation of a
+complete `mut` owner, fixed-length mutation of a `mut` slice, length-changing
+replacement of a complete `var` owner, and structural replacement of a
+complete nested element without changing the outer array length. Compile-fail
+fixtures reject root replacement through `mut` and every `var` slice.
+
+Adversarial bytecode replaces an otherwise valid in-place result with an
+`Array` of another runtime length. The program remains structurally typed, so
+execution must reject publication at the dynamic fixed-extent boundary. The
+legitimate sliced path also runs with an initial GC threshold of one to prove
+that measuring its lender keeps the pending replacement rooted.
+
 ## Conformance separation
 
 Implementation fixtures may test private invariants and `T` diagnostics. The

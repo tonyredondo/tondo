@@ -6752,6 +6752,79 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
     }
 
     #[test]
+    fn mut_array_root_writes_defend_fixed_extent_at_runtime() {
+        let source = "fn preserve(values: mut Array[Int], replacement: Array[Int]) {\n\
+                          values += 0\n\
+                      }\n\
+                      fn execute(): Array[Int] {\n\
+                          var values = [1, 2, 3, 4]\n\
+                          preserve(mut values[1:3], [9, 8, 7])\n\
+                          values\n\
+                      }\n";
+        assert_eq!(
+            execute_function(source, "execute"),
+            RuntimeValue::Array(vec![
+                RuntimeValue::Integer(1),
+                RuntimeValue::Integer(2),
+                RuntimeValue::Integer(3),
+                RuntimeValue::Integer(4),
+            ])
+        );
+
+        let mut forged = lowered(source);
+        let preserve = function_id(&forged, "preserve");
+        let function = &mut forged.functions[preserve.index() as usize];
+        let destination = function.parameters[0];
+        let replacement = function.parameters[1];
+        let replacement_ty = function.slots[replacement.index() as usize].ty;
+        let store = function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instructions)
+            .find_map(|instruction| match &mut instruction.kind {
+                bc::BytecodeInstructionKind::Store {
+                    destination: place,
+                    value,
+                } if place.slot == destination && place.projections.is_empty() => Some(value),
+                _ => None,
+            })
+            .expect("preserve writes its root mut parameter");
+        *store = bc::BytecodeRvalue {
+            ty: replacement_ty,
+            kind: bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                ty: replacement_ty,
+                kind: bc::BytecodeOperandKind::Copy(bc::BytecodePlace {
+                    slot: replacement,
+                    ty: replacement_ty,
+                    projections: Vec::new(),
+                    source_loan: None,
+                }),
+            }),
+        };
+        bc::verify_bytecode(&forged).unwrap();
+
+        let entry = function_id(&forged, "execute");
+        for limits in [
+            VmLimits::default(),
+            VmLimits {
+                initial_gc_threshold: 1,
+                ..VmLimits::default()
+            },
+        ] {
+            let mut host = RejectingHost;
+            let error = execute_with_limits(&forged, entry, &mut host, limits).unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    VmError::Invariant(ref message)
+                        if message.contains("mut Array write changed structural extent")
+                ),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
     fn collection_region_loans_validate_and_execute_disjoint_views() {
         let source = "const Split: Int = 2\n\
                       fn update(left: mut Array[Int], right: mut Array[Int]) {\n\

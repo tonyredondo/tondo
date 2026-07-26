@@ -454,6 +454,11 @@ logical snapshot copier. The eager VM allocates independent ordinary content,
 retains `Ref[T]` identity, and leaves `ref`/`mut` regions attached to the
 original array; the black-box copy corpus makes a later COW representation obey
 the same observations.
+Array mutation uses those same loan modes rather than another container type.
+`mut Array[T]` may update an owner or region only at its current logical
+length; the VM compares a root replacement with the lender before publication,
+including through a slice loan. `var Array[T]` alone may replace a complete
+owner with another length, and no slice is a structurally replaceable place.
 
 The implemented synchronous engine uses iterative frames, checked slot states,
 normal/unwind continuations, call-local reservation tables, normalized

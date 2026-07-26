@@ -14,8 +14,9 @@ classification and normal-path ownership, and TERM-003 explicit defer/guard
 cleanup, TERM-004 closed abnormal fallback lowering, and TERM-005 exact
 explicit/fallback exclusion, REF-001 identity aggregates/shared projections,
 REF-002 identity equality/key operands, ARRAY-001 runtime array length,
-ARRAY-002 positive/negative checked indexing, ARRAY-003 slicing, and ARRAY-004
-logical slice snapshots implemented
+ARRAY-002 positive/negative checked indexing, ARRAY-003 slicing, ARRAY-004
+logical slice snapshots, and ARRAY-005 fixed versus structural array mutation
+implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -314,6 +315,12 @@ lender path may end in a slice; the VM consults the witness only in that case.
 Write validation of an unprojected destination does not read its previous
 value; every projected destination still reads an available root while
 resolving its path.
+HIR admission has already rejected arbitrary root replacement through
+`mut Array[T]` and every `var` region loan. MIR retains the exact `mut`/`var`
+parameter and loan modes: in-place array results therefore return through a
+`mut` carrier, structural replacement through `var`, and a sliced lender can
+only follow the fixed-extent path. Runtime length remains deliberately absent
+from MIR types and is checked at publication.
 
 Before reserving any index or slice loan, MIR emits `ValidateLoan` with a normal
 successor and the current cleanup successor. Its success block must immediately
