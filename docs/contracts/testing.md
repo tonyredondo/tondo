@@ -66,6 +66,32 @@ test at the lowest public boundary that would have caught it. A test must not
 depend on physical absolute paths, wall time, locale, network, hash iteration,
 or scheduling order.
 
+## Value-copy representation equivalence
+
+`tests/runtime/value-copy/` is the stable black-box corpus for logical copy
+semantics. Its cases separately cover:
+
+- preservation of every managed `Copy` shape admitted by the bootstrap;
+- independence of compound values and closure state after a write;
+- deliberate identity sharing through `Ref[T]`;
+- iteration over copied arrays, maps, sets, ranges, and strings;
+- the exact panic class and exit status after copying; and
+- retained values under sustained allocation and GC pressure.
+
+The oracle is the complete `FixtureObservation`: compilation status, process
+exit code, ordered diagnostic codes and renderings, stdout, and stderr. VM
+statistics are intentionally absent. Cases cannot inspect heap handles,
+addresses, allocation or reference counts, collection timing, or eager versus
+COW storage.
+
+The ordinary fixture pass checks these observations against sidecars. The
+equivalence pass runs the identical sources again with an initial GC threshold
+of one, checks the same sidecars, and requires byte-for-byte equal observations.
+All capacity limits remain at their ordinary values so the oracle cannot depend
+on an object or byte count. A future COW candidate must execute this corpus
+unchanged; if eager and COW implementations coexist, their adapters compare
+this same observation type directly.
+
 ## Conformance separation
 
 Implementation fixtures may test private invariants and `T` diagnostics. The

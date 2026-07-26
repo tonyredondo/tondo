@@ -40,6 +40,10 @@ impl Fixture {
     }
 
     pub fn run(&self) -> Result<FixtureObservation, String> {
+        self.run_with_limits(ResourceLimits::default())
+    }
+
+    pub fn run_with_limits(&self, limits: ResourceLimits) -> Result<FixtureObservation, String> {
         let bytes = fs::read(&self.source).map_err(|error| error.to_string())?;
         let logical_path = self
             .source
@@ -81,7 +85,7 @@ impl Fixture {
             BuildTarget::vm_hosted_capabilities(),
             DiagnosticFormat::Json,
             source_form,
-            ResourceLimits::default(),
+            limits,
             PackageGraph::loose(&sources, root).map_err(|error| error.to_string())?,
             sources,
             root,
@@ -199,7 +203,7 @@ impl Fixture {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct FixtureObservation {
     status: CompilationStatus,
     exit_code: u8,

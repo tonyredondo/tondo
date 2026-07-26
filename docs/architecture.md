@@ -416,7 +416,10 @@ heap, and a cooperative single-thread executor. Logical copies of every
 compound `Copy` shape are currently eager and recursive; immutable String
 storage and `Ref[T]` identity are the only deliberate sharing cases. COW, ARC,
 compact tagging, and native lowering are later optimizations that must preserve
-the same observables.
+the same observables. The `tests/runtime/value-copy/` corpus records those
+observables at the driver boundary and runs unchanged both with ordinary
+limits and with an initial GC threshold of one, without exposing the current
+heap representation.
 
 The implemented synchronous engine uses iterative frames, checked slot states,
 normal/unwind continuations, call-local reservation tables, normalized

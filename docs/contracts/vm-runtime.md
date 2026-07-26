@@ -14,7 +14,8 @@ trace descriptors, GC-002 complete synchronous root lifetimes, and GC-003
 cycle recovery under sustained allocation pressure plus GC-004 single
 pre-exhaustion collection and atomic publication, REF-001 managed identity
 construction/shared content projection, and REF-002 equality and collection
-keys by identity plus VALUE-001 exhaustive eager logical copies
+keys by identity, VALUE-001 exhaustive eager logical copies, and VALUE-002
+representation-independent copy observations
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -68,7 +69,10 @@ roots until the new object is published with the source descriptor. Copying an
 admitted intrinsic cursor recursively copies its owned source (or duplicates
 its shared reference), preserves the current index, and allocates an
 independently advancing iterator object. COW and compact representations
-require differential tests against this baseline.
+require differential tests against this baseline. The stable comparison corpus
+observes only values, post-write independence, identity, iteration, panic,
+output, exit status, and survival under GC pressure. Heap handles, allocation
+counts, collection timing, and storage strategy are excluded from that oracle.
 
 Constructing `Ref(value)` allocates one cell and transfers the already
 evaluated payload into it. Copying the resulting `Ref[T]` copies only its

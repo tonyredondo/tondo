@@ -2,15 +2,15 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.57
+**Versión del tracker:** 0.58
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** convertir la semántica observable de copia en una suite
-diferencial independiente de la representación para poder sustituir eager por
-COW sin cambiar comportamiento (VALUE-002).
+**Objetivo inmediato:** consolidar el contrato ya ejecutable de `Array[T]` con
+longitud runtime y cerrar cualquier hueco entre construcción, tipos, bytecode y
+VM (ARRAY-001).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1508,8 +1508,13 @@ lifetimes escritos por el usuario.
   las formas administradas, payloads anidados, separación tras escritura y la
   copia independiente del estado de cursor.
 
-- [ ] **VALUE-002 — Crear tests de equivalencia que permitan sustituir copia
-  eager por COW posteriormente sin cambiar observables.**
+- [x] **VALUE-002 — Crear tests de equivalencia que permitan sustituir copia
+  eager por COW posteriormente sin cambiar observables.** Un corpus black-box
+  separado fija valor, independencia tras escritura, identidad `Ref`,
+  iteración, pánico y presión de GC exclusivamente mediante la observación
+  pública del driver. Los mismos casos pasan con límites ordinarios y con
+  umbral inicial de GC igual a uno; handles, allocations, schedule y
+  representación no forman parte del oráculo.
 
 ### Gate de salida de M5
 
@@ -2055,14 +2060,30 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es VALUE-002: extraer de la implementación eager una
-suite de observables de copia —valor, independencia tras escritura, identidad,
-iteración, pánico y presión de GC— que pueda ejecutarse sin conocer handles,
-conteos de allocation ni la representación futura.
+La siguiente acción activa es ARRAY-001: auditar el soporte vertical ya
+existente de `Array[T]`, fijar la longitud runtime como contrato observable y
+cerrar con tests cualquier camino de construcción, copia, llamada o retorno que
+todavía no conserve esa longitud.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.58 — 2026-07-25
+
+- Se cierra VALUE-002 con seis fixtures públicos e independientes para valor,
+  separación tras escritura, identidad, iteración, pánico y presión de GC.
+- `Fixture::run_with_limits` permite ejecutar exactamente la misma fuente y los
+  mismos sidecars bajo perfiles distintos. La comparación usa la observación
+  completa del driver y excluye deliberadamente toda estadística o identidad
+  física de la VM.
+- El corpus eager pasa también con umbral inicial de GC igual a uno sin alterar
+  los límites ordinarios de objetos o bytes. Una futura implementación COW
+  deberá ejecutar los fixtures sin modificarlos y producir el mismo oráculo.
+- La puerta completa pasa con 565 tests —497 del núcleo del compilador, 25 de
+  la VM y 43 de CLI/integración—, formatter canónico de todos los fixtures,
+  `cargo fmt --check`, `cargo check`, `cargo build`, Clippy y rustdoc con
+  warnings como error, y `git diff --check`.
 
 ### 0.57 — 2026-07-25
 
