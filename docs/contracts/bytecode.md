@@ -486,6 +486,13 @@ when their managed handles identify the same live cell; distinct cells never
 compare their payloads. Map lookup/replacement and set membership reuse that
 same equality, which supplies `Key` by identity independently of `T`.
 
+Set aggregate verification requires one `Set[K]` result, one `K` operand per
+source entry, and `K: Key`. Runtime construction keeps the first equal entry and
+therefore preserves its insertion position even when a later duplicate is
+dynamic. Range construction carries an explicit exclusive/inclusive tag and
+two endpoints of the exact `T` in `Range[T]`; containment and iteration must
+consume that tag rather than synthesize an adjusted endpoint.
+
 `BytecodeRvalueKind::MapRemove` mutates only a `Map[K, V]` place sourced from
 its exact active `var` region and returns `Option[V]`. The VM searches with the
 same normative key equality as lookup, removes the matching insertion-order

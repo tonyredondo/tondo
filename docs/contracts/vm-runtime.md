@@ -19,7 +19,9 @@ representation-independent copy observations, plus ARRAY-001 runtime array
 length, ARRAY-002 checked array indexing, ARRAY-003 checked slicing, ARRAY-004
 logical slice snapshots, ARRAY-005 fixed versus structural array mutation,
 ARRAY-006 closed lifted arithmetic, and ARRAY-007 named
-concatenation/repetition
+concatenation/repetition, MAP-001..003 insertion-ordered map operations and
+content equality, SET-001 insertion-ordered unique sets and membership, and
+RANGE-001 lazy discrete ranges with checked boundaries
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -140,6 +142,15 @@ state. Arrays and sets remove the next element; maps remove a key/value pair and
 yield a newly allocated tuple. The cursor retains the compact remainder, and
 the yielded managed value is rooted while iterator state is replaced. Ref
 cursors retain their source and expose only a verified position into it.
+
+Set construction compares each evaluated key with the ordered prefix already
+accepted, keeps the first equal key, and never changes that position for a
+duplicate. Membership uses the same equality and set equality matches members
+independently of insertion order. Range objects retain their exact endpoints
+and endpoint kind. Integer iteration computes the current mathematical offset
+without adding one to an emitted inclusive maximum. `Char` iteration advances
+only through Unicode scalar values, jumps from `U+D7FF` to `U+E000`, and marks
+an inclusive `U+10FFFF` exhausted immediately after emitting it.
 
 ## Frames and roots
 

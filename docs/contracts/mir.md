@@ -179,6 +179,14 @@ accepts that rvalue only from `Array[T]` and requires an `Int` result. Calls,
 returns, and Copy/Move selection forward the complete array value, so no phase
 may reconstruct its length from the static type.
 
+A set literal similarly lowers to `MirAggregateKind::Set` without performing
+deduplication in the compiler backend; ordered normalization is an observable
+runtime operation because equal dynamic operands may only be compared after
+their left-to-right evaluation. A range lowers to one `MirRvalueKind::Range`
+carrying its inclusive/exclusive kind and two already typed endpoints. MIR
+verification requires identical discrete integer or `Char` endpoint types and
+the exact corresponding `Range[T]` result.
+
 An ARRAY-007 HIR node evaluates its receiver through `lower_borrowed_value`,
 then its argument through ordinary value lowering, and emits one checked
 `MirOperationKind::ArraySequence` `Invoke`. The operation records `Concat` or

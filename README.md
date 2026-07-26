@@ -65,7 +65,10 @@ call error sets; partial snapshots state exactly which semantic phase completed.
 Record construction/update, inherent method dispatch, closed generic-call inference,
 range/membership checking, and compile-time constant evaluation are implemented
 for the bootstrap subset. `tondo check` now succeeds when that entire subset is
-understood. Complete HIR lowers through a verified typed MIR and then to
+understood. Executable collections include insertion-ordered maps and unique
+sets with content-based equality, plus lazy integer and Unicode-scalar ranges
+whose inclusive maximum does not require an overflowing successor. Complete HIR
+lowers through a verified typed MIR and then to
 verified in-memory slot bytecode with source maps. Reached generic functions
 are monomorphized deterministically; equal concrete substitutions share one
 body, direct bytecode calls carry no runtime type pack, and expanding recursion

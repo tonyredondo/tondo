@@ -563,6 +563,14 @@ array element, map key, set member, range element, or string character. Both
 retain left-to-right runtime evaluation even where bidirectional checking uses
 the container type to select an item literal type.
 
+A set literal retains every source operand in evaluation order and requires its
+single element type to satisfy `Key`. Constant evaluation and the runtime then
+apply the same normalization: the first equal element fixes the observable
+insertion position and every later equal element is discarded. Equality is
+still content-based and does not compare that order. A compile-time-known
+duplicate additionally produces `W1011`; an unknown dynamic operand is never
+executed or guessed by the diagnostic pass.
+
 Array indexing records one `Array[T]` base, one exact `Int` index, and the
 element type `T`. Materializing the expression as a value requires `T: Copy`;
 using it as a write target, `ref`/`mut`/`var` argument, receiver, or stable

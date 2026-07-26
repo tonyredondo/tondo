@@ -2,13 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.66
+**Versión del tracker:** 0.67
 
 **Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar `Set[K]` y pertenencia (SET-001).
+**Objetivo inmediato:** cerrar el protocolo estático y las cuatro formas de
+iteración (ITER-001 e ITER-002).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1606,9 +1607,18 @@ lifetimes escritos por el usuario.
   capacidad, semilla ni representación; la iteración continúa observando el
   orden de inserción.
 
-- [ ] **SET-001 — Implementar `Set[K]` y pertenencia.**
+- [x] **SET-001 — Implementar `Set[K]` y pertenencia.** La construcción evalúa
+  entradas de izquierda a derecha, conserva la primera posición de inserción y
+  deduplica claves iguales aunque solo puedan compararse en runtime. `in`
+  reutiliza la igualdad de `Key`; la igualdad de sets compara pertenencia y
+  cardinalidad sin observar el orden. Duplicados constantes producen `W1011`
+  sin impedir ejecución.
 
-- [ ] **RANGE-001 — Implementar ranges y sus límites de overflow.**
+- [x] **RANGE-001 — Implementar ranges y sus límites de overflow.** `..` y
+  `..=` conservan extremos discretos idénticos, pertenencia e iteración lazy.
+  Los ranges descendentes están vacíos; un extremo inclusivo se marca agotado
+  al emitirlo sin calcular sucesor. La VM cubre `Int.min/max`, `UInt64.max`,
+  salta surrogates de `Char` y termina en `U+10FFFF`.
 
 - [ ] **ITER-001 — Implementar el protocolo estático `Iterator[T]` con un único
   elemento por target.**
@@ -2105,12 +2115,31 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es SET-001: cerrar construcción, deduplicación,
-pertenencia, orden observable e igualdad de `Set[K]`.
+La siguiente acción activa es ITER-001/ITER-002: cerrar el protocolo estático
+`Iterator[T]` y completar `for`, `for ref`, `for mut` y `for var` sobre sus
+fuentes permitidas.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.67 — 2026-07-26
+
+- Se cierran SET-001 y RANGE-001 sobre las representaciones ya verificadas en
+  HIR, MIR, bytecode y VM. Set conserva el primer orden de inserción, deduplica
+  entradas constantes y dinámicas, consulta pertenencia con la misma igualdad
+  de `Key` y compara contenido independientemente del orden.
+- Range conserva extremos y clase inclusiva/exclusiva sin materialización. Los
+  cursores terminan al emitir un máximo inclusivo, por lo que no fabrican un
+  sucesor desbordado; `Char` avanza por escalares, salta `D800...DFFF` y admite
+  `U+10FFFF` como último valor.
+- El corpus público añade casos end-to-end de orden, deduplicación dinámica,
+  `W1011`, pertenencia, igualdad, ranges vacíos, `Int.min/max`, `UInt64.max`,
+  hueco surrogate y máximo Unicode, además de rechazos de `Set` sin `Key` y
+  `Range[Byte]`.
+- El gate acumulado continúa en 587 tests y pasa formatter check, compilación
+  de todos los targets, Clippy con warnings como errores, rustdoc estricto y la
+  suite workspace locked con compilación incremental desactivada.
 
 ### 0.66 — 2026-07-26
 
