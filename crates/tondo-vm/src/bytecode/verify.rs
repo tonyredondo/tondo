@@ -3334,7 +3334,7 @@ impl Verifier<'_> {
                 self.verify_operand(function, left, context)?;
                 self.verify_operand(function, right, context)?;
                 self.verify_binary(*operator, left.ty, right.ty, value.ty, context)?;
-                if self.binary_requires_checked(*operator, left.ty) {
+                if self.binary_requires_checked(*operator, left.ty, right.ty) {
                     return Err(BytecodeVerificationError::new(
                         context,
                         "potentially panicking binary operation is not Invoke",
@@ -3779,6 +3779,7 @@ impl Verifier<'_> {
         &self,
         operator: BytecodeBinaryOperator,
         left: BytecodeTypeId,
+        right: BytecodeTypeId,
     ) -> bool {
         matches!(
             operator,
@@ -3789,12 +3790,14 @@ impl Verifier<'_> {
                 | BytecodeBinaryOperator::Subtract
                 | BytecodeBinaryOperator::ShiftLeft
                 | BytecodeBinaryOperator::ShiftRight
-        ) && !matches!(
-            self.program.ty(left).map(|ty| &ty.kind),
-            Some(BytecodeTypeKind::Scalar(
-                BytecodeScalarType::Float | BytecodeScalarType::Float32
+        ) && (self.array_element(left).is_some()
+            || self.array_element(right).is_some()
+            || !matches!(
+                self.program.ty(left).map(|ty| &ty.kind),
+                Some(BytecodeTypeKind::Scalar(
+                    BytecodeScalarType::Float | BytecodeScalarType::Float32
+                ))
             ))
-        )
     }
 
     fn assignability(
@@ -4332,7 +4335,7 @@ impl Verifier<'_> {
                 self.verify_operand(function, left, context)?;
                 self.verify_operand(function, right, context)?;
                 self.verify_binary(*operator, left.ty, right.ty, operation.ty, context)?;
-                if !self.binary_requires_checked(*operator, left.ty) {
+                if !self.binary_requires_checked(*operator, left.ty, right.ty) {
                     return Err(operation_error(context));
                 }
             }

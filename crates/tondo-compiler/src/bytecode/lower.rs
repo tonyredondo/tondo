@@ -8506,6 +8506,132 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
     }
 
     #[test]
+    fn lifted_array_arithmetic_preserves_types_preflights_shape_and_survives_gc() {
+        let source = "fn calculate(): (Array[Float], Array[Float32], Array[Array[Int]]) {\n\
+                          let wide = 10.0 - [1.5, 2.0]\n\
+                          let narrow = 4.0f32 / [1.0f32, 2.0f32]\n\
+                          let nested = [[1, 2], [3, 4]] + [10, 20]\n\
+                          (wide, narrow, nested)\n\
+                      }\n";
+        assert_eq!(
+            execute_function(source, "calculate"),
+            RuntimeValue::Tuple(vec![
+                RuntimeValue::Array(vec![RuntimeValue::Float(8.5), RuntimeValue::Float(8.0),]),
+                RuntimeValue::Array(vec![RuntimeValue::Float(4.0), RuntimeValue::Float(2.0),]),
+                RuntimeValue::Array(vec![
+                    RuntimeValue::Array(
+                        vec![RuntimeValue::Integer(11), RuntimeValue::Integer(12),]
+                    ),
+                    RuntimeValue::Array(
+                        vec![RuntimeValue::Integer(23), RuntimeValue::Integer(24),]
+                    ),
+                ]),
+            ])
+        );
+
+        let VmOutcome::Panicked(panic) = execute_outcome(
+            "fn explode(): Array[Array[Int]] {\n\
+                 let left = [[9223372036854775807, 0], [1]]\n\
+                 let right = [[1, 0], [1, 2]]\n\
+                 left + right\n\
+             }\n",
+            "explode",
+        ) else {
+            panic!("a deep shape mismatch must be detected before leaf arithmetic")
+        };
+        assert_eq!(panic.code, PanicCode::ArrayShapeMismatch);
+
+        let program = lowered(source);
+        let entry = function_id(&program, "calculate");
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            entry,
+            &mut host,
+            VmLimits {
+                max_heap_objects: 256,
+                max_heap_bytes: 128 * 1024,
+                initial_gc_threshold: 1,
+                ..VmLimits::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
+        assert!(matches!(execution.outcome, VmOutcome::Returned(_)));
+        assert!(execution.statistics.collections > 0);
+    }
+
+    #[test]
+    fn bytecode_verifier_rejects_array_arithmetic_forged_as_pure() {
+        let mut program = lowered(
+            "fn combine(scalar: Float, values: Array[Float]): Array[Float] {\n\
+                 scalar + values\n\
+             }\n",
+        );
+        let entry = function_id(&program, "combine");
+        let function = &mut program.functions[entry.index() as usize];
+        let block = function
+            .blocks
+            .iter_mut()
+            .find(|block| {
+                matches!(
+                    block.terminator.kind,
+                    bc::BytecodeTerminatorKind::Invoke {
+                        operation: bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::CheckedBinary { .. },
+                            ..
+                        },
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let span = block.terminator.span;
+        let bc::BytecodeTerminatorKind::Invoke {
+            operation,
+            destination: Some(destination),
+            target: Some(target),
+            ..
+        } = std::mem::replace(
+            &mut block.terminator.kind,
+            bc::BytecodeTerminatorKind::Unreachable,
+        )
+        else {
+            unreachable!("the selected terminator is a returning checked Invoke")
+        };
+        let bc::BytecodeOperationKind::CheckedBinary {
+            operator,
+            left,
+            right,
+        } = operation.kind
+        else {
+            unreachable!("the selected operation is checked binary")
+        };
+        block.instructions.push(bc::BytecodeInstruction {
+            span,
+            kind: bc::BytecodeInstructionKind::Store {
+                destination,
+                value: bc::BytecodeRvalue {
+                    ty: operation.ty,
+                    kind: bc::BytecodeRvalueKind::Binary {
+                        operator,
+                        left,
+                        right,
+                    },
+                },
+            },
+        });
+        block.terminator.kind = bc::BytecodeTerminatorKind::Goto { target };
+
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("potentially panicking binary operation"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn runtime_validates_slice_assignment_after_the_rhs_and_before_any_write() {
         let value = execute_function(
             "fn replace(): Array[Int] {\n\

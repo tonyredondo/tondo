@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.63
+**Versión del tracker:** 0.64
 
 **Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar aritmética cerrada array-array y
-array-escalar con forma exacta (ARRAY-006).
+**Objetivo inmediato:** implementar concatenación y repetición mediante
+operaciones nombradas, sin sobrecargar `+` ni `*` (ARRAY-007).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1570,8 +1570,14 @@ lifetimes escritos por el usuario.
   antes de publicar, mantiene el reemplazo como root durante una posible
   materialización y deja `var` como único permiso que puede redimensionar.
 
-- [ ] **ARRAY-006 — Implementar aritmética array-array y array-escalar con
-  reglas de forma exactas.**
+- [x] **ARRAY-006 — Implementar aritmética array-array y array-escalar con
+  reglas de forma exactas.** Una expectativa de peer aritmético infiere la hoja
+  numérica sin fijar la forma y trata igual literales, bindings y llamadas. MIR
+  y bytecode exigen `Invoke` checked si cualquiera de los operandos es array.
+  Evaluación constante y VM validan toda la forma recursiva antes de calcular
+  hojas; runtime reutiliza la aritmética escalar para enteros y floats,
+  construye un resultado separado y solo después permite publicar una variante
+  in-place.
 
 - [ ] **ARRAY-007 — Implementar concatenación y repetición mediante operaciones
   nombradas cuando la stdlib las fije, no mediante nuevos significados de `+`.**
@@ -2084,14 +2090,40 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es ARRAY-006: cerrar la matriz de aritmética
-array-array y array-escalar, demostrar forma exacta antes de la primera
-operación elemental y conservar tipos, orden, pánicos y atomicidad sin duplicar
-la implementación escalar.
+La siguiente acción activa es ARRAY-007: cerrar concatenación y repetición como
+operaciones nombradas de `Array`, con contratos de ownership, overflow,
+evaluación, asignación y verificación explícitos, sin otorgar nuevos
+significados a `+` o `*`.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.64 — 2026-07-26
+
+- Se cierra ARRAY-006 sin introducir operadores ni tipos auxiliares. La
+  expectativa interna `ArithmeticPeer` fija una única hoja numérica y acepta
+  cualquier forma array compatible; variables y llamadas reciben la misma
+  inferencia que los literales y un contexto `Array[Int32]` tipa sus hojas sin
+  conversión implícita.
+- MIR y bytecode clasifican una operación aritmética como checked cuando
+  cualquiera de sus operandos es `Array`. Sus verificadores rechazan una
+  codificación pure forjada, incluida la forma escalar-array con escalar
+  izquierdo `Float`.
+- La VM realiza un preflight recursivo completo antes de la primera hoja. El
+  fixture `m6-array-006-shape-preflight` coloca deliberadamente un overflow
+  antes de una incompatibilidad profunda y observa `P0006`, fijando la
+  precedencia y la garantía fuerte de las variantes in-place. El evaluador
+  constante aplica el mismo preflight mediante un worklist iterativo antes de
+  calcular hojas.
+- El fixture `m6-array-006-arithmetic` cubre los cinco operadores enteros,
+  ambos sentidos de broadcasting escalar, arrays anidados, `Float`, `Float32`
+  y las cinco asignaciones compuestas. La ejecución interna repite arrays
+  anidados bajo un umbral inicial de GC igual a uno.
+- La puerta completa pasa con 578 tests —508 del núcleo del compilador, 27 de
+  la VM y 43 de CLI/integración—, formatter canónico de los nuevos fixtures,
+  `cargo fmt --check`, `cargo check`, `cargo build`, Clippy y rustdoc con
+  warnings como error, y `git diff --check`.
 
 ### 0.63 — 2026-07-26
 

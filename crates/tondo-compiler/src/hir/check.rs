@@ -148,19 +148,22 @@ pub fn check_expressions<'a>(
 enum ExpressionExpectation {
     Direct(TypeId),
     CallableOutcome { full: TypeId, success: TypeId },
+    ArithmeticPeer(TypeId),
 }
 
 impl ExpressionExpectation {
     fn contextual_type(self) -> TypeId {
         match self {
-            Self::Direct(ty) => ty,
+            Self::Direct(ty) | Self::ArithmeticPeer(ty) => ty,
             Self::CallableOutcome { success, .. } => success,
         }
     }
 
     fn resulting_type(self) -> TypeId {
         match self {
-            Self::Direct(ty) | Self::CallableOutcome { full: ty, .. } => ty,
+            Self::Direct(ty)
+            | Self::ArithmeticPeer(ty)
+            | Self::CallableOutcome { full: ty, .. } => ty,
         }
     }
 }
@@ -2108,6 +2111,11 @@ impl<'a> ExpressionChecker<'a> {
         }
         if expectation.contextual_type() == self.program.interner.error()
             || expectation.resulting_type() == self.program.interner.error()
+        {
+            return Ok(value);
+        }
+        if let ExpressionExpectation::ArithmeticPeer(peer) = expectation
+            && self.arithmetic_peer_matches(actual, peer)?
         {
             return Ok(value);
         }
@@ -4804,6 +4812,10 @@ impl<'a> ExpressionChecker<'a> {
             .child_nodes()
             .filter(|child| AstExpression::cast(*child).is_some())
             .collect::<Vec<_>>();
+        let arithmetic_peer = match expected {
+            Some(ExpressionExpectation::ArithmeticPeer(peer)) => Some(peer),
+            _ => None,
+        };
         let mut contextual = expected
             .map(ExpressionExpectation::contextual_type)
             .map(|ty| self.unique_intrinsic_member(ty, IntrinsicType::Array))
@@ -4820,24 +4832,24 @@ impl<'a> ExpressionChecker<'a> {
             .transpose()?
             .flatten()
             .map(|arguments| arguments[0]);
-        if items.is_empty() && contextual_item.is_none() {
+        if items.is_empty() && contextual_item.is_none() && arithmetic_peer.is_none() {
             self.emit_collection_context_required(file, node.range(), "array", "Array[T]")?;
             return self.recovery_expression(file, node.range());
         }
 
         let mut values = Vec::with_capacity(items.len());
-        let mut item_type = contextual_item;
+        let mut item_type = contextual_item.or(arithmetic_peer);
         let mut invalid = false;
-        for item in items {
-            let value = self.check_expression(
-                file,
-                item,
-                item_type.map(ExpressionExpectation::Direct),
-                context,
-            )?;
+        for (index, item) in items.into_iter().enumerate() {
+            let item_expected = if contextual_item.is_some() || index != 0 {
+                item_type.map(ExpressionExpectation::Direct)
+            } else {
+                arithmetic_peer.map(ExpressionExpectation::ArithmeticPeer)
+            };
+            let value = self.check_expression(file, item, item_expected, context)?;
             let actual = self.expression_type(value);
             invalid |= actual == self.program.interner.error();
-            if item_type.is_none() && actual != self.program.interner.error() {
+            if contextual_item.is_none() && index == 0 && actual != self.program.interner.error() {
                 item_type = Some(actual);
             }
             values.push(value);
@@ -11405,55 +11417,46 @@ impl<'a> ExpressionChecker<'a> {
             return self.recovery_expression(file, node.range());
         };
         let bool_type = self.program.interner.scalar(ScalarType::Bool);
-        let array_context = contextual.is_some_and(|ty| {
-            self.program.interner.kind(ty).is_ok_and(is_array_type)
-                && matches!(
-                    operator,
-                    HirBinaryOperator::Add
-                        | HirBinaryOperator::Subtract
-                        | HirBinaryOperator::Multiply
-                        | HirBinaryOperator::Divide
-                        | HirBinaryOperator::Remainder
-                )
-        });
-        let (left_expected, right_from_left) = match operator {
-            HirBinaryOperator::LogicalAnd | HirBinaryOperator::LogicalOr => {
-                (Some(bool_type), false)
-            }
-            HirBinaryOperator::ShiftLeft | HirBinaryOperator::ShiftRight => (contextual, false),
-            HirBinaryOperator::Less
-            | HirBinaryOperator::LessEqual
-            | HirBinaryOperator::Greater
-            | HirBinaryOperator::GreaterEqual
-            | HirBinaryOperator::Equal
-            | HirBinaryOperator::NotEqual => (None, true),
-            _ if array_context => (None, false),
-            _ => (contextual, true),
-        };
-        let left = self.check_expression(
-            file,
-            operands[0],
-            left_expected.map(ExpressionExpectation::Direct),
-            context,
-        )?;
-        let left_type = self.expression_type(left);
-        let lifted_array_candidate = matches!(
+        let arithmetic = matches!(
             operator,
             HirBinaryOperator::Add
                 | HirBinaryOperator::Subtract
                 | HirBinaryOperator::Multiply
                 | HirBinaryOperator::Divide
                 | HirBinaryOperator::Remainder
-        ) && (self
-            .program
-            .interner
-            .kind(left_type)
-            .is_ok_and(is_array_type)
-            || operands[1].kind() == SyntaxKind::BracketLiteralExpr);
-        let right_expected = if array_context || lifted_array_candidate {
-            None
+        );
+        let array_context = contextual.is_some_and(|ty| {
+            self.program.interner.kind(ty).is_ok_and(is_array_type) && arithmetic
+        });
+        let (left_expected, right_from_left) = match operator {
+            HirBinaryOperator::LogicalAnd | HirBinaryOperator::LogicalOr => {
+                (Some(ExpressionExpectation::Direct(bool_type)), false)
+            }
+            HirBinaryOperator::ShiftLeft | HirBinaryOperator::ShiftRight => {
+                (contextual.map(ExpressionExpectation::Direct), false)
+            }
+            HirBinaryOperator::Less
+            | HirBinaryOperator::LessEqual
+            | HirBinaryOperator::Greater
+            | HirBinaryOperator::GreaterEqual
+            | HirBinaryOperator::Equal
+            | HirBinaryOperator::NotEqual => (None, true),
+            _ if array_context => (
+                Some(ExpressionExpectation::ArithmeticPeer(
+                    self.array_leaf_type(contextual.expect("array context has a type"))?,
+                )),
+                false,
+            ),
+            _ => (contextual.map(ExpressionExpectation::Direct), true),
+        };
+        let left = self.check_expression(file, operands[0], left_expected, context)?;
+        let left_type = self.expression_type(left);
+        let right_expected = if arithmetic {
+            Some(ExpressionExpectation::ArithmeticPeer(
+                self.array_leaf_type(left_type)?,
+            ))
         } else if right_from_left {
-            Some(left_type)
+            Some(ExpressionExpectation::Direct(left_type))
         } else if matches!(
             operator,
             HirBinaryOperator::ShiftLeft | HirBinaryOperator::ShiftRight
@@ -11462,12 +11465,7 @@ impl<'a> ExpressionChecker<'a> {
         } else {
             left_expected
         };
-        let right = self.check_expression(
-            file,
-            operands[1],
-            right_expected.map(ExpressionExpectation::Direct),
-            context,
-        )?;
+        let right = self.check_expression(file, operands[1], right_expected, context)?;
         let right_type = self.expression_type(right);
         if left_type == self.program.interner.error() || right_type == self.program.interner.error()
         {
@@ -11947,6 +11945,21 @@ impl<'a> ExpressionChecker<'a> {
                     .map_err(HirError::from)
             })
             .transpose()
+    }
+
+    fn array_leaf_type(&self, mut ty: TypeId) -> Result<TypeId, HirError> {
+        while let TypeKind::Intrinsic {
+            constructor: IntrinsicType::Array,
+            arguments,
+        } = self.program.interner.kind(ty)?
+        {
+            ty = arguments[0];
+        }
+        Ok(ty)
+    }
+
+    fn arithmetic_peer_matches(&self, actual: TypeId, peer: TypeId) -> Result<bool, HirError> {
+        Ok(self.array_leaf_type(actual)? == peer)
     }
 
     fn check_postfix(
@@ -14375,8 +14388,8 @@ impl<'a> ExpressionChecker<'a> {
                 };
                 if let Some(expectation) = expected {
                     let contextual = match expectation {
-                        ExpressionExpectation::Direct(ty) => ty,
-                        ExpressionExpectation::CallableOutcome { full, success } => {
+                        ExpressionExpectation::Direct(ty) => Some(ty),
+                        ExpressionExpectation::CallableOutcome { full, success } => Some(
                             if matches!(
                                 self.program.interner.kind(function.outcome())?,
                                 TypeKind::Result { .. }
@@ -14384,14 +14397,17 @@ impl<'a> ExpressionChecker<'a> {
                                 full
                             } else {
                                 success
-                            }
-                        }
+                            },
+                        ),
+                        ExpressionExpectation::ArithmeticPeer(_) => None,
                     };
-                    let _ = self.constrain_inference_assignment(
-                        &mut inference.solver,
-                        function.outcome(),
-                        contextual,
-                    )?;
+                    if let Some(contextual) = contextual {
+                        let _ = self.constrain_inference_assignment(
+                            &mut inference.solver,
+                            function.outcome(),
+                            contextual,
+                        )?;
+                    }
                 }
                 Some(inference)
             } else {
@@ -21031,7 +21047,8 @@ mod tests {
     #[test]
     fn every_scalar_compound_operator_and_array_arithmetic_are_closed() {
         let (_, _, output) = check(
-            "fn update(number: var Int, values: var Array[Int], other: Array[Int]) {\n\
+            "fn identity[T](value: T): T { value }\n\
+             fn update(number: var Int, values: var Array[Int], other: Array[Int]) {\n\
                  number += 1\n\
                  number -= 1\n\
                  number *= 2\n\
@@ -21051,8 +21068,21 @@ mod tests {
                  let inverse: Array[Int] = 100 - values\n\
                  let inferred = values + 1\n\
                  let inferred_inverse = 100 - [1, 2]\n\
+                 let named_inverse = 100 - values\n\
+                 let called_inverse = 100 - identity(values)\n\
                  _ = inferred\n\
                  _ = inferred_inverse\n\
+                 _ = named_inverse\n\
+                 _ = called_inverse\n\
+             }\n\
+             fn narrow(values: Array[Int32]): (Array[Int32], Array[Int32]) {\n\
+                 (values + 1, 100 - values)\n\
+             }\n\
+             fn empty(values: Array[Int32]): Array[Int32] {\n\
+                 values + []\n\
+             }\n\
+             fn nestedNarrow(): Array[Array[Int32]] {\n\
+                 [[1], [2]] + 1\n\
              }\n",
         );
         assert!(
@@ -22006,6 +22036,17 @@ mod tests {
             let (_, _, output) = check(source);
             assert_eq!(codes(&output), ["E1903"], "{source}");
         }
+
+        let (_, _, shape_preflight) = check(
+            "const Invalid: Array[Array[Int]] = \
+             [[9223372036854775807, 0], [1]] + [[1, 0], [1, 2]]\n",
+        );
+        assert_eq!(codes(&shape_preflight), ["E1903"]);
+        assert!(
+            shape_preflight.diagnostics()[0]
+                .message()
+                .contains("different shapes")
+        );
 
         let (_, _, identity) = check("const Invalid: Ref[Int] = Ref(1)\n");
         assert_eq!(codes(&identity), ["E1901"]);

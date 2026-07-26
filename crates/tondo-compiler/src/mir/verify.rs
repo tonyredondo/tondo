@@ -3142,7 +3142,7 @@ impl Verifier<'_> {
         &self,
         operator: HirBinaryOperator,
         left: TypeId,
-        _right: TypeId,
+        right: TypeId,
     ) -> bool {
         matches!(
             operator,
@@ -3153,10 +3153,12 @@ impl Verifier<'_> {
                 | HirBinaryOperator::Subtract
                 | HirBinaryOperator::ShiftLeft
                 | HirBinaryOperator::ShiftRight
-        ) && !matches!(
-            self.hir.interner().kind(left),
-            Ok(TypeKind::Scalar(ScalarType::Float | ScalarType::Float32))
-        )
+        ) && (self.is_array(left)
+            || self.is_array(right)
+            || !matches!(
+                self.hir.interner().kind(left),
+                Ok(TypeKind::Scalar(ScalarType::Float | ScalarType::Float32))
+            ))
     }
 
     fn verify_numeric_conversion(

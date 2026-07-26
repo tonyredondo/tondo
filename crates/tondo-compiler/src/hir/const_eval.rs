@@ -625,6 +625,17 @@ fn evaluate_binary(
     left: HirConstantValue,
     right: HirConstantValue,
 ) -> Result<HirConstantValue, ConstantEvaluationError> {
+    if matches!(
+        operator,
+        HirBinaryOperator::Add
+            | HirBinaryOperator::Subtract
+            | HirBinaryOperator::Multiply
+            | HirBinaryOperator::Divide
+            | HirBinaryOperator::Remainder
+    ) {
+        validate_lifted_array_shape(&left, &right, span)?;
+    }
+
     enum LiftWork<'a> {
         Apply(&'a HirConstantValue, &'a HirConstantValue, TypeId),
         FinishArray { ty: TypeId, length: usize },
@@ -682,6 +693,39 @@ fn evaluate_binary(
         return Err(ConstantEvaluationError::Unavailable);
     }
     results.pop().ok_or(ConstantEvaluationError::Unavailable)
+}
+
+fn validate_lifted_array_shape(
+    left: &HirConstantValue,
+    right: &HirConstantValue,
+    span: Span,
+) -> Result<(), ConstantEvaluationError> {
+    let mut pending = vec![(left, right)];
+    while let Some((left, right)) = pending.pop() {
+        let left_array = match left.kind() {
+            HirConstantValueKind::Array(items) => Some(items.as_slice()),
+            _ => None,
+        };
+        let right_array = match right.kind() {
+            HirConstantValueKind::Array(items) => Some(items.as_slice()),
+            _ => None,
+        };
+        let length = match (left_array, right_array) {
+            (Some(left), Some(right)) if left.len() != right.len() => {
+                return Err(panic_error(span, "array operands have different shapes"));
+            }
+            (Some(left), Some(_)) | (Some(left), None) => left.len(),
+            (None, Some(right)) => right.len(),
+            (None, None) => continue,
+        };
+        for index in (0..length).rev() {
+            pending.push((
+                left_array.map_or(left, |items| &items[index]),
+                right_array.map_or(right, |items| &items[index]),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn evaluate_scalar_binary(

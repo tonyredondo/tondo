@@ -13,7 +13,7 @@ use crate::hir::{
 };
 use crate::resolve::{LocalId, MemberKind, ResolvedProgram};
 use crate::source::Span;
-use crate::types::{CursorMode, ParameterMode, ScalarType, TypeId, TypeKind};
+use crate::types::{CursorMode, IntrinsicType, ParameterMode, ScalarType, TypeId, TypeKind};
 
 use super::{
     MirAggregateKind, MirAssertMessagePart, MirBasicBlock, MirBlockId, MirBlockKind,
@@ -886,7 +886,7 @@ impl<'a> FunctionBuilder<'a> {
                 let Some((block, right)) = right else {
                     return Ok(None);
                 };
-                if self.binary_may_panic(*operator, left.ty) {
+                if self.binary_may_panic(*operator, left.ty, right.ty) {
                     self.invoke(
                         block,
                         span,
@@ -1658,7 +1658,7 @@ impl<'a> FunctionBuilder<'a> {
         let left = self.copy_local(previous);
         let result = self.allocate_temporary(left.ty, span, block)?;
         let result_place = self.local_place(result);
-        let block = if self.binary_may_panic(binary, left.ty) {
+        let block = if self.binary_may_panic(binary, left.ty, right.ty) {
             let Some(block) = self.invoke(
                 block,
                 span,
@@ -4848,30 +4848,34 @@ impl<'a> FunctionBuilder<'a> {
         )
     }
 
-    fn binary_may_panic(&self, operator: HirBinaryOperator, ty: TypeId) -> bool {
-        match operator {
+    fn binary_may_panic(&self, operator: HirBinaryOperator, left: TypeId, right: TypeId) -> bool {
+        if !matches!(
+            operator,
             HirBinaryOperator::Multiply
-            | HirBinaryOperator::Divide
-            | HirBinaryOperator::Remainder
-            | HirBinaryOperator::Add
-            | HirBinaryOperator::Subtract
-            | HirBinaryOperator::ShiftLeft
-            | HirBinaryOperator::ShiftRight => !matches!(
-                self.hir.interner().kind(ty),
-                Ok(TypeKind::Scalar(ScalarType::Float | ScalarType::Float32))
-            ),
-            HirBinaryOperator::BitwiseAnd
-            | HirBinaryOperator::BitwiseXor
-            | HirBinaryOperator::BitwiseOr
-            | HirBinaryOperator::Less
-            | HirBinaryOperator::LessEqual
-            | HirBinaryOperator::Greater
-            | HirBinaryOperator::GreaterEqual
-            | HirBinaryOperator::Equal
-            | HirBinaryOperator::NotEqual
-            | HirBinaryOperator::LogicalAnd
-            | HirBinaryOperator::LogicalOr => false,
+                | HirBinaryOperator::Divide
+                | HirBinaryOperator::Remainder
+                | HirBinaryOperator::Add
+                | HirBinaryOperator::Subtract
+                | HirBinaryOperator::ShiftLeft
+                | HirBinaryOperator::ShiftRight
+        ) {
+            return false;
         }
+        let is_array = |ty| {
+            matches!(
+                self.hir.interner().kind(ty),
+                Ok(TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Array,
+                    ..
+                })
+            )
+        };
+        is_array(left)
+            || is_array(right)
+            || !matches!(
+                self.hir.interner().kind(left),
+                Ok(TypeKind::Scalar(ScalarType::Float | ScalarType::Float32))
+            )
     }
 
     fn expression(&self, id: HirExpressionId) -> Result<&HirExpression, MirError> {
@@ -6694,6 +6698,115 @@ mod tests {
                 })
         );
         verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
+    fn lifted_array_arithmetic_is_checked_and_compound_results_are_staged() {
+        let source = "fn combine(scalar: Float, values: Array[Float]): Array[Float] {\n\
+                          scalar + values\n\
+                      }\n\
+                      fn update(values: var Array[Int], other: Array[Int]) {\n\
+                          values += other\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+
+        let combine = mir.function(function_id(&resolved, "combine")).unwrap();
+        assert!(combine.blocks().any(|block| matches!(
+            block.terminator().kind(),
+            MirTerminatorKind::Invoke {
+                operation: MirOperation {
+                    kind: MirOperationKind::CheckedBinary { .. },
+                    ..
+                },
+                destination: Some(_),
+                ..
+            }
+        )));
+        let update = mir.function(function_id(&resolved, "update")).unwrap();
+        let update_destination = update
+            .blocks()
+            .find_map(|block| match block.terminator().kind() {
+                MirTerminatorKind::Invoke {
+                    operation:
+                        MirOperation {
+                            kind: MirOperationKind::CheckedBinary { .. },
+                            ..
+                        },
+                    destination: Some(destination),
+                    ..
+                } => Some(destination),
+                _ => None,
+            })
+            .expect("compound array arithmetic must stage a checked result");
+        assert_eq!(
+            update.local(update_destination.local()).unwrap().kind(),
+            MirLocalKind::Temporary
+        );
+        assert_ne!(update_destination.local(), update.parameters()[0]);
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let mut forged = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let combine = forged
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "combine")))
+            .unwrap();
+        let block = combine
+            .blocks
+            .iter_mut()
+            .find(|block| {
+                matches!(
+                    block.terminator.kind,
+                    MirTerminatorKind::Invoke {
+                        operation: MirOperation {
+                            kind: MirOperationKind::CheckedBinary { .. },
+                            ..
+                        },
+                        ..
+                    }
+                )
+            })
+            .unwrap();
+        let span = block.terminator.span;
+        let MirTerminatorKind::Invoke {
+            operation,
+            destination: Some(destination),
+            target: Some(target),
+            ..
+        } = std::mem::replace(&mut block.terminator.kind, MirTerminatorKind::Unreachable)
+        else {
+            unreachable!("the selected terminator is a returning checked Invoke")
+        };
+        let MirOperationKind::CheckedBinary {
+            operator,
+            left,
+            right,
+        } = operation.kind
+        else {
+            unreachable!("the selected operation is checked binary")
+        };
+        block.statements.push(MirStatement {
+            span,
+            kind: MirStatementKind::Assign {
+                destination,
+                value: MirRvalue {
+                    ty: operation.ty,
+                    kind: MirRvalueKind::Binary {
+                        operator,
+                        left,
+                        right,
+                    },
+                },
+            },
+        });
+        block.terminator.kind = MirTerminatorKind::Goto { target };
+        let error = verify_mir(&resolved, &hir, &forged).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("potentially panicking binary operation"),
+            "{error}"
+        );
     }
 
     #[test]

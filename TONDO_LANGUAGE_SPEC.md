@@ -2484,6 +2484,12 @@ Cuando ambos operandos son arrays se elige siempre la operación elemento a elem
 
 Los arrays emparejados deben tener la misma longitud en cada nivel. Una diferencia de forma produce pánico de contrato. Cuando una diferencia sea parte normal del dominio, el programa debe validarla o utilizar una operación checked de la librería.
 
+Después de evaluar ambos operandos de izquierda a derecha, se valida toda la
+forma recursiva antes de ejecutar la primera operación numérica elemental. Por
+tanto, una incompatibilidad de forma produce `P0006` aunque una hoja anterior
+hubiera producido overflow o división por cero; un pánico ocurrido al evaluar
+uno de los operandos conserva en cambio su precedencia.
+
 Los operadores elevados son:
 
 ~~~text
@@ -2491,6 +2497,14 @@ Los operadores elevados son:
 ~~~
 
 Solo se elevan cuando la operación de los elementos es una operación numérica intrínseca válida. El usuario no puede redefinirla.
+
+La inferencia contextual puede fijar el tipo numérico de las hojas, pero no
+inventa la forma de los operandos. Una vez conocida una hoja `N`, un peer
+aritmético puede ser `N` o cualquier anidación `Array[…Array[N]…]`; la forma
+concreta procede de la expresión. Literales, bindings y resultados de llamadas
+siguen la misma regla. Esto permite, por ejemplo, inferir el `Int32` de `1` en
+`values + 1` cuando `values: Array[Int32]`, sin introducir conversiones
+numéricas implícitas.
 
 La operación:
 

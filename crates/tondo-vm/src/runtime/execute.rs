@@ -4418,6 +4418,17 @@ impl Engine<'_, '_> {
         if left_element.is_some() || right_element.is_some() {
             return self.checked_array_binary(operator, left_ty, right_ty, result_ty, left, right);
         }
+        self.checked_scalar_binary(operator, left_ty, right_ty, left, right)
+    }
+
+    fn checked_scalar_binary(
+        &mut self,
+        operator: BytecodeBinaryOperator,
+        left_ty: BytecodeTypeId,
+        right_ty: BytecodeTypeId,
+        left: Value,
+        right: Value,
+    ) -> Result<Result<Value, (PanicCode, String)>, VmError> {
         let left_scalar = self.scalar(left_ty)?;
         match (left, right) {
             (Value::Integer(left), Value::Integer(right)) => Ok(self
@@ -4448,6 +4459,15 @@ impl Engine<'_, '_> {
                         )
                     })
                 })),
+            (Value::Float(left), Value::Float(right)) => self
+                .pure_binary(
+                    operator,
+                    left_ty,
+                    right_ty,
+                    Value::Float(left),
+                    Value::Float(right),
+                )
+                .map(Ok),
             _ => Err(VmError::invariant(
                 "verified checked binary values are not numeric",
             )),
@@ -4565,10 +4585,67 @@ impl Engine<'_, '_> {
         let marker = self.temporary_roots.len();
         self.retain_temporary(&left);
         self.retain_temporary(&right);
-        let result =
-            self.checked_rooted_array_binary(operator, left_ty, right_ty, result_ty, left, right);
+        let result = match self
+            .validate_rooted_array_binary_shape(left_ty, right_ty, &left, &right)?
+        {
+            Ok(()) => self
+                .checked_rooted_array_binary(operator, left_ty, right_ty, result_ty, left, right),
+            Err(panic) => Ok(Err(panic)),
+        };
         self.temporary_roots.truncate(marker);
         result
+    }
+
+    fn validate_rooted_array_binary_shape(
+        &self,
+        left_ty: BytecodeTypeId,
+        right_ty: BytecodeTypeId,
+        left: &Value,
+        right: &Value,
+    ) -> Result<Result<(), (PanicCode, String)>, VmError> {
+        let left_element = self.array_element(left_ty);
+        let right_element = self.array_element(right_ty);
+        if left_element.is_none() && right_element.is_none() {
+            return Ok(Ok(()));
+        }
+        let left_values = left_element.map(|_| self.array_values(left)).transpose()?;
+        let right_values = right_element
+            .map(|_| self.array_values(right))
+            .transpose()?;
+        let length = match (&left_values, &right_values) {
+            (Some(left), Some(right)) if left.len() != right.len() => {
+                return Ok(Err((
+                    PanicCode::ArrayShapeMismatch,
+                    format!(
+                        "array arithmetic requires equal lengths, found {} and {}",
+                        left.len(),
+                        right.len()
+                    ),
+                )));
+            }
+            (Some(left), _) => left.len(),
+            (_, Some(right)) => right.len(),
+            (None, None) => unreachable!("an Array type was established above"),
+        };
+        for index in 0..length {
+            let left_value = left_values.as_ref().map_or_else(
+                || Ok(left.clone()),
+                |values| clone_present(&values[index], "array element"),
+            )?;
+            let right_value = right_values.as_ref().map_or_else(
+                || Ok(right.clone()),
+                |values| clone_present(&values[index], "array element"),
+            )?;
+            if let Err(panic) = self.validate_rooted_array_binary_shape(
+                left_element.unwrap_or(left_ty),
+                right_element.unwrap_or(right_ty),
+                &left_value,
+                &right_value,
+            )? {
+                return Ok(Err(panic));
+            }
+        }
+        Ok(Ok(()))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4592,14 +4669,9 @@ impl Engine<'_, '_> {
             .transpose()?;
         let length = match (&left_values, &right_values) {
             (Some(left), Some(right)) if left.len() != right.len() => {
-                return Ok(Err((
-                    PanicCode::ArrayShapeMismatch,
-                    format!(
-                        "array arithmetic requires equal lengths, found {} and {}",
-                        left.len(),
-                        right.len()
-                    ),
-                )));
+                return Err(VmError::invariant(
+                    "array shape changed after arithmetic preflight",
+                ));
             }
             (Some(left), _) => left.len(),
             (_, Some(right)) => right.len(),
@@ -4619,7 +4691,7 @@ impl Engine<'_, '_> {
                 || Ok(right.clone()),
                 |values| clone_present(&values[index], "array element"),
             );
-            let element = self.checked_binary(
+            let element = self.checked_rooted_binary(
                 operator,
                 left_element.unwrap_or(left_ty),
                 right_element.unwrap_or(right_ty),
@@ -4640,6 +4712,23 @@ impl Engine<'_, '_> {
             HeapObject::Array(output),
             &[],
         )?))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn checked_rooted_binary(
+        &mut self,
+        operator: BytecodeBinaryOperator,
+        left_ty: BytecodeTypeId,
+        right_ty: BytecodeTypeId,
+        result_ty: BytecodeTypeId,
+        left: Value,
+        right: Value,
+    ) -> Result<Result<Value, (PanicCode, String)>, VmError> {
+        if self.array_element(left_ty).is_some() || self.array_element(right_ty).is_some() {
+            self.checked_rooted_array_binary(operator, left_ty, right_ty, result_ty, left, right)
+        } else {
+            self.checked_scalar_binary(operator, left_ty, right_ty, left, right)
+        }
     }
 
     fn array_element(&self, ty: BytecodeTypeId) -> Option<BytecodeTypeId> {
