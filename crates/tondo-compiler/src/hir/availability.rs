@@ -733,22 +733,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 values.extend(step.map(|value| (value, Demand::Transfer)));
                 let mut flow = self.sequence_unsettled(state, values, live_after)?;
                 settle_handoff(&mut flow, &baseline);
-                if flow.normal.is_some() {
-                    let TypeKind::Intrinsic {
-                        constructor: crate::types::IntrinsicType::Array,
-                        arguments,
-                    } = self.program.interner().kind(expression.ty())?.clone()
-                    else {
-                        unreachable!("stored slice results retain their Array type")
-                    };
-                    if !self.is_copy(arguments[0])? {
-                        self.findings.insert(AvailabilityFinding {
-                            kind: AvailabilityFindingKind::InvalidPartialTransfer,
-                            local: None,
-                            use_span: expression.span(),
-                            move_span: None,
-                        });
-                    }
+                if flow.normal.is_some() && !self.is_copy(expression.ty())? {
+                    self.findings.insert(AvailabilityFinding {
+                        kind: AvailabilityFindingKind::InvalidPartialTransfer,
+                        local: None,
+                        use_span: expression.span(),
+                        move_span: None,
+                    });
                 }
                 flow
             }

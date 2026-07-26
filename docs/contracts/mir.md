@@ -18,7 +18,7 @@ ARRAY-002 positive/negative checked indexing, ARRAY-003 slicing, ARRAY-004
 logical slice snapshots, ARRAY-005 fixed versus structural array mutation,
 ARRAY-006 closed lifted arithmetic, ARRAY-007 named concatenation/repetition,
 and ITER-001/002 static user iterators plus all four intrinsic iteration forms
-implemented
+implemented, plus TEXT-002 Unicode-scalar String length, indexing, and slicing
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -344,11 +344,17 @@ manufactured sentinel, and MIR never normalizes, clips, or advances the
 indices. The checked operation and every projected place reuse those exact
 locals; a zero step and every later loan/write validation follow the same
 language-panic unwind edge.
-`MirOperationKind::Slice` always materializes an owning `Array[T]` and the MIR
-verifier therefore rederives `Array[T]: Copy` under the exact function generic
-assumptions. A slice that remains inside `ref`/`mut` loan metadata is only a
-place projection and does not require `T: Copy`; it never passes through the
-materializing operation.
+`MirOperationKind::Slice` over an array always materializes an owning
+`Array[T]` and the MIR verifier therefore rederives `Array[T]: Copy` under the
+exact function generic assumptions. A slice that remains inside `ref`/`mut`
+loan metadata is only a place projection and does not require `T: Copy`; it
+never passes through the materializing operation.
+String index and slice reads use the same checked operations and operand order.
+The verifier instead requires `String + Int -> Char` for an index and
+`String + bounds -> String` for a slice. Neither form can enter place
+projections, runtime-overlap metadata, or write validation, preserving text
+immutability independently of HIR construction. `Length` admits only `Array`
+or `String` and always produces `Int`; String execution counts Unicode scalars.
 `MirOperationKind::ArraySequence` is likewise always checked. Its shared
 receiver is the sole permitted immediate `Borrow`; its value argument cannot
 contain a borrow or loan. The explicit operand order fixes

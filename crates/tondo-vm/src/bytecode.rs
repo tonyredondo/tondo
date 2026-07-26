@@ -927,6 +927,7 @@ pub enum BytecodeArraySequenceKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BytecodeIndexAccess {
     Array,
+    String,
     MapLookup,
     MapEntry,
 }

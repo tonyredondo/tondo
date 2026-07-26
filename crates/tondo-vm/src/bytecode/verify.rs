@@ -3182,6 +3182,9 @@ impl Verifier<'_> {
                     collection
                 }
                 BytecodeProjectionKind::Index { index, access } => {
+                    if *access == BytecodeIndexAccess::String {
+                        return Err(projection_error(context));
+                    }
                     let index = self.slot(function, *index, context)?.ty;
                     self.index_result(current, index, *access, context)?
                 }
@@ -3552,9 +3555,15 @@ impl Verifier<'_> {
             BytecodeRvalueKind::Length(operand) => {
                 self.verify_operand(function, operand, context)?;
                 if !self.is_scalar(value.ty, BytecodeScalarType::Int)
-                    || self
-                        .intrinsic_argument(operand.ty, BytecodeIntrinsicType::Array, 0, context)
-                        .is_err()
+                    || (!self.is_scalar(operand.ty, BytecodeScalarType::String)
+                        && self
+                            .intrinsic_argument(
+                                operand.ty,
+                                BytecodeIntrinsicType::Array,
+                                0,
+                                context,
+                            )
+                            .is_err())
                 {
                     return Err(rvalue_error(context));
                 }
@@ -4151,6 +4160,17 @@ impl Verifier<'_> {
                 }
                 self.intrinsic_argument(base, BytecodeIntrinsicType::Array, 0, context)
             }
+            BytecodeIndexAccess::String => {
+                if !self.is_scalar(base, BytecodeScalarType::String)
+                    || !self.is_scalar(index, BytecodeScalarType::Int)
+                {
+                    return Err(projection_error(context));
+                }
+                self.find_type(
+                    |kind| matches!(kind, BytecodeTypeKind::Scalar(BytecodeScalarType::Char)),
+                    context,
+                )
+            }
             BytecodeIndexAccess::MapLookup | BytecodeIndexAccess::MapEntry => {
                 let key = self.intrinsic_argument(base, BytecodeIntrinsicType::Map, 0, context)?;
                 let value =
@@ -4586,6 +4606,9 @@ impl Verifier<'_> {
                 if self.index_result(base.ty, index.ty, *access, context)? != operation.ty {
                     return Err(operation_error(context));
                 }
+                if *access == BytecodeIndexAccess::String && !against.is_empty() {
+                    return Err(operation_error(context));
+                }
                 self.verify_runtime_conflict_ids(function, against, context)?;
                 let _ = operation_access_place(operation, context)?;
             }
@@ -4601,14 +4624,17 @@ impl Verifier<'_> {
                         return Err(operation_error(context));
                     }
                 }
-                if operation.ty != base.ty
-                    || self
-                        .intrinsic_argument(base.ty, BytecodeIntrinsicType::Array, 0, context)
-                        .is_err()
-                {
+                let is_array = self
+                    .intrinsic_argument(base.ty, BytecodeIntrinsicType::Array, 0, context)
+                    .is_ok();
+                let is_string = self.is_scalar(base.ty, BytecodeScalarType::String);
+                if operation.ty != base.ty || !(is_array || is_string) {
                     return Err(operation_error(context));
                 }
-                if !self.capability(operation.ty, ClosedCapability::Copy, context)? {
+                if is_string && !against.is_empty() {
+                    return Err(operation_error(context));
+                }
+                if is_array && !self.capability(operation.ty, ClosedCapability::Copy, context)? {
                     return Err(BytecodeVerificationError::new(
                         context,
                         "slice operation materializes a non-Copy Array",
@@ -9012,7 +9038,10 @@ fn collection_region(
                 CollectionComponent::Static(StaticCollectionRegion::Index(*index))
             }),
         MovePathComponent::Index {
-            access: BytecodeIndexAccess::MapLookup | BytecodeIndexAccess::MapEntry,
+            access:
+                BytecodeIndexAccess::String
+                | BytecodeIndexAccess::MapLookup
+                | BytecodeIndexAccess::MapEntry,
             ..
         }
         | MovePathComponent::IteratorElement { .. } => CollectionComponent::Dynamic,

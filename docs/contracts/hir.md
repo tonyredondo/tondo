@@ -19,7 +19,8 @@ projection, REF-002 identity equality/key admission, ARRAY-001 runtime length,
 ARRAY-002 typed array indexing, ARRAY-003 typed slicing, ARRAY-004 logical slice
 ownership, ARRAY-005 fixed versus structural array mutation, ARRAY-006 closed
 lifted arithmetic, ARRAY-007 named concatenation/repetition, and ITER-001/002
-static user iterators plus all four intrinsic iteration forms implemented
+static user iterators plus all four intrinsic iteration forms, plus TEXT-002
+Unicode-scalar String length, indexing, and slicing implemented
 
 ## Boundary
 
@@ -580,6 +581,11 @@ observation place retains the projection without moving the element. Negative
 indices remain signed operands because their meaning depends on runtime length;
 HIR neither rewrites them nor manufactures a static length.
 
+String indexing records one `String` base, one exact `Int` index, result type
+`Char`, and a value category regardless of the base category. It can therefore
+observe but never become an assignment, move, or loan place. Negative positions
+remain signed for the same runtime-length reason as arrays.
+
 Array slicing records one `Array[T]` base and up to three independently checked
 `Int` expressions for start, exclusive end, and step. Each omitted expression
 remains `None`; in particular, HIR never turns the omitted end of a negative
@@ -591,6 +597,11 @@ The availability verifier independently rederives that use-sensitive boundary:
 a stored/returned slice is a new logical owner and an affine transfer is
 invalid, while `ref`/`mut` call access reserves the original projected region.
 HIR records no storage, stride, sharing, uniqueness, or COW decision.
+
+String slicing uses the identical optional `Int` shape and omission rules, but
+its result is an immutable `String` value rather than a projected region.
+Availability proves that result `Copy` directly, so admitting text does not
+weaken the existing affine-element restriction on stored array slices.
 
 `Array.concat` and `Array.repeat` lower directly to one
 `HirExpressionKind::ArraySequence`, not to an unresolved library call or a
@@ -649,6 +660,11 @@ Constant array slicing likewise calls the runtime normalizer with its exact
 optional bounds. Sign-dependent defaults, explicit negative bounds, clipping,
 positive and negative strides, empty arrays, and `Int.min` steps therefore
 cannot drift; a zero step remains the compile-time panic `E1903`.
+Constant String indexing and slicing call those same normalizers over a
+Unicode-scalar count, producing `Char` and `String` respectively. Named
+constants therefore agree with runtime on negative positions, omitted negative
+ends, clipped extremes, empty text, and zero-step failure without exposing a
+UTF-8 byte offset.
 
 Evaluated scalars retain their exact semantic payload: integers use a
 mathematical signed representation constrained by their `TypeId`, and floats

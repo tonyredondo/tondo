@@ -94,7 +94,7 @@ fn collection_region(
                 CollectionComponent::Static(StaticCollectionRegion::Index(*index))
             }),
         MirProjectionKind::Index {
-            access: HirIndexAccess::MapLookup | HirIndexAccess::MapEntry,
+            access: HirIndexAccess::String | HirIndexAccess::MapLookup | HirIndexAccess::MapEntry,
             ..
         }
         | MirProjectionKind::IteratorElement { .. } => CollectionComponent::Dynamic,

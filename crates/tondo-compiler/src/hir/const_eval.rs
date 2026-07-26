@@ -1085,6 +1085,19 @@ fn evaluate_index(
                 .nth(normalized)
                 .ok_or(ConstantEvaluationError::Unavailable)
         }
+        (HirIndexAccess::String, HirConstantValueKind::String(text)) => {
+            let HirConstantValueKind::Integer(index) = index.kind else {
+                return Err(ConstantEvaluationError::Unavailable);
+            };
+            let length = text.chars().count();
+            let normalized = normalize_array_index(index, length)
+                .ok_or_else(|| panic_error(span, "constant String index is out of bounds"))?;
+            let character = text
+                .chars()
+                .nth(normalized)
+                .ok_or(ConstantEvaluationError::Unavailable)?;
+            Ok(constant_value(ty, HirConstantValueKind::Char(character)))
+        }
         (HirIndexAccess::MapLookup, HirConstantValueKind::Map(entries)) => {
             for (key, value) in entries {
                 if values_equal(program, &index, &key)? {
@@ -1112,23 +1125,39 @@ fn evaluate_slice(
     end: Option<HirConstantValue>,
     step: Option<HirConstantValue>,
 ) -> Result<HirConstantValue, ConstantEvaluationError> {
-    let HirConstantValueKind::Array(items) = base.kind else {
-        return Err(ConstantEvaluationError::Unavailable);
-    };
     let start = optional_integer(start)?;
     let end = optional_integer(end)?;
     let step = optional_integer(step)?;
-    let indices = normalize_array_slice_indices(start, end, step, items.len()).map_err(
-        |error| match error {
-            ArraySliceError::ZeroStep => panic_error(span, "constant slice step is zero"),
-            ArraySliceError::LengthNotRepresentable => ConstantEvaluationError::Unavailable,
-        },
-    )?;
-    let output = indices
-        .into_iter()
-        .map(|index| items[index].clone())
-        .collect();
-    Ok(constant_value(ty, HirConstantValueKind::Array(output)))
+    match base.kind {
+        HirConstantValueKind::Array(items) => {
+            let indices = constant_slice_indices(span, start, end, step, items.len())?;
+            let output = indices
+                .into_iter()
+                .map(|index| items[index].clone())
+                .collect();
+            Ok(constant_value(ty, HirConstantValueKind::Array(output)))
+        }
+        HirConstantValueKind::String(text) => {
+            let characters = text.chars().collect::<Vec<_>>();
+            let indices = constant_slice_indices(span, start, end, step, characters.len())?;
+            let output = indices.into_iter().map(|index| characters[index]).collect();
+            Ok(constant_value(ty, HirConstantValueKind::String(output)))
+        }
+        _ => Err(ConstantEvaluationError::Unavailable),
+    }
+}
+
+fn constant_slice_indices(
+    span: Span,
+    start: Option<i128>,
+    end: Option<i128>,
+    step: Option<i128>,
+    length: usize,
+) -> Result<Vec<usize>, ConstantEvaluationError> {
+    normalize_array_slice_indices(start, end, step, length).map_err(|error| match error {
+        ArraySliceError::ZeroStep => panic_error(span, "constant slice step is zero"),
+        ArraySliceError::LengthNotRepresentable => ConstantEvaluationError::Unavailable,
+    })
 }
 
 fn optional_integer(

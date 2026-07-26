@@ -3942,6 +3942,7 @@ fn containment_kind(value: crate::hir::HirContainmentKind) -> bc::BytecodeContai
 fn index_access(value: crate::hir::HirIndexAccess) -> bc::BytecodeIndexAccess {
     match value {
         crate::hir::HirIndexAccess::Array => bc::BytecodeIndexAccess::Array,
+        crate::hir::HirIndexAccess::String => bc::BytecodeIndexAccess::String,
         crate::hir::HirIndexAccess::MapLookup => bc::BytecodeIndexAccess::MapLookup,
         crate::hir::HirIndexAccess::MapEntry => bc::BytecodeIndexAccess::MapEntry,
     }
@@ -4221,6 +4222,110 @@ fn observe(): (Int, Int, Int, Int, Int, Int, Int, Int, Int) {
     }
 
     #[test]
+    fn string_length_rvalue_counts_unicode_scalars() {
+        let source = r#"fn textLength(): Int {
+    let text = "añ🙂"
+    let values = [0, 0, 0]
+    match values {
+        [] => 0
+        [_, _, _] => 3
+        [_, ..] => 1
+    }
+}
+"#;
+        let mut program = lowered(source);
+        let string_type = program
+            .types
+            .iter()
+            .position(|ty| {
+                matches!(
+                    ty.kind,
+                    bc::BytecodeTypeKind::Scalar(bc::BytecodeScalarType::String)
+                )
+            })
+            .map(|index| bc::BytecodeTypeId::new(index as u32))
+            .expect("the function must retain its String type");
+        let function_id = function_id(&program, "textLength");
+        let function = &mut program.functions[function_id.index() as usize];
+        let string_slot = function
+            .slots
+            .iter()
+            .enumerate()
+            .find(|(_, slot)| {
+                slot.ty == string_type && matches!(slot.kind, bc::BytecodeSlotKind::User { .. })
+            })
+            .map(|(index, _)| bc::BytecodeSlotId::new(index as u32))
+            .expect("the text binding must have a user slot");
+        let operand = function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instructions)
+            .find_map(|instruction| match &mut instruction.kind {
+                bc::BytecodeInstructionKind::Store {
+                    value:
+                        bc::BytecodeRvalue {
+                            kind: bc::BytecodeRvalueKind::Length(operand),
+                            ..
+                        },
+                    ..
+                } => Some(operand),
+                _ => None,
+            })
+            .expect("the array match must contain a Length rvalue");
+        *operand = bc::BytecodeOperand {
+            ty: string_type,
+            kind: bc::BytecodeOperandKind::Copy(bc::BytecodePlace {
+                slot: string_slot,
+                ty: string_type,
+                projections: Vec::new(),
+                source_loan: None,
+            }),
+        };
+
+        bc::verify_bytecode(&program).unwrap();
+        let mut host = RejectingHost;
+        let result = execute(&program, function_id, &mut host).unwrap();
+        assert_eq!(
+            result.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(3))
+        );
+    }
+
+    #[test]
+    fn string_index_access_tag_is_closed() {
+        let mut program = lowered(
+            "fn characterAt(text: String, index: Int): Char {\n\
+                 text[index]\n\
+             }\n",
+        );
+        let function_id = function_id(&program, "characterAt");
+        let access = program.functions[function_id.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Index { access, .. },
+                            ..
+                        },
+                    ..
+                } => Some(access),
+                _ => None,
+            })
+            .expect("String indexing must lower to a checked Index operation");
+        assert_eq!(*access, bc::BytecodeIndexAccess::String);
+        *access = bc::BytecodeIndexAccess::Array;
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(
+            error.message().contains("operation")
+                || error.message().contains("projection")
+                || error.message().contains("intrinsic"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn array_indices_normalize_reads_writes_borrows_and_bounds_uniformly() {
         let source = r#"fn inspect(value: ref Int): Int {
     value
@@ -4369,6 +4474,27 @@ fn verifierTarget(index: Int, flag: Bool): Int {
                 source_loan: None,
             }),
         };
+        let error = bc::verify_bytecode(&forged).unwrap_err();
+        assert!(error.message().contains("projection"), "{error}");
+
+        let mut forged = lowered(source);
+        let target = function_id(&forged, "highWrite");
+        let function = &mut forged.functions[target.index() as usize];
+        let access = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::ValidatePlaces { places, .. } => places
+                    .iter_mut()
+                    .flat_map(|place| &mut place.projections)
+                    .find_map(|projection| match &mut projection.kind {
+                        bc::BytecodeProjectionKind::Index { access, .. } => Some(access),
+                        _ => None,
+                    }),
+                _ => None,
+            })
+            .expect("highWrite must validate an indexed place");
+        *access = bc::BytecodeIndexAccess::String;
         let error = bc::verify_bytecode(&forged).unwrap_err();
         assert!(error.message().contains("projection"), "{error}");
     }

@@ -76,7 +76,8 @@ panic classes are likewise executable. `Float32` and `Float64` preserve their
 IEEE precision at every operation, including ties-to-even rounding, gradual
 underflow, infinities, NaN, signed zero, and the prohibition on implicit FMA
 contraction. Immutable strings retain valid UTF-8, exact scalar equality and
-ordering, and linear Unicode-scalar iteration; `String`, `Char`, `Byte`, and
+ordering, linear Unicode-scalar iteration, negative indexing to `Char`, and
+array-compatible scalar slicing back to `String`; `String`, `Char`, `Byte`, and
 `Array[Byte]` remain distinct, while `Bytes` is deliberately reserved for the
 future standard library. Complete HIR lowers through a verified typed MIR and
 then to verified in-memory slot bytecode with source maps. Reached generic

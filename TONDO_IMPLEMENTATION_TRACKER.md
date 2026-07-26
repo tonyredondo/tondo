@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.73
+**Versión del tracker:** 0.74
 
 **Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** TEXT-001 y TEXT-004 cerrados; implementar longitud,
-indexación y slicing Unicode de `String` (TEXT-002).
+**Objetivo inmediato:** TEXT-001, TEXT-002 y TEXT-004 cerrados; implementar
+`Char`, escapes e interpolación estática mediante `Display` (TEXT-003).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1678,8 +1678,11 @@ lifetimes escritos por el usuario.
   secuencias escalares exactas sin normalización e itera `Char` en tiempo
   lineal mediante offsets internos de byte no observables.
 
-- [ ] **TEXT-002 — Implementar longitud, indexación y slicing por escalares
-  Unicode según el spec.**
+- [x] **TEXT-002 — Implementar longitud, indexación y slicing por escalares
+  Unicode según el spec.** Longitud cuenta escalares, el índice `Int` produce
+  `Char`, el slice produce `String` y ambos comparten exactamente la
+  normalización negativa, clipping, extremos y pánicos de arrays sin exponer
+  offsets UTF-8 ni lugares mutables.
 
 - [ ] **TEXT-003 — Implementar `Char`, escapes e interpolación mediante
   `Display`.**
@@ -2152,12 +2155,27 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-NUM-001 a NUM-005 y TEXT-001/TEXT-004 quedan cerrados. La siguiente acción es
-TEXT-002: longitud, indexación y slicing de `String` por escalares Unicode.
+NUM-001 a NUM-005 y TEXT-001/TEXT-002/TEXT-004 quedan cerrados. La siguiente
+acción es TEXT-003: `Char`, escapes e interpolación estática mediante `Display`.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.74 — 2026-07-26
+
+- Se cierra TEXT-002 con `String[Int]: Char` y slicing
+  `String[start:end:step]: String` en HIR, MIR, bytecode verificado, evaluación
+  constante y VM.
+- El acceso cuenta valores escalares Unicode y reutiliza el normalizador
+  matemático de arrays para índices negativos, límites omitidos, clipping,
+  strides, `Int.min`, `Int.max`, `P0001` y `P0002`.
+- El HIR y ambos verificadores impiden que un índice o slice de String forme una
+  ubicación, préstamo o destino de escritura; la inmutabilidad no depende de
+  que el frontend haya construido bytecode honesto.
+- El `Length` interno admite Array o String y se prueba con texto multibyte; el
+  nombre de la futura API pública sigue reservado a la especificación de
+  stdlib.
 
 ### 0.73 — 2026-07-26
 

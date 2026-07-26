@@ -2656,7 +2656,9 @@ impl Engine<'_, '_> {
             }),
             BytecodeRvalueKind::Length(value) => {
                 let value = self.evaluate_operand(frame, value)?;
-                Ok(Value::Integer(self.length(&value)? as i128))
+                let length = i128::try_from(self.length(&value)?)
+                    .map_err(|_| VmError::invariant("materialized length does not fit Int"))?;
+                Ok(Value::Integer(length))
             }
             BytecodeRvalueKind::IteratorState(value) => {
                 let BytecodeTypeKind::Cursor { mode, .. } = self
@@ -3526,9 +3528,9 @@ impl Engine<'_, '_> {
                             .ok_or_else(|| VmError::invariant("unvalidated map entry is absent"))?;
                         present(&entries[index].1, "map value").cloned()
                     }
-                    BytecodeIndexAccess::Array => Err(VmError::invariant(
-                        "array index access was applied to a map",
-                    )),
+                    BytecodeIndexAccess::Array | BytecodeIndexAccess::String => Err(
+                        VmError::invariant("non-map index access was applied to a map"),
+                    ),
                 }
             }
             (BytecodeProjectionKind::Slice { start, end, step }, HeapObject::Array(values)) => {
@@ -5076,6 +5078,22 @@ impl Engine<'_, '_> {
                     self.copy_value(present(&values[index], "array element")?)?
                 ))
             }
+            (BytecodeIndexAccess::String, HeapObject::String(text)) => {
+                let Value::Integer(index) = index else {
+                    return Err(VmError::invariant("String index is not Int"));
+                };
+                let length = text.chars().count();
+                let Some(index) = normalize_array_index(index, length) else {
+                    return Ok(Err((
+                        PanicCode::Bounds,
+                        format!("String index {index} is out of bounds for length {length}"),
+                    )));
+                };
+                let character = text.chars().nth(index).ok_or_else(|| {
+                    VmError::invariant("normalized String index has no Unicode scalar")
+                })?;
+                Ok(Ok(Value::Char(character)))
+            }
             (BytecodeIndexAccess::MapLookup, HeapObject::Map(entries)) => {
                 if let Some(position) = self.find_map_entry(&entries, &index)? {
                     let value = self.copy_value(present(&entries[position].1, "map value")?)?;
@@ -5162,9 +5180,7 @@ impl Engine<'_, '_> {
         let Value::Heap(handle) = base else {
             return Err(VmError::invariant("slice base is not managed"));
         };
-        let HeapObject::Array(values) = self.heap.get(handle)?.clone() else {
-            return Err(VmError::invariant("slice base is not Array"));
-        };
+        let object = self.heap.get(handle)?.clone();
         let integer = |value: Option<Value>, label: &str| -> Result<Option<i128>, VmError> {
             value
                 .map(|value| match value {
@@ -5173,16 +5189,32 @@ impl Engine<'_, '_> {
                 })
                 .transpose()
         };
-        let indices = match slice_indices(
-            integer(start, "start")?,
-            integer(end, "end")?,
-            integer(step, "step")?,
-            values.len(),
-        ) {
-            Ok(indices) => indices,
-            Err(panic) => return Ok(Err(panic)),
-        };
-        Ok(Ok(self.copy_array_snapshot(result_ty, &values, &indices)?))
+        let start = integer(start, "start")?;
+        let end = integer(end, "end")?;
+        let step = integer(step, "step")?;
+        match object {
+            HeapObject::Array(values) => {
+                let indices = match slice_indices(start, end, step, values.len()) {
+                    Ok(indices) => indices,
+                    Err(panic) => return Ok(Err(panic)),
+                };
+                Ok(Ok(self.copy_array_snapshot(result_ty, &values, &indices)?))
+            }
+            HeapObject::String(text) => {
+                let characters = text.chars().collect::<Vec<_>>();
+                let indices = match slice_indices(start, end, step, characters.len()) {
+                    Ok(indices) => indices,
+                    Err(panic) => return Ok(Err(panic)),
+                };
+                let output = indices.into_iter().map(|index| characters[index]).collect();
+                Ok(Ok(self.allocate(
+                    result_ty,
+                    HeapObject::String(output),
+                    &[],
+                )?))
+            }
+            _ => Err(VmError::invariant("slice base is not Array or String")),
+        }
     }
 
     fn copy_array_snapshot(
@@ -5956,7 +5988,7 @@ fn slice_indices(
         ArraySliceError::ZeroStep => (PanicCode::ZeroSliceStep, "slice step cannot be zero".into()),
         ArraySliceError::LengthNotRepresentable => (
             PanicCode::Bounds,
-            "array length is not representable as Int".into(),
+            "sequence length is not representable as Int".into(),
         ),
     })
 }

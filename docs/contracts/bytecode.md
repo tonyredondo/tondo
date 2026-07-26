@@ -20,7 +20,8 @@ ARRAY-005 fixed versus structural array mutation, ARRAY-006 closed lifted
 arithmetic, ARRAY-007 named concatenation/repetition, ITER-001/002 static user
 iterators plus all four intrinsic iteration forms, and the M3 VM admission
 path implemented, plus TEXT-001 immutable UTF-8 strings and TEXT-004 distinct
-text and byte domains
+text and byte domains, and TEXT-002 Unicode-scalar String length, indexing, and
+slicing
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -261,11 +262,11 @@ abstraction over language-level values.
 
 An Array aggregate stores its complete ordered operand list while its result
 type is only `Array[T]`; operand count is runtime data, not type metadata.
-`Length` is the internal shape observation used by array-pattern lowering. The
-verifier independently requires its operand to be an `Array` intrinsic of
-arity one and its result to be `Int`, rejecting a forged scalar or another
-collection before execution. Copy, call, and return instructions preserve the
-complete value rather than carrying a separately trusted length.
+`Length` is the internal shape observation used by array-pattern lowering and
+the future String length API. The verifier independently requires an
+`Array[T]` or `String` operand and an `Int` result, rejecting every other
+scalar or collection before execution. Copy, call, and return instructions
+preserve the complete value rather than carrying a separately trusted length.
 
 For a ref cursor, `IteratorNext` writes an `Int` position rather than an owned
 item and carries the exact borrowed source place. `IteratorElement { index }`
@@ -504,6 +505,16 @@ derives the closed `Copy` capability of its complete `Array[T]` result. A slice
 projection retained only in call-loan metadata has no such requirement and can
 name affine elements. Forging a materializing operation over non-`Copy`
 elements is invalid bytecode, independently of the HIR check.
+
+String access reuses the signed normalizers without pretending UTF-8 is an
+array. `BytecodeIndexAccess::String` requires exactly `String + Int -> Char`;
+a String `Slice` preserves `String` and accepts the same three optional `Int`
+bounds. Both forms are checked `Invoke` operations, so `P0001` and `P0002`
+follow the ordinary unwind edge. The verifier rejects the String access tag and
+every String slice inside a place projection: text is immutable and these
+operations always materialize values. The internal `Length` rvalue accepts only
+`Array` or `String`, returns `Int`, and delegates the concrete count to the
+verified runtime shape.
 
 `BytecodeOperationKind::ArraySequence` preserves the closed `Concat`/`Repeat`
 tag and both ordered operands. Its result and borrowed receiver must be the

@@ -27,7 +27,8 @@ user iterators plus `for`, `for ref`, `for mut`, and `for var`, NUM-001 exact
 intrinsic widths, and NUM-002/005 closed numeric conversion with stable
 recoverable errors, NUM-003 fixed-width integer operators, and NUM-004 strict
 IEEE arithmetic at each declared precision, plus TEXT-001 immutable UTF-8
-strings and TEXT-004 distinct text and byte domains
+strings and TEXT-004 distinct text and byte domains, and TEXT-002
+Unicode-scalar String length, indexing, and slicing
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -91,6 +92,16 @@ a complete traversal linear while keeping byte offsets unobservable. Logical
 copies may share the immutable object because no source operation can mutate
 it or observe its identity.
 
+String length, indexing, and slicing first count or collect Unicode scalar
+values; byte length never enters source semantics. Index normalization is the
+same mathematical operation used by arrays and invalid positions produce
+`P0001`. Slicing calls the same normalizer with the scalar count, including
+sign-dependent defaults, clipping, omitted negative-end behavior, and the full
+`Int` range; step zero produces `P0002`. The result is a newly materialized
+valid UTF-8 String in the bootstrap, an unobservable choice that may later
+become a shared contiguous view. A non-unit stride necessarily constructs the
+selected scalar sequence.
+
 `String`, `Char`, `Byte`, and `Array[Byte]` remain distinct runtime and bytecode
 types with no implicit conversion. The language core has no intrinsic `Bytes`
 type; that name and any explicit text encoding or decoding API belong to the
@@ -100,9 +111,10 @@ An array object owns one ordered vector of optional value slots. The vector
 length is the array's runtime length; it is not duplicated in bytecode type
 metadata. Construction fixes that count from the evaluated operands, and
 logical copy, argument passing, and return preserve it with the complete value.
-The internal `Length` observation counts the vector slots after verified array
-typing. It currently serves language pattern semantics and does not choose the
-name or shape of a future standard-library length API.
+The internal `Length` observation counts vector slots for an Array or Unicode
+scalars for a String after verified typing. It currently serves language
+semantics and does not choose the name or shape of a future standard-library
+length API.
 
 All array index paths call the same normalizer: value reads, projected reads,
 moves, writes, place validation, loan-region resolution, and constant
@@ -113,8 +125,8 @@ overflowing intermediate. A simple assignment evaluates its index once and its
 complete RHS before bounds validation, then performs no write if validation
 panics.
 
-All runtime slice reads and projected place/loan paths call the same normalizer
-as constant evaluation. Omitted bounds retain their sign-dependent meaning;
+All runtime array-slice reads and projected place/loan paths call the same
+normalizer as constant evaluation. Omitted bounds retain their sign-dependent meaning;
 only explicit negative bounds are offset from the current runtime length and
 then clipped. Both stride signs, empty arrays, and the full `Int` range use
 distance-before-advance checks, so `Int.min` is a valid negative step rather

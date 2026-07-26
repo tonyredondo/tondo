@@ -4746,6 +4746,53 @@ impl<'a> ExpressionChecker<'a> {
                     },
                 })
             }
+            TypeKind::Scalar(ScalarType::String) => {
+                if bracket
+                    .child_nodes()
+                    .any(|child| child.kind() == SyntaxKind::SliceSpec)
+                {
+                    let (start, end, step) = self.check_slice_operands(file, bracket, context)?;
+                    return self.allocate_expression(HirExpression {
+                        span: self.sources.span(file, range)?,
+                        ty: base_type,
+                        category: HirValueCategory::Value,
+                        kind: HirExpressionKind::Slice {
+                            base,
+                            start,
+                            end,
+                            step,
+                        },
+                    });
+                }
+                let Some(index_node) = single_bracket_expression(bracket) else {
+                    self.emit(
+                        self.sources.span(file, bracket.range())?,
+                        "E1102",
+                        "String access requires exactly one index",
+                        Vec::new(),
+                        None,
+                    )?;
+                    return self.recovery_expression(file, range);
+                };
+                let index = self.check_expression(
+                    file,
+                    index_node,
+                    Some(ExpressionExpectation::Direct(
+                        self.program.interner.scalar(ScalarType::Int),
+                    )),
+                    context,
+                )?;
+                self.allocate_expression(HirExpression {
+                    span: self.sources.span(file, range)?,
+                    ty: self.program.interner.scalar(ScalarType::Char),
+                    category: HirValueCategory::Value,
+                    kind: HirExpressionKind::Index {
+                        base,
+                        index,
+                        access: HirIndexAccess::String,
+                    },
+                })
+            }
             TypeKind::Error => self.recovery_expression(file, range),
             TypeKind::Function(_) if self.bracket_looks_like_type_arguments(file, bracket) => {
                 self.complete = false;

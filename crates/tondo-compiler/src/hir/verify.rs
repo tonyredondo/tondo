@@ -3380,6 +3380,15 @@ impl Verifier<'_> {
                 Some(self.expression(base, context)?.category)
             }
             HirExpressionKind::RefValue { .. } => Some(HirValueCategory::Place),
+            HirExpressionKind::Index {
+                access: HirIndexAccess::String,
+                ..
+            } => Some(HirValueCategory::Value),
+            HirExpressionKind::Slice { .. }
+                if expression.ty == self.program.interner().scalar(ScalarType::String) =>
+            {
+                Some(HirValueCategory::Value)
+            }
             HirExpressionKind::Index { base, .. } | HirExpressionKind::Slice { base, .. } => {
                 if expression.category == HirValueCategory::Place
                     && self.expression(base, context)?.category != HirValueCategory::Place

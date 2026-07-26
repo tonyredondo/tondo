@@ -2025,11 +2025,12 @@ impl Verifier<'_> {
             MirRvalueKind::Length(operand) => {
                 self.verify_operand(function, operand, context)?;
                 if value.ty != self.hir.interner().scalar(ScalarType::Int)
-                    || !self.is_array(operand.ty)
+                    || (!self.is_array(operand.ty)
+                        && operand.ty != self.hir.interner().scalar(ScalarType::String))
                 {
                     return Err(MirInvariantError::new(
                         context,
-                        "length requires Array and produces Int",
+                        "length requires Array or String and produces Int",
                     ));
                 }
             }
@@ -2155,6 +2156,12 @@ impl Verifier<'_> {
                 self.verify_operand(function, base, context)?;
                 self.verify_operand(function, index, context)?;
                 self.verify_index_result(base.ty, index.ty, *access, operation.ty, context)?;
+                if *access == HirIndexAccess::String && !against.is_empty() {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "String indexing cannot carry runtime place conflicts",
+                    ));
+                }
                 self.verify_runtime_conflict_ids(function, against, context)?;
                 let _ = operation_access_place(operation, context)?;
             }
@@ -2170,18 +2177,27 @@ impl Verifier<'_> {
                         return Err(MirInvariantError::new(context, "slice bound is not Int"));
                     }
                 }
-                if operation.ty != base.ty || !self.is_array(base.ty) {
+                let is_array = self.is_array(base.ty);
+                let is_string = base.ty == self.hir.interner().scalar(ScalarType::String);
+                if operation.ty != base.ty || !(is_array || is_string) {
                     return Err(MirInvariantError::new(
                         context,
-                        "slice operation must preserve its Array type",
+                        "slice operation must preserve its Array or String type",
                     ));
                 }
-                if self.capability_status(
-                    function.id,
-                    operation.ty,
-                    HirCapability::Copy,
-                    context,
-                )? != HirCapabilityStatus::Satisfied
+                if is_string && !against.is_empty() {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "String slicing cannot carry runtime place conflicts",
+                    ));
+                }
+                if is_array
+                    && self.capability_status(
+                        function.id,
+                        operation.ty,
+                        HirCapability::Copy,
+                        context,
+                    )? != HirCapabilityStatus::Satisfied
                 {
                     return Err(MirInvariantError::new(
                         context,
@@ -3620,6 +3636,12 @@ impl Verifier<'_> {
                 Ok(*collection)
             }
             MirProjectionKind::Index { index, access } => {
+                if *access == HirIndexAccess::String {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "String indexing cannot form a place projection",
+                    ));
+                }
                 let index_type = self.local(function, *index, context)?.ty;
                 self.verify_index_result(current, index_type, *access, declared, context)?;
                 Ok(declared)
@@ -3653,6 +3675,11 @@ impl Verifier<'_> {
             HirIndexAccess::Array => {
                 let arguments = self.intrinsic_arguments(base, IntrinsicType::Array, context)?;
                 index == self.hir.interner().scalar(ScalarType::Int) && result == arguments[0]
+            }
+            HirIndexAccess::String => {
+                base == self.hir.interner().scalar(ScalarType::String)
+                    && index == self.hir.interner().scalar(ScalarType::Int)
+                    && result == self.hir.interner().scalar(ScalarType::Char)
             }
             HirIndexAccess::MapLookup | HirIndexAccess::MapEntry => {
                 let arguments = self.intrinsic_arguments(base, IntrinsicType::Map, context)?;
@@ -7754,7 +7781,7 @@ fn collection_region(
                 CollectionComponent::Static(StaticCollectionRegion::Index(*index))
             }),
         MovePathComponent::Index {
-            access: HirIndexAccess::MapLookup | HirIndexAccess::MapEntry,
+            access: HirIndexAccess::String | HirIndexAccess::MapLookup | HirIndexAccess::MapEntry,
             ..
         }
         | MovePathComponent::IteratorElement { .. } => CollectionComponent::Dynamic,
