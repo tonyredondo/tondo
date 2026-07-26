@@ -14,7 +14,7 @@ trace descriptors, GC-002 complete synchronous root lifetimes, and GC-003
 cycle recovery under sustained allocation pressure plus GC-004 single
 pre-exhaustion collection and atomic publication, REF-001 managed identity
 construction/shared content projection, and REF-002 equality and collection
-keys by identity
+keys by identity plus VALUE-001 exhaustive eager logical copies
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -61,10 +61,14 @@ checks prevent an absent field from being observed as a value.
 Tondo value semantics do not expose physical sharing. The bootstrap therefore
 copies compound `Copy` values eagerly. Immutable strings and identity-bearing
 `Ref[T]` cells may share their managed object because that sharing preserves
-the language contract. Copying an admitted intrinsic cursor recursively copies
-its owned source (or duplicates its shared reference), preserves the current
-index, and allocates an independently advancing iterator object. COW and compact
-representations require differential tests against this baseline.
+the language contract. One exhaustive walker recursively copies tuples, arrays,
+maps, sets, closure environments, newtypes, records, all enum payload shapes,
+options, results, unions, and ranges, retaining completed children as temporary
+roots until the new object is published with the source descriptor. Copying an
+admitted intrinsic cursor recursively copies its owned source (or duplicates
+its shared reference), preserves the current index, and allocates an
+independently advancing iterator object. COW and compact representations
+require differential tests against this baseline.
 
 Constructing `Ref(value)` allocates one cell and transfers the already
 evaluated payload into it. Copying the resulting `Ref[T]` copies only its
@@ -378,6 +382,12 @@ cell performs no second identity allocation, preserve a traced compound payload
 under forced collection, reject forged move/write/exclusive bytecode paths, and
 exercise equality, map replacement/lookup, and set membership with a payload
 that is itself neither `Equatable` nor `Key`.
+
+Eager-copy regressions must cover every managed `Copy` shape and every enum
+payload layout, prove recursive allocation for a nested value, preserve the
+deliberate String/`Ref` sharing exceptions, separate subsequent writes through
+tuple/array, record, newtype, and map paths, and give a copied owning cursor an
+independent source and position.
 
 Loan regressions execute shared temporaries, root and projected exclusive
 write-through, nested and closure-capture reborrows, statically disjoint fields,

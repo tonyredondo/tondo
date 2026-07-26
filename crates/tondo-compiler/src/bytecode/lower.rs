@@ -4595,6 +4595,233 @@ mod tests {
     }
 
     #[test]
+    fn eager_logical_copies_cover_every_managed_copy_shape() {
+        const DECLARATIONS: &str = "type Wrapped = Int\n\
+            type Record = { value: Int }\n\
+            enum Choice {\n\
+                Empty\n\
+                Item(Int)\n\
+                Named { value: Int }\n\
+            }\n";
+
+        fn allocations(body: &str, case: &str) -> u64 {
+            let source = format!("{DECLARATIONS}fn execute(): Bool {{\n{body}\n}}\n");
+            let program = lowered(&source);
+            let mut host = RejectingHost;
+            let execution = execute(&program, function_id(&program, "execute"), &mut host)
+                .unwrap_or_else(|error| panic!("{case}: {error}\n{}", bc::disassemble(&program)));
+            assert_eq!(
+                execution.outcome,
+                VmOutcome::Returned(RuntimeValue::Bool(true)),
+                "{case}"
+            );
+            execution.statistics.allocations
+        }
+
+        for (name, setup, binding, original_result, copied_result, shares_storage) in [
+            (
+                "tuple",
+                "let original = (1, 2)",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "array",
+                "let original = [1, 2]",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "map",
+                "let original = [1: 2]",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "set",
+                "let original = Set[1, 2]",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "closure",
+                "var count = 0\n\
+                 var original = (): Int {\n\
+                     count += 1\n\
+                     count\n\
+                 }",
+                "var copied = original",
+                "original() == 1",
+                "original() == 1 and copied() == 1",
+                false,
+            ),
+            (
+                "newtype",
+                "let original = Wrapped(1)",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "record",
+                "let original = Record { value: 1 }",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "unit variant",
+                "let original = Choice.Empty",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "tuple variant",
+                "let original = Choice.Item(1)",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "record variant",
+                "let original = Choice.Named { value: 1 }",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "none",
+                "let original: Int? = none",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "some",
+                "let original = some(1)",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "ok",
+                "let original: Int ! Bool = ok(1)",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "err",
+                "let original: Int ! Bool = err(false)",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "union",
+                "let original: Int | Bool = 1",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "range",
+                "let original = 1..=3",
+                "let copied = original",
+                "2 in original",
+                "2 in copied",
+                false,
+            ),
+            (
+                "nested",
+                "let original = ([1, 2], [3, 4])",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                false,
+            ),
+            (
+                "string",
+                "let original = \"value\"",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                true,
+            ),
+            (
+                "Ref",
+                "let original = Ref(1)",
+                "let copied = original",
+                "original == original",
+                "copied == original",
+                true,
+            ),
+        ] {
+            let baseline = allocations(&format!("{setup}\n{original_result}"), name);
+            let copied = allocations(&format!("{setup}\n{binding}\n{copied_result}"), name);
+            if shares_storage {
+                assert_eq!(
+                    copied, baseline,
+                    "{name} must preserve its deliberate sharing rule"
+                );
+            } else {
+                let minimum_copy = if name == "nested" { 3 } else { 1 };
+                assert!(
+                    copied >= baseline + minimum_copy,
+                    "{name} did not eagerly allocate its complete logical copy: \
+                     baseline={baseline}, copied={copied}"
+                );
+            }
+        }
+
+        assert_eq!(
+            execute_function(
+                "type Holder = { values: Array[Int] }\n\
+                 type Values = Array[Int]\n\
+                 fn separated(): Bool {\n\
+                     var originalTuple = ([1], [2])\n\
+                     var copiedTuple = originalTuple\n\
+                     copiedTuple.0[0] = 9\n\
+                     var originalRecord = Holder { values: [3] }\n\
+                     var copiedRecord = originalRecord\n\
+                     copiedRecord.values[0] = 8\n\
+                     var originalNewtype = Values([4])\n\
+                     var copiedNewtype = originalNewtype\n\
+                     copiedNewtype.value[0] = 7\n\
+                     var originalMap = [1: 5]\n\
+                     var copiedMap = originalMap\n\
+                     copiedMap[1] = 6\n\
+                     originalTuple.0[0] == 1 and copiedTuple.0[0] == 9 and\n\
+                         originalRecord.values[0] == 3 and copiedRecord.values[0] == 8 and\n\
+                         originalNewtype.value[0] == 4 and copiedNewtype.value[0] == 7 and\n\
+                         originalMap[1] == some(5) and copiedMap[1] == some(6)\n\
+                 }\n",
+                "separated",
+            ),
+            RuntimeValue::Bool(true)
+        );
+    }
+
+    #[test]
     fn bytecode_verifier_seals_ref_shape_and_shared_value_access() {
         let source = "fn make(value: Int): Ref[Int] { Ref(value) }\n\
                       fn inspect(value: ref Int) {}\n\
@@ -7067,6 +7294,13 @@ mod tests {
 
         let mut copyable = lowered(SOURCE);
         let entry = function_id(&copyable, "sum");
+        let baseline_allocations = {
+            let mut host = RejectingHost;
+            execute(&copyable, entry, &mut host)
+                .unwrap()
+                .statistics
+                .allocations
+        };
         let (block_index, instruction_index, span, state) = {
             let function = copyable.function(entry).unwrap();
             function
@@ -7143,6 +7377,11 @@ mod tests {
         assert_eq!(
             execution.outcome,
             VmOutcome::Returned(RuntimeValue::Integer(10))
+        );
+        assert_eq!(
+            execution.statistics.allocations,
+            baseline_allocations + 2,
+            "copying an owning cursor must eagerly copy its array source and allocate a new cursor"
         );
 
         let mut wrong_borrow_access = copyable.clone();

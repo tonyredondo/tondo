@@ -5938,9 +5938,9 @@ fn integer_bounds(scalar: BytecodeScalarType) -> Option<(i128, i128)> {
 #[cfg(test)]
 mod tests {
     use crate::bytecode::{
-        BytecodeConstantValue, BytecodeConstantValueKind, BytecodeIntrinsicType, BytecodeProgram,
-        BytecodeRangeKind, BytecodeScalarType, BytecodeType, BytecodeTypeId, BytecodeTypeKind,
-        derive_trace_metadata,
+        BytecodeConstantValue, BytecodeConstantValueKind, BytecodeCursorMode,
+        BytecodeIntrinsicType, BytecodeProgram, BytecodeRangeKind, BytecodeScalarType,
+        BytecodeType, BytecodeTypeId, BytecodeTypeKind, derive_trace_metadata,
     };
 
     use super::{
@@ -5980,6 +5980,24 @@ mod tests {
                 BytecodeType {
                     name: "(Array[String], Array[String])".into(),
                     kind: BytecodeTypeKind::Tuple(vec![strings, strings]),
+                },
+                BytecodeType {
+                    name: "Int".into(),
+                    kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Int),
+                },
+                BytecodeType {
+                    name: "Array[Int]".into(),
+                    kind: BytecodeTypeKind::Intrinsic {
+                        constructor: BytecodeIntrinsicType::Array,
+                        arguments: vec![BytecodeTypeId::new(5)],
+                    },
+                },
+                BytecodeType {
+                    name: "cursor[own, Array[Int]]".into(),
+                    kind: BytecodeTypeKind::Cursor {
+                        mode: BytecodeCursorMode::Own,
+                        collection: BytecodeTypeId::new(6),
+                    },
                 },
             ],
             nominals: Vec::new(),
@@ -6099,6 +6117,89 @@ mod tests {
             }
         );
         assert!(engine.statistics.collections > 0);
+    }
+
+    #[test]
+    fn eager_cursor_copy_owns_an_independent_source_and_position() {
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(&program, &mut host, VmLimits::default(), trace);
+        let source = engine
+            .materialize_constant(&BytecodeConstantValue {
+                ty: BytecodeTypeId::new(6),
+                kind: BytecodeConstantValueKind::Array(vec![
+                    BytecodeConstantValue {
+                        ty: BytecodeTypeId::new(5),
+                        kind: BytecodeConstantValueKind::Integer(1),
+                    },
+                    BytecodeConstantValue {
+                        ty: BytecodeTypeId::new(5),
+                        kind: BytecodeConstantValueKind::Integer(2),
+                    },
+                ]),
+            })
+            .unwrap();
+        let original = engine
+            .allocate(
+                BytecodeTypeId::new(7),
+                super::HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Own,
+                    source: Some(source.clone()),
+                    next: 1,
+                },
+                std::slice::from_ref(&source),
+            )
+            .unwrap();
+        let allocations = engine.statistics.allocations;
+        let copied = engine.copy_value(&original).unwrap();
+        assert_eq!(engine.statistics.allocations, allocations + 2);
+
+        let (Value::Heap(original), Value::Heap(copied)) = (original, copied) else {
+            unreachable!("managed cursors use heap handles")
+        };
+        assert_ne!(original, copied);
+        let super::HeapObject::Iterator {
+            mode: original_mode,
+            source: original_source,
+            next: original_next,
+        } = engine.heap.get(original).unwrap().clone()
+        else {
+            unreachable!("the original cursor retains its iterator shape")
+        };
+        let super::HeapObject::Iterator {
+            mode: copied_mode,
+            source: copied_source,
+            next: copied_next,
+        } = engine.heap.get(copied).unwrap().clone()
+        else {
+            unreachable!("the copied cursor retains its iterator shape")
+        };
+        assert_eq!(original_mode, BytecodeCursorMode::Own);
+        assert_eq!(copied_mode, BytecodeCursorMode::Own);
+        assert_eq!(original_next, 1);
+        assert_eq!(copied_next, 1);
+        assert_ne!(
+            original_source.unwrap().heap_handle(),
+            copied_source.unwrap().heap_handle(),
+            "owning cursor copies must not share their destructively advanced collection"
+        );
+
+        engine
+            .replace_object(
+                original,
+                super::HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Own,
+                    source: Some(source),
+                    next: 2,
+                },
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.heap.get(copied).unwrap(),
+            super::HeapObject::Iterator { next: 1, .. }
+        ));
     }
 
     #[test]

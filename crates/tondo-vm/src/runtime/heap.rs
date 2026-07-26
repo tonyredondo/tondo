@@ -63,7 +63,6 @@ pub(super) enum HeapObject {
         source: Option<Value>,
         next: usize,
     },
-    #[allow(dead_code)]
     Ref(Option<Value>),
 }
 

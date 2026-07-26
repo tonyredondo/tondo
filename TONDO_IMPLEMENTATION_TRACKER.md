@@ -2,15 +2,15 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.56
+**Versión del tracker:** 0.57
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** completar la copia lógica eager de valores `Copy`
-compuestos como baseline sustituible por COW sin cambiar observables
-(VALUE-001).
+**Objetivo inmediato:** convertir la semántica observable de copia en una suite
+diferencial independiente de la representación para poder sustituir eager por
+COW sin cambiar comportamiento (VALUE-002).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1499,8 +1499,14 @@ lifetimes escritos por el usuario.
   reemplazo, lookup, deduplicación y pertenencia, incluso cuando `T` no es
   `Equatable` ni `Key`.
 
-- [ ] **VALUE-001 — Implementar inicialmente copia lógica eager para valores
-  `Copy` compuestos.**
+- [x] **VALUE-001 — Implementar inicialmente copia lógica eager para valores
+  `Copy` compuestos.** Un único walker exhaustivo duplica recursivamente tuples,
+  arrays, maps, sets, closures, nominales, sums, uniones, ranges y cursores own
+  bajo roots temporales y conserva el descriptor original. String comparte
+  storage inmutable y `Ref[T]` comparte identidad deliberadamente; ningún otro
+  compuesto `Copy` comparte estado mutable. La matriz ejecutable cubre todas
+  las formas administradas, payloads anidados, separación tras escritura y la
+  copia independiente del estado de cursor.
 
 - [ ] **VALUE-002 — Crear tests de equivalencia que permitan sustituir copia
   eager por COW posteriormente sin cambiar observables.**
@@ -2049,14 +2055,30 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es VALUE-001: fijar y completar la copia lógica
-eager de cada valor compuesto `Copy`, conservando `Ref[T]` como identidad
-compartida y dejando una suite diferencial suficiente para sustituir el
-almacenamiento por COW más adelante.
+La siguiente acción activa es VALUE-002: extraer de la implementación eager una
+suite de observables de copia —valor, independencia tras escritura, identidad,
+iteración, pánico y presión de GC— que pueda ejecutarse sin conocer handles,
+conteos de allocation ni la representación futura.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.57 — 2026-07-25
+
+- Se cierra VALUE-001 sobre el walker eager ya construido por las verticales de
+  ownership y GC. Todas las formas administradas `Copy` se duplican
+  recursivamente bajo roots precisos; String y `Ref[T]` conservan sus dos únicas
+  reglas explícitas de sharing.
+- Una matriz source-to-VM compara construcción y copia para tuple, array, map,
+  set, closure, newtype, record, los tres payloads de enum, Option, Result,
+  union, range, String, `Ref` y agregados anidados. Mutaciones posteriores
+  prueban separación de tuple/array, record, newtype y map; el cursor own prueba
+  además copia independiente de su source y posición.
+- La puerta completa pasa con 564 tests —497 del compilador, 25 de la VM y 42
+  de CLI/integración—, `cargo fmt --check`, `cargo check`, `cargo build`,
+  Clippy con warnings como error, rustdoc con warnings como error y
+  `git diff --check`.
 
 ### 0.56 — 2026-07-25
 

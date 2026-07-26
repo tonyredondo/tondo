@@ -412,9 +412,11 @@ Its disassembler is tooling text only and there is deliberately no loader.
 ### VM
 
 The VM starts with explicit Rust enums for values, a precise non-moving tracing
-heap, and a cooperative single-thread executor. Logical value copies may be
-eager. COW, ARC, compact tagging, and native lowering are later optimizations
-that must preserve the same tests.
+heap, and a cooperative single-thread executor. Logical copies of every
+compound `Copy` shape are currently eager and recursive; immutable String
+storage and `Ref[T]` identity are the only deliberate sharing cases. COW, ARC,
+compact tagging, and native lowering are later optimizations that must preserve
+the same observables.
 
 The implemented synchronous engine uses iterative frames, checked slot states,
 normal/unwind continuations, call-local reservation tables, normalized
