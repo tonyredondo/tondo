@@ -486,6 +486,14 @@ when their managed handles identify the same live cell; distinct cells never
 compare their payloads. Map lookup/replacement and set membership reuse that
 same equality, which supplies `Key` by identity independently of `T`.
 
+`BytecodeRvalueKind::MapRemove` mutates only a `Map[K, V]` place sourced from
+its exact active `var` region and returns `Option[V]`. The VM searches with the
+same normative key equality as lookup, removes the matching insertion-order
+entry without reordering its neighbours, and roots the transferred value across
+heap replacement and option allocation. An absent key allocates `none` without
+changing the map. Bytecode verification rejects a changed key/result type,
+non-map receiver, weaker region, or forged region origin before execution.
+
 ## Independent verification
 
 Before execution, the verifier proves:

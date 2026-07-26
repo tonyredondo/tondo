@@ -251,6 +251,7 @@ fn constant_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
         HirExpressionKind::ArraySequence {
             array, argument, ..
         } => vec![*array, *argument],
+        HirExpressionKind::MapRemove { map, key } => vec![*map, *key],
         HirExpressionKind::Range { start, end, .. } => vec![*start, *end],
         HirExpressionKind::Contains {
             item, container, ..
@@ -558,6 +559,7 @@ fn evaluate_composite(
         }
         HirExpressionKind::Recovery
         | HirExpressionKind::ArraySequence { .. }
+        | HirExpressionKind::MapRemove { .. }
         | HirExpressionKind::Ref { .. }
         | HirExpressionKind::RefValue { .. }
         | HirExpressionKind::Literal(_)

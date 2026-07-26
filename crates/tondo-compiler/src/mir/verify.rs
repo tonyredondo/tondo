@@ -711,6 +711,7 @@ fn mir_rvalue_contains_invalid_borrow(value: &MirRvalue) -> bool {
         MirRvalueKind::Contains {
             item, container, ..
         } => mir_operand_is_loan(item) || mir_operand_is_loan(container),
+        MirRvalueKind::MapRemove { key, .. } => escapes(key),
         MirRvalueKind::Length(operand) => mir_operand_is_loan(operand),
         MirRvalueKind::IteratorState { source } => mir_operand_is_loan(source),
         MirRvalueKind::Binary { left, right, .. }
@@ -997,13 +998,7 @@ impl Verifier<'_> {
             }
             match loan.kind {
                 MirLoanKind::CallLocal => {}
-                MirLoanKind::Region if loan.mode == ParameterMode::Ref => {}
-                MirLoanKind::Region => {
-                    return Err(MirInvariantError::new(
-                        &loan_context,
-                        "region loan is not a shared `ref` reservation",
-                    ));
-                }
+                MirLoanKind::Region => {}
             }
             if let Some(source) = loan.place.source_loan
                 && source.index() as usize >= index
@@ -1982,6 +1977,31 @@ impl Verifier<'_> {
                 self.verify_operand(function, container, context)?;
                 self.verify_contains(*kind, item.ty, container.ty, value.ty, context)?;
             }
+            MirRvalueKind::MapRemove { map, key } => {
+                self.verify_place(function, map, context)?;
+                self.verify_operand(function, key, context)?;
+                let arguments = self.intrinsic_arguments(map.ty, IntrinsicType::Map, context)?;
+                let TypeKind::Option(result) = self.kind(value.ty, context)? else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "Map.remove result is not Option[V]",
+                    ));
+                };
+                let source = map.source_loan.and_then(|source| function.loan(source));
+                if key.ty != arguments[0]
+                    || *result != arguments[1]
+                    || !source.is_some_and(|source| {
+                        source.kind() == MirLoanKind::Region
+                            && source.mode() == ParameterMode::Var
+                            && same_place_path(source.place(), map)
+                    })
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "Map.remove receiver, key, result, or exclusive region is inconsistent",
+                    ));
+                }
+            }
             MirRvalueKind::Length(operand) => {
                 self.verify_operand(function, operand, context)?;
                 if value.ty != self.hir.interner().scalar(ScalarType::Int)
@@ -2751,10 +2771,10 @@ impl Verifier<'_> {
         }
         if let Some(source) = place.source_loan {
             let source = self.loan(function, source, context)?;
-            if source.kind != MirLoanKind::Region || source.mode != ParameterMode::Ref {
+            if source.kind != MirLoanKind::Region {
                 return Err(MirInvariantError::new(
                     context,
-                    "place source is not a shared region loan",
+                    "place source is not a region loan",
                 ));
             }
             let source = LocalAccess::from_place(&source.place);
@@ -6022,10 +6042,10 @@ impl Verifier<'_> {
         let Some(mut source) = access.source_loan else {
             return Ok(());
         };
-        if access_kind != "read" {
+        if access_kind == "move" {
             return Err(MirInvariantError::new(
                 context,
-                format!("{access_kind} uses a shared region reference"),
+                "move transfers content out of a region reference",
             ));
         }
         let mut seen = BTreeSet::new();
@@ -6043,10 +6063,16 @@ impl Verifier<'_> {
                 ));
             }
             let loan = self.loan(function, source, context)?;
-            if loan.kind != MirLoanKind::Region || loan.mode != ParameterMode::Ref {
+            if loan.kind != MirLoanKind::Region {
                 return Err(MirInvariantError::new(
                     context,
-                    "place source is not a shared region loan",
+                    "place source is not a region loan",
+                ));
+            }
+            if access_kind == "write" && loan.mode == ParameterMode::Ref {
+                return Err(MirInvariantError::new(
+                    context,
+                    "write uses a shared region reference",
                 ));
             }
             let Some(parent) = loan.place.source_loan else {
@@ -6066,11 +6092,23 @@ impl Verifier<'_> {
         context: &str,
     ) -> Result<(), MirInvariantError> {
         let ClassifiedLocalAccess { access, kind } = access;
+        let mut source_chain = BTreeSet::new();
+        let mut source = access.source_loan;
+        while let Some(id) = source {
+            if !source_chain.insert(id) {
+                return Err(MirInvariantError::new(
+                    context,
+                    "place source region chain contains a cycle",
+                ));
+            }
+            source = self.loan(function, id, context)?.place().source_loan();
+        }
         for active in state.iter().copied() {
             self.consume_dataflow_step(context)?;
             let loan = self.loan(function, active, context)?;
             let loan_access = LocalAccess::from_place(loan.place());
-            if access.local != loan_access.local
+            if source_chain.contains(&active)
+                || access.local != loan_access.local
                 || kind == "read" && loan.mode() == ParameterMode::Ref
             {
                 continue;
@@ -7007,6 +7045,10 @@ fn push_tag_rvalue(function: &MirFunction, value: &MirRvalue, events: &mut Vec<T
             push_tag_operand(function, item, events);
             push_tag_operand(function, container, events);
         }
+        MirRvalueKind::MapRemove { map, key } => {
+            push_tag_place(function, map, true, events);
+            push_tag_operand(function, key, events);
+        }
     }
 }
 
@@ -7713,6 +7755,10 @@ fn push_rvalue_events(value: &MirRvalue, events: &mut Vec<LocalEvent>) {
         } => {
             push_operand_events(item, events);
             push_operand_events(container, events);
+        }
+        MirRvalueKind::MapRemove { map, key } => {
+            push_destination_reads(map, true, events);
+            push_operand_events(key, events);
         }
     }
 }

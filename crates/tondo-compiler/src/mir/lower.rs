@@ -942,6 +942,30 @@ impl<'a> FunctionBuilder<'a> {
                     },
                 )
             }
+            HirExpressionKind::MapRemove { map, key } => {
+                let Some((block, map)) = self.lower_place(*map, block)? else {
+                    return Ok(None);
+                };
+                let (block, map) = self.reserve_checked_region_loan(
+                    block,
+                    span,
+                    crate::types::ParameterMode::Var,
+                    map,
+                )?;
+                let Some((block, key)) = self.lower_value(*key, block)? else {
+                    return Ok(None);
+                };
+                self.assign(
+                    block,
+                    span,
+                    destination,
+                    MirRvalue {
+                        ty: expression.ty(),
+                        kind: MirRvalueKind::MapRemove { map, key },
+                    },
+                )?;
+                Ok(Some(block))
+            }
             HirExpressionKind::Range { kind, start, end } => {
                 let Some((block, start)) = self.lower_value(*start, block)? else {
                     return Ok(None);
@@ -2125,7 +2149,12 @@ impl<'a> FunctionBuilder<'a> {
                 };
                 let (block, source) =
                     self.freeze_borrowed_iteration_place_inputs(block, span, source)?;
-                let (block, borrowed) = self.reserve_checked_region_loan(block, span, source)?;
+                let (block, borrowed) = self.reserve_checked_region_loan(
+                    block,
+                    span,
+                    crate::types::ParameterMode::Ref,
+                    source,
+                )?;
                 (
                     block,
                     MirOperand {
@@ -2407,7 +2436,12 @@ impl<'a> FunctionBuilder<'a> {
                             .into(),
                     });
                 };
-                let (block, borrowed) = self.reserve_checked_region_loan(block, span, place)?;
+                let (block, borrowed) = self.reserve_checked_region_loan(
+                    block,
+                    span,
+                    crate::types::ParameterMode::Ref,
+                    place,
+                )?;
                 self.borrow_aliases.insert(*local, borrowed);
                 Ok(Some(block))
             }
@@ -4065,14 +4099,16 @@ impl<'a> FunctionBuilder<'a> {
         &mut self,
         block: MirBlockId,
         span: Span,
+        mode: crate::types::ParameterMode,
         place: MirPlace,
     ) -> Result<(MirBlockId, MirPlace), MirError> {
-        let id = self.allocate_loan(
-            span,
-            MirLoanKind::Region,
-            crate::types::ParameterMode::Ref,
-            place.clone(),
-        )?;
+        if mode == crate::types::ParameterMode::Value {
+            return Err(MirError::Construction {
+                span,
+                message: "a value mode cannot form a region loan".into(),
+            });
+        }
+        let id = self.allocate_loan(span, MirLoanKind::Region, mode, place.clone())?;
         let block = self.validate_loan_place(id, block, span)?;
         self.push_statement(block, span, MirStatementKind::ReserveLoan(id))?;
         let mut borrowed = place;
@@ -5518,6 +5554,10 @@ fn collect_rvalue_region_uses(
                 collect_operand_region_uses(operand, loans, output);
             }
         }
+        MirRvalueKind::MapRemove { map, key } => {
+            collect_place_region_uses(map, loans, output);
+            collect_operand_region_uses(key, loans, output);
+        }
     }
 }
 
@@ -5711,6 +5751,7 @@ fn rvalue_move_places(value: &MirRvalue) -> Vec<MirPlace> {
                 collect(operand);
             }
         }
+        MirRvalueKind::MapRemove { key, .. } => collect(key),
     }
     places
 }
@@ -6915,6 +6956,66 @@ mod tests {
                 .contains("argument differs from its closed signature"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn map_remove_lowers_to_an_exact_var_region_rvalue() {
+        let source = "fn remove(values: var Map[Int, String], key: Int): String? {\n\
+                          values.remove(key)\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = mir.function(function_id(&resolved, "remove")).unwrap();
+        let map = function
+            .blocks()
+            .flat_map(|block| block.statements())
+            .find_map(|statement| match statement.kind() {
+                MirStatementKind::Assign {
+                    value:
+                        MirRvalue {
+                            kind: MirRvalueKind::MapRemove { map, .. },
+                            ..
+                        },
+                    ..
+                } => Some(map),
+                _ => None,
+            })
+            .expect("Map.remove lowers to one rvalue");
+        let source = map.source_loan().expect("Map.remove retains a region");
+        let loan = function
+            .loan(source)
+            .expect("region metadata remains indexed");
+        assert_eq!(loan.kind(), MirLoanKind::Region);
+        assert_eq!(loan.mode(), crate::types::ParameterMode::Var);
+        let mut lender = map.clone();
+        lender.source_loan = None;
+        assert_eq!(loan.place(), &lender);
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let mut forged = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = forged
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "remove")))
+            .unwrap();
+        let source = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .find_map(|statement| match &statement.kind {
+                MirStatementKind::Assign {
+                    value:
+                        MirRvalue {
+                            kind: MirRvalueKind::MapRemove { map, .. },
+                            ..
+                        },
+                    ..
+                } => map.source_loan,
+                _ => None,
+            })
+            .unwrap();
+        function.loans[source.index() as usize].mode = crate::types::ParameterMode::Ref;
+        let error = verify_mir(&resolved, &hir, &forged).unwrap_err();
+        assert!(error.message().contains("Map.remove"), "{error}");
     }
 
     #[test]

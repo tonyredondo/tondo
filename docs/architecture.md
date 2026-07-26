@@ -265,6 +265,8 @@ environment move paths. Closure terminal obligations are intersected across all
 normal exits. HIR now also reserves fixed `ref`/`mut`/`var` call arguments in
 source order and rejects overlapping later argument access. Last-use and
 collection loan regions and confirmed borrowed transfers are explicit. A
+closed `Map.remove` node reserves its receiver as `var`, removes without a
+`Copy` requirement, and transfers the removed value through `Option[V]`. A
 separate closed registry classifies direct terminal roots and derives structural
 `Absent`/`Potential`/`Present` status without treating every non-`Discard` value
 as the same resource. The availability state follows every non-absent terminal

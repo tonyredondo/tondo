@@ -2640,9 +2640,10 @@ almacenado. La futura librería puede ofrecer una consulta afirmativa como
 `at(key): V`, también limitada a `V: Copy`, y debe fijar en su propia
 especificación la clase de pánico o contrato checked ante ausencia. Un valor por
 defecto se obtiene mediante una operación como `getOr`. Maps con valores afines
-se observan mediante `for ref` o callbacks de lookup y transfieren ownership
-mediante una operación como `remove`. Los nombres y firmas detallados pertenecen
-a la librería estándar.
+se observan mediante iteración prestada. La extracción destructiva no depende de
+la librería estándar: el lenguaje define la operación intrínseca
+`Map[K, V].remove(var self, key: K): V?`, que transfiere el valor almacenado sin
+exigir `V: Copy`.
 
 Un map de valores opcionales conserva dos niveles:
 
@@ -2673,6 +2674,21 @@ Eliminar se expresa únicamente mediante una operación nombrada:
 ~~~tondo
 let removed: Int? = ages.remove("leo")
 ~~~
+
+`remove` requiere un receptor estructuralmente reemplazable porque cambia la
+extensión. Si la clave existe, elimina exactamente esa entrada, conserva el
+orden relativo de todas las demás y devuelve `some(value)` transfiriendo su
+ownership. Si no existe, devuelve `none` y no modifica el map. No requiere
+`V: Copy` y no produce pánico por ausencia.
+
+La forma calificada conserva visible el modo exclusivo del receptor:
+
+~~~tondo
+let removed = Map.remove(var ages, "leo")
+~~~
+
+`K` y `V` siempre se infieren del receptor; `Map[K, V].remove(...)` no es una
+segunda forma válida.
 
 Asignar `none` almacena ausencia cuando `V` es opcional; nunca elimina la clave.
 

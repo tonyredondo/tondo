@@ -1945,6 +1945,10 @@ impl<'a> ExpressionChecker<'a> {
                     argument: right,
                     ..
                 }
+                | HirExpressionKind::MapRemove {
+                    map: left,
+                    key: right,
+                }
                 | HirExpressionKind::Range {
                     start: left,
                     end: right,
@@ -12730,6 +12734,18 @@ impl<'a> ExpressionChecker<'a> {
                 )? {
                     return Ok(Some(call));
                 }
+                if let Some(call) = self.check_qualified_map_remove_call(
+                    file,
+                    range,
+                    suffix,
+                    explicit_bracket,
+                    &tokens,
+                    resolved_index,
+                    &resolved,
+                    context,
+                )? {
+                    return Ok(Some(call));
+                }
                 let resolved_is_type = match &resolved {
                     ResolvedName::Symbol(symbol) => {
                         self.resolved.symbol(*symbol).is_some_and(|symbol| {
@@ -12858,13 +12874,11 @@ impl<'a> ExpressionChecker<'a> {
         let Some(member_token) = tokens.last() else {
             return Ok(false);
         };
-        if !matches!(
-            member_token.token().normalized_identifier(),
-            Some("concat" | "repeat")
-        ) {
+        let member = member_token.token().normalized_identifier();
+        if !matches!(member, Some("concat" | "repeat" | "remove")) {
             return Ok(false);
         }
-        let is_array = tokens
+        let owner = tokens
             .iter()
             .find_map(|token| {
                 let reference = self.resolved.reference(file, token.range())?;
@@ -12875,16 +12889,21 @@ impl<'a> ExpressionChecker<'a> {
                 else {
                     return None;
                 };
-                Some(name.as_str() == "Array")
+                Some(name.as_str())
             })
-            .unwrap_or(false);
-        if !is_array {
+            .unwrap_or("");
+        let subject = match (owner, member) {
+            ("Array", Some("concat" | "repeat")) => "Array sequence operations",
+            ("Map", Some("remove")) => "Map.remove",
+            _ => return Ok(false),
+        };
+        if owner.is_empty() {
             return Ok(false);
         }
         self.emit(
             self.sources.span(file, bracket.range())?,
             "E1104",
-            "Array sequence operations infer T from their receiver",
+            format!("{subject} infers its type arguments from the receiver"),
             Vec::new(),
             None,
         )?;
@@ -13064,6 +13083,168 @@ impl<'a> ExpressionChecker<'a> {
                 kind,
                 array: values[0],
                 argument: values[1],
+            },
+        })
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_qualified_map_remove_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        tokens: &[SyntaxTokenRef<'_>],
+        resolved_index: usize,
+        resolved: &ResolvedName,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let ResolvedName::Prelude {
+            namespace: Namespace::Type,
+            name,
+        } = resolved
+        else {
+            return Ok(None);
+        };
+        if name.as_str() != "Map"
+            || resolved_index + 2 != tokens.len()
+            || tokens
+                .last()
+                .and_then(|token| token.token().normalized_identifier())
+                != Some("remove")
+        {
+            return Ok(None);
+        }
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "Map.remove infers K and V from its receiver and has no generic list",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+
+        let arguments = suffix
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::CallArgument)
+            .collect::<Vec<_>>();
+        let mut valid = arguments.len() == 2;
+        if !valid {
+            self.emit(
+                self.sources.span(file, suffix.range())?,
+                "E1102",
+                format!(
+                    "Map.remove expects its qualified `var` receiver and one key, found {} arguments",
+                    arguments.len()
+                ),
+                Vec::new(),
+                None,
+            )?;
+        }
+        let mut values = Vec::with_capacity(arguments.len());
+        let mut map_arguments = None;
+        for (index, argument) in arguments.iter().copied().enumerate() {
+            let argument_tokens = argument
+                .child_tokens()
+                .filter(|token| !token.kind().is_trivia())
+                .collect::<Vec<_>>();
+            let invalid_shape = argument_tokens
+                .iter()
+                .any(|token| matches!(token.kind(), TokenKind::Colon | TokenKind::Ellipsis));
+            let modes = argument_tokens
+                .iter()
+                .filter_map(|token| {
+                    matches!(
+                        token.kind(),
+                        TokenKind::Ref | TokenKind::Mut | TokenKind::Var
+                    )
+                    .then_some(token.kind())
+                })
+                .collect::<Vec<_>>();
+            let valid_mode = if index == 0 {
+                modes.as_slice() == [TokenKind::Var]
+            } else {
+                modes.is_empty()
+            };
+            if invalid_shape || !valid_mode {
+                self.emit(
+                    self.sources.span(file, argument.range())?,
+                    if invalid_shape { "E1102" } else { "E1407" },
+                    if index == 0 {
+                        "qualified Map.remove requires `var` on its receiver argument"
+                    } else {
+                        "Map.remove passes its key by value without an argument mode"
+                    },
+                    Vec::new(),
+                    None,
+                )?;
+                valid = false;
+            }
+            let Some(expression) = argument
+                .child_nodes()
+                .find(|child| AstExpression::cast(*child).is_some())
+            else {
+                valid = false;
+                continue;
+            };
+            let expected = if index == 1 {
+                map_arguments
+                    .as_ref()
+                    .map(|arguments: &Vec<TypeId>| arguments[0])
+            } else {
+                None
+            };
+            let value = self.check_expression(
+                file,
+                expression,
+                expected.map(ExpressionExpectation::Direct),
+                context,
+            )?;
+            if index == 0 {
+                let receiver_type = self.expression_type(value);
+                map_arguments = self.intrinsic_arguments(receiver_type, IntrinsicType::Map)?;
+                if map_arguments.is_none() && receiver_type != self.program.interner.error() {
+                    self.emit(
+                        self.program
+                            .expression(value)
+                            .expect("checked receiver remains indexed")
+                            .span(),
+                        "E1102",
+                        "Map.remove receiver is not a Map",
+                        Vec::new(),
+                        None,
+                    )?;
+                    valid = false;
+                }
+            }
+            values.push(value);
+        }
+        let Some(map_arguments) = map_arguments else {
+            return self.recovery_expression(file, range).map(Some);
+        };
+        if values.len() == 2 {
+            valid &= self.expression_type(values[1]) == map_arguments[0];
+            self.check_method_receiver(
+                values[0],
+                ParameterMode::Var,
+                Some(self.expression_type(values[0])),
+                context,
+            )?;
+        }
+        if !valid || values.len() != 2 {
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let result = self.program.interner.option(map_arguments[1])?;
+        self.allocate_expression(HirExpression {
+            span: self.sources.span(file, range)?,
+            ty: result,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::MapRemove {
+                map: values[0],
+                key: values[1],
             },
         })
         .map(Some)
@@ -13429,6 +13610,18 @@ impl<'a> ExpressionChecker<'a> {
         if receiver_type == self.program.interner.error() {
             return self.recovery_expression(file, range).map(Some);
         }
+        if let Some(call) = self.check_map_remove_call(
+            file,
+            range,
+            receiver,
+            receiver_type,
+            member_token,
+            suffix,
+            explicit_bracket,
+            context,
+        )? {
+            return Ok(Some(call));
+        }
         if let Some(call) = self.check_array_sequence_call(
             file,
             range,
@@ -13655,6 +13848,55 @@ impl<'a> ExpressionChecker<'a> {
             None,
             context,
         )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_map_remove_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        receiver: HirExpressionId,
+        receiver_type: TypeId,
+        member_token: SyntaxTokenRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let Some(arguments) = self.intrinsic_arguments(receiver_type, IntrinsicType::Map)? else {
+            return Ok(None);
+        };
+        if member_token.token().normalized_identifier() != Some("remove") {
+            return Ok(None);
+        }
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "Map.remove does not declare generic parameters",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let key_type = arguments[0];
+        let value_type = arguments[1];
+        let (mut values, valid) =
+            self.check_constructor_arguments(file, suffix, &[key_type], "Map.remove", context)?;
+        self.check_method_receiver(receiver, ParameterMode::Var, Some(receiver_type), context)?;
+        if !valid || values.len() != 1 {
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let key = values
+            .pop()
+            .expect("a valid Map.remove call has one key argument");
+        let result = self.program.interner.option(value_type)?;
+        self.allocate_expression(HirExpression {
+            span: self.sources.span(file, range)?,
+            ty: result,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::MapRemove { map: receiver, key },
+        })
         .map(Some)
     }
 
@@ -15847,6 +16089,9 @@ impl<'a> ExpressionChecker<'a> {
             } => self
                 .expression_summary(*array)
                 .then(self.expression_summary(*argument)),
+            HirExpressionKind::MapRemove { map, key } => self
+                .expression_summary(*map)
+                .then(self.expression_summary(*key)),
             HirExpressionKind::Range { start, end, .. } => self
                 .expression_summary(*start)
                 .then(self.expression_summary(*end)),
@@ -16349,6 +16594,10 @@ fn closure_protocol_expression_children(kind: &HirExpressionKind) -> Vec<HirExpr
             array: left,
             argument: right,
             ..
+        }
+        | HirExpressionKind::MapRemove {
+            map: left,
+            key: right,
         }
         | HirExpressionKind::Range {
             start: left,
@@ -21500,6 +21749,48 @@ mod tests {
              }\n",
         );
         assert_eq!(codes(&explicit_operation_argument), ["E1104"]);
+    }
+
+    #[test]
+    fn map_remove_is_var_exact_and_does_not_require_copy_values() {
+        let (_, _, output) = check(
+            "fn removeBoth[V: Discard](\n\
+                 values: var Map[Int, V],\n\
+             ): (V?, V?) {\n\
+                 (values.remove(1), Map.remove(var values, 2))\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        assert_eq!(
+            output
+                .program()
+                .expressions()
+                .filter(|expression| {
+                    matches!(expression.kind(), HirExpressionKind::MapRemove { .. })
+                })
+                .count(),
+            2
+        );
+
+        let (_, _, immutable) = check(
+            "fn invalid(): Int? {\n\
+                 let values = [1: 10]\n\
+                 values.remove(1)\n\
+             }\n",
+        );
+        assert_eq!(codes(&immutable), ["E1407"]);
+
+        let (_, _, missing_mode) = check(
+            "fn invalid(values: var Map[Int, Int]): Int? {\n\
+                 Map.remove(values, 1)\n\
+             }\n",
+        );
+        assert_eq!(codes(&missing_mode), ["E1407"]);
     }
 
     #[test]

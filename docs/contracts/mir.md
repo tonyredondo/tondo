@@ -189,6 +189,15 @@ argument to be the same array type for `Concat` or exact `Int` for `Repeat`.
 Changing the operation kind, receiver access, argument, result, or capability
 therefore invalidates MIR before bytecode lowering.
 
+MAP-002 lowers `Map.remove` after reserving an exact `var` region for its stable
+receiver place. `MirRvalueKind::MapRemove` carries that sourced `Map[K, V]`
+place and the already evaluated `K` operand and produces exactly `Option[V]`.
+It is non-panicking: absence is represented by `none`, so the operation remains
+a `Store` rvalue rather than an `Invoke`. The verifier rederives the map
+arguments, result payload, exact region origin, and `var` mode. Its write-access
+event is permitted only through that source region and conflicts with every
+other overlapping active loan.
+
 A concrete closure expression lowers to one aggregate with its `HirClosureId`
 and captures in the exact HIR table order. Each operand is an unprojected Copy or
 Move of the MIR local for that exact outer `LocalId`, selected under the exact

@@ -2,14 +2,13 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.65
+**Versión del tracker:** 0.66
 
 **Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar `Map[K, V]` con orden observable de
-inserción (MAP-001).
+**Objetivo inmediato:** implementar `Set[K]` y pertenencia (SET-001).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1590,12 +1589,22 @@ lifetimes escritos por el usuario.
 
 ### 11.2 Map, Set, Range e Iterator
 
-- [ ] **MAP-001 — Implementar `Map[K, V]` con orden observable de inserción.**
+- [x] **MAP-001 — Implementar `Map[K, V]` con orden observable de inserción.**
+  Literales, copias e iteración conservan una secuencia explícita de entradas;
+  ninguna frontera observable depende de la tabla o estrategia de búsqueda
+  interna.
 
-- [ ] **MAP-002 — Implementar lookup, inserción, reemplazo y eliminación
-  preservando el orden normativo.**
+- [x] **MAP-002 — Implementar lookup, inserción, reemplazo y eliminación
+  preservando el orden normativo.** Lookup devuelve `V?` con `V: Copy`;
+  asignación indexada inserta al final o reemplaza en posición. La nueva
+  operación intrínseca `Map.remove(var self, key): V?` transfiere valores sin
+  `Copy`, conserva el orden restante y no modifica el map ante ausencia. HIR,
+  MIR y bytecode rederivan firma, receptor `var` y origen exacto de región.
 
-- [ ] **MAP-003 — Implementar igualdad independiente del layout interno.**
+- [x] **MAP-003 — Implementar igualdad independiente del layout interno.**
+  Igualdad compara pertenencia clave-valor y cardinalidad, no posición,
+  capacidad, semilla ni representación; la iteración continúa observando el
+  orden de inserción.
 
 - [ ] **SET-001 — Implementar `Set[K]` y pertenencia.**
 
@@ -2096,13 +2105,36 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es MAP-001: cerrar la representación y construcción
-de `Map[K, V]` con orden de inserción observable, sin adelantar todavía las
-operaciones de lookup, reemplazo y eliminación de MAP-002.
+La siguiente acción activa es SET-001: cerrar construcción, deduplicación,
+pertenencia, orden observable e igualdad de `Set[K]`.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.66 — 2026-07-26
+
+- Se cierran MAP-001..MAP-003 sobre una representación ordenada explícita:
+  inserción nueva añade al final, reemplazo conserva posición, eliminación
+  conserva el orden relativo y reinserción vuelve a añadir al final. Igualdad
+  compara contenido independientemente de ese orden observable.
+- `Map.remove` pasa a ser una operación intrínseca cerrada con firma
+  `Map[K, V].remove(var self, key: K): V?`. La forma calificada exige
+  `Map.remove(var map, key)`, infiere los tipos del receptor y rechaza listas de
+  tipos en el owner. La ausencia devuelve `none`; un valor presente se
+  transfiere sin requerir `V: Copy`.
+- HIR reserva el receptor `var` antes de evaluar la clave. MIR lo conserva como
+  un `MapRemove` no panicking sobre una región exacta y bytecode vuelve a
+  verificar map, clave, resultado, modo y lender. La VM enraíza el valor
+  extraído durante reemplazo del objeto y construcción de `some`.
+- El corpus black-box cubre lookup, inserción, reemplazo, eliminación ausente y
+  presente, reinserción, ambas formas de llamada, genéricos sin `Copy`, orden e
+  igualdad. Un fixture separado repite la transferencia bajo GC forzado; tests
+  de mutación de IR prueban que MIR y bytecode rechazan degradar `var` a `ref`.
+- El gate acumulado queda en 587 tests; también pasan formatter check,
+  compilación de todos los targets, Clippy con warnings como errores y rustdoc
+  estricto, siempre con compilación incremental desactivada por el ICE conocido
+  de Rust 1.93.
 
 ### 0.65 — 2026-07-26
 

@@ -667,6 +667,35 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 [(*array, Demand::Observe), (*argument, Demand::Transfer)],
                 live_after,
             )?,
+            HirExpressionKind::MapRemove { map, key } => {
+                let baseline = handoff_baseline(&state);
+                let retained_loans = state.loans.keys().copied().collect::<BTreeSet<_>>();
+                let values = [*map, *key];
+                let (value_live_after, _) = self.ordered_live_afters(&values, live_after);
+                let loan_place = self.loan_place_in_state(*map, &state);
+                let mut flow = self.then_loan_argument(
+                    AvailabilityFlow::normal(state),
+                    *map,
+                    Demand::Observe,
+                    &value_live_after[0],
+                )?;
+                if let Some(state) = &mut flow.normal {
+                    self.reserve_loan(
+                        state,
+                        LoanIdentity::Call(*map),
+                        loan_place,
+                        ParameterMode::Var,
+                        self.program
+                            .expression(*map)
+                            .expect("Map.remove receiver remains indexed")
+                            .span(),
+                    );
+                }
+                flow = self.then_expression(flow, *key, Demand::Transfer, &value_live_after[1])?;
+                flow.retain_loans(&retained_loans);
+                settle_handoff(&mut flow, &baseline);
+                flow
+            }
             HirExpressionKind::Contains {
                 item, container, ..
             } => self.sequence(
@@ -3706,6 +3735,10 @@ fn expression_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
             array: left,
             argument: right,
             ..
+        }
+        | HirExpressionKind::MapRemove {
+            map: left,
+            key: right,
         }
         | HirExpressionKind::Range {
             start: left,

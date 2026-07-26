@@ -1756,6 +1756,10 @@ pub enum HirExpressionKind {
         array: HirExpressionId,
         argument: HirExpressionId,
     },
+    MapRemove {
+        map: HirExpressionId,
+        key: HirExpressionId,
+    },
     Range {
         kind: HirRangeKind,
         start: HirExpressionId,

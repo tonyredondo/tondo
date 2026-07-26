@@ -3612,6 +3612,44 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            HirExpressionKind::MapRemove { map, key } => {
+                let map = self.expression(*map, context)?;
+                let key = self.expression(*key, context)?;
+                let TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Map,
+                    arguments,
+                } = self
+                    .program
+                    .interner
+                    .kind(map.ty)
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                else {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "Map.remove has a non-Map receiver",
+                    ));
+                };
+                let TypeKind::Option(result) = self
+                    .program
+                    .interner
+                    .kind(expression.ty)
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                else {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "Map.remove has a non-Option result",
+                    ));
+                };
+                if map.category != HirValueCategory::Place
+                    || key.ty != arguments[0]
+                    || *result != arguments[1]
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "Map.remove operands or result differ from its closed signature",
+                    ));
+                }
+            }
             HirExpressionKind::Call {
                 callee,
                 arguments,
@@ -5133,6 +5171,10 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
             array: left,
             argument: right,
             ..
+        }
+        | HirExpressionKind::MapRemove {
+            map: left,
+            key: right,
         }
         | HirExpressionKind::Range {
             start: left,

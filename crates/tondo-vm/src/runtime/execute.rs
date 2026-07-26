@@ -1330,11 +1330,6 @@ impl<'program, 'host> Engine<'program, 'host> {
                 "ReserveLoan uses the owning value parameter mode",
             ));
         }
-        if loan.kind == BytecodeLoanKind::Region && loan.mode != BytecodeParameterMode::Ref {
-            return Err(VmError::invariant(
-                "a region reservation is not shared `ref`",
-            ));
-        }
         let source_mode =
             if let Some(mode) = self.validate_source_regions(frame, &loan.place, true)? {
                 Some(mode)
@@ -1913,11 +1908,6 @@ impl<'program, 'host> Engine<'program, 'host> {
         let Some(mut source) = place.source_loan else {
             return Ok(None);
         };
-        if !read_only {
-            return Err(VmError::invariant(
-                "a move or write attempted to use a shared region reference",
-            ));
-        }
         let function_id = self
             .frames
             .get(frame)
@@ -1944,9 +1934,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                 .loans
                 .get(source.index() as usize)
                 .ok_or_else(|| VmError::invariant("place references an invalid source region"))?;
-            if loan.kind != BytecodeLoanKind::Region || loan.mode != BytecodeParameterMode::Ref {
+            if loan.kind != BytecodeLoanKind::Region {
                 return Err(VmError::invariant(
-                    "place source is not a shared region reservation",
+                    "place source is not a region reservation",
+                ));
+            }
+            if !read_only && loan.mode == BytecodeParameterMode::Ref {
+                return Err(VmError::invariant(
+                    "a move or write attempted to use a shared region reference",
                 ));
             }
             let reservation = self.frames[frame]
@@ -2607,6 +2602,13 @@ impl Engine<'_, '_> {
                 engine.retain_temporary(&item);
                 let container = engine.evaluate_operand(frame, container)?;
                 Ok(Value::Bool(engine.contains(*kind, &item, &container)?))
+            }),
+            BytecodeRvalueKind::MapRemove { map, key } => self.with_temporary_roots(|engine| {
+                let map = engine.read_place(frame, map)?;
+                engine.retain_temporary(&map);
+                let key = engine.evaluate_operand(frame, key)?;
+                engine.retain_temporary(&key);
+                engine.map_remove(rvalue.ty, map, &key)
             }),
             BytecodeRvalueKind::Length(value) => {
                 let value = self.evaluate_operand(frame, value)?;
@@ -4936,6 +4938,39 @@ impl Engine<'_, '_> {
             }
             _ => Err(VmError::invariant("index access and heap value disagree")),
         }
+    }
+
+    fn map_remove(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        map: Value,
+        key: &Value,
+    ) -> Result<Value, VmError> {
+        let Value::Heap(handle) = map else {
+            return Err(VmError::invariant("Map.remove receiver is not managed"));
+        };
+        let HeapObject::Map(mut entries) = self.heap.get(handle)?.clone() else {
+            return Err(VmError::invariant(
+                "Map.remove receiver has the wrong heap shape",
+            ));
+        };
+        let Some(position) = self.find_map_entry(&entries, key)? else {
+            return self.allocate(result_ty, HeapObject::OptionNone, &[]);
+        };
+        let (_, value) = entries.remove(position);
+        let value =
+            value.ok_or_else(|| VmError::invariant("removed map value was already absent"))?;
+        self.retain_temporary(&value);
+        self.replace_object(
+            handle,
+            HeapObject::Map(entries),
+            std::slice::from_ref(&value),
+        )?;
+        self.allocate(
+            result_ty,
+            HeapObject::OptionSome(Some(value.clone())),
+            &[value],
+        )
     }
 
     fn slice_value(

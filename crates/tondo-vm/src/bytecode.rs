@@ -794,6 +794,10 @@ pub enum BytecodeRvalueKind {
         item: BytecodeOperand,
         container: BytecodeOperand,
     },
+    MapRemove {
+        map: BytecodePlace,
+        key: BytecodeOperand,
+    },
     Length(BytecodeOperand),
     IteratorState(BytecodeOperand),
 }

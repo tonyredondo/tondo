@@ -2714,13 +2714,7 @@ impl Verifier<'_> {
             }
             match loan.kind {
                 BytecodeLoanKind::CallLocal => {}
-                BytecodeLoanKind::Region if loan.mode == BytecodeParameterMode::Ref => {}
-                BytecodeLoanKind::Region => {
-                    return Err(BytecodeVerificationError::new(
-                        &loan_context,
-                        "region loan is not a shared `ref` reservation",
-                    ));
-                }
+                BytecodeLoanKind::Region => {}
             }
             if let Some(source) = loan.place.source_loan
                 && source.index() as usize >= index
@@ -3163,11 +3157,10 @@ impl Verifier<'_> {
         }
         if let Some(source) = place.source_loan {
             let source = self.loan(function, source, context)?;
-            if source.kind != BytecodeLoanKind::Region || source.mode != BytecodeParameterMode::Ref
-            {
+            if source.kind != BytecodeLoanKind::Region {
                 return Err(BytecodeVerificationError::new(
                     context,
-                    "place source is not a shared region loan",
+                    "place source is not a region loan",
                 ));
             }
             let source = LocalAccess::from_place(&source.place);
@@ -3412,6 +3405,31 @@ impl Verifier<'_> {
                 self.verify_operand(function, item, context)?;
                 self.verify_operand(function, container, context)?;
                 self.verify_contains(*kind, item.ty, container.ty, value.ty, context)?;
+            }
+            BytecodeRvalueKind::MapRemove { map, key } => {
+                self.verify_place(function, map, context)?;
+                self.verify_operand(function, key, context)?;
+                let map_key =
+                    self.intrinsic_argument(map.ty, BytecodeIntrinsicType::Map, 0, context)?;
+                let map_value =
+                    self.intrinsic_argument(map.ty, BytecodeIntrinsicType::Map, 1, context)?;
+                let BytecodeTypeKind::Option(result_value) = self.ty(value.ty, context)?.kind
+                else {
+                    return Err(rvalue_error(context));
+                };
+                let source = map
+                    .source_loan
+                    .and_then(|source| function.loans.get(source.index() as usize));
+                if key.ty != map_key
+                    || result_value != map_value
+                    || !source.is_some_and(|source| {
+                        source.kind == BytecodeLoanKind::Region
+                            && source.mode == BytecodeParameterMode::Var
+                            && same_place_path(&source.place, map)
+                    })
+                {
+                    return Err(rvalue_error(context));
+                }
             }
             BytecodeRvalueKind::Length(operand) => {
                 self.verify_operand(function, operand, context)?;
@@ -6563,10 +6581,10 @@ impl Verifier<'_> {
         let Some(mut source) = access.source_loan else {
             return Ok(());
         };
-        if access_kind != "read" {
+        if access_kind == "move" {
             return Err(BytecodeVerificationError::new(
                 context,
-                format!("{access_kind} uses a shared region reference"),
+                "move transfers content out of a region reference",
             ));
         }
         let mut seen = BTreeSet::new();
@@ -6584,10 +6602,16 @@ impl Verifier<'_> {
                 ));
             }
             let loan = self.loan(function, source, context)?;
-            if loan.kind != BytecodeLoanKind::Region || loan.mode != BytecodeParameterMode::Ref {
+            if loan.kind != BytecodeLoanKind::Region {
                 return Err(BytecodeVerificationError::new(
                     context,
-                    "place source is not a shared region loan",
+                    "place source is not a region loan",
+                ));
+            }
+            if access_kind == "write" && loan.mode == BytecodeParameterMode::Ref {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "write uses a shared region reference",
                 ));
             }
             let Some(parent) = loan.place.source_loan else {
@@ -6607,11 +6631,23 @@ impl Verifier<'_> {
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
         let ClassifiedLocalAccess { access, kind } = access;
+        let mut source_chain = BTreeSet::new();
+        let mut source = access.source_loan;
+        while let Some(id) = source {
+            if !source_chain.insert(id) {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "place source region chain contains a cycle",
+                ));
+            }
+            source = self.loan(function, id, context)?.place.source_loan;
+        }
         for active in state.iter().copied() {
             self.consume_dataflow_step(context)?;
             let loan = self.loan(function, active, context)?;
             let loan_access = LocalAccess::from_place(&loan.place);
-            if access.slot != loan_access.slot
+            if source_chain.contains(&active)
+                || access.slot != loan_access.slot
                 || kind == "read" && loan.mode == BytecodeParameterMode::Ref
             {
                 continue;
@@ -7476,6 +7512,7 @@ fn rvalue_contains_invalid_borrow(value: &BytecodeRvalue) -> bool {
         BytecodeRvalueKind::Contains {
             item, container, ..
         } => operand_is_loan(item) || operand_is_loan(container),
+        BytecodeRvalueKind::MapRemove { key, .. } => escapes(key),
         BytecodeRvalueKind::Length(operand) | BytecodeRvalueKind::IteratorState(operand) => {
             operand_is_loan(operand)
         }
@@ -9264,6 +9301,10 @@ fn push_tag_rvalue(
             push_tag_operand(function, item, events);
             push_tag_operand(function, container, events);
         }
+        BytecodeRvalueKind::MapRemove { map, key } => {
+            push_tag_place(function, map, true, events);
+            push_tag_operand(function, key, events);
+        }
     }
 }
 
@@ -9482,6 +9523,10 @@ fn push_rvalue_events(value: &BytecodeRvalue, events: &mut Vec<LocalEvent>) {
         } => {
             push_operand_events(item, events);
             push_operand_events(container, events);
+        }
+        BytecodeRvalueKind::MapRemove { map, key } => {
+            push_destination_reads(map, true, events);
+            push_operand_events(key, events);
         }
     }
 }

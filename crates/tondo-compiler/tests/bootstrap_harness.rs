@@ -82,6 +82,7 @@ fn value_copy_observables_are_stable_under_gc_pressure() {
             "gc-pressure".to_owned(),
             "identity".to_owned(),
             "iteration".to_owned(),
+            "map-remove".to_owned(),
             "panic".to_owned(),
             "slice-snapshot".to_owned(),
             "value".to_owned(),

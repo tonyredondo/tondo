@@ -499,6 +499,10 @@ pub enum MirRvalueKind {
         item: MirOperand,
         container: MirOperand,
     },
+    MapRemove {
+        map: MirPlace,
+        key: MirOperand,
+    },
     Length(MirOperand),
     IteratorState {
         source: MirOperand,

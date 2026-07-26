@@ -594,6 +594,15 @@ copy and neither source owner becomes unavailable. `verify_typed_hir`
 independently rederives the result/operand signatures and the element
 capability before MIR admission.
 
+`Map.remove` is likewise a closed HIR intrinsic rather than an unresolved
+library call. `HirExpressionKind::MapRemove` retains the `Map[K, V]` receiver
+before the by-value `K` expression and has the exact result `V?`. The receiver
+must be a structurally replaceable place and is reserved as `var` while the key
+is evaluated; this exposes conflicts through the ordinary availability loan
+analysis. Dot syntax supplies that receiver mode implicitly, while the
+qualified form is exactly `Map.remove(var map, key)`. Neither form accepts an
+owner type-argument list, and no `V: Copy` proof is required.
+
 Record construction, update, projection, and inherent calls enforce visibility
 against the declaring module. External construction of a record with hidden
 representation emits one non-revealing `E1502`; diagnostics for omitted fields

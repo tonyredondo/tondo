@@ -1881,6 +1881,10 @@ fn collect_rvalue_types(value: &MirRvalue, types: &mut BTreeSet<TypeId>) {
                 collect_operand_types(value, types);
             }
         }
+        MirRvalueKind::MapRemove { map, key } => {
+            collect_place_types(map, types);
+            collect_operand_types(key, types);
+        }
     }
 }
 
@@ -2100,6 +2104,9 @@ fn collect_rvalue_function_references(value: &MirRvalue, references: &mut Vec<Fu
             for (_, value) in fields {
                 collect_operand_function_references(value, references);
             }
+        }
+        MirRvalueKind::MapRemove { key, .. } => {
+            collect_operand_function_references(key, references);
         }
     }
 }
@@ -3334,6 +3341,10 @@ fn lower_rvalue(
             kind: containment_kind(*kind),
             item: operand(item)?,
             container: operand(container)?,
+        },
+        MirRvalueKind::MapRemove { map, key } => bc::BytecodeRvalueKind::MapRemove {
+            map: lower_place(map, context, type_map)?,
+            key: operand(key)?,
         },
         MirRvalueKind::Length(value) => bc::BytecodeRvalueKind::Length(operand(value)?),
         MirRvalueKind::IteratorState { source } => {
@@ -8762,6 +8773,39 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
         array.kind = bc::BytecodeOperandKind::Copy(place.clone());
         let error = bc::verify_bytecode(&wrong_receiver).unwrap_err();
         assert!(error.message().contains("operation"), "{error}");
+    }
+
+    #[test]
+    fn bytecode_verifier_rederives_map_remove_region_mode() {
+        let program = lowered(
+            "fn remove(values: var Map[Int, String], key: Int): String? {\n\
+                 values.remove(key)\n\
+             }\n",
+        );
+        let entry = function_id(&program, "remove");
+        let source = program.functions[entry.index() as usize]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match &instruction.kind {
+                bc::BytecodeInstructionKind::Store {
+                    value:
+                        bc::BytecodeRvalue {
+                            kind: bc::BytecodeRvalueKind::MapRemove { map, .. },
+                            ..
+                        },
+                    ..
+                } => map.source_loan,
+                _ => None,
+            })
+            .expect("Map.remove bytecode retains its source region");
+        bc::verify_bytecode(&program).unwrap();
+
+        let mut wrong_mode = program;
+        wrong_mode.functions[entry.index() as usize].loans[source.index() as usize].mode =
+            bc::BytecodeParameterMode::Ref;
+        let error = bc::verify_bytecode(&wrong_mode).unwrap_err();
+        assert!(error.message().contains("rvalue"), "{error}");
     }
 
     #[test]
