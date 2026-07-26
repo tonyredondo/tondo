@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.59
+**Versión del tracker:** 0.60
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** consolidar la indexación positiva y negativa de arrays,
-incluidos normalización, bounds y pánico normativo (ARRAY-002).
+**Objetivo inmediato:** consolidar slicing, normalización de extremos, pasos
+positivos/negativos y sus pánicos normativos (ARRAY-003).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1539,7 +1539,11 @@ lifetimes escritos por el usuario.
   mediante `Length(Array[T]) : Int`, sellado otra vez por el verificador de
   bytecode. Un fixture público cubre longitudes distintas bajo el mismo tipo.
 
-- [ ] **ARRAY-002 — Implementar indexación positiva y negativa con bounds.**
+- [x] **ARRAY-002 — Implementar indexación positiva y negativa con bounds.**
+  Evaluación constante y VM comparten un único normalizador sin suma signed
+  intermedia. Lecturas, escrituras, préstamos y validación de lugares aceptan
+  `0..n - 1` y `-1..-n`; el resto produce `P0001`. El verificador sella
+  `Array[T]` + `Int` + `T` antes de ejecutar.
 
 - [ ] **ARRAY-003 — Implementar slicing y normalización de extremos.**
 
@@ -2063,14 +2067,33 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es ARRAY-002: auditar la indexación ya ejecutable,
-fijar una sola normalización para índices positivos y negativos, comprobar los
-bounds y el pánico normativo en lectura y escritura, y cerrar cualquier hueco
-entre HIR, MIR, bytecode y VM.
+La siguiente acción activa es ARRAY-003: auditar el algoritmo de slicing ya
+ejecutable, unificar la normalización de start/end/step para ambos signos,
+comprobar `Int.min`, extremos recortados y `P0002`, y cerrar cualquier hueco
+entre constantes, préstamos, MIR, bytecode y VM.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.60 — 2026-07-25
+
+- Se cierra ARRAY-002 con una única función `normalize_array_index` compartida
+  por evaluación constante y todos los caminos del VM. La transformación usa
+  distancia desde el final y no puede desbordar al simular `n + i`.
+- La matriz source-to-VM cubre lectura, escritura y préstamo con `0`, `n - 1`,
+  `-1` y `-n`; vacío, `n`, `-n - 1`, `Int.min` e `Int.max` producen
+  `P0001`. Una escritura simple demuestra además que el RHS se completa antes
+  de validar bounds.
+- El chequeo semántico exige `Int`, solo materializa `T: Copy` y permite
+  observar un elemento afín mediante préstamo. Una mutación adversarial del
+  operando a `Bool` queda rechazada por el verificador de bytecode.
+- Cinco fixtures públicos fijan el caso válido, bounds positivo, negativo y
+  extremo, además del orden RHS-antes-de-bounds.
+- La puerta completa pasa con 569 tests —500 del núcleo del compilador, 26 de
+  la VM y 43 de CLI/integración—, formatter canónico de todos los fixtures,
+  `cargo fmt --check`, `cargo check`, `cargo build`, Clippy y rustdoc con
+  warnings como error, y `git diff --check`.
 
 ### 0.59 — 2026-07-25
 

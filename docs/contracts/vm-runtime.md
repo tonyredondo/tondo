@@ -16,7 +16,7 @@ pre-exhaustion collection and atomic publication, REF-001 managed identity
 construction/shared content projection, and REF-002 equality and collection
 keys by identity, VALUE-001 exhaustive eager logical copies, and VALUE-002
 representation-independent copy observations, plus ARRAY-001 runtime array
-length
+length and ARRAY-002 checked array indexing
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -52,6 +52,15 @@ logical copy, argument passing, and return preserve it with the complete value.
 The internal `Length` observation counts the vector slots after verified array
 typing. It currently serves language pattern semantics and does not choose the
 name or shape of a future standard-library length API.
+
+All array index paths call the same normalizer: value reads, projected reads,
+moves, writes, place validation, loan-region resolution, and constant
+evaluation. `0` through `n - 1` remain unchanged; `-1` maps to `n - 1` and
+`-n` maps to zero. Empty-array access, `n`, `-n - 1`, `Int.min`, `Int.max`, and
+every other invalid value produce `P0001 bounds` at runtime without an
+overflowing intermediate. A simple assignment evaluates its index once and its
+complete RHS before bounds validation, then performs no write if validation
+panics.
 
 Closures pair a concrete bytecode callable identity with a managed environment
 whose capture fields use the same optional-value move representation as other
@@ -406,6 +415,13 @@ Array-length regressions must construct empty and nonempty values that share
 one `Array[T]` type, observe distinct runtime lengths through source semantics,
 preserve those lengths across copy, calls, and returns, and prove that the
 bytecode verifier rejects a `Length` rvalue whose operand is not an array.
+
+Array-index regressions must cover both valid endpoints in positive and
+negative form, empty arrays, both `Int` extremes, positive and negative bounds
+failures, value reads, writes, and borrowed places. They must prove constant
+and runtime normalization share one implementation, invalid access produces
+`P0001`, a simple-write RHS completes before bounds validation, and forged
+non-`Int` bytecode is rejected before execution.
 
 Loan regressions execute shared temporaries, root and projected exclusive
 write-through, nested and closure-capture reborrows, statically disjoint fields,

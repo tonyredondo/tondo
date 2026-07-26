@@ -14,7 +14,7 @@ classification and normal-path ownership, and TERM-003 explicit defer/guard
 cleanup, TERM-004 closed abnormal fallback lowering, and TERM-005 exact
 explicit/fallback exclusion, REF-001 identity aggregates/shared projections,
 REF-002 identity equality/key operands, and ARRAY-001 runtime array length
-implemented
+plus ARRAY-002 positive/negative checked indexing implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -289,6 +289,10 @@ bypass their bounds/unwind edge. Assignment first resolves all destination
 places, then materializes its complete RHS, then validates overlap, bounds, and
 slice replacement lengths before performing any write. Each validated place
 carries an aligned `against` list for active runtime-dependent conflicts.
+An array index remains one `Int` operand evaluated exactly once; MIR does not
+pre-normalize a negative value because the current array length is required.
+Both the checked read operation and projected place use the same operand local,
+and every failure follows the function's ordinary language-panic unwind edge.
 Compound assignment
 uses an access validation before reading its previous value and validates the
 fully computed replacement again before storing it. Every write validation

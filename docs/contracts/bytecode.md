@@ -14,8 +14,8 @@ borrowed-iterator boundaries, TERM-001 independent terminal classification,
 TERM-002 normal-path terminal ownership, TERM-003 explicit defer/guard cleanup,
 TERM-004 closed abnormal fallbacks, TERM-005 exact explicit/fallback exclusion,
 REF-001 managed identity cells/shared projections, REF-002 identity
-equality/keys, ARRAY-001 runtime array length, and the M3 VM admission path
-implemented
+equality/keys, ARRAY-001 runtime array length, ARRAY-002 checked array
+indexing, and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -422,6 +422,13 @@ record/newtype fields, the shared `RefValue` payload, tuple positions,
 enum/option/result/union payloads, array-pattern segments, dynamic indexing,
 and slices. Index and bound operands are slots evaluated earlier, preserving
 MIR evaluation order.
+
+Every array `Index` operation or projection has an `Array[T]` base, an `Int`
+operand, and result `T`; the verifier rederives all three facts. Bytecode keeps
+the original signed operand. `normalize_array_index` is the single checked
+normalizer shared by runtime value reads, place reads/moves/writes, loan paths,
+and compiler constant evaluation. It computes negative indices by distance from
+the end, avoiding an overflowing signed `n + i` intermediate.
 
 The VM resolves each protected path to normalized runtime components: negative
 indices use the current array length, slices become their exact selected-index

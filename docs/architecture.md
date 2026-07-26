@@ -200,6 +200,8 @@ worklist. Dependency SCCs and their topological order use stable symbol
 identities; normalized values remain in HIR for later MIR/bytecode lowering,
 while compile-time panics, nonconstant work, duplicate collection entries, and
 known NaN comparisons receive their normative diagnostics.
+Constant and runtime array indexing share the bytecode boundary's single
+overflow-free positive/negative index normalizer.
 The driver retains those facts in an immutable semantic snapshot. It provides
 structured type, entity, reference, member, signature, and closed-call-error
 queries without making tooling re-resolve the CST; partial snapshots have an
@@ -384,6 +386,8 @@ edge-specific natural exhaustion disarm.
 Array construction stores operand count in the value, never in the type
 catalog; the verifier seals the internal `Length` operation to
 `Length(Array[T]) : Int`.
+Array indexing likewise retains one signed `Int` operand, while the verifier
+seals both value operations and place projections to `Array[T]`.
 
 Before those tables are allocated, a bounded deterministic worklist
 monomorphizes every generic callable reached from non-generic roots, constants,
@@ -429,6 +433,8 @@ heap representation.
 An Array heap object owns its ordered runtime slots; construction, copy,
 argument passing, and return preserve that vector length independently of the
 single canonical `Array[T]` type.
+Every read, write, borrowed place, and constant array access uses the same
+normalization rule; invalid endpoints unwind as `P0001`.
 
 The implemented synchronous engine uses iterative frames, checked slot states,
 normal/unwind continuations, call-local reservation tables, normalized

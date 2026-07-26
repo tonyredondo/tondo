@@ -43,6 +43,24 @@ index_type!(BytecodeBlockId);
 index_type!(BytecodeSpanId);
 index_type!(BytecodeScopeId);
 
+/// Normalizes one Tondo array index without a signed intermediate addition.
+///
+/// Nonnegative indices are used directly. A negative index denotes its
+/// absolute distance from the end, so `-1` selects the final element and
+/// `-length` selects the first. Every value outside the array returns `None`,
+/// including the minimum signed integer.
+pub fn normalize_array_index(index: i128, length: usize) -> Option<usize> {
+    let normalized = if index < 0 {
+        let distance = index
+            .checked_neg()
+            .and_then(|value| usize::try_from(value).ok())?;
+        length.checked_sub(distance)?
+    } else {
+        usize::try_from(index).ok()?
+    };
+    (normalized < length).then_some(normalized)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BytecodeSpan {
     pub file: u32,
@@ -1020,6 +1038,22 @@ mod tests {
         assert_eq!(BytecodeIntrinsicType::Map.arity(), 2);
         assert_eq!(BytecodeIntrinsicType::Array.arity(), 1);
         assert_eq!(BytecodeIntrinsicType::Command.arity(), 0);
+    }
+
+    #[test]
+    fn array_index_normalization_is_mathematical_and_closed() {
+        assert_eq!(normalize_array_index(0, 4), Some(0));
+        assert_eq!(normalize_array_index(3, 4), Some(3));
+        assert_eq!(normalize_array_index(-1, 4), Some(3));
+        assert_eq!(normalize_array_index(-4, 4), Some(0));
+
+        assert_eq!(normalize_array_index(4, 4), None);
+        assert_eq!(normalize_array_index(-5, 4), None);
+        assert_eq!(normalize_array_index(0, 0), None);
+        assert_eq!(normalize_array_index(-1, 0), None);
+        assert_eq!(normalize_array_index(i64::MAX as i128, 4), None);
+        assert_eq!(normalize_array_index(i64::MIN as i128, 4), None);
+        assert_eq!(normalize_array_index(i128::MIN, 4), None);
     }
 
     #[test]

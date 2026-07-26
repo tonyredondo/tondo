@@ -20910,6 +20910,38 @@ mod tests {
     }
 
     #[test]
+    fn array_indexing_requires_int_and_copies_only_when_materialized() {
+        let (_, _, wrong_index) = check(
+            "fn invalid(values: Array[Int]) {\n\
+                 _ = values[true]\n\
+             }\n",
+        );
+        assert_eq!(codes(&wrong_index), ["E1102"]);
+
+        let (_, _, affine_value) = check(
+            "fn invalid(\n\
+                 values: ref Array[Join[Int, Never]],\n\
+             ): Join[Int, Never] {\n\
+                 values[0]\n\
+             }\n",
+        );
+        assert_eq!(codes(&affine_value), ["E1406"]);
+
+        let (_, _, borrowed) = check(
+            "fn inspect(value: ref Join[Int, Never]) {}\n\
+             fn valid(values: ref Array[Join[Int, Never]]) {\n\
+                 inspect(ref values[-1])\n\
+             }\n",
+        );
+        assert!(
+            borrowed.diagnostics().is_empty(),
+            "{:#?}",
+            borrowed.diagnostics()
+        );
+        assert!(borrowed.is_complete());
+    }
+
+    #[test]
     fn assignment_supports_fields_tuple_slots_arrays_slices_and_maps() {
         let (_, _, output) = check(
             "type State = { count: Int, values: Array[Int] }\n\
@@ -21887,6 +21919,9 @@ mod tests {
             "const Invalid: Array[Int] = [1, 2] + [3]\n",
             "const Invalid: Int8 = 1i8 << 8\n",
             "const Invalid: Int = [1][2]\n",
+            "const Invalid: Int = [1][-2]\n",
+            "const Invalid: Int = [1][-9223372036854775808]\n",
+            "const Invalid: Int = [1][9223372036854775807]\n",
             "const Invalid: Array[Int] = [1, 2][::0]\n",
             "const Invalid = Int8(128)\n",
             "const Invalid: Int8 = -128i8 / -1i8\n",

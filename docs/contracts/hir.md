@@ -15,7 +15,8 @@ TERM-001 closed terminal-type registration and structural status, TERM-002
 normal-path terminal ownership, TERM-003 checked synchronous `defer` actions
 and affine guards, TERM-004 downstream closed-fallback admission, and verified
 MIR admission, REF-001 safe identity construction and shared content
-projection, and REF-002 identity equality/key admission implemented
+projection, REF-002 identity equality/key admission, ARRAY-001 runtime length,
+and ARRAY-002 typed array indexing implemented
 
 ## Boundary
 
@@ -559,6 +560,13 @@ array element, map key, set member, range element, or string character. Both
 retain left-to-right runtime evaluation even where bidirectional checking uses
 the container type to select an item literal type.
 
+Array indexing records one `Array[T]` base, one exact `Int` index, and the
+element type `T`. Materializing the expression as a value requires `T: Copy`;
+using it as a write target, `ref`/`mut`/`var` argument, receiver, or stable
+observation place retains the projection without moving the element. Negative
+indices remain signed operands because their meaning depends on runtime length;
+HIR neither rewrites them nor manufactures a static length.
+
 Record construction, update, projection, and inherent calls enforce visibility
 against the declaring module. External construction of a record with hidden
 representation emits one non-revealing `E1502`; diagnostics for omitted fields
@@ -583,6 +591,9 @@ nested length before producing a value. Integer overflow, zero division,
 invalid shifts, invalid indices, zero slice steps, shape mismatches, and failed
 checked conversions become `E1903`; calls, interpolation through `Display`, and
 other runtime-only work become `E1901`.
+Constant array indexing calls the same normalization function as bytecode
+execution, so `0`, `n - 1`, `-1`, `-n`, empty arrays, and both `Int` extremes
+cannot drift between compile-time and runtime behavior.
 
 Evaluated scalars retain their exact semantic payload: integers use a
 mathematical signed representation constrained by their `TypeId`, and floats

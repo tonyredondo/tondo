@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 
+use tondo_vm::bytecode::normalize_array_index;
+
 use crate::source::Span;
 use crate::types::{
     Assignability, IntrinsicType, NumericConversion, ScalarType, TypeError, TypeId, TypeKind,
@@ -1001,7 +1003,7 @@ fn evaluate_index(
             let HirConstantValueKind::Integer(index) = index.kind else {
                 return Err(ConstantEvaluationError::Unavailable);
             };
-            let normalized = normalize_index(index, items.len())
+            let normalized = normalize_array_index(index, items.len())
                 .ok_or_else(|| panic_error(span, "constant array index is out of bounds"))?;
             items
                 .into_iter()
@@ -1096,19 +1098,6 @@ fn normalize_slice_bound(mut value: i128, length: i128, positive: bool) -> i128 
     } else {
         value.clamp(-1, length - 1)
     }
-}
-
-fn normalize_index(index: i128, length: usize) -> Option<usize> {
-    let length = i128::try_from(length).ok()?;
-    let normalized = if index < 0 {
-        length.checked_add(index)?
-    } else {
-        index
-    };
-    (0..length)
-        .contains(&normalized)
-        .then(|| usize::try_from(normalized).ok())
-        .flatten()
 }
 
 pub(super) fn values_equal(

@@ -13,7 +13,7 @@ use crate::bytecode::{
     BytecodeScalarType, BytecodeScopeId, BytecodeSlotId, BytecodeSpan, BytecodeTag,
     BytecodeTerminalUnwindAction, BytecodeTerminator, BytecodeTerminatorKind,
     BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind, BytecodeVariantPayload,
-    BytecodeVerificationLimits, verify_bytecode_with_trace_metadata,
+    BytecodeVerificationLimits, normalize_array_index, verify_bytecode_with_trace_metadata,
 };
 
 use super::heap::{Heap, HeapHandle, HeapObject};
@@ -3330,7 +3330,7 @@ impl Engine<'_, '_> {
                 if *access == BytecodeIndexAccess::Array =>
             {
                 let index = self.integer_slot(frame, *index)?;
-                let index = normalize_index(index, values.len()).ok_or_else(|| {
+                let index = normalize_array_index(index, values.len()).ok_or_else(|| {
                     VmError::invariant("unvalidated array index reached a projection")
                 })?;
                 present(&values[index], "array element").cloned()
@@ -3465,7 +3465,7 @@ impl Engine<'_, '_> {
             (BytecodeProjectionKind::Index { index, access }, HeapObject::Array(values))
                 if *access == BytecodeIndexAccess::Array =>
             {
-                let index = normalize_index(self.integer_slot(frame, *index)?, values.len())
+                let index = normalize_array_index(self.integer_slot(frame, *index)?, values.len())
                     .ok_or_else(|| VmError::invariant("unvalidated array move index"))?;
                 values[index]
                     .take()
@@ -3575,7 +3575,7 @@ impl Engine<'_, '_> {
             (BytecodeProjectionKind::Index { index, access }, HeapObject::Array(values))
                 if *access == BytecodeIndexAccess::Array =>
             {
-                let index = normalize_index(self.integer_slot(frame, *index)?, values.len())
+                let index = normalize_array_index(self.integer_slot(frame, *index)?, values.len())
                     .ok_or_else(|| VmError::invariant("unvalidated array write index"))?;
                 values[index] = Some(value.clone());
             }
@@ -3949,7 +3949,7 @@ impl Engine<'_, '_> {
                 if *access == BytecodeIndexAccess::Array =>
             {
                 let raw = self.integer_slot(frame, *index)?;
-                let index = normalize_index(raw, values.len()).ok_or_else(|| {
+                let index = normalize_array_index(raw, values.len()).ok_or_else(|| {
                     PlaceFailure::Panic(PanicCode::Bounds, "array index is out of bounds".into())
                 })?;
                 PlaceComponent::Index(index as i128)
@@ -4657,7 +4657,7 @@ impl Engine<'_, '_> {
                 let Value::Integer(index) = index else {
                     return Err(VmError::invariant("array index is not Int"));
                 };
-                let Some(index) = normalize_index(index, values.len()) else {
+                let Some(index) = normalize_array_index(index, values.len()) else {
                     return Ok(Err((
                         PanicCode::Bounds,
                         format!(
@@ -5484,19 +5484,6 @@ fn paths_overlap(left: &ResolvedPlacePath, right: &ResolvedPlacePath) -> bool {
         };
     }
     true
-}
-
-fn normalize_index(index: i128, length: usize) -> Option<usize> {
-    let length = i128::try_from(length).ok()?;
-    let normalized = if index < 0 {
-        length.checked_add(index)?
-    } else {
-        index
-    };
-    (0..length)
-        .contains(&normalized)
-        .then(|| usize::try_from(normalized).ok())
-        .flatten()
 }
 
 fn slice_indices(

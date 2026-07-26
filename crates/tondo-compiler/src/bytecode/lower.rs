@@ -4172,6 +4172,159 @@ fn observe(): (Int, Int, Int, Int, Int, Int, Int, Int, Int) {
     }
 
     #[test]
+    fn array_indices_normalize_reads_writes_borrows_and_bounds_uniformly() {
+        let source = r#"fn inspect(value: ref Int): Int {
+    value
+}
+
+fn observe(): (Int, Int, Int, Int, Int, Int, Int) {
+    var values = [10, 20, 30, 40]
+    let first = values[0]
+    let lastPositive = values[3]
+    let lastNegative = values[-1]
+    let firstNegative = values[-4]
+    values[1] = 21
+    values[-2] = 31
+    let borrowed = inspect(ref values[-1])
+    (
+        first,
+        lastPositive,
+        lastNegative,
+        firstNegative,
+        values[1],
+        values[2],
+        borrowed,
+    )
+}
+
+fn highRead(): Int {
+    let values = [10, 20, 30, 40]
+    let index = 4
+    values[index]
+}
+
+fn lowRead(): Int {
+    let values = [10, 20, 30, 40]
+    let index = -5
+    values[index]
+}
+
+fn emptyRead(): Int {
+    let values: Array[Int] = []
+    let index = 0
+    values[index]
+}
+
+fn minimumRead(): Int {
+    let values = [10, 20, 30, 40]
+    let index = -9223372036854775808
+    values[index]
+}
+
+fn maximumRead(): Int {
+    let values = [10, 20, 30, 40]
+    let index = 9223372036854775807
+    values[index]
+}
+
+fn highWrite(): Array[Int] {
+    var values = [10, 20, 30, 40]
+    let index = 4
+    values[index] = 99
+    values
+}
+
+fn lowWrite(): Array[Int] {
+    var values = [10, 20, 30, 40]
+    let index = -5
+    values[index] = 99
+    values
+}
+
+fn panicRhs(): Int {
+    panic("rhs")
+}
+
+fn invalidWriteRunsRhs() {
+    var values = [1]
+    let index = 1
+    values[index] = panicRhs()
+}
+
+fn verifierTarget(index: Int, flag: Bool): Int {
+    _ = flag
+    [1, 2][index]
+}
+"#;
+        assert_eq!(
+            execute_function(source, "observe"),
+            RuntimeValue::Tuple(vec![
+                RuntimeValue::Integer(10),
+                RuntimeValue::Integer(40),
+                RuntimeValue::Integer(40),
+                RuntimeValue::Integer(10),
+                RuntimeValue::Integer(21),
+                RuntimeValue::Integer(31),
+                RuntimeValue::Integer(40),
+            ])
+        );
+
+        for name in [
+            "highRead",
+            "lowRead",
+            "emptyRead",
+            "minimumRead",
+            "maximumRead",
+            "highWrite",
+            "lowWrite",
+        ] {
+            let VmOutcome::Panicked(panic) = execute_outcome(source, name) else {
+                panic!("{name} must panic on an invalid array index")
+            };
+            assert_eq!(panic.code, PanicCode::Bounds, "{name}");
+            assert_eq!(panic.code.code(), "P0001", "{name}");
+        }
+
+        let VmOutcome::Panicked(panic) = execute_outcome(source, "invalidWriteRunsRhs") else {
+            panic!("the RHS panic must occur before write bounds validation")
+        };
+        assert_eq!(panic.code, PanicCode::ExplicitPanic);
+        assert_eq!(panic.message, "rhs");
+
+        let mut forged = lowered(source);
+        let target = function_id(&forged, "verifierTarget");
+        let function = &mut forged.functions[target.index() as usize];
+        let bool_slot = function.parameters[1];
+        let bool_type = function.slots[bool_slot.index() as usize].ty;
+        let index = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Index { index, .. },
+                            ..
+                        },
+                    ..
+                } => Some(index),
+                _ => None,
+            })
+            .expect("verifierTarget must contain an index operation");
+        *index = bc::BytecodeOperand {
+            ty: bool_type,
+            kind: bc::BytecodeOperandKind::Copy(bc::BytecodePlace {
+                slot: bool_slot,
+                ty: bool_type,
+                projections: Vec::new(),
+                source_loan: None,
+            }),
+        };
+        let error = bc::verify_bytecode(&forged).unwrap_err();
+        assert!(error.message().contains("projection"), "{error}");
+    }
+
+    #[test]
     fn lowering_is_deterministic_and_preserves_slots_spans_and_edges() {
         let source = "fn choose(flag: Bool): Int {\n    if flag { 20 + 22 } else { 0 }\n}\n";
         let first = lowered(source);
