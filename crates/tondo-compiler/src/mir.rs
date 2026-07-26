@@ -559,6 +559,11 @@ pub enum MirOperationKind {
         left: MirOperand,
         right: MirOperand,
     },
+    ArraySequence {
+        kind: crate::hir::HirArraySequenceKind,
+        array: MirOperand,
+        argument: MirOperand,
+    },
     BuildMap {
         entries: Vec<(MirOperand, MirOperand)>,
         reject_dynamic_duplicates: bool,

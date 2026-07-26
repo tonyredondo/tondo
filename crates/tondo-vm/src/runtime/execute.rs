@@ -1,20 +1,20 @@
 use std::cmp::Ordering;
 
 use crate::bytecode::{
-    ArraySliceError, BytecodeAggregateKind, BytecodeBinaryOperator, BytecodeBlockId,
-    BytecodeBootstrapHostFunction, BytecodeCallArgument, BytecodeCallArgumentTarget,
-    BytecodeCoercion, BytecodeConstant, BytecodeConstantValue, BytecodeConstantValueKind,
-    BytecodeConstantVariantValue, BytecodeContainmentKind, BytecodeCursorMode, BytecodeFunctionId,
-    BytecodeIndexAccess, BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType,
-    BytecodeLoanId, BytecodeLoanKind, BytecodeNominalShape, BytecodeNumericConversion,
-    BytecodeOperand, BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind,
-    BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator, BytecodeProgram,
-    BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
-    BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId, BytecodeSlotId, BytecodeSpan,
-    BytecodeTag, BytecodeTerminalUnwindAction, BytecodeTerminator, BytecodeTerminatorKind,
-    BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind, BytecodeVariantPayload,
-    BytecodeVerificationLimits, normalize_array_index, normalize_array_slice_indices,
-    verify_bytecode_with_trace_metadata,
+    ArraySliceError, BytecodeAggregateKind, BytecodeArraySequenceKind, BytecodeBinaryOperator,
+    BytecodeBlockId, BytecodeBootstrapHostFunction, BytecodeCallArgument,
+    BytecodeCallArgumentTarget, BytecodeCoercion, BytecodeConstant, BytecodeConstantValue,
+    BytecodeConstantValueKind, BytecodeConstantVariantValue, BytecodeContainmentKind,
+    BytecodeCursorMode, BytecodeFunctionId, BytecodeIndexAccess, BytecodeInstruction,
+    BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeLoanId, BytecodeLoanKind,
+    BytecodeNominalShape, BytecodeNumericConversion, BytecodeOperand, BytecodeOperandKind,
+    BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode, BytecodePlace,
+    BytecodePrefixOperator, BytecodeProgram, BytecodeProjection, BytecodeProjectionKind,
+    BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId,
+    BytecodeSlotId, BytecodeSpan, BytecodeTag, BytecodeTerminalUnwindAction, BytecodeTerminator,
+    BytecodeTerminatorKind, BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind,
+    BytecodeVariantPayload, BytecodeVerificationLimits, normalize_array_index,
+    normalize_array_slice_indices, verify_bytecode_with_trace_metadata,
 };
 
 use super::heap::{Heap, HeapHandle, HeapObject};
@@ -4204,6 +4204,22 @@ impl Engine<'_, '_> {
                     },
                 )
             }),
+            BytecodeOperationKind::ArraySequence {
+                kind,
+                array,
+                argument,
+            } => self.with_temporary_roots(|engine| {
+                let array = engine.evaluate_operand(frame, array)?;
+                engine.retain_temporary(&array);
+                let argument = engine.evaluate_operand(frame, argument)?;
+                engine.retain_temporary(&argument);
+                Ok(
+                    match engine.array_sequence(operation.ty, *kind, array, argument)? {
+                        Ok(value) => OperationResult::Value(value),
+                        Err((code, message)) => OperationResult::Panic(code, message),
+                    },
+                )
+            }),
             BytecodeOperationKind::BuildMap {
                 entries,
                 reject_dynamic_duplicates,
@@ -4419,6 +4435,115 @@ impl Engine<'_, '_> {
             return self.checked_array_binary(operator, left_ty, right_ty, result_ty, left, right);
         }
         self.checked_scalar_binary(operator, left_ty, right_ty, left, right)
+    }
+
+    fn array_sequence(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        kind: BytecodeArraySequenceKind,
+        array: Value,
+        argument: Value,
+    ) -> Result<Result<Value, (PanicCode, String)>, VmError> {
+        let array_length = self.array_length(&array)?;
+        let (copies, argument_values, length) = match kind {
+            BytecodeArraySequenceKind::Concat => {
+                let argument_length = self.array_length(&argument)?;
+                let Some(length) = array_length.checked_add(argument_length) else {
+                    return Ok(Err((
+                        PanicCode::CheckedOverflow,
+                        "Array.concat result length exceeds Int".into(),
+                    )));
+                };
+                if !collection_length_fits_int(length) {
+                    return Ok(Err((
+                        PanicCode::CheckedOverflow,
+                        "Array.concat result length exceeds Int".into(),
+                    )));
+                }
+                (1, Some(self.array_values(&argument)?), length)
+            }
+            BytecodeArraySequenceKind::Repeat => {
+                let Value::Integer(count) = argument else {
+                    return Err(VmError::invariant("Array.repeat count is not Int"));
+                };
+                if count < 0 {
+                    return Ok(Err((
+                        PanicCode::InvalidRepeatCount,
+                        "Array.repeat count cannot be negative".into(),
+                    )));
+                }
+                let Some((_, maximum_length)) = integer_bounds(BytecodeScalarType::Int) else {
+                    return Err(VmError::invariant("Int has no integer bounds"));
+                };
+                let length = i128::try_from(array_length)
+                    .ok()
+                    .and_then(|length| length.checked_mul(count));
+                let Some(length) = length.filter(|length| *length <= maximum_length) else {
+                    return Ok(Err((
+                        PanicCode::CheckedOverflow,
+                        "Array.repeat result length exceeds Int".into(),
+                    )));
+                };
+                let length = usize::try_from(length).map_err(|_| VmError::ResourceLimit {
+                    resource: "array allocation bytes",
+                    limit: self.limits.max_heap_bytes,
+                })?;
+                let copies = if array_length == 0 {
+                    0
+                } else {
+                    usize::try_from(count).map_err(|_| VmError::ResourceLimit {
+                        resource: "array allocation bytes",
+                        limit: self.limits.max_heap_bytes,
+                    })?
+                };
+                (copies, None, length)
+            }
+        };
+        let element_bytes = std::mem::size_of::<Option<Value>>() as u64;
+        let requested_bytes = u64::try_from(length)
+            .unwrap_or(u64::MAX)
+            .saturating_mul(element_bytes)
+            .saturating_add(std::mem::size_of::<HeapObject>() as u64);
+        if requested_bytes > self.limits.max_heap_bytes {
+            return Err(VmError::ResourceLimit {
+                resource: "array allocation bytes",
+                limit: self.limits.max_heap_bytes,
+            });
+        }
+
+        let source = self.array_values(&array)?;
+        let marker = self.temporary_roots.len();
+        let result = (|| {
+            let mut output = Vec::new();
+            output
+                .try_reserve_exact(length)
+                .map_err(|_| VmError::ResourceLimit {
+                    resource: "array allocation bytes",
+                    limit: self.limits.max_heap_bytes,
+                })?;
+            for _ in 0..copies {
+                self.copy_array_elements(&source, &mut output)?;
+            }
+            if let Some(argument) = &argument_values {
+                self.copy_array_elements(argument, &mut output)?;
+            }
+            self.allocate(result_ty, HeapObject::Array(output), &[])
+        })();
+        self.temporary_roots.truncate(marker);
+        result.map(Ok)
+    }
+
+    fn copy_array_elements(
+        &mut self,
+        source: &[Option<Value>],
+        output: &mut Vec<Option<Value>>,
+    ) -> Result<(), VmError> {
+        for value in source {
+            let value = self.copy_value(present(value, "Array sequence item")?)?;
+            self.retain_temporary(&value);
+            output.push(Some(value));
+        }
+        Ok(())
     }
 
     fn checked_scalar_binary(
@@ -6010,6 +6135,13 @@ fn integer_bounds(scalar: BytecodeScalarType) -> Option<(i128, i128)> {
     } else {
         (0, (1_i128 << bits) - 1)
     })
+}
+
+fn collection_length_fits_int(length: usize) -> bool {
+    let Some((_, maximum)) = integer_bounds(BytecodeScalarType::Int) else {
+        return false;
+    };
+    i128::try_from(length).is_ok_and(|length| length <= maximum)
 }
 
 #[cfg(test)]

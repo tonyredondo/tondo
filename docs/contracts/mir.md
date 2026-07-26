@@ -15,8 +15,9 @@ cleanup, TERM-004 closed abnormal fallback lowering, and TERM-005 exact
 explicit/fallback exclusion, REF-001 identity aggregates/shared projections,
 REF-002 identity equality/key operands, ARRAY-001 runtime array length,
 ARRAY-002 positive/negative checked indexing, ARRAY-003 slicing, ARRAY-004
-logical slice snapshots, and ARRAY-005 fixed versus structural array mutation
-implemented
+logical slice snapshots, ARRAY-005 fixed versus structural array mutation,
+ARRAY-006 closed lifted arithmetic, and ARRAY-007 named
+concatenation/repetition implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -178,6 +179,16 @@ accepts that rvalue only from `Array[T]` and requires an `Int` result. Calls,
 returns, and Copy/Move selection forward the complete array value, so no phase
 may reconstruct its length from the static type.
 
+An ARRAY-007 HIR node evaluates its receiver through `lower_borrowed_value`,
+then its argument through ordinary value lowering, and emits one checked
+`MirOperationKind::ArraySequence` `Invoke`. The operation records `Concat` or
+`Repeat`, returns the same `Array[T]` type as its receiver, and always owns an
+unwind edge because length overflow or an invalid repeat count can panic. The
+MIR verifier requires a `Borrow` receiver, rederives `T: Copy`, and requires the
+argument to be the same array type for `Concat` or exact `Int` for `Repeat`.
+Changing the operation kind, receiver access, argument, result, or capability
+therefore invalidates MIR before bytecode lowering.
+
 A concrete closure expression lowers to one aggregate with its `HirClosureId`
 and captures in the exact HIR table order. Each operand is an unprojected Copy or
 Move of the MIR local for that exact outer `LocalId`, selected under the exact
@@ -306,6 +317,11 @@ verifier therefore rederives `Array[T]: Copy` under the exact function generic
 assumptions. A slice that remains inside `ref`/`mut` loan metadata is only a
 place projection and does not require `T: Copy`; it never passes through the
 materializing operation.
+`MirOperationKind::ArraySequence` is likewise always checked. Its shared
+receiver is the sole permitted immediate `Borrow`; its value argument cannot
+contain a borrow or loan. The explicit operand order fixes
+receiver-before-argument evaluation, while runtime preflight owns `P0005` and
+`P0011`.
 Compound assignment
 uses an access validation before reading its previous value and validates the
 fully computed replacement again before storing it. Every write validation

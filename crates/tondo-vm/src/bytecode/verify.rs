@@ -4339,6 +4339,34 @@ impl Verifier<'_> {
                     return Err(operation_error(context));
                 }
             }
+            BytecodeOperationKind::ArraySequence {
+                kind,
+                array,
+                argument,
+            } => {
+                self.verify_operand(function, array, context)?;
+                self.verify_operand(function, argument, context)?;
+                let element = self.intrinsic_argument(
+                    operation.ty,
+                    BytecodeIntrinsicType::Array,
+                    0,
+                    context,
+                )?;
+                let expected = match kind {
+                    BytecodeArraySequenceKind::Concat => operation.ty,
+                    BytecodeArraySequenceKind::Repeat => self.find_type(
+                        |ty| matches!(ty, BytecodeTypeKind::Scalar(BytecodeScalarType::Int)),
+                        context,
+                    )?,
+                };
+                if array.ty != operation.ty
+                    || !matches!(array.kind, BytecodeOperandKind::Borrow(_))
+                    || argument.ty != expected
+                    || !self.capability(element, ClosedCapability::Copy, context)?
+                {
+                    return Err(operation_error(context));
+                }
+            }
             BytecodeOperationKind::BuildMap { entries, .. } => {
                 let key =
                     self.intrinsic_argument(operation.ty, BytecodeIntrinsicType::Map, 0, context)?;
@@ -7471,6 +7499,9 @@ fn operation_contains_invalid_borrow(operation: &BytecodeOperation) -> bool {
         BytecodeOperationKind::CheckedPrefix { operand, .. }
         | BytecodeOperationKind::ExplicitPanic { message: operand } => escapes(operand),
         BytecodeOperationKind::CheckedBinary { left, right, .. } => escapes(left) || escapes(right),
+        BytecodeOperationKind::ArraySequence {
+            array, argument, ..
+        } => operand_is_loan(array) || escapes(argument),
         BytecodeOperationKind::BuildMap { entries, .. } => entries
             .iter()
             .any(|(key, value)| escapes(key) || escapes(value)),
@@ -7511,6 +7542,11 @@ fn operation_operands(operation: &BytecodeOperation) -> Vec<&BytecodeOperand> {
         BytecodeOperationKind::CheckedPrefix { operand, .. }
         | BytecodeOperationKind::ExplicitPanic { message: operand } => operands.push(operand),
         BytecodeOperationKind::CheckedBinary { left, right, .. }
+        | BytecodeOperationKind::ArraySequence {
+            array: left,
+            argument: right,
+            ..
+        }
         | BytecodeOperationKind::Index {
             base: left,
             index: right,
@@ -9244,6 +9280,12 @@ fn push_tag_operation(
             push_tag_operand(function, left, events);
             push_tag_operand(function, right, events);
         }
+        BytecodeOperationKind::ArraySequence {
+            array, argument, ..
+        } => {
+            push_tag_operand(function, array, events);
+            push_tag_operand(function, argument, events);
+        }
         BytecodeOperationKind::BuildMap { entries, .. } => {
             for (key, value) in entries {
                 push_tag_operand(function, key, events);
@@ -9452,6 +9494,12 @@ fn push_operation_events(operation: &BytecodeOperation, events: &mut Vec<LocalEv
         BytecodeOperationKind::CheckedBinary { left, right, .. } => {
             push_operand_events(left, events);
             push_operand_events(right, events);
+        }
+        BytecodeOperationKind::ArraySequence {
+            array, argument, ..
+        } => {
+            push_operand_events(array, events);
+            push_operand_events(argument, events);
         }
         BytecodeOperationKind::BuildMap { entries, .. } => {
             for (key, value) in entries {

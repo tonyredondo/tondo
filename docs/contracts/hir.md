@@ -17,7 +17,8 @@ and affine guards, TERM-004 downstream closed-fallback admission, and verified
 MIR admission, REF-001 safe identity construction and shared content
 projection, REF-002 identity equality/key admission, ARRAY-001 runtime length,
 ARRAY-002 typed array indexing, ARRAY-003 typed slicing, ARRAY-004 logical slice
-ownership, and ARRAY-005 fixed versus structural array mutation implemented
+ownership, ARRAY-005 fixed versus structural array mutation, ARRAY-006 closed
+lifted arithmetic, and ARRAY-007 named concatenation/repetition implemented
 
 ## Boundary
 
@@ -159,7 +160,8 @@ The implemented bootstrap subset includes:
   the normative default panic message without keeping CST nodes alive;
 - explicit numeric conversions classified as identity, total, or checked by
   the closed conversion table;
-- scalar and closed element-wise array arithmetic;
+- scalar and closed element-wise array arithmetic, plus the exact named
+  `Array.concat` and `Array.repeat` operations;
 - simple, compound, discard, and nested tuple assignment with target resolution
   before RHS evaluation, per-leaf coercions, left-to-right writes, static
   overlap rejection, and explicit replace-versus-preserve-extent requirements;
@@ -580,6 +582,18 @@ a stored/returned slice is a new logical owner and an affine transfer is
 invalid, while `ref`/`mut` call access reserves the original projected region.
 HIR records no storage, stride, sharing, uniqueness, or COW decision.
 
+`Array.concat` and `Array.repeat` lower directly to one
+`HirExpressionKind::ArraySequence`, not to an unresolved library call or a
+numeric operator. The node retains its exact kind, result type, shared receiver,
+and by-value argument in source evaluation order. The checker accepts the
+canonical dot form and the ordinary qualified `self` form without an argument
+mode, infers the element type only from that receiver, and proves `T: Copy`.
+Availability observes the receiver and transfers the argument; because the
+closed argument is `Array[T: Copy]`, the transfer remains an ordinary logical
+copy and neither source owner becomes unavailable. `verify_typed_hir`
+independently rederives the result/operand signatures and the element
+capability before MIR admission.
+
 Record construction, update, projection, and inherent calls enforce visibility
 against the declaring module. External construction of a record with hidden
 representation emits one non-revealing `E1502`; diagnostics for omitted fields
@@ -603,7 +617,10 @@ Logical operators short-circuit. Element-wise array arithmetic checks every
 nested length before producing a value. Integer overflow, zero division,
 invalid shifts, invalid indices, zero slice steps, shape mismatches, and failed
 checked conversions become `E1903`; calls, interpolation through `Display`, and
-other runtime-only work become `E1901`.
+other runtime-only work become `E1901`. ARRAY-007 keeps its named sequence
+operations on that runtime-only side of the existing 0.1 constant-evaluation
+boundary; adding arbitrary call evaluation or an output-size budget is a
+separate constant-engine contract.
 Constant array indexing calls the same normalization function as bytecode
 execution, so `0`, `n - 1`, `-1`, `-n`, empty arrays, and both `Int` extremes
 cannot drift between compile-time and runtime behavior.

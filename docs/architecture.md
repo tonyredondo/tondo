@@ -459,6 +459,13 @@ Array mutation uses those same loan modes rather than another container type.
 length; the VM compares a root replacement with the lender before publication,
 including through a slice loan. `var Array[T]` alone may replace a complete
 owner with another length, and no slice is a structurally replaceable place.
+Named `Array.concat` and `Array.repeat` remain distinct from numeric `+` and
+`*`. They cross HIR, MIR, and bytecode as one closed checked sequence operation
+with a shared receiver, value argument, `T: Copy` proof, and explicit unwind
+edge. The VM preflights negative counts and mathematical length before copying,
+then builds one fresh compact logical value through the ordinary recursive
+copier. This preserves nested independence and `Ref` identity without exposing
+the eager bootstrap representation.
 
 The implemented synchronous engine uses iterative frames, checked slot states,
 normal/unwind continuations, call-local reservation tables, normalized
@@ -479,9 +486,10 @@ schema. `Ref[T]` uses that traceable cell shape for source-visible
 keys compare the identity rather than its payload.
 The operation-local root stack protects completed children and operands across
 every later allocation, including constants, compound host returns, recursive
-copies, projections, slices, array arithmetic, variadic packing, calls, and the
-structured terminal-fallback walker. Publication into a frame, cleanup, or
-managed object and withdrawal by move/death/pop have explicit transitions.
+copies, projections, slices, array arithmetic, named array sequences, variadic
+packing, calls, and the structured terminal-fallback walker. Publication into a
+frame, cleanup, or managed object and withdrawal by move/death/pop have explicit
+transitions.
 Closure environments remain ordinary traced objects. Host values are detached
 snapshots rather than handles; suspended-frame containers remain absent until
 M7 registers them as a new root source. The VM rejects effectful ordinary calls

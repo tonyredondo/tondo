@@ -1895,6 +1895,12 @@ fn collect_operation_types(operation: &MirOperation, types: &mut BTreeSet<TypeId
             collect_operand_types(left, types);
             collect_operand_types(right, types);
         }
+        MirOperationKind::ArraySequence {
+            array, argument, ..
+        } => {
+            collect_operand_types(array, types);
+            collect_operand_types(argument, types);
+        }
         MirOperationKind::BuildMap { entries, .. } => {
             for (key, value) in entries {
                 collect_operand_types(key, types);
@@ -2110,6 +2116,12 @@ fn collect_operation_function_references(
         MirOperationKind::CheckedBinary { left, right, .. } => {
             collect_operand_function_references(left, references);
             collect_operand_function_references(right, references);
+        }
+        MirOperationKind::ArraySequence {
+            array, argument, ..
+        } => {
+            collect_operand_function_references(array, references);
+            collect_operand_function_references(argument, references);
         }
         MirOperationKind::BuildMap { entries, .. } => {
             for (key, value) in entries {
@@ -3402,6 +3414,18 @@ fn lower_operation(
             operator: binary_operator(*operator),
             left: operand(left)?,
             right: operand(right)?,
+        },
+        MirOperationKind::ArraySequence {
+            kind,
+            array,
+            argument,
+        } => bc::BytecodeOperationKind::ArraySequence {
+            kind: match kind {
+                crate::hir::HirArraySequenceKind::Concat => bc::BytecodeArraySequenceKind::Concat,
+                crate::hir::HirArraySequenceKind::Repeat => bc::BytecodeArraySequenceKind::Repeat,
+            },
+            array: operand(array)?,
+            argument: operand(argument)?,
         },
         MirOperationKind::BuildMap {
             entries,
@@ -8558,6 +8582,186 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
         .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
         assert!(matches!(execution.outcome, VmOutcome::Returned(_)));
         assert!(execution.statistics.collections > 0);
+    }
+
+    #[test]
+    fn array_sequences_copy_logically_preserve_identity_and_survive_gc() {
+        let source = "fn repeatBorrowed(\n\
+                 values: ref Array[Array[Int]],\n\
+                 count: Int,\n\
+             ): Array[Array[Int]] {\n\
+                 values.repeat(count)\n\
+             }\n\
+\n\
+             fn sequences(): (\n\
+                 Array[Array[Int]],\n\
+                 Array[Array[Int]],\n\
+                 Array[Array[Int]],\n\
+                 Array[Array[Int]],\n\
+                 Array[Int],\n\
+             ) {\n\
+                 var left = [[1], [2]]\n\
+                 var right = [[3]]\n\
+                 var joined = left.concat(right)\n\
+                 joined[0][0] = 9\n\
+                 var repeated = right.repeat(2)\n\
+                 repeated[0][0] = 7\n\
+                 assert(left == [[1], [2]])\n\
+                 assert(right == [[3]])\n\
+                 assert(joined == [[9], [2], [3]])\n\
+                 assert(repeated == [[7], [3]])\n\
+\n\
+                 let qualified = Array.concat(left, right)\n\
+                 assert(qualified == [[1], [2], [3]])\n\
+                 assert(Array.repeat(right, 0) == [])\n\
+                 assert(repeatBorrowed(ref right, 2) == [[3], [3]])\n\
+\n\
+                 let marker = Ref(42)\n\
+                 let joinedRefs = [marker].concat([marker])\n\
+                 let repeatedRefs = [marker].repeat(2)\n\
+                 assert(joinedRefs[0] == marker)\n\
+                 assert(joinedRefs[1] == marker)\n\
+                 assert(repeatedRefs[0] == marker)\n\
+                 assert(repeatedRefs[1] == marker)\n\
+\n\
+                 let empty: Array[Int] = []\n\
+                 let hugeEmpty = empty.repeat(9223372036854775807)\n\
+                 (left, right, joined, repeated, hugeEmpty)\n\
+             }\n";
+        assert_eq!(
+            execute_function(source, "sequences"),
+            RuntimeValue::Tuple(vec![
+                RuntimeValue::Array(vec![
+                    RuntimeValue::Array(vec![RuntimeValue::Integer(1)]),
+                    RuntimeValue::Array(vec![RuntimeValue::Integer(2)]),
+                ]),
+                RuntimeValue::Array(vec![RuntimeValue::Array(vec![RuntimeValue::Integer(3)])]),
+                RuntimeValue::Array(vec![
+                    RuntimeValue::Array(vec![RuntimeValue::Integer(9)]),
+                    RuntimeValue::Array(vec![RuntimeValue::Integer(2)]),
+                    RuntimeValue::Array(vec![RuntimeValue::Integer(3)]),
+                ]),
+                RuntimeValue::Array(vec![
+                    RuntimeValue::Array(vec![RuntimeValue::Integer(7)]),
+                    RuntimeValue::Array(vec![RuntimeValue::Integer(3)]),
+                ]),
+                RuntimeValue::Array(Vec::new()),
+            ])
+        );
+
+        let program = lowered(source);
+        let entry = function_id(&program, "sequences");
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            entry,
+            &mut host,
+            VmLimits {
+                max_heap_objects: 512,
+                max_heap_bytes: 256 * 1024,
+                initial_gc_threshold: 1,
+                ..VmLimits::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
+        assert!(matches!(execution.outcome, VmOutcome::Returned(_)));
+        assert!(execution.statistics.collections > 0);
+    }
+
+    #[test]
+    fn array_sequence_preflight_has_stable_panics_and_left_to_right_evaluation() {
+        let VmOutcome::Panicked(negative) =
+            execute_outcome("fn explode(): Array[Int] { [1].repeat(-1) }\n", "explode")
+        else {
+            panic!("a negative repeat count must panic")
+        };
+        assert_eq!(negative.code, PanicCode::InvalidRepeatCount);
+        assert_eq!(negative.code.code(), "P0011");
+
+        let VmOutcome::Panicked(overflow) = execute_outcome(
+            "fn explode(): Array[Int] {\n\
+                 [1, 2].repeat(9223372036854775807)\n\
+             }\n",
+            "explode",
+        ) else {
+            panic!("a result length outside Int must panic")
+        };
+        assert_eq!(overflow.code, PanicCode::CheckedOverflow);
+        assert_eq!(overflow.code.code(), "P0005");
+
+        let VmOutcome::Panicked(receiver) = execute_outcome(
+            "fn receiver(): Array[Int] { panic(\"receiver-first\") }\n\
+             fn count(): Int { panic(\"argument-second\") }\n\
+             fn explode(): Array[Int] { receiver().repeat(count()) }\n",
+            "explode",
+        ) else {
+            panic!("the receiver must be evaluated first")
+        };
+        assert_eq!(receiver.code, PanicCode::ExplicitPanic);
+        assert_eq!(receiver.message, "receiver-first");
+
+        let VmOutcome::Panicked(argument) = execute_outcome(
+            "fn count(): Int { panic(\"argument-second\") }\n\
+             fn explode(): Array[Int] { [1].repeat(count()) }\n",
+            "explode",
+        ) else {
+            panic!("the argument must be evaluated before repeat preflight")
+        };
+        assert_eq!(argument.code, PanicCode::ExplicitPanic);
+        assert_eq!(argument.message, "argument-second");
+    }
+
+    #[test]
+    fn bytecode_verifier_rederives_array_sequence_kind_and_receiver_mode() {
+        let program = lowered(
+            "fn combine(left: Array[Int], right: Array[Int]): Array[Int] {\n\
+                 left.concat(right)\n\
+             }\n",
+        );
+        let entry = function_id(&program, "combine");
+
+        let mut wrong_kind = program.clone();
+        let operation = wrong_kind.functions[entry.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::ArraySequence { kind, .. },
+                            ..
+                        },
+                    ..
+                } => Some(kind),
+                _ => None,
+            })
+            .expect("concat lowers to one checked Array sequence operation");
+        *operation = bc::BytecodeArraySequenceKind::Repeat;
+        let error = bc::verify_bytecode(&wrong_kind).unwrap_err();
+        assert!(error.message().contains("operation"), "{error}");
+
+        let mut wrong_receiver = program;
+        let array = wrong_receiver.functions[entry.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::ArraySequence { array, .. },
+                            ..
+                        },
+                    ..
+                } => Some(array),
+                _ => None,
+            })
+            .expect("concat lowers with one Array receiver");
+        let bc::BytecodeOperandKind::Borrow(place) = &array.kind else {
+            unreachable!("a verified Array sequence receiver is borrowed")
+        };
+        array.kind = bc::BytecodeOperandKind::Copy(place.clone());
+        let error = bc::verify_bytecode(&wrong_receiver).unwrap_err();
+        assert!(error.message().contains("operation"), "{error}");
     }
 
     #[test]

@@ -1,0 +1,38 @@
+import std.console
+
+fn repeatBorrowed(values: ref Array[Array[Int]], count: Int): Array[Array[Int]] {
+    values.repeat(count)
+}
+
+fn main() {
+    var left = [[1], [2]]
+    var right = [[3]]
+
+    var joined = left.concat(right)
+    joined[0][0] = 9
+    assert(left == [[1], [2]])
+    assert(right == [[3]])
+    assert(joined == [[9], [2], [3]])
+
+    var repeated = right.repeat(2)
+    repeated[0][0] = 7
+    assert(right == [[3]])
+    assert(repeated == [[7], [3]])
+
+    assert(Array.concat(left, right) == [[1], [2], [3]])
+    assert(Array.repeat(right, 0) == [])
+    assert(repeatBorrowed(ref right, 2) == [[3], [3]])
+
+    let marker = Ref(42)
+    let joinedRefs = [marker].concat([marker])
+    let repeatedRefs = [marker].repeat(2)
+    assert(joinedRefs[0] == marker)
+    assert(joinedRefs[1] == marker)
+    assert(repeatedRefs[0] == marker)
+    assert(repeatedRefs[1] == marker)
+
+    let empty: Array[Int] = []
+    assert(empty.repeat(9223372036854775807) == [])
+
+    console.print("array-sequences\n")
+}

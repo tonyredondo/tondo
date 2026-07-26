@@ -660,6 +660,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 [(*left, Demand::Transfer), (*right, Demand::Transfer)],
                 live_after,
             )?,
+            HirExpressionKind::ArraySequence {
+                array, argument, ..
+            } => self.sequence(
+                state,
+                [(*array, Demand::Observe), (*argument, Demand::Transfer)],
+                live_after,
+            )?,
             HirExpressionKind::Contains {
                 item, container, ..
             } => self.sequence(
@@ -3695,6 +3702,11 @@ fn expression_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
         }
         HirExpressionKind::Prefix { operand, .. } => children.push(*operand),
         HirExpressionKind::Binary { left, right, .. }
+        | HirExpressionKind::ArraySequence {
+            array: left,
+            argument: right,
+            ..
+        }
         | HirExpressionKind::Range {
             start: left,
             end: right,

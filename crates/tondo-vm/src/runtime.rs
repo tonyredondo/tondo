@@ -117,6 +117,7 @@ pub enum PanicCode {
     ExplicitPanic,
     DuplicateDynamicMapKey,
     InvalidShiftCount,
+    InvalidRepeatCount,
 }
 
 impl PanicCode {
@@ -132,6 +133,7 @@ impl PanicCode {
             Self::ExplicitPanic => "P0008",
             Self::DuplicateDynamicMapKey => "P0009",
             Self::InvalidShiftCount => "P0010",
+            Self::InvalidRepeatCount => "P0011",
         }
     }
 
@@ -147,6 +149,7 @@ impl PanicCode {
             Self::ExplicitPanic => "explicit-panic",
             Self::DuplicateDynamicMapKey => "duplicate-dynamic-map-key",
             Self::InvalidShiftCount => "invalid-shift-count",
+            Self::InvalidRepeatCount => "invalid-repeat-count",
         }
     }
 }

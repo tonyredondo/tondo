@@ -733,6 +733,9 @@ fn mir_operation_contains_invalid_borrow(operation: &MirOperation) -> bool {
         MirOperationKind::CheckedPrefix { operand, .. }
         | MirOperationKind::ExplicitPanic { message: operand } => escapes(operand),
         MirOperationKind::CheckedBinary { left, right, .. } => escapes(left) || escapes(right),
+        MirOperationKind::ArraySequence {
+            array, argument, ..
+        } => mir_operand_is_loan(array) || escapes(argument),
         MirOperationKind::BuildMap { entries, .. } => entries
             .iter()
             .any(|(key, value)| escapes(key) || escapes(value)),
@@ -773,6 +776,11 @@ fn operation_operands(operation: &MirOperation) -> Vec<&MirOperand> {
         MirOperationKind::CheckedPrefix { operand, .. }
         | MirOperationKind::ExplicitPanic { message: operand } => operands.push(operand),
         MirOperationKind::CheckedBinary { left, right, .. }
+        | MirOperationKind::ArraySequence {
+            array: left,
+            argument: right,
+            ..
+        }
         | MirOperationKind::Index {
             base: left,
             index: right,
@@ -2045,6 +2053,42 @@ impl Verifier<'_> {
                     return Err(MirInvariantError::new(
                         context,
                         "non-panicking binary operation is encoded as Invoke",
+                    ));
+                }
+            }
+            MirOperationKind::ArraySequence {
+                kind,
+                array,
+                argument,
+            } => {
+                self.verify_operand(function, array, context)?;
+                self.verify_operand(function, argument, context)?;
+                let elements =
+                    self.intrinsic_arguments(operation.ty, IntrinsicType::Array, context)?;
+                if array.ty != operation.ty
+                    || !matches!(array.kind, MirOperandKind::Borrow(_))
+                    || self.capability_status(
+                        function.id,
+                        elements[0],
+                        HirCapability::Copy,
+                        context,
+                    )? != HirCapabilityStatus::Satisfied
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "Array sequence operation requires a borrowed Array[T: Copy] receiver",
+                    ));
+                }
+                let expected = match kind {
+                    crate::hir::HirArraySequenceKind::Concat => operation.ty,
+                    crate::hir::HirArraySequenceKind::Repeat => {
+                        self.hir.interner().scalar(ScalarType::Int)
+                    }
+                };
+                if argument.ty != expected {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "Array sequence argument differs from its closed signature",
                     ));
                 }
             }
@@ -6979,6 +7023,12 @@ fn push_tag_operation(
             push_tag_operand(function, left, events);
             push_tag_operand(function, right, events);
         }
+        MirOperationKind::ArraySequence {
+            array, argument, ..
+        } => {
+            push_tag_operand(function, array, events);
+            push_tag_operand(function, argument, events);
+        }
         MirOperationKind::BuildMap { entries, .. } => {
             for (key, value) in entries {
                 push_tag_operand(function, key, events);
@@ -7673,6 +7723,12 @@ fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>)
         MirOperationKind::CheckedBinary { left, right, .. } => {
             push_operand_events(left, events);
             push_operand_events(right, events);
+        }
+        MirOperationKind::ArraySequence {
+            array, argument, ..
+        } => {
+            push_operand_events(array, events);
+            push_operand_events(argument, events);
         }
         MirOperationKind::BuildMap { entries, .. } => {
             for (key, value) in entries {

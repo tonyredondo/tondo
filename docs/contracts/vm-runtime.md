@@ -17,7 +17,9 @@ construction/shared content projection, and REF-002 equality and collection
 keys by identity, VALUE-001 exhaustive eager logical copies, and VALUE-002
 representation-independent copy observations, plus ARRAY-001 runtime array
 length, ARRAY-002 checked array indexing, ARRAY-003 checked slicing, ARRAY-004
-logical slice snapshots, and ARRAY-005 fixed versus structural array mutation
+logical slice snapshots, ARRAY-005 fixed versus structural array mutation,
+ARRAY-006 closed lifted arithmetic, and ARRAY-007 named
+concatenation/repetition
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -80,6 +82,18 @@ immutable strings may share storage and `Ref[T]` retains identity exactly as
 for any other logical copy. This eager strategy is not observable and can later
 become COW without changing the tests. A `ref`/`mut` slice argument bypasses
 materialization and continues to resolve against the lender's original region.
+
+Named concatenation and repetition share one `ArraySequence` execution path.
+It evaluates and roots the shared receiver before the value argument, validates
+the complete mathematical result length, reserves one fresh compact outer
+array, and applies the same exhaustive logical copier to every source element.
+`Concat` appends the right sequence after the left. `Repeat` emits ordered
+copies, returns an empty array immediately for zero or for an empty receiver
+with a nonnegative count, maps a negative count to `P0011`, and maps a result
+length outside `Int` to `P0005`.
+Valid lengths that cannot fit the configured heap remain VM resource
+exhaustion. Nested ordinary values are independent, while immutable String
+storage and `Ref[T]` identity keep their normal sharing rules.
 
 Closures pair a concrete bytecode callable identity with a managed environment
 whose capture fields use the same optional-value move representation as other
@@ -226,10 +240,12 @@ allocation-capable path restores its marker on success and VM error.
 
 The operation-local stack covers completed constant and host-result children,
 left-to-right operands, dynamic map entries, record updates, assertion parts,
-recursive copies, projection and slice copies, nested array arithmetic,
-variadic packing, and call preparation. The object being allocated is traced as
-a pending object during the same collection, so a completed parent does not
-need a second publication step. Moving an affine array rest takes its
+recursive copies, projection and slice copies, nested array arithmetic, named
+array sequences, variadic packing, and call preparation. Every completed
+sequence element remains rooted until the fresh array is published, including
+when a later recursive copy triggers collection. The object being allocated is
+traced as a pending object during the same collection, so a completed parent
+does not need a second publication step. Moving an affine array rest takes its
 contiguous elements into a new owning array, leaves holes in the
 compiler-owned scrutinee, and roots both parent and moved children across the
 allocation.
@@ -334,6 +350,13 @@ The VM executes verified branches, tag dispatch, loops, iterators, calls,
 returns, and cleanup edges directly. Checked operations either produce a value
 for their normal successor or begin a language panic on their unwind successor.
 
+An array sequence evaluates its receiver and argument through that same checked
+operation discipline. Only after both complete does preflight inspect the count
+or the two runtime lengths. It performs no result-element copy before detecting
+`P0011` or `P0005`; an operand panic therefore retains precedence. Allocation
+failure remains the third VM/toolchain-error channel and is never relabelled as
+a language panic.
+
 An indirect call evaluates and roots its callee before evaluating arguments
 left to right, retaining every completed value as an operation-local root. A
 uniform named function selects its direct implementation. A managed closure
@@ -412,9 +435,10 @@ bodies while their runtime contexts remain unimplemented.
 Root-lifetime regressions force collection at every allocation while
 materializing nested constants and host returns, evaluating compound operands,
 building and updating collections and records, copying nested slices, and
-performing elevated array arithmetic. A structured pending value must survive
-while published and become reclaimable after withdrawal. A retained detached
-host snapshot must remain valid without keeping its former heap object alive.
+performing elevated array arithmetic and named array sequences. A structured
+pending value must survive while published and become reclaimable after
+withdrawal. A retained detached host snapshot must remain valid without keeping
+its former heap object alive.
 The private memory adapter must additionally retain a mixed reachable cycle
 through sustained pressure, reclaim independent cycles without explicit
 collection calls, and reclaim the retained cycle after its root is withdrawn.
@@ -470,6 +494,13 @@ without changing its outer array. Source fixtures reject a `mut` root
 replacement and a `var` slice. A verified bytecode mutation then attempts a
 different-length root store through a sliced `mut Array[T]`; ordinary execution
 and a GC threshold of one must both reject it before publication.
+
+Array-sequence regressions must cover dot and qualified calls, including a
+shared receiver crossing a `ref` parameter, concat order, zero and empty
+repetition, nested write independence, `Ref` identity, negative-count `P0011`,
+length-overflow `P0005`, operand-panic precedence, and a GC threshold of one.
+HIR, MIR, and bytecode mutations must independently reject a missing `Copy`
+proof, changed sequence tag, wrong argument type, or non-borrowed receiver.
 
 Loan regressions execute shared temporaries, root and projected exclusive
 write-through, nested and closure-capture reborrows, statically disjoint fields,

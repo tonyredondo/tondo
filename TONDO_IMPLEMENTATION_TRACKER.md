@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.64
+**Versión del tracker:** 0.65
 
 **Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar concatenación y repetición mediante
-operaciones nombradas, sin sobrecargar `+` ni `*` (ARRAY-007).
+**Objetivo inmediato:** implementar `Map[K, V]` con orden observable de
+inserción (MAP-001).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1579,8 +1579,14 @@ lifetimes escritos por el usuario.
   construye un resultado separado y solo después permite publicar una variante
   in-place.
 
-- [ ] **ARRAY-007 — Implementar concatenación y repetición mediante operaciones
-  nombradas cuando la stdlib las fije, no mediante nuevos significados de `+`.**
+- [x] **ARRAY-007 — Implementar concatenación y repetición mediante operaciones
+  nombradas, no mediante nuevos significados de `+` o `*`.** La especificación
+  fija `Array[T: Copy].concat(self, other)` y `repeat(self, count)`, incluidas
+  sus formas calificadas con el mismo `self` implícitamente compartido. HIR
+  conserva una única operación cerrada; MIR y bytecode la exigen como `Invoke`
+  checked con receptor prestado y rederivan tipos y `Copy`. La VM preflighta
+  `P0011` y `P0005`, construye un valor lógico nuevo con copia recursiva,
+  preserva identidad `Ref` y mantiene todos los temporales vivos bajo GC.
 
 ### 11.2 Map, Set, Range e Iterator
 
@@ -2090,14 +2096,41 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es ARRAY-007: cerrar concatenación y repetición como
-operaciones nombradas de `Array`, con contratos de ownership, overflow,
-evaluación, asignación y verificación explícitos, sin otorgar nuevos
-significados a `+` o `*`.
+La siguiente acción activa es MAP-001: cerrar la representación y construcción
+de `Map[K, V]` con orden de inserción observable, sin adelantar todavía las
+operaciones de lookup, reemplazo y eliminación de MAP-002.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.65 — 2026-07-26
+
+- Se cierra ARRAY-007 con una única superficie canónica:
+  `Array[T: Copy].concat(self, other)` y `repeat(self, count)`. `+` y `*`
+  conservan exclusivamente su semántica numérica; las formas calificadas
+  conservan el receptor `self` sin modificador como
+  `Array.concat(left, right)` y `Array.repeat(values, count)`.
+- Typed HIR registra `ArraySequence { kind, array, argument }`, observa el
+  receptor, transfiere el argumento `Copy` y rechaza tipos sin `T: Copy`.
+  MIR y bytecode retienen el orden receptor-argumento en un `Invoke` checked;
+  ambos verificadores vuelven a derivar kind, firma, capacidad y modo
+  `Borrow`, por lo que una mutación del IR no puede convertirlo en otra
+  operación.
+- La VM valida la longitud matemática antes de copiar: un conteo negativo
+  produce `P0011`, una longitud fuera de `Int` produce `P0005` y una reserva
+  físicamente imposible permanece agotamiento de recursos. Repetir un array
+  vacío con cualquier conteo no negativo termina inmediatamente.
+- El fixture `m6-array-007-sequences` prueba concat, repeat, formas calificadas,
+  receptor `ref`, cero, vacío con `Int.max`, independencia de arrays anidados e
+  identidad `Ref`. Fixtures separados fijan `P0011`, `P0005`, el bound `Copy` y
+  el modo explícito del receptor; las pruebas internas añaden precedencia de
+  evaluación, GC con umbral uno y HIR/MIR/bytecode adversarial.
+- La puerta integral queda verde con Rust incremental desactivado: formato,
+  `cargo check`, build, Clippy con warnings como errores, rustdoc con warnings
+  como errores y 584 pruebas de todos los targets (514 del compilador, 27 de la
+  VM, 12 de CLI y 31 de integración/especificación), además de
+  `git diff --check`.
 
 ### 0.64 — 2026-07-26
 

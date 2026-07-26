@@ -887,6 +887,12 @@ pub enum BytecodeContainmentKind {
     StringChar,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BytecodeArraySequenceKind {
+    Concat,
+    Repeat,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BytecodeIndexAccess {
     Array,
@@ -910,6 +916,11 @@ pub enum BytecodeOperationKind {
         operator: BytecodeBinaryOperator,
         left: BytecodeOperand,
         right: BytecodeOperand,
+    },
+    ArraySequence {
+        kind: BytecodeArraySequenceKind,
+        array: BytecodeOperand,
+        argument: BytecodeOperand,
     },
     BuildMap {
         entries: Vec<(BytecodeOperand, BytecodeOperand)>,

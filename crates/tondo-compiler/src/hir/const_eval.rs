@@ -108,6 +108,7 @@ pub(super) fn evaluate(
                         pending.push(Work::Enter(*left));
                     }
                     HirExpressionKind::Local(_)
+                    | HirExpressionKind::ArraySequence { .. }
                     | HirExpressionKind::PreludeTraitFunction { .. }
                     | HirExpressionKind::Receiver
                     | HirExpressionKind::InterpolatedString { .. }
@@ -247,6 +248,9 @@ fn constant_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
             .chain(fields.iter().map(|field| field.value()))
             .collect(),
         HirExpressionKind::Binary { left, right, .. } => vec![*left, *right],
+        HirExpressionKind::ArraySequence {
+            array, argument, ..
+        } => vec![*array, *argument],
         HirExpressionKind::Range { start, end, .. } => vec![*start, *end],
         HirExpressionKind::Contains {
             item, container, ..
@@ -553,6 +557,7 @@ fn evaluate_composite(
             }
         }
         HirExpressionKind::Recovery
+        | HirExpressionKind::ArraySequence { .. }
         | HirExpressionKind::Ref { .. }
         | HirExpressionKind::RefValue { .. }
         | HirExpressionKind::Literal(_)

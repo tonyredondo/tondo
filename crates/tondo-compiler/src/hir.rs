@@ -1633,6 +1633,12 @@ pub enum HirContainmentKind {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HirArraySequenceKind {
+    Concat,
+    Repeat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HirMatchMode {
     Copy,
     Observe,
@@ -1744,6 +1750,11 @@ pub enum HirExpressionKind {
         operator: HirBinaryOperator,
         left: HirExpressionId,
         right: HirExpressionId,
+    },
+    ArraySequence {
+        kind: HirArraySequenceKind,
+        array: HirExpressionId,
+        argument: HirExpressionId,
     },
     Range {
         kind: HirRangeKind,

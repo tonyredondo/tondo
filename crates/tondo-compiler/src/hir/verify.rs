@@ -708,6 +708,27 @@ impl Verifier<'_> {
                     )?;
                 }
             }
+            HirExpressionKind::ArraySequence { array, .. } => {
+                let array = self.expression(*array, context)?;
+                let Ok(TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Array,
+                    arguments,
+                }) = self.program.interner.kind(array.ty)
+                else {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "Array sequence operation has a non-Array receiver",
+                    ));
+                };
+                self.verify_capability_requirement(
+                    analysis,
+                    arguments[0],
+                    HirCapability::Copy,
+                    assumptions,
+                    context,
+                    "Array sequence operation",
+                )?;
+            }
             HirExpressionKind::Index {
                 base,
                 access: HirIndexAccess::MapLookup,
@@ -3557,6 +3578,40 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            HirExpressionKind::ArraySequence {
+                kind,
+                array,
+                argument,
+            } => {
+                let array = self.expression(*array, context)?;
+                let argument = self.expression(*argument, context)?;
+                let TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Array,
+                    ..
+                } = self
+                    .program
+                    .interner
+                    .kind(expression.ty)
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                else {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "Array sequence operation has a non-Array result",
+                    ));
+                };
+                let expected_argument = match kind {
+                    super::HirArraySequenceKind::Concat => expression.ty,
+                    super::HirArraySequenceKind::Repeat => {
+                        self.program.interner.scalar(ScalarType::Int)
+                    }
+                };
+                if array.ty != expression.ty || argument.ty != expected_argument {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "Array sequence operands differ from their closed signature",
+                    ));
+                }
+            }
             HirExpressionKind::Call {
                 callee,
                 arguments,
@@ -5074,6 +5129,11 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
         | HirExpressionKind::TupleField { base: operand, .. }
         | HirExpressionKind::RefValue { base: operand } => children.push(*operand),
         HirExpressionKind::Binary { left, right, .. }
+        | HirExpressionKind::ArraySequence {
+            array: left,
+            argument: right,
+            ..
+        }
         | HirExpressionKind::Range {
             start: left,
             end: right,
@@ -5299,8 +5359,8 @@ mod tests {
     use std::sync::Arc;
 
     use crate::hir::{
-        ExpressionCheckLimits, HirExpressionKind, HirMatchMode, HirPrefixOperator,
-        TypeLoweringLimits, check_expressions, lower_types,
+        ExpressionCheckLimits, HirArraySequenceKind, HirExpressionKind, HirMatchMode,
+        HirPrefixOperator, TypeLoweringLimits, check_expressions, lower_types,
     };
     use crate::package::PackageGraph;
     use crate::resolve::{ResolvedProgram, resolve};
@@ -6587,6 +6647,40 @@ mod tests {
         let error = verify_typed_hir(&resolved, &program).unwrap_err();
         assert_eq!(error.context(), "terminal types");
         assert!(error.message().contains("terminal status"));
+    }
+
+    #[test]
+    fn array_sequence_signature_is_rederived_before_mir() {
+        let (resolved, mut program) = checked_program_from(
+            "fn combine(left: Array[Int], right: Array[Int]): Array[Int] {\n\
+                 left.concat(right)\n\
+             }\n",
+        );
+        let sequence = program
+            .expressions
+            .iter_mut()
+            .find(|expression| {
+                matches!(
+                    expression.kind,
+                    HirExpressionKind::ArraySequence {
+                        kind: HirArraySequenceKind::Concat,
+                        ..
+                    }
+                )
+            })
+            .expect("concat lowers to one closed HIR operation");
+        let HirExpressionKind::ArraySequence { kind, .. } = &mut sequence.kind else {
+            unreachable!()
+        };
+        *kind = HirArraySequenceKind::Repeat;
+
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("operands differ from their closed signature"),
+            "{error}"
+        );
     }
 
     #[test]

@@ -2528,6 +2528,64 @@ a.concat(b)
 a.repeat(3)
 ~~~
 
+Sus firmas intrínsecas exactas son:
+
+~~~tondo
+fn Array[T: Copy].concat(self, other: Array[T]): Array[T]
+fn Array[T: Copy].repeat(self, count: Int): Array[T]
+~~~
+
+`self` es el receptor compartido ordinario: se observa durante la operación y
+no se copia ni se mueve. La forma calificada sigue la misma regla general de
+11.5 y `T` se infiere únicamente desde el receptor:
+
+~~~tondo
+Array.concat(a, b)
+Array.repeat(a, 3)
+~~~
+
+La posición `self` ya declara el préstamo compartido, por lo que escribir
+`ref a` en esa forma es `E1407`, igual que en cualquier otro método con
+receptor `self`. No se escribe `Array[T].concat(...)` ni una lista genérica
+después del método. `other` se pasa por valor, pero `T: Copy` implica que ambos
+arrays son `Copy` y por tanto los dos operandos siguen disponibles después de
+`concat`. Esta única restricción común mantiene `concat` y `repeat` como
+observaciones que producen un valor nuevo; un algoritmo que transfiera
+elementos afines debe usar una operación consumidora con otro contrato y otro
+nombre.
+
+Ambas operaciones:
+
+- Evalúan primero el receptor y después su argumento.
+- Conservan cualquier pánico producido durante esa evaluación antes de validar
+  la longitud del resultado.
+- Exigen `T: Copy` y aplican la copia lógica ordinaria a cada aparición de un
+  elemento.
+- Producen un `Array[T]` nuevo, compacto e independiente y no modifican ningún
+  operando.
+- Calculan y validan la longitud matemática completa antes de construir el
+  primer elemento del resultado.
+
+`concat` produce primero todos los elementos del receptor y después todos los
+de `other`; su longitud es la suma de ambas longitudes. `repeat` produce
+`count` copias consecutivas del receptor, conservando el orden interno en cada
+una; su longitud es el producto de la longitud original por `count`.
+
+Un `count` igual a cero produce un array vacío nuevo. Repetir un array vacío
+cualquier número no negativo representable como `Int` también produce
+inmediatamente un array vacío. Un `count` negativo rompe el contrato y produce
+`P0011 invalid-repeat-count`. Si la longitud matemática de cualquiera de las
+dos operaciones excede `Int.max`, se produce `P0005 checked-overflow`. Una
+longitud válida que la implementación no pueda reservar es agotamiento de
+recursos según 10.3, no `P0005` ni `P0011`.
+
+La copia lógica es recursiva. Los valores ordinarios anidados quedan
+independientes tanto de los operandos como entre repeticiones; `String` puede
+compartir almacenamiento inmutable y cada `Ref[T]` conserva su identidad, de
+acuerdo con 16.17. Estas son garantías de valor, no una exigencia de realizar
+copias físicas cuando COW, fusión o reutilización preserven todos los
+observables.
+
 Producto escalar, producto matricial y broadcasting multidimensional pertenecen a módulos matemáticos:
 
 ~~~tondo
@@ -5129,6 +5187,7 @@ Un pánico representa un invariante roto, por ejemplo:
 - Overflow comprobado.
 - Conteo de shift negativo, no representable como `Int` o fuera del ancho del
   operando.
+- Conteo negativo en `Array.repeat`.
 - Longitudes incompatibles en aritmética de arrays.
 - Solapamiento detectado por el check dinámico normativo de préstamos o
   transferencia atómica.
@@ -7522,6 +7581,7 @@ oculten un diagnóstico independiente.
 | `P0008` | `explicit-panic` | Invocación explícita de `panic`. |
 | `P0009` | `duplicate-dynamic-map-key` | Literal de map con valor terminal produce claves dinámicas repetidas. |
 | `P0010` | `invalid-shift-count` | Conteo de shift negativo, no representable como `Int` o mayor o igual que el ancho izquierdo. |
+| `P0011` | `invalid-repeat-count` | `Array.repeat` recibe un conteo negativo. |
 
 Un runtime incluye el código `P` y el nombre estable en su diagnóstico. OOM
 irrecuperable y los aborts fuera del modelo de 15.7 no reciben un código `P`.
@@ -9535,7 +9595,17 @@ El lenguaje garantiza las capacidades necesarias para:
 - Comprobar pertenencia.
 - Aplicar operadores definidos.
 
-Los nombres concretos como `length`, `get`, `getOr`, `append`, `remove`, `concat`, `repeat`, `keys` y `values` se fijarán en la especificación estándar. Los ejemplos de este documento anticipan nombres recomendados, pero no constituyen aún el inventario final de métodos.
+Los nombres concretos como `length`, `get`, `getOr`, `append`, `remove`, `keys`
+y `values` se fijarán en la especificación estándar. Los ejemplos de este
+documento anticipan nombres recomendados, pero no constituyen aún el inventario
+final de métodos.
+
+`Array.concat` y `Array.repeat` son la excepción cerrada: 10.7 fija sus nombres,
+firmas, ownership, orden de evaluación, copia lógica y pánicos como operaciones
+intrínsecas del lenguaje. El compilador necesita conocer esas propiedades para
+probar `Copy`, construir unwind correcto y distinguir overflow semántico de
+agotamiento de recursos; delegarlas a una API todavía no especificada dejaría
+incompleto el contrato del núcleo.
 
 ### 26.5 Criterio para añadir una característica al lenguaje
 

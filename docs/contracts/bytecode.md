@@ -16,8 +16,9 @@ TERM-004 closed abnormal fallbacks, TERM-005 exact explicit/fallback exclusion,
 REF-001 managed identity cells/shared projections, REF-002 identity
 equality/keys, ARRAY-001 runtime array length, ARRAY-002 checked array
 indexing, ARRAY-003 checked slicing, ARRAY-004 logical slice snapshots,
-ARRAY-005 fixed versus structural array mutation, and the M3 VM admission path
-implemented
+ARRAY-005 fixed versus structural array mutation, ARRAY-006 closed lifted
+arithmetic, ARRAY-007 named concatenation/repetition, and the M3 VM admission
+path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -374,7 +375,8 @@ another coercion kind without invalidating the program.
 
 Potentially panicking work remains a terminator-level `Invoke` with explicit
 normal destination/target and cleanup target. This includes checked arithmetic,
-map construction, indexing, slicing, calls, `assert`, and `panic`. Other
+named array sequences, map construction, indexing, slicing, calls, `assert`,
+and `panic`. Other
 terminators cover direct branches, boolean and discriminant dispatch,
 iterator-next, atomic destination validation, loan validation, return, panic
 resumption, scope-specific defer drain, unified abnormal drain, and unreachable
@@ -456,6 +458,14 @@ derives the closed `Copy` capability of its complete `Array[T]` result. A slice
 projection retained only in call-loan metadata has no such requirement and can
 name affine elements. Forging a materializing operation over non-`Copy`
 elements is invalid bytecode, independently of the HIR check.
+
+`BytecodeOperationKind::ArraySequence` preserves the closed `Concat`/`Repeat`
+tag and both ordered operands. Its result and borrowed receiver must be the
+same `Array[T]`, `T` must satisfy the independently derived closed `Copy`
+capability, and the value argument must be that same array type for `Concat` or
+the canonical `Int` type for `Repeat`. It is valid only inside `Invoke`; a
+forged pure rvalue, `Copy` receiver, loan receiver, borrowed argument, changed
+tag, or mismatched type is rejected before execution.
 
 The VM resolves each protected path to normalized runtime components: negative
 indices use the current array length, slices become their exact selected-index

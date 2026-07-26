@@ -917,6 +917,31 @@ impl<'a> FunctionBuilder<'a> {
                     Ok(Some(block))
                 }
             }
+            HirExpressionKind::ArraySequence {
+                kind,
+                array,
+                argument,
+            } => {
+                let Some((block, array)) = self.lower_borrowed_value(*array, block)? else {
+                    return Ok(None);
+                };
+                let Some((block, argument)) = self.lower_value(*argument, block)? else {
+                    return Ok(None);
+                };
+                self.invoke(
+                    block,
+                    span,
+                    Some(destination),
+                    MirOperation {
+                        ty: expression.ty(),
+                        kind: MirOperationKind::ArraySequence {
+                            kind: *kind,
+                            array,
+                            argument,
+                        },
+                    },
+                )
+            }
             HirExpressionKind::Range { kind, start, end } => {
                 let Some((block, start)) = self.lower_value(*start, block)? else {
                     return Ok(None);
@@ -5510,6 +5535,12 @@ fn collect_operation_region_uses(
             collect_operand_region_uses(left, loans, output);
             collect_operand_region_uses(right, loans, output);
         }
+        MirOperationKind::ArraySequence {
+            array, argument, ..
+        } => {
+            collect_operand_region_uses(array, loans, output);
+            collect_operand_region_uses(argument, loans, output);
+        }
         MirOperationKind::BuildMap { entries, .. } => {
             for (key, value) in entries {
                 collect_operand_region_uses(key, loans, output);
@@ -5563,6 +5594,11 @@ fn operation_move_places(operation: &MirOperation) -> Vec<MirPlace> {
         MirOperationKind::CheckedPrefix { operand, .. }
         | MirOperationKind::ExplicitPanic { message: operand } => collect(operand),
         MirOperationKind::CheckedBinary { left, right, .. }
+        | MirOperationKind::ArraySequence {
+            array: left,
+            argument: right,
+            ..
+        }
         | MirOperationKind::Index {
             base: left,
             index: right,
@@ -6805,6 +6841,78 @@ mod tests {
             error
                 .message()
                 .contains("potentially panicking binary operation"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn array_sequences_lower_to_checked_operations_with_a_borrowed_receiver() {
+        let source = "fn sequences(\n\
+                          left: Array[Int],\n\
+                          right: Array[Int],\n\
+                      ): (Array[Int], Array[Int]) {\n\
+                          (left.concat(right), left.repeat(2))\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = mir.function(function_id(&resolved, "sequences")).unwrap();
+        let operations = function
+            .blocks()
+            .filter_map(|block| match block.terminator().kind() {
+                MirTerminatorKind::Invoke {
+                    operation:
+                        operation @ MirOperation {
+                            kind: MirOperationKind::ArraySequence { .. },
+                            ..
+                        },
+                    destination: Some(_),
+                    ..
+                } => Some(operation),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(operations.len(), 2);
+        for operation in operations {
+            let MirOperationKind::ArraySequence { array, .. } = operation.kind() else {
+                unreachable!()
+            };
+            assert!(matches!(array.kind(), MirOperandKind::Borrow(_)));
+        }
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let mut forged = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = forged
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(
+                &resolved,
+                "sequences",
+            )))
+            .unwrap();
+        let kind = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::Invoke {
+                    operation:
+                        MirOperation {
+                            kind:
+                                MirOperationKind::ArraySequence {
+                                    kind: kind @ crate::hir::HirArraySequenceKind::Concat,
+                                    ..
+                                },
+                            ..
+                        },
+                    ..
+                } => Some(kind),
+                _ => None,
+            })
+            .expect("concat lowers to a checked Array sequence operation");
+        *kind = crate::hir::HirArraySequenceKind::Repeat;
+        let error = verify_mir(&resolved, &hir, &forged).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("argument differs from its closed signature"),
             "{error}"
         );
     }

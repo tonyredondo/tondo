@@ -109,6 +109,22 @@ execution must reject publication at the dynamic fixed-extent boundary. The
 legitimate sliced path also runs with an initial GC threshold of one to prove
 that measuring its lender keeps the pending replacement rooted.
 
+## Named array sequences
+
+ARRAY-007 fixtures execute both dot and qualified `concat`/`repeat`, including
+a receiver that crosses a `ref Array[T]` parameter. They observe concat order,
+zero repetition, an empty receiver with `Int.max`, nested write independence,
+and preserved `Ref` identity. Separate runtime cases fix `P0011` for a negative
+count and `P0005` for a mathematical result length outside `Int`; compile-fail
+cases fix the `T: Copy` obligation and reject a redundant explicit mode on the
+qualified `self` receiver or explicit type arguments on the intrinsic owner.
+
+Internal execution repeats the nested case with an initial GC threshold of one
+and checks receiver-before-argument panic precedence. Mutated typed HIR, MIR,
+and bytecode independently prove that operation kind, argument signature,
+shared receiver access, and closed capability cannot be forged past their
+admission gates.
+
 ## Conformance separation
 
 Implementation fixtures may test private invariants and `T` diagnostics. The

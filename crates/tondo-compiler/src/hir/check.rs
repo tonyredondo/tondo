@@ -22,19 +22,19 @@ use super::const_eval::{
     ConstantEvaluationError, evaluate, has_unavailable_input, is_nan, values_equal,
 };
 use super::{
-    AvailabilityFindingKind, HirAssertMessagePart, HirAssignmentOperator, HirAssignmentTarget,
-    HirAssignmentTargetKind, HirBinaryOperator, HirBody, HirBootstrapHostFunction, HirCallArgument,
-    HirCallArgumentTarget, HirCallProtocol, HirCallableId, HirCallableSignature, HirCapability,
-    HirCapabilityStatus, HirClosure, HirClosureCapture, HirClosureId, HirClosureProtocols,
-    HirContainmentKind, HirDeferAction, HirError, HirExpression, HirExpressionId,
-    HirExpressionKind, HirField, HirFlow, HirForKind, HirGenericParameter, HirIndexAccess,
-    HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry, HirMatchArm, HirMatchMode,
-    HirMemberReference, HirNominalShape, HirParameter, HirPattern, HirPatternField, HirPatternId,
-    HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod, HirProgram, HirRangeKind,
-    HirRecordFieldValue, HirScopeId, HirStatement, HirTraitConstructor, HirTypeDeclarationKind,
-    HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind, TerminalAnalysis,
-    TraitQuery, TraitSelectionError, analyze_availability, analyze_closure_captures,
-    select_implementation,
+    AvailabilityFindingKind, HirArraySequenceKind, HirAssertMessagePart, HirAssignmentOperator,
+    HirAssignmentTarget, HirAssignmentTargetKind, HirBinaryOperator, HirBody,
+    HirBootstrapHostFunction, HirCallArgument, HirCallArgumentTarget, HirCallProtocol,
+    HirCallableId, HirCallableSignature, HirCapability, HirCapabilityStatus, HirClosure,
+    HirClosureCapture, HirClosureId, HirClosureProtocols, HirContainmentKind, HirDeferAction,
+    HirError, HirExpression, HirExpressionId, HirExpressionKind, HirField, HirFlow, HirForKind,
+    HirGenericParameter, HirIndexAccess, HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry,
+    HirMatchArm, HirMatchMode, HirMemberReference, HirNominalShape, HirParameter, HirPattern,
+    HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod,
+    HirProgram, HirRangeKind, HirRecordFieldValue, HirScopeId, HirStatement, HirTraitConstructor,
+    HirTypeDeclarationKind, HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind,
+    TerminalAnalysis, TraitQuery, TraitSelectionError, analyze_availability,
+    analyze_closure_captures, select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1940,6 +1940,11 @@ impl<'a> ExpressionChecker<'a> {
                 | HirExpressionKind::PropagateResult { value: operand, .. }
                 | HirExpressionKind::Coerce { value: operand, .. } => pending.push(*operand),
                 HirExpressionKind::Binary { left, right, .. }
+                | HirExpressionKind::ArraySequence {
+                    array: left,
+                    argument: right,
+                    ..
+                }
                 | HirExpressionKind::Range {
                     start: left,
                     end: right,
@@ -12644,6 +12649,9 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<Option<HirExpressionId>, HirError> {
+        if self.reject_explicit_array_sequence_owner_arguments(file, base_node)? {
+            return self.recovery_expression(file, range).map(Some);
+        }
         let explicit_bracket = (base_node.kind() == SyntaxKind::PostfixExpr)
             .then(|| {
                 base_node
@@ -12699,6 +12707,19 @@ impl<'a> ExpressionChecker<'a> {
                     file,
                     range,
                     base_node,
+                    suffix,
+                    explicit_bracket,
+                    &tokens,
+                    resolved_index,
+                    &resolved,
+                    expected,
+                    context,
+                )? {
+                    return Ok(Some(call));
+                }
+                if let Some(call) = self.check_qualified_array_sequence_call(
+                    file,
+                    range,
                     suffix,
                     explicit_bracket,
                     &tokens,
@@ -12814,6 +12835,238 @@ impl<'a> ExpressionChecker<'a> {
             );
         }
         Ok(None)
+    }
+
+    fn reject_explicit_array_sequence_owner_arguments(
+        &mut self,
+        file: FileId,
+        base_node: SyntaxNodeRef<'_>,
+    ) -> Result<bool, HirError> {
+        if base_node.kind() != SyntaxKind::PathExpr {
+            return Ok(false);
+        }
+        let Some(bracket) = base_node
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::BracketPostfix)
+        else {
+            return Ok(false);
+        };
+        let tokens = base_node
+            .child_tokens()
+            .filter(|token| token.kind() == TokenKind::Identifier)
+            .collect::<Vec<_>>();
+        let Some(member_token) = tokens.last() else {
+            return Ok(false);
+        };
+        if !matches!(
+            member_token.token().normalized_identifier(),
+            Some("concat" | "repeat")
+        ) {
+            return Ok(false);
+        }
+        let is_array = tokens
+            .iter()
+            .find_map(|token| {
+                let reference = self.resolved.reference(file, token.range())?;
+                let ResolvedEntity::Name(ResolvedName::Prelude {
+                    namespace: Namespace::Type,
+                    name,
+                }) = reference.entity()
+                else {
+                    return None;
+                };
+                Some(name.as_str() == "Array")
+            })
+            .unwrap_or(false);
+        if !is_array {
+            return Ok(false);
+        }
+        self.emit(
+            self.sources.span(file, bracket.range())?,
+            "E1104",
+            "Array sequence operations infer T from their receiver",
+            Vec::new(),
+            None,
+        )?;
+        Ok(true)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_qualified_array_sequence_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        tokens: &[SyntaxTokenRef<'_>],
+        resolved_index: usize,
+        resolved: &ResolvedName,
+        _expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let ResolvedName::Prelude {
+            namespace: Namespace::Type,
+            name,
+        } = resolved
+        else {
+            return Ok(None);
+        };
+        if name.as_str() != "Array" || resolved_index + 2 != tokens.len() {
+            return Ok(None);
+        }
+        let member_token = *tokens
+            .last()
+            .expect("a qualified Array operation has a member token");
+        let kind = match member_token.token().normalized_identifier() {
+            Some("concat") => HirArraySequenceKind::Concat,
+            Some("repeat") => HirArraySequenceKind::Repeat,
+            _ => return Ok(None),
+        };
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "Array sequence operations infer T from their receiver and have no generic list",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+
+        let arguments = suffix
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::CallArgument)
+            .collect::<Vec<_>>();
+        let subject = match kind {
+            HirArraySequenceKind::Concat => "Array.concat",
+            HirArraySequenceKind::Repeat => "Array.repeat",
+        };
+        let mut valid = arguments.len() == 2;
+        if !valid {
+            self.emit(
+                self.sources.span(file, suffix.range())?,
+                "E1102",
+                format!(
+                    "{subject} expects its qualified receiver and one value, found {} arguments",
+                    arguments.len()
+                ),
+                Vec::new(),
+                None,
+            )?;
+        }
+        let mut values = Vec::with_capacity(arguments.len());
+        let mut receiver_type = None;
+        for (index, argument) in arguments.iter().copied().enumerate() {
+            let argument_tokens = argument
+                .child_tokens()
+                .filter(|token| !token.kind().is_trivia())
+                .collect::<Vec<_>>();
+            let invalid_shape = argument_tokens
+                .iter()
+                .any(|token| matches!(token.kind(), TokenKind::Colon | TokenKind::Ellipsis));
+            let explicit_mode = argument_tokens.iter().any(|token| {
+                matches!(
+                    token.kind(),
+                    TokenKind::Ref | TokenKind::Mut | TokenKind::Var
+                )
+            });
+            if invalid_shape || explicit_mode {
+                self.emit(
+                    self.sources.span(file, argument.range())?,
+                    if invalid_shape { "E1102" } else { "E1407" },
+                    if index == 0 {
+                        format!(
+                            "{subject} writes its shared `self` receiver without an argument mode"
+                        )
+                    } else {
+                        format!("{subject} passes its second argument by value")
+                    },
+                    Vec::new(),
+                    None,
+                )?;
+                valid = false;
+            }
+            let Some(expression) = argument
+                .child_nodes()
+                .find(|child| AstExpression::cast(*child).is_some())
+            else {
+                valid = false;
+                continue;
+            };
+            let expected = if index == 1 {
+                match kind {
+                    HirArraySequenceKind::Concat => receiver_type,
+                    HirArraySequenceKind::Repeat => {
+                        Some(self.program.interner.scalar(ScalarType::Int))
+                    }
+                }
+            } else {
+                None
+            };
+            let value = self.check_expression(
+                file,
+                expression,
+                expected.map(ExpressionExpectation::Direct),
+                context,
+            )?;
+            if index == 0 {
+                receiver_type = Some(self.expression_type(value));
+            }
+            values.push(value);
+        }
+        let Some(receiver_type) = receiver_type else {
+            return self.recovery_expression(file, range).map(Some);
+        };
+        let Some(element) = self
+            .intrinsic_arguments(receiver_type, IntrinsicType::Array)?
+            .map(|arguments| arguments[0])
+        else {
+            self.emit(
+                self.sources.span(
+                    file,
+                    arguments.first().map_or(suffix.range(), |a| a.range()),
+                )?,
+                "E1102",
+                format!("{subject} receiver is not an Array"),
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        };
+        if values.len() == 2 {
+            let expected = match kind {
+                HirArraySequenceKind::Concat => receiver_type,
+                HirArraySequenceKind::Repeat => self.program.interner.scalar(ScalarType::Int),
+            };
+            valid &= self.expression_type(values[1]) == expected;
+            self.check_method_receiver(
+                values[0],
+                ParameterMode::Ref,
+                Some(receiver_type),
+                context,
+            )?;
+        }
+        valid &= self.require_capability_with_generics(
+            self.sources.span(file, member_token.range())?,
+            element,
+            HirCapability::Copy,
+            &context.capability_assumptions,
+            subject,
+        )?;
+        if !valid || values.len() != 2 {
+            return self.recovery_expression(file, range).map(Some);
+        }
+        self.allocate_expression(HirExpression {
+            span: self.sources.span(file, range)?,
+            ty: receiver_type,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::ArraySequence {
+                kind,
+                array: values[0],
+                argument: values[1],
+            },
+        })
+        .map(Some)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -13176,6 +13429,18 @@ impl<'a> ExpressionChecker<'a> {
         if receiver_type == self.program.interner.error() {
             return self.recovery_expression(file, range).map(Some);
         }
+        if let Some(call) = self.check_array_sequence_call(
+            file,
+            range,
+            receiver,
+            receiver_type,
+            member_token,
+            suffix,
+            explicit_bracket,
+            context,
+        )? {
+            return Ok(Some(call));
+        }
         if let Some((owner, _, _)) = self.nominal_instance(receiver_type)?
             && let Some(member) =
                 self.callable_member(file, owner, member_token, &[MemberKind::InherentMethod])?
@@ -13390,6 +13655,79 @@ impl<'a> ExpressionChecker<'a> {
             None,
             context,
         )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_array_sequence_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        receiver: HirExpressionId,
+        receiver_type: TypeId,
+        member_token: SyntaxTokenRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let Some(arguments) = self.intrinsic_arguments(receiver_type, IntrinsicType::Array)? else {
+            return Ok(None);
+        };
+        let member_name = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?);
+        let kind = match member_name {
+            "concat" => HirArraySequenceKind::Concat,
+            "repeat" => HirArraySequenceKind::Repeat,
+            _ => return Ok(None),
+        };
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "Array sequence operations do not declare generic parameters",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let expected_argument = match kind {
+            HirArraySequenceKind::Concat => receiver_type,
+            HirArraySequenceKind::Repeat => self.program.interner.scalar(ScalarType::Int),
+        };
+        let subject = match kind {
+            HirArraySequenceKind::Concat => "Array.concat",
+            HirArraySequenceKind::Repeat => "Array.repeat",
+        };
+        let (mut values, valid) =
+            self.check_constructor_arguments(file, suffix, &[expected_argument], subject, context)?;
+        if !valid || values.len() != 1 {
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let element = arguments[0];
+        if !self.require_capability_with_generics(
+            self.sources.span(file, member_token.range())?,
+            element,
+            HirCapability::Copy,
+            &context.capability_assumptions,
+            subject,
+        )? {
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let argument = values
+            .pop()
+            .expect("a valid Array sequence operation has one argument");
+        self.allocate_expression(HirExpression {
+            span: self.sources.span(file, range)?,
+            ty: receiver_type,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::ArraySequence {
+                kind,
+                array: receiver,
+                argument,
+            },
+        })
         .map(Some)
     }
 
@@ -15504,6 +15842,11 @@ impl<'a> ExpressionChecker<'a> {
                 };
                 left
             }
+            HirExpressionKind::ArraySequence {
+                array, argument, ..
+            } => self
+                .expression_summary(*array)
+                .then(self.expression_summary(*argument)),
             HirExpressionKind::Range { start, end, .. } => self
                 .expression_summary(*start)
                 .then(self.expression_summary(*end)),
@@ -16002,6 +16345,11 @@ fn closure_protocol_expression_children(kind: &HirExpressionKind) -> Vec<HirExpr
         | HirExpressionKind::TupleField { base: operand, .. }
         | HirExpressionKind::RefValue { base: operand } => children.push(*operand),
         HirExpressionKind::Binary { left, right, .. }
+        | HirExpressionKind::ArraySequence {
+            array: left,
+            argument: right,
+            ..
+        }
         | HirExpressionKind::Range {
             start: left,
             end: right,
@@ -21091,6 +21439,67 @@ mod tests {
             output.diagnostics()
         );
         assert!(output.is_complete());
+    }
+
+    #[test]
+    fn array_sequence_operations_have_one_named_copy_contract() {
+        let (_, _, output) = check(
+            "fn sequences[T: Copy](\n\
+                 left: Array[T],\n\
+                 right: Array[T],\n\
+             ): (Array[T], Array[T], Array[T], Array[T]) {\n\
+                 (\n\
+                     left.concat(right),\n\
+                     left.repeat(2),\n\
+                     Array.concat(left, right),\n\
+                     Array.repeat(left, 2),\n\
+                 )\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        assert_eq!(
+            output
+                .program()
+                .expressions()
+                .filter(|expression| {
+                    matches!(expression.kind(), HirExpressionKind::ArraySequence { .. })
+                })
+                .count(),
+            4
+        );
+
+        let (_, _, missing_copy) = check(
+            "fn invalid[T](values: Array[T]): Array[T] {\n\
+                 values.repeat(2)\n\
+             }\n",
+        );
+        assert_eq!(codes(&missing_copy), ["E1105", "E1404"]);
+
+        let (_, _, wrong_mode) = check(
+            "fn invalid(values: Array[Int]): Array[Int] {\n\
+                 Array.repeat(ref values, 2)\n\
+             }\n",
+        );
+        assert_eq!(codes(&wrong_mode), ["E1407"]);
+
+        let (_, _, explicit_owner_argument) = check(
+            "fn invalid(values: Array[Int]): Array[Int] {\n\
+                 Array[Int].repeat(values, 2)\n\
+             }\n",
+        );
+        assert_eq!(codes(&explicit_owner_argument), ["E1104"]);
+
+        let (_, _, explicit_operation_argument) = check(
+            "fn invalid(values: Array[Int]): Array[Int] {\n\
+                 Array.repeat[Int](values, 2)\n\
+             }\n",
+        );
+        assert_eq!(codes(&explicit_operation_argument), ["E1104"]);
     }
 
     #[test]
