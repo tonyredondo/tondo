@@ -84,6 +84,7 @@ struct CallProtocolVerification<'a> {
     capabilities: &'a CapabilityAssumptions,
     analysis: &'a CapabilityAnalysis,
     exclusive_parameters: &'a BTreeSet<crate::resolve::LocalId>,
+    deferred_actions: &'a BTreeSet<HirExpressionId>,
     mutable_receiver: bool,
     context: &'a str,
 }
@@ -167,7 +168,7 @@ impl Verifier<'_> {
         self.verify_annotations_and_locals()?;
         self.verify_member_references()?;
         self.verify_patterns()?;
-        let loops = self.collect_loops()?;
+        let loops = self.collect_control_ids()?;
         self.verify_expressions(&loops)?;
         self.verify_call_protocol_contracts()?;
         self.verify_bodies()?;
@@ -240,6 +241,10 @@ impl Verifier<'_> {
                 ),
                 AvailabilityFindingKind::TerminalOverwrite => format!(
                     "{local} overwrites a live terminal obligation at {}",
+                    finding.use_span().range()
+                ),
+                AvailabilityFindingKind::InvalidDefer => format!(
+                    "{local} violates an active defer guard at {}",
                     finding.use_span().range()
                 ),
             };
@@ -784,6 +789,42 @@ impl Verifier<'_> {
                         HirAssignmentTargetKind::Tuple(items) => pending.extend(items),
                         HirAssignmentTargetKind::Place { .. } => {}
                     }
+                }
+            }
+            HirStatement::Defer { action, .. } => {
+                let operands = defer_registration_children(self.program, action);
+                let mut affine = Vec::new();
+                for operand in &operands {
+                    let expression = self.expression(*operand, context)?;
+                    if analysis
+                        .status(
+                            self.program,
+                            expression.ty,
+                            HirCapability::Copy,
+                            assumptions,
+                        )
+                        .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                        != HirCapabilityStatus::Satisfied
+                    {
+                        affine.push(*operand);
+                    }
+                }
+                if affine.len() > 1 || affine.first().copied() != action.guarded() {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "defer guard does not match its unique non-Copy operand",
+                    ));
+                }
+                if let HirExpressionKind::Call {
+                    callee, protocol, ..
+                } = &self.expression(action.expression(), context)?.kind
+                    && affine.first().copied() == Some(*callee)
+                    && *protocol != super::HirCallProtocol::CallOnce
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "a non-Copy deferred callee does not use CallOnce",
+                    ));
                 }
             }
             HirStatement::For {
@@ -2347,7 +2388,9 @@ impl Verifier<'_> {
             }
             let expression = self.expression(id, context)?;
             match &expression.kind {
-                HirExpressionKind::Block { statements, tail } => {
+                HirExpressionKind::Block {
+                    statements, tail, ..
+                } => {
                     let mut reachable = true;
                     for statement in statements {
                         if !reachable {
@@ -2452,6 +2495,9 @@ impl Verifier<'_> {
                     .into_iter()
                     .all(|expression| flow(expression).may_complete())
             }
+            HirStatement::Defer { action, .. } => defer_registration_children(self.program, action)
+                .into_iter()
+                .all(|expression| flow(expression).may_complete()),
             HirStatement::For { id, kind, body, .. } => {
                 let header_completes = match kind {
                     HirForKind::Infinite => true,
@@ -3182,12 +3228,22 @@ impl Verifier<'_> {
         Ok(())
     }
 
-    fn collect_loops(&self) -> Result<BTreeSet<super::HirLoopId>, HirInvariantError> {
+    fn collect_control_ids(&self) -> Result<BTreeSet<super::HirLoopId>, HirInvariantError> {
         let mut loops = BTreeSet::new();
+        let mut scopes = BTreeSet::new();
         for expression in &self.program.expressions {
-            let HirExpressionKind::Block { statements, .. } = &expression.kind else {
+            let HirExpressionKind::Block {
+                scope, statements, ..
+            } = &expression.kind
+            else {
                 continue;
             };
+            if !scopes.insert(*scope) {
+                return Err(HirInvariantError::new(
+                    format!("scope#{}", scope.index()),
+                    "cleanup scope ID is duplicated",
+                ));
+            }
             for statement in statements {
                 if let HirStatement::For { id, .. } = statement
                     && !loops.insert(*id)
@@ -3631,9 +3687,11 @@ impl Verifier<'_> {
                     ));
                 }
             }
-            HirExpressionKind::Block { statements, .. } => {
+            HirExpressionKind::Block {
+                scope, statements, ..
+            } => {
                 for statement in statements {
-                    self.verify_statement(statement, context)?;
+                    self.verify_statement(*scope, statement, context)?;
                 }
             }
             HirExpressionKind::Coerce { kind, value } => {
@@ -3729,9 +3787,105 @@ impl Verifier<'_> {
 
     fn verify_statement(
         &self,
+        scope: super::HirScopeId,
         statement: &HirStatement,
         context: &str,
     ) -> Result<(), HirInvariantError> {
+        if let HirStatement::Defer {
+            span,
+            scope: action_scope,
+            action,
+        } = statement
+        {
+            if *action_scope != scope {
+                return Err(HirInvariantError::new(
+                    context,
+                    "defer cleanup scope differs from its containing block",
+                ));
+            }
+            let expression = self.expression(action.expression(), context)?;
+            if expression.ty != self.program.interner.scalar(ScalarType::Unit) {
+                return Err(HirInvariantError::new(
+                    context,
+                    "deferred invocation does not return Unit",
+                ));
+            }
+            let operands = defer_registration_children(self.program, action);
+            match &expression.kind {
+                HirExpressionKind::Call {
+                    arguments,
+                    protocol,
+                    signature,
+                    ..
+                } => {
+                    if arguments
+                        .iter()
+                        .any(|argument| argument.mode != ParameterMode::Value)
+                    {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "deferred call retains a borrowed argument",
+                        ));
+                    }
+                    if *protocol == super::HirCallProtocol::CallMut {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "deferred call retains an exclusive callee borrow",
+                        ));
+                    }
+                    let TypeKind::Function(function) = self
+                        .program
+                        .interner
+                        .kind(*signature)
+                        .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                    else {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "deferred call signature is not a function",
+                        ));
+                    };
+                    if function.is_async()
+                        || function.is_unsafe()
+                        || function.outcome() != self.program.interner.scalar(ScalarType::Unit)
+                    {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "deferred call is effectful or does not return Unit",
+                        ));
+                    }
+                }
+                HirExpressionKind::PreludeAssert { .. }
+                | HirExpressionKind::BootstrapHostCall { .. } => {}
+                _ => {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "defer action is not an invocation",
+                    ));
+                }
+            }
+            self.verify_defer_control_boundary(&operands, context)?;
+            if let Some(body) = self.defer_block_body(*span, expression, context)? {
+                self.verify_defer_control_boundary(&[body], context)?;
+            }
+            if let Some(guarded) = action.guarded() {
+                if !operands.contains(&guarded) {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "defer guard does not identify a direct invocation operand",
+                    ));
+                }
+                let guarded = self.expression(guarded, context)?;
+                if guarded.category == HirValueCategory::Place
+                    && !matches!(guarded.kind, HirExpressionKind::Local(_))
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "defer guard identifies a partial place",
+                    ));
+                }
+            }
+            return Ok(());
+        }
         let HirStatement::For {
             kind:
                 HirForKind::Iterate {
@@ -3840,6 +3994,115 @@ impl Verifier<'_> {
                 context,
                 "iterator pattern type differs from its element type",
             ));
+        }
+        Ok(())
+    }
+
+    fn defer_block_body(
+        &self,
+        statement_span: crate::source::Span,
+        action: &HirExpression,
+        context: &str,
+    ) -> Result<Option<HirExpressionId>, HirInvariantError> {
+        let HirExpressionKind::Call { callee, .. } = &action.kind else {
+            return Ok(None);
+        };
+        let callee = self.expression(*callee, context)?;
+        if action.span != statement_span || callee.span != statement_span {
+            return Ok(None);
+        }
+        let HirExpressionKind::Closure(closure) = &callee.kind else {
+            return Ok(None);
+        };
+        let closure = self.program.closure(*closure).ok_or_else(|| {
+            HirInvariantError::new(context, "defer block closure has no closure metadata")
+        })?;
+        Ok((closure.span == statement_span).then_some(closure.body.root))
+    }
+
+    fn verify_defer_control_boundary(
+        &self,
+        roots: &[HirExpressionId],
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        let mut pending = roots
+            .iter()
+            .rev()
+            .map(|root| (*root, Vec::new()))
+            .collect::<Vec<_>>();
+        let mut visited = BTreeSet::new();
+        while let Some((id, loops)) = pending.pop() {
+            if !visited.insert((id, loops.clone())) {
+                continue;
+            }
+            let expression = self.expression(id, context)?;
+            match &expression.kind {
+                HirExpressionKind::Return { .. } | HirExpressionKind::Fail { .. } => {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "defer control boundary transfers control outside itself",
+                    ));
+                }
+                HirExpressionKind::Break { target } | HirExpressionKind::Continue { target }
+                    if target.is_none_or(|target| !loops.contains(&target)) =>
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "defer control boundary transfers control outside itself",
+                    ));
+                }
+                _ => {}
+            }
+
+            let HirExpressionKind::Block {
+                statements, tail, ..
+            } = &expression.kind
+            else {
+                pending.extend(
+                    expression_children(expression)
+                        .into_iter()
+                        .rev()
+                        .map(|child| (child, loops.clone())),
+                );
+                continue;
+            };
+            if let Some(tail) = tail {
+                pending.push((*tail, loops.clone()));
+            }
+            for statement in statements.iter().rev() {
+                match statement {
+                    HirStatement::Defer { .. } => {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "defer control boundary registers a nested defer",
+                        ));
+                    }
+                    HirStatement::For { id, kind, body, .. } => {
+                        let mut body_loops = loops.clone();
+                        body_loops.push(*id);
+                        pending.push((*body, body_loops));
+                        match kind {
+                            HirForKind::Infinite => {}
+                            HirForKind::Conditional { condition } => {
+                                pending.push((*condition, loops.clone()));
+                            }
+                            HirForKind::Iterate { source, .. } => {
+                                pending.push((*source, loops.clone()));
+                            }
+                        }
+                    }
+                    statement => {
+                        let mut children = Vec::new();
+                        statement_children(statement, &mut children);
+                        pending.extend(
+                            children
+                                .into_iter()
+                                .rev()
+                                .map(|child| (child, loops.clone())),
+                        );
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -4187,6 +4450,20 @@ impl Verifier<'_> {
                 format!("invalid capability graph: {error}"),
             )
         })?;
+        let deferred_actions = self
+            .program
+            .expressions
+            .iter()
+            .filter_map(|expression| match &expression.kind {
+                HirExpressionKind::Block { statements, .. } => Some(statements),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|statement| match statement {
+                HirStatement::Defer { action, .. } => Some(action.expression()),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
         for (callable, body) in &self.program.bodies {
             let signature = self.program.callable(*callable).ok_or_else(|| {
                 HirInvariantError::new("call protocols", "callable body has no signature")
@@ -4214,6 +4491,7 @@ impl Verifier<'_> {
                     capabilities: &capabilities,
                     analysis: &analysis,
                     exclusive_parameters: &exclusive_parameters,
+                    deferred_actions: &deferred_actions,
                     mutable_receiver,
                     context: &context,
                 },
@@ -4242,6 +4520,7 @@ impl Verifier<'_> {
                     capabilities: &capabilities,
                     analysis: &analysis,
                     exclusive_parameters: &exclusive_parameters,
+                    deferred_actions: &deferred_actions,
                     mutable_receiver: false,
                     context: &context,
                 },
@@ -4281,6 +4560,7 @@ impl Verifier<'_> {
             capabilities,
             analysis,
             exclusive_parameters,
+            deferred_actions,
             mutable_receiver,
             context,
         } = verification;
@@ -4307,22 +4587,36 @@ impl Verifier<'_> {
                     analysis,
                     context,
                 )?;
-                let expected = if available.supports(super::HirCallProtocol::Call) {
-                    Some(super::HirCallProtocol::Call)
-                } else if available.supports(super::HirCallProtocol::CallMut)
-                    && self.call_mut_place_is_available(
-                        *callee,
-                        exclusive_parameters,
-                        mutable_receiver,
-                        context,
-                    )?
-                {
-                    Some(super::HirCallProtocol::CallMut)
-                } else if available.supports(super::HirCallProtocol::CallOnce) {
-                    Some(super::HirCallProtocol::CallOnce)
+                let deferred = deferred_actions.contains(&id);
+                let copy = if deferred {
+                    analysis
+                        .status(self.program, callee_type, HirCapability::Copy, capabilities)
+                        .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                        == HirCapabilityStatus::Satisfied
                 } else {
-                    None
+                    false
                 };
+                let expected =
+                    if available.supports(super::HirCallProtocol::Call) && (!deferred || copy) {
+                        Some(super::HirCallProtocol::Call)
+                    } else if deferred && available.supports(super::HirCallProtocol::CallOnce) {
+                        Some(super::HirCallProtocol::CallOnce)
+                    } else if available.supports(super::HirCallProtocol::Call) {
+                        Some(super::HirCallProtocol::Call)
+                    } else if available.supports(super::HirCallProtocol::CallMut)
+                        && self.call_mut_place_is_available(
+                            *callee,
+                            exclusive_parameters,
+                            mutable_receiver,
+                            context,
+                        )?
+                    {
+                        Some(super::HirCallProtocol::CallMut)
+                    } else if available.supports(super::HirCallProtocol::CallOnce) {
+                        Some(super::HirCallProtocol::CallOnce)
+                    } else {
+                        None
+                    };
                 if expected != Some(*protocol) {
                     return Err(HirInvariantError::new(
                         context,
@@ -4718,7 +5012,9 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
             children.push(*base);
             children.extend(fields.iter().map(|field| field.value));
         }
-        HirExpressionKind::Block { statements, tail } => {
+        HirExpressionKind::Block {
+            statements, tail, ..
+        } => {
             for statement in statements {
                 statement_children(statement, &mut children);
             }
@@ -4804,6 +5100,9 @@ fn statement_children(statement: &HirStatement, children: &mut Vec<HirExpression
             assignment_target_children(target, children);
             children.push(*value);
         }
+        HirStatement::Defer { action, .. } => {
+            children.push(action.expression());
+        }
         HirStatement::For { kind, body, .. } => {
             match kind {
                 HirForKind::Infinite => {}
@@ -4812,6 +5111,31 @@ fn statement_children(statement: &HirStatement, children: &mut Vec<HirExpression
             }
             children.push(*body);
         }
+    }
+}
+
+fn defer_registration_children(
+    program: &HirProgram,
+    action: &super::HirDeferAction,
+) -> Vec<HirExpressionId> {
+    let Some(expression) = program.expression(action.expression()) else {
+        return Vec::new();
+    };
+    match expression.kind() {
+        HirExpressionKind::Call {
+            callee, arguments, ..
+        } => std::iter::once(*callee)
+            .chain(arguments.iter().map(|argument| argument.value()))
+            .collect(),
+        HirExpressionKind::PreludeAssert {
+            condition,
+            message_parts,
+            ..
+        } => std::iter::once(*condition)
+            .chain(message_parts.iter().map(|part| part.value()))
+            .collect(),
+        HirExpressionKind::BootstrapHostCall { arguments, .. } => arguments.clone(),
+        _ => Vec::new(),
     }
 }
 
@@ -5867,6 +6191,266 @@ mod tests {
         assert_eq!(error.context(), "implementation#0");
         assert!(error.message().contains("nonterminating trait cycle"));
         assert!(error.message().contains("[[=]]"));
+    }
+
+    #[test]
+    fn cleanup_scope_identity_is_reproved_before_mir() {
+        const SOURCE: &str = "fn note(value: Int) {}\n\
+             fn main() {\n\
+                 defer note(1)\n\
+                 {\n\
+                     defer note(2)\n\
+                 }\n\
+             }\n";
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+        let scopes = program
+            .expressions
+            .iter()
+            .filter_map(|expression| match expression.kind {
+                HirExpressionKind::Block { scope, .. } => Some(scope),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(scopes.len() >= 2);
+
+        let (resolved, mut duplicate) = checked_program_from(SOURCE);
+        let mut seen = None;
+        for expression in &mut duplicate.expressions {
+            let HirExpressionKind::Block { scope, .. } = &mut expression.kind else {
+                continue;
+            };
+            if let Some(first) = seen {
+                *scope = first;
+                break;
+            }
+            seen = Some(*scope);
+        }
+        let error = verify_typed_hir(&resolved, &duplicate).unwrap_err();
+        assert!(error.message().contains("cleanup scope ID is duplicated"));
+
+        let (resolved, mut mismatched) = checked_program_from(SOURCE);
+        let scopes = mismatched
+            .expressions
+            .iter()
+            .filter_map(|expression| match expression.kind {
+                HirExpressionKind::Block { scope, .. } => Some(scope),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let mut changed = false;
+        for expression in &mut mismatched.expressions {
+            let HirExpressionKind::Block {
+                scope, statements, ..
+            } = &mut expression.kind
+            else {
+                continue;
+            };
+            let replacement = scopes.iter().copied().find(|candidate| candidate != scope);
+            let Some(replacement) = replacement else {
+                continue;
+            };
+            let Some(action_scope) = statements.iter_mut().find_map(|statement| match statement {
+                HirStatement::Defer { scope, .. } => Some(scope),
+                _ => None,
+            }) else {
+                continue;
+            };
+            *action_scope = replacement;
+            changed = true;
+            break;
+        }
+        assert!(changed);
+        let error = verify_typed_hir(&resolved, &mismatched).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("defer cleanup scope differs from its containing block"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn defer_control_boundaries_are_reproved_before_mir() {
+        const CALL_SOURCE: &str = "fn note(value: Int) {}\n\
+             fn main() {\n\
+                 defer note(1)\n\
+             }\n";
+        let (resolved, mut escaping) = checked_program_from(CALL_SOURCE);
+        let argument = escaping
+            .expressions
+            .iter()
+            .filter_map(|expression| match &expression.kind {
+                HirExpressionKind::Block { statements, .. } => Some(statements),
+                _ => None,
+            })
+            .flatten()
+            .find_map(|statement| match statement {
+                HirStatement::Defer { action, .. } => {
+                    let expression = escaping.expression(action.expression())?;
+                    let HirExpressionKind::Call { arguments, .. } = &expression.kind else {
+                        return None;
+                    };
+                    arguments.first().map(|argument| argument.value())
+                }
+                _ => None,
+            })
+            .expect("the defer call retains its argument");
+        escaping.expressions[argument.index() as usize].kind =
+            HirExpressionKind::Return { value: None };
+        escaping.expression_flows[argument.index() as usize] = HirFlow::Diverges;
+        let error = verify_typed_hir(&resolved, &escaping).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("defer control boundary transfers control outside itself"),
+            "{error}"
+        );
+
+        const BLOCK_SOURCE: &str = "fn note() {}\n\
+             fn main() {\n\
+                 defer {\n\
+                     note()\n\
+                 }\n\
+             }\n";
+        let (resolved, mut nested) = checked_program_from(BLOCK_SOURCE);
+        let closure = nested
+            .expressions
+            .iter()
+            .filter_map(|expression| match &expression.kind {
+                HirExpressionKind::Block { statements, .. } => Some(statements),
+                _ => None,
+            })
+            .flatten()
+            .find_map(|statement| match statement {
+                HirStatement::Defer { action, .. } => {
+                    let expression = nested.expression(action.expression())?;
+                    let HirExpressionKind::Call { callee, .. } = &expression.kind else {
+                        return None;
+                    };
+                    let callee = nested.expression(*callee)?;
+                    let HirExpressionKind::Closure(closure) = &callee.kind else {
+                        return None;
+                    };
+                    Some(*closure)
+                }
+                _ => None,
+            })
+            .expect("the defer block retains its synthetic closure");
+        let body = nested
+            .closure(closure)
+            .expect("the synthetic closure has metadata")
+            .body()
+            .root();
+        let value = match &nested.expressions[body.index() as usize].kind {
+            HirExpressionKind::Block {
+                tail: Some(value), ..
+            } => *value,
+            _ => panic!("the cleanup body retains its call as the tail"),
+        };
+        let span = nested.expressions[value.index() as usize].span;
+        let HirExpressionKind::Block {
+            scope,
+            statements,
+            tail,
+        } = &mut nested.expressions[body.index() as usize].kind
+        else {
+            panic!("the defer block closure body remains a block")
+        };
+        let scope = *scope;
+        *tail = None;
+        statements.push(HirStatement::Defer {
+            span,
+            scope,
+            action: crate::hir::HirDeferAction {
+                expression: value,
+                guarded: None,
+            },
+        });
+        let error = verify_typed_hir(&resolved, &nested).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("defer control boundary registers a nested defer"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn non_copy_deferred_callees_must_retain_call_once() {
+        const SOURCE: &str = "fn execute[F: Discard + CallMut[fn()] + CallOnce[fn()]](action: F) {\n\
+                 defer action()\n\
+             }\n";
+        let (resolved, mut program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+        let action = program
+            .expressions
+            .iter()
+            .filter_map(|expression| match &expression.kind {
+                HirExpressionKind::Block { statements, .. } => Some(statements),
+                _ => None,
+            })
+            .flatten()
+            .find_map(|statement| match statement {
+                HirStatement::Defer { action, .. } => Some(action.expression()),
+                _ => None,
+            })
+            .expect("the checked defer retains its invocation");
+        let HirExpressionKind::Call { protocol, .. } =
+            &mut program.expressions[action.index() as usize].kind
+        else {
+            panic!("the defer action remains a call")
+        };
+        assert_eq!(*protocol, crate::hir::HirCallProtocol::CallOnce);
+        *protocol = crate::hir::HirCallProtocol::CallMut;
+
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("non-Copy deferred callee does not use CallOnce"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn copy_deferred_callees_cannot_retain_an_exclusive_borrow() {
+        const SOURCE: &str = "fn execute[\n\
+                 F: Copy + Discard + CallMut[fn()] + CallOnce[fn()],\n\
+             ](action: F) {\n\
+                 var mutableAction = action\n\
+                 defer mutableAction()\n\
+             }\n";
+        let (resolved, mut program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+        let action = program
+            .expressions
+            .iter()
+            .filter_map(|expression| match &expression.kind {
+                HirExpressionKind::Block { statements, .. } => Some(statements),
+                _ => None,
+            })
+            .flatten()
+            .find_map(|statement| match statement {
+                HirStatement::Defer { action, .. } => Some(action.expression()),
+                _ => None,
+            })
+            .expect("the checked defer retains its invocation");
+        let HirExpressionKind::Call { protocol, .. } =
+            &mut program.expressions[action.index() as usize].kind
+        else {
+            panic!("the defer action remains a call")
+        };
+        assert_eq!(*protocol, crate::hir::HirCallProtocol::CallOnce);
+        *protocol = crate::hir::HirCallProtocol::CallMut;
+
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("deferred call retains an exclusive callee borrow"),
+            "{error}"
+        );
     }
 
     #[test]

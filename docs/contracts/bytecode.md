@@ -10,8 +10,9 @@ complete-slot reinitialization, OWN-005 typed move paths, OWN-006 affine closure
 captures, OWN-007 exact closed `CallOnce` rows, BORROW-001 call-local loans, and
 BORROW-002 inferred pattern regions, BORROW-003 reborrow permissions, BORROW-004
 static collection disjunction, BORROW-005 runtime overlap proofs, BORROW-006
-borrowed-iterator boundaries, TERM-001 independent terminal classification, and
-the M3 VM admission path implemented
+borrowed-iterator boundaries, TERM-001 independent terminal classification,
+TERM-002 normal-path terminal ownership, TERM-003 explicit defer/guard cleanup,
+and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -171,7 +172,8 @@ return place have function-wide storage.
 ## Instructions and control flow
 
 Ordinary instructions perform storage lifetime changes, reserve/release one
-loan identity, or store one pure typed rvalue. Rvalues cover loads,
+loan identity, store one pure typed rvalue, register one deferred invocation,
+or retarget/disarm its unique affine guard. Rvalues cover loads,
 copies/moves, constants, pure arithmetic,
 construction, record update, coercion, total conversion, range, membership,
 length, and iterator-state creation. The latter accepts an intrinsic collection
@@ -186,9 +188,18 @@ Array and set elements remain in their collection; map tuple fields are views
 of the stored key/value pair rather than ownership transfers. The verifier
 requires one canonical cursor definition, source region, position producer,
 and matching element projection.
-Copy and move forms come directly from verified MIR. Monomorphization preserves
-that source-generic decision: a move selected in a `T: Discard` body remains a
-move even when one concrete instantiation happens to substitute a `Copy` type.
+An own cursor instead transfers each yielded element out of its private
+collection state. Arrays and sets move one element; maps move one key/value
+pair into the yielded tuple. The remaining collection stays in the cursor so a
+guarded early exit cleans only that remainder. Natural exhaustion may carry an
+edge-specific guard disarm as described below.
+Copy and move forms ordinarily come directly from verified MIR.
+Monomorphization preserves that source-generic decision: a move selected in a
+`T: Discard` body remains a move even when one concrete instantiation happens
+to substitute a `Copy` type. The one cleanup-specific exception is a guarded
+defer operand whose closed type gains `Copy`: lowering converts its exact
+guarded `Move` into the required registration-time `Copy` snapshot, removes the
+now-vacuous guard transitions, and re-verifies the complete bytecode program.
 The VM verifier independently rejects every forged `Copy` whose closed concrete
 type lacks `Copy`.
 
@@ -305,7 +316,8 @@ normal destination/target and cleanup target. This includes checked arithmetic,
 map construction, indexing, slicing, calls, `assert`, and `panic`. Other
 terminators cover direct branches, boolean and discriminant dispatch,
 iterator-next, atomic destination validation, loan validation, return, panic
-resumption, and unreachable code. `ValidateLoan` must resolve to a normal block
+resumption, scope-specific defer drain, and unreachable code. `ValidateLoan`
+must resolve to a normal block
 whose first instruction reserves the same loan. A read validation aligns each
 destination with no replacement;
 a write validation requires one borrowed replacement witness of exactly the
@@ -391,6 +403,19 @@ Before execution, the verifier proves:
   an active shared source chain, active sets agree at joins, overlapping
   exclusive regions are rejected, and `Loan` cannot occur outside its matching
   non-value argument;
+- every `RegisterDefer` contains one synchronous infallible `Unit` operation,
+  snapshots all closed `Copy` operands, retains at most one complete affine
+  guard in a local or closure-capture owner slot, and belongs to a live lexical
+  scope;
+- the independent defer dataflow rejects duplicate live registrations,
+  overlapping guards, partial or embedded guarded moves, non-immediate
+  retarget/disarm transitions, post-drain access before complete
+  reinitialization, incompatible joins, incorrect scope drains, and any active
+  entry at `Return` or `ResumePanic`;
+- an own intrinsic `IteratorNext` has an exhaustion guard exactly when its
+  closed collection status is `Present`; the guard is the exact cursor-source
+  path and is removed only on the exhausted edge, while ref cursors never carry
+  one;
 - normal edges remain in normal code, unwind edges enter cleanup code, and the
   distinguished unwind block resumes panic;
 - all reachable reads have a dominating live definition, every root or
@@ -427,9 +452,13 @@ positions that can carry a token; own cursors and closure environments follow
 owned state, while ref cursors and safe/raw references do not acquire ownership.
 Executable opaque witnesses must be `Absent`. TERM-002 consumes the corresponding
 HIR proof before executable lowering and the bytecode move verifier preserves
-the admitted handoffs without inventing a terminal discharge. There is still no
-`await`, guard, or fallback opcode: TERM-003 and TERM-004 will add that executable
-ledger and its independent bytecode verification.
+the admitted handoffs. TERM-003 adds `RegisterDefer`, `RetargetDefer`,
+`DisarmDefer`, and `DrainDefers`, with a separate exact verifier ledger rather
+than trusting MIR. Monomorphization resolves a generic intrinsic iterator's
+`Potential` exhaustion marker against the closed catalog: it retains the marker
+for `Present`, removes it for `Absent`, and rejects any remaining `Potential`
+executable state. There is still no `await` or closed intrinsic fallback
+operation; TERM-004 adds that second side of the terminal cleanup ledger.
 
 ## Determinism, limits, and tooling
 

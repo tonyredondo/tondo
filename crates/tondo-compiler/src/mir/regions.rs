@@ -106,6 +106,7 @@ fn collection_region(
             }))
         }
         MirProjectionKind::ClosureCapture { .. }
+        | MirProjectionKind::IteratorSource
         | MirProjectionKind::Field(_)
         | MirProjectionKind::TupleField(_)
         | MirProjectionKind::NewtypeValue
@@ -238,6 +239,7 @@ pub(super) fn static_integer_locals(
             }
             | MirTerminatorKind::ValidatePlaces { .. }
             | MirTerminatorKind::ValidateLoan { .. }
+            | MirTerminatorKind::DrainDefers { .. }
             | MirTerminatorKind::Return
             | MirTerminatorKind::ResumePanic
             | MirTerminatorKind::Unreachable => {}

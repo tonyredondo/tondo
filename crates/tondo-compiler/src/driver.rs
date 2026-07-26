@@ -1191,6 +1191,24 @@ fn panic_diagnostic(sources: &SourceDatabase, panic: &VmPanic) -> Result<Diagnos
             source_span_from_bytecode(sources, frame.span)?,
         )?);
     }
+    diagnostic = attach_suppressed_panics(sources, diagnostic, &panic.suppressed)?;
+    Ok(diagnostic)
+}
+
+fn attach_suppressed_panics(
+    sources: &SourceDatabase,
+    mut diagnostic: Diagnostic,
+    suppressed: &[VmPanic],
+) -> Result<Diagnostic, DriverError> {
+    let mut pending = suppressed.iter().rev().collect::<Vec<_>>();
+    while let Some(panic) = pending.pop() {
+        let message = panic.message.replace('\r', "\\r").replace('\n', "\\n");
+        diagnostic = diagnostic.with_related(Related::new(
+            format!("suppressed {}: {message}", panic.code.name()),
+            source_span_from_bytecode(sources, panic.span)?,
+        )?);
+        pending.extend(panic.suppressed.iter().rev());
+    }
     Ok(diagnostic)
 }
 
@@ -2629,6 +2647,31 @@ mod tests {
                 .unwrap()
                 .contains("called from")
         );
+    }
+
+    #[test]
+    fn cleanup_panics_are_reported_as_suppressed_without_replacing_the_primary() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"fn first() {\n    panic(\"first\")\n}\n\
+              fn second() {\n    panic(\"second\")\n}\n\
+              fn main() {\n\
+                  defer first()\n\
+                  defer second()\n\
+                  panic(\"primary\")\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert_eq!(output.exit_code(), 101);
+        let diagnostic = &output.diagnostics().diagnostics()[0];
+        assert_eq!(diagnostic.code(), "P0008");
+        assert!(diagnostic.message().ends_with("primary"));
+        let json = output.diagnostics().json_lines().unwrap();
+        assert!(json.contains("suppressed explicit-panic: second"));
+        assert!(json.contains("suppressed explicit-panic: first"));
     }
 
     #[test]

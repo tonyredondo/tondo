@@ -100,6 +100,20 @@ pub fn derive_discard_capabilities(
         .collect()
 }
 
+/// Derives `Copy` for closed bytecode types from the same structural graph
+/// used by verification. The compiler uses this after monomorphization to
+/// replace a source-generic defer guard with a concrete value snapshot.
+pub fn derive_copy_capabilities(
+    program: &BytecodeProgram,
+    types: &[BytecodeTypeId],
+) -> Result<Vec<bool>, BytecodeVerificationError> {
+    let analysis = CapabilityAnalysis::new(program)?;
+    types
+        .iter()
+        .map(|ty| analysis.status(program, *ty, ClosedCapability::Copy))
+        .collect()
+}
+
 /// Derives the closed terminal status of concrete bytecode types.
 ///
 /// This is independent of source HIR metadata so malformed lowering cannot
@@ -150,6 +164,17 @@ impl ClosedCapability {
         Self::Send,
         Self::Share,
     ];
+
+    const fn exposed_by(self, capabilities: BytecodeCapabilitySet) -> bool {
+        match self {
+            Self::Copy => capabilities.copy,
+            Self::Discard => capabilities.discard,
+            Self::Equatable => capabilities.equatable,
+            Self::Key => capabilities.key,
+            Self::Send => capabilities.send,
+            Self::Share => capabilities.share,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -314,8 +339,8 @@ impl CapabilityAnalysis {
                 }
             }
             BytecodeTypeKind::GenericParameter(_) => fixed_capability(true),
-            BytecodeTypeKind::OpaqueResult { witness, .. } => {
-                dependent_capability(vec![(*witness, capability)])
+            BytecodeTypeKind::OpaqueResult { capabilities, .. } => {
+                fixed_capability(capability.exposed_by(*capabilities))
             }
             BytecodeTypeKind::Generated { .. } => generated_capability(program, ty, capability),
             BytecodeTypeKind::Cursor { mode, collection } => {
@@ -400,8 +425,8 @@ fn capability_requirement(
             BytecodeTypeKind::GenericParameter(position) => {
                 requirement.parameters.insert((*position, capability));
             }
-            BytecodeTypeKind::OpaqueResult { witness, .. } => {
-                pending.push((*witness, capability));
+            BytecodeTypeKind::OpaqueResult { capabilities, .. } => {
+                requirement.possible &= capability.exposed_by(*capabilities);
             }
             BytecodeTypeKind::Generated { .. } => {
                 let node = generated_capability(program, ty, capability);
@@ -937,6 +962,7 @@ impl Verifier<'_> {
         self.terminals
             .set(TerminalAnalysis::new(self.program)?)
             .expect("terminal analysis is initialized once");
+        self.verify_opaque_capabilities()?;
         self.verify_terminal_types()?;
         self.verify_type_formations()?;
         self.verify_callables()?;
@@ -1045,11 +1071,20 @@ impl Verifier<'_> {
                 identity,
                 arguments,
                 witness,
+                capabilities,
             } = &ty.kind
             else {
                 continue;
             };
             let context = format!("type#{index}");
+            if !capabilities.discard
+                || (capabilities.key && !(capabilities.copy && capabilities.equatable))
+            {
+                return Err(BytecodeVerificationError::new(
+                    &context,
+                    "opaque result has a non-normalized published capability set",
+                ));
+            }
             if !families.insert((identity.as_str(), arguments.as_slice())) {
                 return Err(BytecodeVerificationError::new(
                     context,
@@ -1110,6 +1145,33 @@ impl Verifier<'_> {
                     if state[dependency_index] == 0 {
                         pending.push((*dependency, false));
                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_opaque_capabilities(&self) -> Result<(), BytecodeVerificationError> {
+        for (index, ty) in self.program.types.iter().enumerate() {
+            let BytecodeTypeKind::OpaqueResult {
+                witness,
+                capabilities,
+                ..
+            } = &ty.kind
+            else {
+                continue;
+            };
+            let context = format!("type#{index}");
+            for capability in ClosedCapability::ALL {
+                if capability.exposed_by(*capabilities)
+                    && !self.capability(*witness, capability, &context)?
+                {
+                    return Err(BytecodeVerificationError::new(
+                        &context,
+                        format!(
+                            "opaque result publishes {capability:?} without a matching witness capability"
+                        ),
+                    ));
                 }
             }
         }
@@ -1252,6 +1314,7 @@ impl Verifier<'_> {
                     identity,
                     arguments,
                     witness,
+                    ..
                 } => {
                     if identity.is_empty() {
                         return Err(BytecodeVerificationError::new(
@@ -2087,15 +2150,18 @@ impl Verifier<'_> {
                         identity: left_identity,
                         arguments: left,
                         witness: left_witness,
+                        capabilities: left_capabilities,
                     },
                     BytecodeTypeKind::OpaqueResult {
                         identity: right_identity,
                         arguments: right,
                         witness: right_witness,
+                        capabilities: right_capabilities,
                     },
                 ) if left_identity == right_identity
                     && left.len() == right.len()
-                    && left_witness == right_witness =>
+                    && left_witness == right_witness
+                    && left_capabilities == right_capabilities =>
                 {
                     pending.extend(left.iter().copied().zip(right.iter().copied()));
                 }
@@ -2314,18 +2380,20 @@ impl Verifier<'_> {
                         "cleanup block manipulates a loan reservation",
                     ));
                 }
-                self.verify_instruction(function, instruction, &block_context)?;
+                self.verify_instruction(function, block.kind, instruction, &block_context)?;
             }
             self.span(function, block.terminator.span, &block_context)?;
             self.verify_terminator(function, block, &block_context)?;
         }
         self.verify_control_and_dataflow(function, &context)?;
+        self.verify_defer_flow(function, &context)?;
         Ok(())
     }
 
     fn verify_instruction(
         &self,
         function: &BytecodeFunction,
+        block_kind: BytecodeBlockKind,
         instruction: &BytecodeInstruction,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
@@ -2347,6 +2415,126 @@ impl Verifier<'_> {
                         "store destination and rvalue types differ",
                     ));
                 }
+            }
+            BytecodeInstructionKind::RegisterDefer { action, guard, .. } => {
+                if block_kind != BytecodeBlockKind::Normal {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "cleanup block registers another defer",
+                    ));
+                }
+                if let BytecodeOperationKind::Call {
+                    callee, protocol, ..
+                } = &action.kind
+                    && !self.capability(callee.ty, ClosedCapability::Copy, context)?
+                    && *protocol != BytecodeCallProtocol::CallOnce
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "a non-Copy deferred callee does not use CallOnce",
+                    ));
+                }
+                self.verify_operation(function, action, true, context)?;
+                if !self.is_scalar(action.ty, BytecodeScalarType::Unit)
+                    || !matches!(
+                        action.kind,
+                        BytecodeOperationKind::Call { .. }
+                            | BytecodeOperationKind::Assert { .. }
+                            | BytecodeOperationKind::BootstrapHostCall { .. }
+                    )
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "defer entry is not an infallible Unit invocation",
+                    ));
+                }
+                if operation_operands(action).iter().any(|operand| {
+                    matches!(
+                        operand.kind,
+                        BytecodeOperandKind::Borrow(_) | BytecodeOperandKind::Loan(_)
+                    )
+                }) {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "defer entry retains a borrowed operand",
+                    ));
+                }
+                if let BytecodeOperationKind::Call { arguments, .. } = &action.kind
+                    && arguments
+                        .iter()
+                        .any(|argument| argument.mode != BytecodeParameterMode::Value)
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "defer call retains a non-value argument mode",
+                    ));
+                }
+                let operands = operation_operands(action);
+                let mut affine = Vec::new();
+                for operand in &operands {
+                    if self.capability(operand.ty, ClosedCapability::Copy, context)? {
+                        if matches!(operand.kind, BytecodeOperandKind::Move(_)) {
+                            return Err(BytecodeVerificationError::new(
+                                context,
+                                "defer must snapshot a Copy operand instead of moving it",
+                            ));
+                        }
+                    } else {
+                        affine.push(*operand);
+                    }
+                }
+                if affine.len() > 1 || guard.is_some() != (affine.len() == 1) {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "defer entry does not have exactly one guard for its affine operand",
+                    ));
+                }
+                if let Some(guard) = guard {
+                    self.verify_place(function, guard, context)?;
+                    if !is_complete_defer_owner_place(guard) {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "registered defer guard is not one complete owner place",
+                        ));
+                    }
+                    if !matches!(
+                        &affine[0].kind,
+                        BytecodeOperandKind::Move(place) if place == guard
+                    ) {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "defer guard does not match exactly one moved invocation operand",
+                        ));
+                    }
+                }
+            }
+            BytecodeInstructionKind::RetargetDefer { from, to } => {
+                if block_kind != BytecodeBlockKind::Normal {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "cleanup block retargets a defer guard",
+                    ));
+                }
+                self.verify_place(function, from, context)?;
+                self.verify_place(function, to, context)?;
+                if from.ty != to.ty
+                    || !is_complete_defer_owner_place(from)
+                    || !(is_complete_defer_owner_place(to) || is_iterator_defer_target(to))
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "defer retarget does not preserve one complete owner place",
+                    ));
+                }
+            }
+            BytecodeInstructionKind::DisarmDefer(place) => {
+                if block_kind != BytecodeBlockKind::Normal {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "cleanup block explicitly disarms a defer guard",
+                    ));
+                }
+                self.verify_place(function, place, context)?;
             }
         }
         Ok(())
@@ -2520,6 +2708,17 @@ impl Verifier<'_> {
                         return Err(projection_error(context));
                     }
                     expected
+                }
+                BytecodeProjectionKind::IteratorSource => {
+                    let BytecodeTypeKind::Cursor { collection, .. } =
+                        self.ty(current, context)?.kind
+                    else {
+                        return Err(projection_error(context));
+                    };
+                    if collection != projection.ty {
+                        return Err(projection_error(context));
+                    }
+                    collection
                 }
                 BytecodeProjectionKind::Index { index, access } => {
                     let index = self.slot(function, *index, context)?.ty;
@@ -3679,6 +3878,7 @@ impl Verifier<'_> {
         &self,
         function: &BytecodeFunction,
         operation: &BytecodeOperation,
+        deferred: bool,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
         if operation_contains_invalid_borrow(operation) {
@@ -3776,6 +3976,7 @@ impl Verifier<'_> {
                         protocol: *protocol,
                         outcome: operation.ty,
                     },
+                    deferred,
                     context,
                 )?;
             }
@@ -3839,6 +4040,7 @@ impl Verifier<'_> {
         &self,
         bytecode_function: &BytecodeFunction,
         call: CallVerification<'_>,
+        deferred: bool,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
         let CallVerification {
@@ -3871,6 +4073,14 @@ impl Verifier<'_> {
                     self.concrete_callable_for_type(callee.ty, context)?;
                 let expected = match callable.and_then(|callable| callable.closure.as_ref()) {
                     None => Some(BytecodeCallProtocol::Call),
+                    Some(closure)
+                        if deferred
+                            && !self.capability(callee.ty, ClosedCapability::Copy, context)?
+                            && closure.protocols.call_once
+                            && !matches!(callee.kind, BytecodeOperandKind::Borrow(_)) =>
+                    {
+                        Some(BytecodeCallProtocol::CallOnce)
+                    }
                     Some(closure) if closure.protocols.call => Some(BytecodeCallProtocol::Call),
                     Some(closure)
                         if closure.protocols.call_mut
@@ -4124,7 +4334,7 @@ impl Verifier<'_> {
                 if block.kind != BytecodeBlockKind::Normal {
                     return Err(terminator_error(context));
                 }
-                self.verify_operation(function, operation, context)?;
+                self.verify_operation(function, operation, false, context)?;
                 match (destination, target) {
                     (Some(destination), Some(target)) => {
                         self.verify_place(function, destination, context)?;
@@ -4144,6 +4354,7 @@ impl Verifier<'_> {
                 state,
                 destination,
                 borrowed_source,
+                exhaustion_guard,
                 has_value,
                 exhausted,
                 unwind,
@@ -4165,8 +4376,31 @@ impl Verifier<'_> {
                         {
                             return Err(terminator_error(context));
                         }
+                        let terminal = self.terminal_status(collection, context)?
+                            == BytecodeTerminalStatus::Present;
+                        if terminal != exhaustion_guard.is_some() {
+                            return Err(terminator_error(context));
+                        }
+                        if let Some(guard) = exhaustion_guard {
+                            if has_value == exhausted {
+                                return Err(terminator_error(context));
+                            }
+                            self.verify_place(function, guard, context)?;
+                            let mut expected = state.clone();
+                            expected.ty = collection;
+                            expected.projections.push(BytecodeProjection {
+                                ty: collection,
+                                kind: BytecodeProjectionKind::IteratorSource,
+                            });
+                            if guard != &expected {
+                                return Err(terminator_error(context));
+                            }
+                        }
                     }
                     BytecodeCursorMode::Ref => {
+                        if exhaustion_guard.is_some() {
+                            return Err(terminator_error(context));
+                        }
                         let source = borrowed_source
                             .as_ref()
                             .ok_or_else(|| terminator_error(context))?;
@@ -4272,6 +4506,28 @@ impl Verifier<'_> {
                     return Err(terminator_error(context));
                 }
                 self.cleanup_target(function, *unwind, context)?;
+            }
+            BytecodeTerminatorKind::DrainDefers {
+                scopes,
+                target,
+                unwind,
+            } => {
+                if scopes.is_empty()
+                    || scopes.iter().copied().collect::<BTreeSet<_>>().len() != scopes.len()
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "defer drain has an empty or duplicate scope set",
+                    ));
+                }
+                self.edge_target(function, block.kind, *target, context)?;
+                self.cleanup_target(function, *unwind, context)?;
+                if !block.instructions.is_empty() {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "defer drain block contains ordinary instructions",
+                    ));
+                }
             }
             BytecodeTerminatorKind::Return => {
                 if block.kind != BytecodeBlockKind::Normal
@@ -4455,6 +4711,324 @@ impl Verifier<'_> {
         }
         self.verify_loan_flow(function, &reachable, context)?;
         self.verify_tag_refinements(function, &successors, &reachable, context)?;
+        Ok(())
+    }
+
+    fn verify_defer_flow(
+        &self,
+        function: &BytecodeFunction,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let registered_scopes = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter_map(|instruction| match &instruction.kind {
+                BytecodeInstructionKind::RegisterDefer { scope, .. } => Some(*scope),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        for (index, block) in function.blocks.iter().enumerate() {
+            let BytecodeTerminatorKind::DrainDefers { scopes, .. } = &block.terminator.kind else {
+                continue;
+            };
+            if scopes
+                .iter()
+                .any(|scope| !registered_scopes.contains(scope))
+            {
+                return Err(BytecodeVerificationError::new(
+                    format!("{context} block#{index}"),
+                    "defer drain references a scope with no registration",
+                ));
+            }
+        }
+        let successors = function
+            .blocks
+            .iter()
+            .map(|block| successor_edges(&block.terminator.kind))
+            .collect::<Vec<_>>();
+        let mut incoming = vec![BTreeSet::<DeferFlowState>::new(); function.blocks.len()];
+        incoming[function.entry.index() as usize].insert(DeferFlowState::default());
+        let mut queue = VecDeque::from([function.entry]);
+        let mut queued = vec![false; function.blocks.len()];
+        queued[function.entry.index() as usize] = true;
+
+        while let Some(block_id) = queue.pop_front() {
+            queued[block_id.index() as usize] = false;
+            let block = &function.blocks[block_id.index() as usize];
+            let block_context = format!("{context} block#{}", block_id.index());
+            let block_events = local_events(function, block);
+            let mut outgoing = BTreeSet::new();
+            for mut state in incoming[block_id.index() as usize].clone() {
+                self.consume_dataflow_step(context)?;
+                apply_consumed_defer_events(&mut state, &block_events, &block_context)?;
+                for (index, instruction) in block.instructions.iter().enumerate() {
+                    let instruction_context = format!("{block_context} instruction#{index}");
+                    let advances_pending = match &instruction.kind {
+                        BytecodeInstructionKind::RetargetDefer { from, .. } => state
+                            .pending_moves
+                            .contains_key(&LocalAccess::from_place(from)),
+                        BytecodeInstructionKind::DisarmDefer(place) => state
+                            .pending_moves
+                            .contains_key(&LocalAccess::from_place(place)),
+                        _ => false,
+                    };
+                    if !state.pending_moves.is_empty() && !advances_pending {
+                        return Err(BytecodeVerificationError::new(
+                            instruction_context,
+                            "guarded move is not immediately followed by its defer transition",
+                        ));
+                    }
+                    match &instruction.kind {
+                        BytecodeInstructionKind::RegisterDefer { scope, guard, .. } => {
+                            state.activate_scope(*scope, &instruction_context)?;
+                            let registration = (block_id, index);
+                            if state.registrations.insert(registration, *scope).is_some() {
+                                return Err(BytecodeVerificationError::new(
+                                    instruction_context,
+                                    "defer registration is re-executed before it is drained or disarmed",
+                                ));
+                            }
+                            if let Some(guard) = guard {
+                                let guard = LocalAccess::from_place(guard);
+                                if state
+                                    .guards
+                                    .keys()
+                                    .any(|existing| local_accesses_overlap(existing, &guard))
+                                {
+                                    return Err(BytecodeVerificationError::new(
+                                        instruction_context,
+                                        "defer registration overlaps an already-active guard",
+                                    ));
+                                }
+                                state.guards.insert(
+                                    guard,
+                                    ActiveDeferGuard {
+                                        scope: *scope,
+                                        registration,
+                                    },
+                                );
+                            } else {
+                                state.unguarded_scopes.insert(*scope);
+                            }
+                        }
+                        BytecodeInstructionKind::RetargetDefer { from, to } => {
+                            let from = LocalAccess::from_place(from);
+                            let to = LocalAccess::from_place(to);
+                            if let Some(guard) = state.guards.remove(&from) {
+                                if state.pending_moves.remove(&from)
+                                    != Some(PendingDeferTransition::Retarget)
+                                {
+                                    return Err(BytecodeVerificationError::new(
+                                        instruction_context,
+                                        "defer guard retarget is not backed by an immediate move",
+                                    ));
+                                }
+                                if state
+                                    .guards
+                                    .keys()
+                                    .any(|existing| local_accesses_overlap(existing, &to))
+                                {
+                                    return Err(BytecodeVerificationError::new(
+                                        instruction_context,
+                                        "defer guard retarget overlaps another active guard",
+                                    ));
+                                }
+                                state.guards.insert(to, guard);
+                            }
+                        }
+                        BytecodeInstructionKind::DisarmDefer(place) => {
+                            let place = LocalAccess::from_place(place);
+                            let pending = state.pending_moves.remove(&place);
+                            if let Some(guard) = state.guards.remove(&place) {
+                                if !defer_disarm_is_confirmed(
+                                    function,
+                                    block,
+                                    index,
+                                    &place,
+                                    guard.scope,
+                                    pending,
+                                ) {
+                                    return Err(BytecodeVerificationError::new(
+                                        instruction_context,
+                                        "defer guard is disarmed without an immediate consuming handoff or scope exit",
+                                    ));
+                                }
+                                state.registrations.remove(&guard.registration);
+                                state.remove_inactive_scope(guard.scope);
+                            }
+                        }
+                        BytecodeInstructionKind::Store { destination, value } => {
+                            let destination_place = destination;
+                            let destination = LocalAccess::from_place(destination_place);
+                            if state
+                                .guards
+                                .keys()
+                                .any(|guard| local_accesses_overlap(guard, &destination))
+                            {
+                                return Err(BytecodeVerificationError::new(
+                                    instruction_context,
+                                    "store overwrites an active defer guard",
+                                ));
+                            }
+                            let mut events = Vec::new();
+                            push_rvalue_events(value, &mut events);
+                            for access in events.into_iter().filter_map(|event| match event {
+                                LocalEvent::Move(access) => Some(access),
+                                _ => None,
+                            }) {
+                                let overlapping = state
+                                    .guards
+                                    .keys()
+                                    .filter(|guard| local_accesses_overlap(guard, &access))
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                if overlapping.iter().any(|guard| guard != &access) {
+                                    return Err(BytecodeVerificationError::new(
+                                        &instruction_context,
+                                        "store partially moves an active defer guard",
+                                    ));
+                                }
+                                if let Some(guard) = state.guards.get(&access) {
+                                    let transition = defer_assignment_transition(
+                                        function,
+                                        block,
+                                        destination_place,
+                                        value,
+                                        &access,
+                                        guard.scope,
+                                    )
+                                    .ok_or_else(|| {
+                                        BytecodeVerificationError::new(
+                                            &instruction_context,
+                                            "store embeds an active defer guard instead of retargeting or handing it off",
+                                        )
+                                    })?;
+                                    state.pending_moves.insert(access, transition);
+                                }
+                            }
+                        }
+                        BytecodeInstructionKind::StorageLive(slot)
+                        | BytecodeInstructionKind::StorageDead(slot) => {
+                            if state.guards.keys().any(|guard| guard.slot == *slot) {
+                                return Err(BytecodeVerificationError::new(
+                                    instruction_context,
+                                    "storage lifetime crosses an active defer guard",
+                                ));
+                            }
+                        }
+                        BytecodeInstructionKind::ReserveLoan(_)
+                        | BytecodeInstructionKind::ReleaseLoan(_) => {}
+                    }
+                }
+                if !state.pending_moves.is_empty() {
+                    return Err(BytecodeVerificationError::new(
+                        &block_context,
+                        "guarded move reaches a terminator without retarget or disarm",
+                    ));
+                }
+
+                let mut terminator_events = Vec::new();
+                match &block.terminator.kind {
+                    BytecodeTerminatorKind::BranchBool { condition, .. }
+                    | BytecodeTerminatorKind::BranchTag {
+                        value: condition, ..
+                    } => push_operand_events(condition, &mut terminator_events),
+                    BytecodeTerminatorKind::Invoke { operation, .. } => {
+                        push_operation_events(operation, &mut terminator_events);
+                    }
+                    BytecodeTerminatorKind::ValidatePlaces { replacements, .. } => {
+                        for replacement in replacements.iter().flatten() {
+                            push_operand_events(replacement, &mut terminator_events);
+                        }
+                    }
+                    BytecodeTerminatorKind::Goto { .. }
+                    | BytecodeTerminatorKind::IteratorNext { .. }
+                    | BytecodeTerminatorKind::ValidateLoan { .. }
+                    | BytecodeTerminatorKind::DrainDefers { .. }
+                    | BytecodeTerminatorKind::Return
+                    | BytecodeTerminatorKind::ResumePanic
+                    | BytecodeTerminatorKind::Unreachable => {}
+                }
+                for access in terminator_events
+                    .into_iter()
+                    .filter_map(|event| match event {
+                        LocalEvent::Move(access) => Some(access),
+                        _ => None,
+                    })
+                {
+                    if state
+                        .guards
+                        .keys()
+                        .any(|guard| local_accesses_overlap(guard, &access))
+                    {
+                        return Err(BytecodeVerificationError::new(
+                            &block_context,
+                            "terminator moves an active defer guard without disarming it",
+                        ));
+                    }
+                }
+
+                if let BytecodeTerminatorKind::DrainDefers { scopes, .. } = &block.terminator.kind {
+                    state.drain(scopes, &block_context)?;
+                }
+                if matches!(
+                    block.terminator.kind,
+                    BytecodeTerminatorKind::Return | BytecodeTerminatorKind::ResumePanic
+                ) && !state.is_empty()
+                {
+                    return Err(BytecodeVerificationError::new(
+                        &block_context,
+                        "terminal control flow abandons registered defer entries",
+                    ));
+                }
+                outgoing.insert(state);
+            }
+
+            for edge in &successors[block_id.index() as usize] {
+                let target = edge.target.index() as usize;
+                let mut changed = false;
+                for state in &outgoing {
+                    let mut state = state.clone();
+                    if let Some(destination) = &edge.writes {
+                        let destination = LocalAccess::from_place(destination);
+                        if state
+                            .guards
+                            .keys()
+                            .any(|guard| local_accesses_overlap(guard, &destination))
+                        {
+                            return Err(BytecodeVerificationError::new(
+                                &block_context,
+                                "terminator overwrites an active defer guard",
+                            ));
+                        }
+                        apply_consumed_defer_events(
+                            &mut state,
+                            &[LocalEvent::Write(destination)],
+                            &block_context,
+                        )?;
+                    }
+                    if let BytecodeTerminatorKind::IteratorNext {
+                        exhaustion_guard: Some(place),
+                        exhausted,
+                        ..
+                    } = &block.terminator.kind
+                        && edge.target == *exhausted
+                    {
+                        let place = LocalAccess::from_place(place);
+                        if let Some(guard) = state.guards.remove(&place) {
+                            state.registrations.remove(&guard.registration);
+                            state.remove_inactive_scope(guard.scope);
+                        }
+                    }
+                    changed |= incoming[target].insert(state);
+                }
+                if changed && !queued[target] {
+                    queued[target] = true;
+                    queue.push_back(edge.target);
+                }
+            }
+        }
         Ok(())
     }
 
@@ -4746,6 +5320,10 @@ impl Verifier<'_> {
                             format!("validates already-active or pending loan#{}", loan.index()),
                         ));
                     }
+                    propagate(*target, state)?;
+                    propagate(*unwind, LoanFlowState::default())?;
+                }
+                BytecodeTerminatorKind::DrainDefers { target, unwind, .. } => {
                     propagate(*target, state)?;
                     propagate(*unwind, LoanFlowState::default())?;
                 }
@@ -6120,6 +6698,51 @@ fn operation_contains_invalid_borrow(operation: &BytecodeOperation) -> bool {
     }
 }
 
+fn operation_operands(operation: &BytecodeOperation) -> Vec<&BytecodeOperand> {
+    let mut operands = Vec::new();
+    match &operation.kind {
+        BytecodeOperationKind::CheckedPrefix { operand, .. }
+        | BytecodeOperationKind::ExplicitPanic { message: operand } => operands.push(operand),
+        BytecodeOperationKind::CheckedBinary { left, right, .. }
+        | BytecodeOperationKind::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
+            operands.push(left);
+            operands.push(right);
+        }
+        BytecodeOperationKind::BuildMap { entries, .. } => {
+            for (key, value) in entries {
+                operands.push(key);
+                operands.push(value);
+            }
+        }
+        BytecodeOperationKind::Slice { base, bounds, .. } => {
+            operands.push(base);
+            operands.extend(bounds.start.iter().chain(&bounds.end).chain(&bounds.step));
+        }
+        BytecodeOperationKind::Call {
+            callee, arguments, ..
+        } => {
+            operands.push(callee);
+            operands.extend(arguments.iter().map(|argument| &argument.value));
+        }
+        BytecodeOperationKind::Assert {
+            condition,
+            message_parts,
+            ..
+        } => {
+            operands.push(condition);
+            operands.extend(message_parts.iter().map(|part| &part.value));
+        }
+        BytecodeOperationKind::BootstrapHostCall { arguments, .. } => {
+            operands.extend(arguments);
+        }
+    }
+    operands
+}
+
 fn closure_capture_place(
     function: &BytecodeFunction,
     callable: BytecodeCallableId,
@@ -6247,6 +6870,229 @@ impl LocalAccess {
     }
 }
 
+fn is_complete_defer_owner_place(place: &BytecodePlace) -> bool {
+    place.source_loan.is_none()
+        && (place.projections.is_empty()
+            || matches!(
+                place.projections.as_slice(),
+                [BytecodeProjection {
+                    kind: BytecodeProjectionKind::ClosureCapture { .. },
+                    ..
+                }]
+            ))
+}
+
+fn is_iterator_defer_target(place: &BytecodePlace) -> bool {
+    place.source_loan.is_none()
+        && matches!(
+            place.projections.as_slice(),
+            [BytecodeProjection {
+                kind: BytecodeProjectionKind::IteratorSource,
+                ..
+            }]
+        )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+struct DeferFlowState {
+    unguarded_scopes: BTreeSet<BytecodeScopeId>,
+    guards: BTreeMap<LocalAccess, ActiveDeferGuard>,
+    registrations: BTreeMap<(BytecodeBlockId, usize), BytecodeScopeId>,
+    scope_order: Vec<BytecodeScopeId>,
+    pending_moves: BTreeMap<LocalAccess, PendingDeferTransition>,
+    consumed: BTreeSet<LocalAccess>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ActiveDeferGuard {
+    scope: BytecodeScopeId,
+    registration: (BytecodeBlockId, usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PendingDeferTransition {
+    Retarget,
+    Disarm,
+}
+
+impl DeferFlowState {
+    fn scope_is_active(&self, scope: BytecodeScopeId) -> bool {
+        self.unguarded_scopes.contains(&scope)
+            || self
+                .guards
+                .values()
+                .any(|candidate| candidate.scope == scope)
+    }
+
+    fn activate_scope(
+        &mut self,
+        scope: BytecodeScopeId,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        if self.scope_is_active(scope) {
+            if self.scope_order.last() != Some(&scope) {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "defer registration re-enters an outer scope beneath active inner entries",
+                ));
+            }
+        } else {
+            self.scope_order.push(scope);
+        }
+        Ok(())
+    }
+
+    fn remove_inactive_scope(&mut self, scope: BytecodeScopeId) {
+        if !self.scope_is_active(scope) {
+            self.scope_order.retain(|candidate| *candidate != scope);
+        }
+    }
+
+    fn drain(
+        &mut self,
+        scopes: &[BytecodeScopeId],
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let selected = scopes.iter().copied().collect::<BTreeSet<_>>();
+        if let Some(first) = self
+            .scope_order
+            .iter()
+            .position(|scope| selected.contains(scope))
+            && self.scope_order[first..]
+                .iter()
+                .any(|scope| !selected.contains(scope))
+        {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "defer drain skips a still-active inner scope",
+            ));
+        }
+        self.consumed.extend(
+            self.guards.iter().filter_map(|(place, guard)| {
+                selected.contains(&guard.scope).then_some(place.clone())
+            }),
+        );
+        self.unguarded_scopes
+            .retain(|scope| !selected.contains(scope));
+        self.guards
+            .retain(|_, guard| !selected.contains(&guard.scope));
+        self.registrations
+            .retain(|_, scope| !selected.contains(scope));
+        self.scope_order.retain(|scope| !selected.contains(scope));
+        Ok(())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.unguarded_scopes.is_empty()
+            && self.guards.is_empty()
+            && self.registrations.is_empty()
+            && self.scope_order.is_empty()
+            && self.pending_moves.is_empty()
+    }
+}
+
+fn defer_assignment_transition(
+    function: &BytecodeFunction,
+    block: &BytecodeBlock,
+    destination: &BytecodePlace,
+    value: &BytecodeRvalue,
+    guard: &LocalAccess,
+    scope: BytecodeScopeId,
+) -> Option<PendingDeferTransition> {
+    let directly_retargeted = match &value.kind {
+        BytecodeRvalueKind::Use(BytecodeOperand {
+            kind: BytecodeOperandKind::Move(place),
+            ..
+        })
+        | BytecodeRvalueKind::IteratorState(BytecodeOperand {
+            kind: BytecodeOperandKind::Move(place),
+            ..
+        }) => LocalAccess::from_place(place) == *guard,
+        _ => false,
+    };
+    if directly_retargeted {
+        return Some(PendingDeferTransition::Retarget);
+    }
+
+    let exits_scope = block_exits_defer_scope(function, block, scope);
+    let return_root =
+        destination.slot == function.return_slot && destination.projections.is_empty();
+    let confirmed_handoff = matches!(&value.kind, BytecodeRvalueKind::Coerce { .. })
+        || (return_root
+            && matches!(
+                &value.kind,
+                BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::ResultOk | BytecodeAggregateKind::ResultErr,
+                    ..
+                }
+            ));
+    (exits_scope && confirmed_handoff).then_some(PendingDeferTransition::Disarm)
+}
+
+fn defer_disarm_is_confirmed(
+    function: &BytecodeFunction,
+    block: &BytecodeBlock,
+    instruction: usize,
+    place: &LocalAccess,
+    scope: BytecodeScopeId,
+    pending: Option<PendingDeferTransition>,
+) -> bool {
+    if block.instructions[instruction + 1..]
+        .iter()
+        .any(|instruction| {
+            !matches!(
+                instruction.kind,
+                BytecodeInstructionKind::ReleaseLoan(_) | BytecodeInstructionKind::DisarmDefer(_)
+            )
+        })
+    {
+        return false;
+    }
+    match pending {
+        Some(PendingDeferTransition::Retarget) => false,
+        Some(PendingDeferTransition::Disarm) => block_exits_defer_scope(function, block, scope),
+        None => {
+            terminator_moves_defer_guard(&block.terminator.kind, place)
+                || block_exits_defer_scope(function, block, scope)
+        }
+    }
+}
+
+fn terminator_moves_defer_guard(terminator: &BytecodeTerminatorKind, guard: &LocalAccess) -> bool {
+    let BytecodeTerminatorKind::Invoke { operation, .. } = terminator else {
+        return false;
+    };
+    operation_operands(operation).into_iter().any(|operand| {
+        matches!(
+            &operand.kind,
+            BytecodeOperandKind::Move(place) if LocalAccess::from_place(place) == *guard
+        )
+    })
+}
+
+fn block_exits_defer_scope(
+    function: &BytecodeFunction,
+    block: &BytecodeBlock,
+    scope: BytecodeScopeId,
+) -> bool {
+    let drains = |terminator: &BytecodeTerminatorKind| {
+        matches!(
+            terminator,
+            BytecodeTerminatorKind::DrainDefers { scopes, .. } if scopes.contains(&scope)
+        )
+    };
+    if drains(&block.terminator.kind) {
+        return true;
+    }
+    let BytecodeTerminatorKind::Goto { target } = &block.terminator.kind else {
+        return false;
+    };
+    function
+        .blocks
+        .get(target.index() as usize)
+        .is_some_and(|target| drains(&target.terminator.kind))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum MovePathComponent {
     ClosureCapture(BytecodeCallableId, u32),
@@ -6267,6 +7113,7 @@ enum MovePathComponent {
     IteratorElement {
         index: BytecodeSlotId,
     },
+    IteratorSource,
     Index {
         index: BytecodeSlotId,
         access: BytecodeIndexAccess,
@@ -6305,6 +7152,7 @@ impl MovePathComponent {
             BytecodeProjectionKind::IteratorElement { index } => {
                 Self::IteratorElement { index: *index }
             }
+            BytecodeProjectionKind::IteratorSource => Self::IteratorSource,
             BytecodeProjectionKind::Index { index, access } => Self::Index {
                 index: *index,
                 access: *access,
@@ -6428,11 +7276,19 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
                 push_destination_events(destination, &mut local);
                 events.extend(local.into_iter().map(LoanEvent::Local));
             }
+            BytecodeInstructionKind::RegisterDefer { action, guard, .. } => {
+                let mut local = Vec::new();
+                push_defer_operation_events(action, guard.as_ref(), &mut local);
+                events.extend(local.into_iter().map(LoanEvent::Local));
+            }
+            BytecodeInstructionKind::RetargetDefer { .. }
+            | BytecodeInstructionKind::DisarmDefer(_) => {}
         }
     }
     let mut local = Vec::new();
     match &block.terminator.kind {
         BytecodeTerminatorKind::Goto { .. }
+        | BytecodeTerminatorKind::DrainDefers { .. }
         | BytecodeTerminatorKind::ResumePanic
         | BytecodeTerminatorKind::Unreachable => {}
         BytecodeTerminatorKind::BranchBool { condition, .. } => {
@@ -6584,7 +7440,8 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
             edge(*unwind),
         ],
         BytecodeTerminatorKind::ValidatePlaces { target, unwind, .. }
-        | BytecodeTerminatorKind::ValidateLoan { target, unwind, .. } => {
+        | BytecodeTerminatorKind::ValidateLoan { target, unwind, .. }
+        | BytecodeTerminatorKind::DrainDefers { target, unwind, .. } => {
             vec![edge(*target), edge(*unwind)]
         }
         BytecodeTerminatorKind::Return
@@ -6694,6 +7551,79 @@ fn move_paths_overlap(left: &[MovePathComponent], right: &[MovePathComponent]) -
         .all(|(left, right)| !move_path_components_are_disjoint(left, right))
 }
 
+fn local_accesses_overlap(left: &LocalAccess, right: &LocalAccess) -> bool {
+    left.slot == right.slot && move_paths_overlap(&left.path, &right.path)
+}
+
+fn local_access_contains(outer: &LocalAccess, inner: &LocalAccess) -> bool {
+    outer.slot == inner.slot
+        && outer.source_loan == inner.source_loan
+        && outer.path.len() <= inner.path.len()
+        && outer
+            .path
+            .iter()
+            .zip(&inner.path)
+            .all(|(left, right)| left == right)
+}
+
+fn apply_consumed_defer_events(
+    state: &mut DeferFlowState,
+    events: &[LocalEvent],
+    context: &str,
+) -> Result<(), BytecodeVerificationError> {
+    for event in events {
+        match event {
+            LocalEvent::Read(access) | LocalEvent::Resolve(access) | LocalEvent::Move(access) => {
+                if state
+                    .consumed
+                    .iter()
+                    .any(|consumed| local_accesses_overlap(consumed, access))
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "accesses an owner already consumed by a deferred action",
+                    ));
+                }
+            }
+            LocalEvent::WriteAccess(access) => {
+                if state.consumed.iter().any(|consumed| {
+                    local_accesses_overlap(consumed, access)
+                        && !local_access_contains(access, consumed)
+                }) {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "resolves a partial write through an owner consumed by a deferred action",
+                    ));
+                }
+            }
+            LocalEvent::Write(access) => {
+                let overlapping = state
+                    .consumed
+                    .iter()
+                    .filter(|consumed| local_accesses_overlap(consumed, access))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if overlapping
+                    .iter()
+                    .any(|consumed| !local_access_contains(access, consumed))
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "partially reinitializes an owner consumed by a deferred action",
+                    ));
+                }
+                state
+                    .consumed
+                    .retain(|consumed| !local_access_contains(access, consumed));
+            }
+            LocalEvent::StorageLive(slot) | LocalEvent::StorageDead(slot) => {
+                state.consumed.retain(|consumed| consumed.slot != *slot);
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn loan_paths_overlap(
     left: &[MovePathComponent],
@@ -6775,6 +7705,7 @@ fn move_path_runtime_inputs(
             MovePathComponent::IteratorElement { index } => [Some(*index), None, None],
             MovePathComponent::Slice { start, end, step } => [*start, *end, *step],
             MovePathComponent::ClosureCapture(_, _)
+            | MovePathComponent::IteratorSource
             | MovePathComponent::Field(_)
             | MovePathComponent::TupleField(_)
             | MovePathComponent::NewtypeValue
@@ -6861,6 +7792,7 @@ fn collection_region(
             }))
         }
         MovePathComponent::ClosureCapture(_, _)
+        | MovePathComponent::IteratorSource
         | MovePathComponent::Field(_)
         | MovePathComponent::TupleField(_)
         | MovePathComponent::NewtypeValue
@@ -7057,6 +7989,7 @@ fn static_integer_slots(
             }
             | BytecodeTerminatorKind::ValidatePlaces { .. }
             | BytecodeTerminatorKind::ValidateLoan { .. }
+            | BytecodeTerminatorKind::DrainDefers { .. }
             | BytecodeTerminatorKind::Return
             | BytecodeTerminatorKind::ResumePanic
             | BytecodeTerminatorKind::Unreachable => {}
@@ -7218,10 +8151,16 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
                 push_rvalue_events(value, &mut events);
                 push_destination_events(destination, &mut events);
             }
+            BytecodeInstructionKind::RegisterDefer { action, guard, .. } => {
+                push_defer_operation_events(action, guard.as_ref(), &mut events);
+            }
+            BytecodeInstructionKind::RetargetDefer { .. }
+            | BytecodeInstructionKind::DisarmDefer(_) => {}
         }
     }
     match &block.terminator.kind {
         BytecodeTerminatorKind::Goto { .. }
+        | BytecodeTerminatorKind::DrainDefers { .. }
         | BytecodeTerminatorKind::ResumePanic
         | BytecodeTerminatorKind::Unreachable => {}
         BytecodeTerminatorKind::BranchBool { condition, .. } => {
@@ -7286,15 +8225,21 @@ fn tag_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<TagEven
             BytecodeInstructionKind::StorageLive(_)
             | BytecodeInstructionKind::StorageDead(_)
             | BytecodeInstructionKind::ReserveLoan(_)
-            | BytecodeInstructionKind::ReleaseLoan(_) => {}
+            | BytecodeInstructionKind::ReleaseLoan(_)
+            | BytecodeInstructionKind::RetargetDefer { .. }
+            | BytecodeInstructionKind::DisarmDefer(_) => {}
             BytecodeInstructionKind::Store { destination, value } => {
                 push_tag_rvalue(function, value, &mut events);
                 push_tag_place(function, destination, true, &mut events);
+            }
+            BytecodeInstructionKind::RegisterDefer { action, .. } => {
+                push_tag_operation(function, action, &mut events);
             }
         }
     }
     match &block.terminator.kind {
         BytecodeTerminatorKind::Goto { .. }
+        | BytecodeTerminatorKind::DrainDefers { .. }
         | BytecodeTerminatorKind::Return
         | BytecodeTerminatorKind::ResumePanic
         | BytecodeTerminatorKind::Unreachable => {}
@@ -7472,6 +8417,7 @@ fn push_tag_place(
             }
             BytecodeProjectionKind::UnionValue(member) => Some(BytecodeTag::Union(member)),
             BytecodeProjectionKind::ClosureCapture { .. }
+            | BytecodeProjectionKind::IteratorSource
             | BytecodeProjectionKind::Field(_)
             | BytecodeProjectionKind::TupleField(_)
             | BytecodeProjectionKind::NewtypeValue
@@ -7648,6 +8594,22 @@ fn push_operation_events(operation: &BytecodeOperation, events: &mut Vec<LocalEv
     }
 }
 
+fn push_defer_operation_events(
+    operation: &BytecodeOperation,
+    guard: Option<&BytecodePlace>,
+    events: &mut Vec<LocalEvent>,
+) {
+    for operand in operation_operands(operation) {
+        if let (Some(guard), BytecodeOperandKind::Move(place)) = (guard, &operand.kind)
+            && place == guard
+        {
+            push_resolve_place_events(place, events);
+        } else {
+            push_operand_events(operand, events);
+        }
+    }
+}
+
 fn push_operand_events(operand: &BytecodeOperand, events: &mut Vec<LocalEvent>) {
     match &operand.kind {
         BytecodeOperandKind::Move(place) => {
@@ -7718,6 +8680,7 @@ fn push_projection_index_events(place: &BytecodePlace, events: &mut Vec<LocalEve
                 }));
             }
             BytecodeProjectionKind::ClosureCapture { .. }
+            | BytecodeProjectionKind::IteratorSource
             | BytecodeProjectionKind::Field(_)
             | BytecodeProjectionKind::TupleField(_)
             | BytecodeProjectionKind::NewtypeValue
@@ -7808,6 +8771,10 @@ mod tests {
                         identity: "test::opaque".into(),
                         arguments: Vec::new(),
                         witness: if opaque_witness_terminal { array } else { int },
+                        capabilities: BytecodeCapabilitySet {
+                            discard: true,
+                            ..BytecodeCapabilitySet::default()
+                        },
                     },
                 },
             ],

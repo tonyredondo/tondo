@@ -4,8 +4,8 @@ use tondo_vm::bytecode as bc;
 
 use super::{BytecodeError, BytecodeLoweringLimits};
 use crate::hir::{
-    CapabilityAnalysis, CapabilityAssumptions, HirCallProtocol, HirCallableId, HirClosureId,
-    HirConstantValue, HirConstantValueKind, HirConstantVariantValue, HirNominalShape,
+    CapabilityAnalysis, CapabilityAssumptions, HirCallProtocol, HirCallableId, HirCapability,
+    HirClosureId, HirConstantValue, HirConstantValueKind, HirConstantVariantValue, HirNominalShape,
     HirPreludeTraitMethod, HirProgram, HirTraitConstructor, HirTraitMethodKey,
     HirTypeDeclarationKind, HirVariantPayload, TraitQuery, TraitSelectionError,
     analyze_closure_captures, select_implementation,
@@ -171,6 +171,8 @@ pub fn lower_to_bytecode(
         &callable_ids,
         &mut program,
     )?;
+    specialize_defer_guards(&mut program)?;
+    specialize_iterator_exhaustion_guards(&mut program)?;
     match bc::verify_bytecode_with_limits(
         &program,
         bc::BytecodeVerificationLimits {
@@ -183,6 +185,185 @@ pub fn lower_to_bytecode(
         }),
         Err(error) => Err(BytecodeError::Invariant(error)),
     }
+}
+
+fn specialize_defer_guards(program: &mut bc::BytecodeProgram) -> Result<(), BytecodeError> {
+    let guard_types = program
+        .functions
+        .iter()
+        .flat_map(|body| {
+            body.blocks.iter().flat_map(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .filter_map(|instruction| match &instruction.kind {
+                        bc::BytecodeInstructionKind::RegisterDefer {
+                            guard: Some(guard), ..
+                        } => Some(guard.ty),
+                        _ => None,
+                    })
+            })
+        })
+        .collect::<Vec<_>>();
+    let copy =
+        bc::derive_copy_capabilities(program, &guard_types).map_err(BytecodeError::Invariant)?;
+    let closed_copy_types = guard_types
+        .into_iter()
+        .zip(copy)
+        .filter_map(|(ty, copy)| copy.then_some(ty))
+        .collect::<BTreeSet<_>>();
+    if closed_copy_types.is_empty() {
+        return Ok(());
+    }
+
+    for body in &mut program.functions {
+        let copy_guard_types = body
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter_map(|instruction| match &instruction.kind {
+                bc::BytecodeInstructionKind::RegisterDefer {
+                    guard: Some(guard), ..
+                } if closed_copy_types.contains(&guard.ty) => Some(guard.ty),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        if copy_guard_types.is_empty() {
+            continue;
+        }
+        for block in &mut body.blocks {
+            for instruction in &mut block.instructions {
+                let bc::BytecodeInstructionKind::RegisterDefer {
+                    action,
+                    guard: Some(guard),
+                    ..
+                } = &mut instruction.kind
+                else {
+                    continue;
+                };
+                if !copy_guard_types.contains(&guard.ty) {
+                    continue;
+                }
+                let guard = guard.clone();
+                specialize_defer_snapshot(action, &guard)?;
+                if let bc::BytecodeInstructionKind::RegisterDefer { guard, .. } =
+                    &mut instruction.kind
+                {
+                    *guard = None;
+                }
+            }
+            block
+                .instructions
+                .retain(|instruction| match &instruction.kind {
+                    bc::BytecodeInstructionKind::RetargetDefer { from, .. } => {
+                        !copy_guard_types.contains(&from.ty)
+                    }
+                    bc::BytecodeInstructionKind::DisarmDefer(place) => {
+                        !copy_guard_types.contains(&place.ty)
+                    }
+                    _ => true,
+                });
+        }
+    }
+    Ok(())
+}
+
+fn specialize_defer_snapshot(
+    action: &mut bc::BytecodeOperation,
+    guard: &bc::BytecodePlace,
+) -> Result<(), BytecodeError> {
+    fn rewrite(operand: &mut bc::BytecodeOperand, guard: &bc::BytecodePlace) -> bool {
+        let bc::BytecodeOperandKind::Move(place) = &operand.kind else {
+            return false;
+        };
+        if place != guard {
+            return false;
+        }
+        operand.kind = bc::BytecodeOperandKind::Copy(place.clone());
+        true
+    }
+
+    let mut rewritten = 0usize;
+    match &mut action.kind {
+        bc::BytecodeOperationKind::Call {
+            callee, arguments, ..
+        } => {
+            rewritten += usize::from(rewrite(callee, guard));
+            for argument in arguments {
+                rewritten += usize::from(rewrite(&mut argument.value, guard));
+            }
+        }
+        bc::BytecodeOperationKind::Assert {
+            condition,
+            message_parts,
+            ..
+        } => {
+            rewritten += usize::from(rewrite(condition, guard));
+            for part in message_parts {
+                rewritten += usize::from(rewrite(&mut part.value, guard));
+            }
+        }
+        bc::BytecodeOperationKind::BootstrapHostCall { arguments, .. } => {
+            for operand in arguments {
+                rewritten += usize::from(rewrite(operand, guard));
+            }
+        }
+        _ => {}
+    }
+    if rewritten != 1 {
+        return Err(BytecodeError::construction(
+            "defer specialization",
+            "concrete Copy guard does not match exactly one moved invocation operand",
+        ));
+    }
+    Ok(())
+}
+
+fn specialize_iterator_exhaustion_guards(
+    program: &mut bc::BytecodeProgram,
+) -> Result<(), BytecodeError> {
+    let sites = program
+        .functions
+        .iter()
+        .enumerate()
+        .flat_map(|(function, body)| {
+            body.blocks
+                .iter()
+                .enumerate()
+                .filter_map(move |(block, basic_block)| {
+                    let bc::BytecodeTerminatorKind::IteratorNext {
+                        exhaustion_guard: Some(guard),
+                        ..
+                    } = &basic_block.terminator.kind
+                    else {
+                        return None;
+                    };
+                    Some((function, block, guard.ty))
+                })
+        })
+        .collect::<Vec<_>>();
+    let roots = sites.iter().map(|(_, _, ty)| *ty).collect::<Vec<_>>();
+    let statuses =
+        bc::derive_terminal_statuses(program, &roots).map_err(BytecodeError::Invariant)?;
+    for ((function, block, _), status) in sites.into_iter().zip(statuses) {
+        let bc::BytecodeTerminatorKind::IteratorNext {
+            exhaustion_guard, ..
+        } = &mut program.functions[function].blocks[block].terminator.kind
+        else {
+            unreachable!("recorded iterator site remains an iterator terminator")
+        };
+        match status {
+            bc::BytecodeTerminalStatus::Present => {}
+            bc::BytecodeTerminalStatus::Absent => *exhaustion_guard = None,
+            bc::BytecodeTerminalStatus::Potential => {
+                return Err(BytecodeError::construction(
+                    "iterator exhaustion",
+                    "monomorphization left terminal ownership unresolved",
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn specialize_closure_call_once(
@@ -1224,7 +1405,7 @@ impl TypeCatalog {
             opaque_witnesses,
         };
         for ty in seeds {
-            catalog.types.push(catalog.lower_type(interner, ty)?);
+            catalog.types.push(catalog.lower_type(interner, hir, ty)?);
         }
         Ok(catalog)
     }
@@ -1238,6 +1419,7 @@ impl TypeCatalog {
     fn lower_type(
         &self,
         interner: &TypeInterner,
+        hir: &HirProgram,
         ty: TypeId,
     ) -> Result<bc::BytecodeType, BytecodeError> {
         let name = interner.canonical(ty).map_err(|error| {
@@ -1294,6 +1476,14 @@ impl TypeCatalog {
                         "opaque type is missing its witness mapping",
                     )
                 })?)?,
+                capabilities: bc::BytecodeCapabilitySet {
+                    copy: hir.opaque_exposes_capability(identity, HirCapability::Copy),
+                    discard: hir.opaque_exposes_capability(identity, HirCapability::Discard),
+                    equatable: hir.opaque_exposes_capability(identity, HirCapability::Equatable),
+                    key: hir.opaque_exposes_capability(identity, HirCapability::Key),
+                    send: hir.opaque_exposes_capability(identity, HirCapability::Send),
+                    share: hir.opaque_exposes_capability(identity, HirCapability::Share),
+                },
             },
             TypeKind::Generated { arguments, .. } => bc::BytecodeTypeKind::Generated {
                 identity: name.clone(),
@@ -1550,6 +1740,17 @@ fn collect_function_types(function: &MirFunction, types: &mut BTreeSet<TypeId>) 
                     collect_place_types(destination, types);
                     collect_rvalue_types(value, types);
                 }
+                MirStatementKind::RegisterDefer { action, guard, .. } => {
+                    collect_operation_types(action, types);
+                    if let Some(guard) = guard {
+                        collect_place_types(guard, types);
+                    }
+                }
+                MirStatementKind::RetargetDefer { from, to } => {
+                    collect_place_types(from, types);
+                    collect_place_types(to, types);
+                }
+                MirStatementKind::DisarmDefer(place) => collect_place_types(place, types),
             }
         }
         collect_terminator_types(block.terminator(), types);
@@ -1688,6 +1889,7 @@ fn collect_terminator_types(terminator: &MirTerminator, types: &mut BTreeSet<Typ
     match terminator.kind() {
         MirTerminatorKind::Goto { .. }
         | MirTerminatorKind::ValidateLoan { .. }
+        | MirTerminatorKind::DrainDefers { .. }
         | MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => {}
@@ -1714,12 +1916,16 @@ fn collect_terminator_types(terminator: &MirTerminator, types: &mut BTreeSet<Typ
             state,
             destination,
             borrowed_source,
+            exhaustion_guard,
             ..
         } => {
             collect_place_types(state, types);
             collect_place_types(destination, types);
             if let Some(source) = borrowed_source {
                 collect_place_types(source, types);
+            }
+            if let Some(guard) = exhaustion_guard {
+                collect_place_types(guard, types);
             }
         }
         MirTerminatorKind::ValidatePlaces {
@@ -1740,8 +1946,19 @@ fn collect_terminator_types(terminator: &MirTerminator, types: &mut BTreeSet<Typ
 fn collect_function_references(function: &MirFunction, references: &mut Vec<FunctionReference>) {
     for block in function.blocks() {
         for statement in block.statements() {
-            if let MirStatementKind::Assign { value, .. } = statement.kind() {
-                collect_rvalue_function_references(value, references);
+            match statement.kind() {
+                MirStatementKind::Assign { value, .. } => {
+                    collect_rvalue_function_references(value, references);
+                }
+                MirStatementKind::RegisterDefer { action, .. } => {
+                    collect_operation_function_references(action, references);
+                }
+                MirStatementKind::StorageLive(_)
+                | MirStatementKind::StorageDead(_)
+                | MirStatementKind::ReserveLoan(_)
+                | MirStatementKind::ReleaseLoan(_)
+                | MirStatementKind::RetargetDefer { .. }
+                | MirStatementKind::DisarmDefer(_) => {}
             }
         }
         collect_terminator_function_references(block.terminator(), references);
@@ -1888,7 +2105,8 @@ fn collect_terminator_function_references(
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable
         | MirTerminatorKind::IteratorNext { .. }
-        | MirTerminatorKind::ValidateLoan { .. } => {}
+        | MirTerminatorKind::ValidateLoan { .. }
+        | MirTerminatorKind::DrainDefers { .. } => {}
         MirTerminatorKind::SwitchBool { condition, .. } => {
             collect_operand_function_references(condition, references);
         }
@@ -2432,6 +2650,19 @@ fn lower_function(
                     collect_place_types(destination, &mut function_types);
                     collect_rvalue_types(value, &mut function_types);
                 }
+                MirStatementKind::RegisterDefer { action, guard, .. } => {
+                    collect_operation_types(action, &mut function_types);
+                    if let Some(guard) = guard {
+                        collect_place_types(guard, &mut function_types);
+                    }
+                }
+                MirStatementKind::RetargetDefer { from, to } => {
+                    collect_place_types(from, &mut function_types);
+                    collect_place_types(to, &mut function_types);
+                }
+                MirStatementKind::DisarmDefer(place) => {
+                    collect_place_types(place, &mut function_types);
+                }
             }
         }
         collect_terminator_types(block.terminator(), &mut function_types);
@@ -2575,6 +2806,27 @@ fn lower_statement(
             destination: lower_place(destination, context, type_map)?,
             value: lower_rvalue(value, context, type_map)?,
         },
+        MirStatementKind::RegisterDefer {
+            scope,
+            action,
+            guard,
+        } => bc::BytecodeInstructionKind::RegisterDefer {
+            scope: bc::BytecodeScopeId::new(scope.index()),
+            action: lower_operation(action, true, context, type_map)?,
+            guard: guard
+                .as_ref()
+                .map(|place| lower_place(place, context, type_map))
+                .transpose()?,
+        },
+        MirStatementKind::RetargetDefer { from, to } => {
+            bc::BytecodeInstructionKind::RetargetDefer {
+                from: lower_place(from, context, type_map)?,
+                to: lower_place(to, context, type_map)?,
+            }
+        }
+        MirStatementKind::DisarmDefer(place) => {
+            bc::BytecodeInstructionKind::DisarmDefer(lower_place(place, context, type_map)?)
+        }
     };
     Ok(bc::BytecodeInstruction {
         span: span_id(span_ids, statement.span())?,
@@ -2624,7 +2876,7 @@ fn lower_terminator(
             target,
             unwind,
         } => bc::BytecodeTerminatorKind::Invoke {
-            operation: lower_operation(operation, context, type_map)?,
+            operation: lower_operation(operation, false, context, type_map)?,
             destination: destination
                 .as_ref()
                 .map(|place| lower_place(place, context, type_map))
@@ -2636,6 +2888,7 @@ fn lower_terminator(
             state,
             destination,
             borrowed_source,
+            exhaustion_guard,
             has_value,
             exhausted,
             unwind,
@@ -2643,6 +2896,10 @@ fn lower_terminator(
             state: lower_place(state, context, type_map)?,
             destination: lower_place(destination, context, type_map)?,
             borrowed_source: borrowed_source
+                .as_ref()
+                .map(|place| lower_place(place, context, type_map))
+                .transpose()?,
+            exhaustion_guard: exhaustion_guard
                 .as_ref()
                 .map(|place| lower_place(place, context, type_map))
                 .transpose()?,
@@ -2694,6 +2951,18 @@ fn lower_terminator(
             against: against
                 .iter()
                 .map(|loan| bc::BytecodeLoanId::new(loan.index()))
+                .collect(),
+            target: block_id(*target),
+            unwind: block_id(*unwind),
+        },
+        MirTerminatorKind::DrainDefers {
+            scopes,
+            target,
+            unwind,
+        } => bc::BytecodeTerminatorKind::DrainDefers {
+            scopes: scopes
+                .iter()
+                .map(|scope| bc::BytecodeScopeId::new(scope.index()))
                 .collect(),
             target: block_id(*target),
             unwind: block_id(*unwind),
@@ -2774,6 +3043,7 @@ fn lower_projection(
                 index: bc::BytecodeSlotId::new(index.index()),
             }
         }
+        MirProjectionKind::IteratorSource => bc::BytecodeProjectionKind::IteratorSource,
         MirProjectionKind::Index { index, access } => bc::BytecodeProjectionKind::Index {
             index: bc::BytecodeSlotId::new(index.index()),
             access: index_access(*access),
@@ -3033,6 +3303,7 @@ fn lower_aggregate(
 
 fn lower_operation(
     operation: &MirOperation,
+    deferred: bool,
     context: &FunctionLoweringContext<'_>,
     type_map: &BTreeMap<TypeId, TypeId>,
 ) -> Result<bc::BytecodeOperation, BytecodeError> {
@@ -3101,7 +3372,7 @@ fn lower_operation(
             protocol,
         } => {
             let callee = operand(callee)?;
-            let protocol = normalized_call_protocol(*protocol, &callee, context)?;
+            let protocol = normalized_call_protocol(*protocol, &callee, deferred, context)?;
             bc::BytecodeOperationKind::Call {
                 callee,
                 arguments: arguments
@@ -3156,8 +3427,10 @@ fn lower_operation(
 fn normalized_call_protocol(
     source: HirCallProtocol,
     callee: &bc::BytecodeOperand,
+    deferred: bool,
     context: &FunctionLoweringContext<'_>,
 ) -> Result<bc::BytecodeCallProtocol, BytecodeError> {
+    let source = call_protocol(source);
     let concrete = match &context
         .catalog
         .types
@@ -3176,7 +3449,13 @@ fn normalized_call_protocol(
                 ConcreteCallable::Function => bc::BytecodeCallProtocol::Call,
                 ConcreteCallable::Closure(closure) => {
                     let borrowed = matches!(callee.kind, bc::BytecodeOperandKind::Borrow(_));
-                    if closure.protocols.call {
+                    if deferred
+                        && source == bc::BytecodeCallProtocol::CallOnce
+                        && closure.protocols.call_once
+                        && !borrowed
+                    {
+                        bc::BytecodeCallProtocol::CallOnce
+                    } else if closure.protocols.call {
                         bc::BytecodeCallProtocol::Call
                     } else if closure.protocols.call_mut && borrowed {
                         bc::BytecodeCallProtocol::CallMut
@@ -3198,7 +3477,6 @@ fn normalized_call_protocol(
             ));
         }
     };
-    let source = call_protocol(source);
     let valid_specialization = matches!(
         (source, concrete),
         (
@@ -7199,6 +7477,1008 @@ mod tests {
     }
 
     #[test]
+    fn runtime_executes_defer_lifo_on_normal_and_abrupt_scope_exits() {
+        #[derive(Default)]
+        struct RecordingHost {
+            output: String,
+        }
+
+        impl VmHost for RecordingHost {
+            fn invoke(
+                &mut self,
+                name: &str,
+                arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                assert_eq!(name, "std.console.print");
+                let [RuntimeValue::String(text)] = arguments else {
+                    panic!("console print must receive one String")
+                };
+                self.output.push_str(text);
+                Ok(RuntimeValue::Unit)
+            }
+        }
+
+        fn run(program: &bc::BytecodeProgram, name: &str, host: &mut RecordingHost) -> VmOutcome {
+            let entry = function_id(program, name);
+            execute(program, entry, host)
+                .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(program)))
+                .outcome
+        }
+
+        let program = lowered(
+            "import std.console\n\
+             fn emit(value: String) {\n\
+                 console.print(value)\n\
+             }\n\
+             fn hidden(value: Int): impl Discard { value }\n\
+             fn consume[T: Discard](value: T) {\n\
+                 emit(\"guard\")\n\
+             }\n\
+             fn normal() {\n\
+                 var value = \"captured\"\n\
+                 defer emit(\"outer-first\")\n\
+                 defer emit(value)\n\
+                 value = \"changed\"\n\
+                 var blockValue = \"block-captured\"\n\
+                 defer {\n\
+                     emit(blockValue)\n\
+                 }\n\
+                 blockValue = \"block-changed\"\n\
+                 {\n\
+                     defer emit(\"inner\")\n\
+                     emit(\"body\")\n\
+                 }\n\
+             }\n\
+             fn guardMove() {\n\
+                 let owner = hidden(1)\n\
+                 defer consume(owner)\n\
+                 let moved = owner\n\
+             }\n\
+             fn guardTemporary() {\n\
+                 defer consume(hidden(2))\n\
+             }\n\
+             fn guardConsume() {\n\
+                 let owner = hidden(3)\n\
+                 defer consume(owner)\n\
+                 consume(owner)\n\
+             }\n\
+             fn handoff(): impl Discard {\n\
+                 {\n\
+                     let owner = hidden(4)\n\
+                     defer consume(owner)\n\
+                     owner\n\
+                 }\n\
+             }\n\
+             fn guardHandoff() {\n\
+                 _ = handoff()\n\
+             }\n\
+             fn rootHandoff(): impl Discard {\n\
+                 let owner = hidden(5)\n\
+                 defer consume(owner)\n\
+                 owner\n\
+             }\n\
+             fn guardRootHandoff() {\n\
+                 _ = rootHandoff()\n\
+             }\n\
+             fn failOwner[T: Discard](owner: T): Unit ! T {\n\
+                 defer consume(owner)\n\
+                 fail owner\n\
+             }\n\
+             fn guardFailHandoff() {\n\
+                 _ = failOwner(hidden(6))\n\
+             }\n\
+             fn earlyReturn() {\n\
+                 defer emit(\"return\")\n\
+                 return\n\
+             }\n\
+             fn failure(): Unit ! String {\n\
+                 defer emit(\"fail\")\n\
+                 fail \"bad\"\n\
+             }\n\
+             fn propagate(): Unit ! String {\n\
+                 defer emit(\"question\")\n\
+                 failure()?\n\
+             }\n\
+             fn loops() {\n\
+                 var index = 0\n\
+                 for index < 3 {\n\
+                     defer emit(\"loop\")\n\
+                     index += 1\n\
+                     if index == 1 {\n\
+                         continue\n\
+                     }\n\
+                     if index == 2 {\n\
+                         break\n\
+                     }\n\
+                 }\n\
+             }\n\
+             fn explode() {\n\
+                 defer emit(\"panic\")\n\
+                 panic(\"primary\")\n\
+             }\n\
+             fn consumeInt(value: Int) {\n\
+                 _ = value\n\
+             }\n\
+             fn registrationPanic() {\n\
+                 defer emit(\"outer\")\n\
+                 defer consumeInt(panic(\"registration\"))\n\
+             }\n",
+        );
+        let mut host = RecordingHost::default();
+
+        assert_eq!(
+            run(&program, "normal", &mut host),
+            VmOutcome::Returned(RuntimeValue::Unit)
+        );
+        assert_eq!(host.output, "bodyinnerblock-capturedcapturedouter-first");
+
+        host.output.clear();
+        assert_eq!(
+            run(&program, "guardMove", &mut host),
+            VmOutcome::Returned(RuntimeValue::Unit)
+        );
+        assert_eq!(host.output, "guard");
+
+        host.output.clear();
+        assert_eq!(
+            run(&program, "guardTemporary", &mut host),
+            VmOutcome::Returned(RuntimeValue::Unit)
+        );
+        assert_eq!(host.output, "guard");
+
+        host.output.clear();
+        assert_eq!(
+            run(&program, "guardConsume", &mut host),
+            VmOutcome::Returned(RuntimeValue::Unit)
+        );
+        assert_eq!(host.output, "guard");
+
+        host.output.clear();
+        assert_eq!(
+            run(&program, "guardHandoff", &mut host),
+            VmOutcome::Returned(RuntimeValue::Unit)
+        );
+        assert_eq!(host.output, "");
+
+        host.output.clear();
+        assert_eq!(
+            run(&program, "guardRootHandoff", &mut host),
+            VmOutcome::Returned(RuntimeValue::Unit)
+        );
+        assert_eq!(host.output, "");
+
+        host.output.clear();
+        assert_eq!(
+            run(&program, "guardFailHandoff", &mut host),
+            VmOutcome::Returned(RuntimeValue::Unit)
+        );
+        assert_eq!(host.output, "");
+
+        host.output.clear();
+        assert_eq!(
+            run(&program, "earlyReturn", &mut host),
+            VmOutcome::Returned(RuntimeValue::Unit)
+        );
+        assert_eq!(host.output, "return");
+
+        host.output.clear();
+        assert_eq!(
+            run(&program, "failure", &mut host),
+            VmOutcome::Returned(RuntimeValue::ResultErr(Box::new(RuntimeValue::String(
+                "bad".into()
+            ))))
+        );
+        assert_eq!(host.output, "fail");
+
+        host.output.clear();
+        assert_eq!(
+            run(&program, "propagate", &mut host),
+            VmOutcome::Returned(RuntimeValue::ResultErr(Box::new(RuntimeValue::String(
+                "bad".into()
+            ))))
+        );
+        assert_eq!(host.output, "failquestion");
+
+        host.output.clear();
+        assert_eq!(
+            run(&program, "loops", &mut host),
+            VmOutcome::Returned(RuntimeValue::Unit)
+        );
+        assert_eq!(host.output, "looploop");
+
+        host.output.clear();
+        let VmOutcome::Panicked(panic) = run(&program, "explode", &mut host) else {
+            panic!("explicit panic must unwind through defer")
+        };
+        assert_eq!(panic.message, "primary");
+        assert!(panic.suppressed.is_empty());
+        assert_eq!(host.output, "panic");
+
+        host.output.clear();
+        let VmOutcome::Panicked(panic) = run(&program, "registrationPanic", &mut host) else {
+            panic!("a registration-time panic must unwind through earlier defers")
+        };
+        assert_eq!(panic.message, "registration");
+        assert!(panic.suppressed.is_empty());
+        assert_eq!(host.output, "outer");
+    }
+
+    #[test]
+    fn runtime_roots_copy_snapshots_while_registering_a_defer() {
+        let program = lowered(
+            "fn verify(first: Array[Array[Int]], second: Array[Array[Int]]) {\n\
+                 assert(first[0][0] == 11)\n\
+                 assert(first[5][0] == 16)\n\
+                 assert(second[0][0] == 21)\n\
+                 assert(second[5][0] == 26)\n\
+             }\n\
+             fn execute() {\n\
+                 let first = [[11], [12], [13], [14], [15], [16]]\n\
+                 let second = [[21], [22], [23], [24], [25], [26]]\n\
+                 defer verify(first, second)\n\
+             }\n",
+        );
+        let entry = function_id(&program, "execute");
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            entry,
+            &mut host,
+            VmLimits {
+                max_heap_objects: 256,
+                max_heap_bytes: 128 * 1024,
+                initial_gc_threshold: 1,
+                ..VmLimits::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
+        assert_eq!(execution.outcome, VmOutcome::Returned(RuntimeValue::Unit));
+        assert!(execution.statistics.collections > 0);
+        assert!(execution.statistics.reclaimed_objects > 0);
+    }
+
+    #[test]
+    fn runtime_keeps_the_primary_panic_and_runs_later_defer_actions() {
+        #[derive(Default)]
+        struct RecordingHost {
+            output: String,
+        }
+
+        impl VmHost for RecordingHost {
+            fn invoke(
+                &mut self,
+                name: &str,
+                arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                assert_eq!(name, "std.console.print");
+                let [RuntimeValue::String(text)] = arguments else {
+                    panic!("console print must receive one String")
+                };
+                self.output.push_str(text);
+                Ok(RuntimeValue::Unit)
+            }
+        }
+
+        let program = lowered(
+            "import std.console\n\
+             fn emit(value: String) {\n\
+                 console.print(value)\n\
+             }\n\
+             fn first() {\n\
+                 emit(\"first\")\n\
+                 panic(\"first\")\n\
+             }\n\
+             fn second() {\n\
+                 emit(\"second\")\n\
+                 panic(\"second\")\n\
+             }\n\
+             fn cleanupOnly() {\n\
+                 defer first()\n\
+                 defer second()\n\
+             }\n\
+             fn primary() {\n\
+                 defer first()\n\
+                 defer second()\n\
+                 panic(\"primary\")\n\
+             }\n",
+        );
+
+        let mut host = RecordingHost::default();
+        let cleanup = execute(&program, function_id(&program, "cleanupOnly"), &mut host)
+            .unwrap()
+            .outcome;
+        let VmOutcome::Panicked(cleanup) = cleanup else {
+            panic!("cleanup panic must become the primary panic")
+        };
+        assert_eq!(cleanup.message, "second");
+        assert_eq!(
+            cleanup
+                .suppressed
+                .iter()
+                .map(|panic| panic.message.as_str())
+                .collect::<Vec<_>>(),
+            ["first"]
+        );
+        assert_eq!(host.output, "secondfirst");
+
+        host.output.clear();
+        let primary = execute(&program, function_id(&program, "primary"), &mut host)
+            .unwrap()
+            .outcome;
+        let VmOutcome::Panicked(primary) = primary else {
+            panic!("body panic must remain primary")
+        };
+        assert_eq!(primary.message, "primary");
+        assert_eq!(
+            primary
+                .suppressed
+                .iter()
+                .map(|panic| panic.message.as_str())
+                .collect::<Vec<_>>(),
+            ["second", "first"]
+        );
+        assert_eq!(host.output, "secondfirst");
+    }
+
+    #[test]
+    fn bytecode_defer_ledger_rejects_undrained_and_out_of_order_scopes() {
+        let mut wrong_guard = lowered(
+            "fn note(value: Int) {}\n\
+             fn execute() {\n\
+                 defer note(1)\n\
+             }\n",
+        );
+        let mut moved_copy = wrong_guard.clone();
+        let function = function_id(&moved_copy, "execute");
+        let instruction = moved_copy.functions[function.index() as usize]
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instructions)
+            .find(|instruction| {
+                matches!(
+                    instruction.kind,
+                    bc::BytecodeInstructionKind::RegisterDefer { .. }
+                )
+            })
+            .expect("copy defer has a registration");
+        let bc::BytecodeInstructionKind::RegisterDefer { action, .. } = &mut instruction.kind
+        else {
+            unreachable!()
+        };
+        let bc::BytecodeOperationKind::Call { arguments, .. } = &mut action.kind else {
+            unreachable!()
+        };
+        let place = match &arguments[0].value.kind {
+            bc::BytecodeOperandKind::Copy(place) => place.clone(),
+            _ => unreachable!(),
+        };
+        arguments[0].value.kind = bc::BytecodeOperandKind::Move(place);
+        let error = bc::verify_bytecode(&moved_copy).unwrap_err();
+        assert!(
+            error.message().contains("snapshot a Copy operand"),
+            "{error}"
+        );
+
+        let mut forged_disarm = lowered(
+            "fn hidden(): impl Discard { 1 }\n\
+             fn consume[T: Discard](value: T) {}\n\
+             fn execute() {\n\
+                 let owner = hidden()\n\
+                 defer consume(owner)\n\
+                 let moved = owner\n\
+             }\n",
+        );
+        let function = function_id(&forged_disarm, "execute");
+        let body = &mut forged_disarm.functions[function.index() as usize];
+        let guard = body
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match &instruction.kind {
+                bc::BytecodeInstructionKind::RegisterDefer {
+                    guard: Some(guard), ..
+                } => Some(guard.clone()),
+                _ => None,
+            })
+            .expect("affine defer has a guard");
+        let transition = body
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instructions)
+            .find(|instruction| match &instruction.kind {
+                bc::BytecodeInstructionKind::RetargetDefer { from, .. } => from == &guard,
+                _ => false,
+            })
+            .expect("whole affine move has a retarget transition");
+        let from = match &transition.kind {
+            bc::BytecodeInstructionKind::RetargetDefer { from, .. } => from.clone(),
+            _ => unreachable!(),
+        };
+        transition.kind = bc::BytecodeInstructionKind::DisarmDefer(from);
+        let error = bc::verify_bytecode(&forged_disarm).unwrap_err();
+        assert!(
+            error.message().contains("disarmed without an immediate"),
+            "{error}"
+        );
+
+        let mut wrong_callee_protocol = lowered(
+            "fn hidden(): impl Discard { 1 }\n\
+             fn consume[T: Discard](value: T) {}\n\
+             fn execute() {\n\
+                 let owner = hidden()\n\
+                 let action = () {\n\
+                     consume(owner)\n\
+                 }\n\
+                 defer action()\n\
+             }\n",
+        );
+        let function = function_id(&wrong_callee_protocol, "execute");
+        let protocol = wrong_callee_protocol.functions[function.index() as usize]
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instructions)
+            .find_map(|instruction| match &mut instruction.kind {
+                bc::BytecodeInstructionKind::RegisterDefer {
+                    action:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Call { protocol, .. },
+                            ..
+                        },
+                    guard: Some(_),
+                    ..
+                } => Some(protocol),
+                _ => None,
+            })
+            .expect("the affine deferred callee has a guarded call");
+        assert_eq!(*protocol, bc::BytecodeCallProtocol::CallOnce);
+        *protocol = bc::BytecodeCallProtocol::CallMut;
+        let error = bc::verify_bytecode(&wrong_callee_protocol).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("non-Copy deferred callee does not use CallOnce"),
+            "{error}"
+        );
+
+        let repeatable_callee = lowered(
+            "fn hidden(value: Int): impl Discard { value }\n\
+             fn observe[T](value: ref T) {}\n\
+             fn execute() {\n\
+                 let owner = hidden(1)\n\
+                 let action = () {\n\
+                     observe(ref owner)\n\
+                 }\n\
+                 defer action()\n\
+             }\n",
+        );
+        bc::verify_bytecode(&repeatable_callee).unwrap();
+        let function = function_id(&repeatable_callee, "execute");
+        let protocol = repeatable_callee.functions[function.index() as usize]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match &instruction.kind {
+                bc::BytecodeInstructionKind::RegisterDefer {
+                    action:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Call { protocol, .. },
+                            ..
+                        },
+                    guard: Some(_),
+                    ..
+                } => Some(*protocol),
+                _ => None,
+            })
+            .expect("the repeatable affine deferred callee has a guarded call");
+        assert_eq!(protocol, bc::BytecodeCallProtocol::CallOnce);
+
+        let mut overwritten_guard = lowered(
+            "fn hidden(value: Int): impl Discard { value }\n\
+             fn identity[T: Discard](value: T): T { value }\n\
+             fn consume[T: Discard](value: T) {}\n\
+             fn execute() {\n\
+                 let owner = hidden(1)\n\
+                 let replacement = hidden(2)\n\
+                 defer consume(owner)\n\
+                 _ = identity(replacement)\n\
+             }\n",
+        );
+        let identity = overwritten_guard
+            .callables
+            .iter()
+            .enumerate()
+            .find_map(|(index, callable)| {
+                callable
+                    .name
+                    .contains("::value::identity[")
+                    .then_some(bc::BytecodeCallableId::new(index as u32))
+            })
+            .expect("identity has one concrete callable");
+        let function = function_id(&overwritten_guard, "execute");
+        let overwrite_guard = overwritten_guard.functions[function.index() as usize]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match &instruction.kind {
+                bc::BytecodeInstructionKind::RegisterDefer {
+                    guard: Some(guard), ..
+                } => Some(guard.clone()),
+                _ => None,
+            })
+            .expect("the affine defer has a guard");
+        let destination =
+            overwritten_guard.functions[function.index() as usize]
+                .blocks
+                .iter_mut()
+                .find_map(|block| match &mut block.terminator.kind {
+                    bc::BytecodeTerminatorKind::Invoke {
+                        operation:
+                            bc::BytecodeOperation {
+                                kind:
+                                    bc::BytecodeOperationKind::Call {
+                                        callee:
+                                            bc::BytecodeOperand {
+                                                kind:
+                                                    bc::BytecodeOperandKind::Function {
+                                                        callable, ..
+                                                    },
+                                                ..
+                                            },
+                                        ..
+                                    },
+                                ..
+                            },
+                        destination,
+                        ..
+                    } if *callable == identity => Some(destination),
+                    _ => None,
+                })
+                .expect("identity is lowered as an invocation");
+        *destination = Some(overwrite_guard);
+        let error = bc::verify_bytecode(&overwritten_guard).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("terminator overwrites an active defer guard"),
+            "{error}"
+        );
+
+        let function = function_id(&wrong_guard, "execute");
+        let instruction = wrong_guard.functions[function.index() as usize]
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instructions)
+            .find(|instruction| {
+                matches!(
+                    instruction.kind,
+                    bc::BytecodeInstructionKind::RegisterDefer { .. }
+                )
+            })
+            .expect("copy defer has a registration");
+        let bc::BytecodeInstructionKind::RegisterDefer { action, guard, .. } =
+            &mut instruction.kind
+        else {
+            unreachable!()
+        };
+        let bc::BytecodeOperationKind::Call { arguments, .. } = &action.kind else {
+            unreachable!()
+        };
+        let bc::BytecodeOperandKind::Copy(place) = &arguments[0].value.kind else {
+            unreachable!()
+        };
+        *guard = Some(place.clone());
+        let error = bc::verify_bytecode(&wrong_guard).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("exactly one guard for its affine operand"),
+            "{error}"
+        );
+
+        let mut undrained = lowered(
+            "fn note(value: Int) {}\n\
+             fn execute() {\n\
+                 defer note(1)\n\
+             }\n",
+        );
+        let mut unknown_scope = undrained.clone();
+        let function = function_id(&unknown_scope, "execute");
+        let scopes = unknown_scope.functions[function.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| {
+                let bc::BytecodeTerminatorKind::DrainDefers { scopes, .. } =
+                    &mut block.terminator.kind
+                else {
+                    return None;
+                };
+                Some(scopes)
+            })
+            .expect("the defer exit has an explicit drain");
+        scopes.push(bc::BytecodeScopeId::new(u32::MAX));
+        let error = bc::verify_bytecode(&unknown_scope).unwrap_err();
+        assert!(
+            error.message().contains("scope with no registration"),
+            "{error}"
+        );
+
+        let function = function_id(&undrained, "execute");
+        let terminator = undrained.functions[function.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| {
+                if block.kind != bc::BytecodeBlockKind::Normal {
+                    return None;
+                }
+                let bc::BytecodeTerminatorKind::DrainDefers { .. } = &block.terminator.kind else {
+                    return None;
+                };
+                Some(&mut block.terminator)
+            })
+            .expect("normal defer exit has an explicit drain");
+        let target = match &terminator.kind {
+            bc::BytecodeTerminatorKind::DrainDefers { target, .. } => *target,
+            _ => unreachable!(),
+        };
+        terminator.kind = bc::BytecodeTerminatorKind::Goto { target };
+        let error = bc::verify_bytecode(&undrained).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("abandons registered defer entries"),
+            "{error}"
+        );
+
+        let mut repeated = lowered(
+            "fn note(value: Int) {}\n\
+             fn marker() {}\n\
+             fn execute(flag: Bool) {\n\
+                 marker()\n\
+                 defer note(1)\n\
+                 if flag {}\n\
+             }\n",
+        );
+        let function = function_id(&repeated, "execute");
+        let body = &mut repeated.functions[function.index() as usize];
+        let registration = body
+            .blocks
+            .iter()
+            .position(|block| {
+                block.instructions.iter().any(|instruction| {
+                    matches!(
+                        instruction.kind,
+                        bc::BytecodeInstructionKind::RegisterDefer { .. }
+                    )
+                })
+            })
+            .map(|index| bc::BytecodeBlockId::new(index as u32))
+            .expect("defer registration follows the marker call");
+        assert_ne!(registration, body.entry);
+        let if_true = match &body.blocks[registration.index() as usize].terminator.kind {
+            bc::BytecodeTerminatorKind::BranchBool { if_true, .. } => *if_true,
+            _ => panic!("registration block must branch on the source condition"),
+        };
+        let bc::BytecodeTerminatorKind::Goto { target } =
+            &mut body.blocks[if_true.index() as usize].terminator.kind
+        else {
+            panic!("true Unit branch must join through one goto")
+        };
+        *target = registration;
+        let error = bc::verify_bytecode(&repeated).unwrap_err();
+        assert!(
+            error.message().contains("registration is re-executed"),
+            "{error}"
+        );
+
+        let mut out_of_order = lowered(
+            "fn note(value: Int) {}\n\
+             fn execute() {\n\
+                 defer note(1)\n\
+                 {\n\
+                     defer note(2)\n\
+                 }\n\
+             }\n",
+        );
+        let function = function_id(&out_of_order, "execute");
+        let scopes = out_of_order.functions[function.index() as usize]
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter_map(|instruction| match instruction.kind {
+                bc::BytecodeInstructionKind::RegisterDefer { scope, .. } => Some(scope),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(scopes.len(), 2);
+        let outer = scopes[0];
+        let inner = scopes[1];
+        let inner_drain = out_of_order.functions[function.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| {
+                let bc::BytecodeTerminatorKind::DrainDefers { scopes, .. } =
+                    &mut block.terminator.kind
+                else {
+                    return None;
+                };
+                (block.kind == bc::BytecodeBlockKind::Normal && scopes.as_slice() == [inner])
+                    .then_some(scopes)
+            })
+            .expect("inner lexical scope has its own drain");
+        *inner_drain = vec![outer];
+        let error = bc::verify_bytecode(&out_of_order).unwrap_err();
+        assert!(
+            error.message().contains("skips a still-active inner scope"),
+            "{error}"
+        );
+
+        let mut use_after_drain = lowered(
+            "fn hidden(): impl Discard { 1 }\n\
+             fn consume[T: Discard](value: T) {}\n\
+             fn execute() {\n\
+                 let owner = hidden()\n\
+                 {\n\
+                     defer consume(owner)\n\
+                 }\n\
+             }\n",
+        );
+        let function = function_id(&use_after_drain, "execute");
+        let body = &mut use_after_drain.functions[function.index() as usize];
+        let (guard, scope) = body
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match &instruction.kind {
+                bc::BytecodeInstructionKind::RegisterDefer {
+                    scope,
+                    guard: Some(guard),
+                    ..
+                } => Some((guard.clone(), *scope)),
+                _ => None,
+            })
+            .expect("the inner defer has one guard");
+        let (target, span) = body
+            .blocks
+            .iter()
+            .find_map(|block| match &block.terminator.kind {
+                bc::BytecodeTerminatorKind::DrainDefers { scopes, target, .. }
+                    if block.kind == bc::BytecodeBlockKind::Normal && scopes.contains(&scope) =>
+                {
+                    Some((*target, block.terminator.span))
+                }
+                _ => None,
+            })
+            .expect("the inner scope has a normal drain");
+        let guard_ty = guard.ty;
+        body.blocks[target.index() as usize].instructions.insert(
+            0,
+            bc::BytecodeInstruction {
+                span,
+                kind: bc::BytecodeInstructionKind::Store {
+                    destination: guard.clone(),
+                    value: bc::BytecodeRvalue {
+                        ty: guard_ty,
+                        kind: bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                            ty: guard_ty,
+                            kind: bc::BytecodeOperandKind::Move(guard),
+                        }),
+                    },
+                },
+            },
+        );
+        let error = bc::verify_bytecode(&use_after_drain).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("already consumed by a deferred action"),
+            "{error}"
+        );
+
+        let reinitialized = lowered(
+            "fn hidden(value: Int): impl Discard { value }\n\
+             fn consume[T: Discard](value: T) {}\n\
+             fn execute() {\n\
+                 var owner = hidden(1)\n\
+                 {\n\
+                     defer consume(owner)\n\
+                 }\n\
+                 owner = hidden(2)\n\
+                 consume(owner)\n\
+             }\n",
+        );
+        bc::verify_bytecode(&reinitialized).unwrap();
+    }
+
+    #[test]
+    fn iterator_exhaustion_guards_are_specialized_and_reverified() {
+        let mut nonterminal = lowered(
+            "fn hidden(value: Int): impl Discard { value }\n\
+             fn cleanup[T: Discard](values: Array[T]) {}\n\
+             fn consumeOne[T: Discard](value: T) {}\n\
+             fn drain[T](\n\
+                 values: Array[T],\n\
+                 cleanupAll: fn(Array[T]),\n\
+                 consume: fn(T),\n\
+             ) {\n\
+                 defer cleanupAll(values)\n\
+                 for value in values {\n\
+                     consume(value)\n\
+                 }\n\
+             }\n\
+             fn main() {\n\
+                 drain([hidden(1)], cleanup, consumeOne)\n\
+             }\n",
+        );
+        let drain = nonterminal
+            .callables
+            .iter()
+            .find(|callable| callable.name.contains("::value::drain["))
+            .and_then(|callable| callable.implementation)
+            .expect("generic drain has one concrete bytecode body");
+        let state = nonterminal.functions[drain.index() as usize]
+            .blocks
+            .iter()
+            .find_map(|block| match &block.terminator.kind {
+                bc::BytecodeTerminatorKind::IteratorNext {
+                    state,
+                    exhaustion_guard,
+                    ..
+                } => {
+                    assert!(
+                        exhaustion_guard.is_none(),
+                        "concrete Discard element removes the potential terminal transition"
+                    );
+                    Some(state.clone())
+                }
+                _ => None,
+            })
+            .expect("concrete drain has an intrinsic cursor");
+        let bc::BytecodeTypeKind::Cursor { collection, .. } =
+            nonterminal.types[state.ty.index() as usize].kind
+        else {
+            panic!("iterator state has a concrete cursor type")
+        };
+        let mut forged = state;
+        forged.ty = collection;
+        forged.projections.push(bc::BytecodeProjection {
+            ty: collection,
+            kind: bc::BytecodeProjectionKind::IteratorSource,
+        });
+        let guard = nonterminal.functions[drain.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::IteratorNext {
+                    exhaustion_guard, ..
+                } => Some(exhaustion_guard),
+                _ => None,
+            })
+            .unwrap();
+        *guard = Some(forged);
+        let error = bc::verify_bytecode(&nonterminal).unwrap_err();
+        assert!(
+            error.message().contains("terminator"),
+            "unexpected bytecode rejection: {error}"
+        );
+
+        let mut terminal = lowered(
+            "fn drainTerminal(\n\
+                 values: Array[Join[Int, Never]],\n\
+                 cleanupAll: fn(Array[Join[Int, Never]]),\n\
+                 consume: fn(Join[Int, Never]),\n\
+             ) {\n\
+                 defer cleanupAll(values)\n\
+                 for value in values {\n\
+                     consume(value)\n\
+                 }\n\
+             }\n",
+        );
+        let drain = function_id(&terminal, "drainTerminal");
+        let guard = terminal.functions[drain.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::IteratorNext {
+                    exhaustion_guard, ..
+                } => exhaustion_guard.take(),
+                _ => None,
+            })
+            .expect("terminal collection keeps its exact exhaustion guard");
+        let error = bc::verify_bytecode(&terminal).unwrap_err();
+        assert!(
+            error.message().contains("terminator"),
+            "unexpected bytecode rejection after removing {guard:?}: {error}"
+        );
+    }
+
+    #[test]
+    fn copy_defer_guards_are_specialized_to_snapshots() {
+        #[derive(Default)]
+        struct RecordingHost {
+            output: String,
+        }
+
+        impl VmHost for RecordingHost {
+            fn invoke(
+                &mut self,
+                name: &str,
+                arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                assert_eq!(name, "std.console.print");
+                let [RuntimeValue::String(text)] = arguments else {
+                    panic!("console print must receive one String")
+                };
+                self.output.push_str(text);
+                Ok(RuntimeValue::Unit)
+            }
+        }
+
+        let program = lowered(
+            "import std.console\n\
+             fn cleanup(value: Int) {\n\
+                 assert(value == 1)\n\
+                 console.print(\"cleanup\")\n\
+             }\n\
+             fn guarded[T: Discard](owner: T, action: fn(T)) {\n\
+                 defer action(owner)\n\
+                 let moved = owner\n\
+                 _ = moved\n\
+             }\n\
+             fn execute() {\n\
+                 guarded(1, cleanup)\n\
+             }\n",
+        );
+        let guarded = program
+            .callables
+            .iter()
+            .find(|callable| callable.name.contains("::value::guarded["))
+            .and_then(|callable| callable.implementation)
+            .expect("generic guarded has one concrete bytecode body");
+        let body = &program.functions[guarded.index() as usize];
+        let (action, guard) = body
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match &instruction.kind {
+                bc::BytecodeInstructionKind::RegisterDefer { action, guard, .. } => {
+                    Some((action, guard))
+                }
+                _ => None,
+            })
+            .expect("generic guarded registers one defer");
+        assert!(guard.is_none(), "the concrete Copy owner needs no guard");
+        let bc::BytecodeOperationKind::Call { arguments, .. } = &action.kind else {
+            panic!("the deferred action remains a call")
+        };
+        assert!(matches!(
+            arguments[0].value.kind,
+            bc::BytecodeOperandKind::Copy(_)
+        ));
+        let owner_ty = arguments[0].value.ty;
+        assert!(
+            !body.blocks.iter().any(|block| {
+                block
+                    .instructions
+                    .iter()
+                    .any(|instruction| match &instruction.kind {
+                        bc::BytecodeInstructionKind::RetargetDefer { from, .. } => {
+                            from.ty == owner_ty
+                        }
+                        bc::BytecodeInstructionKind::DisarmDefer(place) => place.ty == owner_ty,
+                        _ => false,
+                    })
+            }),
+            "{}",
+            bc::disassemble(&program)
+        );
+
+        let mut host = RecordingHost::default();
+        let execution = execute(&program, function_id(&program, "execute"), &mut host).unwrap();
+        assert_eq!(execution.outcome, VmOutcome::Returned(RuntimeValue::Unit));
+        assert_eq!(host.output, "cleanup");
+    }
+
+    #[test]
     fn runtime_collects_unreachable_program_objects_under_allocation_pressure() {
         let program = lowered(
             "fn collect(): Int {\n\
@@ -8167,12 +9447,16 @@ mod tests {
             RuntimeValue::Integer(42)
         );
         let program = lowered(source);
-        assert!(
-            program
-                .types
-                .iter()
-                .any(|ty| matches!(ty.kind, bc::BytecodeTypeKind::OpaqueResult { .. }))
-        );
+        let capabilities = program
+            .types
+            .iter()
+            .find_map(|ty| match &ty.kind {
+                bc::BytecodeTypeKind::OpaqueResult { capabilities, .. } => Some(*capabilities),
+                _ => None,
+            })
+            .expect("opaque result retains its published capability row");
+        assert!(capabilities.discard);
+        assert!(!capabilities.copy);
         assert!(program.functions.iter().any(|function| {
             function.blocks.iter().any(|block| {
                 block.instructions.iter().any(|instruction| {
@@ -8243,6 +9527,16 @@ mod tests {
         *witness = bc::BytecodeTypeId::new(opaque as u32);
         let error = bc::verify_bytecode(&cyclic).unwrap_err();
         assert!(error.message().contains("form a cycle"));
+
+        let mut missing_discard = program.clone();
+        let bc::BytecodeTypeKind::OpaqueResult { capabilities, .. } =
+            &mut missing_discard.types[opaque].kind
+        else {
+            unreachable!()
+        };
+        capabilities.discard = false;
+        let error = bc::verify_bytecode(&missing_discard).unwrap_err();
+        assert!(error.message().contains("published capability set"));
 
         let mut generic = program.clone();
         let generic_id = bc::BytecodeTypeId::new(generic.types.len() as u32);
@@ -8337,6 +9631,7 @@ mod tests {
                     identity,
                     arguments,
                     witness,
+                    ..
                 } = &ty.kind
                 else {
                     return None;

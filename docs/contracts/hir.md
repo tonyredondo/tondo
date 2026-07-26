@@ -11,8 +11,9 @@ restrictions, ordered call-local `ref`/`mut`/`var` loans, semantic occurrences,
 BORROW-002 last-use regions for pattern `ref` bindings, BORROW-003 fixed-extent
 permissions, BORROW-004 static collection regions, BORROW-005 deferred runtime
 overlap obligations, BORROW-006 borrowed-iteration regions and boundary policy,
-TERM-001 closed terminal-type registration and structural status, and verified
-MIR admission implemented
+TERM-001 closed terminal-type registration and structural status, TERM-002
+normal-path terminal ownership, TERM-003 checked synchronous `defer` actions
+and affine guards, and verified MIR admission implemented
 
 ## Boundary
 
@@ -54,6 +55,8 @@ The output owns:
   expression in the implemented subset;
 - a bottom-up normal-completion summary and reachable loop-transfer targets for
   every expression, plus an exact source span for every statement;
+- one stable lexical cleanup-scope identity for every block and one fully
+  checked invocation action for every `defer`;
 - exact member-use occurrences recorded where field and enum-pattern selection
   becomes type-directed; and
 - explicit HIR nodes for option/union coercions, `Result` construction,
@@ -72,11 +75,12 @@ iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   coercion. Concrete external implementations, effectful invocation, `await`,
   `spawn`, unsafe-region proofs and raw
   operations, async liveness/`Send` analysis, string interpolation through
-  `Display`, `defer`, concrete suspension nodes, confirmed borrowed replacement,
-  terminal consumption flow, and scope cleanup remain explicit later boundaries
-  rather than receiving provisional semantics. Persistent source-visible partial owner
-  states are deliberately absent from Tondo 0.1; OWN-005 implements the typed
-  internal paths needed by complete destructuring without adding such a state.
+  `Display`, concrete suspension nodes, confirmed borrowed replacement, closed
+  terminal fallback actions, and cancellation cleanup remain explicit later
+  boundaries rather than receiving provisional semantics. Persistent
+  source-visible partial owner states are deliberately absent from Tondo 0.1;
+  OWN-005 implements the typed internal paths needed by complete destructuring
+  without adding such a state.
 
 ## Typed expression invariants
 
@@ -726,10 +730,10 @@ recomputes all rows, and rejects a present terminal type that is `Copy` or
 contract without exposing runtime actions as user-callable values.
 
 TERM-001 registers and classifies types. TERM-002 consumes that classification
-in the path-sensitive availability proof described below. TERM-003 and TERM-004
-populate the already reserved cleanup edges with guards and unwind actions. No
-destructor, normal-exit cleanup, or provisional `defer` behavior is synthesized
-by either completed phase.
+in the path-sensitive availability proof described below. TERM-003 adds checked
+explicit `defer` actions and the unique affine-guard side of the cleanup ledger.
+TERM-004 will add the closed intrinsic fallback side. No destructor or
+provisional implicit cleanup is synthesized.
 
 Type formation requires `K: Key` for every `Map[K, V]` and `Set[K]`, and
 `T: Discard` for every `Ref[T]`, including declaration signatures, nominal
@@ -817,6 +821,44 @@ become typed environment move paths. OWN-007 intersects complete environment
 transfers across all normal exits; it adds no capture list, implicit loan, or
 second transfer form.
 
+## Deferred cleanup
+
+Every lexical block owns one stable `HirScopeId`. A `defer` statement records
+that scope and one already type-checked invocation-shaped `HirDeferAction`; the
+invocation itself is delayed, but its direct operands remain in source
+evaluation order. The action must return `Unit`, be infallible and synchronous,
+and be a call, `assert`, bootstrap host invocation, or the zero-argument closure
+generated for a defer block. A deferred call cannot retain a `ref`, `mut`, or
+`var` argument, and a defer body cannot register another defer or transfer
+control outside itself. Admission rewalks both registration-time operands and
+the generated cleanup root with lexical loop scopes; nested closure bodies stay
+separate roots, so only a transfer that actually crosses the defer boundary is
+rejected.
+
+Every direct operand proven `Copy` is a registration-time snapshot. There may
+be at most one non-`Copy` operand. It must be a complete local binding or a
+temporary value. A deferred callee uses `Call` only when it is both `Copy` and
+repeatable; otherwise it uses `CallOnce`. It never retains the exclusive borrow
+required by `CallMut`, and a non-`Copy` callee must use `CallOnce`. HIR records
+that exact operand as the guard instead of pretending to move it when the
+statement is registered. This protocol override applies only to the invocation
+being registered; calls evaluated inside its operands or cleanup block retain
+their ordinary protocol selection. A defer block may capture only `Copy`
+values, so an affine cleanup uses the call form and remains visible to the
+ownership analysis. Violations produce `E1410`.
+
+The availability proof maintains an explicit registration and guard ledger in
+parallel with owner availability. Two active guards may not overlap. A guarded
+value may be observed or borrowed, but it cannot be overwritten, partially
+moved, destructured, or embedded in an aggregate. A complete same-type move to
+another local retargets the guard immediately. A confirmed consuming handoff
+or terminal operation disarms it; an abandoned handoff leaves it armed.
+Re-entering the same dynamic registration before its previous entry has been
+drained or disarmed is rejected. The stable scope identities let MIR derive the
+exact inner-to-outer scope list for every edge that leaves lexical scopes.
+Draining consumes the guarded owner; only a later complete assignment may
+reinitialize the direct `var`, never a partial write.
+
 ## Normal-path terminal obligations
 
 TERM-002 extends the same structured flow with a separate terminal owner state.
@@ -836,7 +878,8 @@ leaves through `return`, `fail`, `?`, `break`, or `continue` before confirmation
 the original local becomes live again. A terminal temporary already constructed
 from that local owns its independent fallback and therefore does not resurrect
 the earlier binding. This is the static half of the confirmed-transfer protocol;
-it emits no runtime cleanup instruction.
+TERM-003 additionally emits the exact guard retarget or disarm transition when
+that owner is protected by an explicit defer.
 
 An owned terminal temporary used only through an observation or loan remains a
 hidden owner until the containing operation completes. A normal completion then
@@ -871,12 +914,15 @@ value first and then completely reinitializing a `var` remains valid.
 
 Panic and cancellation paths intentionally do not participate in the normal
 exit check: their armed entries are consumed by the closed fallback introduced
-in TERM-004. TERM-002 does not run that fallback on final, `return`, `fail`, `?`,
-`break`, or `continue`, and it does not recognize a provisional `defer`. HIR
-admission reconstructs the terminal registry and reruns the entire availability
-analysis before MIR. MIR and bytecode continue to preserve the resulting
-affine moves and confirmed source availability; TERM-003 and TERM-004 will add
-the executable guard and unwind ledger to their reserved cleanup edges.
+in TERM-004. Final completion, `return`, `fail`, `?`, `break`, and `continue`
+must still satisfy TERM-002 statically, but TERM-003 now permits an armed
+explicit guard and records the scopes that execute it. Intrinsic own iteration
+retargets a collection guard to the cursor's internal source. Natural
+exhaustion disarms it only when the intrinsic drain has consumed every terminal
+element; `break` and other early exits retain the remainder. User
+`Iterator.next` merely borrows its state and therefore never gains this
+intrinsic discharge. HIR admission reconstructs the terminal registry, owner
+availability, defer registrations, guards, and every transition before MIR.
 
 ## Call-local loans
 

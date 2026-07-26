@@ -7,8 +7,9 @@ use crate::hir::{
     CapabilityAnalysis, CapabilityAssumptions, HirBinaryOperator, HirCallProtocol, HirCallableId,
     HirCapability, HirCapabilityStatus, HirClosureProtocols, HirContainmentKind,
     HirGenericParameter, HirIndexAccess, HirNominalShape, HirPrefixOperator, HirProgram,
-    HirTraitConstructor, HirTypeDeclarationKind, HirVariantPayload, StaticCollectionRegion,
-    StaticRegionRelation, StaticSlice, static_collection_relation,
+    HirTerminalStatus, HirTraitConstructor, HirTypeDeclarationKind, HirVariantPayload,
+    StaticCollectionRegion, StaticRegionRelation, StaticSlice, TerminalAnalysis,
+    static_collection_relation,
 };
 use crate::resolve::{MemberKind, MemberOwner, ResolvedProgram, SymbolId};
 use crate::types::{
@@ -139,11 +140,19 @@ pub(crate) fn verify_mir_with_capability_analysis(
             "function set does not exactly match the typed HIR bodies",
         ));
     }
+    let terminal_analysis = TerminalAnalysis::new(hir, resolved).map_err(|error| {
+        MirInvariantError::new(
+            "MIR terminal ownership",
+            format!("cannot derive the typed HIR terminal graph: {error}"),
+        )
+    })?;
     let verifier = Verifier {
         resolved,
         hir,
         capability_analysis,
+        terminal_analysis,
         capability_statuses: RefCell::new(BTreeMap::new()),
+        terminal_statuses: RefCell::new(BTreeMap::new()),
         limits,
         dataflow_steps: Cell::new(0),
     };
@@ -166,8 +175,10 @@ struct Verifier<'a> {
     resolved: &'a ResolvedProgram,
     hir: &'a HirProgram,
     capability_analysis: &'a CapabilityAnalysis,
+    terminal_analysis: TerminalAnalysis,
     capability_statuses:
         RefCell<BTreeMap<(MirFunctionId, TypeId, HirCapability), HirCapabilityStatus>>,
+    terminal_statuses: RefCell<BTreeMap<(MirFunctionId, TypeId), HirTerminalStatus>>,
     limits: MirVerificationLimits,
     dataflow_steps: Cell<u64>,
 }
@@ -231,6 +242,229 @@ impl LocalAccess {
     }
 }
 
+fn is_complete_defer_owner_place(place: &MirPlace) -> bool {
+    place.source_loan.is_none()
+        && (place.projections.is_empty()
+            || matches!(
+                place.projections.as_slice(),
+                [MirProjection {
+                    kind: MirProjectionKind::ClosureCapture { .. },
+                    ..
+                }]
+            ))
+}
+
+fn is_iterator_defer_target(place: &MirPlace) -> bool {
+    place.source_loan.is_none()
+        && matches!(
+            place.projections.as_slice(),
+            [MirProjection {
+                kind: MirProjectionKind::IteratorSource,
+                ..
+            }]
+        )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Default)]
+struct DeferFlowState {
+    unguarded_scopes: BTreeSet<crate::hir::HirScopeId>,
+    guards: BTreeMap<LocalAccess, ActiveDeferGuard>,
+    registrations: BTreeMap<(MirBlockId, usize), crate::hir::HirScopeId>,
+    scope_order: Vec<crate::hir::HirScopeId>,
+    pending_moves: BTreeMap<LocalAccess, PendingDeferTransition>,
+    consumed: BTreeSet<LocalAccess>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ActiveDeferGuard {
+    scope: crate::hir::HirScopeId,
+    registration: (MirBlockId, usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PendingDeferTransition {
+    Retarget,
+    Disarm,
+}
+
+impl DeferFlowState {
+    fn scope_is_active(&self, scope: crate::hir::HirScopeId) -> bool {
+        self.unguarded_scopes.contains(&scope)
+            || self
+                .guards
+                .values()
+                .any(|candidate| candidate.scope == scope)
+    }
+
+    fn activate_scope(
+        &mut self,
+        scope: crate::hir::HirScopeId,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        if self.scope_is_active(scope) {
+            if self.scope_order.last() != Some(&scope) {
+                return Err(MirInvariantError::new(
+                    context,
+                    "defer registration re-enters an outer scope beneath active inner entries",
+                ));
+            }
+        } else {
+            self.scope_order.push(scope);
+        }
+        Ok(())
+    }
+
+    fn remove_inactive_scope(&mut self, scope: crate::hir::HirScopeId) {
+        if !self.scope_is_active(scope) {
+            self.scope_order.retain(|candidate| *candidate != scope);
+        }
+    }
+
+    fn drain(
+        &mut self,
+        scopes: &[crate::hir::HirScopeId],
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let selected = scopes.iter().copied().collect::<BTreeSet<_>>();
+        if let Some(first) = self
+            .scope_order
+            .iter()
+            .position(|scope| selected.contains(scope))
+            && self.scope_order[first..]
+                .iter()
+                .any(|scope| !selected.contains(scope))
+        {
+            return Err(MirInvariantError::new(
+                context,
+                "defer drain skips a still-active inner scope",
+            ));
+        }
+        self.consumed.extend(
+            self.guards.iter().filter_map(|(place, guard)| {
+                selected.contains(&guard.scope).then_some(place.clone())
+            }),
+        );
+        self.unguarded_scopes
+            .retain(|scope| !selected.contains(scope));
+        self.guards
+            .retain(|_, guard| !selected.contains(&guard.scope));
+        self.registrations
+            .retain(|_, scope| !selected.contains(scope));
+        self.scope_order.retain(|scope| !selected.contains(scope));
+        Ok(())
+    }
+
+    fn is_empty(&self) -> bool {
+        self.unguarded_scopes.is_empty()
+            && self.guards.is_empty()
+            && self.registrations.is_empty()
+            && self.scope_order.is_empty()
+            && self.pending_moves.is_empty()
+    }
+}
+
+fn defer_assignment_transition(
+    function: &MirFunction,
+    block: &MirBasicBlock,
+    destination: &MirPlace,
+    value: &MirRvalue,
+    guard: &LocalAccess,
+    scope: crate::hir::HirScopeId,
+) -> Option<PendingDeferTransition> {
+    let directly_retargeted = match value.kind() {
+        MirRvalueKind::Use(MirOperand {
+            kind: MirOperandKind::Move(place),
+            ..
+        })
+        | MirRvalueKind::IteratorState {
+            source:
+                MirOperand {
+                    kind: MirOperandKind::Move(place),
+                    ..
+                },
+        } => LocalAccess::from_place(place) == *guard,
+        _ => false,
+    };
+    if directly_retargeted {
+        return Some(PendingDeferTransition::Retarget);
+    }
+
+    let exits_scope = block_exits_defer_scope(function, block, scope);
+    let return_root =
+        destination.local == function.return_local && destination.projections.is_empty();
+    let confirmed_handoff = matches!(value.kind(), MirRvalueKind::Coerce { .. })
+        || (return_root
+            && matches!(
+                value.kind(),
+                MirRvalueKind::Aggregate {
+                    shape: MirAggregateKind::ResultOk | MirAggregateKind::ResultErr,
+                    ..
+                }
+            ));
+    (exits_scope && confirmed_handoff).then_some(PendingDeferTransition::Disarm)
+}
+
+fn defer_disarm_is_confirmed(
+    function: &MirFunction,
+    block: &MirBasicBlock,
+    statement: usize,
+    place: &LocalAccess,
+    scope: crate::hir::HirScopeId,
+    pending: Option<PendingDeferTransition>,
+) -> bool {
+    if block.statements[statement + 1..].iter().any(|statement| {
+        !matches!(
+            statement.kind,
+            MirStatementKind::ReleaseLoan(_) | MirStatementKind::DisarmDefer(_)
+        )
+    }) {
+        return false;
+    }
+    match pending {
+        Some(PendingDeferTransition::Retarget) => false,
+        Some(PendingDeferTransition::Disarm) => block_exits_defer_scope(function, block, scope),
+        None => {
+            terminator_moves_defer_guard(&block.terminator.kind, place)
+                || block_exits_defer_scope(function, block, scope)
+        }
+    }
+}
+
+fn terminator_moves_defer_guard(terminator: &MirTerminatorKind, guard: &LocalAccess) -> bool {
+    let MirTerminatorKind::Invoke { operation, .. } = terminator else {
+        return false;
+    };
+    operation_operands(operation).into_iter().any(|operand| {
+        matches!(
+            operand.kind(),
+            MirOperandKind::Move(place) if LocalAccess::from_place(place) == *guard
+        )
+    })
+}
+
+fn block_exits_defer_scope(
+    function: &MirFunction,
+    block: &MirBasicBlock,
+    scope: crate::hir::HirScopeId,
+) -> bool {
+    let drains = |terminator: &MirTerminatorKind| {
+        matches!(
+            terminator,
+            MirTerminatorKind::DrainDefers { scopes, .. } if scopes.contains(&scope)
+        )
+    };
+    if drains(&block.terminator.kind) {
+        return true;
+    }
+    let MirTerminatorKind::Goto { target } = &block.terminator.kind else {
+        return false;
+    };
+    function
+        .blocks
+        .get(target.0 as usize)
+        .is_some_and(|target| drains(&target.terminator.kind))
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum MovePathComponent {
     ClosureCapture(crate::hir::HirClosureId, u32),
@@ -251,6 +485,7 @@ enum MovePathComponent {
     IteratorElement {
         index: MirLocalId,
     },
+    IteratorSource,
     Index {
         index: MirLocalId,
         access: HirIndexAccess,
@@ -287,6 +522,7 @@ impl MovePathComponent {
                 suffix: *suffix,
             },
             MirProjectionKind::IteratorElement { index } => Self::IteratorElement { index: *index },
+            MirProjectionKind::IteratorSource => Self::IteratorSource,
             MirProjectionKind::Index { index, access } => Self::Index {
                 index: *index,
                 access: *access,
@@ -446,6 +682,55 @@ fn mir_operation_contains_invalid_borrow(operation: &MirOperation) -> bool {
         } => escapes(condition) || message_parts.iter().any(|part| escapes(&part.value)),
         MirOperationKind::BootstrapHostCall { arguments, .. } => arguments.iter().any(escapes),
     }
+}
+
+fn operation_operands(operation: &MirOperation) -> Vec<&MirOperand> {
+    let mut operands = Vec::new();
+    match operation.kind() {
+        MirOperationKind::CheckedPrefix { operand, .. }
+        | MirOperationKind::ExplicitPanic { message: operand } => operands.push(operand),
+        MirOperationKind::CheckedBinary { left, right, .. }
+        | MirOperationKind::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
+            operands.push(left);
+            operands.push(right);
+        }
+        MirOperationKind::BuildMap { entries, .. } => {
+            for (key, value) in entries {
+                operands.push(key);
+                operands.push(value);
+            }
+        }
+        MirOperationKind::Slice { base, bounds, .. } => {
+            operands.push(base);
+            operands.extend(
+                bounds
+                    .start()
+                    .into_iter()
+                    .chain(bounds.end())
+                    .chain(bounds.step()),
+            );
+        }
+        MirOperationKind::Call {
+            callee, arguments, ..
+        } => {
+            operands.push(callee);
+            operands.extend(arguments.iter().map(super::MirCallArgument::value));
+        }
+        MirOperationKind::Assert {
+            condition,
+            message_parts,
+            ..
+        } => {
+            operands.push(condition);
+            operands.extend(message_parts.iter().map(super::MirAssertMessagePart::value));
+        }
+        MirOperationKind::BootstrapHostCall { arguments, .. } => operands.extend(arguments),
+    }
+    operands
 }
 
 #[derive(Debug, Clone)]
@@ -671,6 +956,7 @@ impl Verifier<'_> {
             self.verify_block(function, MirBlockId(index as u32), block)?;
         }
         self.verify_control_and_dataflow(function)?;
+        self.verify_defer_flow(function, &context)?;
         if let MirFunctionId::Closure(closure) = function.id {
             self.verify_closure_protocols(function, closure, &context)?;
         }
@@ -890,6 +1176,106 @@ impl Verifier<'_> {
                         ));
                     }
                 }
+                MirStatementKind::RegisterDefer { action, guard, .. } => {
+                    if block.kind != MirBlockKind::Normal {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "cleanup block registers another defer",
+                        ));
+                    }
+                    if let MirOperationKind::Call {
+                        callee, protocol, ..
+                    } = &action.kind
+                        && matches!(callee.kind(), MirOperandKind::Move(_))
+                        && *protocol != crate::hir::HirCallProtocol::CallOnce
+                    {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "a non-Copy deferred callee does not use CallOnce",
+                        ));
+                    }
+                    self.verify_operation(function, action, true, &context)?;
+                    if action.ty != self.hir.interner().scalar(ScalarType::Unit)
+                        || !matches!(
+                            action.kind,
+                            MirOperationKind::Call { .. }
+                                | MirOperationKind::Assert { .. }
+                                | MirOperationKind::BootstrapHostCall { .. }
+                        )
+                    {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "defer entry is not an infallible Unit invocation",
+                        ));
+                    }
+                    if operation_operands(action).iter().any(|operand| {
+                        matches!(
+                            operand.kind(),
+                            MirOperandKind::Borrow(_) | MirOperandKind::Loan(_)
+                        )
+                    }) {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "defer entry retains a borrowed operand",
+                        ));
+                    }
+                    let moved = operation_operands(action)
+                        .into_iter()
+                        .filter_map(|operand| match operand.kind() {
+                            MirOperandKind::Move(place) => Some(place),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    if moved.len() > 1 || guard.is_some() != (moved.len() == 1) {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "defer entry does not have exactly one guard for its affine operand",
+                        ));
+                    }
+                    if let Some(guard) = guard {
+                        self.verify_place(function, guard, &context)?;
+                        if !is_complete_defer_owner_place(guard) {
+                            return Err(MirInvariantError::new(
+                                &context,
+                                "registered defer guard is not one complete owner place",
+                            ));
+                        }
+                        if moved[0] != guard {
+                            return Err(MirInvariantError::new(
+                                &context,
+                                "defer guard does not match exactly one moved invocation operand",
+                            ));
+                        }
+                    }
+                }
+                MirStatementKind::RetargetDefer { from, to } => {
+                    if block.kind != MirBlockKind::Normal {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "cleanup block retargets a defer guard",
+                        ));
+                    }
+                    self.verify_place(function, from, &context)?;
+                    self.verify_place(function, to, &context)?;
+                    if from.ty != to.ty
+                        || !is_complete_defer_owner_place(from)
+                        || !(is_complete_defer_owner_place(to) || is_iterator_defer_target(to))
+                    {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "defer retarget does not preserve one complete owner place",
+                        ));
+                    }
+                }
+                MirStatementKind::DisarmDefer(place) => {
+                    if block.kind != MirBlockKind::Normal {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "cleanup block explicitly disarms a defer guard",
+                        ));
+                    }
+                    self.verify_place(function, place, &context)?;
+                }
             }
         }
         self.verify_span(function, block.terminator.span, &context)?;
@@ -979,7 +1365,7 @@ impl Verifier<'_> {
                         "cleanup block invokes an ordinary fallible operation",
                     ));
                 }
-                self.verify_operation(function, operation, &context)?;
+                self.verify_operation(function, operation, false, &context)?;
                 let never = self.hir.interner().scalar(ScalarType::Never);
                 match (destination, target) {
                     (Some(destination), Some(target)) => {
@@ -1012,6 +1398,7 @@ impl Verifier<'_> {
                 state,
                 destination,
                 borrowed_source,
+                exhaustion_guard,
                 has_value,
                 exhausted,
                 unwind,
@@ -1039,8 +1426,43 @@ impl Verifier<'_> {
                             ));
                         }
                         self.verify_iterator(state.ty, destination.ty, &context)?;
+                        let terminal = self.terminal_status(function.id, *collection, &context)?
+                            != HirTerminalStatus::Absent;
+                        if terminal != exhaustion_guard.is_some() {
+                            return Err(MirInvariantError::new(
+                                &context,
+                                "owning iterator exhaustion guard does not match contextual terminal ownership",
+                            ));
+                        }
+                        if let Some(guard) = exhaustion_guard {
+                            if has_value == exhausted {
+                                return Err(MirInvariantError::new(
+                                    &context,
+                                    "guarded iterator uses the same value and exhaustion edge",
+                                ));
+                            }
+                            self.verify_place(function, guard, &context)?;
+                            let mut expected = state.clone();
+                            expected.ty = *collection;
+                            expected.projections.push(MirProjection {
+                                ty: *collection,
+                                kind: MirProjectionKind::IteratorSource,
+                            });
+                            if guard != &expected {
+                                return Err(MirInvariantError::new(
+                                    &context,
+                                    "iterator exhaustion guard is not its exact owned source",
+                                ));
+                            }
+                        }
                     }
                     CursorMode::Ref => {
+                        if exhaustion_guard.is_some() {
+                            return Err(MirInvariantError::new(
+                                &context,
+                                "borrowed iterator carries an owning exhaustion guard",
+                            ));
+                        }
                         let source = borrowed_source.as_ref().ok_or_else(|| {
                             MirInvariantError::new(
                                 &context,
@@ -1194,6 +1616,34 @@ impl Verifier<'_> {
                     return Err(MirInvariantError::new(
                         &context,
                         "loan-validation unwind edge does not enter cleanup code",
+                    ));
+                }
+            }
+            MirTerminatorKind::DrainDefers {
+                scopes,
+                target,
+                unwind,
+            } => {
+                if scopes.is_empty()
+                    || scopes.iter().copied().collect::<BTreeSet<_>>().len() != scopes.len()
+                {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "defer drain has an empty or duplicate scope set",
+                    ));
+                }
+                let target_block = self.block(function, *target, &context)?;
+                let unwind_block = self.block(function, *unwind, &context)?;
+                if target_block.kind != block.kind || unwind_block.kind != MirBlockKind::Cleanup {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "defer drain crosses an invalid normal or unwind boundary",
+                    ));
+                }
+                if !block.statements.is_empty() {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "defer drain block contains ordinary statements",
                     ));
                 }
             }
@@ -1414,6 +1864,7 @@ impl Verifier<'_> {
         &self,
         function: &MirFunction,
         operation: &MirOperation,
+        deferred: bool,
         context: &str,
     ) -> Result<(), MirInvariantError> {
         if mir_operation_contains_invalid_borrow(operation) {
@@ -1521,6 +1972,7 @@ impl Verifier<'_> {
                         protocol: *protocol,
                         outcome: operation.ty,
                     },
+                    deferred,
                     context,
                 )?;
             }
@@ -1983,6 +2435,35 @@ impl Verifier<'_> {
             ));
         }
         self.capability_statuses.borrow_mut().insert(key, status);
+        Ok(status)
+    }
+
+    fn terminal_status(
+        &self,
+        function: MirFunctionId,
+        ty: TypeId,
+        context: &str,
+    ) -> Result<HirTerminalStatus, MirInvariantError> {
+        let key = (function, ty);
+        if let Some(status) = self.terminal_statuses.borrow().get(&key).copied() {
+            return Ok(status);
+        }
+        let generics = match function {
+            MirFunctionId::Callable(callable) => self
+                .hir
+                .callable(callable)
+                .map(|callable| callable.generics()),
+            MirFunctionId::Closure(closure) => {
+                self.hir.closure(closure).map(|closure| closure.generics())
+            }
+        }
+        .ok_or_else(|| MirInvariantError::new(context, "function has no typed HIR generics"))?;
+        let assumptions = CapabilityAssumptions::from_generics(self.hir, generics);
+        let status = self
+            .terminal_analysis
+            .status(self.hir, ty, &assumptions)
+            .map_err(|error| MirInvariantError::new(context, error.to_string()))?;
+        self.terminal_statuses.borrow_mut().insert(key, status);
         Ok(status)
     }
 
@@ -2839,6 +3320,21 @@ impl Verifier<'_> {
                 }
                 Ok(expected)
             }
+            MirProjectionKind::IteratorSource => {
+                let TypeKind::Cursor { collection, .. } = self.kind(current, context)? else {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "iterator source projection has a non-cursor base",
+                    ));
+                };
+                if *collection != declared {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "iterator source projection declares the wrong collection type",
+                    ));
+                }
+                Ok(*collection)
+            }
             MirProjectionKind::Index { index, access } => {
                 let index_type = self.local(function, *index, context)?.ty;
                 self.verify_index_result(current, index_type, *access, declared, context)?;
@@ -3420,6 +3916,7 @@ impl Verifier<'_> {
         &self,
         function: &MirFunction,
         verification: MirCallVerification<'_>,
+        deferred: bool,
         context: &str,
     ) -> Result<(), MirInvariantError> {
         let MirCallVerification {
@@ -3482,7 +3979,12 @@ impl Verifier<'_> {
             } => self.opaque_call_protocols(identity, arguments, signature, context)?,
             _ => HirClosureProtocols::new(false, false, false),
         };
-        let expected_protocol = if available.supports(HirCallProtocol::Call) {
+        let expected_protocol = if deferred
+            && matches!(callee.kind, MirOperandKind::Move(_))
+            && available.supports(HirCallProtocol::CallOnce)
+        {
+            Some(HirCallProtocol::CallOnce)
+        } else if available.supports(HirCallProtocol::Call) {
             Some(HirCallProtocol::Call)
         } else if available.supports(HirCallProtocol::CallMut)
             && matches!(callee.kind, MirOperandKind::Borrow(_))
@@ -3920,6 +4422,332 @@ impl Verifier<'_> {
         Ok(())
     }
 
+    fn verify_defer_flow(
+        &self,
+        function: &MirFunction,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let registered_scopes = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .filter_map(|statement| match &statement.kind {
+                MirStatementKind::RegisterDefer { scope, .. } => Some(*scope),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        for (index, block) in function.blocks.iter().enumerate() {
+            let MirTerminatorKind::DrainDefers { scopes, .. } = &block.terminator.kind else {
+                continue;
+            };
+            if scopes
+                .iter()
+                .any(|scope| !registered_scopes.contains(scope))
+            {
+                return Err(MirInvariantError::new(
+                    format!("{context} block#{index}"),
+                    "defer drain references a scope with no registration",
+                ));
+            }
+        }
+        let successors = function
+            .blocks
+            .iter()
+            .map(|block| successor_edges(&block.terminator.kind))
+            .collect::<Vec<_>>();
+        let mut incoming = vec![BTreeSet::<DeferFlowState>::new(); function.blocks.len()];
+        incoming[function.entry.0 as usize].insert(DeferFlowState::default());
+        let mut queue = VecDeque::from([function.entry]);
+        let mut queued = vec![false; function.blocks.len()];
+        queued[function.entry.0 as usize] = true;
+
+        while let Some(block_id) = queue.pop_front() {
+            queued[block_id.0 as usize] = false;
+            let block = &function.blocks[block_id.0 as usize];
+            let block_context = format!("{context} block#{}", block_id.0);
+            let local_events = self.local_events(function, block);
+            let mut outgoing = BTreeSet::new();
+            for mut state in incoming[block_id.0 as usize].clone() {
+                self.consume_dataflow_step(context)?;
+                apply_consumed_defer_events(&mut state, &local_events, &block_context)?;
+                for (index, statement) in block.statements.iter().enumerate() {
+                    let statement_context = format!("{block_context} statement#{index}");
+                    let advances_pending = match &statement.kind {
+                        MirStatementKind::RetargetDefer { from, .. } => state
+                            .pending_moves
+                            .contains_key(&LocalAccess::from_place(from)),
+                        MirStatementKind::DisarmDefer(place) => state
+                            .pending_moves
+                            .contains_key(&LocalAccess::from_place(place)),
+                        _ => false,
+                    };
+                    if !state.pending_moves.is_empty() && !advances_pending {
+                        return Err(MirInvariantError::new(
+                            statement_context,
+                            "guarded move is not immediately followed by its defer transition",
+                        ));
+                    }
+                    match &statement.kind {
+                        MirStatementKind::RegisterDefer { scope, guard, .. } => {
+                            state.activate_scope(*scope, &statement_context)?;
+                            let registration = (block_id, index);
+                            if state.registrations.insert(registration, *scope).is_some() {
+                                return Err(MirInvariantError::new(
+                                    statement_context,
+                                    "defer registration is re-executed before it is drained or disarmed",
+                                ));
+                            }
+                            if let Some(guard) = guard {
+                                let guard = LocalAccess::from_place(guard);
+                                if state
+                                    .guards
+                                    .keys()
+                                    .any(|existing| local_accesses_overlap(existing, &guard))
+                                {
+                                    return Err(MirInvariantError::new(
+                                        statement_context,
+                                        "defer registration overlaps an already-active guard",
+                                    ));
+                                }
+                                state.guards.insert(
+                                    guard,
+                                    ActiveDeferGuard {
+                                        scope: *scope,
+                                        registration,
+                                    },
+                                );
+                            } else {
+                                state.unguarded_scopes.insert(*scope);
+                            }
+                        }
+                        MirStatementKind::RetargetDefer { from, to } => {
+                            let from = LocalAccess::from_place(from);
+                            let to = LocalAccess::from_place(to);
+                            if let Some(guard) = state.guards.remove(&from) {
+                                if state.pending_moves.remove(&from)
+                                    != Some(PendingDeferTransition::Retarget)
+                                {
+                                    return Err(MirInvariantError::new(
+                                        statement_context,
+                                        "defer guard retarget is not backed by an immediate move",
+                                    ));
+                                }
+                                if state
+                                    .guards
+                                    .keys()
+                                    .any(|existing| local_accesses_overlap(existing, &to))
+                                {
+                                    return Err(MirInvariantError::new(
+                                        statement_context,
+                                        "defer guard retarget overlaps another active guard",
+                                    ));
+                                }
+                                state.guards.insert(to, guard);
+                            }
+                        }
+                        MirStatementKind::DisarmDefer(place) => {
+                            let place = LocalAccess::from_place(place);
+                            let pending = state.pending_moves.remove(&place);
+                            if let Some(guard) = state.guards.remove(&place) {
+                                if !defer_disarm_is_confirmed(
+                                    function,
+                                    block,
+                                    index,
+                                    &place,
+                                    guard.scope,
+                                    pending,
+                                ) {
+                                    return Err(MirInvariantError::new(
+                                        statement_context,
+                                        "defer guard is disarmed without an immediate consuming handoff or scope exit",
+                                    ));
+                                }
+                                state.registrations.remove(&guard.registration);
+                                state.remove_inactive_scope(guard.scope);
+                            }
+                        }
+                        MirStatementKind::Assign { destination, value } => {
+                            let destination_place = destination;
+                            let destination = LocalAccess::from_place(destination_place);
+                            if state
+                                .guards
+                                .keys()
+                                .any(|guard| local_accesses_overlap(guard, &destination))
+                            {
+                                return Err(MirInvariantError::new(
+                                    statement_context,
+                                    "assignment overwrites an active defer guard",
+                                ));
+                            }
+                            let mut events = Vec::new();
+                            push_rvalue_events(value, &mut events);
+                            for access in events.into_iter().filter_map(|event| match event {
+                                LocalEvent::Move(access) => Some(access),
+                                _ => None,
+                            }) {
+                                let overlapping = state
+                                    .guards
+                                    .keys()
+                                    .filter(|guard| local_accesses_overlap(guard, &access))
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                if overlapping.iter().any(|guard| guard != &access) {
+                                    return Err(MirInvariantError::new(
+                                        &statement_context,
+                                        "assignment partially moves an active defer guard",
+                                    ));
+                                }
+                                if let Some(guard) = state.guards.get(&access) {
+                                    let transition = defer_assignment_transition(
+                                        function,
+                                        block,
+                                        destination_place,
+                                        value,
+                                        &access,
+                                        guard.scope,
+                                    )
+                                    .ok_or_else(|| {
+                                        MirInvariantError::new(
+                                            &statement_context,
+                                            "assignment embeds an active defer guard instead of retargeting or handing it off",
+                                        )
+                                    })?;
+                                    state.pending_moves.insert(access, transition);
+                                }
+                            }
+                        }
+                        MirStatementKind::StorageLive(local)
+                        | MirStatementKind::StorageDead(local) => {
+                            if state.guards.keys().any(|guard| guard.local == *local) {
+                                return Err(MirInvariantError::new(
+                                    statement_context,
+                                    "storage lifetime crosses an active defer guard",
+                                ));
+                            }
+                        }
+                        MirStatementKind::ReserveLoan(_) | MirStatementKind::ReleaseLoan(_) => {}
+                    }
+                }
+                if !state.pending_moves.is_empty() {
+                    return Err(MirInvariantError::new(
+                        &block_context,
+                        "guarded move reaches a terminator without retarget or disarm",
+                    ));
+                }
+
+                let mut terminator_events = Vec::new();
+                match &block.terminator.kind {
+                    MirTerminatorKind::SwitchBool { condition, .. }
+                    | MirTerminatorKind::SwitchTag {
+                        value: condition, ..
+                    } => push_operand_events(condition, &mut terminator_events),
+                    MirTerminatorKind::Invoke { operation, .. } => {
+                        push_operation_events(operation, &mut terminator_events);
+                    }
+                    MirTerminatorKind::ValidatePlaces { replacements, .. } => {
+                        for replacement in replacements.iter().flatten() {
+                            push_operand_events(replacement, &mut terminator_events);
+                        }
+                    }
+                    MirTerminatorKind::Goto { .. }
+                    | MirTerminatorKind::IteratorNext { .. }
+                    | MirTerminatorKind::ValidateLoan { .. }
+                    | MirTerminatorKind::DrainDefers { .. }
+                    | MirTerminatorKind::Return
+                    | MirTerminatorKind::ResumePanic
+                    | MirTerminatorKind::Unreachable => {}
+                }
+                for access in terminator_events
+                    .into_iter()
+                    .filter_map(|event| match event {
+                        LocalEvent::Move(access) => Some(access),
+                        _ => None,
+                    })
+                {
+                    if state
+                        .guards
+                        .keys()
+                        .any(|guard| local_accesses_overlap(guard, &access))
+                    {
+                        return Err(MirInvariantError::new(
+                            &block_context,
+                            "terminator moves an active defer guard without disarming it",
+                        ));
+                    }
+                }
+
+                if let MirTerminatorKind::DrainDefers { scopes, .. } = &block.terminator.kind {
+                    state.drain(scopes, &block_context)?;
+                }
+                if matches!(
+                    block.terminator.kind,
+                    MirTerminatorKind::Return | MirTerminatorKind::ResumePanic
+                ) && !state.is_empty()
+                {
+                    return Err(MirInvariantError::new(
+                        &block_context,
+                        "terminal control flow abandons registered defer entries",
+                    ));
+                }
+                outgoing.insert(state);
+            }
+
+            for edge in &successors[block_id.0 as usize] {
+                let target = edge.target.0 as usize;
+                let mut changed = false;
+                for state in &outgoing {
+                    let mut edge_state = state.clone();
+                    if let Some(destination) = &edge.writes {
+                        let destination = LocalAccess::from_place(destination);
+                        if edge_state
+                            .guards
+                            .keys()
+                            .any(|guard| local_accesses_overlap(guard, &destination))
+                        {
+                            return Err(MirInvariantError::new(
+                                &block_context,
+                                "terminator overwrites an active defer guard",
+                            ));
+                        }
+                        apply_consumed_defer_events(
+                            &mut edge_state,
+                            &[LocalEvent::Write(destination)],
+                            &block_context,
+                        )?;
+                    }
+                    let mut edge_states = vec![edge_state.clone()];
+                    if let MirTerminatorKind::IteratorNext {
+                        exhaustion_guard: Some(place),
+                        exhausted,
+                        ..
+                    } = &block.terminator.kind
+                        && edge.target == *exhausted
+                    {
+                        let terminal =
+                            self.terminal_status(function.id, place.ty, &block_context)?;
+                        if terminal == HirTerminalStatus::Present {
+                            let place = LocalAccess::from_place(place);
+                            let mut disarmed = edge_state;
+                            if let Some(guard) = disarmed.guards.remove(&place) {
+                                disarmed.registrations.remove(&guard.registration);
+                                disarmed.remove_inactive_scope(guard.scope);
+                            }
+                            edge_states = vec![disarmed];
+                        }
+                    }
+                    for state in edge_states {
+                        changed |= incoming[target].insert(state);
+                    }
+                }
+                if changed && !queued[target] {
+                    queued[target] = true;
+                    queue.push_back(edge.target);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn verify_loan_flow(
         &self,
         function: &MirFunction,
@@ -4202,6 +5030,10 @@ impl Verifier<'_> {
                             format!("validates already-active or pending loan#{}", loan.index()),
                         ));
                     }
+                    propagate(*target, state)?;
+                    propagate(*unwind, LoanFlowState::default())?;
+                }
+                MirTerminatorKind::DrainDefers { target, unwind, .. } => {
                     propagate(*target, state)?;
                     propagate(*unwind, LoanFlowState::default())?;
                 }
@@ -5106,10 +5938,15 @@ impl Verifier<'_> {
                     push_rvalue_events(value, &mut events);
                     push_destination_events(destination, &mut events);
                 }
+                MirStatementKind::RegisterDefer { action, guard, .. } => {
+                    push_defer_operation_events(action, guard.as_ref(), &mut events);
+                }
+                MirStatementKind::RetargetDefer { .. } | MirStatementKind::DisarmDefer(_) => {}
             }
         }
         match &block.terminator.kind {
             MirTerminatorKind::Goto { .. }
+            | MirTerminatorKind::DrainDefers { .. }
             | MirTerminatorKind::ResumePanic
             | MirTerminatorKind::Unreachable => {}
             MirTerminatorKind::SwitchBool { condition, .. } => {
@@ -5369,11 +6206,18 @@ fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEve
                 push_destination_events(destination, &mut local);
                 events.extend(local.into_iter().map(LoanEvent::Local));
             }
+            MirStatementKind::RegisterDefer { action, guard, .. } => {
+                let mut local = Vec::new();
+                push_defer_operation_events(action, guard.as_ref(), &mut local);
+                events.extend(local.into_iter().map(LoanEvent::Local));
+            }
+            MirStatementKind::RetargetDefer { .. } | MirStatementKind::DisarmDefer(_) => {}
         }
     }
     let mut local = Vec::new();
     match &block.terminator.kind {
         MirTerminatorKind::Goto { .. }
+        | MirTerminatorKind::DrainDefers { .. }
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => {}
         MirTerminatorKind::SwitchBool { condition, .. } => {
@@ -5473,15 +6317,21 @@ fn tag_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<TagEvent> {
             MirStatementKind::StorageLive(_)
             | MirStatementKind::StorageDead(_)
             | MirStatementKind::ReserveLoan(_)
-            | MirStatementKind::ReleaseLoan(_) => {}
+            | MirStatementKind::ReleaseLoan(_)
+            | MirStatementKind::RetargetDefer { .. }
+            | MirStatementKind::DisarmDefer(_) => {}
             MirStatementKind::Assign { destination, value } => {
                 push_tag_rvalue(function, value, &mut events);
                 push_tag_place(function, destination, true, &mut events);
+            }
+            MirStatementKind::RegisterDefer { action, .. } => {
+                push_tag_operation(function, action, &mut events);
             }
         }
     }
     match &block.terminator.kind {
         MirTerminatorKind::Goto { .. }
+        | MirTerminatorKind::DrainDefers { .. }
         | MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => {}
@@ -5649,6 +6499,7 @@ fn push_tag_place(
             | MirProjectionKind::VariantField { variant, .. } => Some(MirTag::Variant(*variant)),
             MirProjectionKind::UnionValue(member) => Some(MirTag::Union(*member)),
             MirProjectionKind::ClosureCapture { .. }
+            | MirProjectionKind::IteratorSource
             | MirProjectionKind::Field(_)
             | MirProjectionKind::TupleField(_)
             | MirProjectionKind::NewtypeValue
@@ -5794,7 +6645,8 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
             edge(*unwind),
         ],
         MirTerminatorKind::ValidatePlaces { target, unwind, .. }
-        | MirTerminatorKind::ValidateLoan { target, unwind, .. } => {
+        | MirTerminatorKind::ValidateLoan { target, unwind, .. }
+        | MirTerminatorKind::DrainDefers { target, unwind, .. } => {
             vec![edge(*target), edge(*unwind)]
         }
         MirTerminatorKind::Return
@@ -5911,6 +6763,79 @@ fn move_paths_overlap(left: &[MovePathComponent], right: &[MovePathComponent]) -
         .all(|(left, right)| !move_path_components_are_disjoint(left, right))
 }
 
+fn local_accesses_overlap(left: &LocalAccess, right: &LocalAccess) -> bool {
+    left.local == right.local && move_paths_overlap(&left.path, &right.path)
+}
+
+fn local_access_contains(outer: &LocalAccess, inner: &LocalAccess) -> bool {
+    outer.local == inner.local
+        && outer.source_loan == inner.source_loan
+        && outer.path.len() <= inner.path.len()
+        && outer
+            .path
+            .iter()
+            .zip(&inner.path)
+            .all(|(left, right)| left == right)
+}
+
+fn apply_consumed_defer_events(
+    state: &mut DeferFlowState,
+    events: &[LocalEvent],
+    context: &str,
+) -> Result<(), MirInvariantError> {
+    for event in events {
+        match event {
+            LocalEvent::Read(access) | LocalEvent::Resolve(access) | LocalEvent::Move(access) => {
+                if state
+                    .consumed
+                    .iter()
+                    .any(|consumed| local_accesses_overlap(consumed, access))
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "accesses an owner already consumed by a deferred action",
+                    ));
+                }
+            }
+            LocalEvent::WriteAccess(access) => {
+                if state.consumed.iter().any(|consumed| {
+                    local_accesses_overlap(consumed, access)
+                        && !local_access_contains(access, consumed)
+                }) {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "resolves a partial write through an owner consumed by a deferred action",
+                    ));
+                }
+            }
+            LocalEvent::Write(access) => {
+                let overlapping = state
+                    .consumed
+                    .iter()
+                    .filter(|consumed| local_accesses_overlap(consumed, access))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if overlapping
+                    .iter()
+                    .any(|consumed| !local_access_contains(access, consumed))
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "partially reinitializes an owner consumed by a deferred action",
+                    ));
+                }
+                state
+                    .consumed
+                    .retain(|consumed| !local_access_contains(access, consumed));
+            }
+            LocalEvent::StorageLive(local) | LocalEvent::StorageDead(local) => {
+                state.consumed.retain(|consumed| consumed.local != *local);
+            }
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 fn loan_paths_overlap(
     left: &[MovePathComponent],
@@ -5969,6 +6894,7 @@ fn move_path_runtime_inputs(path: &[MovePathComponent]) -> impl Iterator<Item = 
             MovePathComponent::IteratorElement { index } => [Some(*index), None, None],
             MovePathComponent::Slice { start, end, step } => [*start, *end, *step],
             MovePathComponent::ClosureCapture(_, _)
+            | MovePathComponent::IteratorSource
             | MovePathComponent::Field(_)
             | MovePathComponent::TupleField(_)
             | MovePathComponent::NewtypeValue
@@ -6055,6 +6981,7 @@ fn collection_region(
             }))
         }
         MovePathComponent::ClosureCapture(_, _)
+        | MovePathComponent::IteratorSource
         | MovePathComponent::Field(_)
         | MovePathComponent::TupleField(_)
         | MovePathComponent::NewtypeValue
@@ -6236,6 +7163,22 @@ fn push_operation_events(operation: &MirOperation, events: &mut Vec<LocalEvent>)
     }
 }
 
+fn push_defer_operation_events(
+    operation: &MirOperation,
+    guard: Option<&MirPlace>,
+    events: &mut Vec<LocalEvent>,
+) {
+    for operand in operation_operands(operation) {
+        if let (Some(guard), MirOperandKind::Move(place)) = (guard, operand.kind())
+            && place == guard
+        {
+            push_resolve_place_events(place, events);
+        } else {
+            push_operand_events(operand, events);
+        }
+    }
+}
+
 fn push_operand_events(operand: &MirOperand, events: &mut Vec<LocalEvent>) {
     match &operand.kind {
         MirOperandKind::Move(place) => {
@@ -6305,6 +7248,7 @@ fn push_projection_index_events(place: &MirPlace, events: &mut Vec<LocalEvent>) 
                 }));
             }
             MirProjectionKind::ClosureCapture { .. }
+            | MirProjectionKind::IteratorSource
             | MirProjectionKind::Field(_)
             | MirProjectionKind::TupleField(_)
             | MirProjectionKind::NewtypeValue

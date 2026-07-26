@@ -7,7 +7,9 @@ observations, OWN-003 flow availability, and OWN-004 complete-slot
 reinitialization, OWN-005 typed move paths, OWN-006 affine closure captures,
 OWN-007 terminal capture obligations, BORROW-001 call-local loan execution,
 BORROW-002 last-use regions, BORROW-003 fixed versus structural mutation, and
-BORROW-004 static collection-region disjunction
+BORROW-004 static collection-region disjunction, BORROW-005 dynamic overlap
+proofs, BORROW-006 borrowed iteration, and TERM-003 synchronous defer/guard
+execution
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -59,6 +61,12 @@ its owned source (or duplicates its shared reference), preserves the current
 index, and allocates an independently advancing iterator object. COW and compact
 representations require differential tests against this baseline.
 
+Advancing an own cursor is a destructive ownership transfer from that private
+state. Arrays and sets remove the next element; maps remove a key/value pair and
+yield a newly allocated tuple. The cursor retains the compact remainder, and
+the yielded managed value is rooted while iterator state is replaced. Ref
+cursors retain their source and expose only a verified position into it.
+
 ## Frames and roots
 
 Execution uses an iterative Rust vector of frames; a Tondo call never recurses
@@ -67,6 +75,8 @@ through the Rust call stack. Each frame owns:
 - the verified bytecode function, block, and instruction cursor;
 - one state per typed slot: dead, live-uninitialized, or live with a value;
 - one optional normalized reservation per function-local loan identity; and
+- one ordered stack of captured deferred operations, each with a lexical scope
+  and optional affine guard place; and
 - an optional normal/unwind continuation for its caller.
 
 Parameters and the return slot follow the function metadata. Explicit
@@ -124,6 +134,19 @@ each propagated unwind clears the abandoned caller frame before following its
 cleanup edge. Because the synchronous caller frame remains live throughout the
 call, the original slot also remains a precise GC root. Host callables cannot
 declare or receive borrowed parameters in the bootstrap ABI.
+
+Registering a defer evaluates and snapshots every `Copy` operand immediately.
+Each completed snapshot remains on the operation-local root stack until the
+whole entry has been installed in the frame, including while later operands
+allocate and trigger collection.
+Its one optional affine operand is represented by a guard placeholder and stays
+in the verified frame place until cleanup. A retarget changes only that place;
+a disarm removes the complete entry. Both operations defensively require at
+most one matching entry. Deferred snapshots and guarded places are precise GC
+roots. `DrainDefers` repeatedly removes the last entry belonging to any
+abandoned scope before invoking it, so an action is disarmed before it runs and
+cannot execute twice. The guarded frame place is consumed by that invocation;
+verified code cannot access it again unless a complete write reinitializes it.
 
 At every possible collection, roots are enumerated precisely from every live
 value in every frame plus an explicit stack of operation-local values that have
@@ -184,7 +207,12 @@ activating an unfinished async runtime or bypassing an unsafe context proof.
 
 A panic stores its normative `P` code, stable name, message, primary source
 span, and a canonical innermost-first call stack. Cleanup blocks execute while
-the pending panic crosses frames. Tondo 0.1 cannot catch it. `assert` evaluates
+the pending panic crosses frames. A panic raised by a deferred action does not
+skip later defers: draining continues on its unwind continuation. If another
+panic was already active it remains primary and the cleanup panic is appended
+as suppressed; otherwise the first LIFO cleanup panic becomes primary. A
+normal `return`, `fail`, `?`, `break`, or `continue` that encounters a cleanup
+panic is replaced by that panic. Tondo 0.1 cannot catch it. `assert` evaluates
 its condition and every message part from left to right; a failed assertion
 concatenates ordinary and spread `Array[String]` parts without a separator. If
 there are no message parts, the VM reports `assertion failed: <condition>` from
@@ -236,6 +264,14 @@ loans exercise checked bounds without inventing an overlap check. Early `?`,
 transfer proves that it cannot release an outer reservation. Mutated MIR and
 bytecode reject duplicate reservation, inactive release, conflicting access,
 forged overlapping collection paths, and a loan operand outside its call.
+
+Defer regressions execute registration-time Copy snapshots, nested-scope LIFO,
+final-expression, `return`, `fail`, `?`, `break`, `continue`, and panic drains,
+guard retarget/disarm, guarded intrinsic Array/Map remainder cleanup, natural
+exhaustion, and suppressed cleanup panics. Mutated HIR, MIR, and bytecode reject
+invalid actions, duplicate guards, missing or forged transitions, repeated
+registrations, post-drain reuse, incorrect drain scopes, and malformed iterator
+exhaustion markers before execution.
 
 Slice assignment materializes the complete RHS before its write validation.
 The validation terminator carries aligned destination/replacement metadata,

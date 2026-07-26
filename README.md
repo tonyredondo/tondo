@@ -85,9 +85,12 @@ alias rejection, reborrowing, VM write-through, and explicit release on
 abandoned argument paths. General last-use regions, collection-view loans,
 fixed-versus-structural mutation enforcement, runtime overlap proofs, and
 borrowed `for ref` iteration over `Array`, `Map`, and `Set` are also verified
-through the VM. Concrete `await` frame/`Send` safety and terminal cleanup remain
-later milestones. The workspace therefore identifies itself as a bootstrap and
-does not claim full Tondo conformance.
+through the VM. Synchronous `defer` now captures its operands at registration,
+drains lexical scopes in LIFO order on normal and panic exits, and follows or
+disarms a unique affine guard through verified ownership transfers. Concrete
+`await` frame/`Send` safety and the closed intrinsic terminal fallback remain
+later milestones. The workspace therefore identifies itself as a bootstrap
+and does not claim full Tondo conformance.
 
 ## Project documentation
 

@@ -9,9 +9,9 @@ use crate::bytecode::{
     BytecodeLoanKind, BytecodeNumericConversion, BytecodeOperand, BytecodeOperandKind,
     BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode, BytecodePlace,
     BytecodePrefixOperator, BytecodeProgram, BytecodeProjection, BytecodeProjectionKind,
-    BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind, BytecodeScalarType, BytecodeSlotId,
-    BytecodeSpan, BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind, BytecodeTypeId,
-    BytecodeTypeKind, BytecodeVerificationLimits, verify_bytecode_with_limits,
+    BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId,
+    BytecodeSlotId, BytecodeSpan, BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind,
+    BytecodeTypeId, BytecodeTypeKind, BytecodeVerificationLimits, verify_bytecode_with_limits,
 };
 
 use super::heap::{Heap, HeapHandle, HeapObject};
@@ -139,12 +139,92 @@ struct RuntimeReservation {
 }
 
 #[derive(Debug)]
+enum DeferredValue {
+    Captured(Value),
+    Guard,
+}
+
+impl DeferredValue {
+    fn roots(&self, output: &mut Vec<Value>) {
+        if let Self::Captured(value) = self {
+            output.push(value.clone());
+        }
+    }
+}
+
+#[derive(Debug)]
+struct DeferredCallArgument {
+    target: BytecodeCallArgumentTarget,
+    value: DeferredValue,
+}
+
+#[derive(Debug)]
+enum DeferredOperation {
+    Call {
+        callee: DeferredValue,
+        arguments: Vec<DeferredCallArgument>,
+    },
+    Assert {
+        condition: DeferredValue,
+        condition_repr: String,
+        message_parts: Vec<(DeferredValue, bool)>,
+    },
+    BootstrapHostCall {
+        function: BytecodeBootstrapHostFunction,
+        arguments: Vec<DeferredValue>,
+    },
+}
+
+impl DeferredOperation {
+    fn roots(&self, output: &mut Vec<Value>) {
+        match self {
+            Self::Call { callee, arguments } => {
+                callee.roots(output);
+                for argument in arguments {
+                    argument.value.roots(output);
+                }
+            }
+            Self::Assert {
+                condition,
+                message_parts,
+                ..
+            } => {
+                condition.roots(output);
+                for (value, _) in message_parts {
+                    value.roots(output);
+                }
+            }
+            Self::BootstrapHostCall { arguments, .. } => {
+                for value in arguments {
+                    value.roots(output);
+                }
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RuntimeDefer {
+    scope: BytecodeScopeId,
+    span: BytecodeSpan,
+    operation: DeferredOperation,
+    guard: Option<BytecodePlace>,
+}
+
+impl RuntimeDefer {
+    fn roots(&self, output: &mut Vec<Value>) {
+        self.operation.roots(output);
+    }
+}
+
+#[derive(Debug)]
 struct Frame {
     function: BytecodeFunctionId,
     block: BytecodeBlockId,
     instruction: usize,
     slots: Vec<SlotState>,
     loans: Vec<Option<RuntimeReservation>>,
+    defers: Vec<RuntimeDefer>,
     continuation: Option<CallContinuation>,
 }
 
@@ -154,6 +234,9 @@ impl Frame {
             SlotState::Value(value) => Some(value.clone()),
             SlotState::Dead | SlotState::Uninitialized => None,
         }));
+        for deferred in &self.defers {
+            deferred.roots(output);
+        }
     }
 }
 
@@ -285,7 +368,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                 | BytecodeInstructionKind::StorageDead(slot) => Some(slot),
                 BytecodeInstructionKind::ReserveLoan(_)
                 | BytecodeInstructionKind::ReleaseLoan(_)
-                | BytecodeInstructionKind::Store { .. } => None,
+                | BytecodeInstructionKind::Store { .. }
+                | BytecodeInstructionKind::RegisterDefer { .. }
+                | BytecodeInstructionKind::RetargetDefer { .. }
+                | BytecodeInstructionKind::DisarmDefer(_) => None,
             })
             .collect::<std::collections::BTreeSet<_>>();
         let mut slots = function
@@ -310,6 +396,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             instruction: 0,
             slots,
             loans: vec![None; function.loans.len()],
+            defers: Vec::new(),
             continuation,
         });
         self.statistics.peak_stack_depth = self
@@ -353,8 +440,199 @@ impl<'program, 'host> Engine<'program, 'host> {
                 let value = self.evaluate_rvalue(frame, value)?;
                 self.write_place(frame, destination, value)?;
             }
+            BytecodeInstructionKind::RegisterDefer {
+                scope,
+                action,
+                guard,
+            } => {
+                let span = self.resolve_span(frame, instruction.span)?;
+                let marker = self.temporary_roots.len();
+                let deferred = self.capture_defer(frame, *scope, span, action, guard.as_ref());
+                match deferred {
+                    Ok(deferred) => self.frames[frame].defers.push(deferred),
+                    Err(error) => {
+                        self.temporary_roots.truncate(marker);
+                        return Err(error);
+                    }
+                }
+                self.temporary_roots.truncate(marker);
+            }
+            BytecodeInstructionKind::RetargetDefer { from, to } => {
+                self.retarget_defer(frame, from, to)?;
+            }
+            BytecodeInstructionKind::DisarmDefer(place) => {
+                self.disarm_defer(frame, place)?;
+            }
         }
         Ok(())
+    }
+
+    fn capture_defer(
+        &mut self,
+        frame: usize,
+        scope: BytecodeScopeId,
+        span: BytecodeSpan,
+        action: &BytecodeOperation,
+        guard: Option<&BytecodePlace>,
+    ) -> Result<RuntimeDefer, VmError> {
+        let mut guard_uses = 0_usize;
+        let operation = match &action.kind {
+            BytecodeOperationKind::Call {
+                callee, arguments, ..
+            } => {
+                let callee = self.capture_deferred_value(frame, callee, guard, &mut guard_uses)?;
+                let mut captured = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    if argument.mode != BytecodeParameterMode::Value {
+                        return Err(VmError::invariant(
+                            "defer attempted to retain a borrowed call argument",
+                        ));
+                    }
+                    captured.push(DeferredCallArgument {
+                        target: argument.target,
+                        value: self.capture_deferred_value(
+                            frame,
+                            &argument.value,
+                            guard,
+                            &mut guard_uses,
+                        )?,
+                    });
+                }
+                DeferredOperation::Call {
+                    callee,
+                    arguments: captured,
+                }
+            }
+            BytecodeOperationKind::Assert {
+                condition,
+                condition_repr,
+                message_parts,
+            } => {
+                let condition =
+                    self.capture_deferred_value(frame, condition, guard, &mut guard_uses)?;
+                let mut captured = Vec::with_capacity(message_parts.len());
+                for part in message_parts {
+                    captured.push((
+                        self.capture_deferred_value(frame, &part.value, guard, &mut guard_uses)?,
+                        part.spread,
+                    ));
+                }
+                DeferredOperation::Assert {
+                    condition,
+                    condition_repr: condition_repr.clone(),
+                    message_parts: captured,
+                }
+            }
+            BytecodeOperationKind::BootstrapHostCall {
+                function,
+                arguments,
+            } => {
+                let mut captured = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    captured.push(self.capture_deferred_value(
+                        frame,
+                        argument,
+                        guard,
+                        &mut guard_uses,
+                    )?);
+                }
+                DeferredOperation::BootstrapHostCall {
+                    function: *function,
+                    arguments: captured,
+                }
+            }
+            _ => {
+                return Err(VmError::invariant(
+                    "defer action is not a verified Unit invocation",
+                ));
+            }
+        };
+        if guard_uses != usize::from(guard.is_some()) {
+            return Err(VmError::invariant(
+                "defer guard does not identify exactly one invocation operand",
+            ));
+        }
+        if let Some(guard) = guard
+            && self.frames[frame]
+                .defers
+                .iter()
+                .any(|deferred| deferred.guard.as_ref() == Some(guard))
+        {
+            return Err(VmError::invariant(
+                "two active defer entries guard the same place",
+            ));
+        }
+        Ok(RuntimeDefer {
+            scope,
+            span,
+            operation,
+            guard: guard.cloned(),
+        })
+    }
+
+    fn capture_deferred_value(
+        &mut self,
+        frame: usize,
+        operand: &BytecodeOperand,
+        guard: Option<&BytecodePlace>,
+        guard_uses: &mut usize,
+    ) -> Result<DeferredValue, VmError> {
+        if let (Some(guard), BytecodeOperandKind::Move(place)) = (guard, &operand.kind)
+            && place == guard
+        {
+            *guard_uses += 1;
+            return Ok(DeferredValue::Guard);
+        }
+        let value = self.evaluate_operand(frame, operand)?;
+        self.temporary_roots.push(value.clone());
+        Ok(DeferredValue::Captured(value))
+    }
+
+    fn retarget_defer(
+        &mut self,
+        frame: usize,
+        from: &BytecodePlace,
+        to: &BytecodePlace,
+    ) -> Result<(), VmError> {
+        let matches = self.frames[frame]
+            .defers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, deferred)| {
+                (deferred.guard.as_ref() == Some(from)).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        match matches.as_slice() {
+            [] => Ok(()),
+            [index] => {
+                self.frames[frame].defers[*index].guard = Some(to.clone());
+                Ok(())
+            }
+            _ => Err(VmError::invariant(
+                "more than one defer guard matched a retarget source",
+            )),
+        }
+    }
+
+    fn disarm_defer(&mut self, frame: usize, place: &BytecodePlace) -> Result<(), VmError> {
+        let matches = self.frames[frame]
+            .defers
+            .iter()
+            .enumerate()
+            .filter_map(|(index, deferred)| {
+                (deferred.guard.as_ref() == Some(place)).then_some(index)
+            })
+            .collect::<Vec<_>>();
+        match matches.as_slice() {
+            [] => Ok(()),
+            [index] => {
+                self.frames[frame].defers.remove(*index);
+                Ok(())
+            }
+            _ => Err(VmError::invariant(
+                "more than one defer guard matched a disarm place",
+            )),
+        }
     }
 
     fn reserve_loan(&mut self, frame: usize, id: BytecodeLoanId) -> Result<(), VmError> {
@@ -579,6 +857,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 state,
                 destination,
                 borrowed_source,
+                exhaustion_guard,
                 has_value,
                 exhausted,
                 unwind,
@@ -601,7 +880,12 @@ impl<'program, 'host> Engine<'program, 'host> {
                             "iterator mode and terminator destination disagree",
                         ));
                     }
-                    Ok(None) => self.jump(frame, *exhausted),
+                    Ok(None) => {
+                        if let Some(guard) = exhaustion_guard {
+                            self.disarm_defer(frame, guard)?;
+                        }
+                        self.jump(frame, *exhausted);
+                    }
                     Err((code, message)) => {
                         self.begin_panic(frame, code, message, span, *unwind)?;
                     }
@@ -640,7 +924,59 @@ impl<'program, 'host> Engine<'program, 'host> {
                     Err(PlaceFailure::Vm(error)) => return Err(error),
                 }
             }
+            BytecodeTerminatorKind::DrainDefers {
+                scopes,
+                target,
+                unwind,
+            } => {
+                let continuation = self.frames[frame].block;
+                let next = self.frames[frame]
+                    .defers
+                    .iter()
+                    .rposition(|deferred| scopes.contains(&deferred.scope));
+                if let Some(index) = next {
+                    let deferred = self.frames[frame].defers.remove(index);
+                    let span = deferred.span;
+                    match self.evaluate_deferred_operation(frame, deferred)? {
+                        OperationResult::Value(Value::Unit) => {
+                            self.jump(frame, continuation);
+                        }
+                        OperationResult::Value(_) => {
+                            return Err(VmError::invariant(
+                                "deferred invocation returned a non-Unit value",
+                            ));
+                        }
+                        OperationResult::Call {
+                            function,
+                            arguments,
+                        } => {
+                            self.push_frame(
+                                function,
+                                arguments,
+                                Some(CallContinuation {
+                                    destination: None,
+                                    target: Some(continuation),
+                                    unwind: continuation,
+                                    call_span: span,
+                                }),
+                            )?;
+                        }
+                        OperationResult::Panic(code, message) => {
+                            self.begin_panic(frame, code, message, span, continuation)?;
+                        }
+                    }
+                } else if self.pending_panic.is_some() {
+                    self.jump(frame, *unwind);
+                } else {
+                    self.jump(frame, *target);
+                }
+            }
             BytecodeTerminatorKind::Return => {
+                if !self.frames[frame].defers.is_empty() {
+                    return Err(VmError::invariant(
+                        "a function returned with registered defer entries",
+                    ));
+                }
                 if self.frames[frame].loans.iter().any(Option::is_some) {
                     return Err(VmError::invariant(
                         "a function returned with an active loan reservation",
@@ -677,6 +1013,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
             }
             BytecodeTerminatorKind::ResumePanic => {
+                if !self.frames[frame].defers.is_empty() {
+                    return Err(VmError::invariant(
+                        "panic unwinding abandoned registered defer entries",
+                    ));
+                }
                 if self.pending_panic.is_none() {
                     return Err(VmError::invariant(
                         "ResumePanic executed without an active panic",
@@ -714,11 +1055,6 @@ impl<'program, 'host> Engine<'program, 'host> {
         span: BytecodeSpan,
         unwind: BytecodeBlockId,
     ) -> Result<(), VmError> {
-        if self.pending_panic.is_some() {
-            return Err(VmError::invariant(
-                "a second panic began while cleanup was already unwinding",
-            ));
-        }
         let stack = self
             .frames
             .iter()
@@ -747,12 +1083,18 @@ impl<'program, 'host> Engine<'program, 'host> {
                 })
             })
             .collect::<Result<Vec<_>, VmError>>()?;
-        self.pending_panic = Some(VmPanic {
+        let panic = VmPanic {
             code,
             message,
             span,
             stack,
-        });
+            suppressed: Vec::new(),
+        };
+        if let Some(primary) = &mut self.pending_panic {
+            primary.suppressed.push(panic);
+        } else {
+            self.pending_panic = Some(panic);
+        }
         self.frames[frame].loans.fill(None);
         self.jump(frame, unwind);
         Ok(())
@@ -2111,6 +2453,9 @@ impl Engine<'_, '_> {
                     &[key, value],
                 )
             }
+            (BytecodeProjectionKind::IteratorSource, HeapObject::Iterator { source, .. }) => {
+                present(&source, "iterator source").cloned()
+            }
             (BytecodeProjectionKind::Index { index, access }, HeapObject::Array(values))
                 if *access == BytecodeIndexAccess::Array =>
             {
@@ -2240,6 +2585,9 @@ impl Engine<'_, '_> {
                 roots.push(Value::Heap(handle));
                 self.allocate(HeapObject::Array(output), &roots)?
             }
+            (BytecodeProjectionKind::IteratorSource, HeapObject::Iterator { source, .. }) => {
+                take_option(source, "iterator source")?
+            }
             (BytecodeProjectionKind::Index { index, access }, HeapObject::Array(values))
                 if *access == BytecodeIndexAccess::Array =>
             {
@@ -2331,6 +2679,9 @@ impl Engine<'_, '_> {
             ) if expected == member => *slot = Some(value.clone()),
             (BytecodeProjectionKind::ArrayPatternIndex(index), HeapObject::Array(values)) => {
                 set_index(values, *index, value.clone(), "array pattern item")?;
+            }
+            (BytecodeProjectionKind::IteratorSource, HeapObject::Iterator { source, .. }) => {
+                *source = Some(value.clone());
             }
             (BytecodeProjectionKind::Index { index, access }, HeapObject::Array(values))
                 if *access == BytecodeIndexAccess::Array =>
@@ -2677,6 +3028,9 @@ impl Engine<'_, '_> {
                 }
                 PlaceComponent::Index(index as i128)
             }
+            (BytecodeProjectionKind::IteratorSource, HeapObject::Iterator { .. }) => {
+                PlaceComponent::Field(0)
+            }
             (BytecodeProjectionKind::IteratorElement { index }, HeapObject::Map(entries)) => {
                 let index = usize::try_from(self.integer_slot(frame, *index)?).map_err(|_| {
                     PlaceFailure::Vm(VmError::invariant(
@@ -2790,6 +3144,120 @@ impl Engine<'_, '_> {
 }
 
 impl Engine<'_, '_> {
+    fn evaluate_deferred_operation(
+        &mut self,
+        frame: usize,
+        deferred: RuntimeDefer,
+    ) -> Result<OperationResult, VmError> {
+        let RuntimeDefer {
+            operation,
+            mut guard,
+            ..
+        } = deferred;
+        match operation {
+            DeferredOperation::Call { callee, arguments } => {
+                let callee = self.take_deferred_value(frame, callee, &mut guard)?;
+                let mut values = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    values.push((
+                        argument.target,
+                        self.take_deferred_value(frame, argument.value, &mut guard)?,
+                    ));
+                }
+                self.prepare_evaluated_call(callee, values)
+            }
+            DeferredOperation::Assert {
+                condition,
+                condition_repr,
+                message_parts,
+            } => {
+                let condition = self.take_deferred_value(frame, condition, &mut guard)?;
+                let Value::Bool(condition) = condition else {
+                    return Err(VmError::invariant("deferred assert condition is not Bool"));
+                };
+                let mut values = Vec::with_capacity(message_parts.len());
+                for (value, spread) in message_parts {
+                    values.push((self.take_deferred_value(frame, value, &mut guard)?, spread));
+                }
+                if condition {
+                    Ok(OperationResult::Value(Value::Unit))
+                } else {
+                    let message = self.assert_message(&condition_repr, &values)?;
+                    Ok(OperationResult::Panic(PanicCode::AssertionFailed, message))
+                }
+            }
+            DeferredOperation::BootstrapHostCall {
+                function,
+                arguments,
+            } => {
+                let mut values = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    values.push(self.take_deferred_value(frame, argument, &mut guard)?);
+                }
+                let snapshots = values
+                    .iter()
+                    .map(|value| {
+                        snapshot_value(value, &self.heap, &self.callable_names, &self.nominal_names)
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let returned = self.host.invoke(function.name(), &snapshots)?;
+                match (function, returned) {
+                    (BytecodeBootstrapHostFunction::ConsolePrint, RuntimeValue::Unit) => {
+                        Ok(OperationResult::Value(Value::Unit))
+                    }
+                    (BytecodeBootstrapHostFunction::ConsolePrint, _) => Err(VmError::Host(
+                        "std.console.print returned a non-Unit value".into(),
+                    )),
+                }
+            }
+        }
+    }
+
+    fn take_deferred_value(
+        &mut self,
+        frame: usize,
+        value: DeferredValue,
+        guard: &mut Option<BytecodePlace>,
+    ) -> Result<Value, VmError> {
+        match value {
+            DeferredValue::Captured(value) => Ok(value),
+            DeferredValue::Guard => {
+                let place = guard.take().ok_or_else(|| {
+                    VmError::invariant("deferred operation consumes its guard more than once")
+                })?;
+                self.take_place(frame, &place)
+            }
+        }
+    }
+
+    fn assert_message(
+        &mut self,
+        condition_repr: &str,
+        values: &[(Value, bool)],
+    ) -> Result<String, VmError> {
+        if values.is_empty() {
+            return Ok(format!("assertion failed: {condition_repr}"));
+        }
+        let mut message = String::new();
+        for (value, spread) in values {
+            if *spread {
+                let Value::Heap(handle) = value else {
+                    return Err(VmError::invariant("spread assert message is not managed"));
+                };
+                let HeapObject::Array(parts) = self.heap.get(*handle)?.clone() else {
+                    return Err(VmError::invariant("spread assert message is not an Array"));
+                };
+                for part in parts {
+                    let part = present(&part, "assert message part")?;
+                    message.push_str(self.string_value(part)?);
+                }
+            } else {
+                message.push_str(self.string_value(value)?);
+            }
+        }
+        Ok(message)
+    }
+
     fn evaluate_operation(
         &mut self,
         frame: usize,
@@ -3357,46 +3825,8 @@ impl Engine<'_, '_> {
         let marker = self.temporary_roots.len();
         self.temporary_roots.push(callee.clone());
         let result = (|| {
-            let (callable, environment) = match callee {
-                Value::Function {
-                    callable,
-                    arguments: _type_arguments,
-                } => (callable, None),
-                Value::Heap(handle) => {
-                    let HeapObject::Closure { callable, .. } = self.heap.get(handle)? else {
-                        return Err(VmError::invariant(
-                            "call callee is not a function or closure value",
-                        ));
-                    };
-                    (*callable, Some(Value::Heap(handle)))
-                }
-                _ => {
-                    return Err(VmError::invariant(
-                        "call callee is not a function or closure value",
-                    ));
-                }
-            };
-            let metadata = self
-                .program
-                .callable(callable)
-                .ok_or_else(|| VmError::invariant("callable metadata index is invalid"))?
-                .clone();
-            if metadata.closure.is_some() != environment.is_some() {
-                return Err(VmError::invariant(
-                    "callable kind differs from its runtime value",
-                ));
-            }
-            let mut values = vec![None; metadata.parameters.len()];
-            let variadic = metadata
-                .parameters
-                .iter()
-                .position(|parameter| parameter.variadic_element.is_some());
-            let receiver = metadata
-                .parameters
-                .iter()
-                .position(|parameter| parameter.receiver);
-            let mut variadic_values = Vec::new();
             let mut consumed_loans = Vec::new();
+            let mut evaluated = Vec::with_capacity(arguments.len());
             for argument in arguments {
                 let value = if argument.mode == BytecodeParameterMode::Value {
                     self.evaluate_operand(frame, &argument.value)?
@@ -3453,7 +3883,76 @@ impl Engine<'_, '_> {
                     })
                 };
                 self.temporary_roots.push(value.clone());
-                match argument.target {
+                evaluated.push((argument.target, value));
+            }
+            for loan in consumed_loans {
+                let reservation = self.frames[frame]
+                    .loans
+                    .get_mut(loan.index() as usize)
+                    .ok_or_else(|| VmError::invariant("consumed loan index became invalid"))?;
+                if reservation.take().is_none() {
+                    return Err(VmError::invariant(
+                        "call loan reservation disappeared before consumption",
+                    ));
+                }
+            }
+            self.prepare_evaluated_call(callee, evaluated)
+        })();
+        self.temporary_roots.truncate(marker);
+        result
+    }
+
+    fn prepare_evaluated_call(
+        &mut self,
+        callee: Value,
+        arguments: Vec<(BytecodeCallArgumentTarget, Value)>,
+    ) -> Result<OperationResult, VmError> {
+        let marker = self.temporary_roots.len();
+        self.temporary_roots.push(callee.clone());
+        self.temporary_roots
+            .extend(arguments.iter().map(|(_, value)| value.clone()));
+        let result = (|| {
+            let (callable, environment) = match callee {
+                Value::Function {
+                    callable,
+                    arguments: _type_arguments,
+                } => (callable, None),
+                Value::Heap(handle) => {
+                    let HeapObject::Closure { callable, .. } = self.heap.get(handle)? else {
+                        return Err(VmError::invariant(
+                            "call callee is not a function or closure value",
+                        ));
+                    };
+                    (*callable, Some(Value::Heap(handle)))
+                }
+                _ => {
+                    return Err(VmError::invariant(
+                        "call callee is not a function or closure value",
+                    ));
+                }
+            };
+            let metadata = self
+                .program
+                .callable(callable)
+                .ok_or_else(|| VmError::invariant("callable metadata index is invalid"))?
+                .clone();
+            if metadata.closure.is_some() != environment.is_some() {
+                return Err(VmError::invariant(
+                    "callable kind differs from its runtime value",
+                ));
+            }
+            let mut values = vec![None; metadata.parameters.len()];
+            let variadic = metadata
+                .parameters
+                .iter()
+                .position(|parameter| parameter.variadic_element.is_some());
+            let receiver = metadata
+                .parameters
+                .iter()
+                .position(|parameter| parameter.receiver);
+            let mut variadic_values = Vec::new();
+            for (target, value) in arguments {
+                match target {
                     BytecodeCallArgumentTarget::Receiver => {
                         let index = receiver.ok_or_else(|| {
                             VmError::invariant("call provides a receiver to a free function")
@@ -3480,17 +3979,6 @@ impl Engine<'_, '_> {
                             variadic_values.push(value);
                         }
                     }
-                }
-            }
-            for loan in consumed_loans {
-                let reservation = self.frames[frame]
-                    .loans
-                    .get_mut(loan.index() as usize)
-                    .ok_or_else(|| VmError::invariant("consumed loan index became invalid"))?;
-                if reservation.take().is_none() {
-                    return Err(VmError::invariant(
-                        "call loan reservation disappeared before consumption",
-                    ));
                 }
             }
             if let Some(index) = variadic {
@@ -3664,14 +4152,18 @@ impl Engine<'_, '_> {
                 )
             }
         };
+        let mut roots = vec![source.clone()];
+        if let Some(IteratorStep::Value(value)) = &item {
+            roots.push(value.clone());
+        }
         self.replace_object(
             handle,
             HeapObject::Iterator {
                 mode,
-                source: Some(source.clone()),
+                source: Some(source),
                 next: next_index,
             },
-            &[source],
+            &roots,
         )?;
         Ok(Ok(item))
     }
@@ -3700,26 +4192,62 @@ impl Engine<'_, '_> {
             return Err(VmError::invariant("iterator source is not managed"));
         };
         match self.heap.get(*handle)?.clone() {
-            HeapObject::Array(values) | HeapObject::Set(values) => {
-                let Some(value) = values.get(next) else {
+            HeapObject::Array(mut values) => {
+                if next != 0 {
+                    return Err(VmError::invariant(
+                        "owning Array iterator has a nonzero compact position",
+                    ));
+                }
+                if values.is_empty() {
                     return Ok((None, usize::MAX));
-                };
-                Ok((
-                    Some(self.copy_value(present(value, "iterator item")?)?),
-                    next.saturating_add(1),
-                ))
+                }
+                let value = present(&values.remove(0), "iterator item")?.clone();
+                self.replace_object(
+                    *handle,
+                    HeapObject::Array(values),
+                    std::slice::from_ref(&value),
+                )?;
+                Ok((Some(value), 0))
             }
-            HeapObject::Map(entries) => {
-                let Some((key, value)) = entries.get(next) else {
+            HeapObject::Set(mut values) => {
+                if next != 0 {
+                    return Err(VmError::invariant(
+                        "owning Set iterator has a nonzero compact position",
+                    ));
+                }
+                if values.is_empty() {
                     return Ok((None, usize::MAX));
-                };
-                let key = self.copy_value(present(key, "map iterator key")?)?;
-                let value = self.copy_value(present(value, "map iterator value")?)?;
+                }
+                let value = present(&values.remove(0), "iterator item")?.clone();
+                self.replace_object(
+                    *handle,
+                    HeapObject::Set(values),
+                    std::slice::from_ref(&value),
+                )?;
+                Ok((Some(value), 0))
+            }
+            HeapObject::Map(mut entries) => {
+                if next != 0 {
+                    return Err(VmError::invariant(
+                        "owning Map iterator has a nonzero compact position",
+                    ));
+                }
+                if entries.is_empty() {
+                    return Ok((None, usize::MAX));
+                }
+                let (key, value) = entries.remove(0);
+                let key = present(&key, "map iterator key")?.clone();
+                let value = present(&value, "map iterator value")?.clone();
+                self.replace_object(
+                    *handle,
+                    HeapObject::Map(entries),
+                    &[key.clone(), value.clone()],
+                )?;
                 let tuple = self.allocate(
                     HeapObject::Tuple(vec![Some(key.clone()), Some(value.clone())]),
                     &[key, value],
                 )?;
-                Ok((Some(tuple), next.saturating_add(1)))
+                Ok((Some(tuple), 0))
             }
             HeapObject::String(text) => {
                 let Some(value) = text.chars().nth(next) else {

@@ -110,8 +110,11 @@ fn type_kind_text(kind: &BytecodeTypeKind) -> String {
         BytecodeTypeKind::OpaqueResult {
             identity,
             arguments,
+            capabilities,
             ..
-        } => format!("OpaqueResult {{ identity: {identity:?}, arguments: {arguments:?} }}"),
+        } => format!(
+            "OpaqueResult {{ identity: {identity:?}, arguments: {arguments:?}, capabilities: {capabilities:?} }}"
+        ),
         kind => format!("{kind:?}"),
     }
 }
@@ -128,6 +131,23 @@ fn instruction_text(instruction: &BytecodeInstructionKind) -> String {
             value.kind,
             value.ty.index()
         ),
+        BytecodeInstructionKind::RegisterDefer {
+            scope,
+            action,
+            guard,
+        } => format!(
+            "register_defer scope{} {:?}:t{} guard={:?}",
+            scope.index(),
+            action.kind,
+            action.ty.index(),
+            guard.as_ref().map(place_text)
+        ),
+        BytecodeInstructionKind::RetargetDefer { from, to } => {
+            format!("retarget_defer {} -> {}", place_text(from), place_text(to))
+        }
+        BytecodeInstructionKind::DisarmDefer(place) => {
+            format!("disarm_defer {}", place_text(place))
+        }
     }
 }
 
@@ -163,14 +183,16 @@ fn terminator_text(terminator: &BytecodeTerminatorKind) -> String {
             state,
             destination,
             borrowed_source,
+            exhaustion_guard,
             has_value,
             exhausted,
             unwind,
         } => format!(
-            "iterator_next {:?} -> {:?} borrowed={:?}; b{}, b{} unwind b{}",
+            "iterator_next {:?} -> {:?} borrowed={:?} exhaustion_guard={:?}; b{}, b{} unwind b{}",
             state,
             destination,
             borrowed_source,
+            exhaustion_guard,
             has_value.index(),
             exhausted.index(),
             unwind.index()
@@ -198,6 +220,16 @@ fn terminator_text(terminator: &BytecodeTerminatorKind) -> String {
             "validate_loan l{} against {:?} -> b{} unwind b{}",
             loan.index(),
             against.iter().map(|loan| loan.index()).collect::<Vec<_>>(),
+            target.index(),
+            unwind.index()
+        ),
+        BytecodeTerminatorKind::DrainDefers {
+            scopes,
+            target,
+            unwind,
+        } => format!(
+            "drain_defers {:?} -> b{} unwind b{}",
+            scopes.iter().map(|scope| scope.index()).collect::<Vec<_>>(),
             target.index(),
             unwind.index()
         ),

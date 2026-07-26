@@ -26,14 +26,15 @@ use super::{
     HirAssignmentTargetKind, HirBinaryOperator, HirBody, HirBootstrapHostFunction, HirCallArgument,
     HirCallArgumentTarget, HirCallProtocol, HirCallableId, HirCallableSignature, HirCapability,
     HirCapabilityStatus, HirClosure, HirClosureCapture, HirClosureId, HirClosureProtocols,
-    HirContainmentKind, HirError, HirExpression, HirExpressionId, HirExpressionKind, HirField,
-    HirFlow, HirForKind, HirGenericParameter, HirIndexAccess, HirIterationProtocol, HirLiteral,
-    HirLoopId, HirMapEntry, HirMatchArm, HirMatchMode, HirMemberReference, HirNominalShape,
-    HirParameter, HirPattern, HirPatternField, HirPatternId, HirPatternKind, HirPrefixOperator,
-    HirPreludeTraitMethod, HirProgram, HirRangeKind, HirRecordFieldValue, HirStatement,
-    HirTraitConstructor, HirTypeDeclarationKind, HirValueCategory, HirVariantPayload,
-    HirVariantValue, HirWriteKind, TerminalAnalysis, TraitQuery, TraitSelectionError,
-    analyze_availability, analyze_closure_captures, select_implementation,
+    HirContainmentKind, HirDeferAction, HirError, HirExpression, HirExpressionId,
+    HirExpressionKind, HirField, HirFlow, HirForKind, HirGenericParameter, HirIndexAccess,
+    HirIterationProtocol, HirLiteral, HirLoopId, HirMapEntry, HirMatchArm, HirMatchMode,
+    HirMemberReference, HirNominalShape, HirParameter, HirPattern, HirPatternField, HirPatternId,
+    HirPatternKind, HirPrefixOperator, HirPreludeTraitMethod, HirProgram, HirRangeKind,
+    HirRecordFieldValue, HirScopeId, HirStatement, HirTraitConstructor, HirTypeDeclarationKind,
+    HirValueCategory, HirVariantPayload, HirVariantValue, HirWriteKind, TerminalAnalysis,
+    TraitQuery, TraitSelectionError, analyze_availability, analyze_closure_captures,
+    select_implementation,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +95,7 @@ pub fn check_expressions<'a>(
         max_diagnostics: limits.max_diagnostics,
         complete: true,
         next_loop_id: 0,
+        next_scope_id: 0,
         capability_analysis: None,
         reported_capability_requirements: BTreeSet::new(),
         opaque_body: None,
@@ -279,6 +281,9 @@ struct BodyContext {
     generics: Vec<super::HirGenericParameter>,
     noncapturable_locals: BTreeSet<LocalId>,
     loops: Vec<HirLoopId>,
+    current_scope: Option<HirScopeId>,
+    in_defer_body: bool,
+    defer_control_boundary: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -557,6 +562,7 @@ struct ExpressionChecker<'a> {
     max_diagnostics: usize,
     complete: bool,
     next_loop_id: u32,
+    next_scope_id: u32,
     capability_analysis: Option<CapabilityAnalysis>,
     reported_capability_requirements: BTreeSet<(Span, TypeId, HirCapability)>,
     opaque_body: Option<OpaqueBodyInference>,
@@ -1233,6 +1239,16 @@ impl<'a> ExpressionChecker<'a> {
                         .unwrap_or_default(),
                     None,
                 )?,
+                AvailabilityFindingKind::InvalidDefer => self.emit(
+                    finding.use_span(),
+                    "E1410",
+                    "deferred affine ownership can only be registered once and moved as one complete local value",
+                    finding
+                        .move_span()
+                        .map(|span| vec![("the active defer guard is registered here", span)])
+                        .unwrap_or_default(),
+                    None,
+                )?,
             }
         }
         Ok(())
@@ -1888,7 +1904,9 @@ impl<'a> ExpressionChecker<'a> {
                     &mut pending,
                     warnings,
                 ),
-                HirExpressionKind::Block { statements, tail } => {
+                HirExpressionKind::Block {
+                    statements, tail, ..
+                } => {
                     let mut reachable = true;
                     for statement in statements {
                         if reachable {
@@ -2045,6 +2063,11 @@ impl<'a> ExpressionChecker<'a> {
                 expressions.push(*value);
                 self.queue_reachable_sequence(expressions, pending, warnings);
             }
+            HirStatement::Defer { action, .. } => self.queue_reachable_sequence(
+                defer_registration_expressions(&self.program, action),
+                pending,
+                warnings,
+            ),
             HirStatement::For { kind, body, .. } => {
                 let header = match kind {
                     HirForKind::Infinite => None,
@@ -2237,6 +2260,20 @@ impl<'a> ExpressionChecker<'a> {
             self.complete = false;
             return self.recovery_expression(file, node.range());
         };
+        if context.in_defer_body
+            && matches!(
+                expression,
+                AstExpression::Await(_) | AstExpression::Spawn(_) | AstExpression::Scope(_)
+            )
+        {
+            self.emit(
+                self.sources.span(file, node.range())?,
+                "E1608",
+                "a deferred cleanup cannot suspend, create a scope, or spawn work",
+                Vec::new(),
+                None,
+            )?;
+        }
         match expression {
             AstExpression::Literal(_) => self.check_literal(file, node, expected),
             AstExpression::String(_) => self.check_string(file, node, context),
@@ -2540,6 +2577,7 @@ impl<'a> ExpressionChecker<'a> {
 
         let mut closure_context = context.clone();
         closure_context.loops.clear();
+        closure_context.defer_control_boundary = false;
         closure_context.receiver = None;
         closure_context.receiver_permission = PlacePermission::Invalid;
         closure_context.callable = Some(CallableContext {
@@ -2726,7 +2764,9 @@ impl<'a> ExpressionChecker<'a> {
             }
             let expression = &self.program.expressions[id.0 as usize];
             match &expression.kind {
-                HirExpressionKind::Block { statements, tail } => {
+                HirExpressionKind::Block {
+                    statements, tail, ..
+                } => {
                     let mut reachable = true;
                     for statement in statements {
                         if !reachable {
@@ -2791,6 +2831,7 @@ impl<'a> ExpressionChecker<'a> {
                 collect_assignment_target_expressions(target, pending);
                 pending.push(*value);
             }
+            HirStatement::Defer { action, .. } => pending.push(action.expression()),
             HirStatement::For { kind, body, .. } => {
                 match kind {
                     HirForKind::Infinite => {}
@@ -5756,6 +5797,15 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
+        let scope = HirScopeId(self.next_scope_id);
+        self.next_scope_id = self
+            .next_scope_id
+            .checked_add(1)
+            .ok_or(HirError::NodeLimit {
+                file,
+                offset: node.range().start(),
+            })?;
+        let outer_scope = context.current_scope.replace(scope);
         let mut statements = Vec::new();
         let mut tail = None;
         let mut reachable = true;
@@ -5825,7 +5875,7 @@ impl<'a> ExpressionChecker<'a> {
                     checked_statement = Some(self.check_assignment(file, item, context)?);
                 }
                 SyntaxKind::DeferStmt => {
-                    self.complete = false;
+                    checked_statement = Some(self.check_defer(file, item, context)?);
                 }
                 _ => {}
             }
@@ -5842,12 +5892,389 @@ impl<'a> ExpressionChecker<'a> {
         } else {
             self.program.interner.scalar(ScalarType::Never)
         };
+        context.current_scope = outer_scope;
         self.allocate_expression(HirExpression {
             span: self.sources.span(file, node.range())?,
             ty,
             category: HirValueCategory::Value,
-            kind: HirExpressionKind::Block { statements, tail },
+            kind: HirExpressionKind::Block {
+                scope,
+                statements,
+                tail,
+            },
         })
+    }
+
+    fn check_defer(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'_>,
+        context: &mut BodyContext,
+    ) -> Result<HirStatement, HirError> {
+        let span = self.sources.span(file, node.range())?;
+        let scope = context
+            .current_scope
+            .expect("a parsed defer statement is always contained by a block");
+        if context.in_defer_body {
+            self.emit(
+                span,
+                "E1410",
+                "a deferred cleanup cannot register another `defer`",
+                Vec::new(),
+                None,
+            )?;
+        }
+
+        let invocation = if let Some(block) = node
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::Block)
+        {
+            self.check_defer_block(file, node, block, context)?
+        } else {
+            let Some(expression) = node
+                .child_nodes()
+                .find(|child| AstExpression::cast(*child).is_some())
+            else {
+                self.complete = false;
+                return Ok(HirStatement::Defer {
+                    span,
+                    scope,
+                    action: HirDeferAction {
+                        expression: self.recovery_expression(file, node.range())?,
+                        guarded: None,
+                    },
+                });
+            };
+            let mut defer_context = context.clone();
+            defer_context.loops.clear();
+            defer_context.in_defer_body = true;
+            defer_context.defer_control_boundary = true;
+            self.check_expression(file, expression, None, &mut defer_context)?
+        };
+
+        self.normalize_deferred_call_protocol(invocation, span, context)?;
+        let guarded = self.validate_defer_invocation(invocation, span, context)?;
+        Ok(HirStatement::Defer {
+            span,
+            scope,
+            action: HirDeferAction {
+                expression: invocation,
+                guarded,
+            },
+        })
+    }
+
+    fn normalize_deferred_call_protocol(
+        &mut self,
+        invocation: HirExpressionId,
+        span: Span,
+        context: &BodyContext,
+    ) -> Result<(), HirError> {
+        let Some(callee) =
+            self.program
+                .expression(invocation)
+                .and_then(|expression| match expression.kind() {
+                    HirExpressionKind::Call { callee, .. } => Some(*callee),
+                    _ => None,
+                })
+        else {
+            return Ok(());
+        };
+        let callee_type = self.expression_type(callee);
+        let Some(contract) = self.callable_protocol_contract(span, callee_type, context)? else {
+            return Ok(());
+        };
+        let copy = self.capability_status_with_generics(
+            callee_type,
+            HirCapability::Copy,
+            &context.capability_assumptions,
+        )? == HirCapabilityStatus::Satisfied;
+        let protocol = if copy && contract.protocols.supports(HirCallProtocol::Call) {
+            Some(HirCallProtocol::Call)
+        } else if contract.protocols.supports(HirCallProtocol::CallOnce) {
+            Some(HirCallProtocol::CallOnce)
+        } else {
+            None
+        };
+        let Some(protocol) = protocol else {
+            self.emit(
+                span,
+                "E1410",
+                "a deferred callee must support `Call` or `CallOnce` without retaining a `CallMut` borrow",
+                Vec::new(),
+                None,
+            )?;
+            return Ok(());
+        };
+        let expression = &mut self.program.expressions[invocation.0 as usize];
+        let HirExpressionKind::Call {
+            protocol: recorded, ..
+        } = &mut expression.kind
+        else {
+            unreachable!("the deferred invocation was already classified as a call")
+        };
+        *recorded = protocol;
+        Ok(())
+    }
+
+    fn check_defer_block(
+        &mut self,
+        file: FileId,
+        defer: SyntaxNodeRef<'_>,
+        body: SyntaxNodeRef<'_>,
+        context: &mut BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        let span = self.sources.span(file, defer.range())?;
+        let (captures, captures_valid) =
+            self.collect_closure_captures(file, defer.range(), body, context)?;
+        let mut valid = captures_valid;
+        for capture in &captures {
+            if self.capability_status_with_generics(
+                capture.ty(),
+                HirCapability::Copy,
+                &context.capability_assumptions,
+            )? != HirCapabilityStatus::Satisfied
+            {
+                let related = self
+                    .resolved
+                    .local(capture.local())
+                    .map(|binding| vec![("the captured binding is declared here", binding.span())])
+                    .unwrap_or_default();
+                self.emit(
+                    span,
+                    "E1410",
+                    "a defer block may capture only `Copy` values; use the call form for one affine owner",
+                    related,
+                    None,
+                )?;
+                valid = false;
+            }
+        }
+        if !valid {
+            return self.recovery_expression(file, defer.range());
+        }
+
+        let unit = self.program.interner.scalar(ScalarType::Unit);
+        let mut closure_context = context.clone();
+        closure_context.loops.clear();
+        closure_context.receiver = None;
+        closure_context.receiver_permission = PlacePermission::Invalid;
+        closure_context.callable = Some(CallableContext {
+            full: unit,
+            success: unit,
+            error: None,
+            signature: span,
+        });
+        closure_context.in_defer_body = true;
+        closure_context.defer_control_boundary = true;
+
+        let body_root = self.check_expression(
+            file,
+            body,
+            Some(ExpressionExpectation::Direct(unit)),
+            &mut closure_context,
+        )?;
+        let function_type = self.program.interner.function(FunctionType::new(
+            false,
+            false,
+            Vec::new(),
+            None,
+            unit,
+        ))?;
+        let source = self.sources.get(file)?;
+        let identity = GeneratedTypeIdentity::new(
+            GeneratedTypeKind::closure(false, false),
+            source.source_id().clone(),
+            source.module().clone(),
+            source.path().clone(),
+            defer.range().start(),
+        );
+        let closure_type = self
+            .program
+            .interner
+            .generated(identity.clone(), context.generic_arguments.clone())?;
+        let generic_arity =
+            u32::try_from(context.generic_arguments.len()).map_err(|_| HirError::NodeLimit {
+                file,
+                offset: defer.range().start(),
+            })?;
+        let protocols =
+            self.derive_closure_protocols(body_root, &captures, false, &context.generics)?;
+        let protocol = if protocols.supports(HirCallProtocol::Call) {
+            HirCallProtocol::Call
+        } else {
+            HirCallProtocol::CallOnce
+        };
+        let id = HirClosureId(u32::try_from(self.program.closures.len()).map_err(|_| {
+            HirError::NodeLimit {
+                file,
+                offset: defer.range().start(),
+            }
+        })?);
+        self.program.closures.push(HirClosure {
+            id,
+            identity,
+            span,
+            ty: closure_type,
+            generic_arity,
+            function_type,
+            protocols,
+            generics: context.generics.clone(),
+            parameters: Vec::new(),
+            captures,
+            body: HirBody { root: body_root },
+        });
+        self.capability_analysis = None;
+        self.program.local_types.extend(closure_context.locals);
+
+        let callee = self.allocate_expression(HirExpression {
+            span,
+            ty: closure_type,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Closure(id),
+        })?;
+        self.allocate_expression(HirExpression {
+            span,
+            ty: unit,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Call {
+                callee,
+                arguments: Vec::new(),
+                signature: function_type,
+                protocol,
+            },
+        })
+    }
+
+    fn validate_defer_invocation(
+        &mut self,
+        invocation: HirExpressionId,
+        span: Span,
+        context: &BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let expression = self
+            .program
+            .expression(invocation)
+            .expect("checked defer invocation remains indexed");
+        let invocation_type = expression.ty();
+        let invocation_kind = expression.kind().clone();
+        let mut borrowed = Vec::new();
+        let operands = match &invocation_kind {
+            HirExpressionKind::Call {
+                callee,
+                arguments,
+                protocol,
+                ..
+            } => {
+                for argument in arguments {
+                    if argument.mode() != ParameterMode::Value {
+                        borrowed.push(argument.value());
+                    }
+                }
+                let mut operands = Vec::with_capacity(arguments.len() + 1);
+                operands.push((*callee, Some(*protocol)));
+                operands.extend(arguments.iter().map(|argument| (argument.value(), None)));
+                operands
+            }
+            HirExpressionKind::BootstrapHostCall { arguments, .. } => arguments
+                .iter()
+                .copied()
+                .map(|value| (value, None))
+                .collect(),
+            HirExpressionKind::PreludeAssert {
+                condition,
+                message_parts,
+                ..
+            } => std::iter::once((*condition, None))
+                .chain(message_parts.iter().map(|part| (part.value(), None)))
+                .collect(),
+            _ => {
+                self.emit(
+                    span,
+                    "E1410",
+                    "`defer` requires a call expression or a block",
+                    Vec::new(),
+                    None,
+                )?;
+                return Ok(None);
+            }
+        };
+        if !borrowed.is_empty() {
+            self.emit(
+                span,
+                "E1410",
+                "a deferred call cannot retain `ref`, `mut`, or `var` arguments",
+                borrowed
+                    .into_iter()
+                    .filter_map(|value| self.program.expression(value))
+                    .map(|value| ("the borrowed argument is here", value.span()))
+                    .collect(),
+                None,
+            )?;
+        }
+        let unit = self.program.interner.scalar(ScalarType::Unit);
+        if invocation_type != unit {
+            self.emit(
+                span,
+                "E1410",
+                "a deferred invocation must be infallible and return `Unit`",
+                Vec::new(),
+                None,
+            )?;
+        }
+
+        let mut guarded = None;
+        for (operand, callee_protocol) in operands {
+            let operand_expression = self
+                .program
+                .expression(operand)
+                .expect("defer operands remain indexed");
+            let operand_type = operand_expression.ty();
+            let operand_span = operand_expression.span();
+            let operand_category = operand_expression.category();
+            let operand_is_local = matches!(operand_expression.kind(), HirExpressionKind::Local(_));
+            let status = self.capability_status_with_generics(
+                operand_type,
+                HirCapability::Copy,
+                &context.capability_assumptions,
+            )?;
+            if status == HirCapabilityStatus::Satisfied {
+                continue;
+            }
+            if callee_protocol.is_some_and(|protocol| protocol != HirCallProtocol::CallOnce) {
+                self.emit(
+                    operand_span,
+                    "E1410",
+                    "a non-`Copy` deferred callee must use its `CallOnce` protocol",
+                    Vec::new(),
+                    None,
+                )?;
+            }
+            if operand_category == HirValueCategory::Place && !operand_is_local {
+                self.emit(
+                    operand_span,
+                    "E1410",
+                    "a deferred affine operand must be one complete local binding or a temporary value",
+                    Vec::new(),
+                    None,
+                )?;
+            }
+            if let Some(previous) = guarded.replace(operand) {
+                let previous = self
+                    .program
+                    .expression(previous)
+                    .expect("the first affine defer operand remains indexed")
+                    .span();
+                self.emit(
+                    operand_span,
+                    "E1410",
+                    "a deferred invocation may own at most one affine operand",
+                    vec![("the first affine operand is here", previous)],
+                    None,
+                )?;
+            }
+        }
+        Ok(guarded)
     }
 
     fn check_assignment(
@@ -9385,6 +9812,15 @@ impl<'a> ExpressionChecker<'a> {
         node: SyntaxNodeRef<'_>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
+        if context.defer_control_boundary && node.kind() == SyntaxKind::ReturnStmt {
+            self.emit(
+                self.sources.span(file, node.range())?,
+                "E1410",
+                "a deferred cleanup cannot return from its enclosing callable",
+                Vec::new(),
+                None,
+            )?;
+        }
         let never = self.program.interner.scalar(ScalarType::Never);
         let kind = match node.kind() {
             SyntaxKind::ReturnStmt => {
@@ -9469,10 +9905,18 @@ impl<'a> ExpressionChecker<'a> {
             SyntaxKind::BreakStmt => {
                 let target = context.loops.last().copied();
                 if target.is_none() {
+                    let (code, message) = if context.defer_control_boundary {
+                        (
+                            "E1410",
+                            "a deferred cleanup cannot break out of its cleanup body",
+                        )
+                    } else {
+                        ("E1205", "`break` has no enclosing loop")
+                    };
                     self.emit(
                         self.sources.span(file, node.range())?,
-                        "E1205",
-                        "`break` has no enclosing loop",
+                        code,
+                        message,
                         Vec::new(),
                         None,
                     )?;
@@ -9482,10 +9926,15 @@ impl<'a> ExpressionChecker<'a> {
             SyntaxKind::ContinueStmt => {
                 let target = context.loops.last().copied();
                 if target.is_none() {
+                    let (code, message) = if context.defer_control_boundary {
+                        ("E1410", "a deferred cleanup cannot continue an outer loop")
+                    } else {
+                        ("E1205", "`continue` has no enclosing loop")
+                    };
                     self.emit(
                         self.sources.span(file, node.range())?,
-                        "E1205",
-                        "`continue` has no enclosing loop",
+                        code,
+                        message,
                         Vec::new(),
                         None,
                     )?;
@@ -9548,6 +9997,15 @@ impl<'a> ExpressionChecker<'a> {
         node: SyntaxNodeRef<'_>,
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
+        if context.defer_control_boundary {
+            self.emit(
+                self.sources.span(file, node.range())?,
+                "E1410",
+                "a deferred cleanup cannot use `fail`",
+                Vec::new(),
+                None,
+            )?;
+        }
         let Some(error_node) = node
             .child_nodes()
             .find(|child| AstExpression::cast(*child).is_some())
@@ -13598,6 +14056,15 @@ impl<'a> ExpressionChecker<'a> {
             // ASYNC-002 and UNSAFE-001 own the initiating expression and its
             // context proof. CALL-004 retains the exact callable effects but
             // must not execute them as an ordinary synchronous safe call.
+            if context.in_defer_body && contract.function.is_async() {
+                self.emit(
+                    call_span,
+                    "E1608",
+                    "a deferred cleanup cannot call an async function",
+                    Vec::new(),
+                    None,
+                )?;
+            }
             self.complete = false;
             return self.recovery_expression(file, range);
         }
@@ -14679,6 +15146,9 @@ impl<'a> ExpressionChecker<'a> {
             HirStatement::Assignment { target, value, .. } => self
                 .assignment_target_summary(target)
                 .then(self.expression_summary(*value)),
+            HirStatement::Defer { action, .. } => {
+                self.expression_sequence(defer_registration_expressions(&self.program, action))
+            }
             HirStatement::For { id, kind, body, .. } => {
                 let header = match kind {
                     HirForKind::Infinite => FlowSummary::completes(),
@@ -14741,7 +15211,9 @@ impl<'a> ExpressionChecker<'a> {
             HirExpressionKind::RecordUpdate { base, fields } => self
                 .expression_summary(*base)
                 .then(self.expression_sequence(fields.iter().map(HirRecordFieldValue::value))),
-            HirExpressionKind::Block { statements, tail } => {
+            HirExpressionKind::Block {
+                statements, tail, ..
+            } => {
                 let summary = statements
                     .iter()
                     .fold(FlowSummary::completes(), |summary, statement| {
@@ -15434,6 +15906,31 @@ fn collect_assignment_target_expressions(
     }
 }
 
+fn defer_registration_expressions(
+    program: &HirProgram,
+    action: &HirDeferAction,
+) -> Vec<HirExpressionId> {
+    let Some(expression) = program.expression(action.expression()) else {
+        return Vec::new();
+    };
+    match expression.kind() {
+        HirExpressionKind::Call {
+            callee, arguments, ..
+        } => std::iter::once(*callee)
+            .chain(arguments.iter().map(HirCallArgument::value))
+            .collect(),
+        HirExpressionKind::PreludeAssert {
+            condition,
+            message_parts,
+            ..
+        } => std::iter::once(*condition)
+            .chain(message_parts.iter().map(|part| part.value()))
+            .collect(),
+        HirExpressionKind::BootstrapHostCall { arguments, .. } => arguments.clone(),
+        _ => Vec::new(),
+    }
+}
+
 fn static_places_overlap(left: &StaticPlace, right: &StaticPlace) -> bool {
     if left.root != right.root {
         return false;
@@ -15796,7 +16293,9 @@ fn collect_statement_type_roots(statement: &HirStatement, roots: &mut BTreeSet<T
                 }
             }
         }
-        HirStatement::Expression { .. } | HirStatement::Discard { .. } => {}
+        HirStatement::Defer { .. }
+        | HirStatement::Expression { .. }
+        | HirStatement::Discard { .. } => {}
     }
 }
 
@@ -15866,7 +16365,9 @@ fn rewrite_statement_types(statement: &mut HirStatement, replacements: &BTreeMap
                 }
             }
         }
-        HirStatement::Expression { .. } | HirStatement::Discard { .. } => {}
+        HirStatement::Defer { .. }
+        | HirStatement::Expression { .. }
+        | HirStatement::Discard { .. } => {}
     }
 }
 
@@ -16229,6 +16730,190 @@ mod tests {
             .body(callable.id())
             .expect("the callable body is checked")
             .root()
+    }
+
+    #[test]
+    fn defer_accepts_copy_snapshots_and_retargets_one_affine_local() {
+        let (_, _, output) = check(
+            "fn note(value: Int) {}\n\
+             fn consume[T: Discard](value: T) {}\n\
+             fn observe[T](value: ref T) {}\n\
+             fn hidden(value: Int): impl Discard { value }\n\
+             fn valid[T: Discard](owner: T, value: Int) {\n\
+                 defer note(value)\n\
+                 defer { note(value) }\n\
+                 defer consume(owner)\n\
+                 let moved = owner\n\
+             }\n\
+             fn invokeLater[F: Discard + CallOnce[fn()]](action: F) {\n\
+                 defer action()\n\
+             }\n\
+             fn invokeRepeatableLater[T: Discard](owner: T) {\n\
+                 let action = () {\n\
+                     observe(ref owner)\n\
+                 }\n\
+                 defer action()\n\
+             }\n\
+             fn invokeMutableLater[\n\
+                 F: Copy + Discard + CallMut[fn()] + CallOnce[fn()],\n\
+             ](action: F) {\n\
+                 var mutableAction = action\n\
+                 defer mutableAction()\n\
+             }\n\
+             fn mutableBlock() {\n\
+                 var value = 1\n\
+                 defer {\n\
+                     value += 1\n\
+                     note(value)\n\
+                 }\n\
+             }\n\
+             fn repeatableInsideBlock() {\n\
+                 defer {\n\
+                     let owner = hidden(1)\n\
+                     let action = () {\n\
+                         observe(ref owner)\n\
+                     }\n\
+                     let stop = () {\n\
+                         return\n\
+                     }\n\
+                     action()\n\
+                     action()\n\
+                     stop()\n\
+                 }\n\
+             }\n\
+             fn loopInsideBlock() {\n\
+                 defer {\n\
+                     for {\n\
+                         break\n\
+                     }\n\
+                 }\n\
+             }\n\
+             fn captured[T: Discard](owner: T) {\n\
+                 let action = () {\n\
+                     defer consume(owner)\n\
+                 }\n\
+                 action()\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let defer_protocols = output
+            .program()
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::Block { statements, .. } => Some(statements.as_slice()),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|statement| match statement {
+                HirStatement::Defer { action, .. } => {
+                    match output.program().expression(action.expression())?.kind() {
+                        HirExpressionKind::Call { protocol, .. } => Some(*protocol),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        assert!(defer_protocols.contains(&HirCallProtocol::Call));
+        assert!(defer_protocols.contains(&HirCallProtocol::CallOnce));
+        assert!(!defer_protocols.contains(&HirCallProtocol::CallMut));
+    }
+
+    #[test]
+    fn defer_rejects_ambiguous_affine_ownership_and_non_cleanup_effects() {
+        for (source, expected) in [
+            (
+                "fn consume[T: Discard](value: T) {}\n\
+                 fn invalid[T: Discard](owner: T) {\n\
+                     defer consume(owner)\n\
+                     defer consume(owner)\n\
+                 }\n",
+                "E1410",
+            ),
+            (
+                "fn consume[T: Discard](value: T) {}\n\
+                 fn invalid[T: Discard](owner: T) {\n\
+                     defer consume(owner)\n\
+                     let nested = [owner]\n\
+                 }\n",
+                "E1410",
+            ),
+            (
+                "fn consume[T: Discard](value: T) {}\n\
+                 fn invalid[T: Discard](owner: T) {\n\
+                     defer consume(owner)\n\
+                     {\n\
+                         let nested = owner\n\
+                     }\n\
+                 }\n",
+                "E1410",
+            ),
+            (
+                "fn consume[T: Discard](value: T) {}\n\
+                 fn invalid[T: Discard](owner: T) {\n\
+                     defer consume(owner)\n\
+                     let moved = { owner }\n\
+                 }\n",
+                "E1410",
+            ),
+            (
+                "fn note(value: Int) {}\n\
+                 fn invalid() {\n\
+                     defer {\n\
+                         defer note(1)\n\
+                     }\n\
+                 }\n",
+                "E1410",
+            ),
+            (
+                "fn invalid(): Int {\n\
+                     defer {\n\
+                         return 1\n\
+                     }\n\
+                     0\n\
+                 }\n",
+                "E1410",
+            ),
+            (
+                "fn invalid(): Unit ! String {\n\
+                     defer {\n\
+                         fail \"cleanup\"\n\
+                     }\n\
+                 }\n",
+                "E1410",
+            ),
+            (
+                "fn note(value: Int) {}\n\
+                 fn invalid() {\n\
+                     for true {\n\
+                         defer note({\n\
+                             break\n\
+                             1\n\
+                         })\n\
+                     }\n\
+                 }\n",
+                "E1410",
+            ),
+            (
+                "async fn later() {}\n\
+                 fn invalid() {\n\
+                     defer later()\n\
+                 }\n",
+                "E1608",
+            ),
+        ] {
+            let (_, _, output) = check(source);
+            assert!(
+                codes(&output).contains(&expected),
+                "{source}\n{:#?}",
+                output.diagnostics()
+            );
+        }
     }
 
     #[test]

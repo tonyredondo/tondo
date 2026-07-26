@@ -213,6 +213,16 @@ impl HirProgram {
             .find(|opaque| opaque.identity == *identity)
     }
 
+    pub(crate) fn opaque_exposes_capability(
+        &self,
+        identity: &SymbolIdentity,
+        capability: HirCapability,
+    ) -> bool {
+        self.opaque_result(identity).is_some_and(|opaque| {
+            capabilities::bounds_imply_capability(self, opaque.bounds(), capability)
+        })
+    }
+
     pub(crate) fn opaque_witness_for(
         &self,
         interner: &mut TypeInterner,
@@ -1719,6 +1729,7 @@ pub enum HirExpressionKind {
         value: HirExpressionId,
     },
     Block {
+        scope: HirScopeId,
         statements: Vec<HirStatement>,
         tail: Option<HirExpressionId>,
     },
@@ -1943,6 +1954,42 @@ impl HirCallArgument {
     }
 }
 
+/// One lexical cleanup scope retained after syntax checking.
+///
+/// IDs are request-local and exist so HIR, MIR, bytecode, and the VM agree on
+/// exactly which dynamic `defer` entries are drained by each control edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct HirScopeId(u32);
+
+impl HirScopeId {
+    pub fn index(self) -> u32 {
+        self.0
+    }
+}
+
+/// A fully checked deferred invocation.
+///
+/// `expression` is an invocation-shaped HIR node whose call itself is delayed.
+/// Its direct operands are evaluated and captured when the statement runs.
+/// `guarded` identifies the unique non-`Copy` operand, when present; that value
+/// remains in its owner place until cleanup and may only follow verified
+/// whole-value moves.
+#[derive(Debug, Clone)]
+pub struct HirDeferAction {
+    expression: HirExpressionId,
+    guarded: Option<HirExpressionId>,
+}
+
+impl HirDeferAction {
+    pub fn expression(&self) -> HirExpressionId {
+        self.expression
+    }
+
+    pub fn guarded(&self) -> Option<HirExpressionId> {
+        self.guarded
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum HirStatement {
     Binding {
@@ -1966,6 +2013,11 @@ pub enum HirStatement {
         target: HirAssignmentTarget,
         value: HirExpressionId,
     },
+    Defer {
+        span: Span,
+        scope: HirScopeId,
+        action: HirDeferAction,
+    },
     For {
         span: Span,
         id: HirLoopId,
@@ -1981,6 +2033,7 @@ impl HirStatement {
             | Self::Expression { span, .. }
             | Self::Discard { span, .. }
             | Self::Assignment { span, .. }
+            | Self::Defer { span, .. }
             | Self::For { span, .. } => *span,
         }
     }

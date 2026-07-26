@@ -266,8 +266,15 @@ assignments, observed temporaries, loops, and control transfers. A normal path
 may leave a scope only after a visible consumption or confirmed handoff; panic
 paths deliberately keep the future fallback armed. Synchronous closure
 invocation crosses this boundary with an explicit exact signature and selected
-call protocol. Guard registration, executable cleanup, and unwind actions
-remain later analyses.
+call protocol. Every lexical block has a stable cleanup-scope identity. Checked
+`defer` actions capture `Copy` operands at registration and reserve at most one
+complete affine owner as an explicit guard. In HIR that owner is a local or
+temporary; MIR and bytecode may represent the same owner as a local slot or one
+closure-capture slot. The availability proof rejects
+duplicate guards, partial moves, embedding and overwrite, follows a permitted
+whole-owner move, and disarms only after a confirmed handoff or intrinsic
+natural exhaustion. Closed intrinsic fallback actions remain the next terminal
+analysis.
 
 Type IDs are request-local interned handles; only canonical recursive type
 strings are observable. Alias expansion, union normalization, nominal identity,
@@ -292,11 +299,17 @@ may move independently, overlapping paths cannot be reused, writes restore
 only a proved subtree, and joins conservatively union moved paths. The loan
 verifier propagates exact active sets across that same CFG, rejects incompatible
 fixed-place overlap and illegal reborrows, and confines each loan operand to its
-call. Last-use pattern regions and static collection-region disjunction use the
-same paths; later ownership steps add runtime-dependent overlap checks,
-confirmed borrowed replacement, and populated cleanup actions; async later adds
-suspension, resume, cancellation, and frame-state edges without moving source
-semantic decisions into a backend.
+call. Last-use pattern regions, static collection-region disjunction, and
+runtime-dependent overlap checks use the same paths. TERM-003 adds
+`RegisterDefer`, `RetargetDefer`, `DisarmDefer`, and scope-specific
+`DrainDefers` operations plus a second exact dataflow ledger for registrations
+and affine guards. Normal completion and every transfer that abandons a scope
+drain its entries in LIFO order; unwind uses the same chain. An owning intrinsic
+iterator carries an edge-specific exhaustion guard when its collection may be
+terminal, so only the exhausted edge disarms it. Monomorphization removes that
+marker for a closed nonterminal specialization. Async later adds suspension,
+resume, cancellation, and frame-state edges without moving source semantic
+decisions into a backend.
 
 Before bytecode lowering, the MIR verifier proves:
 
@@ -319,6 +332,12 @@ Before bytecode lowering, the MIR verifier proves:
   effectful initiation requires the later async or unsafe MIR operation.
 - Capability-sensitive equality, membership, and map lookup agree with the
   independently verified HIR capability table.
+- Defer registrations form one exact scope-nested LIFO ledger, every affine
+  guard transition is backed by the immediately preceding complete move, and
+  no active entry can cross an undrained return or panic-resume edge.
+- An owning intrinsic iterator has an exhaustion guard exactly when its
+  contextual collection can contain a terminal token, and that guard names the
+  cursor's exact internal source path.
 - No unresolved inference, symbol, or contextual syntax node remains.
 
 The current M3 lowering covers the complete error-free bootstrap HIR surface.
@@ -344,7 +363,11 @@ capabilities needed by type formation, equality, membership, and map lookup
 from the concrete bytecode type graph and nominal layout templates, rather than
 trusting a compiler-produced boolean. It likewise rederives terminal presence
 from a sealed `Join` contract and the concrete ownership graph, rejecting an
-opaque witness that would hide a terminal token.
+opaque witness that would hide a terminal token. Its independent defer ledger
+rechecks scope nesting, unique registration, complete affine guards, immediate
+retarget/disarm transitions, and exact draining. Closed specialization also
+rederives whether an intrinsic owning cursor needs its edge-specific natural
+exhaustion disarm.
 
 Before those tables are allocated, a bounded deterministic worklist
 monomorphizes every generic callable reached from non-generic roots, constants,

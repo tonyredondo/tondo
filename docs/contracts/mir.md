@@ -9,7 +9,9 @@ Copy/Move closure captures, OWN-007 all-exit terminal capture obligations, and
 BORROW-001 call-local loans plus BORROW-002 inferred pattern regions with
 explicit reservation/release, BORROW-003 permission-preserving reborrows,
 BORROW-004 static collection disjunction, BORROW-005 runtime overlap proofs,
-and BORROW-006 borrowed-iteration boundary verification implemented
+BORROW-006 borrowed-iteration boundary verification, TERM-001/TERM-002 terminal
+classification and normal-path ownership, and TERM-003 explicit defer/guard
+cleanup lowering implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -72,7 +74,7 @@ They remain queryable but can never be lowered or executed.
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
 | Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, selected synchronous-safe call access, value/place category, pattern coverage, source evaluation order, and source-level control targets |
 | MIR construction (M3/M4/M5) | Typed locals and temporaries, explicit CFG, places, synchronous-safe calls, effect-preserving closure bodies with a hidden environment, contextual Copy/Move closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
-| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, call-local `ref`/`mut`/`var` loans, inferred last-use pattern regions, static and runtime-checked collection regions, and canonical borrowed-iterator boundaries; later M5 steps add confirmed borrowed transfers and cleanup actions |
+| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, call-local `ref`/`mut`/`var` loans, inferred last-use pattern regions, static and runtime-checked collection regions, canonical borrowed-iterator boundaries, and explicit scope-nested defer registrations with affine guard transitions; the next M5 step adds closed intrinsic fallback actions |
 | Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
 
@@ -351,17 +353,44 @@ Loan release is already explicit on normal last-use edges, control transfers,
 and early function exits; an unwind edge closes the abandoned frame's
 reservations as part of panic propagation.
 
-M5 populates those blocks with terminal fallback, guard, `defer`, and confirmed
-handoff operations. The representation enforces one armed action per terminal
-token and disarms before execution. Bytecode lowering preserves these edges; it
-does not synthesize destructor behavior.
+TERM-003 populates those blocks with four explicit forms:
 
-TERM-001 supplies MIR with a verified closed registry and structural terminal
-status for every HIR type. TERM-002 now rejects an unconsumed normal-path owner
-at HIR admission and reruns that proof at the HIR-to-MIR boundary. MIR preserves
-the accepted handoffs as its already verified typed copy/move paths, but neither
-phase emits a cleanup operation. Only TERM-003 and TERM-004 may populate the
-reserved blocks with an executable guard and unwind ledger.
+- `RegisterDefer { scope, action, guard }` stores one already checked
+  synchronous `Unit` invocation. Copy operands are snapshots; an optional guard
+  names its unique complete affine owner slot, including one environment
+  capture slot while lowering a closure body.
+- `RetargetDefer { from, to }` follows an immediately preceding whole-value move
+  of that guard to an equal-typed complete owner slot. The sole non-slot target
+  is the intrinsic owning cursor's exact `IteratorSource` projection.
+- `DisarmDefer(place)` removes the guarded registration only after an immediate
+  confirmed consuming handoff, terminal operation, or proved natural
+  exhaustion.
+- `DrainDefers { scopes, target, unwind }` executes registrations belonging to
+  the exact abandoned scopes in global LIFO order and branches according to
+  whether cleanup completed or panicked. Every drained guard is consumed on
+  both successors and remains unavailable until a complete owner write
+  reinitializes it.
+
+Normal completion and `return`, `fail`, `?`, `break`, and `continue` route
+through the exact inner-to-outer drain set. Checked-operation panic edges use
+the same cleanup chain, so explicit defers execute while unwinding. The ledger
+is independent of loan state: reservations are released before a normal drain
+or invalidated when the frame begins unwinding.
+
+An owning intrinsic `IteratorNext` additionally records an optional
+`exhaustion_guard` naming the exact `IteratorSource` projection in its state.
+It is present when the contextual collection status is `Present` or
+`Potential`, absent when that status is `Absent`, and affects only the
+`exhausted` successor. Generic `Potential` MIR retains the conservative marker;
+closed bytecode specialization removes it when the concrete collection is
+nonterminal. A ref cursor and a user `Iterator.next` call never carry this
+marker.
+
+TERM-001 supplies MIR with the verified closed registry and structural status.
+TERM-002 rejects unconsumed normal-path owners. TERM-003 materializes explicit
+defer registrations and guards without inventing a destructor. TERM-004 will
+populate the same unwind capacity with the closed intrinsic fallback actions
+that remain armed only when no explicit guard owns the token.
 
 M7 represents `await` and structured teardown with a suspension terminator.
 Its successors distinguish resume, cancellation, and panic/unwind. Values live
@@ -420,6 +449,16 @@ The structural verifier introduced in M3 proves at minimum:
 - every borrowed iterator has one stable source-region origin, one canonical
   position producer, and only shared region loans crossing its advance
   boundary;
+- every defer registration belongs to a currently active lexical scope, no
+  dynamic registration is repeated before drain/disarm, guard places are
+  pairwise disjoint, and every guarded move has one immediate exact
+  retarget/disarm transition;
+- every drain names exactly the scopes abandoned by its edge, preserves LIFO
+  order, marks its guards consumed until complete reinitialization, and no
+  return or panic-resume can abandon an active registration;
+- an intrinsic own iterator carries the exact source exhaustion guard if and
+  only if its contextual collection status is non-absent, and only its
+  exhausted successor removes that guard;
 - equality, collection membership, and map lookup satisfy the `Equatable`,
   `Key`, or `Copy` requirement recorded and independently verified in HIR;
 - a variant, union, option, or result payload is read only on an edge dominated
@@ -436,9 +475,9 @@ on their successful edge, and the return place must be initialized on every
 `Return`. Payload refinement is a separate forward analysis so initialization
 alone cannot authorize an invalid projection.
 
-Later M7 work adds concrete suspension/frame/`Send` invariants and terminal
-tokens while reusing the existing BORROW-006 loan-boundary proof. Verification
-always precedes bytecode lowering.
+Later TERM-004 work adds closed intrinsic fallback entries. M7 adds concrete
+suspension/frame/`Send` invariants while reusing the existing BORROW-006
+loan-boundary proof. Verification always precedes bytecode lowering.
 
 ## Determinism and resource limits
 

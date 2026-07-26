@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.48
+**Versión del tracker:** 0.49
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar `defer` LIFO y guards terminales
-(TERM-003).
+**Objetivo inmediato:** implementar acciones cerradas de fallback terminal
+durante unwind (TERM-004).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1410,10 +1410,24 @@ lifetimes escritos por el usuario.
   `Copy`. Toda salida normal pendiente produce `E1404`; una escritura que
   perdería el owner anterior —incluidos captura, préstamo y `with`— produce
   `E1408`. El admission verifier reconstruye registro y dataflow antes de MIR;
-  aún no existen guards, cleanup ni fallback ejecutable.
+  en este checkpoint todavía no existían guards, cleanup ni fallback
+  ejecutable.
 
-- [ ] **TERM-003 — Implementar `defer` LIFO y desarme al registrar guards
-  terminales.**
+- [x] **TERM-003 — Implementar `defer` LIFO y desarme al registrar guards
+  terminales.** HIR asigna IDs estables a los scopes, valida acciones síncronas
+  infalibles `Unit`, captura operands `Copy` y permite un único owner afín
+  completo. MIR y bytecode materializan `RegisterDefer`, `RetargetDefer`,
+  `DisarmDefer` y `DrainDefers`; sus verificadores independientes demuestran
+  scopes exactos, LIFO, guard único, transiciones inmediatas, lifetimes y
+  ausencia de entradas abandonadas. La VM drena en salidas normales y pánico,
+  conserva la prioridad de pánico y adjunta los secundarios como suprimidos, y
+  mantiene snapshots y guards como roots. La iteración own mueve elementos de
+  `Array`, `Map` y `Set`,
+  conserva el resto para una salida temprana y desarma el guard exactamente en
+  el edge de agotamiento natural; la especialización elimina el marker de un
+  genérico cuando su colección cerrada resulta no terminal. Si un guard
+  genérico se cierra como `Copy`, la misma especialización lo convierte en un
+  snapshot de registro y elimina únicamente sus transiciones ya vacías.
 
 - [ ] **TERM-004 — Implementar acciones de unwind cerradas para pánico,
   cancelación y teardown estructurado.**
@@ -1990,15 +2004,37 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es TERM-003: bajar `defer` a un ledger LIFO explícito,
-registrar un único guard al reservar consumo terminal, retargetearlo únicamente
-en movimientos locales permitidos y demostrar que guard y fallback nunca están
-armados a la vez. TERM-003 no ejecuta todavía el fallback de pánico o cancelación
-reservado para TERM-004.
+La siguiente acción activa es TERM-004: materializar las acciones cerradas de
+fallback que TERM-001 registró para cada token terminal vivo, seguirlas a través
+de handoffs confirmados y ejecutarlas durante pánico o cancelación solo cuando
+no existe un guard explícito. Debe reutilizar el ledger y los cleanup edges de
+TERM-003, sin convertir el fallback en destructor visible ni ejecutarlo en una
+salida normal.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.49 — 2026-07-25
+
+- Se completa TERM-003 con acciones `defer` tipadas y estrictamente síncronas,
+  captura inmediata de operands `Copy` y un único guard afín completo que puede
+  retargetearse o desarmarse únicamente mediante una transferencia confirmada.
+- MIR y bytecode incorporan un ledger LIFO explícito y verificadores
+  independientes de scope, registro, guard, move, lifetime y drain. Todas las
+  salidas normales y de pánico atraviesan los scopes exactos sin abandonar una
+  entrada activa.
+- La VM captura, enraíza y ejecuta los defers en LIFO; un pánico de cleanup no
+  detiene los restantes y se conserva como principal o suprimido según la causa
+  previa.
+- La iteración intrínseca own transfiere elementos destructivamente y conserva
+  el resto en el cursor. El agotamiento natural desarma únicamente el guard de
+  una colección terminal; `break` y los demás exits mantienen el remainder, y
+  la monomorfización elimina el marker en especializaciones no terminales.
+- La puerta completa pasa con 533 tests —479 del compilador y 12 de la VM, más
+  42 de CLI e integración—, `cargo fmt --check`, `cargo check`, `cargo build`,
+  Clippy con warnings como error, rustdoc con warnings como error y
+  `git diff --check`.
 
 ### 0.48 — 2026-07-25
 

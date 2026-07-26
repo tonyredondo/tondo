@@ -9,8 +9,9 @@ mod verify;
 
 pub use disassemble::disassemble;
 pub use verify::{
-    BytecodeVerificationError, BytecodeVerificationLimits, derive_discard_capabilities,
-    derive_terminal_statuses, verify_bytecode, verify_bytecode_with_limits,
+    BytecodeVerificationError, BytecodeVerificationLimits, derive_copy_capabilities,
+    derive_discard_capabilities, derive_terminal_statuses, verify_bytecode,
+    verify_bytecode_with_limits,
 };
 
 macro_rules! index_type {
@@ -39,6 +40,7 @@ index_type!(BytecodeSlotId);
 index_type!(BytecodeLoanId);
 index_type!(BytecodeBlockId);
 index_type!(BytecodeSpanId);
+index_type!(BytecodeScopeId);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BytecodeSpan {
@@ -76,6 +78,21 @@ pub struct BytecodeType {
     pub kind: BytecodeTypeKind,
 }
 
+/// Source-visible closed capabilities retained by an opaque result.
+///
+/// The concrete witness remains available to the verifier for representation
+/// checks, but it must not strengthen the contract visible through the opaque
+/// type.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct BytecodeCapabilitySet {
+    pub copy: bool,
+    pub discard: bool,
+    pub equatable: bool,
+    pub key: bool,
+    pub send: bool,
+    pub share: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BytecodeTypeKind {
     Scalar(BytecodeScalarType),
@@ -101,6 +118,7 @@ pub enum BytecodeTypeKind {
         identity: String,
         arguments: Vec<BytecodeTypeId>,
         witness: BytecodeTypeId,
+        capabilities: BytecodeCapabilitySet,
     },
     Generated {
         identity: String,
@@ -440,6 +458,16 @@ pub enum BytecodeInstructionKind {
         destination: BytecodePlace,
         value: BytecodeRvalue,
     },
+    RegisterDefer {
+        scope: BytecodeScopeId,
+        action: BytecodeOperation,
+        guard: Option<BytecodePlace>,
+    },
+    RetargetDefer {
+        from: BytecodePlace,
+        to: BytecodePlace,
+    },
+    DisarmDefer(BytecodePlace),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -523,6 +551,7 @@ pub enum BytecodeProjectionKind {
     IteratorElement {
         index: BytecodeSlotId,
     },
+    IteratorSource,
     Index {
         index: BytecodeSlotId,
         access: BytecodeIndexAccess,
@@ -839,6 +868,7 @@ pub enum BytecodeTerminatorKind {
         state: BytecodePlace,
         destination: BytecodePlace,
         borrowed_source: Option<BytecodePlace>,
+        exhaustion_guard: Option<BytecodePlace>,
         has_value: BytecodeBlockId,
         exhausted: BytecodeBlockId,
         unwind: BytecodeBlockId,
@@ -854,6 +884,11 @@ pub enum BytecodeTerminatorKind {
     ValidateLoan {
         loan: BytecodeLoanId,
         against: Vec<BytecodeLoanId>,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    },
+    DrainDefers {
+        scopes: Vec<BytecodeScopeId>,
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
     },

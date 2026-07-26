@@ -163,6 +163,7 @@ pub struct VmPanic {
     pub message: String,
     pub span: BytecodeSpan,
     pub stack: Vec<VmStackFrame>,
+    pub suppressed: Vec<VmPanic>,
 }
 
 #[derive(Debug)]

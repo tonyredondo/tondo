@@ -336,7 +336,7 @@ pub(crate) fn bounds_imply(bounds: &[HirTraitReference], capability: HirCapabili
     })
 }
 
-fn bounds_imply_capability(
+pub(super) fn bounds_imply_capability(
     program: &HirProgram,
     bounds: &[HirTraitReference],
     capability: HirCapability,

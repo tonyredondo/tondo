@@ -4,10 +4,11 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use crate::hir::{
     CapabilityAnalysis, CapabilityAssumptions, HirAssignmentOperator, HirAssignmentTarget,
     HirAssignmentTargetKind, HirBinaryOperator, HirBootstrapHostFunction, HirCallProtocol,
-    HirCallableSignature, HirCapability, HirCapabilityStatus, HirClosure, HirExpression,
-    HirExpressionId, HirExpressionKind, HirForKind, HirIterationProtocol, HirLiteral, HirLoopId,
-    HirMatchMode, HirNominalShape, HirPatternId, HirPatternKind, HirPreludeTraitMethod, HirProgram,
-    HirStatement, HirValueCategory, HirVariantPayload, HirVariantValue, StaticRegionRelation,
+    HirCallableSignature, HirCapability, HirCapabilityStatus, HirClosure, HirDeferAction,
+    HirExpression, HirExpressionId, HirExpressionKind, HirForKind, HirIterationProtocol,
+    HirLiteral, HirLoopId, HirMatchMode, HirNominalShape, HirPatternId, HirPatternKind,
+    HirPreludeTraitMethod, HirProgram, HirScopeId, HirStatement, HirTerminalStatus,
+    HirValueCategory, HirVariantPayload, HirVariantValue, StaticRegionRelation, TerminalAnalysis,
     verify_typed_hir,
 };
 use crate::resolve::{LocalId, MemberKind, ResolvedProgram};
@@ -65,6 +66,14 @@ pub fn lower_to_mir(
             })
         })
         .transpose()?;
+    let terminal_analysis = first_body_span
+        .map(|span| {
+            TerminalAnalysis::new(hir, resolved).map_err(|error| MirError::Construction {
+                span,
+                message: format!("cannot derive terminal ownership: {error}"),
+            })
+        })
+        .transpose()?;
     for callable in hir.callables() {
         let Some(body) = hir.body(callable.id()) else {
             continue;
@@ -81,6 +90,9 @@ pub fn lower_to_mir(
             capability_analysis
                 .as_ref()
                 .expect("a callable body requires capability analysis"),
+            terminal_analysis
+                .as_ref()
+                .expect("a callable body requires terminal analysis"),
             callable,
             limits,
         )?
@@ -100,6 +112,9 @@ pub fn lower_to_mir(
             capability_analysis
                 .as_ref()
                 .expect("a closure body requires capability analysis"),
+            terminal_analysis
+                .as_ref()
+                .expect("a closure body requires terminal analysis"),
             closure,
             limits,
         )?
@@ -148,6 +163,7 @@ struct FunctionBuilder<'a> {
     resolved: &'a ResolvedProgram,
     hir: &'a HirProgram,
     capability_analysis: &'a CapabilityAnalysis,
+    terminal_analysis: &'a TerminalAnalysis,
     capability_assumptions: CapabilityAssumptions,
     copy_statuses: RefCell<BTreeMap<TypeId, HirCapabilityStatus>>,
     id: MirFunctionId,
@@ -163,6 +179,8 @@ struct FunctionBuilder<'a> {
     capture_places: BTreeMap<LocalId, MirPlace>,
     borrow_aliases: BTreeMap<LocalId, MirPlace>,
     loops: BTreeMap<HirLoopId, LoopTargets>,
+    defer_scopes: Vec<HirScopeId>,
+    unwind_defers: BTreeMap<Vec<HirScopeId>, MirBlockId>,
     receiver: Option<MirLocalId>,
     return_local: MirLocalId,
     entry: MirBlockId,
@@ -175,6 +193,7 @@ struct LoopTargets {
     break_target: MirBlockId,
     continue_target: MirBlockId,
     loan_depth: usize,
+    defer_depth: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -217,6 +236,7 @@ impl<'a> FunctionBuilder<'a> {
         resolved: &'a ResolvedProgram,
         hir: &'a HirProgram,
         capability_analysis: &'a CapabilityAnalysis,
+        terminal_analysis: &'a TerminalAnalysis,
         callable: &HirCallableSignature,
         limits: MirLoweringLimits,
     ) -> Result<Self, MirError> {
@@ -226,6 +246,7 @@ impl<'a> FunctionBuilder<'a> {
             resolved,
             hir,
             capability_analysis,
+            terminal_analysis,
             capability_assumptions: CapabilityAssumptions::from_generics(hir, callable.generics()),
             copy_statuses: RefCell::new(BTreeMap::new()),
             id,
@@ -241,6 +262,8 @@ impl<'a> FunctionBuilder<'a> {
             capture_places: BTreeMap::new(),
             borrow_aliases: BTreeMap::new(),
             loops: BTreeMap::new(),
+            defer_scopes: Vec::new(),
+            unwind_defers: BTreeMap::new(),
             receiver: None,
             return_local: MirLocalId(0),
             entry: MirBlockId(0),
@@ -275,6 +298,7 @@ impl<'a> FunctionBuilder<'a> {
         resolved: &'a ResolvedProgram,
         hir: &'a HirProgram,
         capability_analysis: &'a CapabilityAnalysis,
+        terminal_analysis: &'a TerminalAnalysis,
         closure: &HirClosure,
         limits: MirLoweringLimits,
     ) -> Result<Self, MirError> {
@@ -296,6 +320,7 @@ impl<'a> FunctionBuilder<'a> {
             resolved,
             hir,
             capability_analysis,
+            terminal_analysis,
             capability_assumptions: CapabilityAssumptions::from_generics(hir, closure.generics()),
             copy_statuses: RefCell::new(BTreeMap::new()),
             id: MirFunctionId::Closure(closure.id()),
@@ -311,6 +336,8 @@ impl<'a> FunctionBuilder<'a> {
             capture_places: BTreeMap::new(),
             borrow_aliases: BTreeMap::new(),
             loops: BTreeMap::new(),
+            defer_scopes: Vec::new(),
+            unwind_defers: BTreeMap::new(),
             receiver: None,
             return_local: MirLocalId(0),
             entry: MirBlockId(0),
@@ -374,7 +401,7 @@ impl<'a> FunctionBuilder<'a> {
         let return_place = self.local_place(self.return_local);
         if let Some(end) = self.lower_expression(root, return_place, self.entry)? {
             let span = self.expression(root)?.span();
-            self.terminate(end, span, MirTerminatorKind::Return)?;
+            self.terminate_return(end, span)?;
         }
         self.infer_region_releases()?;
         let mut blocks = Vec::with_capacity(self.blocks.len());
@@ -759,9 +786,11 @@ impl<'a> FunctionBuilder<'a> {
                 )?;
                 Ok(Some(block))
             }
-            HirExpressionKind::Block { statements, tail } => {
-                self.lower_block(statements, *tail, expression.ty(), span, destination, block)
-            }
+            HirExpressionKind::Block {
+                scope,
+                statements,
+                tail,
+            } => self.lower_block(&expression, *scope, statements, *tail, destination, block),
             HirExpressionKind::Prefix { operator, operand } => {
                 let Some((block, operand)) = self.lower_value(*operand, block)? else {
                     return Ok(None);
@@ -1162,8 +1191,7 @@ impl<'a> FunctionBuilder<'a> {
                     Some(block)
                 };
                 if let Some(end) = end {
-                    self.release_loans_from(end, span, 0)?;
-                    self.terminate(end, span, MirTerminatorKind::Return)?;
+                    self.terminate_return(end, span)?;
                 }
                 Ok(None)
             }
@@ -1183,8 +1211,7 @@ impl<'a> FunctionBuilder<'a> {
                         },
                     },
                 )?;
-                self.release_loans_from(block, span, 0)?;
-                self.terminate(block, span, MirTerminatorKind::Return)?;
+                self.terminate_return(block, span)?;
                 Ok(None)
             }
             HirExpressionKind::Coerce { kind, value } => {
@@ -1216,12 +1243,11 @@ impl<'a> FunctionBuilder<'a> {
                             message: format!("break targets inactive loop#{}", target.index()),
                         })?;
                 self.release_loans_from(block, span, targets.loan_depth)?;
-                self.terminate(
+                self.terminate_scope_exit_goto(
                     block,
                     span,
-                    MirTerminatorKind::Goto {
-                        target: targets.break_target,
-                    },
+                    targets.break_target,
+                    targets.defer_depth,
                 )?;
                 Ok(None)
             }
@@ -1239,12 +1265,11 @@ impl<'a> FunctionBuilder<'a> {
                             message: format!("continue targets inactive loop#{}", target.index()),
                         })?;
                 self.release_loans_from(block, span, targets.loan_depth)?;
-                self.terminate(
+                self.terminate_scope_exit_goto(
                     block,
                     span,
-                    MirTerminatorKind::Goto {
-                        target: targets.continue_target,
-                    },
+                    targets.continue_target,
+                    targets.defer_depth,
                 )?;
                 Ok(None)
             }
@@ -1259,24 +1284,48 @@ impl<'a> FunctionBuilder<'a> {
 
     fn lower_block(
         &mut self,
+        expression: &HirExpression,
+        scope: HirScopeId,
         statements: &[HirStatement],
         tail: Option<HirExpressionId>,
-        ty: TypeId,
-        span: Span,
         destination: MirPlace,
         mut block: MirBlockId,
     ) -> Result<Option<MirBlockId>, MirError> {
+        let (ty, span) = (expression.ty(), expression.span());
+        let owns_defers = statements
+            .iter()
+            .any(|statement| matches!(statement, HirStatement::Defer { .. }));
+        if owns_defers {
+            self.defer_scopes.push(scope);
+        }
         for statement in statements {
             let Some(next) = self.lower_statement(statement, block)? else {
+                if owns_defers {
+                    let popped = self.defer_scopes.pop();
+                    debug_assert_eq!(popped, Some(scope));
+                }
                 return Ok(None);
             };
             block = next;
         }
-        if let Some(tail) = tail {
-            self.lower_expression(tail, destination, block)
+        let result = if let Some(tail) = tail {
+            self.lower_expression(tail, destination.clone(), block)?
         } else {
             debug_assert_eq!(ty, self.hir.interner().scalar(ScalarType::Unit));
-            self.assign_operand(block, span, destination, self.unit_operand())?;
+            self.assign_operand(block, span, destination.clone(), self.unit_operand())?;
+            Some(block)
+        };
+        if owns_defers {
+            let popped = self.defer_scopes.pop();
+            debug_assert_eq!(popped, Some(scope));
+        }
+        let Some(block) = result else {
+            return Ok(None);
+        };
+        if owns_defers {
+            self.push_statement(block, span, MirStatementKind::DisarmDefer(destination))?;
+            self.drain_to_normal(block, span, vec![scope]).map(Some)
+        } else {
             Ok(Some(block))
         }
     }
@@ -1302,6 +1351,11 @@ impl<'a> FunctionBuilder<'a> {
                 target,
                 value,
             } => self.lower_assignment(*span, *operator, target, *value, block),
+            HirStatement::Defer {
+                span,
+                scope,
+                action,
+            } => self.lower_defer(*span, *scope, action, block),
             HirStatement::For {
                 span,
                 id,
@@ -1309,6 +1363,198 @@ impl<'a> FunctionBuilder<'a> {
                 body,
             } => self.lower_for(*span, *id, kind, *body, block),
         }
+    }
+
+    fn lower_defer(
+        &mut self,
+        span: Span,
+        scope: HirScopeId,
+        action: &HirDeferAction,
+        block: MirBlockId,
+    ) -> Result<Option<MirBlockId>, MirError> {
+        let expression = self.expression(action.expression())?.clone();
+        let guarded = action.guarded();
+        let mut current = block;
+        let (operation, guard) = match expression.kind() {
+            HirExpressionKind::Call {
+                callee,
+                arguments,
+                signature,
+                protocol,
+            } => {
+                let Some((next, callee, callee_guard)) =
+                    self.lower_defer_operand(*callee, guarded, current)?
+                else {
+                    return Ok(None);
+                };
+                current = next;
+                let mut guard = callee_guard;
+                let mut lowered = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    let Some((next, value, argument_guard)) =
+                        self.lower_defer_operand(argument.value(), guarded, current)?
+                    else {
+                        return Ok(None);
+                    };
+                    current = next;
+                    if argument_guard.is_some() {
+                        guard = argument_guard;
+                    }
+                    lowered.push(MirCallArgument {
+                        mode: argument.mode(),
+                        target: argument.target(),
+                        value,
+                    });
+                }
+                (
+                    MirOperation {
+                        ty: expression.ty(),
+                        kind: MirOperationKind::Call {
+                            callee,
+                            arguments: lowered,
+                            signature: *signature,
+                            protocol: *protocol,
+                        },
+                    },
+                    guard,
+                )
+            }
+            HirExpressionKind::PreludeAssert {
+                condition,
+                condition_repr,
+                message_parts,
+            } => {
+                let Some((next, condition, condition_guard)) =
+                    self.lower_defer_operand(*condition, guarded, current)?
+                else {
+                    return Ok(None);
+                };
+                current = next;
+                let mut guard = condition_guard;
+                let mut lowered = Vec::with_capacity(message_parts.len());
+                for part in message_parts {
+                    let Some((next, value, part_guard)) =
+                        self.lower_defer_operand(part.value(), guarded, current)?
+                    else {
+                        return Ok(None);
+                    };
+                    current = next;
+                    if part_guard.is_some() {
+                        guard = part_guard;
+                    }
+                    lowered.push(MirAssertMessagePart {
+                        value,
+                        spread: part.is_spread(),
+                    });
+                }
+                (
+                    MirOperation {
+                        ty: expression.ty(),
+                        kind: MirOperationKind::Assert {
+                            condition,
+                            condition_repr: condition_repr.clone(),
+                            message_parts: lowered,
+                        },
+                    },
+                    guard,
+                )
+            }
+            HirExpressionKind::BootstrapHostCall {
+                function,
+                arguments,
+            } => {
+                let mut guard = None;
+                let mut lowered = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    let Some((next, value, argument_guard)) =
+                        self.lower_defer_operand(*argument, guarded, current)?
+                    else {
+                        return Ok(None);
+                    };
+                    current = next;
+                    if argument_guard.is_some() {
+                        guard = argument_guard;
+                    }
+                    lowered.push(value);
+                }
+                let function = match function {
+                    HirBootstrapHostFunction::ConsolePrint => {
+                        MirBootstrapHostFunction::ConsolePrint
+                    }
+                };
+                (
+                    MirOperation {
+                        ty: expression.ty(),
+                        kind: MirOperationKind::BootstrapHostCall {
+                            function,
+                            arguments: lowered,
+                        },
+                    },
+                    guard,
+                )
+            }
+            _ => {
+                return Err(MirError::Construction {
+                    span,
+                    message: "verified defer action is not an invocation".into(),
+                });
+            }
+        };
+        self.push_statement(
+            current,
+            span,
+            MirStatementKind::RegisterDefer {
+                scope,
+                action: operation,
+                guard,
+            },
+        )?;
+        Ok(Some(current))
+    }
+
+    fn lower_defer_operand(
+        &mut self,
+        expression: HirExpressionId,
+        guarded: Option<HirExpressionId>,
+        block: MirBlockId,
+    ) -> Result<Option<(MirBlockId, MirOperand, Option<MirPlace>)>, MirError> {
+        if guarded == Some(expression)
+            && matches!(
+                self.expression(expression)?.kind(),
+                HirExpressionKind::Local(_)
+            )
+        {
+            let span = self.expression(expression)?.span();
+            let Some((block, place)) = self.lower_place(expression, block)? else {
+                return Err(MirError::Construction {
+                    span,
+                    message: "defer guard place diverged while lowering".into(),
+                });
+            };
+            let value = self.transfer_place(place.clone(), span)?;
+            return Ok(Some((block, value, Some(place))));
+        }
+        let span = self.expression(expression)?.span();
+        let Some((block, value)) = self.lower_value(expression, block)? else {
+            return Ok(None);
+        };
+        if guarded == Some(expression) {
+            let MirOperandKind::Move(place) = &value.kind else {
+                return Err(MirError::Construction {
+                    span,
+                    message: "defer affine temporary did not materialize as one moved place".into(),
+                });
+            };
+            if !place.projections.is_empty() || place.source_loan.is_some() {
+                return Err(MirError::Construction {
+                    span,
+                    message: "defer affine temporary did not materialize as one complete local"
+                        .into(),
+                });
+            }
+            return Ok(Some((block, value.clone(), Some(place.clone()))));
+        }
+        Ok(Some((block, value, None)))
     }
 
     fn lower_assignment(
@@ -1477,6 +1723,7 @@ impl<'a> FunctionBuilder<'a> {
         }
         let against = vec![Vec::new(); places.len()];
         let target_block = self.allocate_block(MirBlockKind::Normal)?;
+        let unwind = self.current_unwind(span)?;
         self.terminate(
             block,
             span,
@@ -1486,7 +1733,7 @@ impl<'a> FunctionBuilder<'a> {
                 against,
                 for_write,
                 target: target_block,
-                unwind: self.unwind,
+                unwind,
             },
         )?;
         Ok(target_block)
@@ -1709,6 +1956,7 @@ impl<'a> FunctionBuilder<'a> {
                 break_target: exit,
                 continue_target: body_start,
                 loan_depth: self.active_loans.len(),
+                defer_depth: self.defer_scopes.len(),
             },
         );
         let body_end = self.lower_value(body, body_start)?.map(|(block, _)| block);
@@ -1762,6 +2010,7 @@ impl<'a> FunctionBuilder<'a> {
                 break_target: exit,
                 continue_target: header,
                 loan_depth: self.active_loans.len(),
+                defer_depth: self.defer_scopes.len(),
             },
         );
         let body_end = self.lower_value(body, body_start)?.map(|(block, _)| block);
@@ -1780,22 +2029,23 @@ impl<'a> FunctionBuilder<'a> {
         body: HirExpressionId,
         block: MirBlockId,
     ) -> Result<Option<MirBlockId>, MirError> {
-        let mode = match self
-            .hir
-            .interner()
-            .kind(iteration.cursor)
-            .map_err(|error| MirError::Construction {
-                span,
-                message: format!("intrinsic cursor has an invalid type: {error}"),
-            })? {
-            TypeKind::Cursor { mode, .. } => *mode,
-            _ => {
-                return Err(MirError::Construction {
+        let (mode, collection) =
+            match self
+                .hir
+                .interner()
+                .kind(iteration.cursor)
+                .map_err(|error| MirError::Construction {
                     span,
-                    message: "intrinsic iteration has a non-cursor state type".into(),
-                });
-            }
-        };
+                    message: format!("intrinsic cursor has an invalid type: {error}"),
+                })? {
+                TypeKind::Cursor { mode, collection } => (*mode, *collection),
+                _ => {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "intrinsic iteration has a non-cursor state type".into(),
+                    });
+                }
+            };
         let (block, source, borrowed_source) = match mode {
             CursorMode::Own => {
                 let Some((block, source)) = self.lower_value(iteration.source, block)? else {
@@ -1837,9 +2087,21 @@ impl<'a> FunctionBuilder<'a> {
             item_ty
         };
         let item = self.allocate_temporary(destination_ty, span, block)?;
+        let exhaustion_guard = if mode == CursorMode::Own && self.is_terminal(collection, span)? {
+            let mut guard = self.local_place(state);
+            guard.ty = collection;
+            guard.projections.push(MirProjection {
+                ty: collection,
+                kind: MirProjectionKind::IteratorSource,
+            });
+            Some(guard)
+        } else {
+            None
+        };
         let header = self.allocate_block(MirBlockKind::Normal)?;
         let body_start = self.allocate_block(MirBlockKind::Normal)?;
         let exit = self.allocate_block(MirBlockKind::Normal)?;
+        let unwind = self.current_unwind(span)?;
         self.terminate(block, span, MirTerminatorKind::Goto { target: header })?;
         self.terminate(
             header,
@@ -1848,9 +2110,10 @@ impl<'a> FunctionBuilder<'a> {
                 state: self.local_place(state),
                 destination: self.local_place(item),
                 borrowed_source: borrowed_source.clone(),
+                exhaustion_guard,
                 has_value: body_start,
                 exhausted: exit,
-                unwind: self.unwind,
+                unwind,
             },
         )?;
         let item = if let Some(mut place) = borrowed_source {
@@ -1960,6 +2223,7 @@ impl<'a> FunctionBuilder<'a> {
             value: state_loan,
         }];
         self.consume_call_loans(&arguments, loan_depth, span)?;
+        let unwind = self.current_unwind(span)?;
         self.terminate(
             header,
             span,
@@ -1981,7 +2245,7 @@ impl<'a> FunctionBuilder<'a> {
                 },
                 destination: Some(self.local_place(next)),
                 target: Some(inspect),
-                unwind: self.unwind,
+                unwind,
             },
         )?;
         self.terminate(
@@ -2022,6 +2286,7 @@ impl<'a> FunctionBuilder<'a> {
                 break_target: exit,
                 continue_target: header,
                 loan_depth: self.active_loans.len(),
+                defer_depth: self.defer_scopes.len(),
             },
         );
         let Some(body_start) = self.bind_irrefutable(pattern, item, body_start)? else {
@@ -2376,6 +2641,7 @@ impl<'a> FunctionBuilder<'a> {
             return Ok(block);
         }
         let target = self.allocate_block(MirBlockKind::Normal)?;
+        let unwind = self.current_unwind(span)?;
         self.terminate(
             block,
             span,
@@ -2383,7 +2649,7 @@ impl<'a> FunctionBuilder<'a> {
                 loan,
                 against: Vec::new(),
                 target,
-                unwind: self.unwind,
+                unwind,
             },
         )?;
         Ok(target)
@@ -2636,8 +2902,7 @@ impl<'a> FunctionBuilder<'a> {
                 });
             }
         }
-        self.release_loans_from(none, span, 0)?;
-        self.terminate(none, span, MirTerminatorKind::Return)?;
+        self.terminate_return(none, span)?;
         Ok(Some(join))
     }
 
@@ -2756,8 +3021,7 @@ impl<'a> FunctionBuilder<'a> {
                 },
             },
         )?;
-        self.release_loans_from(err, span, 0)?;
-        self.terminate(err, span, MirTerminatorKind::Return)?;
+        self.terminate_return(err, span)?;
         Ok(Some(join))
     }
 
@@ -4018,6 +4282,7 @@ impl<'a> FunctionBuilder<'a> {
                 state,
                 destination,
                 borrowed_source,
+                exhaustion_guard,
                 has_value,
                 exhausted,
                 unwind,
@@ -4025,6 +4290,7 @@ impl<'a> FunctionBuilder<'a> {
                 state,
                 destination,
                 borrowed_source,
+                exhaustion_guard,
                 has_value: target(self, has_value)?,
                 exhausted: target(self, exhausted)?,
                 unwind,
@@ -4041,6 +4307,15 @@ impl<'a> FunctionBuilder<'a> {
                 replacements,
                 against,
                 for_write,
+                target: target(self, next)?,
+                unwind,
+            },
+            MirTerminatorKind::DrainDefers {
+                scopes,
+                target: next,
+                unwind,
+            } => MirTerminatorKind::DrainDefers {
+                scopes,
                 target: target(self, next)?,
                 unwind,
             },
@@ -4147,7 +4422,46 @@ impl<'a> FunctionBuilder<'a> {
         destination: MirPlace,
         value: MirRvalue,
     ) -> Result<(), MirError> {
-        self.push_statement(block, span, MirStatementKind::Assign { destination, value })
+        let defer_transfer = match value.kind() {
+            MirRvalueKind::Use(MirOperand {
+                kind: MirOperandKind::Move(from),
+                ..
+            }) => Some((from.clone(), destination.clone())),
+            MirRvalueKind::IteratorState {
+                source:
+                    MirOperand {
+                        kind: MirOperandKind::Move(from),
+                        ..
+                    },
+            } => {
+                let mut to = destination.clone();
+                to.ty = from.ty();
+                to.projections.push(MirProjection {
+                    ty: from.ty(),
+                    kind: MirProjectionKind::IteratorSource,
+                });
+                Some((from.clone(), to))
+            }
+            _ => None,
+        }
+        .filter(|(from, to)| {
+            is_complete_defer_owner_place(from)
+                && (is_complete_defer_owner_place(to) || is_iterator_defer_target(to))
+        });
+        let consumed = if defer_transfer.is_none() {
+            rvalue_move_places(&value)
+        } else {
+            Vec::new()
+        };
+        self.push_statement(block, span, MirStatementKind::Assign { destination, value })?;
+        if let Some((from, to)) = defer_transfer {
+            self.push_statement(block, span, MirStatementKind::RetargetDefer { from, to })?;
+        } else {
+            for place in consumed {
+                self.push_statement(block, span, MirStatementKind::DisarmDefer(place))?;
+            }
+        }
+        Ok(())
     }
 
     fn assign_operand(
@@ -4208,6 +4522,10 @@ impl<'a> FunctionBuilder<'a> {
             Some(self.allocate_block(MirBlockKind::Normal)?)
         };
         let destination = if target.is_some() { destination } else { None };
+        for place in operation_move_places(&operation) {
+            self.push_statement(block, span, MirStatementKind::DisarmDefer(place))?;
+        }
+        let unwind = self.current_unwind(span)?;
         self.terminate(
             block,
             span,
@@ -4215,10 +4533,115 @@ impl<'a> FunctionBuilder<'a> {
                 operation,
                 destination,
                 target,
-                unwind: self.unwind,
+                unwind,
             },
         )?;
         Ok(target)
+    }
+
+    fn current_unwind(&mut self, span: Span) -> Result<MirBlockId, MirError> {
+        if self.defer_scopes.is_empty() {
+            return Ok(self.unwind);
+        }
+        let scopes = self.defer_scopes.clone();
+        if let Some(block) = self.unwind_defers.get(&scopes).copied() {
+            return Ok(block);
+        }
+        let block = self.allocate_block(MirBlockKind::Cleanup)?;
+        self.terminate(
+            block,
+            span,
+            MirTerminatorKind::DrainDefers {
+                scopes: scopes.clone(),
+                target: self.unwind,
+                unwind: self.unwind,
+            },
+        )?;
+        self.unwind_defers.insert(scopes, block);
+        Ok(block)
+    }
+
+    fn drain_to_normal(
+        &mut self,
+        block: MirBlockId,
+        span: Span,
+        scopes: Vec<HirScopeId>,
+    ) -> Result<MirBlockId, MirError> {
+        if scopes.is_empty() {
+            return Ok(block);
+        }
+        let drain = self.allocate_block(MirBlockKind::Normal)?;
+        let target = self.allocate_block(MirBlockKind::Normal)?;
+        let unwind = self.current_unwind(span)?;
+        self.terminate(block, span, MirTerminatorKind::Goto { target: drain })?;
+        self.terminate(
+            drain,
+            span,
+            MirTerminatorKind::DrainDefers {
+                scopes,
+                target,
+                unwind,
+            },
+        )?;
+        Ok(target)
+    }
+
+    fn terminate_return(&mut self, block: MirBlockId, span: Span) -> Result<(), MirError> {
+        self.push_statement(
+            block,
+            span,
+            MirStatementKind::DisarmDefer(self.local_place(self.return_local)),
+        )?;
+        self.release_loans_from(block, span, 0)?;
+        if self.defer_scopes.is_empty() {
+            return self.terminate(block, span, MirTerminatorKind::Return);
+        }
+        let scopes = self.defer_scopes.clone();
+        let drain = self.allocate_block(MirBlockKind::Normal)?;
+        let target = self.allocate_block(MirBlockKind::Normal)?;
+        self.terminate(target, span, MirTerminatorKind::Return)?;
+        self.terminate(block, span, MirTerminatorKind::Goto { target: drain })?;
+        self.terminate(
+            drain,
+            span,
+            MirTerminatorKind::DrainDefers {
+                scopes,
+                target,
+                unwind: self.unwind,
+            },
+        )
+    }
+
+    fn terminate_scope_exit_goto(
+        &mut self,
+        block: MirBlockId,
+        span: Span,
+        target: MirBlockId,
+        defer_depth: usize,
+    ) -> Result<(), MirError> {
+        let scopes = self
+            .defer_scopes
+            .get(defer_depth..)
+            .ok_or_else(|| MirError::Construction {
+                span,
+                message: "control transfer has an invalid defer-scope depth".into(),
+            })?
+            .to_vec();
+        if scopes.is_empty() {
+            return self.terminate(block, span, MirTerminatorKind::Goto { target });
+        }
+        let drain = self.allocate_block(MirBlockKind::Normal)?;
+        let unwind = self.current_unwind(span)?;
+        self.terminate(block, span, MirTerminatorKind::Goto { target: drain })?;
+        self.terminate(
+            drain,
+            span,
+            MirTerminatorKind::DrainDefers {
+                scopes,
+                target,
+                unwind,
+            },
+        )
     }
 
     fn local_place(&self, local: MirLocalId) -> MirPlace {
@@ -4297,6 +4720,16 @@ impl<'a> FunctionBuilder<'a> {
                 ),
             }),
         }
+    }
+
+    fn is_terminal(&self, ty: TypeId, span: Span) -> Result<bool, MirError> {
+        self.terminal_analysis
+            .status(self.hir, ty, &self.capability_assumptions)
+            .map(|status| status != HirTerminalStatus::Absent)
+            .map_err(|error| MirError::Construction {
+                span,
+                message: format!("cannot classify terminal ownership: {error}"),
+            })
     }
 
     fn unit_operand(&self) -> MirOperand {
@@ -4423,7 +4856,10 @@ fn populate_runtime_loan_checks(
                 }
                 MirStatementKind::StorageLive(_)
                 | MirStatementKind::StorageDead(_)
-                | MirStatementKind::Assign { .. } => {}
+                | MirStatementKind::Assign { .. }
+                | MirStatementKind::RegisterDefer { .. }
+                | MirStatementKind::RetargetDefer { .. }
+                | MirStatementKind::DisarmDefer(_) => {}
             }
         }
 
@@ -4601,6 +5037,10 @@ fn populate_runtime_loan_checks(
                     }
                 }
                 checks[index] = Some(against);
+                propagate(*target, active)?;
+                propagate(*unwind, BTreeSet::new())?;
+            }
+            MirTerminatorKind::DrainDefers { target, unwind, .. } => {
                 propagate(*target, active)?;
                 propagate(*unwind, BTreeSet::new())?;
             }
@@ -4787,7 +5227,8 @@ fn normal_successors(terminator: &MirTerminatorKind) -> Vec<MirBlockId> {
             ..
         } => vec![*has_value, *exhausted],
         MirTerminatorKind::ValidatePlaces { target, .. }
-        | MirTerminatorKind::ValidateLoan { target, .. } => vec![*target],
+        | MirTerminatorKind::ValidateLoan { target, .. }
+        | MirTerminatorKind::DrainDefers { target, .. } => vec![*target],
         MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => Vec::new(),
@@ -4825,6 +5266,19 @@ fn collect_statement_region_uses(
             collect_rvalue_region_uses(value, loans, output);
             collect_place_region_uses(destination, loans, output);
         }
+        MirStatementKind::RegisterDefer { action, guard, .. } => {
+            collect_operation_region_uses(action, loans, output);
+            if let Some(guard) = guard {
+                collect_place_region_uses(guard, loans, output);
+            }
+        }
+        MirStatementKind::RetargetDefer { from, to } => {
+            collect_place_region_uses(from, loans, output);
+            collect_place_region_uses(to, loans, output);
+        }
+        MirStatementKind::DisarmDefer(place) => {
+            collect_place_region_uses(place, loans, output);
+        }
     }
 }
 
@@ -4844,6 +5298,7 @@ fn collect_terminator_region_uses(
 ) {
     match terminator {
         MirTerminatorKind::Goto { .. }
+        | MirTerminatorKind::DrainDefers { .. }
         | MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => {}
@@ -4867,12 +5322,16 @@ fn collect_terminator_region_uses(
             state,
             destination,
             borrowed_source,
+            exhaustion_guard,
             ..
         } => {
             collect_place_region_uses(state, loans, output);
             collect_place_region_uses(destination, loans, output);
             if let Some(source) = borrowed_source {
                 collect_place_region_uses(source, loans, output);
+            }
+            if let Some(guard) = exhaustion_guard {
+                collect_place_region_uses(guard, loans, output);
             }
         }
         MirTerminatorKind::ValidatePlaces {
@@ -4997,6 +5456,133 @@ fn collect_operation_region_uses(
             }
         }
     }
+}
+
+fn operation_move_places(operation: &MirOperation) -> Vec<MirPlace> {
+    let mut places = Vec::new();
+    let mut collect = |operand: &MirOperand| {
+        if let MirOperandKind::Move(place) = operand.kind() {
+            places.push(place.clone());
+        }
+    };
+    match operation.kind() {
+        MirOperationKind::CheckedPrefix { operand, .. }
+        | MirOperationKind::ExplicitPanic { message: operand } => collect(operand),
+        MirOperationKind::CheckedBinary { left, right, .. }
+        | MirOperationKind::Index {
+            base: left,
+            index: right,
+            ..
+        } => {
+            collect(left);
+            collect(right);
+        }
+        MirOperationKind::BuildMap { entries, .. } => {
+            for (key, value) in entries {
+                collect(key);
+                collect(value);
+            }
+        }
+        MirOperationKind::Slice { base, bounds, .. } => {
+            collect(base);
+            for bound in [bounds.start(), bounds.end(), bounds.step()]
+                .into_iter()
+                .flatten()
+            {
+                collect(bound);
+            }
+        }
+        MirOperationKind::Call {
+            callee, arguments, ..
+        } => {
+            collect(callee);
+            for argument in arguments {
+                collect(argument.value());
+            }
+        }
+        MirOperationKind::Assert {
+            condition,
+            message_parts,
+            ..
+        } => {
+            collect(condition);
+            for part in message_parts {
+                collect(part.value());
+            }
+        }
+        MirOperationKind::BootstrapHostCall { arguments, .. } => {
+            for argument in arguments {
+                collect(argument);
+            }
+        }
+    }
+    places
+}
+
+fn is_complete_defer_owner_place(place: &MirPlace) -> bool {
+    place.source_loan.is_none()
+        && (place.projections.is_empty()
+            || matches!(
+                place.projections.as_slice(),
+                [MirProjection {
+                    kind: MirProjectionKind::ClosureCapture { .. },
+                    ..
+                }]
+            ))
+}
+
+fn is_iterator_defer_target(place: &MirPlace) -> bool {
+    place.source_loan.is_none()
+        && matches!(
+            place.projections.as_slice(),
+            [MirProjection {
+                kind: MirProjectionKind::IteratorSource,
+                ..
+            }]
+        )
+}
+
+fn rvalue_move_places(value: &MirRvalue) -> Vec<MirPlace> {
+    let mut places = Vec::new();
+    let mut collect = |operand: &MirOperand| {
+        if let MirOperandKind::Move(place) = operand.kind() {
+            places.push(place.clone());
+        }
+    };
+    match value.kind() {
+        MirRvalueKind::Use(operand)
+        | MirRvalueKind::Prefix { operand, .. }
+        | MirRvalueKind::Coerce { value: operand, .. }
+        | MirRvalueKind::NumericConversion { value: operand, .. }
+        | MirRvalueKind::Length(operand) => collect(operand),
+        MirRvalueKind::IteratorState { source } => collect(source),
+        MirRvalueKind::Binary { left, right, .. }
+        | MirRvalueKind::Range {
+            start: left,
+            end: right,
+            ..
+        }
+        | MirRvalueKind::Contains {
+            item: left,
+            container: right,
+            ..
+        } => {
+            collect(left);
+            collect(right);
+        }
+        MirRvalueKind::Aggregate { values, .. } => {
+            for operand in values {
+                collect(operand);
+            }
+        }
+        MirRvalueKind::RecordUpdate { base, fields } => {
+            collect(base);
+            for (_, operand) in fields {
+                collect(operand);
+            }
+        }
+    }
+    places
 }
 
 fn collect_operand_region_uses(
@@ -7655,6 +8241,602 @@ mod tests {
         assert!(
             error.message().contains("closed assignability relation")
                 || error.message().contains("rvalue type")
+        );
+    }
+
+    #[test]
+    fn unguarded_affine_moves_into_fields_do_not_forge_defer_retargets() {
+        let (resolved, hir) = checked(
+            "type Box[T] = { value: T }\n\
+             fn replace[T: Discard](boxed: var Box[T], source: T) {\n\
+                 boxed.value = source\n\
+             }\n",
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let replace = mir.function(function_id(&resolved, "replace")).unwrap();
+        assert!(
+            replace
+                .blocks()
+                .flat_map(MirBasicBlock::statements)
+                .any(|statement| matches!(
+                    statement.kind(),
+                    MirStatementKind::Assign {
+                        destination,
+                        value:
+                            MirRvalue {
+                                kind:
+                                    MirRvalueKind::Use(MirOperand {
+                                        kind: MirOperandKind::Move(_),
+                                        ..
+                                    }),
+                                ..
+                            },
+                    } if !destination.projections().is_empty()
+                ))
+        );
+        assert!(
+            !replace
+                .blocks()
+                .flat_map(MirBasicBlock::statements)
+                .any(|statement| matches!(
+                    statement.kind(),
+                    MirStatementKind::RetargetDefer { to, .. }
+                        if !is_complete_defer_owner_place(to)
+                            && !is_iterator_defer_target(to)
+                ))
+        );
+        verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
+    fn defer_lowers_to_guard_retarget_and_explicit_scope_drains() {
+        let (resolved, hir) = checked(
+            "fn consume[T: Discard](value: T) {}\n\
+             fn observe[T](value: ref T) {}\n\
+             fn guarded[T: Discard](owner: T) {\n\
+                 defer consume(owner)\n\
+                 let moved = owner\n\
+             }\n\
+             fn reinitialized[T: Discard](first: T, second: T) {\n\
+                 var owner = first\n\
+                 {\n\
+                     defer consume(owner)\n\
+                 }\n\
+                 owner = second\n\
+                 consume(owner)\n\
+             }\n\
+             fn identity[T: Discard](value: T): T { value }\n\
+             fn guardedOverwrite[T: Discard](owner: T, replacement: T) {\n\
+                 defer consume(owner)\n\
+                 _ = identity(replacement)\n\
+             }\n\
+             fn guardedTemporary[T: Discard](owner: T) {\n\
+                 defer consume(identity(owner))\n\
+             }\n\
+             fn guardedCallee[T: Discard](owner: T) {\n\
+                 let action = () {\n\
+                     consume(owner)\n\
+                 }\n\
+                 defer action()\n\
+             }\n\
+             fn guardedRepeatableCallee[T: Discard](owner: T) {\n\
+                 let action = () {\n\
+                     observe(ref owner)\n\
+                 }\n\
+                 defer action()\n\
+             }\n\
+             fn consumeArray[T: Discard](values: Array[T]) {}\n\
+             fn guardedIteration[T: Discard](values: Array[T]) {\n\
+                 defer consumeArray(values)\n\
+                 for value in values {\n\
+                     _ = value\n\
+                     break\n\
+                 }\n\
+             }\n\
+             fn guardedPotential[T](\n\
+                 values: Array[T],\n\
+                 cleanupAll: fn(Array[T]),\n\
+                 consumeOne: fn(T),\n\
+             ) {\n\
+                 defer cleanupAll(values)\n\
+                 for value in values {\n\
+                     consumeOne(value)\n\
+                 }\n\
+             }\n\
+             fn guardedTrait[T: Discard, I: Discard + Iterator[T]](\n\
+                 cursor: I,\n\
+                 cleanup: fn(I),\n\
+             ) {\n\
+                 defer cleanup(cursor)\n\
+                 for value in cursor {\n\
+                     _ = value\n\
+                 }\n\
+             }\n",
+        );
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let guarded = function_id(&resolved, "guarded");
+        let function = mir
+            .function(guarded)
+            .expect("generic guarded function has MIR");
+
+        let guard = function
+            .blocks()
+            .flat_map(|block| block.statements())
+            .find_map(|statement| {
+                let MirStatementKind::RegisterDefer {
+                    guard: Some(guard), ..
+                } = statement.kind()
+                else {
+                    return None;
+                };
+                Some(guard.clone())
+            })
+            .expect("affine defer registers one guard");
+        let (from, to) = function
+            .blocks()
+            .flat_map(|block| block.statements())
+            .find_map(|statement| {
+                let MirStatementKind::RetargetDefer { from, to } = statement.kind() else {
+                    return None;
+                };
+                Some((from.clone(), to.clone()))
+            })
+            .expect("whole local move retargets the guard");
+        assert_eq!(from, guard);
+        assert_ne!(from.local(), to.local());
+        assert!(function.blocks().any(|block| matches!(
+            block.terminator().kind(),
+            MirTerminatorKind::DrainDefers { scopes, .. } if !scopes.is_empty()
+        )));
+        let iteration = mir
+            .function(function_id(&resolved, "guardedIteration"))
+            .expect("generic guarded iteration has MIR");
+        assert!(
+            iteration
+                .blocks()
+                .flat_map(|block| block.statements())
+                .any(|statement| matches!(
+                    statement.kind(),
+                    MirStatementKind::RetargetDefer { to, .. }
+                        if matches!(
+                            to.projections().last().map(MirProjection::kind),
+                            Some(MirProjectionKind::IteratorSource)
+                        )
+                ))
+        );
+        assert!(iteration.blocks().any(|block| matches!(
+            block.terminator().kind(),
+            MirTerminatorKind::IteratorNext {
+                exhaustion_guard: None,
+                ..
+            }
+        )));
+        let potential_iteration = mir
+            .function(function_id(&resolved, "guardedPotential"))
+            .expect("potentially terminal guarded iteration has MIR");
+        let exhaustion_guard = potential_iteration
+            .blocks()
+            .find_map(|block| {
+                let MirTerminatorKind::IteratorNext {
+                    state,
+                    exhaustion_guard: Some(guard),
+                    ..
+                } = block.terminator().kind()
+                else {
+                    return None;
+                };
+                Some((state.clone(), guard.clone()))
+            })
+            .expect("potentially terminal owning cursor disarms on natural exhaustion");
+        assert_eq!(exhaustion_guard.0.local(), exhaustion_guard.1.local());
+        assert!(matches!(
+            exhaustion_guard
+                .1
+                .projections()
+                .last()
+                .map(MirProjection::kind),
+            Some(MirProjectionKind::IteratorSource)
+        ));
+        let trait_iteration = mir
+            .function(function_id(&resolved, "guardedTrait"))
+            .expect("generic guarded trait iterator has MIR");
+        assert!(
+            trait_iteration
+                .blocks()
+                .flat_map(|block| block.statements())
+                .any(|statement| matches!(
+                    statement.kind(),
+                    MirStatementKind::RetargetDefer { to, .. }
+                        if to.projections().is_empty()
+                ))
+        );
+        let temporary = mir
+            .function(function_id(&resolved, "guardedTemporary"))
+            .expect("direct affine temporary has MIR");
+        assert!(
+            temporary
+                .blocks()
+                .flat_map(|block| block.statements())
+                .any(|statement| matches!(
+                    statement.kind(),
+                    MirStatementKind::RegisterDefer {
+                        guard: Some(guard),
+                        ..
+                    } if guard.projections().is_empty()
+                ))
+        );
+        let repeatable = mir
+            .function(function_id(&resolved, "guardedRepeatableCallee"))
+            .expect("repeatable affine deferred callee has MIR");
+        let protocol = repeatable
+            .blocks()
+            .flat_map(|block| block.statements())
+            .find_map(|statement| match statement.kind() {
+                MirStatementKind::RegisterDefer {
+                    action:
+                        MirOperation {
+                            kind: MirOperationKind::Call { protocol, .. },
+                            ..
+                        },
+                    guard: Some(_),
+                    ..
+                } => Some(*protocol),
+                _ => None,
+            })
+            .expect("repeatable affine deferred callee is guarded");
+        assert_eq!(protocol, HirCallProtocol::CallOnce);
+
+        let mut unknown_scope =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let foreign_scope = unknown_scope
+            .function(function_id(&resolved, "guardedIteration"))
+            .unwrap()
+            .blocks()
+            .flat_map(MirBasicBlock::statements)
+            .find_map(|statement| match statement.kind() {
+                MirStatementKind::RegisterDefer { scope, .. } => Some(*scope),
+                _ => None,
+            })
+            .expect("the other function has one foreign cleanup scope");
+        let function = unknown_scope
+            .functions
+            .get_mut(&MirFunctionId::Callable(guarded))
+            .unwrap();
+        let scopes = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::DrainDefers { scopes, .. }
+                    if !scopes.contains(&foreign_scope) =>
+                {
+                    Some(scopes)
+                }
+                _ => None,
+            })
+            .expect("the guarded function has a drain without the foreign scope");
+        scopes.push(foreign_scope);
+        let error = verify_mir(&resolved, &hir, &unknown_scope).unwrap_err();
+        assert!(
+            error.message().contains("scope with no registration"),
+            "{error}"
+        );
+
+        let mut wrong_callee_protocol =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = wrong_callee_protocol
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(
+                &resolved,
+                "guardedCallee",
+            )))
+            .unwrap();
+        let protocol = function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.statements)
+            .find_map(|statement| match &mut statement.kind {
+                MirStatementKind::RegisterDefer {
+                    action:
+                        MirOperation {
+                            kind: MirOperationKind::Call { protocol, .. },
+                            ..
+                        },
+                    guard: Some(_),
+                    ..
+                } => Some(protocol),
+                _ => None,
+            })
+            .expect("the affine deferred callee has a guarded call");
+        assert_eq!(*protocol, HirCallProtocol::CallOnce);
+        *protocol = HirCallProtocol::CallMut;
+        let error = verify_mir(&resolved, &hir, &wrong_callee_protocol).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("non-Copy deferred callee does not use CallOnce"),
+            "{error}"
+        );
+
+        let mut overwritten_guard =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let identity = function_id(&resolved, "identity");
+        let function = overwritten_guard
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(
+                &resolved,
+                "guardedOverwrite",
+            )))
+            .unwrap();
+        let overwrite_guard = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .find_map(|statement| match &statement.kind {
+                MirStatementKind::RegisterDefer {
+                    guard: Some(guard), ..
+                } => Some(guard.clone()),
+                _ => None,
+            })
+            .expect("the affine defer has a guard");
+        let destination = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::Invoke {
+                    operation:
+                        MirOperation {
+                            kind:
+                                MirOperationKind::Call {
+                                    callee:
+                                        MirOperand {
+                                            kind: MirOperandKind::Function { callable, .. },
+                                            ..
+                                        },
+                                    ..
+                                },
+                            ..
+                        },
+                    destination,
+                    ..
+                } if *callable == identity => Some(destination),
+                _ => None,
+            })
+            .expect("identity is lowered as an invocation");
+        *destination = Some(overwrite_guard);
+        let error = verify_mir(&resolved, &hir, &overwritten_guard).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("terminator overwrites an active defer guard"),
+            "{error}"
+        );
+
+        let mut missing_retarget =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = missing_retarget
+            .functions
+            .get_mut(&MirFunctionId::Callable(guarded))
+            .unwrap();
+        let block = function
+            .blocks
+            .iter_mut()
+            .find(|block| {
+                block.statements.iter().any(|statement| {
+                    matches!(statement.kind, MirStatementKind::RetargetDefer { .. })
+                })
+            })
+            .expect("retarget is present before mutation");
+        block
+            .statements
+            .retain(|statement| !matches!(statement.kind, MirStatementKind::RetargetDefer { .. }));
+        let error = verify_mir(&resolved, &hir, &missing_retarget).unwrap_err();
+        assert!(
+            error.message().contains("without retarget or disarm")
+                || error.message().contains("immediately followed"),
+            "{error}"
+        );
+
+        let mut forged_disarm =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = forged_disarm
+            .functions
+            .get_mut(&MirFunctionId::Callable(guarded))
+            .unwrap();
+        let transition = function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.statements)
+            .find(|statement| match &statement.kind {
+                MirStatementKind::RetargetDefer { from, .. } => from == &guard,
+                _ => false,
+            })
+            .expect("whole affine move has a retarget transition");
+        let from = match &transition.kind {
+            MirStatementKind::RetargetDefer { from, .. } => from.clone(),
+            _ => unreachable!(),
+        };
+        transition.kind = MirStatementKind::DisarmDefer(from);
+        let error = verify_mir(&resolved, &hir, &forged_disarm).unwrap_err();
+        assert!(
+            error.message().contains("disarmed without an immediate"),
+            "{error}"
+        );
+
+        let potential = function_id(&resolved, "guardedPotential");
+        let mut missing_exhaustion_guard =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = missing_exhaustion_guard
+            .functions
+            .get_mut(&MirFunctionId::Callable(potential))
+            .unwrap();
+        let _removed_guard = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::IteratorNext {
+                    exhaustion_guard, ..
+                } => exhaustion_guard.take(),
+                _ => None,
+            })
+            .expect("potential cursor has one exhaustion guard");
+        let error = verify_mir(&resolved, &hir, &missing_exhaustion_guard).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("does not match contextual terminal ownership"),
+            "{error}"
+        );
+
+        let mut forged_exhaustion_guard =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = forged_exhaustion_guard
+            .functions
+            .get_mut(&MirFunctionId::Callable(potential))
+            .unwrap();
+        let collection = function
+            .blocks
+            .iter()
+            .find_map(|block| match &block.terminator.kind {
+                MirTerminatorKind::IteratorNext {
+                    exhaustion_guard: Some(guard),
+                    ..
+                } => Some(guard.ty),
+                _ => None,
+            })
+            .expect("potential cursor guard has a collection type");
+        let collection_local = function
+            .locals
+            .iter()
+            .enumerate()
+            .find_map(|(index, local)| (local.ty == collection).then_some(MirLocalId(index as u32)))
+            .expect("potential cursor function retains its collection parameter");
+        let exhaustion_guard = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::IteratorNext {
+                    exhaustion_guard: Some(guard),
+                    ..
+                } => Some(guard),
+                _ => None,
+            })
+            .expect("potential cursor has one exhaustion guard");
+        exhaustion_guard.local = collection_local;
+        exhaustion_guard.projections.clear();
+        let error = verify_mir(&resolved, &hir, &forged_exhaustion_guard).unwrap_err();
+        assert!(
+            error.message().contains("not its exact owned source"),
+            "{error}"
+        );
+
+        let (resolved, hir) = checked(
+            "fn note(value: Int) {}\n\
+             fn marker() {}\n\
+             fn execute(flag: Bool) {\n\
+                 marker()\n\
+                 defer note(1)\n\
+                 if flag {}\n\
+             }\n",
+        );
+        let execute = function_id(&resolved, "execute");
+        let mut repeated = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = repeated
+            .functions
+            .get_mut(&MirFunctionId::Callable(execute))
+            .unwrap();
+        let registration = function
+            .blocks
+            .iter()
+            .position(|block| {
+                block.statements.iter().any(|statement| {
+                    matches!(statement.kind, MirStatementKind::RegisterDefer { .. })
+                })
+            })
+            .map(|index| MirBlockId(index as u32))
+            .expect("defer registration follows the marker call");
+        assert_ne!(registration, function.entry());
+        let if_true = match &function.blocks[registration.index() as usize]
+            .terminator
+            .kind
+        {
+            MirTerminatorKind::SwitchBool { if_true, .. } => *if_true,
+            _ => panic!("registration block must branch on the source condition"),
+        };
+        let MirTerminatorKind::Goto { target } =
+            &mut function.blocks[if_true.index() as usize].terminator.kind
+        else {
+            panic!("true Unit branch must join through one goto")
+        };
+        *target = registration;
+        let error = verify_mir(&resolved, &hir, &repeated).unwrap_err();
+        assert!(
+            error.message().contains("registration is re-executed"),
+            "{error}"
+        );
+
+        let (resolved, hir) = checked(
+            "fn consume[T: Discard](value: T) {}\n\
+             fn execute[T: Discard](owner: T) {\n\
+                 {\n\
+                     defer consume(owner)\n\
+                 }\n\
+             }\n",
+        );
+        let execute = function_id(&resolved, "execute");
+        let mut use_after_drain =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = use_after_drain
+            .functions
+            .get_mut(&MirFunctionId::Callable(execute))
+            .unwrap();
+        let (guard, scope) = function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .find_map(|statement| match &statement.kind {
+                MirStatementKind::RegisterDefer {
+                    scope,
+                    guard: Some(guard),
+                    ..
+                } => Some((guard.clone(), *scope)),
+                _ => None,
+            })
+            .expect("the inner defer has one guard");
+        let (target, span) = function
+            .blocks
+            .iter()
+            .find_map(|block| match &block.terminator.kind {
+                MirTerminatorKind::DrainDefers { scopes, target, .. }
+                    if block.kind == MirBlockKind::Normal && scopes.contains(&scope) =>
+                {
+                    Some((*target, block.terminator.span))
+                }
+                _ => None,
+            })
+            .expect("the inner scope has a normal drain");
+        function.blocks[target.index() as usize].statements.insert(
+            0,
+            MirStatement {
+                span,
+                kind: MirStatementKind::Assign {
+                    destination: guard.clone(),
+                    value: MirRvalue {
+                        ty: guard.ty(),
+                        kind: MirRvalueKind::Use(MirOperand {
+                            ty: guard.ty(),
+                            kind: MirOperandKind::Move(guard),
+                        }),
+                    },
+                },
+            },
+        );
+        let error = verify_mir(&resolved, &hir, &use_after_drain).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("already consumed by a deferred action"),
+            "{error}"
         );
     }
 

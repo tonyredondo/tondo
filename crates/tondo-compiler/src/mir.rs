@@ -10,7 +10,7 @@ use std::fmt;
 
 use crate::hir::{
     HirBinaryOperator, HirCallArgumentTarget, HirCallableId, HirClosureId, HirContainmentKind,
-    HirPrefixOperator, HirPreludeTraitMethod, HirRangeKind,
+    HirPrefixOperator, HirPreludeTraitMethod, HirRangeKind, HirScopeId,
 };
 use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::Span;
@@ -273,6 +273,16 @@ pub enum MirStatementKind {
         destination: MirPlace,
         value: MirRvalue,
     },
+    RegisterDefer {
+        scope: HirScopeId,
+        action: MirOperation,
+        guard: Option<MirPlace>,
+    },
+    RetargetDefer {
+        from: MirPlace,
+        to: MirPlace,
+    },
+    DisarmDefer(MirPlace),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -373,6 +383,7 @@ pub enum MirProjectionKind {
     IteratorElement {
         index: MirLocalId,
     },
+    IteratorSource,
     Index {
         index: MirLocalId,
         access: crate::hir::HirIndexAccess,
@@ -681,6 +692,7 @@ pub enum MirTerminatorKind {
         state: MirPlace,
         destination: MirPlace,
         borrowed_source: Option<MirPlace>,
+        exhaustion_guard: Option<MirPlace>,
         has_value: MirBlockId,
         exhausted: MirBlockId,
         unwind: MirBlockId,
@@ -696,6 +708,11 @@ pub enum MirTerminatorKind {
     ValidateLoan {
         loan: MirLoanId,
         against: Vec<MirLoanId>,
+        target: MirBlockId,
+        unwind: MirBlockId,
+    },
+    DrainDefers {
+        scopes: Vec<HirScopeId>,
         target: MirBlockId,
         unwind: MirBlockId,
     },
