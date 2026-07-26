@@ -110,6 +110,7 @@ fn collection_region(
         | MirProjectionKind::Field(_)
         | MirProjectionKind::TupleField(_)
         | MirProjectionKind::NewtypeValue
+        | MirProjectionKind::RefValue
         | MirProjectionKind::VariantTuple { .. }
         | MirProjectionKind::VariantField { .. }
         | MirProjectionKind::OptionValue

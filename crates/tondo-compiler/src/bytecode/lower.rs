@@ -3087,6 +3087,7 @@ fn lower_projection(
         MirProjectionKind::Field(member) => bc::BytecodeProjectionKind::Field(member.index()),
         MirProjectionKind::TupleField(index) => bc::BytecodeProjectionKind::TupleField(*index),
         MirProjectionKind::NewtypeValue => bc::BytecodeProjectionKind::NewtypeValue,
+        MirProjectionKind::RefValue => bc::BytecodeProjectionKind::RefValue,
         MirProjectionKind::VariantTuple { variant, index } => {
             bc::BytecodeProjectionKind::VariantTuple {
                 variant: variant.index(),
@@ -3359,6 +3360,7 @@ fn lower_aggregate(
         MirAggregateKind::Newtype { owner } => bc::BytecodeAggregateKind::Newtype {
             nominal: map_nominal(*owner, context.nominal_ids)?,
         },
+        MirAggregateKind::Ref => bc::BytecodeAggregateKind::Ref,
         MirAggregateKind::Record { owner, fields } => bc::BytecodeAggregateKind::Record {
             nominal: map_nominal(*owner, context.nominal_ids)?,
             fields: fields.iter().map(|field| field.index()).collect(),
@@ -4503,6 +4505,312 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn ref_identity_is_shared_and_its_content_survives_gc_pressure() {
+        let aliases = "fn observe(reference: ref Ref[Int]): Int { reference.value }\n\
+                       fn aliases(): (Ref[Int], Ref[Int]) {\n\
+                           let reference = Ref(42)\n\
+                           let same = reference\n\
+                           assert(observe(ref same) == 42)\n\
+                           (reference, same)\n\
+                       }\n";
+        let program = lowered(aliases);
+        let function = function_id(&program, "aliases");
+        let mut host = RejectingHost;
+        let execution = execute(&program, function, &mut host).unwrap();
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Tuple(vec![
+                RuntimeValue::Ref(Some(Box::new(RuntimeValue::Integer(42)))),
+                RuntimeValue::Ref(Some(Box::new(RuntimeValue::Integer(42)))),
+            ]))
+        );
+        assert_eq!(
+            execution.statistics.allocations, 2,
+            "one Ref cell and one result tuple must be allocated; copying Ref must not allocate"
+        );
+
+        let retained = "fn retained(): Ref[Array[String]] {\n\
+                            let reference = Ref([\"alive\"])\n\
+                            let same = reference\n\
+                            var index = 0\n\
+                            for index < 64 {\n\
+                                _ = [\"garbage\", \"pressure\"]\n\
+                                index += 1\n\
+                            }\n\
+                            assert(reference.value[0] == \"alive\")\n\
+                            same\n\
+                        }\n";
+        let program = lowered(retained);
+        let function = function_id(&program, "retained");
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            function,
+            &mut host,
+            VmLimits {
+                max_heap_objects: 32,
+                max_heap_bytes: 64 * 1024,
+                initial_gc_threshold: 1,
+                ..VmLimits::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Ref(Some(Box::new(RuntimeValue::Array(
+                vec![RuntimeValue::String("alive".into())],
+            )))))
+        );
+        assert!(execution.statistics.collections > 0);
+        assert!(execution.statistics.reclaimed_objects > 0);
+    }
+
+    #[test]
+    fn ref_equality_and_collection_keys_use_identity_independently_of_content() {
+        let value = execute_function(
+            "fn identity(value: Int): Int { value }\n\
+             fn compare(): Bool {\n\
+                 let first = Ref(identity)\n\
+                 let same = first\n\
+                 let other = Ref(identity)\n\
+                 let missing = Ref(identity)\n\
+                 assert(first == same)\n\
+                 assert(first != other)\n\
+                 let values = [first: 1, same: 3, other: 2]\n\
+                 assert(values[first] == some(3))\n\
+                 assert(values[same] == some(3))\n\
+                 assert(values[other] == some(2))\n\
+                 let identities = Set[first, same, other]\n\
+                 assert(same in identities)\n\
+                 assert(other in identities)\n\
+                 assert(not (missing in identities))\n\
+                 true\n\
+             }\n",
+            "compare",
+        );
+        assert_eq!(value, RuntimeValue::Bool(true));
+    }
+
+    #[test]
+    fn bytecode_verifier_seals_ref_shape_and_shared_value_access() {
+        let source = "fn make(value: Int): Ref[Int] { Ref(value) }\n\
+                      fn inspect(value: ref Int) {}\n\
+                      fn inspectArray(value: ref Array[Int]) {}\n\
+                      fn arrayIdentity(value: Array[Int]): Array[Int] { value }\n\
+                      fn read(reference: Ref[Int]): Int {\n\
+                          inspect(ref reference.value)\n\
+                          reference.value\n\
+                      }\n\
+                      fn writeSinks(reference: Ref[Array[Int]]) {\n\
+                          inspectArray(ref reference.value)\n\
+                          _ = arrayIdentity([1])\n\
+                          for item in [[1]] {\n\
+                              _ = item\n\
+                          }\n\
+                          var values = [1, 2]\n\
+                          values[:] = [3, 4]\n\
+                      }\n";
+        let program = lowered(source);
+        assert!(program.functions.iter().any(|function| {
+            function.blocks.iter().any(|block| {
+                block.instructions.iter().any(|instruction| {
+                    matches!(
+                        &instruction.kind,
+                        bc::BytecodeInstructionKind::Store {
+                            value:
+                                bc::BytecodeRvalue {
+                                    kind:
+                                        bc::BytecodeRvalueKind::Construct {
+                                            shape: bc::BytecodeAggregateKind::Ref,
+                                            values,
+                                        },
+                                    ..
+                                },
+                            ..
+                        } if values.len() == 1
+                    )
+                })
+            })
+        }));
+        bc::verify_bytecode(&program).unwrap();
+
+        let mut malformed = program.clone();
+        let values = malformed
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .flat_map(|block| &mut block.instructions)
+            .find_map(|instruction| match &mut instruction.kind {
+                bc::BytecodeInstructionKind::Store {
+                    value:
+                        bc::BytecodeRvalue {
+                            kind:
+                                bc::BytecodeRvalueKind::Construct {
+                                    shape: bc::BytecodeAggregateKind::Ref,
+                                    values,
+                                },
+                            ..
+                        },
+                    ..
+                } => Some(values),
+                _ => None,
+            })
+            .unwrap();
+        values.clear();
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(error.message().contains("rvalue operands"));
+
+        let mut moved = program.clone();
+        let read = function_id(&moved, "read");
+        let function = &mut moved.functions[read.index() as usize];
+        let operand = function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instructions)
+            .find_map(|instruction| match &mut instruction.kind {
+                bc::BytecodeInstructionKind::Store {
+                    value:
+                        bc::BytecodeRvalue {
+                            kind: bc::BytecodeRvalueKind::Use(operand),
+                            ..
+                        },
+                    ..
+                } if matches!(
+                    &operand.kind,
+                    bc::BytecodeOperandKind::Copy(place)
+                        if place.projections.iter().any(|projection| {
+                            matches!(
+                                &projection.kind,
+                                bc::BytecodeProjectionKind::RefValue
+                            )
+                        })
+                ) =>
+                {
+                    Some(operand)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let bc::BytecodeOperandKind::Copy(place) = &operand.kind else {
+            unreachable!("the selected Ref projection is copied")
+        };
+        operand.kind = bc::BytecodeOperandKind::Move(place.clone());
+        let error = bc::verify_bytecode(&moved).unwrap_err();
+        assert!(error.message().contains("cannot be moved"));
+
+        let mut written = program.clone();
+        let read = function_id(&written, "read");
+        let function = &mut written.functions[read.index() as usize];
+        let mut forged = false;
+        'blocks: for block in &mut function.blocks {
+            for instruction in &mut block.instructions {
+                let bc::BytecodeInstructionKind::Store { destination, value } =
+                    &mut instruction.kind
+                else {
+                    continue;
+                };
+                let bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                    kind: bc::BytecodeOperandKind::Copy(place),
+                    ..
+                }) = &value.kind
+                else {
+                    continue;
+                };
+                if place.projections.iter().any(|projection| {
+                    matches!(&projection.kind, bc::BytecodeProjectionKind::RefValue)
+                }) {
+                    *destination = place.clone();
+                    forged = true;
+                    break 'blocks;
+                }
+            }
+        }
+        assert!(forged);
+        let error = bc::verify_bytecode(&written).unwrap_err();
+        assert!(error.message().contains("read-only"));
+
+        let mut exclusive = program.clone();
+        let read = function_id(&exclusive, "read");
+        let function = &mut exclusive.functions[read.index() as usize];
+        let loan = function
+            .loans
+            .iter_mut()
+            .find(|loan| {
+                loan.place.projections.iter().any(|projection| {
+                    matches!(&projection.kind, bc::BytecodeProjectionKind::RefValue)
+                })
+            })
+            .unwrap();
+        loan.mode = bc::BytecodeParameterMode::Mut;
+        let error = bc::verify_bytecode(&exclusive).unwrap_err();
+        assert!(error.message().contains("only shared `ref` loans"));
+
+        let write_sinks = function_id(&program, "writeSinks");
+        let ref_value_place = program.functions[write_sinks.index() as usize]
+            .loans
+            .iter()
+            .find(|loan| {
+                loan.place.projections.iter().any(|projection| {
+                    matches!(projection.kind, bc::BytecodeProjectionKind::RefValue)
+                })
+            })
+            .unwrap()
+            .place
+            .clone();
+
+        let mut invoked = program.clone();
+        let destination = invoked.functions[write_sinks.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation,
+                    destination: Some(destination),
+                    ..
+                } if operation.ty == ref_value_place.ty => Some(destination),
+                _ => None,
+            })
+            .unwrap();
+        *destination = ref_value_place.clone();
+        let error = bc::verify_bytecode(&invoked).unwrap_err();
+        assert!(error.message().contains("read-only"));
+
+        let mut advanced = program.clone();
+        let destination = advanced.functions[write_sinks.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::IteratorNext { destination, .. }
+                    if destination.ty == ref_value_place.ty =>
+                {
+                    Some(destination)
+                }
+                _ => None,
+            })
+            .unwrap();
+        *destination = ref_value_place.clone();
+        let error = bc::verify_bytecode(&advanced).unwrap_err();
+        assert!(error.message().contains("read-only"));
+
+        let mut validated = program;
+        let place = validated.functions[write_sinks.index() as usize]
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::ValidatePlaces {
+                    places,
+                    for_write: true,
+                    ..
+                } => places.first_mut(),
+                _ => None,
+            })
+            .unwrap();
+        *place = ref_value_place;
+        let error = bc::verify_bytecode(&validated).unwrap_err();
+        assert!(error.message().contains("read-only"));
     }
 
     #[test]

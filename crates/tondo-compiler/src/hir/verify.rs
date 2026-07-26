@@ -2473,6 +2473,7 @@ impl Verifier<'_> {
             HirExpressionKind::Local(local) => Some(*local),
             HirExpressionKind::Field { base, .. }
             | HirExpressionKind::TupleField { base, .. }
+            | HirExpressionKind::RefValue { base }
             | HirExpressionKind::Index { base, .. }
             | HirExpressionKind::Slice { base, .. } => {
                 self.expression_root_local(*base, context)?
@@ -3295,6 +3296,7 @@ impl Verifier<'_> {
             HirExpressionKind::Field { base, .. } | HirExpressionKind::TupleField { base, .. } => {
                 Some(self.expression(base, context)?.category)
             }
+            HirExpressionKind::RefValue { .. } => Some(HirValueCategory::Place),
             HirExpressionKind::Index { base, .. } | HirExpressionKind::Slice { base, .. } => {
                 if expression.category == HirValueCategory::Place
                     && self.expression(base, context)?.category != HirValueCategory::Place
@@ -3488,6 +3490,28 @@ impl Verifier<'_> {
             HirExpressionKind::Newtype { constructor, .. } => {
                 self.verify_symbol(*constructor, &[SymbolKind::Type], context)?
             }
+            HirExpressionKind::Ref { value } => {
+                let TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Ref,
+                    arguments,
+                } = self
+                    .program
+                    .interner
+                    .kind(expression.ty)
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                else {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "Ref construction has a non-Ref result type",
+                    ));
+                };
+                if self.expression(*value, context)?.ty != arguments[0] {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "Ref construction payload differs from its target type",
+                    ));
+                }
+            }
             HirExpressionKind::Record { owner, fields } => {
                 self.verify_symbol(*owner, &[SymbolKind::Type], context)?;
                 self.verify_record_field_values(fields, MemberKind::RecordField, context)?;
@@ -3509,6 +3533,29 @@ impl Verifier<'_> {
                     ],
                     context,
                 )?;
+            }
+            HirExpressionKind::RefValue { base } => {
+                let base = self.expression(*base, context)?;
+                let TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Ref,
+                    arguments,
+                } = self
+                    .program
+                    .interner
+                    .kind(base.ty)
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                else {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "Ref value projection has a non-Ref base",
+                    ));
+                };
+                if expression.ty != arguments[0] {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "Ref value projection has the wrong target type",
+                    ));
+                }
             }
             HirExpressionKind::Call {
                 callee,
@@ -4769,6 +4816,7 @@ impl Verifier<'_> {
                 mutable_receiver,
                 context,
             )?,
+            HirExpressionKind::RefValue { .. } => false,
             HirExpressionKind::Receiver => mutable_receiver,
             _ => false,
         })
@@ -4989,6 +5037,7 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
             }
         }
         HirExpressionKind::Newtype { value, .. }
+        | HirExpressionKind::Ref { value }
         | HirExpressionKind::NumericConversion { value, .. }
         | HirExpressionKind::OptionSome { value }
         | HirExpressionKind::ResultOk { value }
@@ -5022,7 +5071,8 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
         }
         HirExpressionKind::Prefix { operand, .. }
         | HirExpressionKind::Field { base: operand, .. }
-        | HirExpressionKind::TupleField { base: operand, .. } => children.push(*operand),
+        | HirExpressionKind::TupleField { base: operand, .. }
+        | HirExpressionKind::RefValue { base: operand } => children.push(*operand),
         HirExpressionKind::Binary { left, right, .. }
         | HirExpressionKind::Range {
             start: left,

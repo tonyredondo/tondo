@@ -1711,6 +1711,9 @@ pub enum HirExpressionKind {
         constructor: SymbolId,
         value: HirExpressionId,
     },
+    Ref {
+        value: HirExpressionId,
+    },
     Record {
         owner: SymbolId,
         fields: Vec<HirRecordFieldValue>,
@@ -1759,6 +1762,9 @@ pub enum HirExpressionKind {
     TupleField {
         base: HirExpressionId,
         index: u32,
+    },
+    RefValue {
+        base: HirExpressionId,
     },
     Index {
         base: HirExpressionId,

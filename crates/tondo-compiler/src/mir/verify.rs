@@ -552,6 +552,7 @@ enum MovePathComponent {
     Field(crate::resolve::MemberId),
     TupleField(u32),
     NewtypeValue,
+    RefValue,
     VariantTuple(crate::resolve::MemberId, u32),
     VariantField(crate::resolve::MemberId, crate::resolve::MemberId),
     OptionValue,
@@ -587,6 +588,7 @@ impl MovePathComponent {
             MirProjectionKind::Field(member) => Self::Field(*member),
             MirProjectionKind::TupleField(index) => Self::TupleField(*index),
             MirProjectionKind::NewtypeValue => Self::NewtypeValue,
+            MirProjectionKind::RefValue => Self::RefValue,
             MirProjectionKind::VariantTuple { variant, index } => {
                 Self::VariantTuple(*variant, *index)
             }
@@ -1004,6 +1006,12 @@ impl Verifier<'_> {
                 ));
             }
             self.verify_place(function, &loan.place, &loan_context)?;
+            if loan.mode != ParameterMode::Ref && place_contains_ref_value(&loan.place) {
+                return Err(MirInvariantError::new(
+                    &loan_context,
+                    "`Ref[T].value` permits only shared `ref` loans",
+                ));
+            }
         }
         if function.blocks.is_empty() {
             return Err(MirInvariantError::new(
@@ -1247,6 +1255,12 @@ impl Verifier<'_> {
                 MirStatementKind::Assign { destination, value } => {
                     self.verify_place(function, destination, &context)?;
                     self.verify_rvalue(function, value, &context)?;
+                    if place_contains_ref_value(destination) {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "`Ref[T].value` is a read-only projection",
+                        ));
+                    }
                     if destination.ty != value.ty {
                         return Err(MirInvariantError::new(
                             &context,
@@ -1469,6 +1483,12 @@ impl Verifier<'_> {
                 match (destination, target) {
                     (Some(destination), Some(target)) => {
                         self.verify_place(function, destination, &context)?;
+                        if place_contains_ref_value(destination) {
+                            return Err(MirInvariantError::new(
+                                &context,
+                                "`Ref[T].value` is a read-only projection",
+                            ));
+                        }
                         if destination.ty != operation.ty || operation.ty == never {
                             return Err(MirInvariantError::new(
                                 &context,
@@ -1510,6 +1530,12 @@ impl Verifier<'_> {
                 }
                 self.verify_place(function, state, &context)?;
                 self.verify_place(function, destination, &context)?;
+                if place_contains_ref_value(destination) {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "`Ref[T].value` is a read-only projection",
+                    ));
+                }
                 let TypeKind::Cursor { mode, collection } = self.kind(state.ty, &context)? else {
                     return Err(MirInvariantError::new(
                         &context,
@@ -1621,6 +1647,12 @@ impl Verifier<'_> {
                 for ((place, replacement), against) in places.iter().zip(replacements).zip(against)
                 {
                     self.verify_place(function, place, &context)?;
+                    if *for_write && place_contains_ref_value(place) {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "`Ref[T].value` is a read-only projection",
+                        ));
+                    }
                     if unique.contains(&place) {
                         return Err(MirInvariantError::new(
                             &context,
@@ -2277,6 +2309,10 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            MirAggregateKind::Ref => {
+                let arguments = self.intrinsic_arguments(ty, IntrinsicType::Ref, context)?;
+                self.verify_operand_types(values, &[arguments[0]], context)?;
+            }
             MirAggregateKind::Record { owner, fields } => {
                 let (actual_owner, arguments, nominal) = self.nominal_instance(ty, context)?;
                 let HirNominalShape::Record { fields: declared } = nominal.shape() else {
@@ -2405,6 +2441,14 @@ impl Verifier<'_> {
             }
             MirOperandKind::Copy(place) | MirOperandKind::Move(place) => {
                 self.verify_place(function, place, context)?;
+                if matches!(operand.kind, MirOperandKind::Move(_))
+                    && place_contains_ref_value(place)
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "`Ref[T].value` cannot be moved out of its identity cell",
+                    ));
+                }
                 if place.ty != operand.ty {
                     return Err(MirInvariantError::new(
                         context,
@@ -3273,6 +3317,16 @@ impl Verifier<'_> {
                     return Err(MirInvariantError::new(
                         context,
                         "newtype projection has the wrong instantiated payload type",
+                    ));
+                }
+                Ok(declared)
+            }
+            MirProjectionKind::RefValue => {
+                let arguments = self.intrinsic_arguments(current, IntrinsicType::Ref, context)?;
+                if declared != arguments[0] {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "Ref value projection has the wrong target type",
                     ));
                 }
                 Ok(declared)
@@ -6985,6 +7039,7 @@ fn push_tag_place(
             | MirProjectionKind::Field(_)
             | MirProjectionKind::TupleField(_)
             | MirProjectionKind::NewtypeValue
+            | MirProjectionKind::RefValue
             | MirProjectionKind::ArrayPatternIndex(_)
             | MirProjectionKind::ArrayPatternRest { .. }
             | MirProjectionKind::IteratorElement { .. }
@@ -7381,6 +7436,7 @@ fn move_path_runtime_inputs(path: &[MovePathComponent]) -> impl Iterator<Item = 
             | MovePathComponent::Field(_)
             | MovePathComponent::TupleField(_)
             | MovePathComponent::NewtypeValue
+            | MovePathComponent::RefValue
             | MovePathComponent::VariantTuple(_, _)
             | MovePathComponent::VariantField(_, _)
             | MovePathComponent::OptionValue
@@ -7468,6 +7524,7 @@ fn collection_region(
         | MovePathComponent::Field(_)
         | MovePathComponent::TupleField(_)
         | MovePathComponent::NewtypeValue
+        | MovePathComponent::RefValue
         | MovePathComponent::VariantTuple(_, _)
         | MovePathComponent::VariantField(_, _)
         | MovePathComponent::OptionValue
@@ -7735,6 +7792,7 @@ fn push_projection_index_events(place: &MirPlace, events: &mut Vec<LocalEvent>) 
             | MirProjectionKind::Field(_)
             | MirProjectionKind::TupleField(_)
             | MirProjectionKind::NewtypeValue
+            | MirProjectionKind::RefValue
             | MirProjectionKind::VariantTuple { .. }
             | MirProjectionKind::VariantField { .. }
             | MirProjectionKind::OptionValue
@@ -7754,6 +7812,13 @@ fn place_requires_loan_validation(place: &MirPlace) -> bool {
             MirProjectionKind::Index { .. } | MirProjectionKind::Slice { .. }
         )
     })
+}
+
+fn place_contains_ref_value(place: &MirPlace) -> bool {
+    place
+        .projections
+        .iter()
+        .any(|projection| matches!(projection.kind, MirProjectionKind::RefValue))
 }
 
 fn place_is_structurally_replaceable(place: &MirPlace) -> bool {

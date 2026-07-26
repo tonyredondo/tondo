@@ -429,8 +429,10 @@ each heap allocation retains its type descriptor, each mutation is shape
 checked before publication, and each function has an exact slot-schema
 descriptor reusable by a future suspended frame. Opaque results reuse their
 witness layout; closure environments retain their unique callable and capture
-schema. `Ref[T]` has a traceable cell shape but does not gain source-visible
-identity until REF-001.
+schema. `Ref[T]` uses that traceable cell shape for source-visible
+`Ref(value)` construction. Copying it preserves one handle identity,
+`.value` remains a shared read-only projection, and equality plus collection
+keys compare the identity rather than its payload.
 The operation-local root stack protects completed children and operands across
 every later allocation, including constants, compound host returns, recursive
 copies, projections, slices, array arithmetic, variadic packing, calls, and the
@@ -443,13 +445,14 @@ and effectful root entries, so retaining an async or unsafe callable cannot
 activate an unfinished runtime. A test-only memory adapter drives the same
 allocator, descriptors, root enumeration, and pressure trigger to keep a mixed
 `Ref`/array/closure cycle alive, repeatedly reclaim unrooted peers, and reclaim
-the retained graph after root withdrawal. This validates cycle collection
-without inventing source-visible `Ref` construction before REF-001. Its exact
-capacity gate also unifies object and byte limits: a request performs at most
-one full collection, rechecks capacity, and publishes once. Replacement roots
-its target internally and remains unchanged if the retry cannot fit. The exact
-object, tracing, panic, host, and admission boundary is recorded in
-`docs/contracts/vm-runtime.md`.
+the retained graph after root withdrawal. Source-level REF-001 construction
+reuses that same cell and collector path; the adapter remains necessary only
+for cyclic graphs that safe read-only `Ref` values cannot construct directly.
+Its exact capacity gate also unifies object and byte limits: a request performs
+at most one full collection, rechecks capacity, and publishes once.
+Replacement roots its target internally and remains unchanged if the retry
+cannot fit. The exact object, tracing, panic, host, and admission boundary is
+recorded in `docs/contracts/vm-runtime.md`.
 The sole M3 standard-library bridge, capability-gated
 `std.console.print(String): Unit`, is isolated by
 `docs/contracts/bootstrap-host.md` and is not a general FFI or a frozen stdlib

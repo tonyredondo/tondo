@@ -12,7 +12,8 @@ BORROW-004 static collection disjunction, BORROW-005 runtime overlap proofs,
 BORROW-006 borrowed-iteration boundary verification, TERM-001/TERM-002 terminal
 classification and normal-path ownership, and TERM-003 explicit defer/guard
 cleanup, TERM-004 closed abnormal fallback lowering, and TERM-005 exact
-explicit/fallback exclusion implemented
+explicit/fallback exclusion, REF-001 identity aggregates/shared projections,
+and REF-002 identity equality/key operands implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -116,6 +117,16 @@ the complete owner and only then transfers selected components inside the
 compiler-owned operation. The intrinsic `.value` projection of a newtype is
 the one complete-owner projection and consumes its owning binding, ordinary
 value parameter, or movable temporary.
+
+`Ref(value)` lowers to one `MirAggregateKind::Ref` with exactly one operand and
+the exact `Ref[T]` result type. The operand retains HIR's contextual access:
+`Copy` for a `Copy` target and `Move` for a merely `Discard` target.
+`Ref[T].value` lowers to `MirProjectionKind::RefValue`; it participates in
+typed paths so nested reads and loan overlap keep one canonical origin, but it
+is never a complete-owner projection. A `Copy` read is valid only when
+`T: Copy`, a call-local shared loan may observe any admitted `T`, and no
+`Move`, value-producing destination (`Assign`, `Invoke` or `IteratorNext`),
+write validation, `mut` loan, or `var` loan may contain this projection.
 
 MIR independently represents availability as a live-storage bit plus a
 canonical set of unavailable typed move paths. Paths cover closure captures,
@@ -448,6 +459,9 @@ The structural verifier introduced in M3 proves at minimum:
   relation;
 - aggregate, conversion, iterator, index, slice, range, membership, and tag
   operations have the exact instantiated input and result types;
+- a `Ref` aggregate has one payload matching its intrinsic target, every
+  `RefValue` projection has that exact target type, and a projected path is
+  never moved, written, or reserved by an exclusive loan;
 - a closure aggregate names existing HIR metadata, has the exact generated
   result and capture layout, and contextually copies or moves each capture from
   the corresponding unprojected outer source binding rather than a merely

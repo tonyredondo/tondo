@@ -91,6 +91,7 @@ enum TerminalOwner {
 enum PlaceProjection {
     Field(crate::resolve::MemberId),
     TupleField(u32),
+    RefValue,
     Collection(CollectionRegion),
 }
 
@@ -529,6 +530,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 self.construct_value(state, values, live_after, expression.span())?
             }
             HirExpressionKind::Newtype { value, .. }
+            | HirExpressionKind::Ref { value }
             | HirExpressionKind::NumericConversion { value, .. }
             | HirExpressionKind::OptionSome { value }
             | HirExpressionKind::ResultOk { value }
@@ -665,9 +667,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 [(*item, Demand::Observe), (*container, Demand::Observe)],
                 live_after,
             )?,
-            HirExpressionKind::Field { .. } | HirExpressionKind::TupleField { .. } => {
-                self.place(id, state, demand, live_after)?
-            }
+            HirExpressionKind::Field { .. }
+            | HirExpressionKind::TupleField { .. }
+            | HirExpressionKind::RefValue { .. } => self.place(id, state, demand, live_after)?,
             HirExpressionKind::Index { base, index, .. } => self.sequence(
                 state,
                 [(*base, Demand::Observe), (*index, Demand::Transfer)],
@@ -1876,6 +1878,12 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 place.projections.push(PlaceProjection::TupleField(*index));
                 Ok((flow, place))
             }
+            HirExpressionKind::RefValue { base } => {
+                let (flow, mut place) = self.place_base(*base, state, live_after)?;
+                place.complete_transfer = false;
+                place.projections.push(PlaceProjection::RefValue);
+                Ok((flow, place))
+            }
             HirExpressionKind::Index {
                 base,
                 index,
@@ -2119,6 +2127,12 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             HirExpressionKind::TupleField { base, index } => {
                 let mut place = self.loan_place(*base);
                 place.projections.push(PlaceProjection::TupleField(*index));
+                place
+            }
+            HirExpressionKind::RefValue { base } => {
+                let mut place = self.loan_place(*base);
+                place.projections.push(PlaceProjection::RefValue);
+                place.complete_transfer = false;
                 place
             }
             HirExpressionKind::Index {
@@ -2534,6 +2548,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             HirExpressionKind::Local(_) | HirExpressionKind::Receiver => None,
             HirExpressionKind::Field { base, .. }
             | HirExpressionKind::TupleField { base, .. }
+            | HirExpressionKind::RefValue { base }
             | HirExpressionKind::Index { base, .. }
             | HirExpressionKind::Slice { base, .. } => self.temporary_place_root(*base),
             _ => Some(expression),
@@ -3649,6 +3664,7 @@ fn expression_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
             }
         }
         HirExpressionKind::Newtype { value, .. }
+        | HirExpressionKind::Ref { value }
         | HirExpressionKind::NumericConversion { value, .. }
         | HirExpressionKind::OptionSome { value }
         | HirExpressionKind::ResultOk { value }
@@ -3693,9 +3709,9 @@ fn expression_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
             children.push(*item);
             children.push(*container);
         }
-        HirExpressionKind::Field { base, .. } | HirExpressionKind::TupleField { base, .. } => {
-            children.push(*base)
-        }
+        HirExpressionKind::Field { base, .. }
+        | HirExpressionKind::TupleField { base, .. }
+        | HirExpressionKind::RefValue { base } => children.push(*base),
         HirExpressionKind::Index { base, index, .. } => {
             children.push(*base);
             children.push(*index);
@@ -3940,6 +3956,7 @@ fn places_overlap(left: &PlaceInfo, right: &PlaceInfo) -> PlaceOverlap {
                     return PlaceOverlap::Disjoint;
                 }
             }
+            (PlaceProjection::RefValue, PlaceProjection::RefValue) => {}
             (
                 PlaceProjection::Collection(CollectionRegion::Static(left)),
                 PlaceProjection::Collection(CollectionRegion::Static(right)),

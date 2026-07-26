@@ -33,7 +33,9 @@ allocation threshold, and mark-and-sweep pass. Under sustained allocation it
 keeps a rooted cycle spanning a `Ref` cell, array, and closure environment,
 reclaims equivalent unrooted cycles repeatedly, and reclaims the retained cycle
 after root withdrawal. It does not expose a source intrinsic or an alternate
-collector; public identity remains deferred to REF-001.
+collector. REF-001 now constructs the same traced cell from source, while the
+adapter continues to cover cyclic shapes that immutable safe references cannot
+build directly.
 
 Object and byte capacity share one checked gate. An allocation or replacement
 may perform at most one complete collection before its final capacity decision.

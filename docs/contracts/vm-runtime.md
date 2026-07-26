@@ -12,7 +12,9 @@ proofs, BORROW-006 borrowed iteration, TERM-003 synchronous defer/guard
 execution, TERM-004/005 structural unwind exclusivity, and GC-001 verified
 trace descriptors, GC-002 complete synchronous root lifetimes, and GC-003
 cycle recovery under sustained allocation pressure plus GC-004 single
-pre-exhaustion collection and atomic publication
+pre-exhaustion collection and atomic publication, REF-001 managed identity
+construction/shared content projection, and REF-002 equality and collection
+keys by identity
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -39,7 +41,7 @@ Managed heap objects cover:
 - concrete closure environments with ordered optional capture fields;
 - newtypes, records, enum variants, options, results, and union injections;
 - ranges and lazy iterator state; and
-- the identity cell used by the future `Ref[T]` surface.
+- `Ref[T]` identity cells with one present traced payload.
 
 Closures pair a concrete bytecode callable identity with a managed environment
 whose capture fields use the same optional-value move representation as other
@@ -63,6 +65,16 @@ the language contract. Copying an admitted intrinsic cursor recursively copies
 its owned source (or duplicates its shared reference), preserves the current
 index, and allocates an independently advancing iterator object. COW and compact
 representations require differential tests against this baseline.
+
+Constructing `Ref(value)` allocates one cell and transfers the already
+evaluated payload into it. Copying the resulting `Ref[T]` copies only its
+generational heap handle and performs no allocation or payload copy.
+`RefValue` reads the present payload but has no runtime take or write arm;
+bytecode verification rejects those access forms before execution. Equality
+first compares handles, so aliases are equal, while two distinct `Ref` objects
+short-circuit to unequal without inspecting content. Maps and sets call the
+same equality routine for keys, preserving identity semantics without exposing
+an address, slot, generation, or collector schedule.
 
 Advancing an own cursor is a destructive ownership transfer from that private
 state. Arrays and sets remove the next element; maps remove a key/value pair and
@@ -206,7 +218,7 @@ generation, so reuse of a reclaimed slot cannot make a stale handle valid.
 The VM independently derives a closed trace catalog from admitted bytecode. It
 contains one descriptor for every type and covers strings, tuples, arrays,
 maps, sets, closure environments, newtypes, records, variants, options,
-results, unions, ranges, cursors, and the future `Ref[T]` cell. Opaque results
+results, unions, ranges, cursors, and the `Ref[T]` cell. Opaque results
 reuse the concrete witness shape. A generated closure environment must belong
 to exactly one callable and retains its ordered capture schema. Intrinsic
 arities, referenced types, nominal layouts, frame slots, duplicate
@@ -224,9 +236,9 @@ through callable erasure and opaque representation boundaries.
 
 `Pointer[T]`, `Join[T,E]`, `Command`, and `Pipeline` currently have no
 constructible managed bootstrap representation and therefore admit no heap
-object descriptor. REF-001 and M7 must extend the sealed catalog before their
-new runtime object shapes can be allocated; an ad-hoc object-side tracing
-method is not an extension point.
+object descriptor. M7 must extend the sealed catalog before any new runtime
+object shape can be allocated; an ad-hoc object-side tracing method is not an
+extension point.
 
 Allocation may request a full collection when the object threshold, byte
 budget, or slot budget is approached. The object being allocated and all of its
@@ -254,12 +266,12 @@ reclaimed on every pressure round, and that withdrawing the final root makes
 the retained cycle reclaimable too. The adapter never calls a separate test
 collector or marks slots directly.
 
-This is the executable GC-003 boundary before REF-001. Ordinary safe values use
-copy semantics, closures capture snapshots, and the future `Ref[T].value`
-projection is read-only, so the current source and bytecode instruction sets
-cannot create a back-edge. REF-001 must add the public identity construction
-without changing the collector path; later conformance reuses a private runtime
-adapter for graphs that are not necessarily constructible through source alone.
+REF-001 reuses this exact collector path: public construction allocates the
+already catalogued cell, its descriptor traces the payload, and every copied
+handle reaches the same object. The source-visible `Ref[T].value` projection is
+read-only, so it cannot create a back-edge by mutation. The private runtime
+adapter remains the conformance path for cyclic graphs that safe source cannot
+construct directly.
 
 Object and byte accounting uses saturating checked budgets. Collection order,
 free-list order, slot addresses, and threshold timing are not observable Tondo
@@ -360,6 +372,12 @@ limits, observe exactly one collection, and prove that failed allocation is not
 counted. Replacement regressions must force collection without listing the
 target as a caller root, then prove both successful publication and unchanged
 target state after OOM.
+
+`Ref` regressions must execute source-to-VM construction, prove that copying a
+cell performs no second identity allocation, preserve a traced compound payload
+under forced collection, reject forged move/write/exclusive bytecode paths, and
+exercise equality, map replacement/lookup, and set membership with a payload
+that is itself neither `Equatable` nor `Key`.
 
 Loan regressions execute shared temporaries, root and projected exclusive
 write-through, nested and closure-capture reborrows, statically disjoint fields,

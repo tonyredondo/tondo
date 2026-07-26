@@ -14,7 +14,8 @@ overlap obligations, BORROW-006 borrowed-iteration regions and boundary policy,
 TERM-001 closed terminal-type registration and structural status, TERM-002
 normal-path terminal ownership, TERM-003 checked synchronous `defer` actions
 and affine guards, TERM-004 downstream closed-fallback admission, and verified
-MIR admission implemented
+MIR admission, REF-001 safe identity construction and shared content
+projection, and REF-002 identity equality/key admission implemented
 
 ## Boundary
 
@@ -148,6 +149,8 @@ The implemented bootstrap subset includes:
   value type's closed `Discard` status;
 - formation checks requiring `Map[K, V]` and `Set[K]` keys to satisfy `Key` and
   `Ref[T]` targets to satisfy `Discard`, in declarations and body-local types;
+- intrinsic `Ref(value)` construction and the typed, stable, shared,
+  read-only `Ref[T].value` place projection;
 - dedicated runtime `panic`, variadic `assert`, and provisional typed
   `std.console.print` operations rather than unresolved ordinary calls;
 - a nonempty source representation of every `assert` condition, retained for
@@ -691,6 +694,33 @@ admission verifier reconstructs the summaries, recomputes the complete table,
 and independently rechecks every operation that consumes it. MIR receives the
 verified decision; the bytecode verifier derives the capabilities needed by
 closed executable operations again from its own type and nominal catalogs.
+
+## Safe identity references
+
+`Ref(value)` is an intrinsic constructor, not an overloadable function. It
+accepts exactly one positional by-value argument. An explicit `Ref[T]`,
+contextual expected `Ref[T]`, or the checked operand type determines `T`, and
+formation succeeds only with a proof that `T: Discard`. Typed HIR records one
+`HirExpressionKind::Ref { value }` node with the exact `Ref[T]` result; the
+ordinary availability pass copies the operand when `T: Copy` and transfers it
+otherwise. Identity creation is unavailable to constant evaluation.
+
+The only intrinsic member is `value`.
+`HirExpressionKind::RefValue { base }` is a stable `Place` of type `T`, but its
+permission is always immutable regardless of the binding that stores the
+`Ref[T]`. It may anchor a shared `ref` loan or an immediate observation.
+Materializing it by value requires `T: Copy`; it never counts as a complete
+owner projection, so a non-`Copy` payload cannot be moved out. Assignment and
+`mut`/`var` loans are rejected before HIR admission, including through a
+further field or index projection.
+
+`Ref[T]` itself is always `Copy`, `Discard`, `Equatable`, and `Key` once
+formation has proved `T: Discard`; none of the equality/key proofs inspect the
+capabilities of `T`. HIR therefore admits equality, map keys, and set keys by
+identity while retaining content equality as the separate expression
+`left.value == right.value` when `T: Equatable`. The HIR verifier rechecks the
+constructor result/operand relation, projection base/target relation, value
+category, immutable write contract, and shared-only call access before MIR.
 
 ## Closed terminal-type registry
 

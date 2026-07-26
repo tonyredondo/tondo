@@ -1879,7 +1879,9 @@ impl<'a> ExpressionChecker<'a> {
                     &mut pending,
                     warnings,
                 ),
-                HirExpressionKind::Newtype { value, .. } => pending.push(*value),
+                HirExpressionKind::Newtype { value, .. } | HirExpressionKind::Ref { value } => {
+                    pending.push(*value)
+                }
                 HirExpressionKind::NumericConversion { value, .. } => pending.push(*value),
                 HirExpressionKind::Record { fields, .. } => self.queue_reachable_sequence(
                     fields.iter().map(HirRecordFieldValue::value),
@@ -1927,6 +1929,7 @@ impl<'a> ExpressionChecker<'a> {
                 HirExpressionKind::Prefix { operand, .. }
                 | HirExpressionKind::Field { base: operand, .. }
                 | HirExpressionKind::TupleField { base: operand, .. }
+                | HirExpressionKind::RefValue { base: operand }
                 | HirExpressionKind::OptionSome { value: operand }
                 | HirExpressionKind::ResultOk { value: operand }
                 | HirExpressionKind::ResultErr { error: operand }
@@ -4474,6 +4477,34 @@ impl<'a> ExpressionChecker<'a> {
             });
         }
 
+        if let TypeKind::Intrinsic {
+            constructor: IntrinsicType::Ref,
+            arguments,
+        } = self.program.interner.kind(base_type)?
+        {
+            let name = token
+                .token()
+                .normalized_identifier()
+                .map(str::to_owned)
+                .unwrap_or(self.token_text(file, token)?.to_owned());
+            if name != "value" {
+                self.emit(
+                    self.sources.span(file, token.range())?,
+                    "E1102",
+                    "`Ref[T]` exposes only the intrinsic `value` projection",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range);
+            }
+            return self.allocate_expression(HirExpression {
+                span: self.sources.span(file, range)?,
+                ty: arguments[0],
+                category: HirValueCategory::Place,
+                kind: HirExpressionKind::RefValue { base },
+            });
+        }
+
         if self.is_inherent_method_member(file, base_type, token)? {
             self.emit(
                 self.sources.span(file, token.range())?,
@@ -6890,6 +6921,29 @@ impl<'a> ExpressionChecker<'a> {
             place.map_entry = false;
             place.slice = false;
             return Ok(place);
+        }
+
+        if matches!(
+            self.program.interner.kind(place.ty)?,
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Ref,
+                ..
+            }
+        ) {
+            let name = token
+                .token()
+                .normalized_identifier()
+                .map(str::to_owned)
+                .unwrap_or(self.token_text(file, token)?.to_owned());
+            self.emit_invalid_assignment_target(
+                self.sources.span(file, token.range())?,
+                if name == "value" {
+                    "`Ref[T].value` is a shared read-only projection and cannot be assigned"
+                } else {
+                    "`Ref[T]` exposes no assignable members"
+                },
+            )?;
+            return self.recovery_place(file, range);
         }
 
         let Some((member, ty)) = self.resolve_field(file, place.ty, token, "E1411")? else {
@@ -10384,6 +10438,7 @@ impl<'a> ExpressionChecker<'a> {
             HirExpressionKind::Local(_) | HirExpressionKind::Receiver => true,
             HirExpressionKind::Field { base, .. }
             | HirExpressionKind::TupleField { base, .. }
+            | HirExpressionKind::RefValue { base }
             | HirExpressionKind::Index { base, .. } => self.match_scrutinee_is_stable(*base),
             _ => false,
         }
@@ -13512,6 +13567,20 @@ impl<'a> ExpressionChecker<'a> {
         let Some(path) = self.expression_path_info(file, base_node)? else {
             return Ok(None);
         };
+        if matches!(
+            &path.resolved,
+            ResolvedName::Prelude {
+                namespace: Namespace::Type,
+                name,
+                ..
+            } if name.as_str() == "Ref"
+        ) {
+            return self
+                .check_ref_constructor_call(
+                    file, range, base_node, suffix, &path, expected, context,
+                )
+                .map(Some);
+        }
         let Some(ty) = self.construction_type(file, base_node.range(), &path, expected)? else {
             return Ok(Some(self.recovery_expression(file, range)?));
         };
@@ -13638,6 +13707,168 @@ impl<'a> ExpressionChecker<'a> {
                 Ok(Some(self.recovery_expression(file, range)?))
             }
         }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_ref_constructor_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        constructor: SyntaxNodeRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        path: &PatternPathInfo,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        if !path.suffix.is_empty() {
+            self.emit(
+                self.sources.span(file, constructor.range())?,
+                "E1102",
+                "`Ref` construction cannot have a member suffix",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range);
+        }
+
+        let contextual = if path.applied.is_none() {
+            expected
+                .map(ExpressionExpectation::contextual_type)
+                .map(|expected| {
+                    self.select_pattern_member_checked(expected, |candidate| {
+                        Ok(matches!(
+                            self.program.interner.kind(candidate)?,
+                            TypeKind::Intrinsic {
+                                constructor: IntrinsicType::Ref,
+                                ..
+                            }
+                        ))
+                    })
+                })
+                .transpose()?
+                .flatten()
+        } else {
+            None
+        };
+        let ref_type = path.applied.or(contextual);
+        let target = ref_type
+            .map(|ty| {
+                let TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Ref,
+                    arguments,
+                } = self.program.interner.kind(ty)?
+                else {
+                    return Err(HirError::TraitSelectionInvariant {
+                        message: "resolved Ref constructor has a non-Ref applied type".into(),
+                    });
+                };
+                Ok(arguments[0])
+            })
+            .transpose()?;
+        let (mut values, valid) = self.check_single_constructor_argument(
+            file,
+            suffix,
+            target,
+            "Ref constructor",
+            context,
+        )?;
+        if !valid {
+            return self.recovery_expression(file, range);
+        }
+        let value = values
+            .pop()
+            .expect("a valid Ref constructor has exactly one value");
+        let target = target.unwrap_or_else(|| self.expression_type(value));
+        if !self.require_capability_with_generics(
+            self.sources.span(file, constructor.range())?,
+            target,
+            HirCapability::Discard,
+            &context.capability_assumptions,
+            "Ref construction",
+        )? {
+            return self.recovery_expression(file, range);
+        }
+        let ty = if let Some(ty) = ref_type {
+            ty
+        } else {
+            self.program
+                .interner
+                .intrinsic(IntrinsicType::Ref, vec![target])?
+        };
+        self.allocate_expression(HirExpression {
+            span: self.sources.span(file, range)?,
+            ty,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Ref { value },
+        })
+    }
+
+    fn check_single_constructor_argument(
+        &mut self,
+        file: FileId,
+        suffix: SyntaxNodeRef<'_>,
+        expected: Option<TypeId>,
+        subject: &str,
+        context: &mut BodyContext,
+    ) -> Result<(Vec<HirExpressionId>, bool), HirError> {
+        let arguments = suffix
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::CallArgument)
+            .collect::<Vec<_>>();
+        let mut valid = true;
+        if arguments.len() != 1 {
+            self.emit(
+                self.sources.span(file, suffix.range())?,
+                "E1102",
+                format!("{subject} expects one value, found {}", arguments.len()),
+                Vec::new(),
+                None,
+            )?;
+            valid = false;
+        }
+        let mut values = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            let tokens = argument
+                .child_tokens()
+                .filter(|token| !token.kind().is_trivia())
+                .collect::<Vec<_>>();
+            if tokens.iter().any(|token| {
+                matches!(
+                    token.kind(),
+                    TokenKind::Colon
+                        | TokenKind::Ellipsis
+                        | TokenKind::Ref
+                        | TokenKind::Mut
+                        | TokenKind::Var
+                )
+            }) {
+                self.emit(
+                    self.sources.span(file, argument.range())?,
+                    "E1102",
+                    format!("{subject} accepts one positional value passed by value"),
+                    Vec::new(),
+                    None,
+                )?;
+                valid = false;
+            }
+            let Some(expression) = argument
+                .child_nodes()
+                .find(|child| AstExpression::cast(*child).is_some())
+            else {
+                valid = false;
+                continue;
+            };
+            let value = self.check_expression(
+                file,
+                expression,
+                expected.map(ExpressionExpectation::Direct),
+                context,
+            )?;
+            valid &= self.expression_type(value) != self.program.interner.error();
+            values.push(value);
+        }
+        let valid = valid && values.len() == 1;
+        Ok((values, valid))
     }
 
     fn check_numeric_conversion(
@@ -14939,6 +15170,7 @@ impl<'a> ExpressionChecker<'a> {
             | HirExpressionKind::Slice { base, .. } => {
                 self.expression_place_permission(*base, context).projected()
             }
+            HirExpressionKind::RefValue { .. } => PlacePermission::Immutable,
             _ => PlacePermission::Immutable,
         }
     }
@@ -15196,7 +15428,9 @@ impl<'a> ExpressionChecker<'a> {
                     .iter()
                     .flat_map(|entry| [entry.key(), entry.value()]),
             ),
-            HirExpressionKind::Newtype { value, .. } => self.expression_summary(*value),
+            HirExpressionKind::Newtype { value, .. } | HirExpressionKind::Ref { value } => {
+                self.expression_summary(*value)
+            }
             HirExpressionKind::NumericConversion { value, .. } => self.expression_summary(*value),
             HirExpressionKind::Record { fields, .. } => {
                 self.expression_sequence(fields.iter().map(HirRecordFieldValue::value))
@@ -15228,6 +15462,7 @@ impl<'a> ExpressionChecker<'a> {
             HirExpressionKind::Prefix { operand, .. }
             | HirExpressionKind::Field { base: operand, .. }
             | HirExpressionKind::TupleField { base: operand, .. }
+            | HirExpressionKind::RefValue { base: operand }
             | HirExpressionKind::OptionSome { value: operand }
             | HirExpressionKind::ResultOk { value: operand }
             | HirExpressionKind::ResultErr { error: operand }
@@ -15722,6 +15957,7 @@ fn closure_protocol_expression_children(kind: &HirExpressionKind) -> Vec<HirExpr
             }
         }
         HirExpressionKind::Newtype { value, .. }
+        | HirExpressionKind::Ref { value }
         | HirExpressionKind::NumericConversion { value, .. }
         | HirExpressionKind::OptionSome { value }
         | HirExpressionKind::ResultOk { value }
@@ -15747,7 +15983,8 @@ fn closure_protocol_expression_children(kind: &HirExpressionKind) -> Vec<HirExpr
         }
         HirExpressionKind::Prefix { operand, .. }
         | HirExpressionKind::Field { base: operand, .. }
-        | HirExpressionKind::TupleField { base: operand, .. } => children.push(*operand),
+        | HirExpressionKind::TupleField { base: operand, .. }
+        | HirExpressionKind::RefValue { base: operand } => children.push(*operand),
         HirExpressionKind::Binary { left, right, .. }
         | HirExpressionKind::Range {
             start: left,
@@ -19027,6 +19264,103 @@ mod tests {
     }
 
     #[test]
+    fn ref_construction_and_shared_projection_have_explicit_typed_hir() {
+        let (_, _, output) = check(
+            "fn inspect(value: ref Int) {}\n\
+             fn inferred(): Int {\n\
+                 let reference = Ref(41)\n\
+                 let same = reference\n\
+                 inspect(ref same.value)\n\
+                 reference.value + 1\n\
+             }\n\
+             fn explicit(): Int { Ref[Int](1).value }\n\
+             fn contextual(): Ref[Int] { Ref(2) }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let refs = output
+            .program()
+            .expressions()
+            .filter(|expression| matches!(expression.kind(), HirExpressionKind::Ref { .. }))
+            .count();
+        let projections = output
+            .program()
+            .expressions()
+            .filter(|expression| matches!(expression.kind(), HirExpressionKind::RefValue { .. }))
+            .count();
+        assert_eq!(refs, 3);
+        assert_eq!(projections, 3);
+    }
+
+    #[test]
+    fn ref_value_is_read_only_and_cannot_transfer_non_copy_content() {
+        let (_, _, assignment) = check(
+            "fn invalid() {\n\
+                 var reference = Ref(1)\n\
+                 reference.value = 2\n\
+             }\n",
+        );
+        assert_eq!(codes(&assignment), ["E1411"]);
+        assert!(assignment.diagnostics()[0].message().contains("read-only"));
+
+        let (_, _, exclusive) = check(
+            "fn change(value: mut Int) {}\n\
+             fn invalid() {\n\
+                 var reference = Ref(1)\n\
+                 change(mut reference.value)\n\
+             }\n",
+        );
+        assert_eq!(codes(&exclusive), ["E1407"]);
+
+        let (_, _, transfer) = check(
+            "fn extract[T: Discard](reference: Ref[T]): T {\n\
+                 reference.value\n\
+             }\n",
+        );
+        assert_eq!(codes(&transfer), ["E1406"], "{:#?}", transfer.diagnostics());
+    }
+
+    #[test]
+    fn ref_construction_requires_discard_content() {
+        let (_, _, output) = check(
+            "fn invalid[T](value: T) {\n\
+                 _ = Ref(value)\n\
+             }\n",
+        );
+        assert_eq!(
+            codes(&output),
+            ["E1105", "E1404"],
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.diagnostics()[0].message().contains("Discard"));
+    }
+
+    #[test]
+    fn ref_constructor_accepts_exactly_one_positional_value() {
+        for source in [
+            "fn invalid() {\n    _ = Ref()\n}\n",
+            "fn invalid() {\n    _ = Ref(1, 2)\n}\n",
+            "fn invalid() {\n    _ = Ref(value: 1)\n}\n",
+            "fn invalid() {\n    let value = 1\n    _ = Ref(ref value)\n}\n",
+            "fn invalid() {\n    let values = [1]\n    _ = Ref(...values)\n}\n",
+        ] {
+            let (_, _, output) = check(source);
+            assert_eq!(
+                codes(&output),
+                ["E1102"],
+                "{source}\n{:#?}",
+                output.diagnostics()
+            );
+        }
+    }
+
+    #[test]
     fn nominal_construction_and_with_reject_incomplete_or_wrong_shapes() {
         for source in [
             "type Pair = { left: Int, right: Int }\nfn invalid(): Pair { Pair { left: 1 } }\n",
@@ -21564,6 +21898,9 @@ mod tests {
             let (_, _, output) = check(source);
             assert_eq!(codes(&output), ["E1903"], "{source}");
         }
+
+        let (_, _, identity) = check("const Invalid: Ref[Int] = Ref(1)\n");
+        assert_eq!(codes(&identity), ["E1901"]);
     }
 
     #[test]

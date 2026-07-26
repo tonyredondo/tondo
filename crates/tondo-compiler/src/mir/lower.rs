@@ -680,6 +680,14 @@ impl<'a> FunctionBuilder<'a> {
                 )?;
                 Ok(Some(block))
             }
+            HirExpressionKind::Ref { value } => self.lower_single_aggregate(
+                *value,
+                MirAggregateKind::Ref,
+                expression.ty(),
+                span,
+                destination,
+                block,
+            ),
             HirExpressionKind::Record { owner, fields } => {
                 let mut current = block;
                 let mut values = Vec::with_capacity(fields.len());
@@ -957,7 +965,9 @@ impl<'a> FunctionBuilder<'a> {
                 )?;
                 Ok(Some(block))
             }
-            HirExpressionKind::Field { .. } | HirExpressionKind::TupleField { .. } => {
+            HirExpressionKind::Field { .. }
+            | HirExpressionKind::TupleField { .. }
+            | HirExpressionKind::RefValue { .. } => {
                 let Some((block, place)) = self.lower_place(id, block)? else {
                     return Ok(None);
                 };
@@ -3758,6 +3768,17 @@ impl<'a> FunctionBuilder<'a> {
                 place.projections.push(MirProjection {
                     ty: expression.ty(),
                     kind: MirProjectionKind::TupleField(*index),
+                });
+                place.ty = expression.ty();
+                Ok(Some((block, place)))
+            }
+            HirExpressionKind::RefValue { base } => {
+                let Some((block, mut place)) = self.lower_place_base(*base, block)? else {
+                    return Ok(None);
+                };
+                place.projections.push(MirProjection {
+                    ty: expression.ty(),
+                    kind: MirProjectionKind::RefValue,
                 });
                 place.ty = expression.ty();
                 Ok(Some((block, place)))
@@ -6835,6 +6856,284 @@ mod tests {
                 ))
         );
         verify_mir(&resolved, &hir, &mir).unwrap();
+    }
+
+    #[test]
+    fn refs_lower_to_identity_aggregates_and_sealed_shared_projections() {
+        let source = "fn makeCopy(value: Int): Ref[Int] { Ref(value) }\n\
+                      fn makeAffine[T: Discard](value: T): Ref[T] { Ref(value) }\n\
+                      fn inspect(value: ref Int) {}\n\
+                      fn inspectArray(value: ref Array[Int]) {}\n\
+                      fn arrayIdentity(value: Array[Int]): Array[Int] { value }\n\
+                      fn read(reference: Ref[Int]): Int {\n\
+                          inspect(ref reference.value)\n\
+                          reference.value\n\
+                      }\n\
+                      fn writeSinks(reference: Ref[Array[Int]]) {\n\
+                          inspectArray(ref reference.value)\n\
+                          _ = arrayIdentity([1])\n\
+                          for item in [[1]] {\n\
+                              _ = item\n\
+                          }\n\
+                          var values = [1, 2]\n\
+                          values[:] = [3, 4]\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let ref_operands = mir
+            .functions()
+            .flat_map(MirFunction::blocks)
+            .flat_map(MirBasicBlock::statements)
+            .filter_map(|statement| match statement.kind() {
+                MirStatementKind::Assign {
+                    value:
+                        MirRvalue {
+                            kind:
+                                MirRvalueKind::Aggregate {
+                                    shape: MirAggregateKind::Ref,
+                                    values,
+                                },
+                            ..
+                        },
+                    ..
+                } => values.first(),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(ref_operands.len(), 2);
+        assert!(
+            ref_operands
+                .iter()
+                .any(|operand| matches!(operand.kind(), MirOperandKind::Copy(_)))
+        );
+        assert!(
+            ref_operands
+                .iter()
+                .any(|operand| matches!(operand.kind(), MirOperandKind::Move(_)))
+        );
+        assert!(
+            mir.functions()
+                .flat_map(MirFunction::blocks)
+                .flat_map(MirBasicBlock::statements)
+                .any(|statement| matches!(
+                    statement.kind(),
+                    MirStatementKind::Assign {
+                        value:
+                            MirRvalue {
+                                kind:
+                                    MirRvalueKind::Use(MirOperand {
+                                        kind:
+                                            MirOperandKind::Copy(MirPlace {
+                                                projections,
+                                                ..
+                                            }),
+                                        ..
+                                    }),
+                                ..
+                            },
+                        ..
+                    } if projections.iter().any(|projection| {
+                        matches!(&projection.kind, MirProjectionKind::RefValue)
+                    })
+                ))
+        );
+        verify_mir(&resolved, &hir, &mir).unwrap();
+
+        let mut malformed = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = malformed
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "makeCopy")))
+            .unwrap();
+        let values = function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.statements)
+            .find_map(|statement| match &mut statement.kind {
+                MirStatementKind::Assign {
+                    value:
+                        MirRvalue {
+                            kind:
+                                MirRvalueKind::Aggregate {
+                                    shape: MirAggregateKind::Ref,
+                                    values,
+                                },
+                            ..
+                        },
+                    ..
+                } => Some(values),
+                _ => None,
+            })
+            .unwrap();
+        values.clear();
+        let error = verify_mir(&resolved, &hir, &malformed).unwrap_err();
+        assert!(error.message().contains("operand arity"));
+
+        let mut moved = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = moved
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "read")))
+            .unwrap();
+        let operand = function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.statements)
+            .find_map(|statement| match &mut statement.kind {
+                MirStatementKind::Assign {
+                    value:
+                        MirRvalue {
+                            kind: MirRvalueKind::Use(operand),
+                            ..
+                        },
+                    ..
+                } if matches!(
+                    &operand.kind,
+                    MirOperandKind::Copy(place)
+                        if place.projections.iter().any(|projection| {
+                            matches!(&projection.kind, MirProjectionKind::RefValue)
+                        })
+                ) =>
+                {
+                    Some(operand)
+                }
+                _ => None,
+            })
+            .unwrap();
+        let MirOperandKind::Copy(place) = &operand.kind else {
+            unreachable!("the selected Ref projection is copied")
+        };
+        operand.kind = MirOperandKind::Move(place.clone());
+        let error = verify_mir(&resolved, &hir, &moved).unwrap_err();
+        assert!(error.message().contains("cannot be moved"));
+
+        let mut written = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = written
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "read")))
+            .unwrap();
+        let mut forged = false;
+        'blocks: for block in &mut function.blocks {
+            for statement in &mut block.statements {
+                let MirStatementKind::Assign { destination, value } = &mut statement.kind else {
+                    continue;
+                };
+                let MirRvalueKind::Use(MirOperand {
+                    kind: MirOperandKind::Copy(place),
+                    ..
+                }) = &value.kind
+                else {
+                    continue;
+                };
+                if place
+                    .projections
+                    .iter()
+                    .any(|projection| matches!(&projection.kind, MirProjectionKind::RefValue))
+                {
+                    *destination = place.clone();
+                    forged = true;
+                    break 'blocks;
+                }
+            }
+        }
+        assert!(forged);
+        let error = verify_mir(&resolved, &hir, &written).unwrap_err();
+        assert!(error.message().contains("read-only"));
+
+        let mut exclusive = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = exclusive
+            .functions
+            .get_mut(&MirFunctionId::Callable(function_id(&resolved, "read")))
+            .unwrap();
+        let loan = function
+            .loans
+            .iter_mut()
+            .find(|loan| {
+                loan.place
+                    .projections
+                    .iter()
+                    .any(|projection| matches!(&projection.kind, MirProjectionKind::RefValue))
+            })
+            .unwrap();
+        loan.mode = crate::types::ParameterMode::Mut;
+        let error = verify_mir(&resolved, &hir, &exclusive).unwrap_err();
+        assert!(error.message().contains("only shared `ref` loans"));
+
+        let function_id = MirFunctionId::Callable(function_id(&resolved, "writeSinks"));
+        let ref_value_place = lower_to_mir(&resolved, &hir, MirLoweringLimits::default())
+            .unwrap()
+            .functions
+            .get(&function_id)
+            .unwrap()
+            .loans
+            .iter()
+            .find(|loan| {
+                loan.place
+                    .projections
+                    .iter()
+                    .any(|projection| matches!(projection.kind, MirProjectionKind::RefValue))
+            })
+            .unwrap()
+            .place
+            .clone();
+
+        let mut invoked = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let destination = invoked
+            .functions
+            .get_mut(&function_id)
+            .unwrap()
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::Invoke {
+                    operation,
+                    destination: Some(destination),
+                    ..
+                } if operation.ty == ref_value_place.ty => Some(destination),
+                _ => None,
+            })
+            .unwrap();
+        *destination = ref_value_place.clone();
+        let error = verify_mir(&resolved, &hir, &invoked).unwrap_err();
+        assert!(error.message().contains("read-only"));
+
+        let mut advanced = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let destination = advanced
+            .functions
+            .get_mut(&function_id)
+            .unwrap()
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::IteratorNext { destination, .. }
+                    if destination.ty == ref_value_place.ty =>
+                {
+                    Some(destination)
+                }
+                _ => None,
+            })
+            .unwrap();
+        *destination = ref_value_place.clone();
+        let error = verify_mir(&resolved, &hir, &advanced).unwrap_err();
+        assert!(error.message().contains("read-only"));
+
+        let mut validated = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let place = validated
+            .functions
+            .get_mut(&function_id)
+            .unwrap()
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::ValidatePlaces {
+                    places,
+                    for_write: true,
+                    ..
+                } => places.first_mut(),
+                _ => None,
+            })
+            .unwrap();
+        *place = ref_value_place;
+        let error = verify_mir(&resolved, &hir, &validated).unwrap_err();
+        assert!(error.message().contains("read-only"));
     }
 
     #[test]

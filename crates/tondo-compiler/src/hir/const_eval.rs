@@ -223,10 +223,12 @@ fn constant_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
             .flat_map(|entry| [entry.key(), entry.value()])
             .collect(),
         HirExpressionKind::Newtype { value, .. }
+        | HirExpressionKind::Ref { value }
         | HirExpressionKind::NumericConversion { value, .. }
         | HirExpressionKind::Prefix { operand: value, .. }
         | HirExpressionKind::Field { base: value, .. }
         | HirExpressionKind::TupleField { base: value, .. }
+        | HirExpressionKind::RefValue { base: value }
         | HirExpressionKind::OptionSome { value }
         | HirExpressionKind::ResultOk { value }
         | HirExpressionKind::ResultErr { error: value }
@@ -549,6 +551,8 @@ fn evaluate_composite(
             }
         }
         HirExpressionKind::Recovery
+        | HirExpressionKind::Ref { .. }
+        | HirExpressionKind::RefValue { .. }
         | HirExpressionKind::Literal(_)
         | HirExpressionKind::InterpolatedString { .. }
         | HirExpressionKind::Local(_)

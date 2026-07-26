@@ -2,14 +2,15 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.55
+**Versión del tracker:** 0.56
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar `Ref[T]` con identidad estable y contenido
-trazable, sin exponer direcciones ni mutabilidad implícita (REF-001).
+**Objetivo inmediato:** completar la copia lógica eager de valores `Copy`
+compuestos como baseline sustituible por COW sin cambiar observables
+(VALUE-001).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1484,10 +1485,19 @@ lifetimes escritos por el usuario.
   replacement protege internamente su target, lo conserva si no cabe y no
   contabiliza el payload rechazado.
 
-- [ ] **REF-001 — Implementar `Ref[T]` con identidad estable y contenido
-  trazable.**
+- [x] **REF-001 — Implementar `Ref[T]` con identidad estable y contenido
+  trazable.** `Ref(value)` acepta un único operando posicional por valor,
+  demuestra `T: Discard` y crea una celda administrada nueva. Copiar el
+  resultado conserva el handle sin copiar `T`; `.value` es una proyección
+  compartida, de solo lectura e inmovible. HIR, MIR y bytecode sellan forma,
+  tipo, acceso y préstamos, y la celda reutiliza el descriptor y collector
+  verificados.
 
-- [ ] **REF-002 — Implementar igualdad y `Key` por identidad de `Ref[T]`.**
+- [x] **REF-002 — Implementar igualdad y `Key` por identidad de `Ref[T]`.**
+  El comparador de valores reconoce primero el mismo handle y nunca compara el
+  payload de dos celdas distintas. Map y Set reutilizan esa igualdad para
+  reemplazo, lookup, deduplicación y pertenencia, incluso cuando `T` no es
+  `Equatable` ni `Key`.
 
 - [ ] **VALUE-001 — Implementar inicialmente copia lógica eager para valores
   `Copy` compuestos.**
@@ -2039,13 +2049,32 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es REF-001: introducir la construcción intrínseca
-`Ref(value)`, su identidad administrada y la proyección compartida `.value`
-reutilizando el descriptor y collector ya verificados.
+La siguiente acción activa es VALUE-001: fijar y completar la copia lógica
+eager de cada valor compuesto `Copy`, conservando `Ref[T]` como identidad
+compartida y dejando una suite diferencial suficiente para sustituir el
+almacenamiento por COW más adelante.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.56 — 2026-07-25
+
+- Se completan REF-001 y REF-002 como una vertical slice única. El frontend
+  reconoce construcción explícita, contextual e inferida, exige `Discard`,
+  rechaza identidad constante y conserva `.value` como place compartido de
+  solo lectura.
+- MIR y bytecode incorporan agregados y proyecciones nominalmente separados.
+  Sus verificadores rechazan aridad/tipo falsos, move del payload, escritura y
+  préstamos `mut`/`var`, de modo que un programa manipulado no puede convertir
+  identidad segura en alias mutable.
+- La VM asigna una sola celda, copia únicamente su handle y traza el payload
+  durante presión real de GC. Igualdad, Map y Set observan identidad aun cuando
+  el contenido es una función sin `Equatable` ni `Key`.
+- La puerta completa pasa con 562 tests —496 del compilador, 24 de la VM y 42
+  de CLI/integración—, `cargo fmt --check`, `cargo check`, `cargo build`,
+  Clippy con warnings como error, rustdoc con warnings como error y
+  `git diff --check`.
 
 ### 0.55 — 2026-07-25
 

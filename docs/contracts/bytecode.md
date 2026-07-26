@@ -13,7 +13,8 @@ static collection disjunction, BORROW-005 runtime overlap proofs, BORROW-006
 borrowed-iterator boundaries, TERM-001 independent terminal classification,
 TERM-002 normal-path terminal ownership, TERM-003 explicit defer/guard cleanup,
 TERM-004 closed abnormal fallbacks, TERM-005 exact explicit/fallback exclusion,
-and the M3 VM admission path implemented
+REF-001 managed identity cells/shared projections, REF-002 identity
+equality/keys, and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -21,7 +22,7 @@ stable artifact format. `TONDO_LANGUAGE_SPEC.md` remains normative.
 
 ## Ownership and admission
 
-`tondo-vm` owns the bytecode data model, verifier, and future interpreter.
+`tondo-vm` owns the bytecode data model, verifier, and interpreter.
 `tondo-compiler` owns deterministic lowering from verified MIR. The dependency
 therefore points from compiler to VM: the VM never imports HIR, MIR, resolver
 IDs, or the compiler type interner.
@@ -250,6 +251,16 @@ backend distinction that lets OWN-004 reinitialize a complete `var`, supports
 compiler-internal atomic replacement, and still prevents a source program from
 reviving an owner through an unproved partial write.
 
+`BytecodeAggregateKind::Ref` constructs one managed identity cell from exactly
+one operand whose type is the target of the result `Ref[T]`.
+`BytecodeProjectionKind::RefValue` resolves its payload as a shared, read-only
+place. It may appear in `Copy` only when the closed target is `Copy`, or in a
+shared loan used by an immediate borrowed call. The verifier rejects a `Move`;
+a `Store`, `Invoke`, `IteratorNext` or write-validation destination; or a
+`mut`/`var` loan containing the projection, including nested paths. Copying the
+`Ref[T]` root itself remains an ordinary closed `Copy` and preserves the cell
+identity.
+
 A closure construction is an ordinary managed aggregate whose result is a
 concrete generated type. Its shape names one concrete closure callable; that
 callable owns the identical environment type, ordered capture schema, protocol
@@ -397,9 +408,10 @@ index/bound slot from changing before its proof is consumed. Missing or
 misaligned metadata is invalid bytecode.
 
 Places start at one slot and carry typed projections. Projections include
-record/newtype fields, tuple positions, enum/option/result/union payloads,
-array-pattern segments, dynamic indexing, and slices. Index and bound operands
-are slots evaluated earlier, preserving MIR evaluation order.
+record/newtype fields, the shared `RefValue` payload, tuple positions,
+enum/option/result/union payloads, array-pattern segments, dynamic indexing,
+and slices. Index and bound operands are slots evaluated earlier, preserving
+MIR evaluation order.
 
 The VM resolves each protected path to normalized runtime components: negative
 indices use the current array length, slices become their exact selected-index
@@ -415,7 +427,10 @@ order, detects duplicates before allocating the final map, and either preserves
 the first insertion position while replacing its value or raises `P0009`.
 Structural equality preserves sequence order for tuples and arrays, but compares
 maps and sets by membership rather than insertion order. It is emitted only for
-an identical type proven `Equatable`.
+an identical type proven `Equatable`. Two `Ref[T]` operands are equal exactly
+when their managed handles identify the same live cell; distinct cells never
+compare their payloads. Map lookup/replacement and set membership reuse that
+same equality, which supplies `Key` by identity independently of `T`.
 
 ## Independent verification
 
@@ -428,6 +443,8 @@ Before execution, the verifier proves:
 - type constructors, generic arities, nominal fields/variants, constants,
   projections, aggregates, operators, conversions, iterators, and tags have
   their exact structural types;
+- every `Ref` construction has one exact target operand, and every `RefValue`
+  path is read-only, shared-only, and immovable;
 - every closure callable has a unique generated environment, executable body,
   hidden environment parameter, exact capture schema, and protocol row; closure
   aggregates and capture projections name that same callable and match every

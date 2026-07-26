@@ -612,6 +612,7 @@ pub enum BytecodeProjectionKind {
     Field(u32),
     TupleField(u32),
     NewtypeValue,
+    RefValue,
     VariantTuple {
         variant: u32,
         index: u32,
@@ -735,6 +736,7 @@ pub enum BytecodeAggregateKind {
     Newtype {
         nominal: BytecodeNominalId,
     },
+    Ref,
     Record {
         nominal: BytecodeNominalId,
         fields: Vec<u32>,

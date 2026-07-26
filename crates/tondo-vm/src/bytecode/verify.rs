@@ -2731,6 +2731,12 @@ impl Verifier<'_> {
                 ));
             }
             self.verify_place(function, &loan.place, &loan_context)?;
+            if loan.mode != BytecodeParameterMode::Ref && place_contains_ref_value(&loan.place) {
+                return Err(BytecodeVerificationError::new(
+                    &loan_context,
+                    "`Ref[T].value` permits only shared `ref` loans",
+                ));
+            }
         }
         if function.entry == function.unwind
             || self.block(function, function.entry, &context)?.kind != BytecodeBlockKind::Normal
@@ -2792,6 +2798,12 @@ impl Verifier<'_> {
             BytecodeInstructionKind::Store { destination, value } => {
                 self.verify_place(function, destination, context)?;
                 self.verify_rvalue(function, value, context)?;
+                if place_contains_ref_value(destination) {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "`Ref[T].value` is a read-only projection",
+                    ));
+                }
                 if destination.ty != value.ty {
                     return Err(BytecodeVerificationError::new(
                         context,
@@ -3016,6 +3028,9 @@ impl Verifier<'_> {
                     }
                     projection.ty
                 }
+                BytecodeProjectionKind::RefValue => {
+                    self.intrinsic_argument(current, BytecodeIntrinsicType::Ref, 0, context)?
+                }
                 BytecodeProjectionKind::VariantTuple { variant, index } => {
                     let (_, arguments, metadata) = self.nominal_instance(current, context)?;
                     let declaration = enum_variant(metadata, *variant, context)?;
@@ -3216,6 +3231,14 @@ impl Verifier<'_> {
             | BytecodeOperandKind::Move(place)
             | BytecodeOperandKind::Borrow(place) => {
                 self.verify_place(function, place, context)?;
+                if matches!(operand.kind, BytecodeOperandKind::Move(_))
+                    && place_contains_ref_value(place)
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "`Ref[T].value` cannot be moved out of its identity cell",
+                    ));
+                }
                 if place.ty != operand.ty {
                     return Err(BytecodeVerificationError::new(
                         context,
@@ -3478,6 +3501,11 @@ impl Verifier<'_> {
                 {
                     return Err(rvalue_error(context));
                 }
+            }
+            BytecodeAggregateKind::Ref => {
+                let target =
+                    self.intrinsic_argument(result, BytecodeIntrinsicType::Ref, 0, context)?;
+                self.verify_operand_types(values, &[target], context)?;
             }
             BytecodeAggregateKind::Record { nominal, fields } => {
                 let (actual, arguments, metadata) = self.nominal_instance(result, context)?;
@@ -4738,6 +4766,12 @@ impl Verifier<'_> {
                 match (destination, target) {
                     (Some(destination), Some(target)) => {
                         self.verify_place(function, destination, context)?;
+                        if place_contains_ref_value(destination) {
+                            return Err(BytecodeVerificationError::new(
+                                context,
+                                "`Ref[T].value` is a read-only projection",
+                            ));
+                        }
                         if destination.ty != operation.ty
                             || self.is_scalar(operation.ty, BytecodeScalarType::Never)
                         {
@@ -4764,6 +4798,12 @@ impl Verifier<'_> {
                 }
                 self.verify_place(function, state, context)?;
                 self.verify_place(function, destination, context)?;
+                if place_contains_ref_value(destination) {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "`Ref[T].value` is a read-only projection",
+                    ));
+                }
                 let BytecodeTypeKind::Cursor { mode, collection } =
                     self.ty(state.ty, context)?.kind
                 else {
@@ -4846,6 +4886,12 @@ impl Verifier<'_> {
                 for ((place, replacement), against) in places.iter().zip(replacements).zip(against)
                 {
                     self.verify_place(function, place, context)?;
+                    if *for_write && place_contains_ref_value(place) {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "`Ref[T].value` is a read-only projection",
+                        ));
+                    }
                     if unique.contains(place) {
                         return Err(terminator_error(context));
                     }
@@ -7929,6 +7975,7 @@ enum MovePathComponent {
     Field(u32),
     TupleField(u32),
     NewtypeValue,
+    RefValue,
     VariantTuple(u32, u32),
     VariantField(u32, u32),
     OptionValue,
@@ -7964,6 +8011,7 @@ impl MovePathComponent {
             BytecodeProjectionKind::Field(field) => Self::Field(*field),
             BytecodeProjectionKind::TupleField(index) => Self::TupleField(*index),
             BytecodeProjectionKind::NewtypeValue => Self::NewtypeValue,
+            BytecodeProjectionKind::RefValue => Self::RefValue,
             BytecodeProjectionKind::VariantTuple { variant, index } => {
                 Self::VariantTuple(*variant, *index)
             }
@@ -8546,6 +8594,7 @@ fn move_path_runtime_inputs(
             | MovePathComponent::Field(_)
             | MovePathComponent::TupleField(_)
             | MovePathComponent::NewtypeValue
+            | MovePathComponent::RefValue
             | MovePathComponent::VariantTuple(_, _)
             | MovePathComponent::VariantField(_, _)
             | MovePathComponent::OptionValue
@@ -8633,6 +8682,7 @@ fn collection_region(
         | MovePathComponent::Field(_)
         | MovePathComponent::TupleField(_)
         | MovePathComponent::NewtypeValue
+        | MovePathComponent::RefValue
         | MovePathComponent::VariantTuple(_, _)
         | MovePathComponent::VariantField(_, _)
         | MovePathComponent::OptionValue
@@ -9265,6 +9315,7 @@ fn push_tag_place(
             | BytecodeProjectionKind::Field(_)
             | BytecodeProjectionKind::TupleField(_)
             | BytecodeProjectionKind::NewtypeValue
+            | BytecodeProjectionKind::RefValue
             | BytecodeProjectionKind::ArrayPatternIndex(_)
             | BytecodeProjectionKind::ArrayPatternRest { .. }
             | BytecodeProjectionKind::IteratorElement { .. }
@@ -9528,6 +9579,7 @@ fn push_projection_index_events(place: &BytecodePlace, events: &mut Vec<LocalEve
             | BytecodeProjectionKind::Field(_)
             | BytecodeProjectionKind::TupleField(_)
             | BytecodeProjectionKind::NewtypeValue
+            | BytecodeProjectionKind::RefValue
             | BytecodeProjectionKind::VariantTuple { .. }
             | BytecodeProjectionKind::VariantField { .. }
             | BytecodeProjectionKind::OptionValue
@@ -9547,6 +9599,13 @@ fn place_requires_loan_validation(place: &BytecodePlace) -> bool {
             BytecodeProjectionKind::Index { .. } | BytecodeProjectionKind::Slice { .. }
         )
     })
+}
+
+fn place_contains_ref_value(place: &BytecodePlace) -> bool {
+    place
+        .projections
+        .iter()
+        .any(|projection| matches!(projection.kind, BytecodeProjectionKind::RefValue))
 }
 
 #[cfg(test)]

@@ -2705,6 +2705,12 @@ impl Engine<'_, '_> {
                     value: Some(value),
                 }
             }
+            BytecodeAggregateKind::Ref => {
+                let [value] = values.try_into().map_err(|_| {
+                    VmError::invariant("Ref construction has the wrong value count")
+                })?;
+                HeapObject::Ref(Some(value))
+            }
             BytecodeAggregateKind::Record { nominal, fields } => {
                 if fields.len() != values.len() {
                     return Err(VmError::invariant(
@@ -3231,6 +3237,9 @@ impl Engine<'_, '_> {
             }
             (BytecodeProjectionKind::NewtypeValue, HeapObject::Newtype { value, .. }) => {
                 present(&value, "newtype value").cloned()
+            }
+            (BytecodeProjectionKind::RefValue, HeapObject::Ref(value)) => {
+                present(&value, "Ref value").cloned()
             }
             (
                 BytecodeProjectionKind::VariantTuple { variant, index },
@@ -3865,6 +3874,7 @@ impl Engine<'_, '_> {
             (BytecodeProjectionKind::NewtypeValue, HeapObject::Newtype { .. }) => {
                 PlaceComponent::Field(0)
             }
+            (BytecodeProjectionKind::RefValue, HeapObject::Ref(_)) => PlaceComponent::Field(0),
             (BytecodeProjectionKind::OptionValue, HeapObject::OptionSome(_)) => {
                 PlaceComponent::Variant(1)
             }

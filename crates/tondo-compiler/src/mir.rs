@@ -367,6 +367,7 @@ pub enum MirProjectionKind {
     Field(MemberId),
     TupleField(u32),
     NewtypeValue,
+    RefValue,
     VariantTuple {
         variant: MemberId,
         index: u32,
@@ -516,6 +517,7 @@ pub enum MirAggregateKind {
     Newtype {
         owner: SymbolId,
     },
+    Ref,
     Record {
         owner: SymbolId,
         fields: Vec<MemberId>,
