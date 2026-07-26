@@ -35,6 +35,12 @@ reclaims equivalent unrooted cycles repeatedly, and reclaims the retained cycle
 after root withdrawal. It does not expose a source intrinsic or an alternate
 collector; public identity remains deferred to REF-001.
 
+Object and byte capacity share one checked gate. An allocation or replacement
+may perform at most one complete collection before its final capacity decision.
+Pending children and a replacement target are protected by the heap itself;
+success publishes once, while exhaustion leaves the pending object unpublished
+and an existing target unchanged.
+
 The bootstrap representation remains deliberately explicit and more expensive
 than a compact production layout. The native runtime may later use ARC plus
 cycle collection without changing source semantics, provided it preserves the

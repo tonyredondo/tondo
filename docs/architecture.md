@@ -445,6 +445,9 @@ allocator, descriptors, root enumeration, and pressure trigger to keep a mixed
 `Ref`/array/closure cycle alive, repeatedly reclaim unrooted peers, and reclaim
 the retained graph after root withdrawal. This validates cycle collection
 without inventing source-visible `Ref` construction before REF-001. Its exact
+capacity gate also unifies object and byte limits: a request performs at most
+one full collection, rechecks capacity, and publishes once. Replacement roots
+its target internally and remains unchanged if the retry cannot fit. The exact
 object, tracing, panic, host, and admission boundary is recorded in
 `docs/contracts/vm-runtime.md`.
 The sole M3 standard-library bridge, capability-gated

@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.54
+**Versión del tracker:** 0.55
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** probar la recolección completa previa a OOM y el único
-reintento permitido de la asignación (GC-004).
+**Objetivo inmediato:** implementar `Ref[T]` con identidad estable y contenido
+trazable, sin exponer direcciones ni mutabilidad implícita (REF-001).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1472,12 +1472,17 @@ lifetimes escritos por el usuario.
 - [x] **GC-003 — Trazar ciclos y recuperar objetos inalcanzables bajo presión.**
   Un adaptador privado de test usa el allocator, descriptors, roots y trigger de
   presión reales para construir `Ref -> Array -> Closure -> Ref`. Conserva un
-  ciclo publicado durante 32 rondas, recupera ciclos pares inalcanzables sin
-  invocar una colección especial y recupera también el retenido al retirar su
-  último root. REF-001 conserva para sí la construcción de identidad pública.
+  ciclo publicado durante 32 rondas, recupera ciclos independientes no
+  enraizados sin invocar una colección especial y recupera también el retenido
+  al retirar su último root. REF-001 conserva para sí la construcción de
+  identidad pública.
 
-- [ ] **GC-004 — Recolectar antes de declarar OOM por heap y reintentar una
-  vez.**
+- [x] **GC-004 — Recolectar antes de declarar OOM por heap y reintentar una
+  vez.** Objetos y bytes usan una única puerta de capacidad con suma comprobada.
+  Cada petición ejecuta como máximo una colección completa y después publica
+  una sola vez o devuelve OOM. Allocation no contabiliza un objeto rechazado;
+  replacement protege internamente su target, lo conserva si no cabe y no
+  contabiliza el payload rechazado.
 
 - [ ] **REF-001 — Implementar `Ref[T]` con identidad estable y contenido
   trazable.**
@@ -2034,13 +2039,29 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es GC-004: ejecutar una colección completa antes de
-declarar OOM por objetos o bytes, reintentar exactamente una vez y demostrar que
-el estado pendiente de allocation o replacement permanece atómico.
+La siguiente acción activa es REF-001: introducir la construcción intrínseca
+`Ref(value)`, su identidad administrada y la proyección compartida `.value`
+reutilizando el descriptor y collector ya verificados.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.55 — 2026-07-25
+
+- Se completa GC-004 con una puerta única de capacidad comprobada para límites
+  por objetos y bytes. Una petición realiza como máximo una colección completa,
+  reevalúa capacidad y publica una vez o devuelve OOM.
+- Allocation mantiene el objeto pendiente fuera del heap y solo incrementa
+  estadísticas tras publicarlo. Replacement protege su propio target durante
+  GC; un éxito recupera garbage antes de crecer y un OOM conserva descriptor,
+  generation, payload y bytes del slot anteriores.
+- Las regresiones cubren éxito recuperable y agotamiento real en ambos límites,
+  cardinalidad exacta de colección y atomicidad de replacement.
+- La puerta completa pasa con 554 tests —488 del compilador, 24 de la VM y 42
+  de CLI/integración—, `cargo fmt --check`, `cargo check`, `cargo build`,
+  Clippy con warnings como error, rustdoc con warnings como error y
+  `git diff --check`.
 
 ### 0.54 — 2026-07-25
 

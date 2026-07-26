@@ -82,8 +82,10 @@ concrete catalog has its own bytecode type-entry limit.
 
 VM admission and execution enforce non-zero verification, instruction, frame,
 object, byte, and initial-collection budgets. The collector performs a full
-collection before reporting heap exhaustion. Bootstrap resource exhaustion uses
-diagnostic code `T0002`.
+collection before reporting heap exhaustion, for both object and byte pressure.
+It performs at most one such pre-exhaustion pass per allocation or replacement,
+then either publishes atomically once or leaves the pending operation
+unpublished. Bootstrap resource exhaustion uses diagnostic code `T0002`.
 
 The handwritten parser also clamps an embedding host's requested nesting depth
 to 256. This is a process-safety ceiling for the recursive bootstrap parser,

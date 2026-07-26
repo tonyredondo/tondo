@@ -11,7 +11,8 @@ BORROW-004 static collection-region disjunction, BORROW-005 dynamic overlap
 proofs, BORROW-006 borrowed iteration, TERM-003 synchronous defer/guard
 execution, TERM-004/005 structural unwind exclusivity, and GC-001 verified
 trace descriptors, GC-002 complete synchronous root lifetimes, and GC-003
-cycle recovery under sustained allocation pressure
+cycle recovery under sustained allocation pressure plus GC-004 single
+pre-exhaustion collection and atomic publication
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -230,8 +231,19 @@ method is not an extension point.
 Allocation may request a full collection when the object threshold, byte
 budget, or slot budget is approached. The object being allocated and all of its
 children are temporary roots for that collection. Growth of an existing object
-uses the same rule. Only after a complete collection still cannot satisfy the
-request does execution report VM exhaustion.
+uses the same rule and protects the target handle internally, independently of
+the caller's root list. Capacity arithmetic uses checked addition. Each request
+may initiate at most one complete collection; capacity is then evaluated once
+more before either one publication or VM exhaustion.
+
+The bootstrap can detect a logical budget failure before attempting to mutate a
+slot. Its normative retry is therefore the post-collection capacity check
+followed by the single publication attempt, not a deliberately failing partial
+insert. A rejected allocation never enters the heap or increments allocation
+statistics. A rejected replacement leaves the target descriptor, object,
+generation, and per-slot byte accounting unchanged. The collection itself may
+still reclaim unrelated unreachable objects and update global accounting and
+the free list, which is not program-observable.
 
 The runtime test build has a private memory adapter over these exact allocation,
 replacement, root, descriptor, and pressure paths. It can connect managed nodes
@@ -343,6 +355,11 @@ host snapshot must remain valid without keeping its former heap object alive.
 The private memory adapter must additionally retain a mixed reachable cycle
 through sustained pressure, reclaim independent cycles without explicit
 collection calls, and reclaim the retained cycle after its root is withdrawn.
+Capacity regressions must exercise recoverable and irrecoverable object and byte
+limits, observe exactly one collection, and prove that failed allocation is not
+counted. Replacement regressions must force collection without listing the
+target as a caller root, then prove both successful publication and unchanged
+target state after OOM.
 
 Loan regressions execute shared temporaries, root and projected exclusive
 write-through, nested and closure-capture reborrows, statically disjoint fields,

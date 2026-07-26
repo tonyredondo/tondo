@@ -68,7 +68,7 @@ pub(super) enum HeapObject {
 }
 
 impl HeapObject {
-    fn estimated_bytes(&self) -> u64 {
+    pub(super) fn estimated_bytes(&self) -> u64 {
         let base = mem::size_of::<Self>() as u64;
         let value = mem::size_of::<Option<Value>>() as u64;
         base.saturating_add(match self {
@@ -120,6 +120,14 @@ pub(super) struct Heap {
     limits: VmLimits,
 }
 
+struct CapacityDemand<'object> {
+    objects: u32,
+    bytes: u64,
+    threshold_reached: bool,
+    protected: Option<HeapHandle>,
+    pending: Option<(BytecodeTypeId, &'object HeapObject)>,
+}
+
 impl Heap {
     pub(super) fn new(limits: VmLimits, descriptors: Vec<BytecodeTraceDescriptor>) -> Self {
         Self {
@@ -142,20 +150,17 @@ impl Heap {
     ) -> Result<HeapHandle, VmError> {
         Self::visit_object(&self.descriptors, descriptor, &object, |_| {})?;
         let bytes = object.estimated_bytes();
-        if self.live_objects >= self.next_collection
-            || self.live_objects >= self.limits.max_heap_objects
-            || self.live_bytes.saturating_add(bytes) > self.limits.max_heap_bytes
-        {
-            self.collect_with_pending(roots, Some((descriptor, &object)), statistics)?;
-        }
-        if self.live_objects >= self.limits.max_heap_objects
-            || self.live_bytes.saturating_add(bytes) > self.limits.max_heap_bytes
-        {
-            return Err(VmError::OutOfMemory {
-                live_objects: self.live_objects,
-                live_bytes: self.live_bytes,
-            });
-        }
+        self.ensure_capacity(
+            CapacityDemand {
+                objects: 1,
+                bytes,
+                threshold_reached: self.live_objects >= self.next_collection,
+                protected: None,
+                pending: Some((descriptor, &object)),
+            },
+            roots,
+            statistics,
+        )?;
 
         let handle = if let Some(index) = self.free.pop() {
             let slot = self
@@ -233,15 +238,17 @@ impl Heap {
         let old_bytes = self.get(handle)?.estimated_bytes();
         let new_bytes = object.estimated_bytes();
         let growth = new_bytes.saturating_sub(old_bytes);
-        if self.live_bytes.saturating_add(growth) > self.limits.max_heap_bytes {
-            self.collect_with_pending(roots, Some((descriptor, &object)), statistics)?;
-        }
-        if self.live_bytes.saturating_add(growth) > self.limits.max_heap_bytes {
-            return Err(VmError::OutOfMemory {
-                live_objects: self.live_objects,
-                live_bytes: self.live_bytes,
-            });
-        }
+        self.ensure_capacity(
+            CapacityDemand {
+                objects: 0,
+                bytes: growth,
+                threshold_reached: false,
+                protected: Some(handle),
+                pending: Some((descriptor, &object)),
+            },
+            roots,
+            statistics,
+        )?;
         let slot = self
             .slots
             .get_mut(handle.index as usize)
@@ -265,12 +272,44 @@ impl Heap {
         roots: &[Value],
         statistics: &mut VmStatistics,
     ) -> Result<(), VmError> {
-        self.collect_with_pending(roots, None, statistics)
+        self.collect_with_pending(roots, None, None, statistics)
+    }
+
+    fn ensure_capacity(
+        &mut self,
+        demand: CapacityDemand<'_>,
+        roots: &[Value],
+        statistics: &mut VmStatistics,
+    ) -> Result<(), VmError> {
+        // Threshold or capacity pressure permits at most one full collection.
+        // The protected handle keeps a replacement target stable until publication.
+        if demand.threshold_reached || !self.has_capacity(demand.objects, demand.bytes) {
+            self.collect_with_pending(roots, demand.protected, demand.pending, statistics)?;
+        }
+        if self.has_capacity(demand.objects, demand.bytes) {
+            Ok(())
+        } else {
+            Err(VmError::OutOfMemory {
+                live_objects: self.live_objects,
+                live_bytes: self.live_bytes,
+            })
+        }
+    }
+
+    fn has_capacity(&self, additional_objects: u32, additional_bytes: u64) -> bool {
+        self.live_objects
+            .checked_add(additional_objects)
+            .is_some_and(|total| total <= self.limits.max_heap_objects)
+            && self
+                .live_bytes
+                .checked_add(additional_bytes)
+                .is_some_and(|total| total <= self.limits.max_heap_bytes)
     }
 
     fn collect_with_pending(
         &mut self,
         roots: &[Value],
+        protected: Option<HeapHandle>,
         pending: Option<(BytecodeTypeId, &HeapObject)>,
         statistics: &mut VmStatistics,
     ) -> Result<(), VmError> {
@@ -278,6 +317,9 @@ impl Heap {
             slot.marked = false;
         }
         let mut work = roots.to_vec();
+        if let Some(handle) = protected {
+            work.push(Value::Heap(handle));
+        }
         if let Some((descriptor, object)) = pending {
             Self::visit_object(&self.descriptors, descriptor, object, |value| {
                 work.push(value.clone());

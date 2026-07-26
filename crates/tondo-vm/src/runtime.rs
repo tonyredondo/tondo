@@ -254,6 +254,16 @@ mod tests {
         )
     }
 
+    fn string_heap(limits: VmLimits) -> Heap {
+        Heap::new(limits, vec![BytecodeTraceDescriptor::String])
+    }
+
+    fn reserved_string(capacity: usize, value: &str) -> HeapObject {
+        let mut text = String::with_capacity(capacity);
+        text.push_str(value);
+        HeapObject::String(text)
+    }
+
     struct MemoryTestAdapter {
         heap: Heap,
         roots: Vec<Value>,
@@ -426,6 +436,267 @@ mod tests {
         assert!(
             memory.statistics.reclaimed_objects >= reclaimed_before_release + retained.len() as u64
         );
+    }
+
+    #[test]
+    fn allocation_collects_once_before_object_limit_success_or_oom() {
+        let limits = VmLimits {
+            max_heap_objects: 2,
+            max_heap_bytes: 16 * 1024,
+            initial_gc_threshold: 2,
+            ..VmLimits::default()
+        };
+        let mut heap = string_heap(limits);
+        let mut statistics = VmStatistics::default();
+        let first = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("first".into()),
+                &[],
+                &mut statistics,
+            )
+            .unwrap();
+        let second = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("second".into()),
+                &[],
+                &mut statistics,
+            )
+            .unwrap();
+        let replacement = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("replacement".into()),
+                &[],
+                &mut statistics,
+            )
+            .unwrap();
+
+        assert!(heap.get(first).is_err());
+        assert!(heap.get(second).is_err());
+        assert!(matches!(
+            heap.get(replacement),
+            Ok(HeapObject::String(value)) if value == "replacement"
+        ));
+        assert_eq!(heap.live_objects(), 1);
+        assert_eq!(statistics.allocations, 3);
+        assert_eq!(statistics.collections, 1);
+        assert_eq!(statistics.reclaimed_objects, 2);
+
+        let mut heap = string_heap(limits);
+        let mut statistics = VmStatistics::default();
+        let first = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("first".into()),
+                &[],
+                &mut statistics,
+            )
+            .unwrap();
+        let second = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("second".into()),
+                &[],
+                &mut statistics,
+            )
+            .unwrap();
+        let error = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("rejected".into()),
+                &[Value::Heap(first), Value::Heap(second)],
+                &mut statistics,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            VmError::OutOfMemory {
+                live_objects: 2,
+                ..
+            }
+        ));
+        assert!(heap.get(first).is_ok());
+        assert!(heap.get(second).is_ok());
+        assert_eq!(heap.live_objects(), 2);
+        assert_eq!(statistics.allocations, 2);
+        assert_eq!(statistics.collections, 1);
+        assert_eq!(statistics.reclaimed_objects, 0);
+    }
+
+    #[test]
+    fn allocation_collects_once_before_byte_limit_success_or_oom() {
+        let [recoverable_old, recoverable_new, retained_old, rejected_new] = [
+            reserved_string(32, "recoverable-old"),
+            reserved_string(48, "recoverable-new"),
+            reserved_string(64, "retained-old"),
+            reserved_string(80, "rejected-new"),
+        ];
+        let max_heap_bytes = [
+            &recoverable_old,
+            &recoverable_new,
+            &retained_old,
+            &rejected_new,
+        ]
+        .into_iter()
+        .map(HeapObject::estimated_bytes)
+        .max()
+        .unwrap();
+        let limits = VmLimits {
+            max_heap_objects: 8,
+            max_heap_bytes,
+            initial_gc_threshold: 8,
+            ..VmLimits::default()
+        };
+
+        let mut heap = string_heap(limits);
+        let mut statistics = VmStatistics::default();
+        let old = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                recoverable_old,
+                &[],
+                &mut statistics,
+            )
+            .unwrap();
+        let new = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                recoverable_new,
+                &[],
+                &mut statistics,
+            )
+            .unwrap();
+
+        assert!(heap.get(old).is_err());
+        assert!(heap.get(new).is_ok());
+        assert_eq!(statistics.allocations, 2);
+        assert_eq!(statistics.collections, 1);
+        assert_eq!(statistics.reclaimed_objects, 1);
+
+        let mut heap = string_heap(limits);
+        let mut statistics = VmStatistics::default();
+        let retained = heap
+            .allocate(BytecodeTypeId::new(0), retained_old, &[], &mut statistics)
+            .unwrap();
+        let error = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                rejected_new,
+                &[Value::Heap(retained)],
+                &mut statistics,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            VmError::OutOfMemory {
+                live_objects: 1,
+                ..
+            }
+        ));
+        assert!(heap.get(retained).is_ok());
+        assert_eq!(statistics.allocations, 1);
+        assert_eq!(statistics.collections, 1);
+        assert_eq!(statistics.reclaimed_objects, 0);
+    }
+
+    #[test]
+    fn replacement_collection_protects_target_and_is_atomic_on_oom() {
+        let target_object = reserved_string(8, "a");
+        let garbage_object = reserved_string(8, "b");
+        let replacement_object = reserved_string(64, "grown");
+        let max_heap_bytes = target_object
+            .estimated_bytes()
+            .saturating_add(garbage_object.estimated_bytes())
+            .max(replacement_object.estimated_bytes());
+        let limits = VmLimits {
+            max_heap_objects: 8,
+            max_heap_bytes,
+            initial_gc_threshold: 8,
+            ..VmLimits::default()
+        };
+        let mut heap = string_heap(limits);
+        let mut statistics = VmStatistics::default();
+        let target = heap
+            .allocate(BytecodeTypeId::new(0), target_object, &[], &mut statistics)
+            .unwrap();
+        let garbage = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                garbage_object,
+                &[Value::Heap(target)],
+                &mut statistics,
+            )
+            .unwrap();
+
+        heap.replace(target, replacement_object, &[], &mut statistics)
+            .unwrap();
+
+        assert!(matches!(
+            heap.get(target),
+            Ok(HeapObject::String(value)) if value == "grown"
+        ));
+        assert!(heap.get(garbage).is_err());
+        assert_eq!(statistics.allocations, 2);
+        assert_eq!(statistics.collections, 1);
+        assert_eq!(statistics.reclaimed_objects, 1);
+
+        let target_object = reserved_string(8, "a");
+        let blocker_object = reserved_string(8, "b");
+        let rejected_object = reserved_string(64, "rejected");
+        let max_heap_bytes = target_object
+            .estimated_bytes()
+            .saturating_add(blocker_object.estimated_bytes())
+            .max(rejected_object.estimated_bytes());
+        let limits = VmLimits {
+            max_heap_objects: 8,
+            max_heap_bytes,
+            initial_gc_threshold: 8,
+            ..VmLimits::default()
+        };
+        let mut heap = string_heap(limits);
+        let mut statistics = VmStatistics::default();
+        let target = heap
+            .allocate(BytecodeTypeId::new(0), target_object, &[], &mut statistics)
+            .unwrap();
+        let blocker = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                blocker_object,
+                &[Value::Heap(target)],
+                &mut statistics,
+            )
+            .unwrap();
+        let error = heap
+            .replace(
+                target,
+                rejected_object,
+                &[Value::Heap(blocker)],
+                &mut statistics,
+            )
+            .unwrap_err();
+
+        assert!(matches!(
+            error,
+            VmError::OutOfMemory {
+                live_objects: 2,
+                ..
+            }
+        ));
+        assert!(matches!(
+            heap.get(target),
+            Ok(HeapObject::String(value)) if value == "a"
+        ));
+        assert!(matches!(
+            heap.get(blocker),
+            Ok(HeapObject::String(value)) if value == "b"
+        ));
+        assert_eq!(statistics.allocations, 2);
+        assert_eq!(statistics.collections, 1);
+        assert_eq!(statistics.reclaimed_objects, 0);
     }
 
     #[test]
