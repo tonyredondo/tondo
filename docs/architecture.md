@@ -290,6 +290,9 @@ recorded in `docs/contracts/types.md`.
 MIR is a typed control-flow graph with explicit locals, temporaries, branches,
 moves, storage lifetimes, checked-operation unwind edges, and reserved cleanup
 blocks. AST shape is no longer required to execute or analyze the program.
+Array aggregates carry one operand per runtime element while their canonical
+`Array[T]` type contains no length; array-pattern shape checks use the typed
+`Length(Array[T]) : Int` rvalue.
 OWN-002 selects explicit copy/move operands under each body's generic bounds
 and uses non-escaping borrows for immediate observations. BORROW-001 gives
 non-value call arguments explicit loan-table identities, ordered reservations,
@@ -378,6 +381,9 @@ retarget/disarm transitions, exact terminal fallback replacement, exclusion
 between explicit and fallback entries, and exact draining. Closed
 specialization also rederives whether an intrinsic owning cursor needs its
 edge-specific natural exhaustion disarm.
+Array construction stores operand count in the value, never in the type
+catalog; the verifier seals the internal `Length` operation to
+`Length(Array[T]) : Int`.
 
 Before those tables are allocated, a bounded deterministic worklist
 monomorphizes every generic callable reached from non-generic roots, constants,
@@ -420,6 +426,9 @@ the same observables. The `tests/runtime/value-copy/` corpus records those
 observables at the driver boundary and runs unchanged both with ordinary
 limits and with an initial GC threshold of one, without exposing the current
 heap representation.
+An Array heap object owns its ordered runtime slots; construction, copy,
+argument passing, and return preserve that vector length independently of the
+single canonical `Array[T]` type.
 
 The implemented synchronous engine uses iterative frames, checked slot states,
 normal/unwind continuations, call-local reservation tables, normalized

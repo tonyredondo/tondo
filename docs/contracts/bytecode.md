@@ -14,7 +14,8 @@ borrowed-iterator boundaries, TERM-001 independent terminal classification,
 TERM-002 normal-path terminal ownership, TERM-003 explicit defer/guard cleanup,
 TERM-004 closed abnormal fallbacks, TERM-005 exact explicit/fallback exclusion,
 REF-001 managed identity cells/shared projections, REF-002 identity
-equality/keys, and the M3 VM admission path implemented
+equality/keys, ARRAY-001 runtime array length, and the M3 VM admission path
+implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -212,6 +213,15 @@ length, and iterator-state creation. The latter accepts an intrinsic collection
 `IteratorNext` accepts that cursor rather than a collection-shaped alias. A ref
 cursor additionally requires a `Borrow` source operand, while an own cursor
 rejects one, so a backend cannot silently replace observation with a copy.
+
+An Array aggregate stores its complete ordered operand list while its result
+type is only `Array[T]`; operand count is runtime data, not type metadata.
+`Length` is the internal shape observation used by array-pattern lowering. The
+verifier independently requires its operand to be an `Array` intrinsic of
+arity one and its result to be `Int`, rejecting a forged scalar or another
+collection before execution. Copy, call, and return instructions preserve the
+complete value rather than carrying a separately trusted length.
+
 For a ref cursor, `IteratorNext` writes an `Int` position rather than an owned
 item and carries the exact borrowed source place. `IteratorElement { index }`
 then resolves that position against the original `Array`, `Map`, or `Set`.

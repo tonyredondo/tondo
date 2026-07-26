@@ -2,15 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.58
+**Versión del tracker:** 0.59
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** consolidar el contrato ya ejecutable de `Array[T]` con
-longitud runtime y cerrar cualquier hueco entre construcción, tipos, bytecode y
-VM (ARRAY-001).
+**Objetivo inmediato:** consolidar la indexación positiva y negativa de arrays,
+incluidos normalización, bounds y pánico normativo (ARRAY-002).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1534,7 +1533,11 @@ lifetimes escritos por el usuario.
 
 ### 11.1 Arrays
 
-- [ ] **ARRAY-001 — Implementar `Array[T]` con longitud runtime.**
+- [x] **ARRAY-001 — Implementar `Array[T]` con longitud runtime.** El tipo
+  canónico contiene únicamente `T`; construcción, copia, llamada y retorno
+  preservan el vector ordenado y su longitud. Los patterns observan esa forma
+  mediante `Length(Array[T]) : Int`, sellado otra vez por el verificador de
+  bytecode. Un fixture público cubre longitudes distintas bajo el mismo tipo.
 
 - [ ] **ARRAY-002 — Implementar indexación positiva y negativa con bounds.**
 
@@ -2060,14 +2063,30 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es ARRAY-001: auditar el soporte vertical ya
-existente de `Array[T]`, fijar la longitud runtime como contrato observable y
-cerrar con tests cualquier camino de construcción, copia, llamada o retorno que
-todavía no conserve esa longitud.
+La siguiente acción activa es ARRAY-002: auditar la indexación ya ejecutable,
+fijar una sola normalización para índices positivos y negativos, comprobar los
+bounds y el pánico normativo en lectura y escritura, y cerrar cualquier hueco
+entre HIR, MIR, bytecode y VM.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.59 — 2026-07-25
+
+- Se cierra ARRAY-001 sin introducir prematuramente una API de stdlib. Un
+  `Array[T]` no codifica longitud estática; el valor conserva el recuento
+  runtime a través de construcción, copia, llamadas y retornos.
+- El contrato interno `Length(Array[T]) : Int` sirve a los patterns y queda
+  rederivado tanto por MIR como por el verificador de bytecode. Una mutación
+  adversarial sustituye el operando por `Int` y se rechaza antes de ejecutar.
+- El fixture `m6-array-001-runtime-length.to` observa nueve casos de longitud
+  bajo un único `Array[Int]`, incluidos vacío, copia y cruces de función, usando
+  únicamente semántica pública.
+- La puerta completa pasa con 566 tests —498 del núcleo del compilador, 25 de
+  la VM y 43 de CLI/integración—, formatter canónico del fixture,
+  `cargo fmt --check`, `cargo check`, `cargo build`, Clippy y rustdoc con
+  warnings como error, y `git diff --check`.
 
 ### 0.58 — 2026-07-25
 

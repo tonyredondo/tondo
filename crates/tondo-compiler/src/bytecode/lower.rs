@@ -4014,6 +4014,164 @@ mod tests {
     }
 
     #[test]
+    fn arrays_store_length_at_runtime_and_preserve_it_across_boundaries() {
+        let source = r#"fn choose(expanded: Bool): Array[Int] {
+    if expanded {
+        [1, 2, 3, 4, 5]
+    } else {
+        []
+    }
+}
+
+fn fourValues(): Array[Int] {
+    [1, 2, 3, 4]
+}
+
+fn relay(values: Array[Int]): Array[Int] {
+    values
+}
+
+fn runtimeLength(values: Array[Int]): Int {
+    match values {
+        [] => 0
+        [_] => 1
+        [_, _] => 2
+        [_, _, _] => 3
+        [_, _, _, _] => 4
+        [_, _, _, _, _, ..] => 5
+    }
+}
+
+fn observe(): (Int, Int, Int, Int, Int, Int, Int, Int, Int) {
+    let returned = relay(choose(true))
+    let copied = returned
+    (
+        runtimeLength([]),
+        runtimeLength([1]),
+        runtimeLength([1, 2]),
+        runtimeLength([1, 2, 3]),
+        runtimeLength(fourValues()),
+        runtimeLength(choose(true)),
+        runtimeLength(choose(false)),
+        runtimeLength(returned),
+        runtimeLength(copied),
+    )
+}
+"#;
+        let program = lowered(source);
+        let array_types = program
+            .types
+            .iter()
+            .enumerate()
+            .filter_map(|(index, ty)| match &ty.kind {
+                bc::BytecodeTypeKind::Intrinsic {
+                    constructor: bc::BytecodeIntrinsicType::Array,
+                    arguments,
+                } => Some((bc::BytecodeTypeId::new(index as u32), ty, arguments)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            array_types.len(),
+            1,
+            "every runtime length must share one Array[Int] type"
+        );
+        let (array_type, array, arguments) = array_types[0];
+        assert_eq!(array.name, "Array[Int]");
+        assert_eq!(
+            arguments.len(),
+            1,
+            "an array type stores only its element type"
+        );
+        assert!(matches!(
+            program.types[arguments[0].index() as usize].kind,
+            bc::BytecodeTypeKind::Scalar(bc::BytecodeScalarType::Int)
+        ));
+
+        let length_function =
+            &program.functions[function_id(&program, "runtimeLength").index() as usize];
+        let lengths = length_function
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .filter_map(|instruction| match &instruction.kind {
+                bc::BytecodeInstructionKind::Store {
+                    value:
+                        bc::BytecodeRvalue {
+                            ty,
+                            kind: bc::BytecodeRvalueKind::Length(operand),
+                        },
+                    ..
+                } => Some((*ty, operand)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            !lengths.is_empty(),
+            "array patterns must read runtime length"
+        );
+        for (result, operand) in lengths {
+            assert!(matches!(
+                program.types[result.index() as usize].kind,
+                bc::BytecodeTypeKind::Scalar(bc::BytecodeScalarType::Int)
+            ));
+            assert_eq!(operand.ty, array_type);
+        }
+
+        assert_eq!(
+            execute_function(source, "observe"),
+            RuntimeValue::Tuple(vec![
+                RuntimeValue::Integer(0),
+                RuntimeValue::Integer(1),
+                RuntimeValue::Integer(2),
+                RuntimeValue::Integer(3),
+                RuntimeValue::Integer(4),
+                RuntimeValue::Integer(5),
+                RuntimeValue::Integer(0),
+                RuntimeValue::Integer(5),
+                RuntimeValue::Integer(5),
+            ])
+        );
+
+        let mut forged = program;
+        let int_type = forged
+            .types
+            .iter()
+            .position(|ty| {
+                matches!(
+                    ty.kind,
+                    bc::BytecodeTypeKind::Scalar(bc::BytecodeScalarType::Int)
+                )
+            })
+            .map(|index| bc::BytecodeTypeId::new(index as u32))
+            .unwrap();
+        let length_function_id = function_id(&forged, "runtimeLength");
+        let length_function = &mut forged.functions[length_function_id.index() as usize];
+        let operand = length_function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.instructions)
+            .find_map(|instruction| match &mut instruction.kind {
+                bc::BytecodeInstructionKind::Store {
+                    value:
+                        bc::BytecodeRvalue {
+                            kind: bc::BytecodeRvalueKind::Length(operand),
+                            ..
+                        },
+                    ..
+                } => Some(operand),
+                _ => None,
+            })
+            .expect("runtimeLength must contain a Length rvalue");
+        *operand = bc::BytecodeOperand {
+            ty: int_type,
+            kind: bc::BytecodeOperandKind::Constant(bc::BytecodeConstant::Integer("0".into())),
+        };
+        let error = bc::verify_bytecode(&forged).unwrap_err();
+        assert!(error.message().contains("rvalue"), "{error}");
+    }
+
+    #[test]
     fn lowering_is_deterministic_and_preserves_slots_spans_and_edges() {
         let source = "fn choose(flag: Bool): Int {\n    if flag { 20 + 22 } else { 0 }\n}\n";
         let first = lowered(source);

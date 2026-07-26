@@ -2855,6 +2855,12 @@ mod tests {
     fn intrinsic_arity_and_type_node_budget_are_explicit() {
         let mut interner = TypeInterner::default();
         let int = interner.scalar(ScalarType::Int);
+        let array = interner.intrinsic(IntrinsicType::Array, vec![int]).unwrap();
+        assert_eq!(interner.canonical(array).unwrap(), "Array[Int]");
+        assert!(matches!(
+            interner.intrinsic(IntrinsicType::Array, vec![int, int]),
+            Err(TypeError::InvalidIntrinsicArity { .. })
+        ));
         assert!(matches!(
             interner.intrinsic(IntrinsicType::Map, vec![int]),
             Err(TypeError::InvalidIntrinsicArity { .. })

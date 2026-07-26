@@ -15,7 +15,8 @@ cycle recovery under sustained allocation pressure plus GC-004 single
 pre-exhaustion collection and atomic publication, REF-001 managed identity
 construction/shared content projection, and REF-002 equality and collection
 keys by identity, VALUE-001 exhaustive eager logical copies, and VALUE-002
-representation-independent copy observations
+representation-independent copy observations, plus ARRAY-001 runtime array
+length
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -43,6 +44,14 @@ Managed heap objects cover:
 - newtypes, records, enum variants, options, results, and union injections;
 - ranges and lazy iterator state; and
 - `Ref[T]` identity cells with one present traced payload.
+
+An array object owns one ordered vector of optional value slots. The vector
+length is the array's runtime length; it is not duplicated in bytecode type
+metadata. Construction fixes that count from the evaluated operands, and
+logical copy, argument passing, and return preserve it with the complete value.
+The internal `Length` observation counts the vector slots after verified array
+typing. It currently serves language pattern semantics and does not choose the
+name or shape of a future standard-library length API.
 
 Closures pair a concrete bytecode callable identity with a managed environment
 whose capture fields use the same optional-value move representation as other
@@ -392,6 +401,11 @@ payload layout, prove recursive allocation for a nested value, preserve the
 deliberate String/`Ref` sharing exceptions, separate subsequent writes through
 tuple/array, record, newtype, and map paths, and give a copied owning cursor an
 independent source and position.
+
+Array-length regressions must construct empty and nonempty values that share
+one `Array[T]` type, observe distinct runtime lengths through source semantics,
+preserve those lengths across copy, calls, and returns, and prove that the
+bytecode verifier rejects a `Length` rvalue whose operand is not an array.
 
 Loan regressions execute shared temporaries, root and projected exclusive
 write-through, nested and closure-capture reborrows, statically disjoint fields,

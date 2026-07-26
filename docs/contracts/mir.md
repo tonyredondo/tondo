@@ -13,7 +13,8 @@ BORROW-006 borrowed-iteration boundary verification, TERM-001/TERM-002 terminal
 classification and normal-path ownership, and TERM-003 explicit defer/guard
 cleanup, TERM-004 closed abnormal fallback lowering, and TERM-005 exact
 explicit/fallback exclusion, REF-001 identity aggregates/shared projections,
-and REF-002 identity equality/key operands implemented
+REF-002 identity equality/key operands, and ARRAY-001 runtime array length
+implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -167,6 +168,13 @@ and guards, assignment, construction and update, collections, indexing,
 slicing, numeric conversions, calls, and both `Option` and `Result`
 propagation. Recovery and incomplete interpolation nodes cannot cross the HIR
 admission boundary and therefore have no executable MIR interpretation.
+
+An array literal lowers to `MirAggregateKind::Array` with one operand per
+runtime element and an `Array[T]` result type that contains no length. Array
+pattern shape checks lower through `MirRvalueKind::Length`; the MIR verifier
+accepts that rvalue only from `Array[T]` and requires an `Int` result. Calls,
+returns, and Copy/Move selection forward the complete array value, so no phase
+may reconstruct its length from the static type.
 
 A concrete closure expression lowers to one aggregate with its `HirClosureId`
 and captures in the exact HIR table order. Each operand is an unprojected Copy or

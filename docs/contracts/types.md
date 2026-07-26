@@ -115,6 +115,12 @@ one argument; `Map` and `Join` take two; `Command`, `Pipeline`, and
 `NumericConversionError` take none. `Iterator[T]` is a trait bound, not a value
 type node.
 
+`Array[T]` records only its element type. Its length is never a type argument,
+so empty and nonempty arrays with the same element type intern to the same
+canonical node. No fixed-length array spelling or hidden length parameter
+exists at this boundary; construction and later runtime operations carry the
+actual element count.
+
 ## Assignment and numeric conversion
 
 The interner exposes the closed top-level assignment relation required by 8.9.
