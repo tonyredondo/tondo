@@ -4464,6 +4464,70 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
     }
 
     #[test]
+    fn slice_snapshot_verification_requires_copy_elements() {
+        let borrowed = lowered(
+            "fn inspect(values: ref Array[Join[Int, Never]]) {}\n\
+             fn borrow(values: ref Array[Join[Int, Never]]) {\n\
+                 inspect(ref values[:])\n\
+             }\n",
+        );
+        bc::verify_bytecode(&borrowed).unwrap();
+        assert!(borrowed.functions.iter().any(|function| {
+            function.loans.iter().any(|loan| {
+                loan.place.projections.iter().any(|projection| {
+                    matches!(projection.kind, bc::BytecodeProjectionKind::Slice { .. })
+                })
+            })
+        }));
+
+        let mut forged = lowered(
+            "fn view(values: Array[Int]): Array[Int] {\n\
+                 values[:]\n\
+             }\n\
+             fn consume(value: Join[Int, Never]): Never {\n\
+                 panic(\"stop\")\n\
+             }\n",
+        );
+        let join = forged
+            .types
+            .iter()
+            .position(|ty| {
+                matches!(
+                    ty.kind,
+                    bc::BytecodeTypeKind::Intrinsic {
+                        constructor: bc::BytecodeIntrinsicType::Join,
+                        ..
+                    }
+                )
+            })
+            .map(|index| bc::BytecodeTypeId::new(index as u32))
+            .expect("the terminal parameter retains its Join type");
+        let array = forged
+            .types
+            .iter_mut()
+            .find(|ty| {
+                matches!(
+                    ty.kind,
+                    bc::BytecodeTypeKind::Intrinsic {
+                        constructor: bc::BytecodeIntrinsicType::Array,
+                        ..
+                    }
+                )
+            })
+            .expect("view retains its Array type");
+        let bc::BytecodeTypeKind::Intrinsic { arguments, .. } = &mut array.kind else {
+            unreachable!()
+        };
+        arguments[0] = join;
+
+        let error = bc::verify_bytecode(&forged).unwrap_err();
+        assert!(
+            error.message().contains("materializes a non-Copy Array"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn lowering_is_deterministic_and_preserves_slots_spans_and_edges() {
         let source = "fn choose(flag: Bool): Int {\n    if flag { 20 + 22 } else { 0 }\n}\n";
         let first = lowered(source);

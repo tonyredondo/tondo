@@ -2092,6 +2092,18 @@ impl Verifier<'_> {
                         "slice operation must preserve its Array type",
                     ));
                 }
+                if self.capability_status(
+                    function.id,
+                    operation.ty,
+                    HirCapability::Copy,
+                    context,
+                )? != HirCapabilityStatus::Satisfied
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "slice operation materializes a non-Copy Array",
+                    ));
+                }
                 self.verify_runtime_conflict_ids(function, against, context)?;
                 let _ = operation_access_place(operation, context)?;
             }

@@ -74,6 +74,9 @@ semantics. Its cases separately cover:
 - preservation of every managed `Copy` shape admitted by the bootstrap;
 - independence of compound values and closure state after a write;
 - deliberate identity sharing through `Ref[T]`;
+- slice snapshots separated from their source in both write directions,
+  including nested elements, overlapping assignment, borrowed materialization,
+  and `mut` region updates;
 - iteration over copied arrays, maps, sets, ranges, and strings;
 - the exact panic class and exit status after copying; and
 - retained values under sustained allocation and GC pressure.

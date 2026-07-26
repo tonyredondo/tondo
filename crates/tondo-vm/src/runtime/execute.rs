@@ -3367,13 +3367,7 @@ impl Engine<'_, '_> {
                 let indices = self
                     .slice_indices_from_slots(frame, *start, *end, *step, values.len())
                     .map_err(|_| VmError::invariant("unvalidated slice reached a projection"))?;
-                let mut output = Vec::with_capacity(indices.len());
-                for index in indices {
-                    let value = Some(self.copy_value(present(&values[index], "slice item")?)?);
-                    self.retain_optional_temporary(&value);
-                    output.push(value);
-                }
-                self.allocate(projection.ty, HeapObject::Array(output), &[])
+                self.copy_array_snapshot(projection.ty, &values, &indices)
             }
             _ => Err(VmError::invariant(
                 "verified projection does not match its runtime object",
@@ -4744,17 +4738,30 @@ impl Engine<'_, '_> {
             Ok(indices) => indices,
             Err(panic) => return Ok(Err(panic)),
         };
-        let mut output = Vec::with_capacity(indices.len());
-        for index in indices {
-            let value = Some(self.copy_value(present(&values[index], "slice item")?)?);
-            self.retain_optional_temporary(&value);
-            output.push(value);
-        }
-        Ok(Ok(self.allocate(
-            result_ty,
-            HeapObject::Array(output),
-            &[],
-        )?))
+        Ok(Ok(self.copy_array_snapshot(result_ty, &values, &indices)?))
+    }
+
+    fn copy_array_snapshot(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        values: &[Option<Value>],
+        indices: &[usize],
+    ) -> Result<Value, VmError> {
+        let marker = self.temporary_roots.len();
+        let result = (|| {
+            let mut output = Vec::with_capacity(indices.len());
+            for &index in indices {
+                let source = values
+                    .get(index)
+                    .ok_or_else(|| VmError::invariant("normalized slice index is out of bounds"))?;
+                let value = self.copy_value(present(source, "slice item")?)?;
+                self.retain_temporary(&value);
+                output.push(Some(value));
+            }
+            self.allocate(result_ty, HeapObject::Array(output), &[])
+        })();
+        self.temporary_roots.truncate(marker);
+        result
     }
 
     fn prepare_call(

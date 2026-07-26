@@ -29,3 +29,11 @@ allocation counts, collection schedules, or storage strategy. The eager
 runtime and every candidate COW runtime must satisfy the same unchanged
 fixtures; an implementation that needs different expected output is not an
 optimization.
+
+Materialized array slices use that same rule. The bootstrap routes both a
+direct slice operation and the materialization of a borrowed slice place
+through one eager snapshot copier. It recursively copies ordinary `Copy`
+elements, preserves the deliberate immutable `String` and `Ref[T]` identity
+sharing rules, and allocates a distinct outer `Array`. A `ref` or `mut` slice
+argument is not materialized by this path: it remains a temporary region loan
+over the source array.

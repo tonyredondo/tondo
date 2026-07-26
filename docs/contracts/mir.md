@@ -13,9 +13,9 @@ BORROW-006 borrowed-iteration boundary verification, TERM-001/TERM-002 terminal
 classification and normal-path ownership, and TERM-003 explicit defer/guard
 cleanup, TERM-004 closed abnormal fallback lowering, and TERM-005 exact
 explicit/fallback exclusion, REF-001 identity aggregates/shared projections,
-REF-002 identity equality/key operands, and ARRAY-001 runtime array length
-plus ARRAY-002 positive/negative checked indexing and ARRAY-003 slicing
-implemented
+REF-002 identity equality/key operands, ARRAY-001 runtime array length,
+ARRAY-002 positive/negative checked indexing, ARRAY-003 slicing, and ARRAY-004
+logical slice snapshots implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -300,6 +300,11 @@ manufactured sentinel, and MIR never normalizes, clips, or advances the
 indices. The checked operation and every projected place reuse those exact
 locals; a zero step and every later loan/write validation follow the same
 language-panic unwind edge.
+`MirOperationKind::Slice` always materializes an owning `Array[T]` and the MIR
+verifier therefore rederives `Array[T]: Copy` under the exact function generic
+assumptions. A slice that remains inside `ref`/`mut` loan metadata is only a
+place projection and does not require `T: Copy`; it never passes through the
+materializing operation.
 Compound assignment
 uses an access validation before reading its previous value and validates the
 fully computed replacement again before storing it. Every write validation

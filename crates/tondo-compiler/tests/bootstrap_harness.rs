@@ -83,6 +83,7 @@ fn value_copy_observables_are_stable_under_gc_pressure() {
             "identity".to_owned(),
             "iteration".to_owned(),
             "panic".to_owned(),
+            "slice-snapshot".to_owned(),
             "value".to_owned(),
             "write-independence".to_owned(),
         ])

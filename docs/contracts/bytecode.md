@@ -15,7 +15,8 @@ TERM-002 normal-path terminal ownership, TERM-003 explicit defer/guard cleanup,
 TERM-004 closed abnormal fallbacks, TERM-005 exact explicit/fallback exclusion,
 REF-001 managed identity cells/shared projections, REF-002 identity
 equality/keys, ARRAY-001 runtime array length, ARRAY-002 checked array
-indexing, ARRAY-003 checked slicing, and the M3 VM admission path implemented
+indexing, ARRAY-003 checked slicing, ARRAY-004 logical slice snapshots, and the
+M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -440,6 +441,12 @@ offsets only explicit negative bounds, clips them to the direction's exact
 domain, and checks remaining distance before advancing, so even `Int.min` cannot
 overflow. A zero step maps to `P0002`; an omitted negative end remains distinct
 from an explicit `-1`.
+
+Every `Slice` operation is a materialization boundary, so the verifier also
+derives the closed `Copy` capability of its complete `Array[T]` result. A slice
+projection retained only in call-loan metadata has no such requirement and can
+name affine elements. Forging a materializing operation over non-`Copy`
+elements is invalid bytecode, independently of the HIR check.
 
 The VM resolves each protected path to normalized runtime components: negative
 indices use the current array length, slices become their exact selected-index

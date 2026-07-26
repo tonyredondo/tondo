@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.61
+**Versión del tracker:** 0.62
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** fijar los snapshots lógicos de slices con una
-implementación inicial independiente y verificable (ARRAY-004).
+**Objetivo inmediato:** cerrar la distinción entre mutación `mut` de extensión
+fija y mutación estructural `var` de arrays (ARRAY-005).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1553,8 +1553,13 @@ lifetimes escritos por el usuario.
   panic y avanza sin overflow incluso con `Int.min`. Paso cero produce
   `P0002`; el verificador rechaza bases, resultados o bounds incompatibles.
 
-- [ ] **ARRAY-004 — Implementar snapshots lógicos de slices.** La
-  representación inicial puede copiar.
+- [x] **ARRAY-004 — Implementar snapshots lógicos de slices.** Slice directo y
+  materialización por un préstamo compartido usan un único
+  `copy_array_snapshot`. La VM eager crea otro `Array` y copia lógicamente cada
+  elemento; contenido ordinario queda separado y `Ref[T]` conserva identidad.
+  MIR y bytecode rederivan `Array[T]: Copy` solo para materialización, mientras
+  las proyecciones `ref`/`mut` pueden cubrir elementos afines sin crear otro
+  propietario. El corpus black-box fija estos observables sin comprometer COW.
 
 - [ ] **ARRAY-005 — Implementar mutación `mut` de extensión fija y `var`
   estructural.**
@@ -2073,14 +2078,36 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es ARRAY-004: fijar que cada slice materializado sea
-un snapshot lógico independiente, demostrar separación tras escrituras en
-ambas direcciones y conservar los préstamos `ref`/`mut` como vistas sobre el
-array original sin comprometer una representación física concreta.
+La siguiente acción activa es ARRAY-005: auditar todos los caminos de escritura
+de arrays, cerrar `mut` como permiso de extensión fija y `var` como permiso
+estructural, y demostrar que slices y préstamos nunca adquieren por accidente
+capacidad de cambiar longitud.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.62 — 2026-07-25
+
+- Se cierra ARRAY-004 con una sola rutina de snapshot lógico para slice directo
+  y materialización por un parámetro `ref`. La implementación eager copia cada
+  elemento mediante el copiador exhaustivo ya fijado por ADR-011, sin exponer
+  storage, handles, refcounts ni una decisión de COW.
+- El fixture estable `tests/runtime/value-copy/slice-snapshot.to` prueba
+  separación tras escrituras en ambas direcciones, elementos anidados,
+  asignación solapada, identidad `Ref`, materialización a través de préstamo y
+  mutación de la región original mediante `mut`.
+- El mismo fixture se ejecuta con límites ordinarios y con umbral inicial de GC
+  igual a uno; ambas ejecuciones producen la misma observación completa del
+  driver y los mismos sidecars.
+- MIR y bytecode vuelven a demostrar `Array[T]: Copy` en toda operación Slice
+  que materializa otro propietario. Una mutación adversarial a `Array[Join[…]]`
+  es rechazada, mientras la proyección `ref values[:]` equivalente permanece
+  válida porque solo reserva una región.
+- La puerta completa pasa con 574 tests —504 del núcleo del compilador, 27 de
+  la VM y 43 de CLI/integración—, formatter canónico del nuevo fixture,
+  `cargo fmt --check`, `cargo check`, `cargo build`, Clippy y rustdoc con
+  warnings como error, y `git diff --check`.
 
 ### 0.61 — 2026-07-25
 

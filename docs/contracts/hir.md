@@ -16,7 +16,8 @@ normal-path terminal ownership, TERM-003 checked synchronous `defer` actions
 and affine guards, TERM-004 downstream closed-fallback admission, and verified
 MIR admission, REF-001 safe identity construction and shared content
 projection, REF-002 identity equality/key admission, ARRAY-001 runtime length,
-ARRAY-002 typed array indexing, and ARRAY-003 typed slicing implemented
+ARRAY-002 typed array indexing, ARRAY-003 typed slicing, and ARRAY-004 logical
+slice ownership implemented
 
 ## Boundary
 
@@ -574,6 +575,10 @@ slice into the explicit value `-1`. A materialized slice has type `Array[T]`
 and requires `T: Copy`, while a call argument such as `ref values[start:end]`
 retains one projected loan over the original array and can therefore observe an
 affine element without copying it.
+The availability verifier independently rederives that use-sensitive boundary:
+a stored/returned slice is a new logical owner and an affine transfer is
+invalid, while `ref`/`mut` call access reserves the original projected region.
+HIR records no storage, stride, sharing, uniqueness, or COW decision.
 
 Record construction, update, projection, and inherent calls enforce visibility
 against the declaring module. External construction of a record with hidden

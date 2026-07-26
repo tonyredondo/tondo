@@ -3,7 +3,9 @@
 These fixtures are the representation-independent oracle for Tondo value-copy
 semantics. They cover the six observable boundaries required by VALUE-002:
 logical value, independence after writes, `Ref` identity, iteration, language
-panic, and survival under GC pressure.
+panic, and survival under GC pressure. The slice-snapshot case additionally
+fixes ARRAY-004 across direct materialization, materialization through `ref`,
+exclusive region mutation, nested values, and identity-bearing elements.
 
 The ordinary runtime harness checks each case against its public sidecars. A
 second integration test runs the same source with an initial GC threshold of

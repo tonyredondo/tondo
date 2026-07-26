@@ -4382,6 +4382,12 @@ impl Verifier<'_> {
                 {
                     return Err(operation_error(context));
                 }
+                if !self.capability(operation.ty, ClosedCapability::Copy, context)? {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "slice operation materializes a non-Copy Array",
+                    ));
+                }
                 self.verify_runtime_conflict_ids(function, against, context)?;
                 let _ = operation_access_place(operation, context)?;
             }
