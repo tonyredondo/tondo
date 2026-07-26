@@ -8,8 +8,9 @@ reinitialization, OWN-005 typed move paths, OWN-006 affine closure captures,
 OWN-007 terminal capture obligations, BORROW-001 call-local loan execution,
 BORROW-002 last-use regions, BORROW-003 fixed versus structural mutation, and
 BORROW-004 static collection-region disjunction, BORROW-005 dynamic overlap
-proofs, BORROW-006 borrowed iteration, and TERM-003 synchronous defer/guard
-execution
+proofs, BORROW-006 borrowed iteration, TERM-003 synchronous defer/guard
+execution, TERM-004/005 structural unwind exclusivity, and GC-001 verified
+trace descriptors
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -72,6 +73,8 @@ cursors retain their source and expose only a verified position into it.
 Execution uses an iterative Rust vector of frames; a Tondo call never recurses
 through the Rust call stack. Each frame owns:
 
+- one function identity that selects its immutable VM-derived trace descriptor
+  and exact typed slot schema;
 - the verified bytecode function, block, and instruction cursor;
 - one state per typed slot: dead, live-uninitialized, or live with a value;
 - one optional normalized reservation per function-local loan identity; and
@@ -161,11 +164,48 @@ root stack for Copy and Move capture operands. Later suspended tasks and host
 handles must add explicit root sources; they may not rely on conservative stack
 scanning.
 
+Bytecode admission derives one immutable frame descriptor per function and
+checks that its slot vector exactly matches the verified function. Pushing a
+frame repeats that identity, count, and type check before any slot can become a
+root. Live slots are still inspected through the tagged bootstrap `Value`
+carrier: a function-typed slot can contain either an immediate named function
+or a managed erased closure, so static type alone is not a safe root bitmap.
+The descriptor instead proves which schema is being interpreted. A future
+suspended frame retains the same function identity and slot representation, so
+it selects the same descriptor without copying its schema; GC-002 and M7 must
+register the suspended-frame container as an explicit root source, but do not
+need another frame layout.
+
 ## Collector
 
 The bootstrap collector is precise, non-moving, stop-the-world mark-and-sweep.
 It has no finalizers and can reclaim unreachable cycles. Heap handles contain a
 generation, so reuse of a reclaimed slot cannot make a stale handle valid.
+
+The VM independently derives a closed trace catalog from admitted bytecode. It
+contains one descriptor for every type and covers strings, tuples, arrays,
+maps, sets, closure environments, newtypes, records, variants, options,
+results, unions, ranges, cursors, and the future `Ref[T]` cell. Opaque results
+reuse the concrete witness shape. A generated closure environment must belong
+to exactly one callable and retains its ordered capture schema. Intrinsic
+arities, referenced types, nominal layouts, frame slots, duplicate
+environments, and cyclic opaque representations are validated while deriving
+the catalog.
+
+Every heap slot stores the type ID of the descriptor under which it was
+allocated. Allocation and replacement first prove that the runtime object
+matches that descriptor: object family, aggregate arity, nominal or callable
+identity, field/member order, variant payload shape, union member, and cursor
+mode are checked where applicable. Marking then follows only the present edges
+authorized by that same descriptor. A rejected replacement leaves the previous
+object intact. Copying an object preserves its original descriptor, including
+through callable erasure and opaque representation boundaries.
+
+`Pointer[T]`, `Join[T,E]`, `Command`, and `Pipeline` currently have no
+constructible managed bootstrap representation and therefore admit no heap
+object descriptor. REF-001 and M7 must extend the sealed catalog before their
+new runtime object shapes can be allocated; an ad-hoc object-side tracing
+method is not an extension point.
 
 Allocation may request a full collection when the object threshold, byte
 budget, or slot budget is approached. The object being allocated and all of its

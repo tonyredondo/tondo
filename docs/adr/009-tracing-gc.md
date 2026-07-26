@@ -14,5 +14,13 @@ single-thread bootstrap VM.
 
 ## Consequences
 
-Frames and managed objects expose precise trace metadata. The native runtime may
-later use ARC plus cycle collection without changing source semantics.
+The VM derives immutable object and frame descriptors from the closed verified
+bytecode catalogs rather than trusting compiler-supplied tracing flags. Every
+heap slot retains its descriptor identity; allocation, mutation, and marking
+use the same checked shape. Active frames validate an exact typed slot schema,
+and a future suspended frame can retain that schema unchanged.
+
+The bootstrap representation remains deliberately explicit and more expensive
+than a compact production layout. The native runtime may later use ARC plus
+cycle collection without changing source semantics, provided it preserves the
+same reachability and identity tests.

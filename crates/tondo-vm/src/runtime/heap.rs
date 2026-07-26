@@ -2,7 +2,8 @@ use std::collections::BTreeSet;
 use std::mem;
 
 use crate::bytecode::{
-    BytecodeCallableId, BytecodeCursorMode, BytecodeNominalId, BytecodeRangeKind, BytecodeTypeId,
+    BytecodeCallableId, BytecodeCursorMode, BytecodeNominalId, BytecodeRangeKind,
+    BytecodeTraceDescriptor, BytecodeTypeId, BytecodeVariantPayload,
 };
 
 use super::value::{AggregatePayload, Value};
@@ -67,39 +68,6 @@ pub(super) enum HeapObject {
 }
 
 impl HeapObject {
-    fn trace_values(&self, output: &mut Vec<Value>) {
-        match self {
-            Self::String(_) | Self::OptionNone => {}
-            Self::Tuple(values) | Self::Array(values) | Self::Set(values) => {
-                output.extend(values.iter().flatten().cloned());
-            }
-            Self::Closure { captures, .. } => {
-                output.extend(captures.iter().flatten().cloned());
-            }
-            Self::Map(entries) => {
-                for (key, value) in entries {
-                    output.extend(key.iter().cloned());
-                    output.extend(value.iter().cloned());
-                }
-            }
-            Self::Newtype { value, .. }
-            | Self::OptionSome(value)
-            | Self::ResultOk(value)
-            | Self::ResultErr(value)
-            | Self::Union { value, .. }
-            | Self::Ref(value) => output.extend(value.iter().cloned()),
-            Self::Record { fields, .. } => {
-                output.extend(fields.iter().filter_map(|(_, value)| value.clone()));
-            }
-            Self::Variant { payload, .. } => payload.trace_values(output),
-            Self::Range { start, end, .. } => {
-                output.extend(start.iter().cloned());
-                output.extend(end.iter().cloned());
-            }
-            Self::Iterator { source, .. } => output.extend(source.iter().cloned()),
-        }
-    }
-
     fn estimated_bytes(&self) -> u64 {
         let base = mem::size_of::<Self>() as u64;
         let value = mem::size_of::<Option<Value>>() as u64;
@@ -136,12 +104,14 @@ impl HeapObject {
 struct HeapSlot {
     generation: u32,
     marked: bool,
+    descriptor: BytecodeTypeId,
     object: Option<HeapObject>,
     bytes: u64,
 }
 
 #[derive(Debug)]
 pub(super) struct Heap {
+    descriptors: Vec<BytecodeTraceDescriptor>,
     slots: Vec<HeapSlot>,
     free: Vec<u32>,
     live_objects: u32,
@@ -151,8 +121,9 @@ pub(super) struct Heap {
 }
 
 impl Heap {
-    pub(super) fn new(limits: VmLimits) -> Self {
+    pub(super) fn new(limits: VmLimits, descriptors: Vec<BytecodeTraceDescriptor>) -> Self {
         Self {
+            descriptors,
             slots: Vec::new(),
             free: Vec::new(),
             live_objects: 0,
@@ -164,16 +135,18 @@ impl Heap {
 
     pub(super) fn allocate(
         &mut self,
+        descriptor: BytecodeTypeId,
         object: HeapObject,
         roots: &[Value],
         statistics: &mut VmStatistics,
     ) -> Result<HeapHandle, VmError> {
+        Self::visit_object(&self.descriptors, descriptor, &object, |_| {})?;
         let bytes = object.estimated_bytes();
         if self.live_objects >= self.next_collection
             || self.live_objects >= self.limits.max_heap_objects
             || self.live_bytes.saturating_add(bytes) > self.limits.max_heap_bytes
         {
-            self.collect_with_pending(roots, Some(&object), statistics)?;
+            self.collect_with_pending(roots, Some((descriptor, &object)), statistics)?;
         }
         if self.live_objects >= self.limits.max_heap_objects
             || self.live_bytes.saturating_add(bytes) > self.limits.max_heap_bytes
@@ -194,6 +167,7 @@ impl Heap {
                 slot.generation = 1;
             }
             slot.object = Some(object);
+            slot.descriptor = descriptor;
             slot.bytes = bytes;
             HeapHandle {
                 index,
@@ -205,6 +179,7 @@ impl Heap {
             self.slots.push(HeapSlot {
                 generation: 1,
                 marked: false,
+                descriptor,
                 object: Some(object),
                 bytes,
             });
@@ -232,6 +207,20 @@ impl Heap {
             .ok_or_else(|| VmError::invariant("heap handle refers to a collected object"))
     }
 
+    pub(super) fn descriptor(&self, handle: HeapHandle) -> Result<BytecodeTypeId, VmError> {
+        let slot = self
+            .slots
+            .get(handle.index as usize)
+            .filter(|slot| slot.generation == handle.generation)
+            .ok_or_else(|| VmError::invariant("stale or invalid heap handle"))?;
+        if slot.object.is_none() {
+            return Err(VmError::invariant(
+                "heap handle refers to a collected object",
+            ));
+        }
+        Ok(slot.descriptor)
+    }
+
     pub(super) fn replace(
         &mut self,
         handle: HeapHandle,
@@ -239,11 +228,13 @@ impl Heap {
         roots: &[Value],
         statistics: &mut VmStatistics,
     ) -> Result<(), VmError> {
+        let descriptor = self.descriptor(handle)?;
+        Self::visit_object(&self.descriptors, descriptor, &object, |_| {})?;
         let old_bytes = self.get(handle)?.estimated_bytes();
         let new_bytes = object.estimated_bytes();
         let growth = new_bytes.saturating_sub(old_bytes);
         if self.live_bytes.saturating_add(growth) > self.limits.max_heap_bytes {
-            self.collect_with_pending(roots, Some(&object), statistics)?;
+            self.collect_with_pending(roots, Some((descriptor, &object)), statistics)?;
         }
         if self.live_bytes.saturating_add(growth) > self.limits.max_heap_bytes {
             return Err(VmError::OutOfMemory {
@@ -280,17 +271,20 @@ impl Heap {
     fn collect_with_pending(
         &mut self,
         roots: &[Value],
-        pending: Option<&HeapObject>,
+        pending: Option<(BytecodeTypeId, &HeapObject)>,
         statistics: &mut VmStatistics,
     ) -> Result<(), VmError> {
         for slot in &mut self.slots {
             slot.marked = false;
         }
         let mut work = roots.to_vec();
-        if let Some(object) = pending {
-            object.trace_values(&mut work);
+        if let Some((descriptor, object)) = pending {
+            Self::visit_object(&self.descriptors, descriptor, object, |value| {
+                work.push(value.clone());
+            })?;
         }
         let mut visited = BTreeSet::new();
+        let descriptors = &self.descriptors;
         while let Some(value) = work.pop() {
             let Some(handle) = value.heap_handle() else {
                 continue;
@@ -308,7 +302,10 @@ impl Heap {
                 .as_ref()
                 .ok_or_else(|| VmError::invariant("GC root refers to a collected object"))?;
             slot.marked = true;
-            object.trace_values(&mut work);
+            let descriptor = slot.descriptor;
+            Self::visit_object(descriptors, descriptor, object, |value| {
+                work.push(value.clone());
+            })?;
         }
 
         let before = self.live_objects;
@@ -340,4 +337,161 @@ impl Heap {
     pub(super) fn live_objects(&self) -> u32 {
         self.live_objects
     }
+
+    fn visit_object(
+        descriptors: &[BytecodeTraceDescriptor],
+        descriptor: BytecodeTypeId,
+        object: &HeapObject,
+        mut visit: impl FnMut(&Value),
+    ) -> Result<(), VmError> {
+        let descriptor = descriptors
+            .get(descriptor.index() as usize)
+            .ok_or_else(|| VmError::invariant("heap object has an unknown trace descriptor"))?;
+        match (descriptor, object) {
+            (BytecodeTraceDescriptor::String, HeapObject::String(_))
+            | (BytecodeTraceDescriptor::Option { .. }, HeapObject::OptionNone) => {}
+            (BytecodeTraceDescriptor::Tuple { fields }, HeapObject::Tuple(values))
+                if fields.len() == values.len() =>
+            {
+                visit_optional_values(values, &mut visit);
+            }
+            (BytecodeTraceDescriptor::Array { .. }, HeapObject::Array(values))
+            | (BytecodeTraceDescriptor::Set { .. }, HeapObject::Set(values)) => {
+                visit_optional_values(values, &mut visit);
+            }
+            (BytecodeTraceDescriptor::Map { .. }, HeapObject::Map(entries)) => {
+                for (key, value) in entries {
+                    visit_optional_value(key, &mut visit);
+                    visit_optional_value(value, &mut visit);
+                }
+            }
+            (
+                BytecodeTraceDescriptor::Closure {
+                    callable,
+                    captures: expected,
+                },
+                HeapObject::Closure {
+                    callable: actual,
+                    captures,
+                },
+            ) if callable == actual && expected.len() == captures.len() => {
+                visit_optional_values(captures, &mut visit);
+            }
+            (
+                BytecodeTraceDescriptor::Newtype {
+                    nominal: expected, ..
+                },
+                HeapObject::Newtype {
+                    nominal: actual,
+                    value,
+                },
+            ) if expected == actual => visit_optional_value(value, &mut visit),
+            (
+                BytecodeTraceDescriptor::Record {
+                    nominal: expected,
+                    fields: expected_fields,
+                    ..
+                },
+                HeapObject::Record {
+                    nominal: actual,
+                    fields,
+                },
+            ) if expected == actual
+                && expected_fields.len() == fields.len()
+                && expected_fields
+                    .iter()
+                    .zip(fields)
+                    .all(|(expected, (actual, _))| expected.member == *actual) =>
+            {
+                for (_, value) in fields {
+                    visit_optional_value(value, &mut visit);
+                }
+            }
+            (
+                BytecodeTraceDescriptor::Variant { variants, .. },
+                HeapObject::Variant { variant, payload },
+            ) => {
+                let expected = variants
+                    .iter()
+                    .find(|candidate| candidate.member == *variant)
+                    .ok_or_else(|| {
+                        VmError::invariant("heap variant is absent from its trace descriptor")
+                    })?;
+                visit_payload(&expected.payload, payload, &mut visit)?;
+            }
+            (BytecodeTraceDescriptor::Option { .. }, HeapObject::OptionSome(value))
+            | (BytecodeTraceDescriptor::Result { .. }, HeapObject::ResultOk(value))
+            | (BytecodeTraceDescriptor::Result { .. }, HeapObject::ResultErr(value))
+            | (BytecodeTraceDescriptor::Ref { .. }, HeapObject::Ref(value)) => {
+                visit_optional_value(value, &mut visit);
+            }
+            (BytecodeTraceDescriptor::Union { members }, HeapObject::Union { member, value })
+                if members.contains(member) =>
+            {
+                visit_optional_value(value, &mut visit)
+            }
+            (BytecodeTraceDescriptor::Range { .. }, HeapObject::Range { start, end, .. }) => {
+                visit_optional_value(start, &mut visit);
+                visit_optional_value(end, &mut visit);
+            }
+            (
+                BytecodeTraceDescriptor::Cursor { mode: expected, .. },
+                HeapObject::Iterator {
+                    mode: actual,
+                    source,
+                    ..
+                },
+            ) if expected == actual => visit_optional_value(source, &mut visit),
+            _ => {
+                return Err(VmError::invariant(
+                    "heap object does not match its verified trace descriptor",
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn visit_optional_values(values: &[Option<Value>], visit: &mut impl FnMut(&Value)) {
+    for value in values.iter().flatten() {
+        visit(value);
+    }
+}
+
+fn visit_optional_value(value: &Option<Value>, visit: &mut impl FnMut(&Value)) {
+    if let Some(value) = value {
+        visit(value);
+    }
+}
+
+fn visit_payload(
+    descriptor: &BytecodeVariantPayload,
+    payload: &AggregatePayload,
+    visit: &mut impl FnMut(&Value),
+) -> Result<(), VmError> {
+    match (descriptor, payload) {
+        (BytecodeVariantPayload::Unit, AggregatePayload::Unit) => {}
+        (BytecodeVariantPayload::Tuple(expected), AggregatePayload::Tuple(values))
+            if expected.len() == values.len() =>
+        {
+            visit_optional_values(values, visit);
+        }
+        (BytecodeVariantPayload::Record(expected), AggregatePayload::Record(fields))
+            if expected.len() == fields.len()
+                && expected
+                    .iter()
+                    .zip(fields)
+                    .all(|(expected, (actual, _))| expected.member == *actual) =>
+        {
+            for (_, value) in fields {
+                visit_optional_value(value, visit);
+            }
+        }
+        _ => {
+            return Err(VmError::invariant(
+                "heap variant payload does not match its trace descriptor",
+            ));
+        }
+    }
+    Ok(())
 }

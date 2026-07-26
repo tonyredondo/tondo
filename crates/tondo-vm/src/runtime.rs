@@ -223,6 +223,8 @@ impl From<BytecodeVerificationError> for VmError {
 
 #[cfg(test)]
 mod tests {
+    use crate::bytecode::{BytecodeCallableId, BytecodeTraceDescriptor, BytecodeTypeId};
+
     use super::heap::{Heap, HeapObject};
     use super::value::{Value, snapshot_value};
     use super::*;
@@ -236,15 +238,37 @@ mod tests {
         }
     }
 
+    fn heap() -> Heap {
+        Heap::new(
+            limits(),
+            vec![
+                BytecodeTraceDescriptor::String,
+                BytecodeTraceDescriptor::Ref {
+                    value: BytecodeTypeId::new(1),
+                },
+                BytecodeTraceDescriptor::Closure {
+                    callable: BytecodeCallableId::new(7),
+                    captures: vec![BytecodeTypeId::new(0)],
+                },
+            ],
+        )
+    }
+
     #[test]
     fn precise_heap_keeps_reachable_objects_and_reclaims_unreachable_cycles() {
-        let mut heap = Heap::new(limits());
+        let mut heap = heap();
         let mut statistics = VmStatistics::default();
         let first = heap
-            .allocate(HeapObject::Ref(None), &[], &mut statistics)
+            .allocate(
+                BytecodeTypeId::new(1),
+                HeapObject::Ref(None),
+                &[],
+                &mut statistics,
+            )
             .unwrap();
         let second = heap
             .allocate(
+                BytecodeTypeId::new(1),
                 HeapObject::Ref(Some(Value::Heap(first))),
                 &[Value::Heap(first)],
                 &mut statistics,
@@ -269,14 +293,24 @@ mod tests {
 
     #[test]
     fn heap_handles_are_non_moving_and_generational() {
-        let mut heap = Heap::new(limits());
+        let mut heap = heap();
         let mut statistics = VmStatistics::default();
         let old = heap
-            .allocate(HeapObject::String("old".into()), &[], &mut statistics)
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("old".into()),
+                &[],
+                &mut statistics,
+            )
             .unwrap();
         heap.collect(&[], &mut statistics).unwrap();
         let new = heap
-            .allocate(HeapObject::String("new".into()), &[], &mut statistics)
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("new".into()),
+                &[],
+                &mut statistics,
+            )
             .unwrap();
 
         assert_eq!(old.index(), new.index());
@@ -286,15 +320,21 @@ mod tests {
 
     #[test]
     fn closure_environments_trace_and_snapshot_managed_captures() {
-        let mut heap = Heap::new(limits());
+        let mut heap = heap();
         let mut statistics = VmStatistics::default();
         let captured = heap
-            .allocate(HeapObject::String("captured".into()), &[], &mut statistics)
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("captured".into()),
+                &[],
+                &mut statistics,
+            )
             .unwrap();
         let closure = heap
             .allocate(
+                BytecodeTypeId::new(2),
                 HeapObject::Closure {
-                    callable: crate::bytecode::BytecodeCallableId::new(7),
+                    callable: BytecodeCallableId::new(7),
                     captures: vec![Some(Value::Heap(captured))],
                 },
                 &[Value::Heap(captured)],
@@ -319,5 +359,61 @@ mod tests {
 
         heap.collect(&[], &mut statistics).unwrap();
         assert_eq!(heap.live_objects(), 0);
+    }
+
+    #[test]
+    fn heap_rejects_objects_that_do_not_match_their_verified_descriptor() {
+        let mut heap = heap();
+        let mut statistics = VmStatistics::default();
+
+        let error = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::Ref(None),
+                &[],
+                &mut statistics,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, VmError::Invariant(message) if message.contains("trace descriptor"))
+        );
+        assert_eq!(heap.live_objects(), 0);
+
+        let error = heap
+            .allocate(
+                BytecodeTypeId::new(999),
+                HeapObject::String("unknown".into()),
+                &[],
+                &mut statistics,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, VmError::Invariant(message) if message.contains("unknown trace descriptor"))
+        );
+        assert_eq!(heap.live_objects(), 0);
+
+        let string = heap
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("kept".into()),
+                &[],
+                &mut statistics,
+            )
+            .unwrap();
+        let error = heap
+            .replace(
+                string,
+                HeapObject::Ref(None),
+                &[Value::Heap(string)],
+                &mut statistics,
+            )
+            .unwrap_err();
+        assert!(
+            matches!(error, VmError::Invariant(message) if message.contains("trace descriptor"))
+        );
+        assert!(matches!(
+            heap.get(string),
+            Ok(HeapObject::String(value)) if value == "kept"
+        ));
     }
 }

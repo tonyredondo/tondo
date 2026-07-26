@@ -8,9 +8,10 @@ mod disassemble;
 mod verify;
 
 pub use disassemble::disassemble;
+pub(crate) use verify::verify_bytecode_with_trace_metadata;
 pub use verify::{
     BytecodeVerificationError, BytecodeVerificationLimits, derive_copy_capabilities,
-    derive_discard_capabilities, derive_terminal_statuses, verify_bytecode,
+    derive_discard_capabilities, derive_terminal_statuses, derive_trace_metadata, verify_bytecode,
     verify_bytecode_with_limits,
 };
 
@@ -169,6 +170,82 @@ pub enum BytecodeTerminalStatus {
     Absent,
     Potential,
     Present,
+}
+
+/// Closed description of the managed edges in one bytecode type.
+///
+/// The bootstrap VM derives this independently from the verified catalog and
+/// attaches the corresponding type ID to every heap allocation. Template field
+/// types retain the nominal arguments needed to interpret generic layouts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BytecodeTraceDescriptor {
+    Inline,
+    String,
+    Tuple {
+        fields: Vec<BytecodeTypeId>,
+    },
+    Array {
+        element: BytecodeTypeId,
+    },
+    Map {
+        key: BytecodeTypeId,
+        value: BytecodeTypeId,
+    },
+    Set {
+        element: BytecodeTypeId,
+    },
+    Closure {
+        callable: BytecodeCallableId,
+        captures: Vec<BytecodeTypeId>,
+    },
+    Newtype {
+        nominal: BytecodeNominalId,
+        arguments: Vec<BytecodeTypeId>,
+        value: BytecodeTypeId,
+    },
+    Record {
+        nominal: BytecodeNominalId,
+        arguments: Vec<BytecodeTypeId>,
+        fields: Vec<BytecodeField>,
+    },
+    Variant {
+        nominal: Option<BytecodeNominalId>,
+        arguments: Vec<BytecodeTypeId>,
+        variants: Vec<BytecodeVariant>,
+    },
+    Option {
+        value: BytecodeTypeId,
+    },
+    Result {
+        success: BytecodeTypeId,
+        error: BytecodeTypeId,
+    },
+    Union {
+        members: Vec<BytecodeTypeId>,
+    },
+    Range {
+        element: BytecodeTypeId,
+    },
+    Ref {
+        value: BytecodeTypeId,
+    },
+    Cursor {
+        mode: BytecodeCursorMode,
+        collection: BytecodeTypeId,
+    },
+}
+
+/// Trace roots carried by one active or suspended frame of a function.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BytecodeFrameTraceDescriptor {
+    pub function: BytecodeFunctionId,
+    pub slots: Vec<BytecodeTypeId>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BytecodeTraceMetadata {
+    pub types: Vec<BytecodeTraceDescriptor>,
+    pub frames: Vec<BytecodeFrameTraceDescriptor>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

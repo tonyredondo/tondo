@@ -11,9 +11,9 @@ use crate::bytecode::{
     BytecodePlace, BytecodePrefixOperator, BytecodeProgram, BytecodeProjection,
     BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind,
     BytecodeScalarType, BytecodeScopeId, BytecodeSlotId, BytecodeSpan, BytecodeTag,
-    BytecodeTerminalUnwindAction, BytecodeTerminator, BytecodeTerminatorKind, BytecodeTypeId,
-    BytecodeTypeKind, BytecodeVariantPayload, BytecodeVerificationLimits,
-    verify_bytecode_with_limits,
+    BytecodeTerminalUnwindAction, BytecodeTerminator, BytecodeTerminatorKind,
+    BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind, BytecodeVariantPayload,
+    BytecodeVerificationLimits, verify_bytecode_with_trace_metadata,
 };
 
 use super::heap::{Heap, HeapHandle, HeapObject};
@@ -64,14 +64,14 @@ pub fn execute_with_limits(
     limits: VmLimits,
 ) -> Result<VmExecution, VmError> {
     validate_limits(limits)?;
-    verify_bytecode_with_limits(
+    let trace = verify_bytecode_with_trace_metadata(
         program,
         BytecodeVerificationLimits {
             max_dataflow_steps: limits.max_verification_steps,
         },
     )?;
     validate_entry_contract(program, entry)?;
-    Engine::new(program, host, limits).run(entry)
+    Engine::new(program, host, limits, trace).run(entry)
 }
 
 fn validate_entry_contract(
@@ -287,11 +287,21 @@ struct Frame {
 }
 
 impl Frame {
-    fn roots(&self, output: &mut Vec<Value>) {
-        output.extend(self.slots.iter().filter_map(|slot| match slot {
-            SlotState::Value(value) => Some(value.clone()),
-            SlotState::Dead | SlotState::Uninitialized => None,
-        }));
+    fn roots(
+        &self,
+        trace: &crate::bytecode::BytecodeFrameTraceDescriptor,
+        output: &mut Vec<Value>,
+    ) {
+        output.extend(
+            trace
+                .slots
+                .iter()
+                .zip(&self.slots)
+                .filter_map(|(_, slot)| match slot {
+                    SlotState::Value(value) => Some(value.clone()),
+                    SlotState::Dead | SlotState::Uninitialized => None,
+                }),
+        );
         for cleanup in &self.cleanups {
             cleanup.roots(output);
         }
@@ -304,6 +314,7 @@ struct Engine<'program, 'host> {
     limits: VmLimits,
     heap: Heap,
     frames: Vec<Frame>,
+    frame_traces: Vec<crate::bytecode::BytecodeFrameTraceDescriptor>,
     temporary_roots: Vec<Value>,
     pending_panic: Option<VmPanic>,
     statistics: VmStatistics,
@@ -316,13 +327,15 @@ impl<'program, 'host> Engine<'program, 'host> {
         program: &'program BytecodeProgram,
         host: &'host mut dyn VmHost,
         limits: VmLimits,
+        trace: BytecodeTraceMetadata,
     ) -> Self {
         Self {
             program,
             host,
             limits,
-            heap: Heap::new(limits),
+            heap: Heap::new(limits, trace.types),
             frames: Vec::new(),
+            frame_traces: trace.frames,
             temporary_roots: Vec::new(),
             pending_panic: None,
             statistics: VmStatistics::default(),
@@ -449,6 +462,20 @@ impl<'program, 'host> Engine<'program, 'host> {
         for (slot, value) in function.parameters.iter().copied().zip(arguments) {
             slots[slot.index() as usize] = SlotState::Value(value);
         }
+        self.frame_traces
+            .get(function_id.index() as usize)
+            .filter(|trace| {
+                trace.function == function_id
+                    && trace.slots.len() == function.slots.len()
+                    && trace
+                        .slots
+                        .iter()
+                        .zip(&function.slots)
+                        .all(|(expected, slot)| *expected == slot.ty)
+            })
+            .ok_or_else(|| {
+                VmError::invariant("function frame does not match its verified trace descriptor")
+            })?;
         self.frames.push(Frame {
             function: function_id,
             block: function.entry,
@@ -1475,7 +1502,13 @@ impl<'program, 'host> Engine<'program, 'host> {
                 unwind,
             } => {
                 let span = self.resolve_span(frame, terminator.span)?;
-                match self.iterator_next(frame, state, borrowed_source.as_ref(), span)? {
+                match self.iterator_next(
+                    frame,
+                    state,
+                    borrowed_source.as_ref(),
+                    destination.ty,
+                    span,
+                )? {
                     Ok(Some(IteratorStep::Value(value))) if borrowed_source.is_none() => {
                         self.write_place(frame, destination, value)?;
                         self.jump(frame, *has_value);
@@ -1912,20 +1945,40 @@ impl<'program, 'host> Engine<'program, 'host> {
         }
     }
 
-    fn roots(&self, extra: &[Value]) -> Vec<Value> {
+    fn roots(&self, extra: &[Value]) -> Result<Vec<Value>, VmError> {
         let mut roots = extra.to_vec();
         roots.extend(self.temporary_roots.iter().cloned());
         for frame in &self.frames {
-            frame.roots(&mut roots);
+            let trace = self
+                .frame_traces
+                .get(frame.function.index() as usize)
+                .filter(|trace| trace.function == frame.function)
+                .ok_or_else(|| VmError::invariant("live frame has no verified trace descriptor"))?;
+            frame.roots(trace, &mut roots);
         }
-        roots
+        Ok(roots)
     }
 
-    fn allocate(&mut self, object: HeapObject, extra: &[Value]) -> Result<Value, VmError> {
-        let roots = self.roots(extra);
+    fn allocate(
+        &mut self,
+        descriptor: BytecodeTypeId,
+        object: HeapObject,
+        extra: &[Value],
+    ) -> Result<Value, VmError> {
+        let roots = self.roots(extra)?;
         self.heap
-            .allocate(object, &roots, &mut self.statistics)
+            .allocate(descriptor, object, &roots, &mut self.statistics)
             .map(Value::Heap)
+    }
+
+    fn allocate_like(
+        &mut self,
+        source: HeapHandle,
+        object: HeapObject,
+        extra: &[Value],
+    ) -> Result<Value, VmError> {
+        let descriptor = self.heap.descriptor(source)?;
+        self.allocate(descriptor, object, extra)
     }
 
     fn replace_object(
@@ -1934,7 +1987,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         object: HeapObject,
         extra: &[Value],
     ) -> Result<(), VmError> {
-        let roots = self.roots(extra);
+        let roots = self.roots(extra)?;
         self.heap
             .replace(handle, object, &roots, &mut self.statistics)
     }
@@ -2017,7 +2070,7 @@ impl Engine<'_, '_> {
             BytecodeConstant::String(spelling) => {
                 let text = literal::string(spelling)
                     .ok_or_else(|| VmError::invariant("verified string literal is malformed"))?;
-                self.allocate(HeapObject::String(text), &[])
+                self.allocate(ty, HeapObject::String(text), &[])
             }
             BytecodeConstant::Named(id) => {
                 let value = self
@@ -2047,7 +2100,7 @@ impl Engine<'_, '_> {
             }
             BytecodeConstantValueKind::Char(value) => Ok(Value::Char(*value)),
             BytecodeConstantValueKind::String(value) => {
-                self.allocate(HeapObject::String(value.clone()), &[])
+                self.allocate(constant.ty, HeapObject::String(value.clone()), &[])
             }
             BytecodeConstantValueKind::Function {
                 callable,
@@ -2059,6 +2112,7 @@ impl Engine<'_, '_> {
             BytecodeConstantValueKind::Tuple(values) => {
                 let values = self.materialize_constants(values)?;
                 self.allocate(
+                    constant.ty,
                     HeapObject::Tuple(values.into_iter().map(Some).collect()),
                     &[],
                 )
@@ -2066,6 +2120,7 @@ impl Engine<'_, '_> {
             BytecodeConstantValueKind::Array(values) => {
                 let values = self.materialize_constants(values)?;
                 self.allocate(
+                    constant.ty,
                     HeapObject::Array(values.into_iter().map(Some).collect()),
                     &[],
                 )
@@ -2078,15 +2133,20 @@ impl Engine<'_, '_> {
                         Some(self.materialize_constant(value)?),
                     ));
                 }
-                self.allocate(HeapObject::Map(output), &[])
+                self.allocate(constant.ty, HeapObject::Map(output), &[])
             }
             BytecodeConstantValueKind::Set(values) => {
                 let values = self.materialize_constants(values)?;
-                self.allocate(HeapObject::Set(values.into_iter().map(Some).collect()), &[])
+                self.allocate(
+                    constant.ty,
+                    HeapObject::Set(values.into_iter().map(Some).collect()),
+                    &[],
+                )
             }
             BytecodeConstantValueKind::Newtype { nominal, value } => {
                 let value = self.materialize_constant(value)?;
                 self.allocate(
+                    constant.ty,
                     HeapObject::Newtype {
                         nominal: *nominal,
                         value: Some(value.clone()),
@@ -2104,6 +2164,7 @@ impl Engine<'_, '_> {
                     .filter_map(|(_, value)| value.clone())
                     .collect::<Vec<_>>();
                 self.allocate(
+                    constant.ty,
                     HeapObject::Record {
                         nominal: *nominal,
                         fields: output,
@@ -2116,6 +2177,7 @@ impl Engine<'_, '_> {
                 let mut roots = Vec::new();
                 payload.trace_values(&mut roots);
                 self.allocate(
+                    constant.ty,
                     HeapObject::Variant {
                         variant: *variant,
                         payload,
@@ -2123,23 +2185,38 @@ impl Engine<'_, '_> {
                     &roots,
                 )
             }
-            BytecodeConstantValueKind::OptionNone => self.allocate(HeapObject::OptionNone, &[]),
+            BytecodeConstantValueKind::OptionNone => {
+                self.allocate(constant.ty, HeapObject::OptionNone, &[])
+            }
             BytecodeConstantValueKind::OptionSome(value) => {
                 let value = self.materialize_constant(value)?;
-                self.allocate(HeapObject::OptionSome(Some(value.clone())), &[value])
+                self.allocate(
+                    constant.ty,
+                    HeapObject::OptionSome(Some(value.clone())),
+                    &[value],
+                )
             }
             BytecodeConstantValueKind::ResultOk(value) => {
                 let value = self.materialize_constant(value)?;
-                self.allocate(HeapObject::ResultOk(Some(value.clone())), &[value])
+                self.allocate(
+                    constant.ty,
+                    HeapObject::ResultOk(Some(value.clone())),
+                    &[value],
+                )
             }
             BytecodeConstantValueKind::ResultErr(value) => {
                 let value = self.materialize_constant(value)?;
-                self.allocate(HeapObject::ResultErr(Some(value.clone())), &[value])
+                self.allocate(
+                    constant.ty,
+                    HeapObject::ResultErr(Some(value.clone())),
+                    &[value],
+                )
             }
             BytecodeConstantValueKind::Range { kind, start, end } => {
                 let start = self.materialize_constant(start)?;
                 let end = self.materialize_constant(end)?;
                 self.allocate(
+                    constant.ty,
                     HeapObject::Range {
                         kind: *kind,
                         start: Some(start.clone()),
@@ -2201,35 +2278,36 @@ impl Engine<'_, '_> {
                     BytecodeCursorMode::Ref => source,
                 };
                 let roots = source.iter().cloned().collect::<Vec<_>>();
-                self.allocate(HeapObject::Iterator { mode, source, next }, &roots)
+                self.allocate_like(*handle, HeapObject::Iterator { mode, source, next }, &roots)
             }
             HeapObject::Tuple(values) => {
                 let values = self.copy_optional_values(&values)?;
-                self.allocate(HeapObject::Tuple(values), &[])
+                self.allocate_like(*handle, HeapObject::Tuple(values), &[])
             }
             HeapObject::Array(values) => {
                 let values = self.copy_optional_values(&values)?;
-                self.allocate(HeapObject::Array(values), &[])
+                self.allocate_like(*handle, HeapObject::Array(values), &[])
             }
             HeapObject::Map(entries) => {
                 let output = self.copy_map_entries(&entries)?;
-                self.allocate(HeapObject::Map(output), &[])
+                self.allocate_like(*handle, HeapObject::Map(output), &[])
             }
             HeapObject::Set(values) => {
                 let values = self.copy_optional_values(&values)?;
-                self.allocate(HeapObject::Set(values), &[])
+                self.allocate_like(*handle, HeapObject::Set(values), &[])
             }
             HeapObject::Closure { callable, captures } => {
                 let captures = self.copy_optional_values(&captures)?;
-                self.allocate(HeapObject::Closure { callable, captures }, &[])
+                self.allocate_like(*handle, HeapObject::Closure { callable, captures }, &[])
             }
             HeapObject::Newtype { nominal, value } => {
                 let value = self.copy_optional_value(&value)?;
-                self.allocate(HeapObject::Newtype { nominal, value }, &[])
+                self.allocate_like(*handle, HeapObject::Newtype { nominal, value }, &[])
             }
             HeapObject::Record { nominal, fields } => {
                 let output = self.copy_record_fields(&fields)?;
-                self.allocate(
+                self.allocate_like(
+                    *handle,
                     HeapObject::Record {
                         nominal,
                         fields: output,
@@ -2239,24 +2317,24 @@ impl Engine<'_, '_> {
             }
             HeapObject::Variant { variant, payload } => {
                 let payload = self.copy_payload(&payload)?;
-                self.allocate(HeapObject::Variant { variant, payload }, &[])
+                self.allocate_like(*handle, HeapObject::Variant { variant, payload }, &[])
             }
-            HeapObject::OptionNone => self.allocate(HeapObject::OptionNone, &[]),
+            HeapObject::OptionNone => self.allocate_like(*handle, HeapObject::OptionNone, &[]),
             HeapObject::OptionSome(value) => {
                 let value = self.copy_optional_value(&value)?;
-                self.allocate(HeapObject::OptionSome(value), &[])
+                self.allocate_like(*handle, HeapObject::OptionSome(value), &[])
             }
             HeapObject::ResultOk(value) => {
                 let value = self.copy_optional_value(&value)?;
-                self.allocate(HeapObject::ResultOk(value), &[])
+                self.allocate_like(*handle, HeapObject::ResultOk(value), &[])
             }
             HeapObject::ResultErr(value) => {
                 let value = self.copy_optional_value(&value)?;
-                self.allocate(HeapObject::ResultErr(value), &[])
+                self.allocate_like(*handle, HeapObject::ResultErr(value), &[])
             }
             HeapObject::Union { member, value } => {
                 let value = self.copy_optional_value(&value)?;
-                self.allocate(HeapObject::Union { member, value }, &[])
+                self.allocate_like(*handle, HeapObject::Union { member, value }, &[])
             }
             HeapObject::Range { kind, start, end } => {
                 let marker = self.temporary_roots.len();
@@ -2268,7 +2346,7 @@ impl Engine<'_, '_> {
                 })();
                 self.temporary_roots.truncate(marker);
                 let (start, end) = result?;
-                self.allocate(HeapObject::Range { kind, start, end }, &[])
+                self.allocate_like(*handle, HeapObject::Range { kind, start, end }, &[])
             }
         }
     }
@@ -2369,7 +2447,7 @@ impl Engine<'_, '_> {
             }
             BytecodeRvalueKind::Construct { shape, values } => {
                 let values = self.evaluate_operands(frame, values)?;
-                self.construct_aggregate(shape, values)
+                self.construct_aggregate(rvalue.ty, shape, values)
             }
             BytecodeRvalueKind::RecordUpdate { base, fields } => {
                 let base = self.evaluate_operand(frame, base)?;
@@ -2392,6 +2470,7 @@ impl Engine<'_, '_> {
                     destination.1 = Some(value);
                 }
                 self.allocate(
+                    rvalue.ty,
                     HeapObject::Record {
                         nominal,
                         fields: output,
@@ -2406,6 +2485,7 @@ impl Engine<'_, '_> {
                     | BytecodeCoercion::Opaque
                     | BytecodeCoercion::CallableErasure => Ok(value_result),
                     BytecodeCoercion::UnionInjection => self.allocate(
+                        rvalue.ty,
                         HeapObject::Union {
                             member: value.ty,
                             value: Some(value_result.clone()),
@@ -2414,6 +2494,7 @@ impl Engine<'_, '_> {
                     ),
                     BytecodeCoercion::UnionWidening => Ok(value_result),
                     BytecodeCoercion::OptionLift => self.allocate(
+                        rvalue.ty,
                         HeapObject::OptionSome(Some(value_result.clone())),
                         &[value_result],
                     ),
@@ -2428,12 +2509,13 @@ impl Engine<'_, '_> {
                 value,
             } => {
                 let value = self.evaluate_operand(frame, value)?;
-                self.numeric_conversion(*target, *conversion, value)
+                self.numeric_conversion(rvalue.ty, *target, *conversion, value)
             }
             BytecodeRvalueKind::Range { kind, start, end } => {
                 let start = self.evaluate_operand(frame, start)?;
                 let end = self.evaluate_operand(frame, end)?;
                 self.allocate(
+                    rvalue.ty,
                     HeapObject::Range {
                         kind: *kind,
                         start: Some(start.clone()),
@@ -2468,6 +2550,7 @@ impl Engine<'_, '_> {
                 };
                 let value = self.evaluate_operand(frame, value)?;
                 self.allocate(
+                    rvalue.ty,
                     HeapObject::Iterator {
                         mode,
                         source: Some(value.clone()),
@@ -2500,6 +2583,7 @@ impl Engine<'_, '_> {
 
     fn construct_aggregate(
         &mut self,
+        ty: BytecodeTypeId,
         shape: &BytecodeAggregateKind,
         values: Vec<Value>,
     ) -> Result<Value, VmError> {
@@ -2618,7 +2702,7 @@ impl Engine<'_, '_> {
                 HeapObject::ResultErr(Some(value))
             }
         };
-        self.allocate(object, &roots)
+        self.allocate(ty, object, &roots)
     }
 
     fn scalar(&self, ty: BytecodeTypeId) -> Result<BytecodeScalarType, VmError> {
@@ -2853,23 +2937,45 @@ impl Engine<'_, '_> {
 
     fn numeric_conversion(
         &mut self,
+        result_ty: BytecodeTypeId,
         target: BytecodeScalarType,
         conversion: BytecodeNumericConversion,
         value: Value,
     ) -> Result<Value, VmError> {
         let converted = convert_numeric(target, &value);
         if conversion == BytecodeNumericConversion::Checked {
+            let BytecodeTypeKind::Result {
+                error: error_ty, ..
+            } = &self
+                .program
+                .ty(result_ty)
+                .ok_or_else(|| VmError::invariant("numeric conversion result type is missing"))?
+                .kind
+            else {
+                return Err(VmError::invariant(
+                    "checked numeric conversion does not produce Result",
+                ));
+            };
             match converted {
-                Ok(value) => self.allocate(HeapObject::ResultOk(Some(value.clone())), &[value]),
+                Ok(value) => self.allocate(
+                    result_ty,
+                    HeapObject::ResultOk(Some(value.clone())),
+                    &[value],
+                ),
                 Err(variant) => {
                     let error = self.allocate(
+                        *error_ty,
                         HeapObject::Variant {
                             variant,
                             payload: AggregatePayload::Unit,
                         },
                         &[],
                     )?;
-                    self.allocate(HeapObject::ResultErr(Some(error.clone())), &[error])
+                    self.allocate(
+                        result_ty,
+                        HeapObject::ResultErr(Some(error.clone())),
+                        &[error],
+                    )
                 }
             }
         } else {
@@ -3087,7 +3193,7 @@ impl Engine<'_, '_> {
                 for value in &values[start..end] {
                     output.push(Some(self.copy_value(present(value, "array rest item")?)?));
                 }
-                self.allocate(HeapObject::Array(output), &[])
+                self.allocate(projection.ty, HeapObject::Array(output), &[])
             }
             (
                 BytecodeProjectionKind::IteratorElement { index },
@@ -3114,6 +3220,7 @@ impl Engine<'_, '_> {
                 let key = present(key, "borrowed map iterator key")?.clone();
                 let value = present(value, "borrowed map iterator value")?.clone();
                 self.allocate(
+                    projection.ty,
                     HeapObject::Tuple(vec![Some(key.clone()), Some(value.clone())]),
                     &[key, value],
                 )
@@ -3138,9 +3245,13 @@ impl Engine<'_, '_> {
                         if let Some(index) = found {
                             let value =
                                 self.copy_value(present(&entries[index].1, "map value")?)?;
-                            self.allocate(HeapObject::OptionSome(Some(value.clone())), &[value])
+                            self.allocate(
+                                projection.ty,
+                                HeapObject::OptionSome(Some(value.clone())),
+                                &[value],
+                            )
                         } else {
-                            self.allocate(HeapObject::OptionNone, &[])
+                            self.allocate(projection.ty, HeapObject::OptionNone, &[])
                         }
                     }
                     BytecodeIndexAccess::MapEntry => {
@@ -3163,7 +3274,7 @@ impl Engine<'_, '_> {
                         self.copy_value(present(&values[index], "slice item")?)?,
                     ));
                 }
-                self.allocate(HeapObject::Array(output), &[])
+                self.allocate(projection.ty, HeapObject::Array(output), &[])
             }
             _ => Err(VmError::invariant(
                 "verified projection does not match its runtime object",
@@ -3248,7 +3359,7 @@ impl Engine<'_, '_> {
                 }
                 let mut roots = output.iter().flatten().cloned().collect::<Vec<_>>();
                 roots.push(Value::Heap(handle));
-                self.allocate(HeapObject::Array(output), &roots)?
+                self.allocate(projection.ty, HeapObject::Array(output), &roots)?
             }
             (BytecodeProjectionKind::IteratorSource, HeapObject::Iterator { source, .. }) => {
                 take_option(source, "iterator source")?
@@ -3984,9 +4095,11 @@ impl Engine<'_, '_> {
                         output.push((Some(key), Some(value)));
                     }
                 }
-                Ok(OperationResult::Value(
-                    self.allocate(HeapObject::Map(output), &[])?,
-                ))
+                Ok(OperationResult::Value(self.allocate(
+                    operation.ty,
+                    HeapObject::Map(output),
+                    &[],
+                )?))
             }
             BytecodeOperationKind::Index {
                 base,
@@ -4008,10 +4121,12 @@ impl Engine<'_, '_> {
                 }
                 let base = self.evaluate_operand(frame, base)?;
                 let index = self.evaluate_operand(frame, index)?;
-                Ok(match self.index_value(base, index, *access)? {
-                    Ok(value) => OperationResult::Value(value),
-                    Err((code, message)) => OperationResult::Panic(code, message),
-                })
+                Ok(
+                    match self.index_value(operation.ty, base, index, *access)? {
+                        Ok(value) => OperationResult::Value(value),
+                        Err((code, message)) => OperationResult::Panic(code, message),
+                    },
+                )
             }
             BytecodeOperationKind::Slice {
                 base,
@@ -4046,10 +4161,12 @@ impl Engine<'_, '_> {
                     .as_ref()
                     .map(|value| self.evaluate_operand(frame, value))
                     .transpose()?;
-                Ok(match self.slice_value(base, start, end, step)? {
-                    Ok(value) => OperationResult::Value(value),
-                    Err((code, message)) => OperationResult::Panic(code, message),
-                })
+                Ok(
+                    match self.slice_value(operation.ty, base, start, end, step)? {
+                        Ok(value) => OperationResult::Value(value),
+                        Err((code, message)) => OperationResult::Panic(code, message),
+                    },
+                )
             }
             BytecodeOperationKind::Call {
                 callee, arguments, ..
@@ -4369,7 +4486,11 @@ impl Engine<'_, '_> {
                 Err(panic) => return Ok(Err(panic)),
             }
         }
-        Ok(Ok(self.allocate(HeapObject::Array(output), &[])?))
+        Ok(Ok(self.allocate(
+            result_ty,
+            HeapObject::Array(output),
+            &[],
+        )?))
     }
 
     fn array_element(&self, ty: BytecodeTypeId) -> Option<BytecodeTypeId> {
@@ -4394,6 +4515,7 @@ impl Engine<'_, '_> {
 
     fn index_value(
         &mut self,
+        result_ty: BytecodeTypeId,
         base: Value,
         index: Value,
         access: BytecodeIndexAccess,
@@ -4423,11 +4545,12 @@ impl Engine<'_, '_> {
                 if let Some(position) = self.find_map_entry(&entries, &index)? {
                     let value = self.copy_value(present(&entries[position].1, "map value")?)?;
                     Ok(Ok(self.allocate(
+                        result_ty,
                         HeapObject::OptionSome(Some(value.clone())),
                         &[value],
                     )?))
                 } else {
-                    Ok(Ok(self.allocate(HeapObject::OptionNone, &[])?))
+                    Ok(Ok(self.allocate(result_ty, HeapObject::OptionNone, &[])?))
                 }
             }
             (BytecodeIndexAccess::MapEntry, HeapObject::Map(entries)) => {
@@ -4444,6 +4567,7 @@ impl Engine<'_, '_> {
 
     fn slice_value(
         &mut self,
+        result_ty: BytecodeTypeId,
         base: Value,
         start: Option<Value>,
         end: Option<Value>,
@@ -4478,7 +4602,11 @@ impl Engine<'_, '_> {
                 self.copy_value(present(&values[index], "slice item")?)?,
             ));
         }
-        Ok(Ok(self.allocate(HeapObject::Array(output), &[])?))
+        Ok(Ok(self.allocate(
+            result_ty,
+            HeapObject::Array(output),
+            &[],
+        )?))
     }
 
     fn prepare_call(
@@ -4648,6 +4776,7 @@ impl Engine<'_, '_> {
             }
             if let Some(index) = variadic {
                 values[index] = Some(self.allocate(
+                    metadata.parameters[index].ty,
                     HeapObject::Array(variadic_values.into_iter().map(Some).collect()),
                     &[],
                 )?);
@@ -4683,7 +4812,7 @@ impl Engine<'_, '_> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let returned = self.host.invoke(&metadata.name, &snapshots)?;
                 Ok(OperationResult::Value(
-                    self.materialize_host_value(returned)?,
+                    self.materialize_host_value(metadata.outcome, returned)?,
                 ))
             }
         })();
@@ -4691,65 +4820,141 @@ impl Engine<'_, '_> {
         result
     }
 
-    fn materialize_host_value(&mut self, value: RuntimeValue) -> Result<Value, VmError> {
-        match value {
-            RuntimeValue::Unit => Ok(Value::Unit),
-            RuntimeValue::Bool(value) => Ok(Value::Bool(value)),
-            RuntimeValue::Integer(value) => Ok(Value::Integer(value)),
-            RuntimeValue::Float(value) => Ok(Value::Float(value)),
-            RuntimeValue::Byte(value) => Ok(Value::Byte(value)),
-            RuntimeValue::Char(value) => Ok(Value::Char(value)),
-            RuntimeValue::String(value) => self.allocate(HeapObject::String(value), &[]),
-            RuntimeValue::Tuple(values) => {
-                let values = self.materialize_host_values(values)?;
+    fn materialize_host_value(
+        &mut self,
+        ty: BytecodeTypeId,
+        value: RuntimeValue,
+    ) -> Result<Value, VmError> {
+        self.materialize_host_value_as(ty, ty, value)
+    }
+
+    fn materialize_host_value_as(
+        &mut self,
+        representation: BytecodeTypeId,
+        descriptor: BytecodeTypeId,
+        value: RuntimeValue,
+    ) -> Result<Value, VmError> {
+        let kind = self
+            .program
+            .ty(representation)
+            .ok_or_else(|| VmError::invariant("host result type is missing"))?
+            .kind
+            .clone();
+        match (kind, value) {
+            (BytecodeTypeKind::Scalar(BytecodeScalarType::Unit), RuntimeValue::Unit) => {
+                Ok(Value::Unit)
+            }
+            (BytecodeTypeKind::Scalar(BytecodeScalarType::Bool), RuntimeValue::Bool(value)) => {
+                Ok(Value::Bool(value))
+            }
+            (
+                BytecodeTypeKind::Scalar(
+                    BytecodeScalarType::Int
+                    | BytecodeScalarType::Int8
+                    | BytecodeScalarType::Int16
+                    | BytecodeScalarType::Int32
+                    | BytecodeScalarType::UInt8
+                    | BytecodeScalarType::UInt16
+                    | BytecodeScalarType::UInt32
+                    | BytecodeScalarType::UInt64,
+                ),
+                RuntimeValue::Integer(value),
+            ) => Ok(Value::Integer(value)),
+            (
+                BytecodeTypeKind::Scalar(BytecodeScalarType::Float | BytecodeScalarType::Float32),
+                RuntimeValue::Float(value),
+            ) => Ok(Value::Float(value)),
+            (BytecodeTypeKind::Scalar(BytecodeScalarType::Byte), RuntimeValue::Byte(value)) => {
+                Ok(Value::Byte(value))
+            }
+            (BytecodeTypeKind::Scalar(BytecodeScalarType::Char), RuntimeValue::Char(value)) => {
+                Ok(Value::Char(value))
+            }
+            (BytecodeTypeKind::Scalar(BytecodeScalarType::String), RuntimeValue::String(value)) => {
+                self.allocate(descriptor, HeapObject::String(value), &[])
+            }
+            (BytecodeTypeKind::Tuple(fields), RuntimeValue::Tuple(values))
+                if fields.len() == values.len() =>
+            {
+                let values = self.materialize_host_values(&fields, values)?;
                 self.allocate(
+                    descriptor,
                     HeapObject::Tuple(values.into_iter().map(Some).collect()),
                     &[],
                 )
             }
-            RuntimeValue::Array(values) => {
-                let values = self.materialize_host_values(values)?;
+            (
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Array,
+                    arguments,
+                },
+                RuntimeValue::Array(values),
+            ) => {
+                let element = arguments
+                    .first()
+                    .copied()
+                    .ok_or_else(|| VmError::invariant("verified array type has no element type"))?;
+                let mut materialized = Vec::with_capacity(values.len());
+                for value in values {
+                    materialized.push(self.materialize_host_value(element, value)?);
+                }
                 self.allocate(
-                    HeapObject::Array(values.into_iter().map(Some).collect()),
+                    descriptor,
+                    HeapObject::Array(materialized.into_iter().map(Some).collect()),
                     &[],
                 )
             }
-            RuntimeValue::OptionNone => self.allocate(HeapObject::OptionNone, &[]),
-            RuntimeValue::OptionSome(value) => {
-                let value = self.materialize_host_value(*value)?;
-                self.allocate(HeapObject::OptionSome(Some(value.clone())), &[value])
+            (BytecodeTypeKind::Option(_), RuntimeValue::OptionNone) => {
+                self.allocate(descriptor, HeapObject::OptionNone, &[])
             }
-            RuntimeValue::ResultOk(value) => {
-                let value = self.materialize_host_value(*value)?;
-                self.allocate(HeapObject::ResultOk(Some(value.clone())), &[value])
+            (BytecodeTypeKind::Option(item), RuntimeValue::OptionSome(value)) => {
+                let value = self.materialize_host_value(item, *value)?;
+                self.allocate(
+                    descriptor,
+                    HeapObject::OptionSome(Some(value.clone())),
+                    &[value],
+                )
             }
-            RuntimeValue::ResultErr(value) => {
-                let value = self.materialize_host_value(*value)?;
-                self.allocate(HeapObject::ResultErr(Some(value.clone())), &[value])
+            (BytecodeTypeKind::Result { success, .. }, RuntimeValue::ResultOk(value)) => {
+                let value = self.materialize_host_value(success, *value)?;
+                self.allocate(
+                    descriptor,
+                    HeapObject::ResultOk(Some(value.clone())),
+                    &[value],
+                )
             }
-            RuntimeValue::Map(_)
-            | RuntimeValue::Set(_)
-            | RuntimeValue::Closure { .. }
-            | RuntimeValue::Function { .. }
-            | RuntimeValue::Newtype { .. }
-            | RuntimeValue::Record { .. }
-            | RuntimeValue::Variant { .. }
-            | RuntimeValue::Union { .. }
-            | RuntimeValue::Range { .. }
-            | RuntimeValue::Ref(_)
-            | RuntimeValue::Cycle(_) => Err(VmError::Host(
-                "bootstrap host returned an unsupported managed value".into(),
+            (BytecodeTypeKind::Result { error, .. }, RuntimeValue::ResultErr(value)) => {
+                let value = self.materialize_host_value(error, *value)?;
+                self.allocate(
+                    descriptor,
+                    HeapObject::ResultErr(Some(value.clone())),
+                    &[value],
+                )
+            }
+            (BytecodeTypeKind::OpaqueResult { witness, .. }, value) => {
+                self.materialize_host_value_as(witness, descriptor, value)
+            }
+            _ => Err(VmError::Host(
+                "bootstrap host result does not match its verified return type".into(),
             )),
         }
     }
 
     fn materialize_host_values(
         &mut self,
+        types: &[BytecodeTypeId],
         values: Vec<RuntimeValue>,
     ) -> Result<Vec<Value>, VmError> {
-        values
-            .into_iter()
-            .map(|value| self.materialize_host_value(value))
+        if types.len() != values.len() {
+            return Err(VmError::Host(
+                "bootstrap host result has the wrong aggregate arity".into(),
+            ));
+        }
+        types
+            .iter()
+            .copied()
+            .zip(values)
+            .map(|(ty, value)| self.materialize_host_value(ty, value))
             .collect()
     }
 
@@ -4773,6 +4978,7 @@ impl Engine<'_, '_> {
         frame: usize,
         state: &BytecodePlace,
         borrowed_source: Option<&BytecodePlace>,
+        item_ty: BytecodeTypeId,
         _span: BytecodeSpan,
     ) -> Result<Result<Option<IteratorStep>, (PanicCode, String)>, VmError> {
         let iterator = self.read_place(frame, state)?;
@@ -4795,7 +5001,7 @@ impl Engine<'_, '_> {
                         "owning iterator received a borrowed source",
                     ));
                 }
-                let (item, next_index) = self.iterator_item(&source, next)?;
+                let (item, next_index) = self.iterator_item(&source, item_ty, next)?;
                 (item.map(IteratorStep::Value), next_index)
             }
             BytecodeCursorMode::Ref => {
@@ -4851,6 +5057,7 @@ impl Engine<'_, '_> {
     fn iterator_item(
         &mut self,
         source: &Value,
+        item_ty: BytecodeTypeId,
         next: usize,
     ) -> Result<(Option<Value>, usize), VmError> {
         let Value::Heap(handle) = source else {
@@ -4909,6 +5116,7 @@ impl Engine<'_, '_> {
                     &[key.clone(), value.clone()],
                 )?;
                 let tuple = self.allocate(
+                    item_ty,
                     HeapObject::Tuple(vec![Some(key.clone()), Some(value.clone())]),
                     &[key, value],
                 )?;

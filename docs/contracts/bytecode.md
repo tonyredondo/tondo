@@ -170,6 +170,35 @@ must be reconstructed at an instruction offset. `StorageLive` and
 `StorageDead` reserve the later ownership/cleanup boundary; parameters and the
 return place have function-wide storage.
 
+## Trace descriptors
+
+The compiler does not serialize or annotate tracing instructions. After the
+ordinary bytecode checks succeed, the VM derives `BytecodeTraceMetadata`
+directly from the closed type, nominal, callable, and function catalogs. The
+result has:
+
+- one object-shape descriptor at every type ID;
+- the ordered capture schema and exact callable identity of each generated
+  closure environment; and
+- one frame descriptor at every function ID containing its exact slot-type
+  vector.
+
+Structural descriptors retain child type IDs, generic nominal arguments,
+field/member order, variant payload layouts, union members, cursor mode, and
+opaque witness shape. `Inline` means that no heap object may be allocated under
+that type descriptor; it does not make a frame slot a static root bitmap,
+because callable erasure can store a managed closure in a function-typed slot.
+The bootstrap VM inspects the tagged live value while using the frame
+descriptor to prove the slot schema.
+
+Derivation is part of admission and fails closed on unknown references, wrong
+intrinsic arity, unknown nominal layouts, duplicate or non-generated closure
+environments, cyclic opaque witnesses, and invalid frame slot types. The heap
+stores the descriptor type ID with each object and validates every allocation
+and replacement against the derived shape before tracing it. Consequently,
+adding a constructible managed bytecode form requires extending this exhaustive
+derivation and its negative tests; object-local tracing is not authoritative.
+
 ## Instructions and control flow
 
 Ordinary instructions perform storage lifetime changes, reserve/release one

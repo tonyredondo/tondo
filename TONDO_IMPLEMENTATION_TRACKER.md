@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.51
+**Versión del tracker:** 0.52
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** extender el collector bootstrap a todas las formas
-administradas mediante descriptors verificables (GC-001).
+**Objetivo inmediato:** cerrar el inventario de roots del runtime y sus
+transiciones de vida (GC-002).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1454,9 +1454,13 @@ lifetimes escritos por el usuario.
 
 ### 10.4 Memoria e identidad
 
-- [ ] **GC-001 — Extender el collector bootstrap a todas las formas
-  administradas.** Incluir environments, `Ref`, collections y frames
-  suspendibles mediante descriptors de trazado verificables.
+- [x] **GC-001 — Extender el collector bootstrap a todas las formas
+  administradas.** La VM deriva un catálogo sellado desde bytecode verificado
+  para strings, agregados, colecciones, nominales, sums, environments,
+  cursores, `Ref` y witnesses opacos. Cada heap slot conserva su descriptor;
+  allocation, copy, mutation y marking validan la misma forma. Cada función
+  obtiene además un descriptor exacto de slots reutilizable por un futuro frame
+  suspendido, sin implementar todavía identidad pública de `Ref` ni scheduling.
 
 - [ ] **GC-002 — Mantener roots en frames, environments, VM host handles y
   estado estructurado.**
@@ -2021,14 +2025,33 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es GC-001: ampliar el collector bootstrap desde los
-objetos de heap actuales a environments, `Ref`, colecciones y futuros frames
-suspendibles mediante descriptors de trazado cerrados y verificados, sin
-introducir todavía la identidad pública de `Ref` ni el scheduler de M7.
+La siguiente acción activa es GC-002: inventariar y probar cada fuente de roots
+y cada transición que publica o retira esos roots en frames, environments,
+handles del host y estado estructurado. Los handles y frames suspendidos que
+todavía no son constructibles deben quedar como fronteras explícitas, no como
+roots ficticios.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.52 — 2026-07-25
+
+- Se completa GC-001 con descriptors de trazado derivados y verificados por la
+  VM, independientes de metadata de tracing del compilador.
+- Todo objeto administrado conserva el ID de su descriptor; altas, mutaciones,
+  copias, host materialization y marking usan la misma forma cerrada y rechazan
+  discrepancias antes de publicar estado.
+- Environments prueban callable y captures exactos; nominales y sums prueban
+  aridad y layout; collections, cursores, `Ref` y witnesses opacos conservan
+  todos sus edges administrados.
+- Cada función obtiene un descriptor exacto de slots, validado al crear el
+  frame y directamente reutilizable cuando M7 introduzca suspensión. El
+  registro de esos futuros containers como roots permanece en GC-002/M7.
+- La puerta completa pasa con 545 tests —487 del compilador, 16 de la VM y 42
+  de CLI/integración—, `cargo fmt --check`, `cargo check`, `cargo build`,
+  Clippy con warnings como error, rustdoc con warnings como error y
+  `git diff --check`.
 
 ### 0.51 — 2026-07-25
 

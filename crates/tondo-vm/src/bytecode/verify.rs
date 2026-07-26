@@ -75,6 +75,13 @@ pub fn verify_bytecode_with_limits(
     program: &BytecodeProgram,
     limits: BytecodeVerificationLimits,
 ) -> Result<(), BytecodeVerificationError> {
+    verify_bytecode_with_trace_metadata(program, limits).map(drop)
+}
+
+pub(crate) fn verify_bytecode_with_trace_metadata(
+    program: &BytecodeProgram,
+    limits: BytecodeVerificationLimits,
+) -> Result<BytecodeTraceMetadata, BytecodeVerificationError> {
     Verifier {
         program,
         limits,
@@ -82,7 +89,8 @@ pub fn verify_bytecode_with_limits(
         capabilities: OnceCell::new(),
         terminals: OnceCell::new(),
     }
-    .verify()
+    .verify()?;
+    derive_trace_metadata(program)
 }
 
 /// Derives `Discard` for closed bytecode types from the same structural graph
@@ -127,6 +135,381 @@ pub fn derive_terminal_statuses(
         .iter()
         .map(|ty| analysis.status(program, *ty))
         .collect()
+}
+
+/// Derives precise heap-edge and frame-root descriptors from the closed
+/// bytecode catalog.
+///
+/// The returned metadata is runtime-owned proof material, not compiler input:
+/// malformed references, duplicate closure environments, and cyclic opaque
+/// representations are rejected while deriving it.
+pub fn derive_trace_metadata(
+    program: &BytecodeProgram,
+) -> Result<BytecodeTraceMetadata, BytecodeVerificationError> {
+    TraceMetadataAnalysis::new(program)?.finish()
+}
+
+struct TraceMetadataAnalysis<'a> {
+    program: &'a BytecodeProgram,
+    types: Vec<Option<BytecodeTraceDescriptor>>,
+    closures: BTreeMap<BytecodeTypeId, (BytecodeCallableId, Vec<BytecodeTypeId>)>,
+    visiting: BTreeSet<BytecodeTypeId>,
+}
+
+impl<'a> TraceMetadataAnalysis<'a> {
+    fn new(program: &'a BytecodeProgram) -> Result<Self, BytecodeVerificationError> {
+        if program.types.len() > u32::MAX as usize
+            || program.callables.len() > u32::MAX as usize
+            || program.functions.len() > u32::MAX as usize
+        {
+            return Err(BytecodeVerificationError::new(
+                "trace metadata",
+                "catalog exceeds the trace descriptor index space",
+            ));
+        }
+        for (index, ty) in program.types.iter().enumerate() {
+            let context = format!("type#{index}");
+            for child in bytecode_type_children(&ty.kind) {
+                Self::require_type(program, child, &context)?;
+            }
+            if let BytecodeTypeKind::OpaqueResult { witness, .. } = &ty.kind {
+                Self::require_type(program, *witness, &context)?;
+            }
+            if let BytecodeTypeKind::Intrinsic {
+                constructor,
+                arguments,
+            } = &ty.kind
+                && arguments.len() != constructor.arity()
+            {
+                return Err(BytecodeVerificationError::new(
+                    &context,
+                    "intrinsic trace descriptor has the wrong generic arity",
+                ));
+            }
+        }
+        for (index, nominal) in program.nominals.iter().enumerate() {
+            let context = format!("nominal#{index}");
+            match &nominal.shape {
+                BytecodeNominalShape::Newtype { underlying } => {
+                    Self::require_type(program, *underlying, &context)?;
+                }
+                BytecodeNominalShape::Record { fields } => {
+                    for field in fields {
+                        Self::require_type(program, field.ty, &context)?;
+                    }
+                }
+                BytecodeNominalShape::Enum { variants } => {
+                    for variant in variants {
+                        match &variant.payload {
+                            BytecodeVariantPayload::Unit => {}
+                            BytecodeVariantPayload::Tuple(fields) => {
+                                for field in fields {
+                                    Self::require_type(program, *field, &context)?;
+                                }
+                            }
+                            BytecodeVariantPayload::Record(fields) => {
+                                for field in fields {
+                                    Self::require_type(program, field.ty, &context)?;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        let mut closures = BTreeMap::new();
+        for (index, callable) in program.callables.iter().enumerate() {
+            let Some(closure) = &callable.closure else {
+                continue;
+            };
+            let context = format!("callable#{index}");
+            Self::require_type(program, closure.environment, &context)?;
+            if !matches!(
+                program.ty(closure.environment).map(|ty| &ty.kind),
+                Some(BytecodeTypeKind::Generated { .. })
+            ) {
+                return Err(BytecodeVerificationError::new(
+                    &context,
+                    "closure trace descriptor requires a generated environment type",
+                ));
+            }
+            if closures
+                .insert(
+                    closure.environment,
+                    (
+                        BytecodeCallableId::new(index as u32),
+                        closure.captures.clone(),
+                    ),
+                )
+                .is_some()
+            {
+                return Err(BytecodeVerificationError::new(
+                    format!("type#{}", closure.environment.index()),
+                    "generated trace descriptor has duplicate closure environments",
+                ));
+            }
+            for capture in &closure.captures {
+                Self::require_type(program, *capture, &context)?;
+            }
+        }
+        for (index, function) in program.functions.iter().enumerate() {
+            let context = format!("function#{index}");
+            for slot in &function.slots {
+                Self::require_type(program, slot.ty, &context)?;
+            }
+        }
+        Ok(Self {
+            program,
+            types: vec![None; program.types.len()],
+            closures,
+            visiting: BTreeSet::new(),
+        })
+    }
+
+    fn require_type(
+        program: &BytecodeProgram,
+        ty: BytecodeTypeId,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        if program.types.get(ty.index() as usize).is_none() {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "trace descriptor references an unknown type",
+            ));
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> Result<BytecodeTraceMetadata, BytecodeVerificationError> {
+        for index in 0..self.program.types.len() {
+            self.descriptor(BytecodeTypeId::new(index as u32))?;
+        }
+        let types = self
+            .types
+            .into_iter()
+            .map(|descriptor| {
+                descriptor.ok_or_else(|| {
+                    BytecodeVerificationError::new(
+                        "trace metadata",
+                        "type has no derived trace descriptor",
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let frames = self
+            .program
+            .functions
+            .iter()
+            .enumerate()
+            .map(|(index, function)| BytecodeFrameTraceDescriptor {
+                function: BytecodeFunctionId::new(index as u32),
+                slots: function.slots.iter().map(|slot| slot.ty).collect(),
+            })
+            .collect();
+        Ok(BytecodeTraceMetadata { types, frames })
+    }
+
+    fn descriptor(
+        &mut self,
+        id: BytecodeTypeId,
+    ) -> Result<BytecodeTraceDescriptor, BytecodeVerificationError> {
+        let index = id.index() as usize;
+        if let Some(descriptor) = self.types.get(index).and_then(Clone::clone) {
+            return Ok(descriptor);
+        }
+        if !self.visiting.insert(id) {
+            return Err(BytecodeVerificationError::new(
+                format!("type#{}", id.index()),
+                "opaque representation forms a trace descriptor cycle",
+            ));
+        }
+        let kind = self
+            .program
+            .types
+            .get(index)
+            .ok_or_else(|| {
+                BytecodeVerificationError::new(
+                    format!("type#{}", id.index()),
+                    "trace descriptor references an unknown type",
+                )
+            })?
+            .kind
+            .clone();
+        let context = format!("type#{}", id.index());
+        let descriptor = match kind {
+            BytecodeTypeKind::Scalar(BytecodeScalarType::String) => BytecodeTraceDescriptor::String,
+            BytecodeTypeKind::Scalar(_)
+            | BytecodeTypeKind::Function(_)
+            | BytecodeTypeKind::GenericParameter(_) => BytecodeTraceDescriptor::Inline,
+            BytecodeTypeKind::Nominal {
+                nominal: Some(nominal),
+                arguments,
+                ..
+            } => {
+                let metadata = self
+                    .program
+                    .nominals
+                    .get(nominal.index() as usize)
+                    .ok_or_else(|| {
+                        BytecodeVerificationError::new(
+                            &context,
+                            "trace descriptor references an unknown nominal",
+                        )
+                    })?
+                    .clone();
+                match metadata.shape {
+                    BytecodeNominalShape::Newtype { underlying } => {
+                        BytecodeTraceDescriptor::Newtype {
+                            nominal,
+                            arguments,
+                            value: underlying,
+                        }
+                    }
+                    BytecodeNominalShape::Record { fields } => BytecodeTraceDescriptor::Record {
+                        nominal,
+                        arguments,
+                        fields,
+                    },
+                    BytecodeNominalShape::Enum { variants } => BytecodeTraceDescriptor::Variant {
+                        nominal: Some(nominal),
+                        arguments,
+                        variants,
+                    },
+                }
+            }
+            BytecodeTypeKind::Nominal { nominal: None, .. } => BytecodeTraceDescriptor::Inline,
+            BytecodeTypeKind::Tuple(fields) => BytecodeTraceDescriptor::Tuple { fields },
+            BytecodeTypeKind::Option(value) => BytecodeTraceDescriptor::Option { value },
+            BytecodeTypeKind::Result { success, error } => {
+                BytecodeTraceDescriptor::Result { success, error }
+            }
+            BytecodeTypeKind::Union(members) => BytecodeTraceDescriptor::Union { members },
+            BytecodeTypeKind::Intrinsic {
+                constructor,
+                arguments,
+            } => match constructor {
+                BytecodeIntrinsicType::Array => BytecodeTraceDescriptor::Array {
+                    element: arguments.first().copied().ok_or_else(|| {
+                        BytecodeVerificationError::new(
+                            &context,
+                            "array trace descriptor has no element type",
+                        )
+                    })?,
+                },
+                BytecodeIntrinsicType::Map => BytecodeTraceDescriptor::Map {
+                    key: arguments.first().copied().ok_or_else(|| {
+                        BytecodeVerificationError::new(
+                            &context,
+                            "map trace descriptor has no key type",
+                        )
+                    })?,
+                    value: arguments.get(1).copied().ok_or_else(|| {
+                        BytecodeVerificationError::new(
+                            &context,
+                            "map trace descriptor has no value type",
+                        )
+                    })?,
+                },
+                BytecodeIntrinsicType::Set => BytecodeTraceDescriptor::Set {
+                    element: arguments.first().copied().ok_or_else(|| {
+                        BytecodeVerificationError::new(
+                            &context,
+                            "set trace descriptor has no element type",
+                        )
+                    })?,
+                },
+                BytecodeIntrinsicType::Range => BytecodeTraceDescriptor::Range {
+                    element: arguments.first().copied().ok_or_else(|| {
+                        BytecodeVerificationError::new(
+                            &context,
+                            "range trace descriptor has no element type",
+                        )
+                    })?,
+                },
+                BytecodeIntrinsicType::Ref => BytecodeTraceDescriptor::Ref {
+                    value: arguments.first().copied().ok_or_else(|| {
+                        BytecodeVerificationError::new(
+                            &context,
+                            "reference trace descriptor has no value type",
+                        )
+                    })?,
+                },
+                BytecodeIntrinsicType::NumericConversionError => BytecodeTraceDescriptor::Variant {
+                    nominal: None,
+                    arguments: Vec::new(),
+                    variants: (0..=2)
+                        .map(|member| BytecodeVariant {
+                            member,
+                            payload: BytecodeVariantPayload::Unit,
+                        })
+                        .collect(),
+                },
+                BytecodeIntrinsicType::Pointer
+                | BytecodeIntrinsicType::Join
+                | BytecodeIntrinsicType::Command
+                | BytecodeIntrinsicType::Pipeline => BytecodeTraceDescriptor::Inline,
+            },
+            BytecodeTypeKind::OpaqueResult { witness, .. } => self.opaque_descriptor(witness)?,
+            BytecodeTypeKind::Generated { .. } => self
+                .closures
+                .get(&id)
+                .map(|(callable, captures)| BytecodeTraceDescriptor::Closure {
+                    callable: *callable,
+                    captures: captures.clone(),
+                })
+                .unwrap_or(BytecodeTraceDescriptor::Inline),
+            BytecodeTypeKind::Cursor { mode, collection } => {
+                BytecodeTraceDescriptor::Cursor { mode, collection }
+            }
+        };
+        self.visiting.remove(&id);
+        self.types[index] = Some(descriptor.clone());
+        Ok(descriptor)
+    }
+
+    fn opaque_descriptor(
+        &mut self,
+        witness: BytecodeTypeId,
+    ) -> Result<BytecodeTraceDescriptor, BytecodeVerificationError> {
+        let mut current = witness;
+        let mut chain = Vec::new();
+        let descriptor = loop {
+            if let Some(descriptor) = self
+                .types
+                .get(current.index() as usize)
+                .and_then(Clone::clone)
+            {
+                break descriptor;
+            }
+            let kind = self
+                .program
+                .ty(current)
+                .ok_or_else(|| {
+                    BytecodeVerificationError::new(
+                        format!("type#{}", current.index()),
+                        "trace descriptor references an unknown opaque witness",
+                    )
+                })?
+                .kind
+                .clone();
+            let BytecodeTypeKind::OpaqueResult { witness, .. } = kind else {
+                break self.descriptor(current)?;
+            };
+            if !self.visiting.insert(current) {
+                return Err(BytecodeVerificationError::new(
+                    format!("type#{}", current.index()),
+                    "opaque representation forms a trace descriptor cycle",
+                ));
+            }
+            chain.push(current);
+            current = witness;
+        };
+        for opaque in chain.into_iter().rev() {
+            self.visiting.remove(&opaque);
+            self.types[opaque.index() as usize] = Some(descriptor.clone());
+        }
+        Ok(descriptor)
+    }
 }
 
 struct Verifier<'a> {
@@ -9336,6 +9719,416 @@ mod tests {
                 BytecodeTerminalStatus::Present,
                 BytecodeTerminalStatus::Present,
             ]
+        );
+    }
+
+    fn trace_program() -> BytecodeProgram {
+        let mut program = terminal_program(false);
+        let int = BytecodeTypeId::new(0);
+        let array = BytecodeTypeId::new(7);
+        let string = BytecodeTypeId::new(9);
+        let tuple = BytecodeTypeId::new(10);
+        let map = BytecodeTypeId::new(11);
+        let set = BytecodeTypeId::new(12);
+        let result = BytecodeTypeId::new(13);
+        let union = BytecodeTypeId::new(14);
+        let range = BytecodeTypeId::new(15);
+        let reference = BytecodeTypeId::new(16);
+        let cursor = BytecodeTypeId::new(17);
+        let environment = BytecodeTypeId::new(18);
+        let record = BytecodeTypeId::new(19);
+        let variant = BytecodeTypeId::new(20);
+        let pointer = BytecodeTypeId::new(21);
+        let opaque = BytecodeTypeId::new(22);
+        program.types.extend([
+            BytecodeType {
+                name: "String".into(),
+                kind: BytecodeTypeKind::Scalar(BytecodeScalarType::String),
+            },
+            BytecodeType {
+                name: "(Int,String)".into(),
+                kind: BytecodeTypeKind::Tuple(vec![int, string]),
+            },
+            BytecodeType {
+                name: "Map[String,Array]".into(),
+                kind: BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Map,
+                    arguments: vec![string, array],
+                },
+            },
+            BytecodeType {
+                name: "Set[String]".into(),
+                kind: BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Set,
+                    arguments: vec![string],
+                },
+            },
+            BytecodeType {
+                name: "String ! Array".into(),
+                kind: BytecodeTypeKind::Result {
+                    success: string,
+                    error: array,
+                },
+            },
+            BytecodeType {
+                name: "Int | String".into(),
+                kind: BytecodeTypeKind::Union(vec![int, string]),
+            },
+            BytecodeType {
+                name: "Range[Int]".into(),
+                kind: BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Range,
+                    arguments: vec![int],
+                },
+            },
+            BytecodeType {
+                name: "Ref[String]".into(),
+                kind: BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Ref,
+                    arguments: vec![string],
+                },
+            },
+            BytecodeType {
+                name: "cursor-ref".into(),
+                kind: BytecodeTypeKind::Cursor {
+                    mode: BytecodeCursorMode::Ref,
+                    collection: array,
+                },
+            },
+            BytecodeType {
+                name: "closure-environment".into(),
+                kind: BytecodeTypeKind::Generated {
+                    identity: "test::closure".into(),
+                    arguments: Vec::new(),
+                },
+            },
+            BytecodeType {
+                name: "Record".into(),
+                kind: BytecodeTypeKind::Nominal {
+                    nominal: Some(BytecodeNominalId::new(1)),
+                    identity: "test::Record".into(),
+                    arguments: Vec::new(),
+                },
+            },
+            BytecodeType {
+                name: "Variant".into(),
+                kind: BytecodeTypeKind::Nominal {
+                    nominal: Some(BytecodeNominalId::new(2)),
+                    identity: "test::Variant".into(),
+                    arguments: Vec::new(),
+                },
+            },
+            BytecodeType {
+                name: "Pointer[String]".into(),
+                kind: BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Pointer,
+                    arguments: vec![string],
+                },
+            },
+            BytecodeType {
+                name: "opaque-map".into(),
+                kind: BytecodeTypeKind::OpaqueResult {
+                    identity: "test::opaque-map".into(),
+                    arguments: Vec::new(),
+                    witness: map,
+                    capabilities: BytecodeCapabilitySet::default(),
+                },
+            },
+        ]);
+        program.nominals.extend([
+            BytecodeNominal {
+                name: "Record".into(),
+                identity: "test::Record".into(),
+                generic_arity: 0,
+                shape: BytecodeNominalShape::Record {
+                    fields: vec![
+                        BytecodeField {
+                            member: 0,
+                            ty: string,
+                        },
+                        BytecodeField {
+                            member: 1,
+                            ty: array,
+                        },
+                    ],
+                },
+            },
+            BytecodeNominal {
+                name: "Variant".into(),
+                identity: "test::Variant".into(),
+                generic_arity: 0,
+                shape: BytecodeNominalShape::Enum {
+                    variants: vec![
+                        BytecodeVariant {
+                            member: 0,
+                            payload: BytecodeVariantPayload::Unit,
+                        },
+                        BytecodeVariant {
+                            member: 1,
+                            payload: BytecodeVariantPayload::Tuple(vec![string]),
+                        },
+                        BytecodeVariant {
+                            member: 2,
+                            payload: BytecodeVariantPayload::Record(vec![BytecodeField {
+                                member: 0,
+                                ty: array,
+                            }]),
+                        },
+                    ],
+                },
+            },
+        ]);
+        program.callables.push(BytecodeCallable {
+            name: "closure".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: int,
+            function_type: int,
+            implementation: Some(BytecodeFunctionId::new(0)),
+            closure: Some(BytecodeClosure {
+                environment,
+                captures: vec![string, array],
+                protocols: BytecodeClosureProtocols {
+                    call: true,
+                    call_mut: false,
+                    call_once: true,
+                },
+            }),
+        });
+        let span = BytecodeSpan {
+            file: 0,
+            start: 0,
+            end: 0,
+        };
+        program.functions.push(BytecodeFunction {
+            callable: BytecodeCallableId::new(0),
+            source: span,
+            types: vec![
+                tuple, map, set, result, union, range, reference, cursor, record, variant, pointer,
+                opaque,
+            ],
+            spans: vec![span],
+            slots: vec![
+                BytecodeSlot {
+                    ty: map,
+                    span: BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::Return,
+                },
+                BytecodeSlot {
+                    ty: environment,
+                    span: BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::Temporary,
+                },
+                BytecodeSlot {
+                    ty: record,
+                    span: BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::Temporary,
+                },
+                BytecodeSlot {
+                    ty: reference,
+                    span: BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::Temporary,
+                },
+            ],
+            loans: Vec::new(),
+            parameters: Vec::new(),
+            return_slot: BytecodeSlotId::new(0),
+            entry: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(0),
+            blocks: Vec::new(),
+        });
+        program
+    }
+
+    #[test]
+    fn trace_metadata_describes_every_managed_shape_and_frame_slot() {
+        let metadata = derive_trace_metadata(&trace_program()).unwrap();
+        assert_eq!(metadata.types[0], BytecodeTraceDescriptor::Inline);
+        assert_eq!(metadata.types[9], BytecodeTraceDescriptor::String);
+        assert_eq!(
+            metadata.types[10],
+            BytecodeTraceDescriptor::Tuple {
+                fields: vec![BytecodeTypeId::new(0), BytecodeTypeId::new(9)]
+            }
+        );
+        assert_eq!(
+            metadata.types[11],
+            BytecodeTraceDescriptor::Map {
+                key: BytecodeTypeId::new(9),
+                value: BytecodeTypeId::new(7),
+            }
+        );
+        assert_eq!(
+            metadata.types[12],
+            BytecodeTraceDescriptor::Set {
+                element: BytecodeTypeId::new(9)
+            }
+        );
+        assert_eq!(
+            metadata.types[13],
+            BytecodeTraceDescriptor::Result {
+                success: BytecodeTypeId::new(9),
+                error: BytecodeTypeId::new(7),
+            }
+        );
+        assert_eq!(
+            metadata.types[14],
+            BytecodeTraceDescriptor::Union {
+                members: vec![BytecodeTypeId::new(0), BytecodeTypeId::new(9)]
+            }
+        );
+        assert_eq!(
+            metadata.types[15],
+            BytecodeTraceDescriptor::Range {
+                element: BytecodeTypeId::new(0)
+            }
+        );
+        assert_eq!(
+            metadata.types[16],
+            BytecodeTraceDescriptor::Ref {
+                value: BytecodeTypeId::new(9)
+            }
+        );
+        assert_eq!(
+            metadata.types[17],
+            BytecodeTraceDescriptor::Cursor {
+                mode: BytecodeCursorMode::Ref,
+                collection: BytecodeTypeId::new(7),
+            }
+        );
+        assert_eq!(
+            metadata.types[18],
+            BytecodeTraceDescriptor::Closure {
+                callable: BytecodeCallableId::new(0),
+                captures: vec![BytecodeTypeId::new(9), BytecodeTypeId::new(7)],
+            }
+        );
+        assert_eq!(
+            metadata.types[19],
+            BytecodeTraceDescriptor::Record {
+                nominal: BytecodeNominalId::new(1),
+                arguments: Vec::new(),
+                fields: vec![
+                    BytecodeField {
+                        member: 0,
+                        ty: BytecodeTypeId::new(9),
+                    },
+                    BytecodeField {
+                        member: 1,
+                        ty: BytecodeTypeId::new(7),
+                    },
+                ],
+            }
+        );
+        assert!(matches!(
+            &metadata.types[20],
+            BytecodeTraceDescriptor::Variant {
+                nominal: Some(nominal),
+                variants,
+                ..
+            } if *nominal == BytecodeNominalId::new(2) && variants.len() == 3
+        ));
+        assert_eq!(metadata.types[21], BytecodeTraceDescriptor::Inline);
+        assert_eq!(metadata.types[22], metadata.types[11]);
+        assert_eq!(
+            metadata.frames,
+            [BytecodeFrameTraceDescriptor {
+                function: BytecodeFunctionId::new(0),
+                slots: vec![
+                    BytecodeTypeId::new(11),
+                    BytecodeTypeId::new(18),
+                    BytecodeTypeId::new(19),
+                    BytecodeTypeId::new(16),
+                ],
+            }]
+        );
+    }
+
+    #[test]
+    fn trace_metadata_rejects_malformed_catalogs_without_panicking() {
+        let mut wrong_arity = terminal_program(false);
+        let BytecodeTypeKind::Intrinsic { arguments, .. } = &mut wrong_arity.types[7].kind else {
+            panic!("fixture must contain an array");
+        };
+        arguments.clear();
+        let error = derive_trace_metadata(&wrong_arity).unwrap_err();
+        assert_eq!(error.context(), "type#7");
+        assert!(error.message().contains("wrong generic arity"));
+
+        let mut unknown_child = terminal_program(false);
+        unknown_child.types[6].kind = BytecodeTypeKind::Option(BytecodeTypeId::new(999));
+        let error = derive_trace_metadata(&unknown_child).unwrap_err();
+        assert_eq!(error.context(), "type#6");
+        assert!(error.message().contains("unknown type"));
+
+        let mut duplicate_environment = trace_program();
+        duplicate_environment
+            .callables
+            .push(duplicate_environment.callables[0].clone());
+        let error = derive_trace_metadata(&duplicate_environment).unwrap_err();
+        assert_eq!(error.context(), "type#18");
+        assert!(error.message().contains("duplicate closure environments"));
+
+        let mut non_generated_environment = trace_program();
+        non_generated_environment.types[18].kind =
+            BytecodeTypeKind::Tuple(vec![BytecodeTypeId::new(9)]);
+        let error = derive_trace_metadata(&non_generated_environment).unwrap_err();
+        assert_eq!(error.context(), "callable#0");
+        assert!(error.message().contains("generated environment"));
+
+        let mut opaque_cycle = terminal_program(false);
+        let first = BytecodeTypeId::new(opaque_cycle.types.len() as u32);
+        let second = BytecodeTypeId::new(first.index() + 1);
+        opaque_cycle.types.extend([
+            BytecodeType {
+                name: "cycle-a".into(),
+                kind: BytecodeTypeKind::OpaqueResult {
+                    identity: "test::cycle-a".into(),
+                    arguments: Vec::new(),
+                    witness: second,
+                    capabilities: BytecodeCapabilitySet::default(),
+                },
+            },
+            BytecodeType {
+                name: "cycle-b".into(),
+                kind: BytecodeTypeKind::OpaqueResult {
+                    identity: "test::cycle-b".into(),
+                    arguments: Vec::new(),
+                    witness: first,
+                    capabilities: BytecodeCapabilitySet::default(),
+                },
+            },
+        ]);
+        let error = derive_trace_metadata(&opaque_cycle).unwrap_err();
+        assert!(error.message().contains("trace descriptor cycle"));
+    }
+
+    #[test]
+    fn trace_metadata_resolves_deep_opaque_chains_without_rust_recursion() {
+        let mut program = terminal_program(false);
+        let start = program.types.len() as u32;
+        let depth = 4_096_u32;
+        for offset in 0..depth {
+            program.types.push(BytecodeType {
+                name: format!("opaque-{offset}"),
+                kind: BytecodeTypeKind::OpaqueResult {
+                    identity: format!("test::opaque-{offset}"),
+                    arguments: Vec::new(),
+                    witness: if offset + 1 == depth {
+                        BytecodeTypeId::new(0)
+                    } else {
+                        BytecodeTypeId::new(start + offset + 1)
+                    },
+                    capabilities: BytecodeCapabilitySet::default(),
+                },
+            });
+        }
+
+        let metadata = derive_trace_metadata(&program).unwrap();
+        assert!(
+            metadata.types[start as usize..]
+                .iter()
+                .all(|descriptor| *descriptor == BytecodeTraceDescriptor::Inline)
         );
     }
 

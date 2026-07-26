@@ -424,6 +424,13 @@ parameters read and write through to the lender place, and early control or
 panic releases abandoned reservations. Closure
 environments trace, snapshot, copy eligible fields, and take moved fields
 through the same managed-value machinery regardless of their effect signature.
+The VM derives a sealed trace catalog independently from verified bytecode:
+each heap allocation retains its type descriptor, each mutation is shape
+checked before publication, and each function has an exact slot-schema
+descriptor reusable by a future suspended frame. Opaque results reuse their
+witness layout; closure environments retain their unique callable and capture
+schema. `Ref[T]` has a traceable cell shape but does not gain source-visible
+identity until REF-001.
 The operation-local root stack protects both copied and moved captures while an
 environment is allocated. The VM rejects effectful ordinary calls and effectful
 root entries, so retaining an async or unsafe callable cannot activate an
