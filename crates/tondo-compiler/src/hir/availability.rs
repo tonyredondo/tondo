@@ -120,6 +120,13 @@ struct LoanReservation {
     mode: ParameterMode,
     place: PlaceInfo,
     span: Span,
+    source: Option<LoanIdentity>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct MatchPatternIntroduction {
+    activate_terminals: bool,
+    loan_parent: Option<LoanIdentity>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -689,6 +696,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                             .expression(*map)
                             .expect("Map.remove receiver remains indexed")
                             .span(),
+                        self.loan_origin_in_state(*map, state),
                     );
                 }
                 flow = self.then_expression(flow, *key, Demand::Transfer, &value_live_after[1])?;
@@ -807,6 +815,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                                 .expression(argument.value())
                                 .expect("verified call arguments remain indexed")
                                 .span(),
+                            self.loan_origin_in_state(argument.value(), state),
                         );
                     }
                 }
@@ -1141,6 +1150,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     self.loan_place_in_state(place, &state),
                     self.expression_type(place),
                     span,
+                    self.loan_origin_in_state(place, &state),
                 )
             })
             .collect::<Vec<_>>();
@@ -1163,8 +1173,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         }
         let mut flow = self.then_expression(target_flow, value, Demand::Transfer, live_after)?;
         if let Some(state) = &mut flow.normal {
-            for (place, ty, span) in written {
-                self.check_loan_access(state, &place, LoanAccess::Write, span);
+            for (place, ty, span, source) in written {
+                self.check_loan_access(state, &place, LoanAccess::Write, span, source);
                 self.check_terminal_overwrite(state, &place, ty, span)?;
             }
             let retarget = (operator == HirAssignmentOperator::Assign)
@@ -1371,13 +1381,17 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             if activate_terminals {
                 confirm_new_handoffs(&mut arm_entry, &terminal_baseline);
             }
+            let loan_parent = self.loan_origin_in_state(scrutinee, &arm_entry);
             self.introduce_match_pattern(
                 arm.pattern(),
                 &scrutinee_place,
                 &mut arm_entry,
                 &mut pattern_locals,
                 &mut pattern_terminal_owners,
-                activate_terminals,
+                MatchPatternIntroduction {
+                    activate_terminals,
+                    loan_parent,
+                },
             )?;
             let guarded_entry = if let Some(guard) = arm.guard() {
                 let forbidden = self.affine_pattern_bindings(arm.pattern())?;
@@ -1437,7 +1451,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 .pattern(id)
                 .expect("availability patterns retain their children");
             match pattern.kind() {
-                HirPatternKind::BorrowBinding(_) => return true,
+                HirPatternKind::BorrowBinding { .. } => return true,
                 HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
                     pending.extend(items.iter().copied());
                 }
@@ -1511,7 +1525,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 }
                 HirPatternKind::Recovery
                 | HirPatternKind::Wildcard
-                | HirPatternKind::BorrowBinding(_)
+                | HirPatternKind::BorrowBinding { .. }
                 | HirPatternKind::Literal(_)
                 | HirPatternKind::OptionNone => {}
             }
@@ -1541,7 +1555,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     HirIterationProtocol::Intrinsic { cursor } => {
                         match self.program.interner().kind(*cursor)? {
                             TypeKind::Cursor {
-                                mode: CursorMode::Ref,
+                                mode: CursorMode::Ref | CursorMode::Mut,
                                 ..
                             } => Demand::Observe,
                             TypeKind::Cursor {
@@ -1603,29 +1617,37 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                             .span(),
                     );
                 }
-                let borrowed = matches!(
-                    protocol,
-                    HirIterationProtocol::Intrinsic { cursor }
-                        if matches!(
-                            self.program.interner().kind(*cursor)?,
+                let loan_mode = match protocol {
+                    HirIterationProtocol::Intrinsic { cursor } => {
+                        match self.program.interner().kind(*cursor)? {
                             TypeKind::Cursor {
                                 mode: CursorMode::Ref,
                                 ..
-                            }
-                        )
-                );
-                let (loop_entry, pattern_source) = if borrowed {
+                            } => Some(ParameterMode::Ref),
+                            TypeKind::Cursor {
+                                mode: CursorMode::Mut,
+                                ..
+                            } => Some(ParameterMode::Mut),
+                            _ => None,
+                        }
+                    }
+                    HirIterationProtocol::Trait { .. } => None,
+                };
+                let loaned = loan_mode.is_some();
+                let (loop_entry, pattern_source) = if let Some(loan_mode) = loan_mode {
                     let mut loop_entry = loop_entry;
                     let source_place = self.loan_place_in_state(*source, &loop_entry);
+                    let loan_parent = self.loan_origin_in_state(*source, &loop_entry);
                     self.reserve_loan(
                         &mut loop_entry,
                         LoanIdentity::Iteration(id),
                         source_place.clone(),
-                        ParameterMode::Ref,
+                        loan_mode,
                         self.program
                             .expression(*source)
                             .expect("verified iterator sources remain indexed")
                             .span(),
+                        loan_parent,
                     );
                     let mut item = source_place;
                     item.projections
@@ -1645,7 +1667,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     live_after,
                     terminal_owner.filter(|_| owning_intrinsic),
                 )?;
-                if borrowed {
+                if loaned {
                     remove_loan_from_flow(&mut loop_flow, LoanIdentity::Iteration(id));
                 }
                 if let Some(owner) = terminal_owner {
@@ -1770,7 +1792,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                             &mut body_entry,
                             &mut pattern_locals,
                             &mut pattern_terminal_owners,
-                            false,
+                            MatchPatternIntroduction {
+                                activate_terminals: false,
+                                loan_parent: Some(LoanIdentity::Iteration(id)),
+                            },
                         )?;
                     } else {
                         self.introduce_pattern(
@@ -2047,6 +2072,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 })
             })
             .unwrap_or_else(|| place.clone());
+        let loan_source = local
+            .filter(|local| self.pattern_borrowed.contains(local))
+            .map(LoanIdentity::Pattern);
         if check_active_loans {
             self.check_loan_access(
                 state,
@@ -2057,6 +2085,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     LoanAccess::Read
                 },
                 span,
+                loan_source,
             );
         }
         if !transfers {
@@ -2216,6 +2245,37 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         resolved
     }
 
+    fn loan_origin_in_state(
+        &self,
+        id: HirExpressionId,
+        state: &AvailabilityState,
+    ) -> Option<LoanIdentity> {
+        let PlaceRoot::Local(local) = self.loan_place(id).root else {
+            return None;
+        };
+        state
+            .loans
+            .contains_key(&LoanIdentity::Pattern(local))
+            .then_some(LoanIdentity::Pattern(local))
+    }
+
+    fn loan_source_chain(
+        state: &AvailabilityState,
+        mut source: Option<LoanIdentity>,
+    ) -> BTreeSet<LoanIdentity> {
+        let mut chain = BTreeSet::new();
+        while let Some(identity) = source {
+            if !chain.insert(identity) {
+                break;
+            }
+            source = state
+                .loans
+                .get(&identity)
+                .and_then(|reservation| reservation.source);
+        }
+        chain
+    }
+
     fn reserve_loan(
         &mut self,
         state: &mut AvailabilityState,
@@ -2223,8 +2283,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         place: PlaceInfo,
         mode: ParameterMode,
         span: Span,
+        source: Option<LoanIdentity>,
     ) {
-        for active in state.loans.values() {
+        let source_chain = Self::loan_source_chain(state, source);
+        for (active_identity, active) in &state.loans {
+            if source_chain.contains(active_identity) {
+                continue;
+            }
             if active.mode == ParameterMode::Ref && mode == ParameterMode::Ref {
                 continue;
             }
@@ -2240,9 +2305,15 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 move_span: Some(active.span),
             });
         }
-        state
-            .loans
-            .insert(identity, LoanReservation { mode, place, span });
+        state.loans.insert(
+            identity,
+            LoanReservation {
+                mode,
+                place,
+                span,
+                source,
+            },
+        );
     }
 
     fn index_region(
@@ -2290,8 +2361,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         place: &PlaceInfo,
         access: LoanAccess,
         span: Span,
+        source: Option<LoanIdentity>,
     ) {
-        for active in state.loans.values() {
+        let source_chain = Self::loan_source_chain(state, source);
+        for (identity, active) in &state.loans {
+            if source_chain.contains(identity) {
+                continue;
+            }
             if access == LoanAccess::Read && active.mode == ParameterMode::Ref {
                 continue;
             }
@@ -2730,7 +2806,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 locals.push(*local);
                 self.activate_terminal_local(state, *local, pattern.span())?;
             }
-            HirPatternKind::BorrowBinding(local) => {
+            HirPatternKind::BorrowBinding { local, .. } => {
                 self.borrowed.insert(*local);
                 self.pattern_borrowed.insert(*local);
                 remove_local(state, *local);
@@ -2828,7 +2904,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         state: &mut AvailabilityState,
         locals: &mut Vec<LocalId>,
         terminal_owners: &mut Vec<TerminalOwner>,
-        activate_terminals: bool,
+        introduction: MatchPatternIntroduction,
     ) -> Result<(), TypeError> {
         let pattern = self
             .program
@@ -2838,7 +2914,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         match pattern.kind() {
             HirPatternKind::Recovery | HirPatternKind::Literal(_) | HirPatternKind::OptionNone => {}
             HirPatternKind::Wildcard => {
-                if activate_terminals {
+                if introduction.activate_terminals {
                     self.activate_terminal_pattern(
                         state,
                         pattern_id,
@@ -2852,11 +2928,11 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 self.owners.insert(*local);
                 remove_local(state, *local);
                 locals.push(*local);
-                if activate_terminals {
+                if introduction.activate_terminals {
                     self.activate_terminal_local(state, *local, pattern.span())?;
                 }
             }
-            HirPatternKind::BorrowBinding(local) => {
+            HirPatternKind::BorrowBinding { local, mode } => {
                 self.borrowed.insert(*local);
                 self.pattern_borrowed.insert(*local);
                 remove_local(state, *local);
@@ -2865,10 +2941,11 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     state,
                     LoanIdentity::Pattern(*local),
                     source.clone(),
-                    ParameterMode::Ref,
+                    *mode,
                     pattern.span(),
+                    introduction.loan_parent,
                 );
-                if activate_terminals {
+                if introduction.activate_terminals {
                     self.activate_terminal_pattern(
                         state,
                         pattern_id,
@@ -2891,7 +2968,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         state,
                         locals,
                         terminal_owners,
-                        activate_terminals,
+                        introduction,
                     )?;
                 }
             }
@@ -2908,7 +2985,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     state,
                     locals,
                     terminal_owners,
-                    activate_terminals,
+                    introduction,
                 )?;
             }
             HirPatternKind::Record { fields, .. } => {
@@ -2924,7 +3001,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         state,
                         locals,
                         terminal_owners,
-                        activate_terminals,
+                        introduction,
                     )?;
                 }
             }
@@ -2943,7 +3020,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         state,
                         locals,
                         terminal_owners,
-                        activate_terminals,
+                        introduction,
                     )?;
                 }
                 if let Some(rest) = rest {
@@ -2961,7 +3038,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         state,
                         locals,
                         terminal_owners,
-                        activate_terminals,
+                        introduction,
                     )?;
                 }
             }
@@ -2993,7 +3070,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     pattern.span(),
                     terminal_owners,
                 )?,
-                HirPatternKind::BorrowBinding(_) => self.activate_terminal_pattern(
+                HirPatternKind::BorrowBinding { .. } => self.activate_terminal_pattern(
                     state,
                     id,
                     pattern.ty(),

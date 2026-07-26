@@ -925,6 +925,11 @@ fn cursor_capability(
                 (collection, ClosedCapability::Share),
             ])
         }
+        (BytecodeCursorMode::Mut, ClosedCapability::Discard) => fixed_capability(true),
+        (
+            BytecodeCursorMode::Mut,
+            ClosedCapability::Copy | ClosedCapability::Send | ClosedCapability::Share,
+        ) => fixed_capability(false),
         (BytecodeCursorMode::Own, capability) => {
             dependent_capability(vec![(collection, capability)])
         }
@@ -1193,7 +1198,9 @@ impl TerminalAnalysis {
             BytecodeTypeKind::Generated { .. } => generated_terminal(program, ty),
             BytecodeTypeKind::Cursor { mode, collection } => match mode {
                 BytecodeCursorMode::Own => dependent_terminal(vec![*collection]),
-                BytecodeCursorMode::Ref => fixed_terminal(BytecodeTerminalStatus::Absent),
+                BytecodeCursorMode::Ref | BytecodeCursorMode::Mut => {
+                    fixed_terminal(BytecodeTerminalStatus::Absent)
+                }
             },
         };
         Ok(node)
@@ -2731,6 +2738,14 @@ impl Verifier<'_> {
                     "`Ref[T].value` permits only shared `ref` loans",
                 ));
             }
+            if loan.kind == BytecodeLoanKind::Region
+                && matches!(
+                    loan.mode,
+                    BytecodeParameterMode::Mut | BytecodeParameterMode::Var
+                )
+            {
+                self.verify_exclusive_iterator_loan_path(function, &loan.place, &loan_context)?;
+            }
         }
         if function.entry == function.unwind
             || self.block(function, function.entry, &context)?.kind != BytecodeBlockKind::Normal
@@ -3450,7 +3465,7 @@ impl Verifier<'_> {
                 };
                 let borrows = matches!(source.kind, BytecodeOperandKind::Borrow(_));
                 if *collection != source.ty
-                    || (*mode == BytecodeCursorMode::Ref) != borrows
+                    || (*mode != BytecodeCursorMode::Own) != borrows
                     || self
                         .iterated_collection_item_type(source.ty, context)?
                         .is_none()
@@ -4082,12 +4097,60 @@ impl Verifier<'_> {
         Ok(item)
     }
 
+    fn verify_exclusive_iterator_loan_path(
+        &self,
+        function: &BytecodeFunction,
+        place: &BytecodePlace,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let mut current = self.slot(function, place.slot, context)?.ty;
+        for (index, projection) in place.projections.iter().enumerate() {
+            if matches!(
+                projection.kind,
+                BytecodeProjectionKind::IteratorElement { .. }
+            ) {
+                match &self.ty(current, context)?.kind {
+                    BytecodeTypeKind::Intrinsic {
+                        constructor: BytecodeIntrinsicType::Array,
+                        ..
+                    } => {}
+                    BytecodeTypeKind::Intrinsic {
+                        constructor: BytecodeIntrinsicType::Map,
+                        ..
+                    } if matches!(
+                        place.projections.get(index + 1).map(|next| &next.kind),
+                        Some(BytecodeProjectionKind::TupleField(1))
+                    ) => {}
+                    BytecodeTypeKind::Intrinsic {
+                        constructor: BytecodeIntrinsicType::Map,
+                        ..
+                    } => {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "exclusive Map iterator loan does not project through its value",
+                        ));
+                    }
+                    _ => {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "exclusive iterator loan has a non-mutable collection source",
+                        ));
+                    }
+                }
+                return Ok(());
+            }
+            current = projection.ty;
+        }
+        Ok(())
+    }
+
     fn verify_borrowed_iterator_origin(
         &self,
         function: &BytecodeFunction,
         state: &BytecodePlace,
         destination: &BytecodePlace,
         source: &BytecodePlace,
+        mode: BytecodeCursorMode,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
         if !state.projections.is_empty()
@@ -4106,8 +4169,13 @@ impl Verifier<'_> {
                 .ok_or_else(|| terminator_error(context))?,
             context,
         )?;
+        let expected_mode = match mode {
+            BytecodeCursorMode::Ref => BytecodeParameterMode::Ref,
+            BytecodeCursorMode::Mut => BytecodeParameterMode::Mut,
+            BytecodeCursorMode::Own => return Err(terminator_error(context)),
+        };
         if loan.kind != BytecodeLoanKind::Region
-            || loan.mode != BytecodeParameterMode::Ref
+            || loan.mode != expected_mode
             || !same_place_path(&loan.place, source)
         {
             return Err(terminator_error(context));
@@ -4892,7 +4960,7 @@ impl Verifier<'_> {
                             }
                         }
                     }
-                    BytecodeCursorMode::Ref => {
+                    BytecodeCursorMode::Ref | BytecodeCursorMode::Mut => {
                         if exhaustion_guard.is_some() {
                             return Err(terminator_error(context));
                         }
@@ -4900,6 +4968,18 @@ impl Verifier<'_> {
                             .as_ref()
                             .ok_or_else(|| terminator_error(context))?;
                         self.verify_place(function, source, context)?;
+                        if mode == BytecodeCursorMode::Mut
+                            && !matches!(
+                                self.ty(collection, context)?.kind,
+                                BytecodeTypeKind::Intrinsic {
+                                    constructor: BytecodeIntrinsicType::Array
+                                        | BytecodeIntrinsicType::Map,
+                                    ..
+                                }
+                            )
+                        {
+                            return Err(terminator_error(context));
+                        }
                         if source.ty != collection
                             || !self.is_scalar(destination.ty, BytecodeScalarType::Int)
                             || source.source_loan.is_none()
@@ -4914,6 +4994,7 @@ impl Verifier<'_> {
                             state,
                             destination,
                             source,
+                            mode,
                             context,
                         )?;
                     }
@@ -6064,19 +6145,26 @@ impl Verifier<'_> {
                 }
                 BytecodeTerminatorKind::IteratorNext {
                     destination,
+                    borrowed_source,
                     has_value,
                     exhausted,
                     unwind,
                     ..
                 } => {
-                    for loan in &state.active {
-                        let loan = self.loan(function, *loan, &block_context)?;
+                    let source_chain = borrowed_source
+                        .as_ref()
+                        .map(|source| self.place_source_chain(function, source, &block_context))
+                        .transpose()?
+                        .unwrap_or_default();
+                    for id in &state.active {
+                        let loan = self.loan(function, *id, &block_context)?;
                         if loan.kind != BytecodeLoanKind::Region
-                            || loan.mode != BytecodeParameterMode::Ref
+                            || (loan.mode != BytecodeParameterMode::Ref
+                                && !source_chain.contains(id))
                         {
                             return Err(BytecodeVerificationError::new(
                                 &block_context,
-                                "only shared region loans may cross an iterator boundary",
+                                "only shared regions or the iterator source chain may cross an iterator boundary",
                             ));
                         }
                     }
@@ -6257,8 +6345,12 @@ impl Verifier<'_> {
                         ),
                     ));
                 }
+                let source_chain = self.place_source_chain(function, &loan.place, context)?;
                 for active in state.active.iter().copied() {
                     self.consume_dataflow_step(context)?;
+                    if source_chain.contains(&active) {
+                        continue;
+                    }
                     let existing = self.loan(function, active, context)?;
                     if loan.mode == BytecodeParameterMode::Ref
                         && existing.mode == BytecodeParameterMode::Ref
@@ -6416,8 +6508,12 @@ impl Verifier<'_> {
             ));
         }
         let mut against = Vec::new();
+        let source_chain = self.place_source_chain(function, &loan.place, context)?;
         for active in active.iter().copied() {
             self.consume_dataflow_step(context)?;
+            if source_chain.contains(&active) {
+                continue;
+            }
             let existing = self.loan(function, active, context)?;
             if loan.mode == BytecodeParameterMode::Ref
                 && existing.mode == BytecodeParameterMode::Ref
@@ -6452,8 +6548,12 @@ impl Verifier<'_> {
         context: &str,
     ) -> Result<Vec<BytecodeLoanId>, BytecodeVerificationError> {
         let mut against = Vec::new();
+        let source_chain = self.place_source_chain(function, place, context)?;
         for active in active.iter().copied() {
             self.consume_dataflow_step(context)?;
+            if source_chain.contains(&active) {
+                continue;
+            }
             let existing = self.loan(function, active, context)?;
             if !for_write && existing.mode == BytecodeParameterMode::Ref {
                 continue;
@@ -6473,6 +6573,26 @@ impl Verifier<'_> {
             }
         }
         Ok(against)
+    }
+
+    fn place_source_chain(
+        &self,
+        function: &BytecodeFunction,
+        place: &BytecodePlace,
+        context: &str,
+    ) -> Result<BTreeSet<BytecodeLoanId>, BytecodeVerificationError> {
+        let mut chain = BTreeSet::new();
+        let mut source = place.source_loan;
+        while let Some(id) = source {
+            if !chain.insert(id) {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "place source region chain contains a cycle",
+                ));
+            }
+            source = self.loan(function, id, context)?.place.source_loan;
+        }
+        Ok(chain)
     }
 
     fn active_dependent_loan(
@@ -8628,6 +8748,15 @@ fn loan_paths_relation(
 ) -> StaticRegionRelation {
     let mut relation = StaticRegionRelation::Overlap;
     for (left, right) in left.iter().zip(right) {
+        if matches!(
+            (left, right),
+            (
+                MovePathComponent::IteratorElement { index: left },
+                MovePathComponent::IteratorElement { index: right }
+            ) if left == right
+        ) {
+            continue;
+        }
         match (
             collection_region(left, static_integers),
             collection_region(right, static_integers),

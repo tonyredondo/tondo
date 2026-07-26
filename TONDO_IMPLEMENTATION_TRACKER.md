@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.67
+**Versión del tracker:** 0.68
 
 **Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** cerrar el protocolo estático y las cuatro formas de
-iteración (ITER-001 e ITER-002).
+**Objetivo inmediato:** checkpoint de ITER-001/ITER-002 cerrado; la siguiente
+fase pendiente es NUM-001 y no se ha iniciado.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1255,9 +1255,9 @@ lifetimes escritos por el usuario.
   funciones, tuples, unions, options, results, nominales recursivos, genéricos,
   opacos, colecciones, references, pointers, closures y cursores intrínsecos.
   Los cursores conservan ahora un tipo interno explícito
-  `cursor[own,C]`/`cursor[ref,C]`; MIR y bytecode no pueden confundirlo con
-  `C`, y la VM realiza una copia lógica independiente cuando el contrato la
-  permite.
+  `cursor[own,C]`/`cursor[ref,C]`/`cursor[mut,C]`; MIR y bytecode no pueden
+  confundirlo con `C`, y la VM realiza una copia lógica independiente cuando el
+  contrato la permite. El cursor exclusivo es afín y solo cumple `Discard`.
 
 - [x] **OWN-002 — Implementar moves de valores no `Copy`.** MIR selecciona
   `Copy` o `Move` con el grafo de capacidades y los bounds exactos de cada body,
@@ -1340,7 +1340,8 @@ lifetimes escritos por el usuario.
   Los usos inalcanzables no prolongan regiones y `break`/`continue` conservan la
   liveness específica de su destino. BORROW-004 extiende estas regiones a
   elementos y restos de patrones de array, y BORROW-006 cierra los cursores
-  `for ref` con regiones dinámicas y fronteras verificadas.
+  prestados compartidos y exclusivos con regiones dinámicas y fronteras
+  verificadas.
 
 - [x] **BORROW-003 — Distinguir observación compartida, mutación de extensión
   fija y mutación estructural.** HIR clasifica cada escritura como reemplazo o
@@ -1374,18 +1375,20 @@ lifetimes escritos por el usuario.
   bounds/step y limpia reservas por unwind antes de entrar en el callee.
 
 - [x] **BORROW-006 — Rechazar préstamos que crucen suspensión o fronteras no
-  permitidas.** `for ref` acepta únicamente lugares estables `Array`, `Map` o
-  `Set`, mantiene un préstamo compartido de la colección durante todo el bucle
-  y limita cada binding `ref` a su iteración; los bindings por valor deben ser
-  `Copy`. MIR congela una sola vez los índices que identifican una fuente
-  anidada, representa el avance sin copia mediante una posición `Int` y
-  `IteratorElement`, enlaza cursor, origen, región y posición de forma
-  canónica, y libera hijos y colección en backedges, salidas, retorno y
-  unwind. `IteratorNext` es una frontera explícita que admite solo préstamos
-  `Region ref`; los verificadores MIR y bytecode rechazan préstamos call-local
-  o exclusivos y la VM comprueba el origen antes de proyectar. M7 añadirá el
-  terminador concreto de suspensión y reutilizará esta regla junto con frames
-  y `Send`; `await` continúa rechazado honestamente hasta entonces.
+  permitidas.** `for ref` acepta lugares estables `Array`, `Map` o `Set`;
+  patrones con `mut` o `var` aceptan lugares estables escribibles `Array` o
+  `Map`. La colección mantiene durante todo el bucle una región compartida o
+  exclusiva según el cursor y cada binding prestado queda limitado a su
+  iteración; los bindings por valor deben ser `Copy`. MIR congela una sola vez
+  los índices que identifican una fuente anidada, representa el avance sin
+  copia mediante una posición `Int` y `IteratorElement`, enlaza cursor, origen,
+  región y posición de forma canónica, y libera hijos y colección en backedges,
+  salidas, retorno y unwind. `IteratorNext` admite regiones compartidas y la
+  cadena fuente exacta del cursor; toda región exclusiva debe pertenecer a esa
+  cadena. Los verificadores rechazan loans call-local o exclusivos ajenos,
+  claves mutables de map y proyecciones redirigidas. M7 añadirá el terminador
+  concreto de suspensión y reutilizará esta regla junto con frames y `Send`;
+  `await` continúa rechazado honestamente hasta entonces.
 
 ### 10.3 Recursos terminales y cleanup
 
@@ -1620,11 +1623,22 @@ lifetimes escritos por el usuario.
   al emitirlo sin calcular sucesor. La VM cubre `Int.min/max`, `UInt64.max`,
   salta surrogates de `Char` y termina en `U+10FFFF`.
 
-- [ ] **ITER-001 — Implementar el protocolo estático `Iterator[T]` con un único
-  elemento por target.**
+- [x] **ITER-001 — Implementar el protocolo estático `Iterator[T]` con un único
+  elemento por target.** La selección conserva la dependencia funcional
+  target→`T`: dos `impl Iterator[...]` unificables para el mismo tipo producen
+  `E1113`. `for` evalúa una vez el cursor concreto, invoca estáticamente
+  `next(mut self): T?`, ramifica sobre `none`/`some` y mueve o copia cada
+  elemento conforme a sus capacidades sin borrar el tipo del cursor.
 
-- [ ] **ITER-002 — Implementar `for`, `for ref`, `for mut` y `for var` sobre las
-  fuentes permitidas.**
+- [x] **ITER-002 — Implementar `for`, `for ref`, `for mut` y `for var` sobre las
+  fuentes permitidas.** El patrón completo selecciona `cursor[own,C]`,
+  `cursor[ref,C]` o `cursor[mut,C]`, mientras cada hoja conserva su modo exacto.
+  `for ref` observa `Array`/`Map`/`Set`; `for mut` y `for var` escriben a través
+  de `Array`/`Map` estables sin permitir `Set`, `Range`, `String`, temporales ni
+  iteradores de usuario. En maps solo el valor puede ser exclusivo. `mut`
+  conserva extensión y `var` reemplaza el elemento; ninguna forma altera la
+  colección conducida por el cursor. HIR, MIR, bytecode y VM rederivan origen,
+  permisos, regiones, posición, write-through y cleanup en cada salida.
 
 ### 11.3 Numéricos
 
@@ -2115,13 +2129,35 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es ITER-001/ITER-002: cerrar el protocolo estático
-`Iterator[T]` y completar `for`, `for ref`, `for mut` y `for var` sobre sus
-fuentes permitidas.
+ITER-001/ITER-002 quedan cerrados. La siguiente acción de la cola es NUM-001,
+pero permanece sin iniciar en este checkpoint.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.68 — 2026-07-26
+
+- Se cierra ITER-001 con selección estática del `Iterator[T]` único por target,
+  receptor `mut`, discriminación explícita de `Option[T]` y ejecución real de
+  un cursor nominal. Una regresión pública conserva `E1113` para dos elementos
+  incompatibles sobre el mismo target.
+- Se cierra ITER-002 con un único lowering para `for`, `for ref`, `for mut` y
+  `for var`. El patrón selecciona el cursor own/ref/mut y conserva permisos
+  exactos por hoja; las fuentes compartidas y exclusivas siguen una matriz
+  cerrada, se evalúan una vez y liberan sus regiones en agotamiento y toda salida.
+- La VM escribe directamente sobre elementos de array y sobre el valor real de
+  cada entrada de map, nunca sobre la tuple efímera del elemento. `mut` valida
+  extensión fija y `var` permite reemplazo; claves, cardinalidad y orden del map
+  permanecen inmutables durante el recorrido.
+- Las regresiones cubren source checking, modos y capacidades, coherencia HIR,
+  regiones y posiciones MIR, bytecode adversarial, arrays anidados, patterns
+  mixtos, maps, reborrows, `break`, `continue`, `return`, acceso al owner y
+  liberación posterior.
+- El gate acumulado pasa 591 tests: 521 unitarios del compilador, 27 de la VM y
+  43 de CLI/integración. También pasan formatter check, compilación de todos los
+  targets, Clippy con warnings como errores y rustdoc estricto, con compilación
+  incremental desactivada por el ICE conocido de Rust 1.93.
 
 ### 0.67 — 2026-07-26
 

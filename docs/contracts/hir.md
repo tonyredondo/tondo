@@ -10,7 +10,7 @@ complete `var` reinitialization, uniform match ownership modes, affine transfer
 restrictions, ordered call-local `ref`/`mut`/`var` loans, semantic occurrences,
 BORROW-002 last-use regions for pattern `ref` bindings, BORROW-003 fixed-extent
 permissions, BORROW-004 static collection regions, BORROW-005 deferred runtime
-overlap obligations, BORROW-006 borrowed-iteration regions and boundary policy,
+overlap obligations, BORROW-006 loaned-iteration regions and boundary policy,
 TERM-001 closed terminal-type registration and structural status, TERM-002
 normal-path terminal ownership, TERM-003 checked synchronous `defer` actions
 and affine guards, TERM-004 downstream closed-fallback admission, and verified
@@ -18,7 +18,8 @@ MIR admission, REF-001 safe identity construction and shared content
 projection, REF-002 identity equality/key admission, ARRAY-001 runtime length,
 ARRAY-002 typed array indexing, ARRAY-003 typed slicing, ARRAY-004 logical slice
 ownership, ARRAY-005 fixed versus structural array mutation, ARRAY-006 closed
-lifted arithmetic, and ARRAY-007 named concatenation/repetition implemented
+lifted arithmetic, ARRAY-007 named concatenation/repetition, and ITER-001/002
+static user iterators plus all four intrinsic iteration forms implemented
 
 ## Boundary
 
@@ -51,8 +52,8 @@ The output owns:
   expression;
 - one independently derived `Call`/`CallMut`/`CallOnce` row for every closure,
   plus the exact signature and selected protocol on every indirect call;
-- one exact `cursor[own,C]` or `cursor[ref,C]` state type for every intrinsic
-  iterator loop;
+- one exact `cursor[own,C]`, `cursor[ref,C]`, or `cursor[mut,C]` state type for
+  every intrinsic iterator loop;
 - one `Absent`/`Potential`/`Present` terminal status for every interned type,
   plus the sealed direct operation and unwind contract of each language-owned
   terminal root;
@@ -733,6 +734,7 @@ Its source-level matrix is:
 | `Range[T]` | Componentwise `Copy`, `Discard`, `Send`, and `Share`; not `Equatable` or `Key` |
 | `cursor[own,C]` | Componentwise `Copy`, `Discard`, `Send`, and `Share`; not `Equatable` or `Key` |
 | `cursor[ref,C]` | Always `Copy` and `Discard`; `Send` and `Share` both require `C: Send + Share`; not `Equatable` or `Key` |
+| `cursor[mut,C]` | `Discard` only |
 | `Ref[T]` | Always `Copy`, `Discard`, `Equatable`, and `Key` once well formed; `Send` and `Share` both require `T: Send + Share` |
 | `Pointer[T]` | `Copy` and `Discard` only |
 | `Join[T, E]` | None of the six |
@@ -1077,15 +1079,22 @@ exclusive reservation. Equal exact projections may be followed to deeper
 fields or elements; a root still overlaps every descendant. `var` rejects a
 partial slice or region with `E1407`, independently of disjunction.
 
-BORROW-006 applies the exact same active-loan model to intrinsic borrowed
-iteration. `for ref` accepts only a stable `Array`, `Map`, or `Set` place; a
-temporary, `Range`, `String`, or user `Iterator` receives `E1402`. The source
-has one shared reservation for the whole loop, and every `ref` pattern binding
-has a child region limited to the current iteration. A non-`ref` binding in the
-same pattern must prove `Copy`, otherwise it receives `E1406`. Reads through a
-`Copy` borrowed binding are observations rather than ownership transfers.
-The source place is evaluated once; later changes to an index expression do not
-redirect an active cursor. Mutation, replacement, or movement of the source
+BORROW-006 applies the exact same active-loan model to intrinsic loaned
+iteration. `for ref` accepts only a stable `Array`, `Map`, or `Set` place;
+patterns containing `mut` or `var` accept only a stable writable `Array` or
+`Map` place. A temporary, `Range`, `String`, user `Iterator`, read-only
+exclusive source, or `Set` with an exclusive pattern is rejected. The source
+has one loop-wide shared or exclusive reservation, and every loaned pattern
+binding has a child region limited to the current iteration. A value binding in
+the same pattern must prove `Copy`, otherwise it receives `E1406`. Reads through
+a `Copy` value binding are observations rather than ownership transfers.
+
+For `Map[K, V]`, exclusive leaves may project only `V`: keys and complete
+entries remain immutable so key identity and insertion order cannot change.
+`mut` preserves the structural extent of its leaf and `var` may replace that
+leaf; neither may resize the collection traversed by the cursor. The source
+place is evaluated once; later changes to an index expression do not redirect
+an active cursor. Direct access, movement, or a conflicting loan of the source
 remains an ordinary `E1403` conflict until every loop exit closes the
 reservation.
 
@@ -1112,17 +1121,19 @@ a join or on a loop backedge keeps it active on every path that can reach that
 use. Ordered call arguments still retain their call-local loans, so a later
 argument cannot mutate the source of an earlier `ref` argument.
 
-Array-pattern `ref` bindings use exact prefix-index and rest-region
+Array-pattern loan bindings use exact prefix-index and rest-region
 projections. A prefix element is statically disjoint from a later prefix element
 and from a rest beginning after it; the same proof remains attached through a
 call-local reborrow. Data-dependent pattern/index and pattern/slice relationships
 use the same deferred runtime proof as call-local collection loans and ordinary
-accesses. Intrinsic `for ref` uses a dynamic element projection tied to the
-cursor's canonical position and source reservation. `break`, `continue`,
-`return`, `fail`, propagation, and panic paths all end the appropriate child
-and collection regions. Actual `await` remains an M7 surface: HIR continues to
-reject it as incomplete until an explicit suspension node can apply the same
-BORROW-006 active-loan policy together with frame and `Send` checks.
+accesses. Intrinsic loaned `for` uses a dynamic element projection tied to the
+cursor's canonical position and source reservation. `ref` children are shared;
+`mut` and `var` children retain their exact exclusive permission. `break`,
+`continue`, `return`, `fail`, propagation, and panic paths all end the
+appropriate child and collection regions. Actual `await` remains an M7 surface:
+HIR continues to reject it as incomplete until an explicit suspension node can
+apply the same BORROW-006 active-loan policy together with frame and `Send`
+checks.
 
 ## Declaration ordering
 
@@ -1275,7 +1286,7 @@ bounds, constraint forwarding, obligation budgets, and public-driver `E1105`
 propagation. Capability regressions cover the complete intrinsic matrix,
 implication forwarding, recursive nominal equality and keys, opaque bounds,
 async-trait `Self: Send`, collection and reference formation, equality,
-membership, map lookup, explicit own/ref cursor modes and capabilities, and
+membership, map lookup, explicit own/ref/mut cursor modes and capabilities, and
 order-insensitive map/set runtime equality. Ownership-availability regressions
 cover sequential and `CallOnce` moves, Copy and immediate-observation
 preservation, `if`/`match`/short-circuit joins, diverging paths, conditional and

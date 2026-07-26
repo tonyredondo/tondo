@@ -2166,7 +2166,10 @@ pub enum HirPatternKind {
     Recovery,
     Wildcard,
     Binding(LocalId),
-    BorrowBinding(LocalId),
+    BorrowBinding {
+        local: LocalId,
+        mode: ParameterMode,
+    },
     Literal(HirLiteral),
     Tuple(Vec<HirPatternId>),
     OptionSome(HirPatternId),

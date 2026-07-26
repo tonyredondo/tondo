@@ -270,7 +270,7 @@ impl TerminalAnalysis {
             }
             TypeKind::Cursor { mode, collection } => match mode {
                 CursorMode::Own => dependent(vec![collection]),
-                CursorMode::Ref => fixed(HirTerminalStatus::Absent),
+                CursorMode::Ref | CursorMode::Mut => fixed(HirTerminalStatus::Absent),
             },
         };
         Ok(node)

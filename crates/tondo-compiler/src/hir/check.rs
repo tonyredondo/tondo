@@ -7510,18 +7510,27 @@ impl<'a> ExpressionChecker<'a> {
                 })
             }
             AstPattern::Binding(_) => {
-                self.check_pattern_binding(file, node, expected, context, false)
+                self.check_pattern_binding(file, node, expected, context, ParameterMode::Value)
             }
             AstPattern::BorrowBinding(_) => {
+                let mode = pattern_binding_mode(node);
                 if pattern_context == PatternContext::Binding {
                     self.emit_invalid_pattern(
                         file,
                         node.range(),
-                        "borrow bindings are allowed only in `for` headers and `match` arms",
+                        "`ref`, `mut`, and `var` pattern bindings are not allowed in `let` or `var` patterns",
                     )?;
                     return self.recovery_pattern(file, node.range());
                 }
-                self.check_pattern_binding(file, node, expected, context, true)
+                if pattern_context == PatternContext::Match && mode != ParameterMode::Ref {
+                    self.emit_invalid_pattern(
+                        file,
+                        node.range(),
+                        "`mut` and `var` pattern bindings are allowed only in `for` headers",
+                    )?;
+                    return self.recovery_pattern(file, node.range());
+                }
+                self.check_pattern_binding(file, node, expected, context, mode)
             }
             AstPattern::Unit(_) => self.check_unit_pattern(file, node, expected),
             AstPattern::Literal(_) => self.check_literal_pattern(file, node, expected),
@@ -7552,7 +7561,7 @@ impl<'a> ExpressionChecker<'a> {
         node: SyntaxNodeRef<'_>,
         ty: TypeId,
         context: &mut BodyContext,
-        borrowed: bool,
+        mode: ParameterMode,
     ) -> Result<CheckedPattern, HirError> {
         let Some(token) = node
             .child_tokens()
@@ -7561,7 +7570,11 @@ impl<'a> ExpressionChecker<'a> {
             return self.recovery_pattern(file, node.range());
         };
         if token.token().normalized_identifier() == Some("_") {
-            self.emit_invalid_pattern(file, node.range(), "`ref _` is redundant; use `_`")?;
+            self.emit_invalid_pattern(
+                file,
+                node.range(),
+                "a loan binding of `_` is redundant; use `_`",
+            )?;
             return self.recovery_pattern(file, node.range());
         }
         let Some(local) = self.resolved.local_at(file, token.range()) else {
@@ -7569,19 +7582,24 @@ impl<'a> ExpressionChecker<'a> {
             return self.recovery_pattern(file, node.range());
         };
         context.locals.insert(local.id(), ty);
-        context
-            .local_permissions
-            .entry(local.id())
-            .or_insert(PlacePermission::Immutable);
-        if borrowed {
+        let permission = match mode {
+            ParameterMode::Value | ParameterMode::Ref => PlacePermission::Immutable,
+            ParameterMode::Mut => PlacePermission::MutRoot,
+            ParameterMode::Var => PlacePermission::Replace,
+        };
+        context.local_permissions.insert(local.id(), permission);
+        if mode != ParameterMode::Value {
             context.noncapturable_locals.insert(local.id());
         }
         self.program.local_types.insert(local.id(), ty);
         let id = self.allocate_pattern(HirPattern {
             span: self.sources.span(file, node.range())?,
             ty,
-            kind: if borrowed {
-                HirPatternKind::BorrowBinding(local.id())
+            kind: if mode != ParameterMode::Value {
+                HirPatternKind::BorrowBinding {
+                    local: local.id(),
+                    mode,
+                }
             } else {
                 HirPatternKind::Binding(local.id())
             },
@@ -8064,23 +8082,31 @@ impl<'a> ExpressionChecker<'a> {
         }
 
         let rest = if let Some(rest_node) = rest_node {
-            let borrowed = rest_node
-                .child_tokens()
-                .any(|token| token.kind() == TokenKind::Ref);
+            let mode = pattern_binding_mode(rest_node);
             if let Some(binding) = rest_node
                 .child_tokens()
                 .find(|token| token.kind() == TokenKind::Identifier)
             {
-                let checked = if borrowed && pattern_context == PatternContext::Binding {
-                    self.emit_invalid_pattern(
-                        file,
-                        rest_node.range(),
-                        "borrow bindings are not allowed in `let` or `var` patterns",
-                    )?;
-                    self.recovery_pattern(file, rest_node.range())?
-                } else {
-                    self.check_pattern_binding_token(file, binding, member, context, borrowed)?
-                };
+                let checked =
+                    if mode != ParameterMode::Value && pattern_context == PatternContext::Binding {
+                        self.emit_invalid_pattern(
+                            file,
+                            rest_node.range(),
+                            "loan bindings are not allowed in `let` or `var` patterns",
+                        )?;
+                        self.recovery_pattern(file, rest_node.range())?
+                    } else if pattern_context == PatternContext::Match
+                        && matches!(mode, ParameterMode::Mut | ParameterMode::Var)
+                    {
+                        self.emit_invalid_pattern(
+                            file,
+                            rest_node.range(),
+                            "`mut` and `var` pattern bindings are allowed only in `for` headers",
+                        )?;
+                        self.recovery_pattern(file, rest_node.range())?
+                    } else {
+                        self.check_pattern_binding_token(file, binding, member, context, mode)?
+                    };
                 valid &= checked.valid;
                 Some(checked.id)
             } else {
@@ -8456,18 +8482,25 @@ impl<'a> ExpressionChecker<'a> {
             {
                 self.check_pattern(file, pattern_node, ty, context, pattern_context)?
             } else {
-                let borrowed = field_node
-                    .child_tokens()
-                    .any(|token| token.kind() == TokenKind::Ref);
-                if borrowed && pattern_context == PatternContext::Binding {
+                let mode = pattern_binding_mode(field_node);
+                if mode != ParameterMode::Value && pattern_context == PatternContext::Binding {
                     self.emit_invalid_pattern(
                         file,
                         field_node.range(),
-                        "borrow bindings are not allowed in `let` or `var` patterns",
+                        "loan bindings are not allowed in `let` or `var` patterns",
+                    )?;
+                    self.recovery_pattern(file, field_node.range())?
+                } else if pattern_context == PatternContext::Match
+                    && matches!(mode, ParameterMode::Mut | ParameterMode::Var)
+                {
+                    self.emit_invalid_pattern(
+                        file,
+                        field_node.range(),
+                        "`mut` and `var` pattern bindings are allowed only in `for` headers",
                     )?;
                     self.recovery_pattern(file, field_node.range())?
                 } else {
-                    self.check_pattern_binding_token(file, name_token, ty, context, borrowed)?
+                    self.check_pattern_binding_token(file, name_token, ty, context, mode)?
                 }
             };
             valid &= checked.valid;
@@ -8524,7 +8557,7 @@ impl<'a> ExpressionChecker<'a> {
         token: SyntaxTokenRef<'_>,
         ty: TypeId,
         context: &mut BodyContext,
-        borrowed: bool,
+        mode: ParameterMode,
     ) -> Result<CheckedPattern, HirError> {
         if token.token().normalized_identifier() == Some("_") {
             self.emit_invalid_pattern(
@@ -8539,16 +8572,24 @@ impl<'a> ExpressionChecker<'a> {
             return self.recovery_pattern(file, token.range());
         };
         context.locals.insert(local.id(), ty);
-        context
-            .local_permissions
-            .entry(local.id())
-            .or_insert(PlacePermission::Immutable);
+        let permission = match mode {
+            ParameterMode::Value | ParameterMode::Ref => PlacePermission::Immutable,
+            ParameterMode::Mut => PlacePermission::MutRoot,
+            ParameterMode::Var => PlacePermission::Replace,
+        };
+        context.local_permissions.insert(local.id(), permission);
+        if mode != ParameterMode::Value {
+            context.noncapturable_locals.insert(local.id());
+        }
         self.program.local_types.insert(local.id(), ty);
         let id = self.allocate_pattern(HirPattern {
             span: self.sources.span(file, token.range())?,
             ty,
-            kind: if borrowed {
-                HirPatternKind::BorrowBinding(local.id())
+            kind: if mode != ParameterMode::Value {
+                HirPatternKind::BorrowBinding {
+                    local: local.id(),
+                    mode,
+                }
             } else {
                 HirPatternKind::Binding(local.id())
             },
@@ -10221,22 +10262,26 @@ impl<'a> ExpressionChecker<'a> {
                     &mut body_context,
                     PatternContext::For,
                 )?;
-                let borrows = self.pattern_contains_borrow(pattern);
-                if borrows {
-                    self.validate_borrowed_iteration_source(
+                let loan_mode = self.pattern_loan_mode(pattern);
+                if let Some(mode) = loan_mode {
+                    self.validate_loaned_iteration_source(
                         source,
                         source_type,
                         pattern,
-                        &context.capability_assumptions,
+                        mode,
+                        context,
                     )?;
                 }
                 let protocol = if let Some(protocol) = protocol {
                     protocol
                 } else {
-                    let mode = if borrows {
-                        CursorMode::Ref
-                    } else {
-                        CursorMode::Own
+                    let mode = match loan_mode {
+                        None => CursorMode::Own,
+                        Some(ParameterMode::Ref) => CursorMode::Ref,
+                        Some(ParameterMode::Mut | ParameterMode::Var) => CursorMode::Mut,
+                        Some(ParameterMode::Value) => {
+                            unreachable!("value bindings do not create iterator loans")
+                        }
                     };
                     HirIterationProtocol::Intrinsic {
                         cursor: self.program.interner.cursor(mode, source_type)?,
@@ -10289,36 +10334,64 @@ impl<'a> ExpressionChecker<'a> {
         Ok(element)
     }
 
-    fn validate_borrowed_iteration_source(
+    fn validate_loaned_iteration_source(
         &mut self,
         source: HirExpressionId,
         source_type: TypeId,
         pattern: HirPatternId,
-        assumptions: &CapabilityAssumptions,
+        mode: ParameterMode,
+        context: &BodyContext,
     ) -> Result<(), HirError> {
-        let source_expression = self
+        let source_span = self
             .program
             .expression(source)
-            .expect("checked iterator sources remain indexed");
+            .expect("checked iterator sources remain indexed")
+            .span();
+        let constructor = match self.program.interner.kind(source_type)? {
+            TypeKind::Intrinsic { constructor, .. } => Some(*constructor),
+            _ => None,
+        };
+        let exclusive = matches!(mode, ParameterMode::Mut | ParameterMode::Var);
         let supported = matches!(
-            self.program.interner.kind(source_type)?,
-            TypeKind::Intrinsic {
-                constructor: IntrinsicType::Array | IntrinsicType::Map | IntrinsicType::Set,
-                ..
-            }
+            (constructor, exclusive),
+            (
+                Some(IntrinsicType::Array | IntrinsicType::Map | IntrinsicType::Set),
+                false
+            ) | (Some(IntrinsicType::Array | IntrinsicType::Map), true)
         );
-        if !supported || !self.match_scrutinee_is_stable(source) {
+        let stable = self.match_scrutinee_is_stable(source);
+        if !supported || !stable {
             self.emit(
-                source_expression.span(),
+                source_span,
                 "E1402",
-                "borrowed iteration requires a stable Array, Map, or Set lvalue",
+                if exclusive {
+                    "exclusive iteration requires a stable Array or Map lvalue"
+                } else {
+                    "borrowed iteration requires a stable Array, Map, or Set lvalue"
+                },
+                Vec::new(),
+                None,
+            )?;
+        }
+        if exclusive
+            && supported
+            && stable
+            && !matches!(
+                self.expression_place_permission(source, context),
+                PlacePermission::MutRoot | PlacePermission::Replace
+            )
+        {
+            self.emit(
+                source_span,
+                "E1407",
+                "exclusive iteration requires a writable source",
                 Vec::new(),
                 None,
             )?;
         }
 
-        let mut pending = vec![pattern];
-        while let Some(id) = pending.pop() {
+        let mut pending = vec![(pattern, Vec::<u32>::new())];
+        while let Some((id, path)) = pending.pop() {
             let pattern = self
                 .program
                 .pattern(id)
@@ -10329,37 +10402,65 @@ impl<'a> ExpressionChecker<'a> {
                     match self.capability_status_with_generics(
                         pattern.ty(),
                         HirCapability::Copy,
-                        assumptions,
+                        &context.capability_assumptions,
                     )? {
                         HirCapabilityStatus::Satisfied => {}
                         HirCapabilityStatus::Deferred => self.complete = false,
                         HirCapabilityStatus::Unsatisfied => self.emit(
                             pattern.span(),
                             "E1406",
-                            "a non-ref binding cannot move affine content out of a borrowed iterator item",
+                            "a value binding cannot move affine content out of a loaned iterator item",
                             Vec::new(),
                             None,
                         )?,
                     }
                 }
-                HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
-                    pending.extend(items.iter().copied());
+                HirPatternKind::BorrowBinding {
+                    mode: leaf_mode, ..
+                } if matches!(leaf_mode, ParameterMode::Mut | ParameterMode::Var)
+                    && constructor == Some(IntrinsicType::Map)
+                    && path.first() != Some(&1) =>
+                {
+                    self.emit(
+                        pattern.span(),
+                        "E1402",
+                        "Map keys and entries are immutable during iteration; borrow only the value with `mut` or `var`",
+                        Vec::new(),
+                        None,
+                    )?;
+                }
+                HirPatternKind::Tuple(items) => {
+                    for (index, item) in items.iter().copied().enumerate() {
+                        let mut child_path = path.clone();
+                        child_path.push(index as u32);
+                        pending.push((item, child_path));
+                    }
+                }
+                HirPatternKind::Variant { fields: items, .. } => {
+                    pending.extend(items.iter().copied().map(|item| (item, path.clone())));
                 }
                 HirPatternKind::OptionSome(item)
                 | HirPatternKind::ResultOk(item)
                 | HirPatternKind::ResultErr(item)
                 | HirPatternKind::Newtype { value: item, .. }
-                | HirPatternKind::UnionMember { pattern: item, .. } => pending.push(*item),
+                | HirPatternKind::UnionMember { pattern: item, .. } => {
+                    pending.push((*item, path));
+                }
                 HirPatternKind::Record { fields, .. } => {
-                    pending.extend(fields.iter().map(HirPatternField::pattern));
+                    pending.extend(
+                        fields
+                            .iter()
+                            .map(HirPatternField::pattern)
+                            .map(|item| (item, path.clone())),
+                    );
                 }
                 HirPatternKind::Array { prefix, rest } => {
-                    pending.extend(prefix.iter().copied());
-                    pending.extend(*rest);
+                    pending.extend(prefix.iter().copied().map(|item| (item, path.clone())));
+                    pending.extend(rest.map(|item| (item, path)));
                 }
                 HirPatternKind::Recovery
                 | HirPatternKind::Wildcard
-                | HirPatternKind::BorrowBinding(_)
+                | HirPatternKind::BorrowBinding { .. }
                 | HirPatternKind::Literal(_)
                 | HirPatternKind::OptionNone => {}
             }
@@ -10367,14 +10468,20 @@ impl<'a> ExpressionChecker<'a> {
         Ok(())
     }
 
-    fn pattern_contains_borrow(&self, root: HirPatternId) -> bool {
+    fn pattern_loan_mode(&self, root: HirPatternId) -> Option<ParameterMode> {
+        let mut result = None;
         let mut pending = vec![root];
         while let Some(id) = pending.pop() {
             let Some(pattern) = self.program.pattern(id) else {
                 continue;
             };
             match pattern.kind() {
-                HirPatternKind::BorrowBinding(_) => return true,
+                HirPatternKind::BorrowBinding { mode, .. } => {
+                    if matches!(mode, ParameterMode::Mut | ParameterMode::Var) {
+                        return Some(ParameterMode::Mut);
+                    }
+                    result = Some(ParameterMode::Ref);
+                }
                 HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
                     pending.extend(items.iter().copied());
                 }
@@ -10397,7 +10504,7 @@ impl<'a> ExpressionChecker<'a> {
                 | HirPatternKind::OptionNone => {}
             }
         }
-        false
+        result
     }
 
     fn pattern_requires_affine_ownership(
@@ -10440,7 +10547,7 @@ impl<'a> ExpressionChecker<'a> {
                 }
                 HirPatternKind::Recovery
                 | HirPatternKind::Wildcard
-                | HirPatternKind::BorrowBinding(_)
+                | HirPatternKind::BorrowBinding { .. }
                 | HirPatternKind::Literal(_)
                 | HirPatternKind::OptionNone => {}
             }
@@ -10825,7 +10932,7 @@ impl<'a> ExpressionChecker<'a> {
         let has_borrow = pattern_ids
             .iter()
             .copied()
-            .any(|pattern| self.pattern_contains_borrow(pattern));
+            .any(|pattern| self.pattern_loan_mode(pattern).is_some());
         let mut requires_affine_ownership = false;
         for pattern in pattern_ids {
             requires_affine_ownership |=
@@ -16447,6 +16554,10 @@ fn closure_parameter_mode(node: SyntaxNodeRef<'_>) -> ParameterMode {
     }
 }
 
+fn pattern_binding_mode(node: SyntaxNodeRef<'_>) -> ParameterMode {
+    closure_parameter_mode(node)
+}
+
 fn is_result_type(kind: &TypeKind) -> bool {
     matches!(kind, TypeKind::Result { .. })
 }
@@ -21119,6 +21230,11 @@ mod tests {
              }\n\
              fn observe(values: ref Array[Join[Int, Never]]) {\n\
                  for ref value in values {}\n\
+             }\n\
+             fn edit(values: var Array[Int]) {\n\
+                 for mut value in values {\n\
+                     value += 1\n\
+                 }\n\
              }\n",
         );
         assert!(
@@ -21170,6 +21286,7 @@ mod tests {
             "cursor[ref,Array[Join[Int, Never]]]",
             &[HirCapability::Copy, HirCapability::Discard],
         );
+        assert_matrix("cursor[mut,Array[Int]]", &[HirCapability::Discard]);
     }
 
     #[test]
@@ -21260,6 +21377,57 @@ mod tests {
             owner_after_loop.diagnostics()
         );
         assert!(owner_after_loop.is_complete());
+    }
+
+    #[test]
+    fn exclusive_iteration_enforces_source_and_element_permissions() {
+        let (_, _, valid) = check(
+            "fn valid(values: var Array[Int], entries: var Map[Int, Int]) {\n\
+                 for mut value in values {\n\
+                     match value {\n\
+                         ref current => {\n\
+                             _ = current\n\
+                         }\n\
+                     }\n\
+                     value += 1\n\
+                 }\n\
+                 for (ref key, mut value) in entries {\n\
+                     value += key\n\
+                 }\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        let (_, _, immutable) = check(
+            "fn invalid(values: Array[Int]) {\n\
+                 for mut value in values {}\n\
+             }\n",
+        );
+        assert_eq!(codes(&immutable), ["E1407"]);
+
+        let (_, _, set) = check(
+            "fn invalid(values: var Set[Int]) {\n\
+                 for var value in values {}\n\
+             }\n",
+        );
+        assert_eq!(codes(&set), ["E1402"]);
+
+        let (_, _, key) = check(
+            "fn invalid(values: var Map[Int, Int]) {\n\
+                 for (mut key, ref value) in values {}\n\
+             }\n",
+        );
+        assert_eq!(codes(&key), ["E1402"]);
+
+        let (_, _, match_binding) = check(
+            "fn invalid(value: Int): Int {\n\
+                 match value {\n\
+                     mut item => item\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&match_binding), ["E1202"]);
     }
 
     #[test]
@@ -24439,7 +24607,7 @@ mod tests {
                 .program()
                 .patterns
                 .iter()
-                .any(|pattern| { matches!(pattern.kind(), HirPatternKind::BorrowBinding(_)) })
+                .any(|pattern| { matches!(pattern.kind(), HirPatternKind::BorrowBinding { .. }) })
         );
     }
 

@@ -1015,6 +1015,11 @@ impl Verifier<'_> {
                     "`Ref[T].value` permits only shared `ref` loans",
                 ));
             }
+            if loan.kind == MirLoanKind::Region
+                && matches!(loan.mode, ParameterMode::Mut | ParameterMode::Var)
+            {
+                self.verify_exclusive_iterator_loan_path(function, &loan.place, &loan_context)?;
+            }
         }
         if function.blocks.is_empty() {
             return Err(MirInvariantError::new(
@@ -1584,7 +1589,7 @@ impl Verifier<'_> {
                             }
                         }
                     }
-                    CursorMode::Ref => {
+                    CursorMode::Ref | CursorMode::Mut => {
                         if exhaustion_guard.is_some() {
                             return Err(MirInvariantError::new(
                                 &context,
@@ -1598,6 +1603,20 @@ impl Verifier<'_> {
                             )
                         })?;
                         self.verify_place(function, source, &context)?;
+                        if *mode == CursorMode::Mut
+                            && !matches!(
+                                self.kind(*collection, &context)?,
+                                TypeKind::Intrinsic {
+                                    constructor: IntrinsicType::Array | IntrinsicType::Map,
+                                    ..
+                                }
+                            )
+                        {
+                            return Err(MirInvariantError::new(
+                                &context,
+                                "exclusive iterator source is not an Array or Map",
+                            ));
+                        }
                         if source.ty != *collection
                             || destination.ty != self.hir.interner().scalar(ScalarType::Int)
                             || source.source_loan.is_none()
@@ -1615,6 +1634,7 @@ impl Verifier<'_> {
                             state,
                             destination,
                             source,
+                            *mode,
                             &context,
                         )?;
                     }
@@ -2023,7 +2043,7 @@ impl Verifier<'_> {
                 };
                 let borrows = matches!(source.kind, MirOperandKind::Borrow(_));
                 if *collection != source.ty
-                    || (*mode == CursorMode::Ref) != borrows
+                    || (*mode != CursorMode::Own) != borrows
                     || self.iterated_item_type(source.ty).is_none()
                 {
                     return Err(MirInvariantError::new(
@@ -3876,12 +3896,57 @@ impl Verifier<'_> {
         Ok(item)
     }
 
+    fn verify_exclusive_iterator_loan_path(
+        &self,
+        function: &MirFunction,
+        place: &MirPlace,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let mut current = self.local(function, place.local, context)?.ty;
+        for (index, projection) in place.projections.iter().enumerate() {
+            if matches!(projection.kind, MirProjectionKind::IteratorElement { .. }) {
+                match self.kind(current, context)? {
+                    TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Array,
+                        ..
+                    } => {}
+                    TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Map,
+                        ..
+                    } if matches!(
+                        place.projections.get(index + 1).map(|next| &next.kind),
+                        Some(MirProjectionKind::TupleField(1))
+                    ) => {}
+                    TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Map,
+                        ..
+                    } => {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "exclusive Map iterator loan does not project through its value",
+                        ));
+                    }
+                    _ => {
+                        return Err(MirInvariantError::new(
+                            context,
+                            "exclusive iterator loan has a non-mutable collection source",
+                        ));
+                    }
+                }
+                return Ok(());
+            }
+            current = projection.ty;
+        }
+        Ok(())
+    }
+
     fn verify_borrowed_iterator_origin(
         &self,
         function: &MirFunction,
         state: &MirPlace,
         destination: &MirPlace,
         source: &MirPlace,
+        mode: CursorMode,
         context: &str,
     ) -> Result<(), MirInvariantError> {
         if !state.projections.is_empty()
@@ -3900,13 +3965,23 @@ impl Verifier<'_> {
             MirInvariantError::new(context, "borrowed iterator source has no region loan")
         })?;
         let loan = self.loan(function, source_loan, context)?;
+        let expected_mode = match mode {
+            CursorMode::Ref => ParameterMode::Ref,
+            CursorMode::Mut => ParameterMode::Mut,
+            CursorMode::Own => {
+                return Err(MirInvariantError::new(
+                    context,
+                    "owning cursor requested borrowed-origin verification",
+                ));
+            }
+        };
         if loan.kind != MirLoanKind::Region
-            || loan.mode != ParameterMode::Ref
+            || loan.mode != expected_mode
             || !same_place_path(&loan.place, source)
         {
             return Err(MirInvariantError::new(
                 context,
-                "borrowed iterator source is not backed by its exact shared region loan",
+                "borrowed iterator source is not backed by its exact region loan",
             ));
         }
 
@@ -5525,17 +5600,25 @@ impl Verifier<'_> {
                 }
                 MirTerminatorKind::IteratorNext {
                     destination,
+                    borrowed_source,
                     has_value,
                     exhausted,
                     unwind,
                     ..
                 } => {
-                    for loan in &state.active {
-                        let loan = self.loan(function, *loan, &block_context)?;
-                        if loan.kind != MirLoanKind::Region || loan.mode != ParameterMode::Ref {
+                    let source_chain = borrowed_source
+                        .as_ref()
+                        .map(|source| self.place_source_chain(function, source, &block_context))
+                        .transpose()?
+                        .unwrap_or_default();
+                    for id in &state.active {
+                        let loan = self.loan(function, *id, &block_context)?;
+                        if loan.kind != MirLoanKind::Region
+                            || (loan.mode != ParameterMode::Ref && !source_chain.contains(id))
+                        {
                             return Err(MirInvariantError::new(
                                 &block_context,
-                                "only shared region loans may cross an iterator boundary",
+                                "only shared regions or the iterator source chain may cross an iterator boundary",
                             ));
                         }
                     }
@@ -5716,8 +5799,12 @@ impl Verifier<'_> {
                         ),
                     ));
                 }
+                let source_chain = self.place_source_chain(function, loan.place(), context)?;
                 for active in state.active.iter().copied() {
                     self.consume_dataflow_step(context)?;
+                    if source_chain.contains(&active) {
+                        continue;
+                    }
                     let existing = self.loan(function, active, context)?;
                     if loan.mode() == ParameterMode::Ref && existing.mode() == ParameterMode::Ref {
                         continue;
@@ -5875,8 +5962,12 @@ impl Verifier<'_> {
             ));
         }
         let mut against = Vec::new();
+        let source_chain = self.place_source_chain(function, loan.place(), context)?;
         for active in active.iter().copied() {
             self.consume_dataflow_step(context)?;
+            if source_chain.contains(&active) {
+                continue;
+            }
             let existing = self.loan(function, active, context)?;
             if loan.mode() == ParameterMode::Ref && existing.mode() == ParameterMode::Ref {
                 continue;
@@ -5913,8 +6004,12 @@ impl Verifier<'_> {
         context: &str,
     ) -> Result<Vec<MirLoanId>, MirInvariantError> {
         let mut against = Vec::new();
+        let source_chain = self.place_source_chain(function, place, context)?;
         for active in active.iter().copied() {
             self.consume_dataflow_step(context)?;
+            if source_chain.contains(&active) {
+                continue;
+            }
             let existing = self.loan(function, active, context)?;
             if !for_write && existing.mode() == ParameterMode::Ref {
                 continue;
@@ -5934,6 +6029,26 @@ impl Verifier<'_> {
             }
         }
         Ok(against)
+    }
+
+    fn place_source_chain(
+        &self,
+        function: &MirFunction,
+        place: &MirPlace,
+        context: &str,
+    ) -> Result<BTreeSet<MirLoanId>, MirInvariantError> {
+        let mut chain = BTreeSet::new();
+        let mut source = place.source_loan;
+        while let Some(id) = source {
+            if !chain.insert(id) {
+                return Err(MirInvariantError::new(
+                    context,
+                    "place source region chain contains a cycle",
+                ));
+            }
+            source = self.loan(function, id, context)?.place.source_loan;
+        }
+        Ok(chain)
     }
 
     fn active_dependent_loan(
@@ -6121,9 +6236,11 @@ impl Verifier<'_> {
                     return Err(MirInvariantError::new(
                         context,
                         format!(
-                            "{kind} overlaps active loan#{} ({:?})",
+                            "{kind} {:?} overlaps active loan#{} ({:?}) at {:?}",
+                            access.path,
                             active.index(),
-                            loan.mode()
+                            loan.mode(),
+                            loan_access.path,
                         ),
                     ));
                 }
@@ -7496,6 +7613,15 @@ fn loan_paths_relation(
 ) -> StaticRegionRelation {
     let mut relation = StaticRegionRelation::Overlap;
     for (left, right) in left.iter().zip(right) {
+        if matches!(
+            (left, right),
+            (
+                MovePathComponent::IteratorElement { index: left },
+                MovePathComponent::IteratorElement { index: right }
+            ) if left == right
+        ) {
+            continue;
+        }
         match (
             collection_region(left, static_integers),
             collection_region(right, static_integers),

@@ -20,6 +20,15 @@ pub(super) fn loan_place_relation(
     }
     let mut relation = StaticRegionRelation::Overlap;
     for (left, right) in left.projections.iter().zip(&right.projections) {
+        if matches!(
+            (left.kind(), right.kind()),
+            (
+                MirProjectionKind::IteratorElement { index: left },
+                MirProjectionKind::IteratorElement { index: right }
+            ) if left == right
+        ) {
+            continue;
+        }
         match (
             collection_region(left, static_integers),
             collection_region(right, static_integers),

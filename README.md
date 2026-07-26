@@ -86,9 +86,13 @@ exit or `E1408` before overwrite. Synchronous `ref`, `mut`, and `var` arguments
 use verified call-local loans with ordered reservation,
 alias rejection, reborrowing, VM write-through, and explicit release on
 abandoned argument paths. General last-use regions, collection-view loans,
-fixed-versus-structural mutation enforcement, runtime overlap proofs, and
-borrowed `for ref` iteration over `Array`, `Map`, and `Set` are also verified
-through the VM. Synchronous `defer` now captures its operands at registration,
+fixed-versus-structural mutation enforcement, runtime overlap proofs, and all
+four iteration forms are also verified through the VM. `for ref` observes
+stable `Array`, `Map`, and `Set` places; `for mut` and `for var` update stable
+writable `Array` and `Map` elements without exposing mutable keys or changing
+the collection traversed by the cursor. User-defined `Iterator[T]` targets
+retain one statically coherent element type. Synchronous `defer` now captures
+its operands at registration,
 drains lexical scopes in LIFO order on normal and panic exits, and follows or
 disarms a unique affine guard through verified ownership transfers. Concrete
 `await` frame/`Send` safety and the closed intrinsic terminal fallback remain

@@ -10,14 +10,15 @@ complete-slot reinitialization, OWN-005 typed move paths, OWN-006 affine closure
 captures, OWN-007 exact closed `CallOnce` rows, BORROW-001 call-local loans, and
 BORROW-002 inferred pattern regions, BORROW-003 reborrow permissions, BORROW-004
 static collection disjunction, BORROW-005 runtime overlap proofs, BORROW-006
-borrowed-iterator boundaries, TERM-001 independent terminal classification,
+loaned-iterator boundaries, TERM-001 independent terminal classification,
 TERM-002 normal-path terminal ownership, TERM-003 explicit defer/guard cleanup,
 TERM-004 closed abnormal fallbacks, TERM-005 exact explicit/fallback exclusion,
 REF-001 managed identity cells/shared projections, REF-002 identity
 equality/keys, ARRAY-001 runtime array length, ARRAY-002 checked array
 indexing, ARRAY-003 checked slicing, ARRAY-004 logical slice snapshots,
 ARRAY-005 fixed versus structural array mutation, ARRAY-006 closed lifted
-arithmetic, ARRAY-007 named concatenation/repetition, and the M3 VM admission
+arithmetic, ARRAY-007 named concatenation/repetition, ITER-001/002 static user
+iterators plus all four intrinsic iteration forms, and the M3 VM admission
 path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
@@ -212,10 +213,11 @@ or retarget/disarm its unique affine guard. Rvalues cover loads,
 copies/moves, constants, pure arithmetic,
 construction, record update, coercion, total conversion, range, membership,
 length, and iterator-state creation. The latter accepts an intrinsic collection
-`C` and produces only its distinct `cursor[own,C]` or `cursor[ref,C]` type;
-`IteratorNext` accepts that cursor rather than a collection-shaped alias. A ref
-cursor additionally requires a `Borrow` source operand, while an own cursor
-rejects one, so a backend cannot silently replace observation with a copy.
+`C` and produces only its distinct `cursor[own,C]`, `cursor[ref,C]`, or
+`cursor[mut,C]` type; `IteratorNext` accepts that cursor rather than a
+collection-shaped alias. Ref and mut cursors additionally require a `Borrow`
+source operand with the exact root-loan mode, while an own cursor rejects one,
+so a backend cannot silently replace observation or mutation with a copy.
 
 An Array aggregate stores its complete ordered operand list while its result
 type is only `Array[T]`; operand count is runtime data, not type metadata.
@@ -346,19 +348,23 @@ write. Statically disjoint relations carry no conflict ID, while inevitable
 overlap remains invalid bytecode.
 
 BORROW-006 treats `IteratorNext` as an explicit loan boundary. The verifier
-allows only shared `Region` loans in its incoming active set, rejects
-call-local or exclusive reservations, preserves that set on both normal
-successors, and clears it on unwind. The VM advances a ref cursor by position
-without calling the owning copy path, checks that its runtime source is the
-terminator's anchored collection, and resolves each element under the active
-region chain. Bytecode has no suspension instruction yet; M7 must reuse this
-boundary proof when it adds resume, cancellation, and frame state.
+allows shared `Region` loans and the cursor's complete canonical source chain
+in its incoming active set. Every exclusive region must belong to that chain;
+call-local loans and unrelated exclusive reservations are rejected. It
+preserves the set on both normal successors and clears it on unwind. The VM
+advances either loaned cursor by position without calling the owning copy path,
+checks that its runtime source is the terminator's anchored collection, and
+resolves each element under the active region chain. Exclusive map projections
+are limited to the value field, and array replacement enforces `mut` versus
+`var` extent at the write boundary. Bytecode has no suspension instruction yet;
+M7 must reuse this boundary proof when it adds resume, cancellation, and frame
+state.
 
 `Borrow` remains a separate non-storable form admitted only for equality,
 membership, length, discriminant branches, index/slice collection bases,
-indirect shared/exclusive callees, intrinsic ref-cursor construction, and the
-replacement witness attached to write validation. Stores, aggregates, returns,
-every call argument, and unrelated operations reject it.
+indirect shared/exclusive callees, intrinsic ref/mut-cursor construction, and
+the replacement witness attached to write validation. Stores, aggregates,
+returns, every call argument, and unrelated operations reject it.
 
 The bootstrap `Call` operation is deliberately synchronous and safe. Its
 signature must have both effect bits clear; the verifier rejects a forged async

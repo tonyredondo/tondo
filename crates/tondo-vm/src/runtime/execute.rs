@@ -1224,7 +1224,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     self.replace_fallback_object(handle, object)?;
                 }
                 BytecodeTypeKind::Cursor { mode, collection } => {
-                    if mode == BytecodeCursorMode::Ref {
+                    if mode != BytecodeCursorMode::Own {
                         continue;
                     }
                     let Value::Heap(handle) = value else {
@@ -1378,11 +1378,40 @@ impl<'program, 'host> Engine<'program, 'host> {
                 "ReserveLoan reuses an active or invalid reservation",
             ));
         }
-        if reservations.loans.iter().flatten().any(|active| {
-            paths_overlap(&active.path, &path)
-                && !(active.mode == BytecodeParameterMode::Ref
-                    && loan.mode == BytecodeParameterMode::Ref)
-        }) {
+        let function = self
+            .program
+            .function(reservations.function)
+            .ok_or_else(|| VmError::invariant("loan frame has an invalid function"))?;
+        let mut source_chain = Vec::new();
+        let mut source = loan.place.source_loan;
+        while let Some(parent) = source {
+            if source_chain.contains(&parent) {
+                return Err(VmError::invariant(
+                    "loan source region chain contains a cycle",
+                ));
+            }
+            source_chain.push(parent);
+            source = function
+                .loans
+                .get(parent.index() as usize)
+                .ok_or_else(|| VmError::invariant("loan source region is invalid"))?
+                .place
+                .source_loan;
+        }
+        if reservations
+            .loans
+            .iter()
+            .enumerate()
+            .any(|(index, active)| {
+                let identity = BytecodeLoanId::new(index as u32);
+                active.as_ref().is_some_and(|active| {
+                    !source_chain.contains(&identity)
+                        && paths_overlap(&active.path, &path)
+                        && !(active.mode == BytecodeParameterMode::Ref
+                            && loan.mode == BytecodeParameterMode::Ref)
+                })
+            })
+        {
             return Err(VmError::invariant(
                 "ReserveLoan overlaps an incompatible active reservation",
             ));
@@ -2345,6 +2374,11 @@ impl Engine<'_, '_> {
                 let source = match mode {
                     BytecodeCursorMode::Own => self.copy_optional_value(&source)?,
                     BytecodeCursorMode::Ref => source,
+                    BytecodeCursorMode::Mut => {
+                        return Err(VmError::invariant(
+                            "an exclusive iterator was copied as a first-class value",
+                        ));
+                    }
                 };
                 let roots = source.iter().cloned().collect::<Vec<_>>();
                 self.allocate_like(*handle, HeapObject::Iterator { mode, source, next }, &roots)
@@ -3163,7 +3197,14 @@ impl Engine<'_, '_> {
         place: &BytecodePlace,
         value: Value,
     ) -> Result<(), VmError> {
-        self.validate_source_regions(frame, place, false)?;
+        let source_mode = self.validate_source_regions(frame, place, false)?;
+        if source_mode == Some(BytecodeParameterMode::Mut) && self.array_element(place.ty).is_some()
+        {
+            self.ensure_mut_array_extent(frame, place, &value)?;
+        }
+        if self.write_map_iterator_value(frame, place, &value)? {
+            return Ok(());
+        }
         if let Some(loan) = self.root_loan(frame, place.slot)? {
             if loan.mode == BytecodeParameterMode::Ref {
                 return Err(VmError::invariant(
@@ -3203,6 +3244,65 @@ impl Engine<'_, '_> {
             parent = self.read_projection(frame, parent, projection)?;
         }
         self.write_projection(frame, parent, last, value)
+    }
+
+    fn write_map_iterator_value(
+        &mut self,
+        frame: usize,
+        place: &BytecodePlace,
+        value: &Value,
+    ) -> Result<bool, VmError> {
+        let Some(position) = place.projections.iter().position(|projection| {
+            matches!(
+                projection.kind,
+                BytecodeProjectionKind::IteratorElement { .. }
+            )
+        }) else {
+            return Ok(false);
+        };
+        if position + 2 != place.projections.len()
+            || !matches!(
+                place.projections[position + 1].kind,
+                BytecodeProjectionKind::TupleField(1)
+            )
+        {
+            return Ok(false);
+        }
+        let BytecodeProjectionKind::IteratorElement { index } = place.projections[position].kind
+        else {
+            unreachable!();
+        };
+        let base_ty = if position == 0 {
+            self.program
+                .function(self.frames[frame].function)
+                .and_then(|function| function.slots.get(place.slot.index() as usize))
+                .map(|slot| slot.ty)
+                .ok_or_else(|| VmError::invariant("iterator Map base has an invalid slot"))?
+        } else {
+            place.projections[position - 1].ty
+        };
+        let mut base = place.clone();
+        base.ty = base_ty;
+        base.projections.truncate(position);
+        base.source_loan = None;
+        let Value::Heap(handle) = self.read_place(frame, &base)? else {
+            return Err(VmError::invariant(
+                "exclusive Map iterator base is not managed",
+            ));
+        };
+        let mut object = self.heap.get(handle)?.clone();
+        let HeapObject::Map(entries) = &mut object else {
+            return Ok(false);
+        };
+        let index = usize::try_from(self.integer_slot(frame, index)?).map_err(|_| {
+            VmError::invariant("exclusive Map iterator position is negative or too large")
+        })?;
+        let entry = entries.get_mut(index).ok_or_else(|| {
+            VmError::invariant("exclusive Map iterator position is out of bounds")
+        })?;
+        entry.1 = Some(value.clone());
+        self.replace_object(handle, object, std::slice::from_ref(value))?;
+        Ok(true)
     }
 
     fn ensure_mut_array_extent(
@@ -3590,6 +3690,15 @@ impl Engine<'_, '_> {
             ) if expected == member => *slot = Some(value.clone()),
             (BytecodeProjectionKind::ArrayPatternIndex(index), HeapObject::Array(values)) => {
                 set_index(values, *index, value.clone(), "array pattern item")?;
+            }
+            (BytecodeProjectionKind::IteratorElement { index }, HeapObject::Array(values)) => {
+                let index = usize::try_from(self.integer_slot(frame, *index)?).map_err(|_| {
+                    VmError::invariant("exclusive iterator position is negative or too large")
+                })?;
+                let slot = values.get_mut(index).ok_or_else(|| {
+                    VmError::invariant("exclusive iterator position is out of bounds")
+                })?;
+                *slot = Some(value.clone());
             }
             (BytecodeProjectionKind::IteratorSource, HeapObject::Iterator { source, .. }) => {
                 *source = Some(value.clone());
@@ -5446,7 +5555,7 @@ impl Engine<'_, '_> {
                 let (item, next_index) = self.iterator_item(&source, item_ty, next)?;
                 (item.map(IteratorStep::Value), next_index)
             }
-            BytecodeCursorMode::Ref => {
+            BytecodeCursorMode::Ref | BytecodeCursorMode::Mut => {
                 let borrowed_source = borrowed_source
                     .ok_or_else(|| VmError::invariant("borrowed iterator has no source place"))?;
                 if self.read_place(frame, borrowed_source)? != source {

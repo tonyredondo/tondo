@@ -558,6 +558,10 @@ fn cursor_node(mode: CursorMode, collection: TypeId, capability: HirCapability) 
             (collection, HirCapability::Send),
             (collection, HirCapability::Share),
         ]),
+        (CursorMode::Mut, HirCapability::Discard) => satisfied(Vec::new()),
+        (CursorMode::Mut, HirCapability::Copy | HirCapability::Send | HirCapability::Share) => {
+            unsatisfied()
+        }
         (CursorMode::Own, capability) => satisfied(vec![(collection, capability)]),
     }
 }

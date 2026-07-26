@@ -1537,9 +1537,9 @@ abandonar su scope. Todo tipo con esa obligación es necesariamente no `Copy`.
 capacidades y obligaciones que se deriven de su estado; implementar
 `Iterator[T]` no añade, elimina ni oculta ninguna.
 
-Un binding de patrón `ref` sigue siendo un préstamo, no un nuevo propietario. La
-obligación terminal permanece íntegra en el scrutinee o colección de origen y
-nunca se considera satisfecha al terminar el arm o la iteración.
+Un binding de patrón `ref`, `mut` o `var` sigue siendo un préstamo, no un nuevo
+propietario. La obligación terminal permanece íntegra en el scrutinee o colección
+de origen y nunca se considera satisfecha al terminar el arm o la iteración.
 
 La obligación terminal se propaga estructuralmente a newtypes, tuples, records,
 enums, options, results, uniones, colecciones y entornos de cierre cuyo tipo
@@ -1636,7 +1636,8 @@ Cumplen `Copy` automáticamente:
 - `Range[T]` cuando `T: Copy`.
 - El cursor intrínseco `cursor[own,C]` cuando `C: Copy`, y todo
   `cursor[ref,C]`; copiar cualquiera conserva la misma posición inicial pero
-  crea un avance lógico independiente.
+  crea un avance lógico independiente. `cursor[mut,C]` nunca es `Copy`: conserva
+  exclusividad sobre una única colección.
 - Cierres concretos cuando todas sus capturas son `Copy`, según 11.8.
 - Los planes inertes `Command` y `Pipeline`.
 - Newtypes cuyo valor sea `Copy`.
@@ -1662,7 +1663,8 @@ terminal:
 - Los cierres concretos la derivan de todas sus capturas según 11.8.
 - `cursor[own,C]` la cumple exactamente cuando `C: Discard`;
   `cursor[ref,C]` siempre la cumple porque solo libera su préstamo compartido y
-  su posición local.
+  su posición local; `cursor[mut,C]` siempre la cumple porque descartarlo termina
+  el préstamo exclusivo sin descartar `C`.
 - Implementar `Iterator[T]` no altera la derivación del cursor: sus campos y su
   contrato opaco deciden si cumple `Discard`. `Join[T, E]` nunca la cumple.
 - Un tipo opaco la declara como parte de su contrato. Declarar `Discard` y una
@@ -2740,11 +2742,33 @@ for value in ages.values() {
 }
 ~~~
 
-La iteración ordinaria de un map `Copy` recorre un snapshot lógico. El programa puede mutar el binding original durante el bucle; copy-on-write mantiene estable el orden y contenido que ve el cursor. Un map afín se mueve al cursor y su binding deja de estar disponible. Modificar en sitio la colección que se está recorriendo requiere un protocolo mutable específico de librería que garantice exclusividad.
+La iteración ordinaria de un map `Copy` recorre un snapshot lógico. El programa
+puede mutar el binding original durante el bucle; copy-on-write mantiene estable
+el orden y contenido que ve el cursor. Un map afín se mueve al cursor y su binding
+deja de estar disponible.
 
 `for (key, ref value) in map` utiliza en cambio la iteración observacional de
 13.3: copia la clave `Key`, presta el valor y deja disponible el map después del
 bucle sin exigir `V: Copy`.
+
+La actualización en sitio utiliza el mismo `for`, con una fuente escribible y un
+binding exclusivo únicamente sobre el valor:
+
+~~~tondo
+for (ref key, mut value) in map {
+    value.updateFor(key)
+}
+
+for (_, var value) in map {
+    value = replacement()
+}
+~~~
+
+La clave y la entrada completa nunca admiten `mut` ni `var`: cambiar una clave
+rompería unicidad, hashing y orden de inserción. `mut value` permite mutación pero
+conserva la extensión estructural del valor raíz; `var value` permite reemplazar
+el valor completo. Ninguna forma cambia las claves, el número de entradas ni su
+orden.
 
 ### 10.14 Igualdad y combinación de maps
 
@@ -2892,13 +2916,18 @@ interna que no puede escribirse en fuente:
   cumple `Copy + Discard`; cumple tanto `Send` como `Share` únicamente cuando
   `C: Send + Share`, sin que eso permita al préstamo escapar de las regiones
   autorizadas por 16.13.
-- Ninguna de las dos formas cumple `Equatable` ni `Key`: la igualdad observable
+- `cursor[mut,C]` conserva un préstamo exclusivo de `C` y su posición. Cumple
+  `Discard`, pero no `Copy`, `Send`, `Share`, `Equatable` ni `Key`. Es la forma
+  interna común de headers con algún binding `mut` o `var`; el modo exacto se
+  conserva en cada binding de elemento.
+- Ninguna de las tres formas cumple `Equatable` ni `Key`: la igualdad observable
   de un estado mutable de recorrido no forma parte del lenguaje.
 
 Una copia admitida comienza en la misma posición y avanza de forma
 independiente. Copiar `cursor[own,C]` realiza la copia lógica de `C`; copiar
 `cursor[ref,C]` duplica el préstamo compartido, nunca la colección ni su
-ownership. Descartar un cursor no consume ni oculta obligaciones que no posea.
+ownership. `cursor[mut,C]` no puede copiarse. Descartar un cursor no consume ni
+oculta obligaciones que no posea.
 
 `for pattern in expression` evalúa `expression` exactamente una vez, transfiere
 el cursor concreto a un propietario interno y llama a `Iterator.next` hasta
@@ -2934,17 +2963,19 @@ agotamiento ha transferido todos sus elementos, consume al propietario interno y
 desactiva cualquier guard que ya no tenga valor que limpiar. Una salida temprana
 de ese drenaje continúa exigiendo un cleanup reservado.
 
-En un header ordinario sin bindings `ref`, evaluar una colección `Copy` para un
-`for` crea una copia lógica y deja disponible el origen. Evaluar una colección no
-`Copy` mueve la colección completa al cursor y produce sus elementos por
-movimiento; el binding original deja de estar disponible. Un cursor concreto se
-copia o mueve al iniciar el bucle según sus propias capacidades y mediante la
-transferencia confirmada de 8.10. Un guard terminal registrado sobre la colección
-o cursor se retargetea al propietario interno sin duplicar ownership.
+En un header ordinario sin bindings `ref`, `mut` ni `var`, evaluar una colección
+`Copy` para un `for` crea una copia lógica y deja disponible el origen. Evaluar
+una colección no `Copy` mueve la colección completa al cursor y produce sus
+elementos por movimiento; el binding original deja de estar disponible. Un cursor
+concreto se copia o mueve al iniciar el bucle según sus propias capacidades y
+mediante la transferencia confirmada de 8.10. Un guard terminal registrado sobre
+la colección o cursor se retargetea al propietario interno sin duplicar
+ownership.
 
-Un header que contiene bindings `ref` utiliza en cambio el modo observacional de
-13.3: presta una colección con almacenamiento estable y nunca consume su
-colección ni sus elementos.
+Un header que contiene bindings `ref`, `mut` o `var` utiliza en cambio uno de los
+modos prestados de 13.3: conserva estable la colección y nunca consume sus
+elementos. `ref` observa; la presencia de cualquier `mut` o `var` reserva la
+colección en exclusiva.
 
 Los cursores fallibles implementan `Iterator[T ! E]`. El consumidor decide si
 propaga cada error:
@@ -4324,26 +4355,72 @@ for (key, ref resource) in resourcesById {
 }
 ~~~
 
-Si el header contiene algún binding `ref`, el `for` entra en modo de
-**observación**:
+Iteración exclusiva con extensión fija:
 
-- La fuente debe ser un lvalue estable `Array`, `Map` o `Set`, o una reborrow
-  compartida de un parámetro `ref`, `mut` o `var` de una de esas colecciones. Se
-  obtiene una vez y permanece prestada durante todo el bucle.
-- Cada binding `ref` dura solo la iteración actual. Los demás bindings deben
-  corresponder a componentes `Copy`, `_` o forma sin payload; nunca se mueve una
-  parte de la colección prestada.
-- El origen permanece disponible después del bucle, pero no puede moverse,
-  redimensionarse ni recibir un préstamo `mut` o `var` solapado mientras itera.
-- `continue` termina los bindings prestados de la iteración actual antes de
-  comenzar la siguiente. Cualquier salida del bucle —`break`, `return`, `fail`,
-  `?`, pánico o cancelación— termina además el préstamo de la colección antes de
-  continuar su cleanup.
+~~~tondo
+for mut value in values {
+    value.normalize()
+}
+
+for (ref key, mut value) in map {
+    value.recalculateFor(key)
+}
+~~~
+
+Iteración exclusiva con reemplazo estructural:
+
+~~~tondo
+for var value in values {
+    value = replacement()
+}
+
+for (_, var value) in map {
+    value = replacementFor(value)
+}
+~~~
+
+El modo del cursor se deriva del patrón completo y no requiere otra keyword en
+la fuente:
+
+- Sin bindings de préstamo se utiliza `cursor[own,C]`.
+- Con uno o más bindings `ref`, y ninguno exclusivo, se utiliza
+  `cursor[ref,C]`.
+- Si aparece cualquier binding `mut` o `var`, se utiliza `cursor[mut,C]`.
+
+Los modos de cada binding continúan siendo exactos aunque el cursor sea común:
+`ref` observa, `mut` permite escribir conservando la extensión estructural del
+componente raíz y `var` permite reemplazar ese componente. Los modos pueden
+mezclarse dentro de un patrón cuando las regiones son disjuntas.
+
+Todo header prestado cumple estas reglas:
+
+- La fuente se evalúa exactamente una vez y debe ser un lvalue estable. `ref`
+  admite `Array`, `Map` y `Set`; `mut` o `var` admiten únicamente `Array` y
+  `Map`. Una fuente exclusiva debe ser escribible mediante un binding `var`, un
+  parámetro `mut`/`var` o una proyección escribible de uno de ellos.
+- La colección raíz queda prestada durante todo el bucle. Un préstamo compartido
+  impide moverla, redimensionarla o prestarla en exclusiva; uno exclusivo impide
+  además cualquier acceso directo al propietario.
+- Cada binding prestado de elemento dura solo la iteración actual. Los bindings
+  ordinarios del mismo patrón deben corresponder a componentes `Copy`, `_` o
+  formas sin payload; nunca mueven una parte de la colección prestada.
+- En `Map[K, V]`, `ref` puede observar clave o valor. `mut` y `var` solo pueden
+  proyectar el valor `V`; la clave y la entrada completa son inmutables.
+- `Set[K]` solo admite `ref`: sus elementos son también sus claves y mutarlos
+  invalidaría unicidad y hashing.
+- `mut` sobre un componente `Array` no puede cambiar su longitud; `var` sí puede
+  reemplazarlo por otro array. Ninguno permite insertar o eliminar elementos de
+  la colección que conduce el cursor.
+- `continue` termina todos los bindings de elemento antes de solicitar la
+  siguiente posición. Cualquier salida —agotamiento, `break`, `return`, `fail`,
+  `?`, pánico o cancelación— termina primero los bindings de elemento y después
+  el préstamo de la colección. El origen vuelve a estar disponible tras una
+  salida normal.
 
 `Range`, `String` y cualquier cursor concreto que implemente `Iterator[T]`
 producen valores en lugar de ubicaciones de elemento estables y no aceptan
-bindings `ref` en el header. Sus elementos ordinarios se copian o mueven según
-las reglas existentes.
+bindings `ref`, `mut` ni `var` en el header. Sus elementos ordinarios se copian o
+mueven según las reglas existentes.
 
 El patrón del header debe ser irrefutable para el tipo de elemento. Filtrar variantes o elementos se expresa mediante un `match` explícito dentro del bucle.
 
@@ -4826,16 +4903,30 @@ Coincide con cualquier valor y lo vincula.
 
 ~~~tondo
 ref value
+mut value
+var value
 ~~~
 
-Coincide con cualquier valor y crea un préstamo compartido limitado al arm o a la
-iteración actual. No copia ni mueve el componente, incluso si este cumple `Copy`.
-El binding puede utilizar métodos `self`, proyectar datos `Copy`, participar en
-otro match de observación o volver a pasarse como `ref`; no puede almacenarse,
-devolverse, mutarse ni consumirse.
+Las tres formas coinciden con cualquier valor y crean un préstamo limitado a la
+iteración actual; `ref` también puede limitarse a un arm de `match`. Ninguna copia
+ni mueve el componente, incluso si este cumple `Copy`.
 
-El nombre debe ser un identificador ordinario. `ref _` es redundante e inválido;
-`_` por sí solo ya observa forma sin transferir el componente.
+- `ref value` crea una vista compartida. Puede invocar métodos `self`, proyectar
+  datos `Copy`, participar en otro match de observación o volver a pasarse como
+  `ref`; no puede mutarse ni consumirse.
+- `mut value` crea una vista exclusiva escribible. Puede pasarse como `ref` o
+  `mut` y modificar el valor, pero una asignación sobre su raíz debe conservar la
+  extensión estructural.
+- `var value` crea una vista exclusiva reemplazable. Puede pasarse como `ref`,
+  `mut` o `var` y reemplazar su raíz completa.
+
+Ninguna forma puede almacenarse, devolverse, capturarse ni transferirse. `mut` y
+`var` solo son válidos en headers de `for`; permitirlos en un arm de `match`
+convertiría una observación de control en una fuente implícita de escritura.
+
+El nombre debe ser un identificador ordinario. `ref _`, `mut _` y `var _` son
+redundantes e inválidos; `_` por sí solo ya observa forma sin transferir el
+componente.
 
 ~~~tondo
 match connection {
@@ -4844,7 +4935,8 @@ match connection {
 }
 ~~~
 
-En un patrón record, `ref field` abrevia `field: ref field`:
+En un patrón record, `ref field`, `mut field` y `var field` abrevian
+respectivamente `field: ref field`, `field: mut field` y `field: var field`:
 
 ~~~tondo
 match session {
@@ -4978,10 +5070,11 @@ let Shape.Circle(radius) = shape
 
 Estos casos requieren `match`.
 
-Un binding `ref` también es irrefutable, pero solo puede aparecer en el header de
-`for`, donde su vida está cerrada por una iteración, o en un arm de `match`. No se
-admite en `let` ni `var`: Tondo no crea variables locales que contengan préstamos
-de duración abierta.
+Un binding `ref`, `mut` o `var` también es irrefutable. Los tres pueden aparecer
+en el header de `for`, donde su vida está cerrada por una iteración; solo `ref`
+puede aparecer además en un arm de `match`. Ninguno se admite en una declaración
+`let` o `var`: Tondo no crea variables locales que contengan préstamos de
+duración abierta.
 
 La asignación múltiple no acepta el lenguaje general de patrones: utiliza exclusivamente la forma tuple anidada de lvalues y `_` definida en 13.8. Esa forma siempre es irrefutable y evita que una escritura dependa de matching o cree bindings nuevos.
 
@@ -5513,15 +5606,19 @@ lifetime. En una llamada síncrona queda limitada dinámicamente a esa llamada. 
 `ref` de una llamada async puede extenderse hasta completar el `await` o consumir
 el `Join` propietario, pero continúa ligado a esa estructura y nunca se convierte
 en un valor de referencia. Un binding de patrón `ref` queda limitado al arm o a
-la iteración; puede cruzar un `await` dentro de ellos cuando el valor referido cumple
-`Send`, y solo puede prestarse a un hijo concurrente con las garantías
-estructuradas `Send + Share` de 11.12.
+la iteración; un binding de patrón `mut` o `var`, únicamente a la iteración.
+`ref` puede cruzar un `await` dentro de esos límites cuando el valor referido
+cumple `Send`, y solo puede prestarse a un hijo concurrente con las garantías
+estructuradas `Send + Share` de 11.12. `mut` y `var` no pueden cruzar una
+suspensión.
 
 Dentro de esos límites, el análisis termina un préstamo en su último uso posible,
 no necesariamente al final textual del bloque. Una rama posterior que todavía
 pueda utilizar el binding prolonga la vida; la mera visibilidad de un nombre ya no
-usado no lo hace. El préstamo de la colección que sustenta un `for ref` sí dura
-todo el bucle porque cada iteración puede solicitar la siguiente ubicación.
+usado no lo hace. El préstamo de la colección que sustenta cualquier `for`
+prestado sí dura todo el bucle porque cada iteración puede solicitar la siguiente
+ubicación; es compartido para `for ref` y exclusivo cuando el patrón contiene
+`mut` o `var`.
 
 Ningún préstamo puede:
 
@@ -7733,8 +7830,8 @@ local de la fuente:
   existan. `<kind>` es `closure`, `unsafe-closure`, `async-closure` o
   `async-unsafe-closure`; la ubicación es el nodo de fuente que lo crea. Los
   cursores intrínsecos sin identidad de fuente se escriben como
-  `cursor[own,<collection_type>]` o `cursor[ref,<collection_type>]` según el modo
-  de 10.17.
+  `cursor[own,<collection_type>]`, `cursor[ref,<collection_type>]` o
+  `cursor[mut,<collection_type>]` según el modo de 10.17.
 - Keywords, nombres intrínsecos y códigos se escriben sin calificación. Los demás
   nombres de símbolo utilizan el mismo átomo nominal.
 
@@ -7780,7 +7877,8 @@ El tooling debe poder consultar de forma estructurada:
 - Préstamos activos.
 - Checks dinámicos normativos de solapamiento o duplicados que permanecen después
   del análisis, y la prueba estática que permitió eliminar cada check ausente.
-- Origen, región y fin estructurado de cada parámetro o binding `ref`.
+- Origen, modo, región y fin estructurado de cada parámetro o binding `ref`,
+  `mut` o `var`.
 - Modo de ownership de cada `match` —copia, observación o consumo— y el patrón que
   obliga a elegirlo.
 - Scope propietario y estado de consumo de cada `Join`.
@@ -8810,7 +8908,7 @@ pattern         = wildcard_pattern
                 | constructor_pattern
                 | record_pattern
                 | qualified_value_pattern
-                | borrow_binding_pattern
+                | loan_binding_pattern
                 | binding_pattern ;
 
 irrefutable_pattern
@@ -8819,8 +8917,8 @@ irrefutable_pattern
 wildcard_pattern = "_" ;
 unit_pattern    = "(", ")" ;
 binding_pattern = identifier ;
-borrow_binding_pattern
-                = "ref", identifier ;
+loan_binding_pattern
+                = ( "ref" | "mut" | "var" ), identifier ;
 
 qualified_value_pattern
                 = identifier, ".", identifier,
@@ -8854,7 +8952,7 @@ array_pattern   = "[",
 
 array_rest_binding
                 = binding_pattern
-                | borrow_binding_pattern ;
+                | loan_binding_pattern ;
 
 constructor_pattern
                 = type_path, "(", pattern,
@@ -8868,7 +8966,7 @@ record_pattern  = type_path, "{", { NL },
 
 record_pattern_field
                 = field_name, [ ":", pattern ]
-                | "ref", identifier ;
+                | ( "ref" | "mut" | "var" ), identifier ;
 
 record_pattern_item
                 = record_pattern_field | ".." ;
@@ -9753,6 +9851,8 @@ match value {
 for condition {}
 for item in values {}
 for ref item in values {}
+for mut item in values {}
+for var item in values {}
 for {}
 
 return value

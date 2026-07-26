@@ -321,6 +321,7 @@ impl GeneratedTypeIdentity {
 pub enum CursorMode {
     Own,
     Ref,
+    Mut,
 }
 
 impl CursorMode {
@@ -328,6 +329,7 @@ impl CursorMode {
         match self {
             Self::Own => "own",
             Self::Ref => "ref",
+            Self::Mut => "mut",
         }
     }
 }

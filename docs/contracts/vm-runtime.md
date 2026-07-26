@@ -8,7 +8,8 @@ reinitialization, OWN-005 typed move paths, OWN-006 affine closure captures,
 OWN-007 terminal capture obligations, BORROW-001 call-local loan execution,
 BORROW-002 last-use regions, BORROW-003 fixed versus structural mutation, and
 BORROW-004 static collection-region disjunction, BORROW-005 dynamic overlap
-proofs, BORROW-006 borrowed iteration, TERM-003 synchronous defer/guard
+proofs, BORROW-006 shared and exclusive iteration, TERM-003 synchronous
+defer/guard
 execution, TERM-004/005 structural unwind exclusivity, and GC-001 verified
 trace descriptors, GC-002 complete synchronous root lifetimes, and GC-003
 cycle recovery under sustained allocation pressure plus GC-004 single
@@ -21,7 +22,8 @@ logical slice snapshots, ARRAY-005 fixed versus structural array mutation,
 ARRAY-006 closed lifted arithmetic, and ARRAY-007 named
 concatenation/repetition, MAP-001..003 insertion-ordered map operations and
 content equality, SET-001 insertion-ordered unique sets and membership, and
-RANGE-001 lazy discrete ranges with checked boundaries
+RANGE-001 lazy discrete ranges with checked boundaries, and ITER-001/002 static
+user iterators plus `for`, `for ref`, `for mut`, and `for var`
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -141,7 +143,13 @@ Advancing an own cursor is a destructive ownership transfer from that private
 state. Arrays and sets remove the next element; maps remove a key/value pair and
 yield a newly allocated tuple. The cursor retains the compact remainder, and
 the yielded managed value is rooted while iterator state is replaced. Ref
-cursors retain their source and expose only a verified position into it.
+cursors retain their shared source and expose only a verified position into it.
+Mut cursors retain an exclusive source loan and the same position-only state.
+Array element writes resolve through that position; map writes resolve through
+the value half of the current entry rather than through a temporary yielded
+tuple. `mut` replacement validates equal structural extent before publication,
+while `var` may replace the current value. Neither path changes the traversed
+collection's length, keys, or order.
 
 Set construction compares each evaluated key with the ordered prefix already
 accepted, keeps the first equal key, and never changes that position for a
@@ -470,6 +478,15 @@ payload layout, prove recursive allocation for a nested value, preserve the
 deliberate String/`Ref` sharing exceptions, separate subsequent writes through
 tuple/array, record, newtype, and map paths, and give a copied owning cursor an
 independent source and position.
+
+Iterator regressions must execute the unique static `Iterator[T]` contract and
+all intrinsic cursor modes. Loaned cases cover mixed map key/value patterns,
+array and map `mut`/`var` write-through, fixed-extent rejection, source-owner
+conflicts, nested projections, reborrows, `break`, `continue`, `return`, normal
+exhaustion, and release before later owner use. Mutated HIR, MIR, and bytecode
+must reject cursor-mode drift, noncanonical positions, wrong root-loan modes,
+mutable map keys, call-local or unrelated exclusive loans at the advance
+boundary, and redirected element projections.
 
 Array-length regressions must construct empty and nonempty values that share
 one `Array[T]` type, observe distinct runtime lengths through source semantics,

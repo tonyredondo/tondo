@@ -66,6 +66,11 @@ fn normative_minimum_corpus_matches_byte_for_byte_and_is_idempotent() {
             ParseMode::Module,
         ),
         (
+            b"impl Iterator[Int]for Cursor{fn next(mut self):Int?{none}\n}\n",
+            b"impl Iterator[Int] for Cursor {\n    fn next(mut self): Int? {\n        none\n    }\n}\n",
+            ParseMode::Module,
+        ),
+        (
             b"let inverse=- -value\nlet nested=value? ?\n",
             b"let inverse = -(-value)\nlet nested = (value?)?\n",
             ParseMode::SyntaxSequence,

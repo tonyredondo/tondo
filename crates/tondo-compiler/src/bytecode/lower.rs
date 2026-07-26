@@ -1551,6 +1551,7 @@ impl TypeCatalog {
                 mode: match mode {
                     CursorMode::Own => bc::BytecodeCursorMode::Own,
                     CursorMode::Ref => bc::BytecodeCursorMode::Ref,
+                    CursorMode::Mut => bc::BytecodeCursorMode::Mut,
                 },
                 collection: self.id(*collection)?,
             },
@@ -8181,6 +8182,142 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
     }
 
     #[test]
+    fn exclusive_intrinsic_iteration_is_verified_and_executes_write_through() {
+        const SOURCE: &str = "fn edit(\n\
+             values: var Array[Int],\n\
+             groups: var Array[Array[Int]],\n\
+         ) {\n\
+             for mut value in values {\n\
+                 value += 1\n\
+             }\n\
+             for var group in groups {\n\
+                 group = [9]\n\
+             }\n\
+         }\n";
+        let program = lowered(SOURCE);
+        bc::verify_bytecode(&program).unwrap();
+        let entry = function_id(&program, "edit");
+        let function = &program.functions[entry.index() as usize];
+        let root_loans = function
+            .blocks
+            .iter()
+            .filter_map(|block| match &block.terminator.kind {
+                bc::BytecodeTerminatorKind::IteratorNext {
+                    state,
+                    borrowed_source: Some(source),
+                    ..
+                } => {
+                    assert!(matches!(
+                        program.types[state.ty.index() as usize].kind,
+                        bc::BytecodeTypeKind::Cursor {
+                            mode: bc::BytecodeCursorMode::Mut,
+                            ..
+                        }
+                    ));
+                    source.source_loan
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(root_loans.len(), 2);
+        for loan in root_loans {
+            assert_eq!(
+                function.loans[loan.index() as usize].mode,
+                bc::BytecodeParameterMode::Mut
+            );
+        }
+        let element_modes = function
+            .loans
+            .iter()
+            .filter(|loan| {
+                loan.place.projections.iter().any(|projection| {
+                    matches!(
+                        projection.kind,
+                        bc::BytecodeProjectionKind::IteratorElement { .. }
+                    )
+                })
+            })
+            .map(|loan| loan.mode)
+            .collect::<BTreeSet<_>>();
+        assert!(element_modes.contains(&bc::BytecodeParameterMode::Mut));
+        assert!(element_modes.contains(&bc::BytecodeParameterMode::Var));
+
+        let value = execute_function(
+            "fn edit(): Int {\n\
+                 var values = [1, 2]\n\
+                 for mut value in values {\n\
+                     value += 1\n\
+                 }\n\
+                 var groups = [1: [1], 2: [2]]\n\
+                 for (_, var group) in groups {\n\
+                     group = [7, 8]\n\
+                 }\n\
+                 assert(values == [2, 3])\n\
+                 assert(groups == [2: [7, 8], 1: [7, 8]])\n\
+                 values[0]\n\
+             }\n",
+            "edit",
+        );
+        assert_eq!(value, RuntimeValue::Integer(2));
+
+        let mut mutable_key = lowered(
+            "fn edit(entries: var Map[Int, Int]) {\n\
+                 for (ref key, mut value) in entries {\n\
+                     value += key\n\
+                 }\n\
+             }\n",
+        );
+        let map_entry = function_id(&mutable_key, "edit");
+        let field = mutable_key.functions[map_entry.index() as usize]
+            .loans
+            .iter_mut()
+            .find(|loan| {
+                loan.mode == bc::BytecodeParameterMode::Mut
+                    && loan.place.projections.iter().any(|projection| {
+                        matches!(
+                            projection.kind,
+                            bc::BytecodeProjectionKind::IteratorElement { .. }
+                        )
+                    })
+            })
+            .and_then(|loan| {
+                loan.place.projections.iter_mut().find(|projection| {
+                    matches!(projection.kind, bc::BytecodeProjectionKind::TupleField(1))
+                })
+            })
+            .expect("the map value loan projects tuple field 1");
+        field.kind = bc::BytecodeProjectionKind::TupleField(0);
+        let error = bc::verify_bytecode(&mutable_key).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("does not project through its value"),
+            "{error}"
+        );
+
+        let mut wrong_root = program;
+        let function = &mut wrong_root.functions[entry.index() as usize];
+        let root = function
+            .blocks
+            .iter()
+            .find_map(|block| match &block.terminator.kind {
+                bc::BytecodeTerminatorKind::IteratorNext {
+                    borrowed_source: Some(source),
+                    ..
+                } => source.source_loan,
+                _ => None,
+            })
+            .unwrap();
+        function.loans[root.index() as usize].mode = bc::BytecodeParameterMode::Ref;
+        let error = bc::verify_bytecode(&wrong_root).unwrap_err();
+        assert!(
+            error.message().contains("exact region loan")
+                || error.message().contains("terminator edge"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn bytecode_rederives_borrowed_iterator_origins_and_boundary_loans() {
         const SOURCE: &str = "fn observe(values: ref Array[Int]) {\n\
              let marker = 0\n\
@@ -8271,7 +8408,7 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
         let error = bc::verify_bytecode(&overwritten_position).unwrap_err();
         assert!(error.message().contains("terminator"), "{error}");
 
-        let mut crossing_call_loan = program;
+        let mut crossing_call_loan = program.clone();
         let function = &mut crossing_call_loan.functions[entry.index() as usize];
         let place = function
             .loans
@@ -8296,10 +8433,46 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
                 kind: bc::BytecodeInstructionKind::ReserveLoan(loan),
             });
         let error = bc::verify_bytecode(&crossing_call_loan).unwrap_err();
-        assert!(
-            error.message().contains("only shared region loans"),
-            "{error}"
-        );
+        assert!(error.message().contains("iterator source chain"), "{error}");
+
+        let mut crossing_unrelated_exclusive = program;
+        let function = &mut crossing_unrelated_exclusive.functions[entry.index() as usize];
+        let (slot, ty) = function
+            .slots
+            .iter()
+            .enumerate()
+            .find_map(|(index, slot)| {
+                matches!(slot.kind, bc::BytecodeSlotKind::User { .. })
+                    .then_some((bc::BytecodeSlotId::new(index as u32), slot.ty))
+            })
+            .expect("the marker has one user slot");
+        let loan = bc::BytecodeLoanId::new(function.loans.len() as u32);
+        function.loans.push(bc::BytecodeLoan {
+            kind: bc::BytecodeLoanKind::Region,
+            mode: bc::BytecodeParameterMode::Mut,
+            place: bc::BytecodePlace {
+                slot,
+                ty,
+                projections: Vec::new(),
+                source_loan: None,
+            },
+        });
+        let block = function
+            .blocks
+            .iter_mut()
+            .find(|block| {
+                matches!(
+                    block.terminator.kind,
+                    bc::BytecodeTerminatorKind::IteratorNext { .. }
+                )
+            })
+            .expect("the loop has one iterator boundary");
+        block.instructions.push(bc::BytecodeInstruction {
+            span: block.terminator.span,
+            kind: bc::BytecodeInstructionKind::ReserveLoan(loan),
+        });
+        let error = bc::verify_bytecode(&crossing_unrelated_exclusive).unwrap_err();
+        assert!(error.message().contains("iterator source chain"), "{error}");
     }
 
     #[test]

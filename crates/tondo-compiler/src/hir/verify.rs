@@ -860,7 +860,7 @@ impl Verifier<'_> {
                     if matches!(
                         self.program.interner.kind(*cursor),
                         Ok(TypeKind::Cursor {
-                            mode: CursorMode::Ref,
+                            mode: CursorMode::Ref | CursorMode::Mut,
                             ..
                         })
                     ) {
@@ -2534,17 +2534,38 @@ impl Verifier<'_> {
     }
 
     fn local_is_loan(&self, local: crate::resolve::LocalId) -> bool {
-        self.program.callables.iter().any(|callable| {
-            callable.parameters.iter().any(|parameter| {
-                parameter.local == Some(local) && parameter.mode != ParameterMode::Value
+        self.local_loan_mode(local).is_some()
+    }
+
+    fn local_loan_mode(&self, local: crate::resolve::LocalId) -> Option<ParameterMode> {
+        self.program
+            .callables
+            .iter()
+            .flat_map(|callable| &callable.parameters)
+            .find(|parameter| parameter.local == Some(local))
+            .map(|parameter| parameter.mode)
+            .filter(|mode| *mode != ParameterMode::Value)
+            .or_else(|| {
+                self.program
+                    .closures
+                    .iter()
+                    .flat_map(|closure| &closure.parameters)
+                    .find(|parameter| parameter.local == Some(local))
+                    .map(|parameter| parameter.mode)
+                    .filter(|mode| *mode != ParameterMode::Value)
             })
-        }) || self.program.closures.iter().any(|closure| {
-            closure.parameters.iter().any(|parameter| {
-                parameter.local == Some(local) && parameter.mode != ParameterMode::Value
+            .or_else(|| {
+                self.program
+                    .patterns
+                    .iter()
+                    .find_map(|pattern| match pattern.kind {
+                        HirPatternKind::BorrowBinding {
+                            local: candidate,
+                            mode,
+                        } if candidate == local => Some(mode),
+                        _ => None,
+                    })
             })
-        }) || self.program.patterns.iter().any(|pattern| {
-            matches!(pattern.kind, HirPatternKind::BorrowBinding(candidate) if candidate == local)
-        })
     }
 
     fn local_is_mutable_binding(&self, local: crate::resolve::LocalId) -> bool {
@@ -3202,7 +3223,33 @@ impl Verifier<'_> {
         context: &str,
     ) -> Result<(), HirInvariantError> {
         match &pattern.kind {
-            HirPatternKind::Binding(local) | HirPatternKind::BorrowBinding(local) => {
+            HirPatternKind::Binding(local) => {
+                self.verify_local(*local, context)?;
+                let ty = self.program.local_types.get(local).ok_or_else(|| {
+                    HirInvariantError::new(
+                        context,
+                        format!("local#{} has no checked type", local.index()),
+                    )
+                })?;
+                if *ty != pattern.ty {
+                    return Err(HirInvariantError::new(
+                        context,
+                        format!(
+                            "local#{} has {}, pattern has {}",
+                            local.index(),
+                            ty,
+                            pattern.ty
+                        ),
+                    ));
+                }
+            }
+            HirPatternKind::BorrowBinding { local, mode } => {
+                if *mode == ParameterMode::Value {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "loan pattern records value parameter mode",
+                    ));
+                }
                 self.verify_local(*local, context)?;
                 let ty = self.program.local_types.get(local).ok_or_else(|| {
                     HirInvariantError::new(
@@ -3834,6 +3881,32 @@ impl Verifier<'_> {
                     self.verify_statement(*scope, statement, context)?;
                 }
             }
+            HirExpressionKind::Match { arms, .. } => {
+                for arm in arms {
+                    let mut pending = vec![arm.pattern()];
+                    while let Some(id) = pending.pop() {
+                        let pattern = self.program.pattern(id).ok_or_else(|| {
+                            HirInvariantError::new(
+                                context,
+                                format!("match references unknown pattern#{}", id.index()),
+                            )
+                        })?;
+                        if matches!(
+                            pattern.kind(),
+                            HirPatternKind::BorrowBinding {
+                                mode: ParameterMode::Mut | ParameterMode::Var,
+                                ..
+                            }
+                        ) {
+                            return Err(HirInvariantError::new(
+                                context,
+                                "match pattern contains an exclusive loan binding",
+                            ));
+                        }
+                        pending.extend(pattern_children(pattern));
+                    }
+                }
+            }
             HirExpressionKind::Coerce { kind, value } => {
                 let actual = self.expression(*value, context)?.ty;
                 let valid = match kind {
@@ -3883,7 +3956,6 @@ impl Verifier<'_> {
             | HirExpressionKind::PropagateOption { .. }
             | HirExpressionKind::PropagateResult { .. }
             | HirExpressionKind::If { .. }
-            | HirExpressionKind::Match { .. }
             | HirExpressionKind::Return { .. }
             | HirExpressionKind::Fail { .. }
             | HirExpressionKind::Break { .. }
@@ -3931,6 +4003,14 @@ impl Verifier<'_> {
         statement: &HirStatement,
         context: &str,
     ) -> Result<(), HirInvariantError> {
+        if let HirStatement::Binding { pattern, .. } = statement
+            && self.pattern_loan_mode(*pattern, context)?.is_some()
+        {
+            return Err(HirInvariantError::new(
+                context,
+                "ordinary binding contains a loan pattern",
+            ));
+        }
         if let HirStatement::Defer {
             span,
             scope: action_scope,
@@ -4050,11 +4130,17 @@ impl Verifier<'_> {
         let expected_element = match protocol {
             HirIterationProtocol::Intrinsic { cursor } => {
                 self.verify_type(*cursor, format!("{context} intrinsic cursor"))?;
-                let borrows = self.pattern_contains_borrow(pattern_id, context)?;
-                let expected_mode = if borrows {
-                    CursorMode::Ref
-                } else {
-                    CursorMode::Own
+                let loan_mode = self.pattern_loan_mode(pattern_id, context)?;
+                let expected_mode = match loan_mode {
+                    None => CursorMode::Own,
+                    Some(ParameterMode::Ref) => CursorMode::Ref,
+                    Some(ParameterMode::Mut | ParameterMode::Var) => CursorMode::Mut,
+                    Some(ParameterMode::Value) => {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "iterator loan pattern records value mode",
+                        ));
+                    }
                 };
                 match self.program.interner.kind(*cursor) {
                     Ok(TypeKind::Cursor { mode, collection })
@@ -4066,11 +4152,20 @@ impl Verifier<'_> {
                         ));
                     }
                 }
-                if borrows && !self.borrowed_iterator_source_is_stable(source_id, source.ty) {
+                if let Some(mode) = loan_mode
+                    && !self.loaned_iterator_source_is_stable(source_id, source.ty, mode)
+                {
                     return Err(HirInvariantError::new(
                         context,
-                        "borrowed intrinsic iteration requires a stable Array, Map, or Set place",
+                        if matches!(mode, ParameterMode::Mut | ParameterMode::Var) {
+                            "exclusive intrinsic iteration requires a stable Array or Map place"
+                        } else {
+                            "borrowed intrinsic iteration requires a stable Array, Map, or Set place"
+                        },
                     ));
+                }
+                if expected_mode == CursorMode::Mut {
+                    self.verify_exclusive_iterator_pattern(pattern_id, source.ty, context)?;
                 }
                 match self.program.interner.kind(source.ty) {
                     Ok(TypeKind::Intrinsic {
@@ -4105,10 +4200,10 @@ impl Verifier<'_> {
                 element,
                 function_type,
             } => {
-                if self.pattern_contains_borrow(pattern_id, context)? {
+                if self.pattern_loan_mode(pattern_id, context)?.is_some() {
                     return Err(HirInvariantError::new(
                         context,
-                        "borrowed iteration cannot use a user Iterator protocol",
+                        "loaned iteration cannot use a user Iterator protocol",
                     ));
                 }
                 self.verify_type(*element, format!("{context} iterator element"))?;
@@ -4247,14 +4342,25 @@ impl Verifier<'_> {
         Ok(())
     }
 
-    fn borrowed_iterator_source_is_stable(&self, root: HirExpressionId, ty: TypeId) -> bool {
-        matches!(
-            self.program.interner.kind(ty),
-            Ok(TypeKind::Intrinsic {
-                constructor: IntrinsicType::Array | IntrinsicType::Map | IntrinsicType::Set,
-                ..
-            })
-        ) && self.iterator_source_place_is_stable(root)
+    fn loaned_iterator_source_is_stable(
+        &self,
+        root: HirExpressionId,
+        ty: TypeId,
+        mode: ParameterMode,
+    ) -> bool {
+        let supported = match self.program.interner.kind(ty) {
+            Ok(TypeKind::Intrinsic { constructor, .. })
+                if matches!(mode, ParameterMode::Mut | ParameterMode::Var) =>
+            {
+                matches!(constructor, IntrinsicType::Array | IntrinsicType::Map)
+            }
+            Ok(TypeKind::Intrinsic { constructor, .. }) => matches!(
+                constructor,
+                IntrinsicType::Array | IntrinsicType::Map | IntrinsicType::Set
+            ),
+            _ => false,
+        };
+        supported && self.iterator_source_place_is_stable(root)
     }
 
     fn iterator_source_place_is_stable(&self, root: HirExpressionId) -> bool {
@@ -4273,11 +4379,12 @@ impl Verifier<'_> {
         }
     }
 
-    fn pattern_contains_borrow(
+    fn pattern_loan_mode(
         &self,
         root: HirPatternId,
         context: &str,
-    ) -> Result<bool, HirInvariantError> {
+    ) -> Result<Option<ParameterMode>, HirInvariantError> {
+        let mut result = None;
         let mut pending = vec![root];
         while let Some(id) = pending.pop() {
             let pattern = self.program.pattern(id).ok_or_else(|| {
@@ -4286,12 +4393,67 @@ impl Verifier<'_> {
                     format!("iterator references unknown pattern#{}", id.index()),
                 )
             })?;
-            if matches!(pattern.kind(), HirPatternKind::BorrowBinding(_)) {
-                return Ok(true);
+            if let HirPatternKind::BorrowBinding { mode, .. } = pattern.kind() {
+                if matches!(mode, ParameterMode::Mut | ParameterMode::Var) {
+                    return Ok(Some(ParameterMode::Mut));
+                }
+                result = Some(ParameterMode::Ref);
             }
             pending.extend(pattern_children(pattern));
         }
-        Ok(false)
+        Ok(result)
+    }
+
+    fn verify_exclusive_iterator_pattern(
+        &self,
+        root: HirPatternId,
+        source: TypeId,
+        context: &str,
+    ) -> Result<(), HirInvariantError> {
+        if !matches!(
+            self.program.interner.kind(source),
+            Ok(TypeKind::Intrinsic {
+                constructor: IntrinsicType::Map,
+                ..
+            })
+        ) {
+            return Ok(());
+        }
+        let mut pending = vec![(root, Vec::<u32>::new())];
+        while let Some((id, path)) = pending.pop() {
+            let pattern = self.program.pattern(id).ok_or_else(|| {
+                HirInvariantError::new(
+                    context,
+                    format!("iterator references unknown pattern#{}", id.index()),
+                )
+            })?;
+            match pattern.kind() {
+                HirPatternKind::BorrowBinding { mode, .. }
+                    if matches!(mode, ParameterMode::Mut | ParameterMode::Var)
+                        && path.first() != Some(&1) =>
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "exclusive Map iterator pattern borrows a key or whole entry",
+                    ));
+                }
+                HirPatternKind::Tuple(items) => {
+                    for (index, item) in items.iter().copied().enumerate() {
+                        let mut child = path.clone();
+                        child.push(index as u32);
+                        pending.push((item, child));
+                    }
+                }
+                _ => {
+                    pending.extend(
+                        pattern_children(pattern)
+                            .into_iter()
+                            .map(|child| (child, path.clone())),
+                    );
+                }
+            }
+        }
+        Ok(())
     }
 
     fn verify_record_field_values(
@@ -4444,6 +4606,34 @@ impl Verifier<'_> {
                             context,
                         )?;
                     }
+                    if let HirStatement::For {
+                        kind:
+                            HirForKind::Iterate {
+                                source,
+                                protocol: HirIterationProtocol::Intrinsic { cursor },
+                                ..
+                            },
+                        ..
+                    } = statement
+                        && matches!(
+                            self.program.interner.kind(*cursor),
+                            Ok(TypeKind::Cursor {
+                                mode: CursorMode::Mut,
+                                ..
+                            })
+                        )
+                        && self.assignment_place_permission(
+                            *source,
+                            parameter_modes,
+                            receiver_mode,
+                            context,
+                        )? == WritePermission::Immutable
+                    {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "exclusive iterator source is not writable in its body",
+                        ));
+                    }
                 }
             }
             pending.extend(expression_children(expression));
@@ -4532,6 +4722,12 @@ impl Verifier<'_> {
                 Some(ParameterMode::Mut) => WritePermission::PreserveExtent,
                 Some(ParameterMode::Var) => WritePermission::Replace,
                 Some(ParameterMode::Value | ParameterMode::Ref) => WritePermission::Immutable,
+                None if self.local_loan_mode(*local) == Some(ParameterMode::Mut) => {
+                    WritePermission::PreserveExtent
+                }
+                None if self.local_loan_mode(*local) == Some(ParameterMode::Var) => {
+                    WritePermission::Replace
+                }
                 None if self.local_is_mutable_binding(*local) => WritePermission::Replace,
                 None => WritePermission::Immutable,
             },
@@ -5320,7 +5516,7 @@ fn pattern_children(pattern: &HirPattern) -> Vec<HirPatternId> {
         HirPatternKind::Recovery
         | HirPatternKind::Wildcard
         | HirPatternKind::Binding(_)
-        | HirPatternKind::BorrowBinding(_)
+        | HirPatternKind::BorrowBinding { .. }
         | HirPatternKind::Literal(_)
         | HirPatternKind::OptionNone => Vec::new(),
     }
@@ -6288,7 +6484,7 @@ mod tests {
             .patterns
             .iter_mut()
             .find(|pattern| {
-                matches!(pattern.kind, HirPatternKind::BorrowBinding(_))
+                matches!(pattern.kind, HirPatternKind::BorrowBinding { .. })
                     && matches!(
                         affine_binding.interner.kind(pattern.ty),
                         Ok(TypeKind::Intrinsic {
@@ -6298,12 +6494,60 @@ mod tests {
                     )
             })
             .expect("the map value has a borrowed binding");
-        let HirPatternKind::BorrowBinding(local) = join.kind else {
+        let HirPatternKind::BorrowBinding { local, .. } = join.kind else {
             unreachable!()
         };
         join.kind = HirPatternKind::Binding(local);
         let error = verify_typed_hir(&resolved, &affine_binding).unwrap_err();
         assert!(error.message().contains("requires Copy"), "{error}");
+    }
+
+    #[test]
+    fn exclusive_iterator_cursor_and_map_value_path_are_reproved_before_mir() {
+        const ARRAY_SOURCE: &str = "fn edit(values: var Array[Int]) {\n\
+             for mut value in values {\n\
+                 value += 1\n\
+             }\n\
+         }\n";
+        let (resolved, program) = checked_program_from(ARRAY_SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut wrong_mode) = checked_program_from(ARRAY_SOURCE);
+        let mode = wrong_mode
+            .patterns
+            .iter_mut()
+            .find_map(|pattern| match &mut pattern.kind {
+                HirPatternKind::BorrowBinding { mode, .. } => Some(mode),
+                _ => None,
+            })
+            .expect("the loop retains its exclusive binding");
+        *mode = ParameterMode::Ref;
+        let error = verify_typed_hir(&resolved, &wrong_mode).unwrap_err();
+        assert!(error.message().contains("concrete cursor"), "{error}");
+
+        const MAP_SOURCE: &str = "fn edit(entries: var Map[Int, Int]) {\n\
+             for (ref key, mut value) in entries {\n\
+                 value += key\n\
+             }\n\
+         }\n";
+        let (resolved, program) = checked_program_from(MAP_SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut mutable_key) = checked_program_from(MAP_SOURCE);
+        let key_mode = mutable_key
+            .patterns
+            .iter_mut()
+            .find_map(|pattern| match &mut pattern.kind {
+                HirPatternKind::BorrowBinding {
+                    mode: mode @ ParameterMode::Ref,
+                    ..
+                } => Some(mode),
+                _ => None,
+            })
+            .expect("the map key retains its shared binding");
+        *key_mode = ParameterMode::Mut;
+        let error = verify_typed_hir(&resolved, &mutable_key).unwrap_err();
+        assert!(error.message().contains("key or whole entry"), "{error}");
     }
 
     #[test]

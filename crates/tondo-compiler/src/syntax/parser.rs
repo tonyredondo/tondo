@@ -1596,7 +1596,7 @@ impl Parser<'_> {
                 self.finish();
             }
             TokenKind::Identifier => self.parse_named_pattern()?,
-            TokenKind::Ref => {
+            TokenKind::Ref | TokenKind::Mut | TokenKind::Var => {
                 self.start(SyntaxKind::BorrowBindingPattern)?;
                 self.bump();
                 self.expect_identifier()?;
@@ -1726,7 +1726,7 @@ impl Parser<'_> {
             if self.at(TokenKind::DotDot) {
                 self.start(SyntaxKind::ArrayRestPattern)?;
                 self.bump();
-                if self.eat(TokenKind::Ref) {
+                if self.eat_any(&[TokenKind::Ref, TokenKind::Mut, TokenKind::Var]) {
                     self.expect_identifier()?;
                 } else if self.at(TokenKind::Identifier) {
                     self.bump();
@@ -1761,7 +1761,9 @@ impl Parser<'_> {
                 break;
             }
             self.start(SyntaxKind::RecordPatternField)?;
-            if self.at(TokenKind::Ref) && self.nth(1) != TokenKind::Colon {
+            if self.at_any(&[TokenKind::Ref, TokenKind::Mut, TokenKind::Var])
+                && self.nth(1) != TokenKind::Colon
+            {
                 self.bump();
                 self.expect_identifier()?;
             } else {
@@ -2783,6 +2785,16 @@ impl Display for User[Int] {
         [first, ..ref rest] if first > 0 => first
         _ => 0
     }
+}
+fn edit(
+    values: Array[Int],
+    entries: Map[Int, Int],
+    groups: Array[Array[Int]],
+) {
+    for mut value in values {}
+    for var value in values {}
+    for (ref key, mut value) in entries {}
+    for [ref first, ..var rest] in groups {}
 }
 "#;
         let (_, _, parsed) = parse_source(source, ParseMode::Module);

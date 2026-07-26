@@ -9,15 +9,16 @@ Copy/Move closure captures, OWN-007 all-exit terminal capture obligations, and
 BORROW-001 call-local loans plus BORROW-002 inferred pattern regions with
 explicit reservation/release, BORROW-003 permission-preserving reborrows,
 BORROW-004 static collection disjunction, BORROW-005 runtime overlap proofs,
-BORROW-006 borrowed-iteration boundary verification, TERM-001/TERM-002 terminal
+BORROW-006 loaned-iteration boundary verification, TERM-001/TERM-002 terminal
 classification and normal-path ownership, and TERM-003 explicit defer/guard
 cleanup, TERM-004 closed abnormal fallback lowering, and TERM-005 exact
 explicit/fallback exclusion, REF-001 identity aggregates/shared projections,
 REF-002 identity equality/key operands, ARRAY-001 runtime array length,
 ARRAY-002 positive/negative checked indexing, ARRAY-003 slicing, ARRAY-004
 logical slice snapshots, ARRAY-005 fixed versus structural array mutation,
-ARRAY-006 closed lifted arithmetic, and ARRAY-007 named
-concatenation/repetition implemented
+ARRAY-006 closed lifted arithmetic, ARRAY-007 named concatenation/repetition,
+and ITER-001/002 static user iterators plus all four intrinsic iteration forms
+implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -61,7 +62,8 @@ An admitted program guarantees:
   carries one complete specialization whose exact substituted signature is its
   operand type;
 - every iterator loop records either a valid intrinsic source plus its exact
-  `cursor[own,C]`/`cursor[ref,C]` state type, or one exact `Iterator[T]`
+  `cursor[own,C]`/`cursor[ref,C]`/`cursor[mut,C]` state type, or one exact
+  `Iterator[T]`
   contract whose element matches its binding pattern;
 - every opaque result has one verified declaration contract and finite witness,
   and every representation seal relates that exact witness to its opaque family;
@@ -291,21 +293,27 @@ A loan operand has no valid use outside its consuming call and cannot reach a
 branch condition, rvalue, aggregate, host boundary, return, or storage.
 
 User `Iterator.next` calls use the same explicit call-local `mut` loan for
-their state receiver. A `cursor[ref,C]` is instead restricted to `Array`, `Map`,
-or `Set`. Its source is one shared `Region` loan held for the whole loop;
-`IteratorNext` writes only a checked integer position, and
+their state receiver. A `cursor[ref,C]` is restricted to stable `Array`, `Map`,
+or `Set` places; `cursor[mut,C]` is restricted to stable writable `Array` or
+`Map` places. Its source is one shared or exclusive `Region` loan held for the
+whole loop; `IteratorNext` writes only a checked integer position, and
 `IteratorElement { index }` projects the current item directly from that
 borrowed source. Dynamic indices that select a nested source are copied into
 single-assignment temporaries before the region is reserved, so the cursor's
 identity cannot change during the loop. The terminator records the source place
 explicitly. The verifier ties cursor construction, source loan, position
 destination, and every element projection to one canonical origin, so a forged
-cursor cannot redirect a loan or turn borrowed iteration into an element copy.
-Per-pattern `ref` children are reserved inside the body and released on every
-backedge or exit.
+cursor cannot redirect a loan or turn loaned iteration into an element copy.
+Per-pattern `ref`, `mut`, or `var` children are reserved inside the body and
+released on every backedge or exit. Exclusive `Map` children must project tuple
+field 1, preserving keys and insertion order; `mut` array replacement retains
+length while `var` may replace the selected element.
 
 `IteratorNext` is a verified loan boundary: its exact incoming set may contain
-only shared `Region` loans. Call-local or exclusive loans are rejected, and its
+shared `Region` loans plus the cursor's complete canonical source chain. Any
+exclusive region must belong to that chain; call-local loans and unrelated
+exclusive regions are rejected. This admits a nested cursor over a borrowed
+element without allowing an independent mutation to cross the advance. The
 unwind edge starts with an empty set. This closes every boundary currently
 representable before M7; actual suspension still requires M7's explicit
 terminator and must reuse the same active-set rule rather than infer loans from
@@ -396,7 +404,8 @@ visible error channel is unchanged.
 
 Intrinsic `for` sources use an iterator-state rvalue whose operand is the
 collection `C` and whose result is the distinct concrete
-`cursor[own,C]`/`cursor[ref,C]` local consumed by `IteratorNext`. The verifier
+`cursor[own,C]`/`cursor[ref,C]`/`cursor[mut,C]` local consumed by
+`IteratorNext`. The verifier
 rejects both a cursor disguised as its collection and a cursor whose mode or
 collection differs from typed HIR. A user `Iterator[T]` source is evaluated once
 into a state local; each header invokes the typed `Iterator.next` operand with
@@ -406,10 +415,9 @@ projects the dominated
 therefore exposes every evaluation and edge without treating a user iterator
 as a VM intrinsic.
 
-The current admitted bootstrap subset forms only `cursor[own,C]`. Typed HIR
-already retains `cursor[ref,C]` and its closed capabilities, but keeps that body
-incomplete until its runtime-selected region and loop-spanning lifetime are
-proved; it is never approximated with a collection copy.
+All three intrinsic cursor modes are admitted. Loaned cursors retain their
+runtime-selected source region and loop-spanning lifetime explicitly; neither
+shared nor exclusive iteration is ever approximated with a collection copy.
 
 Map construction is an `Invoke` carrying the HIR-selected duplicate policy, so
 `P0009` has an ordinary unwind edge and last-write-wins is never an implicit VM
@@ -539,7 +547,8 @@ The structural verifier introduced in M3 proves at minimum:
   `CallMut`; `CallOnce` additionally requires every non-`Discard` capture to be
   completely transferred on every reachable normal return;
 - `Borrow` appears only in an enumerated immediate observation, as an indirect
-  `Call`/`CallMut` callee, or as the exact source of `cursor[ref,C]`; it never
+  `Call`/`CallMut` callee, or as the exact source of `cursor[ref,C]` or
+  `cursor[mut,C]`; it never
   escapes into storage, call arguments, aggregates, returns, or arbitrary
   rvalues, and `CallOnce` never uses it;
 - every non-value argument consumes one matching call-local `Loan` identity
@@ -547,9 +556,9 @@ The structural verifier introduced in M3 proves at minimum:
   whose anchored accesses occur while its acyclic source chain is active;
   active sets agree at CFG joins, incompatible fixed regions cannot overlap,
   abandoned paths release their reservations, and no loan escapes its extent;
-- every borrowed iterator has one stable source-region origin, one canonical
-  position producer, and only shared region loans crossing its advance
-  boundary;
+- every loaned iterator has one stable source-region origin, one canonical
+  position producer, and only its mode-exact root region loan crossing its
+  advance boundary;
 - every explicit or fallback registration is type-valid, no dynamic
   registration is repeated before drain/disarm, cleanup places are pairwise
   compatible, every terminal explicit guard replaces exactly one fallback,

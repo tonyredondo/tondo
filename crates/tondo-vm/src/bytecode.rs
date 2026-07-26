@@ -376,6 +376,7 @@ impl BytecodeIntrinsicType {
 pub enum BytecodeCursorMode {
     Own,
     Ref,
+    Mut,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -649,6 +650,7 @@ impl BytecodePlace {
                     | BytecodeProjectionKind::ResultErrValue
                     | BytecodeProjectionKind::UnionValue(_)
                     | BytecodeProjectionKind::ArrayPatternIndex(_)
+                    | BytecodeProjectionKind::IteratorElement { .. }
                     | BytecodeProjectionKind::Index {
                         access: BytecodeIndexAccess::Array,
                         ..

@@ -1803,6 +1803,14 @@ impl<'a> Formatter<'a> {
         if right == TokenKind::LParen || right == TokenKind::LBracket {
             return Doc::Nil;
         }
+        if right.is_keyword()
+            && matches!(
+                left,
+                TokenKind::RParen | TokenKind::RBracket | TokenKind::RBrace
+            )
+        {
+            return Doc::text(" ");
+        }
         if word_like(left) && word_like(right) {
             return Doc::text(" ");
         }

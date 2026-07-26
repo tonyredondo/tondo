@@ -1,0 +1,34 @@
+fn setSource(values: var Set[Int]) {
+    for mut value in values {}
+}
+
+fn rangeSource(values: var Range[Int]) {
+    for var value in values {}
+}
+
+fn temporarySource() {
+    for mut value in [1, 2] {}
+}
+
+fn stringSource() {
+    var text = "abc"
+    for var value in text {}
+}
+
+fn mapKey(entries: var Map[Int, Int]) {
+    for (mut key, ref value) in entries {}
+}
+
+type Cursor = {
+    value: Int
+}
+
+impl Iterator[Int] for Cursor {
+    fn next(mut self): Int? {
+        none
+    }
+}
+
+fn userIterator(cursor: Cursor) {
+    for mut value in cursor {}
+}
