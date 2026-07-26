@@ -13,7 +13,8 @@ permissions, BORROW-004 static collection regions, BORROW-005 deferred runtime
 overlap obligations, BORROW-006 borrowed-iteration regions and boundary policy,
 TERM-001 closed terminal-type registration and structural status, TERM-002
 normal-path terminal ownership, TERM-003 checked synchronous `defer` actions
-and affine guards, and verified MIR admission implemented
+and affine guards, TERM-004 downstream closed-fallback admission, and verified
+MIR admission implemented
 
 ## Boundary
 
@@ -732,8 +733,9 @@ contract without exposing runtime actions as user-callable values.
 TERM-001 registers and classifies types. TERM-002 consumes that classification
 in the path-sensitive availability proof described below. TERM-003 adds checked
 explicit `defer` actions and the unique affine-guard side of the cleanup ledger.
-TERM-004 will add the closed intrinsic fallback side. No destructor or
-provisional implicit cleanup is synthesized.
+TERM-004 consumes the same admitted owner/handoff facts in MIR and bytecode to
+materialize the closed intrinsic fallback side. It remains an abnormal-only
+runtime action, not a destructor or provisional implicit normal cleanup.
 
 Type formation requires `K: Key` for every `Map[K, V]` and `Set[K]`, and
 `T: Discard` for every `Ref[T]`, including declaration signatures, nominal

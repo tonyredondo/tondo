@@ -13,7 +13,7 @@ use crate::hir::{
 };
 use crate::resolve::{LocalId, MemberKind, ResolvedProgram};
 use crate::source::Span;
-use crate::types::{CursorMode, ScalarType, TypeId, TypeKind};
+use crate::types::{CursorMode, ParameterMode, ScalarType, TypeId, TypeKind};
 
 use super::{
     MirAggregateKind, MirAssertMessagePart, MirBasicBlock, MirBlockId, MirBlockKind,
@@ -179,8 +179,11 @@ struct FunctionBuilder<'a> {
     capture_places: BTreeMap<LocalId, MirPlace>,
     borrow_aliases: BTreeMap<LocalId, MirPlace>,
     loops: BTreeMap<HirLoopId, LoopTargets>,
+    lexical_scopes: Vec<HirScopeId>,
     defer_scopes: Vec<HirScopeId>,
-    unwind_defers: BTreeMap<Vec<HirScopeId>, MirBlockId>,
+    fallback_parameters: Vec<MirPlace>,
+    fallback_parameters_registered: bool,
+    unwind_cleanup: Option<MirBlockId>,
     receiver: Option<MirLocalId>,
     return_local: MirLocalId,
     entry: MirBlockId,
@@ -262,8 +265,11 @@ impl<'a> FunctionBuilder<'a> {
             capture_places: BTreeMap::new(),
             borrow_aliases: BTreeMap::new(),
             loops: BTreeMap::new(),
+            lexical_scopes: Vec::new(),
             defer_scopes: Vec::new(),
-            unwind_defers: BTreeMap::new(),
+            fallback_parameters: Vec::new(),
+            fallback_parameters_registered: false,
+            unwind_cleanup: None,
             receiver: None,
             return_local: MirLocalId(0),
             entry: MirBlockId(0),
@@ -282,6 +288,9 @@ impl<'a> FunctionBuilder<'a> {
                 },
             )?;
             builder.parameters.push(local);
+            if parameter.mode() == ParameterMode::Value && !parameter.is_receiver() {
+                builder.fallback_parameters.push(builder.local_place(local));
+            }
             if parameter.is_receiver() {
                 builder.receiver = Some(local);
             } else if let Some(source) = parameter.local() {
@@ -336,8 +345,11 @@ impl<'a> FunctionBuilder<'a> {
             capture_places: BTreeMap::new(),
             borrow_aliases: BTreeMap::new(),
             loops: BTreeMap::new(),
+            lexical_scopes: Vec::new(),
             defer_scopes: Vec::new(),
-            unwind_defers: BTreeMap::new(),
+            fallback_parameters: Vec::new(),
+            fallback_parameters_registered: false,
+            unwind_cleanup: None,
             receiver: None,
             return_local: MirLocalId(0),
             entry: MirBlockId(0),
@@ -368,7 +380,10 @@ impl<'a> FunctionBuilder<'a> {
                     })?,
                 },
             });
-            builder.capture_places.insert(capture.local(), place);
+            builder
+                .capture_places
+                .insert(capture.local(), place.clone());
+            builder.fallback_parameters.push(place);
         }
         for (index, parameter) in closure.parameters().iter().enumerate() {
             let parameter_index = u32::try_from(index)
@@ -387,6 +402,9 @@ impl<'a> FunctionBuilder<'a> {
                 },
             )?;
             builder.parameters.push(local);
+            if parameter.mode() == ParameterMode::Value {
+                builder.fallback_parameters.push(builder.local_place(local));
+            }
             if let Some(source) = parameter.local() {
                 builder.source_locals.insert(source, local);
             }
@@ -1292,6 +1310,13 @@ impl<'a> FunctionBuilder<'a> {
         mut block: MirBlockId,
     ) -> Result<Option<MirBlockId>, MirError> {
         let (ty, span) = (expression.ty(), expression.span());
+        self.lexical_scopes.push(scope);
+        if !self.fallback_parameters_registered {
+            self.fallback_parameters_registered = true;
+            for owner in self.fallback_parameters.clone() {
+                self.register_fallback(block, span, owner)?;
+            }
+        }
         let owns_defers = statements
             .iter()
             .any(|statement| matches!(statement, HirStatement::Defer { .. }));
@@ -1304,6 +1329,8 @@ impl<'a> FunctionBuilder<'a> {
                     let popped = self.defer_scopes.pop();
                     debug_assert_eq!(popped, Some(scope));
                 }
+                let popped = self.lexical_scopes.pop();
+                debug_assert_eq!(popped, Some(scope));
                 return Ok(None);
             };
             block = next;
@@ -1319,11 +1346,15 @@ impl<'a> FunctionBuilder<'a> {
             let popped = self.defer_scopes.pop();
             debug_assert_eq!(popped, Some(scope));
         }
+        let popped = self.lexical_scopes.pop();
+        debug_assert_eq!(popped, Some(scope));
         let Some(block) = result else {
             return Ok(None);
         };
         if owns_defers {
-            self.push_statement(block, span, MirStatementKind::DisarmDefer(destination))?;
+            if !self.is_terminal(destination.ty, span)? {
+                self.push_statement(block, span, MirStatementKind::DisarmCleanup(destination))?;
+            }
             self.drain_to_normal(block, span, vec![scope]).map(Some)
         } else {
             Ok(Some(block))
@@ -2116,6 +2147,7 @@ impl<'a> FunctionBuilder<'a> {
                 unwind,
             },
         )?;
+        self.register_fallback(body_start, span, self.local_place(item))?;
         let item = if let Some(mut place) = borrowed_source {
             place.ty = item_ty;
             place.projections.push(MirProjection {
@@ -4319,6 +4351,9 @@ impl<'a> FunctionBuilder<'a> {
                 target: target(self, next)?,
                 unwind,
             },
+            MirTerminatorKind::DrainUnwind { target: next } => MirTerminatorKind::DrainUnwind {
+                target: target(self, next)?,
+            },
             MirTerminatorKind::ValidateLoan {
                 loan,
                 against,
@@ -4422,7 +4457,7 @@ impl<'a> FunctionBuilder<'a> {
         destination: MirPlace,
         value: MirRvalue,
     ) -> Result<(), MirError> {
-        let defer_transfer = match value.kind() {
+        let cleanup_transfer = match value.kind() {
             MirRvalueKind::Use(MirOperand {
                 kind: MirOperandKind::Move(from),
                 ..
@@ -4448,20 +4483,46 @@ impl<'a> FunctionBuilder<'a> {
             is_complete_defer_owner_place(from)
                 && (is_complete_defer_owner_place(to) || is_iterator_defer_target(to))
         });
-        let consumed = if defer_transfer.is_none() {
+        let consumed = if cleanup_transfer.is_none() {
             rvalue_move_places(&value)
         } else {
             Vec::new()
         };
+        let destination_for_fallback = destination.clone();
         self.push_statement(block, span, MirStatementKind::Assign { destination, value })?;
-        if let Some((from, to)) = defer_transfer {
-            self.push_statement(block, span, MirStatementKind::RetargetDefer { from, to })?;
+        if let Some((from, to)) = cleanup_transfer {
+            self.push_statement(block, span, MirStatementKind::RetargetCleanup { from, to })?;
         } else {
             for place in consumed {
-                self.push_statement(block, span, MirStatementKind::DisarmDefer(place))?;
+                self.push_statement(block, span, MirStatementKind::DisarmCleanup(place))?;
             }
+            self.register_fallback(block, span, destination_for_fallback)?;
         }
         Ok(())
+    }
+
+    fn register_fallback(
+        &mut self,
+        block: MirBlockId,
+        span: Span,
+        owner: MirPlace,
+    ) -> Result<(), MirError> {
+        if !self.is_terminal(owner.ty, span)? {
+            return Ok(());
+        }
+        let scope = self
+            .lexical_scopes
+            .last()
+            .copied()
+            .ok_or_else(|| MirError::Construction {
+                span,
+                message: "terminal owner was materialized outside a lexical scope".into(),
+            })?;
+        self.push_statement(
+            block,
+            span,
+            MirStatementKind::RegisterFallback { scope, owner },
+        )
     }
 
     fn assign_operand(
@@ -4522,8 +4583,9 @@ impl<'a> FunctionBuilder<'a> {
             Some(self.allocate_block(MirBlockKind::Normal)?)
         };
         let destination = if target.is_some() { destination } else { None };
+        let fallback_destination = destination.clone();
         for place in operation_move_places(&operation) {
-            self.push_statement(block, span, MirStatementKind::DisarmDefer(place))?;
+            self.push_statement(block, span, MirStatementKind::DisarmCleanup(place))?;
         }
         let unwind = self.current_unwind(span)?;
         self.terminate(
@@ -4536,28 +4598,25 @@ impl<'a> FunctionBuilder<'a> {
                 unwind,
             },
         )?;
+        if let (Some(target), Some(destination)) = (target, fallback_destination) {
+            self.register_fallback(target, span, destination)?;
+        }
         Ok(target)
     }
 
     fn current_unwind(&mut self, span: Span) -> Result<MirBlockId, MirError> {
-        if self.defer_scopes.is_empty() {
-            return Ok(self.unwind);
-        }
-        let scopes = self.defer_scopes.clone();
-        if let Some(block) = self.unwind_defers.get(&scopes).copied() {
+        if let Some(block) = self.unwind_cleanup {
             return Ok(block);
         }
         let block = self.allocate_block(MirBlockKind::Cleanup)?;
         self.terminate(
             block,
             span,
-            MirTerminatorKind::DrainDefers {
-                scopes: scopes.clone(),
+            MirTerminatorKind::DrainUnwind {
                 target: self.unwind,
-                unwind: self.unwind,
             },
         )?;
-        self.unwind_defers.insert(scopes, block);
+        self.unwind_cleanup = Some(block);
         Ok(block)
     }
 
@@ -4590,7 +4649,7 @@ impl<'a> FunctionBuilder<'a> {
         self.push_statement(
             block,
             span,
-            MirStatementKind::DisarmDefer(self.local_place(self.return_local)),
+            MirStatementKind::DisarmCleanup(self.local_place(self.return_local)),
         )?;
         self.release_loans_from(block, span, 0)?;
         if self.defer_scopes.is_empty() {
@@ -4600,6 +4659,7 @@ impl<'a> FunctionBuilder<'a> {
         let drain = self.allocate_block(MirBlockKind::Normal)?;
         let target = self.allocate_block(MirBlockKind::Normal)?;
         self.terminate(target, span, MirTerminatorKind::Return)?;
+        let unwind = self.current_unwind(span)?;
         self.terminate(block, span, MirTerminatorKind::Goto { target: drain })?;
         self.terminate(
             drain,
@@ -4607,7 +4667,7 @@ impl<'a> FunctionBuilder<'a> {
             MirTerminatorKind::DrainDefers {
                 scopes,
                 target,
-                unwind: self.unwind,
+                unwind,
             },
         )
     }
@@ -4858,8 +4918,9 @@ fn populate_runtime_loan_checks(
                 | MirStatementKind::StorageDead(_)
                 | MirStatementKind::Assign { .. }
                 | MirStatementKind::RegisterDefer { .. }
-                | MirStatementKind::RetargetDefer { .. }
-                | MirStatementKind::DisarmDefer(_) => {}
+                | MirStatementKind::RegisterFallback { .. }
+                | MirStatementKind::RetargetCleanup { .. }
+                | MirStatementKind::DisarmCleanup(_) => {}
             }
         }
 
@@ -5043,6 +5104,9 @@ fn populate_runtime_loan_checks(
             MirTerminatorKind::DrainDefers { target, unwind, .. } => {
                 propagate(*target, active)?;
                 propagate(*unwind, BTreeSet::new())?;
+            }
+            MirTerminatorKind::DrainUnwind { target } => {
+                propagate(*target, BTreeSet::new())?;
             }
             MirTerminatorKind::Return
             | MirTerminatorKind::ResumePanic
@@ -5229,6 +5293,7 @@ fn normal_successors(terminator: &MirTerminatorKind) -> Vec<MirBlockId> {
         MirTerminatorKind::ValidatePlaces { target, .. }
         | MirTerminatorKind::ValidateLoan { target, .. }
         | MirTerminatorKind::DrainDefers { target, .. } => vec![*target],
+        MirTerminatorKind::DrainUnwind { target } => vec![*target],
         MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => Vec::new(),
@@ -5272,11 +5337,14 @@ fn collect_statement_region_uses(
                 collect_place_region_uses(guard, loans, output);
             }
         }
-        MirStatementKind::RetargetDefer { from, to } => {
+        MirStatementKind::RegisterFallback { owner, .. } => {
+            collect_place_region_uses(owner, loans, output);
+        }
+        MirStatementKind::RetargetCleanup { from, to } => {
             collect_place_region_uses(from, loans, output);
             collect_place_region_uses(to, loans, output);
         }
-        MirStatementKind::DisarmDefer(place) => {
+        MirStatementKind::DisarmCleanup(place) => {
             collect_place_region_uses(place, loans, output);
         }
     }
@@ -5299,6 +5367,7 @@ fn collect_terminator_region_uses(
     match terminator {
         MirTerminatorKind::Goto { .. }
         | MirTerminatorKind::DrainDefers { .. }
+        | MirTerminatorKind::DrainUnwind { .. }
         | MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => {}
@@ -5717,6 +5786,16 @@ mod tests {
         )
     }
 
+    fn drains_to_function_unwind(function: &MirFunction, block: MirBlockId) -> bool {
+        matches!(
+            function
+                .block(block)
+                .map(MirBasicBlock::terminator)
+                .map(MirTerminator::kind),
+            Some(MirTerminatorKind::DrainUnwind { target }) if *target == function.unwind()
+        )
+    }
+
     #[test]
     fn straight_line_functions_lower_to_typed_blocks_slots_and_unwind_edges() {
         let source = "fn add(left: Int, right: Int): Int {\n    left + right\n}\n\nfn main() {\n    let answer = add(20, 22)\n    _ = answer\n}\n";
@@ -5741,7 +5820,7 @@ mod tests {
                 },
                 unwind,
                 ..
-            } if *unwind == add.unwind()
+            } if drains_to_function_unwind(add, *unwind)
         )));
         assert!(
             add.blocks()
@@ -6328,7 +6407,8 @@ mod tests {
                 .blocks()
                 .filter(|block| matches!(
                     block.terminator().kind(),
-                    MirTerminatorKind::IteratorNext { unwind, .. } if *unwind == loops.unwind()
+                    MirTerminatorKind::IteratorNext { unwind, .. }
+                        if drains_to_function_unwind(loops, *unwind)
                 ))
                 .count(),
             5
@@ -6550,7 +6630,7 @@ mod tests {
             .filter_map(|block| match block.terminator().kind() {
                 MirTerminatorKind::ValidatePlaces {
                     for_write, unwind, ..
-                } if *unwind == update.unwind() => Some(*for_write),
+                } if drains_to_function_unwind(update, *unwind) => Some(*for_write),
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -6615,7 +6695,7 @@ mod tests {
                 },
                 unwind,
                 ..
-            } if *unwind == read.unwind()
+            } if drains_to_function_unwind(read, *unwind)
         )));
         let view = mir.function(function_id(&resolved, "view")).unwrap();
         assert!(view.blocks().any(|block| matches!(
@@ -6627,7 +6707,7 @@ mod tests {
                 },
                 unwind,
                 ..
-            } if *unwind == view.unwind()
+            } if drains_to_function_unwind(view, *unwind)
         )));
         verify_mir(&resolved, &hir, &mir).unwrap();
     }
@@ -8280,7 +8360,7 @@ mod tests {
                 .flat_map(MirBasicBlock::statements)
                 .any(|statement| matches!(
                     statement.kind(),
-                    MirStatementKind::RetargetDefer { to, .. }
+                    MirStatementKind::RetargetCleanup { to, .. }
                         if !is_complete_defer_owner_place(to)
                             && !is_iterator_defer_target(to)
                 ))
@@ -8377,7 +8457,7 @@ mod tests {
             .blocks()
             .flat_map(|block| block.statements())
             .find_map(|statement| {
-                let MirStatementKind::RetargetDefer { from, to } = statement.kind() else {
+                let MirStatementKind::RetargetCleanup { from, to } = statement.kind() else {
                     return None;
                 };
                 Some((from.clone(), to.clone()))
@@ -8398,7 +8478,7 @@ mod tests {
                 .flat_map(|block| block.statements())
                 .any(|statement| matches!(
                     statement.kind(),
-                    MirStatementKind::RetargetDefer { to, .. }
+                    MirStatementKind::RetargetCleanup { to, .. }
                         if matches!(
                             to.projections().last().map(MirProjection::kind),
                             Some(MirProjectionKind::IteratorSource)
@@ -8447,7 +8527,7 @@ mod tests {
                 .flat_map(|block| block.statements())
                 .any(|statement| matches!(
                     statement.kind(),
-                    MirStatementKind::RetargetDefer { to, .. }
+                    MirStatementKind::RetargetCleanup { to, .. }
                         if to.projections().is_empty()
                 ))
         );
@@ -8623,13 +8703,13 @@ mod tests {
             .iter_mut()
             .find(|block| {
                 block.statements.iter().any(|statement| {
-                    matches!(statement.kind, MirStatementKind::RetargetDefer { .. })
+                    matches!(statement.kind, MirStatementKind::RetargetCleanup { .. })
                 })
             })
             .expect("retarget is present before mutation");
-        block
-            .statements
-            .retain(|statement| !matches!(statement.kind, MirStatementKind::RetargetDefer { .. }));
+        block.statements.retain(|statement| {
+            !matches!(statement.kind, MirStatementKind::RetargetCleanup { .. })
+        });
         let error = verify_mir(&resolved, &hir, &missing_retarget).unwrap_err();
         assert!(
             error.message().contains("without retarget or disarm")
@@ -8648,15 +8728,15 @@ mod tests {
             .iter_mut()
             .flat_map(|block| &mut block.statements)
             .find(|statement| match &statement.kind {
-                MirStatementKind::RetargetDefer { from, .. } => from == &guard,
+                MirStatementKind::RetargetCleanup { from, .. } => from == &guard,
                 _ => false,
             })
             .expect("whole affine move has a retarget transition");
         let from = match &transition.kind {
-            MirStatementKind::RetargetDefer { from, .. } => from.clone(),
+            MirStatementKind::RetargetCleanup { from, .. } => from.clone(),
             _ => unreachable!(),
         };
-        transition.kind = MirStatementKind::DisarmDefer(from);
+        transition.kind = MirStatementKind::DisarmCleanup(from);
         let error = verify_mir(&resolved, &hir, &forged_disarm).unwrap_err();
         assert!(
             error.message().contains("disarmed without an immediate"),
@@ -8836,6 +8916,156 @@ mod tests {
             error
                 .message()
                 .contains("already consumed by a deferred action"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn terminal_parameters_register_one_closed_unwind_fallback() {
+        let (resolved, hir) = checked(
+            "fn stop(task: Join[Int, String]): Never {\n\
+                 panic(\"stop\")\n\
+             }\n",
+        );
+        let stop = function_id(&resolved, "stop");
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let function = mir.function(stop).unwrap();
+        let parameter = function.parameters()[0];
+        assert!(matches!(
+            function.block(function.entry()).unwrap().statements().first().map(MirStatement::kind),
+            Some(MirStatementKind::RegisterFallback { owner, .. })
+                if owner.local() == parameter && owner.projections().is_empty()
+        ));
+        let unwind_drain = function
+            .blocks()
+            .find_map(|block| match block.terminator().kind() {
+                MirTerminatorKind::DrainUnwind { target } => Some(*target),
+                _ => None,
+            })
+            .expect("terminal panic paths use one global unwind drain");
+        assert_eq!(unwind_drain, function.unwind());
+
+        let mut missing = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = missing
+            .functions
+            .get_mut(&MirFunctionId::Callable(stop))
+            .unwrap();
+        function.blocks[function.entry.index() as usize]
+            .statements
+            .retain(|statement| {
+                !matches!(statement.kind, MirStatementKind::RegisterFallback { .. })
+            });
+        let error = verify_mir(&resolved, &hir, &missing).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("has no entry fallback registration"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn mir_requires_fallback_coverage_at_every_terminal_materialization_edge() {
+        let (resolved, hir) = checked(
+            "fn main() {\n\
+                 let pending: Join[Int, String]? = none\n\
+                 panic(\"stop\")\n\
+             }\n",
+        );
+        let main = function_id(&resolved, "main");
+        let mut missing_store =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let body = missing_store
+            .functions
+            .get_mut(&MirFunctionId::Callable(main))
+            .unwrap();
+        let registration = body
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.statements
+                    .iter()
+                    .position(|statement| {
+                        matches!(statement.kind, MirStatementKind::RegisterFallback { .. })
+                    })
+                    .map(|instruction| (block, instruction))
+            })
+            .expect("terminal Option construction registers a fallback");
+        body.blocks[registration.0]
+            .statements
+            .remove(registration.1);
+        let error = verify_mir(&resolved, &hir, &missing_store).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("terminal assignment result has no immediate fallback"),
+            "{error}"
+        );
+
+        let (resolved, hir) = checked(
+            "fn empty(): Join[Int, String]? { none }\n\
+             fn main() {\n\
+                 let pending = empty()\n\
+                 panic(\"stop\")\n\
+             }\n",
+        );
+        let main = function_id(&resolved, "main");
+        let mut missing_invoke =
+            lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let body = missing_invoke
+            .functions
+            .get_mut(&MirFunctionId::Callable(main))
+            .unwrap();
+        let target = body
+            .blocks
+            .iter()
+            .find_map(|block| match block.terminator.kind {
+                MirTerminatorKind::Invoke {
+                    destination: Some(_),
+                    target: Some(target),
+                    ..
+                } => Some(target),
+                _ => None,
+            })
+            .expect("terminal call has a normal result edge");
+        body.blocks[target.index() as usize].statements.remove(0);
+        let error = verify_mir(&resolved, &hir, &missing_invoke).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("terminal invocation result edge has no fallback"),
+            "{error}"
+        );
+
+        let (resolved, hir) = checked(
+            "fn inspect(values: Array[Join[Int, String]?]) {\n\
+                 for value in values {\n\
+                     panic(\"stop\")\n\
+                 }\n\
+             }\n",
+        );
+        let inspect = function_id(&resolved, "inspect");
+        let mut missing_item = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let body = missing_item
+            .functions
+            .get_mut(&MirFunctionId::Callable(inspect))
+            .unwrap();
+        let has_value = body
+            .blocks
+            .iter()
+            .find_map(|block| match block.terminator.kind {
+                MirTerminatorKind::IteratorNext { has_value, .. } => Some(has_value),
+                _ => None,
+            })
+            .expect("own iterator has a value edge");
+        body.blocks[has_value.index() as usize].statements.remove(0);
+        let error = verify_mir(&resolved, &hir, &missing_item).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("terminal iterator value edge has no fallback"),
             "{error}"
         );
     }

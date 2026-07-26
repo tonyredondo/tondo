@@ -171,6 +171,7 @@ pub fn lower_to_bytecode(
         &callable_ids,
         &mut program,
     )?;
+    specialize_terminal_fallbacks(&mut program)?;
     specialize_defer_guards(&mut program)?;
     specialize_iterator_exhaustion_guards(&mut program)?;
     match bc::verify_bytecode_with_limits(
@@ -185,6 +186,63 @@ pub fn lower_to_bytecode(
         }),
         Err(error) => Err(BytecodeError::Invariant(error)),
     }
+}
+
+fn specialize_terminal_fallbacks(program: &mut bc::BytecodeProgram) -> Result<(), BytecodeError> {
+    let sites = program
+        .functions
+        .iter()
+        .enumerate()
+        .flat_map(|(function, body)| {
+            body.blocks
+                .iter()
+                .enumerate()
+                .flat_map(move |(block, basic_block)| {
+                    basic_block.instructions.iter().enumerate().filter_map(
+                        move |(instruction, operation)| {
+                            let bc::BytecodeInstructionKind::RegisterFallback { owner, .. } =
+                                &operation.kind
+                            else {
+                                return None;
+                            };
+                            Some((function, block, instruction, owner.ty))
+                        },
+                    )
+                })
+        })
+        .collect::<Vec<_>>();
+    let roots = sites.iter().map(|(_, _, _, ty)| *ty).collect::<Vec<_>>();
+    let statuses =
+        bc::derive_terminal_statuses(program, &roots).map_err(BytecodeError::Invariant)?;
+    let mut remove = BTreeMap::<(usize, usize), BTreeSet<usize>>::new();
+    for ((function, block, instruction, _), status) in sites.into_iter().zip(statuses) {
+        match status {
+            bc::BytecodeTerminalStatus::Present => {}
+            bc::BytecodeTerminalStatus::Absent => {
+                remove
+                    .entry((function, block))
+                    .or_default()
+                    .insert(instruction);
+            }
+            bc::BytecodeTerminalStatus::Potential => {
+                return Err(BytecodeError::construction(
+                    "terminal fallback specialization",
+                    "monomorphization left terminal ownership unresolved",
+                ));
+            }
+        }
+    }
+    for ((function, block), instructions) in remove {
+        let mut index = 0usize;
+        program.functions[function].blocks[block]
+            .instructions
+            .retain(|_| {
+                let keep = !instructions.contains(&index);
+                index += 1;
+                keep
+            });
+    }
+    Ok(())
 }
 
 fn specialize_defer_guards(program: &mut bc::BytecodeProgram) -> Result<(), BytecodeError> {
@@ -255,10 +313,10 @@ fn specialize_defer_guards(program: &mut bc::BytecodeProgram) -> Result<(), Byte
             block
                 .instructions
                 .retain(|instruction| match &instruction.kind {
-                    bc::BytecodeInstructionKind::RetargetDefer { from, .. } => {
+                    bc::BytecodeInstructionKind::RetargetCleanup { from, .. } => {
                         !copy_guard_types.contains(&from.ty)
                     }
-                    bc::BytecodeInstructionKind::DisarmDefer(place) => {
+                    bc::BytecodeInstructionKind::DisarmCleanup(place) => {
                         !copy_guard_types.contains(&place.ty)
                     }
                     _ => true,
@@ -1746,11 +1804,14 @@ fn collect_function_types(function: &MirFunction, types: &mut BTreeSet<TypeId>) 
                         collect_place_types(guard, types);
                     }
                 }
-                MirStatementKind::RetargetDefer { from, to } => {
+                MirStatementKind::RegisterFallback { owner, .. } => {
+                    collect_place_types(owner, types);
+                }
+                MirStatementKind::RetargetCleanup { from, to } => {
                     collect_place_types(from, types);
                     collect_place_types(to, types);
                 }
-                MirStatementKind::DisarmDefer(place) => collect_place_types(place, types),
+                MirStatementKind::DisarmCleanup(place) => collect_place_types(place, types),
             }
         }
         collect_terminator_types(block.terminator(), types);
@@ -1890,6 +1951,7 @@ fn collect_terminator_types(terminator: &MirTerminator, types: &mut BTreeSet<Typ
         MirTerminatorKind::Goto { .. }
         | MirTerminatorKind::ValidateLoan { .. }
         | MirTerminatorKind::DrainDefers { .. }
+        | MirTerminatorKind::DrainUnwind { .. }
         | MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => {}
@@ -1957,8 +2019,9 @@ fn collect_function_references(function: &MirFunction, references: &mut Vec<Func
                 | MirStatementKind::StorageDead(_)
                 | MirStatementKind::ReserveLoan(_)
                 | MirStatementKind::ReleaseLoan(_)
-                | MirStatementKind::RetargetDefer { .. }
-                | MirStatementKind::DisarmDefer(_) => {}
+                | MirStatementKind::RegisterFallback { .. }
+                | MirStatementKind::RetargetCleanup { .. }
+                | MirStatementKind::DisarmCleanup(_) => {}
             }
         }
         collect_terminator_function_references(block.terminator(), references);
@@ -2106,7 +2169,8 @@ fn collect_terminator_function_references(
         | MirTerminatorKind::Unreachable
         | MirTerminatorKind::IteratorNext { .. }
         | MirTerminatorKind::ValidateLoan { .. }
-        | MirTerminatorKind::DrainDefers { .. } => {}
+        | MirTerminatorKind::DrainDefers { .. }
+        | MirTerminatorKind::DrainUnwind { .. } => {}
         MirTerminatorKind::SwitchBool { condition, .. } => {
             collect_operand_function_references(condition, references);
         }
@@ -2656,11 +2720,14 @@ fn lower_function(
                         collect_place_types(guard, &mut function_types);
                     }
                 }
-                MirStatementKind::RetargetDefer { from, to } => {
+                MirStatementKind::RegisterFallback { owner, .. } => {
+                    collect_place_types(owner, &mut function_types);
+                }
+                MirStatementKind::RetargetCleanup { from, to } => {
                     collect_place_types(from, &mut function_types);
                     collect_place_types(to, &mut function_types);
                 }
-                MirStatementKind::DisarmDefer(place) => {
+                MirStatementKind::DisarmCleanup(place) => {
                     collect_place_types(place, &mut function_types);
                 }
             }
@@ -2818,14 +2885,20 @@ fn lower_statement(
                 .map(|place| lower_place(place, context, type_map))
                 .transpose()?,
         },
-        MirStatementKind::RetargetDefer { from, to } => {
-            bc::BytecodeInstructionKind::RetargetDefer {
+        MirStatementKind::RegisterFallback { scope, owner } => {
+            bc::BytecodeInstructionKind::RegisterFallback {
+                scope: bc::BytecodeScopeId::new(scope.index()),
+                owner: lower_place(owner, context, type_map)?,
+            }
+        }
+        MirStatementKind::RetargetCleanup { from, to } => {
+            bc::BytecodeInstructionKind::RetargetCleanup {
                 from: lower_place(from, context, type_map)?,
                 to: lower_place(to, context, type_map)?,
             }
         }
-        MirStatementKind::DisarmDefer(place) => {
-            bc::BytecodeInstructionKind::DisarmDefer(lower_place(place, context, type_map)?)
+        MirStatementKind::DisarmCleanup(place) => {
+            bc::BytecodeInstructionKind::DisarmCleanup(lower_place(place, context, type_map)?)
         }
     };
     Ok(bc::BytecodeInstruction {
@@ -2966,6 +3039,9 @@ fn lower_terminator(
                 .collect(),
             target: block_id(*target),
             unwind: block_id(*unwind),
+        },
+        MirTerminatorKind::DrainUnwind { target } => bc::BytecodeTerminatorKind::DrainUnwind {
+            target: block_id(*target),
         },
         MirTerminatorKind::Return => bc::BytecodeTerminatorKind::Return,
         MirTerminatorKind::ResumePanic => bc::BytecodeTerminatorKind::ResumePanic,
@@ -7886,15 +7962,15 @@ mod tests {
             .iter_mut()
             .flat_map(|block| &mut block.instructions)
             .find(|instruction| match &instruction.kind {
-                bc::BytecodeInstructionKind::RetargetDefer { from, .. } => from == &guard,
+                bc::BytecodeInstructionKind::RetargetCleanup { from, .. } => from == &guard,
                 _ => false,
             })
             .expect("whole affine move has a retarget transition");
         let from = match &transition.kind {
-            bc::BytecodeInstructionKind::RetargetDefer { from, .. } => from.clone(),
+            bc::BytecodeInstructionKind::RetargetCleanup { from, .. } => from.clone(),
             _ => unreachable!(),
         };
-        transition.kind = bc::BytecodeInstructionKind::DisarmDefer(from);
+        transition.kind = bc::BytecodeInstructionKind::DisarmCleanup(from);
         let error = bc::verify_bytecode(&forged_disarm).unwrap_err();
         assert!(
             error.message().contains("disarmed without an immediate"),
@@ -8077,7 +8153,9 @@ mod tests {
 
         let mut undrained = lowered(
             "fn note(value: Int) {}\n\
+             fn marker() {}\n\
              fn execute() {\n\
+                 marker()\n\
                  defer note(1)\n\
              }\n",
         );
@@ -8123,9 +8201,7 @@ mod tests {
         terminator.kind = bc::BytecodeTerminatorKind::Goto { target };
         let error = bc::verify_bytecode(&undrained).unwrap_err();
         assert!(
-            error
-                .message()
-                .contains("abandons registered defer entries"),
+            error.message().contains("abandons an explicit defer entry"),
             "{error}"
         );
 
@@ -8392,6 +8468,223 @@ mod tests {
     }
 
     #[test]
+    fn terminal_fallbacks_are_closed_per_bytecode_instance() {
+        let mut terminal = lowered(
+            "fn stop(task: Join[Int, String]): Never {\n\
+                 panic(\"stop\")\n\
+             }\n",
+        );
+        let stop = function_id(&terminal, "stop");
+        let body = &terminal.functions[stop.index() as usize];
+        let entry = body.entry;
+        assert!(matches!(
+            body.block(body.entry)
+                .and_then(|block| block.instructions.first())
+                .map(|instruction| &instruction.kind),
+            Some(bc::BytecodeInstructionKind::RegisterFallback { owner, .. })
+                if owner.slot == body.parameters[0] && owner.projections.is_empty()
+        ));
+        assert!(body.blocks.iter().any(|block| matches!(
+            block.terminator.kind,
+            bc::BytecodeTerminatorKind::DrainUnwind { target } if target == body.unwind
+        )));
+
+        terminal.functions[stop.index() as usize].blocks[entry.index() as usize]
+            .instructions
+            .retain(|instruction| {
+                !matches!(
+                    instruction.kind,
+                    bc::BytecodeInstructionKind::RegisterFallback { .. }
+                )
+            });
+        let error = bc::verify_bytecode(&terminal).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("has no entry fallback registration"),
+            "{error}"
+        );
+
+        let nonterminal = lowered(
+            "fn stop[T](value: T): Never {\n\
+                 panic(\"stop\")\n\
+             }\n\
+             fn main() {\n\
+                 stop(1)\n\
+             }\n",
+        );
+        let stop = nonterminal
+            .callables
+            .iter()
+            .find(|callable| callable.name.contains("::value::stop["))
+            .and_then(|callable| callable.implementation)
+            .expect("generic stop has one closed Int body");
+        assert!(
+            !nonterminal.functions[stop.index() as usize]
+                .blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .any(|instruction| matches!(
+                    instruction.kind,
+                    bc::BytecodeInstructionKind::RegisterFallback { .. }
+                )),
+            "the Int specialization must remove its conservative MIR fallback"
+        );
+
+        let empty = lowered(
+            "fn main() {\n\
+                 let pending: Join[Int, String]? = none\n\
+                 panic(\"stop\")\n\
+             }\n",
+        );
+        let main = function_id(&empty, "main");
+        let mut host = RejectingHost;
+        let execution = execute(&empty, main, &mut host).unwrap();
+        let VmOutcome::Panicked(panic) = execution.outcome else {
+            panic!("the explicit panic must survive terminal fallback cleanup")
+        };
+        assert_eq!(panic.code, PanicCode::ExplicitPanic);
+    }
+
+    #[test]
+    fn runtime_unifies_explicit_and_structural_fallback_entries_in_lifo_order() {
+        #[derive(Default)]
+        struct RecordingHost {
+            output: String,
+        }
+
+        impl VmHost for RecordingHost {
+            fn invoke(
+                &mut self,
+                name: &str,
+                arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                assert_eq!(name, "std.console.print");
+                let [RuntimeValue::String(text)] = arguments else {
+                    panic!("console print must receive one String")
+                };
+                self.output.push_str(text);
+                Ok(RuntimeValue::Unit)
+            }
+        }
+
+        let program = lowered(
+            "import std.console\n\
+             fn main() {\n\
+                 let first: Join[Int, String]? = none\n\
+                 defer console.print(\"a\")\n\
+                 let second: Join[Int, String]? = none\n\
+                 defer console.print(\"b\")\n\
+                 panic(\"stop\")\n\
+             }\n",
+        );
+        let main = function_id(&program, "main");
+        let mut host = RecordingHost::default();
+        let execution = execute(&program, main, &mut host).unwrap();
+        assert_eq!(host.output, "ba");
+        let VmOutcome::Panicked(panic) = execution.outcome else {
+            panic!("the original panic must resume after the unified drain")
+        };
+        assert_eq!(panic.code, PanicCode::ExplicitPanic);
+    }
+
+    #[test]
+    fn bytecode_requires_fallback_coverage_at_every_terminal_materialization_edge() {
+        let mut missing_store = lowered(
+            "fn main() {\n\
+                 let pending: Join[Int, String]? = none\n\
+                 panic(\"stop\")\n\
+             }\n",
+        );
+        let main = function_id(&missing_store, "main");
+        let body = &mut missing_store.functions[main.index() as usize];
+        let registration = body
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.instructions
+                    .iter()
+                    .position(|instruction| {
+                        matches!(
+                            instruction.kind,
+                            bc::BytecodeInstructionKind::RegisterFallback { .. }
+                        )
+                    })
+                    .map(|instruction| (block, instruction))
+            })
+            .expect("terminal Option construction registers a fallback");
+        body.blocks[registration.0]
+            .instructions
+            .remove(registration.1);
+        let error = bc::verify_bytecode(&missing_store).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("terminal store result has no immediate fallback"),
+            "{error}"
+        );
+
+        let mut missing_invoke = lowered(
+            "fn empty(): Join[Int, String]? { none }\n\
+             fn main() {\n\
+                 let pending = empty()\n\
+                 panic(\"stop\")\n\
+             }\n",
+        );
+        let main = function_id(&missing_invoke, "main");
+        let body = &mut missing_invoke.functions[main.index() as usize];
+        let target = body
+            .blocks
+            .iter()
+            .find_map(|block| match block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    destination: Some(_),
+                    target: Some(target),
+                    ..
+                } => Some(target),
+                _ => None,
+            })
+            .expect("terminal call has a normal result edge");
+        body.blocks[target.index() as usize].instructions.remove(0);
+        let error = bc::verify_bytecode(&missing_invoke).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("terminal invocation result edge has no fallback"),
+            "{error}"
+        );
+
+        let mut missing_item = lowered(
+            "fn inspect(values: Array[Join[Int, String]?]) {\n\
+                 for value in values {\n\
+                     panic(\"stop\")\n\
+                 }\n\
+             }\n",
+        );
+        let inspect = function_id(&missing_item, "inspect");
+        let body = &mut missing_item.functions[inspect.index() as usize];
+        let has_value = body
+            .blocks
+            .iter()
+            .find_map(|block| match block.terminator.kind {
+                bc::BytecodeTerminatorKind::IteratorNext { has_value, .. } => Some(has_value),
+                _ => None,
+            })
+            .expect("own iterator has a value edge");
+        body.blocks[has_value.index() as usize]
+            .instructions
+            .remove(0);
+        let error = bc::verify_bytecode(&missing_item).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("terminal iterator value edge has no fallback"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn copy_defer_guards_are_specialized_to_snapshots() {
         #[derive(Default)]
         struct RecordingHost {
@@ -8461,10 +8754,10 @@ mod tests {
                     .instructions
                     .iter()
                     .any(|instruction| match &instruction.kind {
-                        bc::BytecodeInstructionKind::RetargetDefer { from, .. } => {
+                        bc::BytecodeInstructionKind::RetargetCleanup { from, .. } => {
                             from.ty == owner_ty
                         }
-                        bc::BytecodeInstructionKind::DisarmDefer(place) => place.ty == owner_ty,
+                        bc::BytecodeInstructionKind::DisarmCleanup(place) => place.ty == owner_ty,
                         _ => false,
                     })
             }),

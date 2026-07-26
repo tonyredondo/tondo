@@ -240,6 +240,7 @@ pub(super) fn static_integer_locals(
             | MirTerminatorKind::ValidatePlaces { .. }
             | MirTerminatorKind::ValidateLoan { .. }
             | MirTerminatorKind::DrainDefers { .. }
+            | MirTerminatorKind::DrainUnwind { .. }
             | MirTerminatorKind::Return
             | MirTerminatorKind::ResumePanic
             | MirTerminatorKind::Unreachable => {}

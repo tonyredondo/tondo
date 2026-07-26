@@ -6,12 +6,14 @@ use crate::bytecode::{
     BytecodeConstantValue, BytecodeConstantValueKind, BytecodeConstantVariantValue,
     BytecodeContainmentKind, BytecodeCursorMode, BytecodeFunctionId, BytecodeIndexAccess,
     BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeLoanId,
-    BytecodeLoanKind, BytecodeNumericConversion, BytecodeOperand, BytecodeOperandKind,
-    BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode, BytecodePlace,
-    BytecodePrefixOperator, BytecodeProgram, BytecodeProjection, BytecodeProjectionKind,
-    BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId,
-    BytecodeSlotId, BytecodeSpan, BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind,
-    BytecodeTypeId, BytecodeTypeKind, BytecodeVerificationLimits, verify_bytecode_with_limits,
+    BytecodeLoanKind, BytecodeNominalShape, BytecodeNumericConversion, BytecodeOperand,
+    BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode,
+    BytecodePlace, BytecodePrefixOperator, BytecodeProgram, BytecodeProjection,
+    BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind,
+    BytecodeScalarType, BytecodeScopeId, BytecodeSlotId, BytecodeSpan, BytecodeTag,
+    BytecodeTerminalUnwindAction, BytecodeTerminator, BytecodeTerminatorKind, BytecodeTypeId,
+    BytecodeTypeKind, BytecodeVariantPayload, BytecodeVerificationLimits,
+    verify_bytecode_with_limits,
 };
 
 use super::heap::{Heap, HeapHandle, HeapObject};
@@ -218,13 +220,69 @@ impl RuntimeDefer {
 }
 
 #[derive(Debug)]
+struct RuntimeFallback {
+    scope: BytecodeScopeId,
+    owner: BytecodePlace,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeType {
+    ty: BytecodeTypeId,
+    substitutions: Vec<RuntimeType>,
+}
+
+impl RuntimeType {
+    fn child(&self, ty: BytecodeTypeId) -> Self {
+        Self {
+            ty,
+            substitutions: self.substitutions.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+enum RuntimeCleanup {
+    Explicit(RuntimeDefer),
+    Fallback(RuntimeFallback),
+}
+
+impl RuntimeCleanup {
+    fn scope(&self) -> BytecodeScopeId {
+        match self {
+            Self::Explicit(deferred) => deferred.scope,
+            Self::Fallback(fallback) => fallback.scope,
+        }
+    }
+
+    fn guard(&self) -> Option<&BytecodePlace> {
+        match self {
+            Self::Explicit(deferred) => deferred.guard.as_ref(),
+            Self::Fallback(fallback) => Some(&fallback.owner),
+        }
+    }
+
+    fn guard_mut(&mut self) -> Option<&mut BytecodePlace> {
+        match self {
+            Self::Explicit(deferred) => deferred.guard.as_mut(),
+            Self::Fallback(fallback) => Some(&mut fallback.owner),
+        }
+    }
+
+    fn roots(&self, output: &mut Vec<Value>) {
+        if let Self::Explicit(deferred) = self {
+            deferred.roots(output);
+        }
+    }
+}
+
+#[derive(Debug)]
 struct Frame {
     function: BytecodeFunctionId,
     block: BytecodeBlockId,
     instruction: usize,
     slots: Vec<SlotState>,
     loans: Vec<Option<RuntimeReservation>>,
-    defers: Vec<RuntimeDefer>,
+    cleanups: Vec<RuntimeCleanup>,
     continuation: Option<CallContinuation>,
 }
 
@@ -234,8 +292,8 @@ impl Frame {
             SlotState::Value(value) => Some(value.clone()),
             SlotState::Dead | SlotState::Uninitialized => None,
         }));
-        for deferred in &self.defers {
-            deferred.roots(output);
+        for cleanup in &self.cleanups {
+            cleanup.roots(output);
         }
     }
 }
@@ -370,8 +428,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                 | BytecodeInstructionKind::ReleaseLoan(_)
                 | BytecodeInstructionKind::Store { .. }
                 | BytecodeInstructionKind::RegisterDefer { .. }
-                | BytecodeInstructionKind::RetargetDefer { .. }
-                | BytecodeInstructionKind::DisarmDefer(_) => None,
+                | BytecodeInstructionKind::RegisterFallback { .. }
+                | BytecodeInstructionKind::RetargetCleanup { .. }
+                | BytecodeInstructionKind::DisarmCleanup(_) => None,
             })
             .collect::<std::collections::BTreeSet<_>>();
         let mut slots = function
@@ -396,7 +455,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             instruction: 0,
             slots,
             loans: vec![None; function.loans.len()],
-            defers: Vec::new(),
+            cleanups: Vec::new(),
             continuation,
         });
         self.statistics.peak_stack_depth = self
@@ -449,7 +508,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                 let marker = self.temporary_roots.len();
                 let deferred = self.capture_defer(frame, *scope, span, action, guard.as_ref());
                 match deferred {
-                    Ok(deferred) => self.frames[frame].defers.push(deferred),
+                    Ok(deferred) => {
+                        if let Some(guard) = deferred.guard.as_ref() {
+                            self.replace_fallback_with_explicit(frame, guard)?;
+                        }
+                        self.frames[frame]
+                            .cleanups
+                            .push(RuntimeCleanup::Explicit(deferred));
+                    }
                     Err(error) => {
                         self.temporary_roots.truncate(marker);
                         return Err(error);
@@ -457,11 +523,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
                 self.temporary_roots.truncate(marker);
             }
-            BytecodeInstructionKind::RetargetDefer { from, to } => {
-                self.retarget_defer(frame, from, to)?;
+            BytecodeInstructionKind::RegisterFallback { scope, owner } => {
+                self.register_fallback(frame, *scope, owner)?;
             }
-            BytecodeInstructionKind::DisarmDefer(place) => {
-                self.disarm_defer(frame, place)?;
+            BytecodeInstructionKind::RetargetCleanup { from, to } => {
+                self.retarget_cleanup(frame, from, to)?;
+            }
+            BytecodeInstructionKind::DisarmCleanup(place) => {
+                self.disarm_cleanup(frame, place)?;
             }
         }
         Ok(())
@@ -553,10 +622,9 @@ impl<'program, 'host> Engine<'program, 'host> {
             ));
         }
         if let Some(guard) = guard
-            && self.frames[frame]
-                .defers
-                .iter()
-                .any(|deferred| deferred.guard.as_ref() == Some(guard))
+            && self.frames[frame].cleanups.iter().any(|cleanup| {
+                matches!(cleanup, RuntimeCleanup::Explicit(_)) && cleanup.guard() == Some(guard)
+            })
         {
             return Err(VmError::invariant(
                 "two active defer entries guard the same place",
@@ -588,24 +656,24 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(DeferredValue::Captured(value))
     }
 
-    fn retarget_defer(
+    fn retarget_cleanup(
         &mut self,
         frame: usize,
         from: &BytecodePlace,
         to: &BytecodePlace,
     ) -> Result<(), VmError> {
         let matches = self.frames[frame]
-            .defers
+            .cleanups
             .iter()
             .enumerate()
-            .filter_map(|(index, deferred)| {
-                (deferred.guard.as_ref() == Some(from)).then_some(index)
-            })
+            .filter_map(|(index, cleanup)| (cleanup.guard() == Some(from)).then_some(index))
             .collect::<Vec<_>>();
         match matches.as_slice() {
             [] => Ok(()),
             [index] => {
-                self.frames[frame].defers[*index].guard = Some(to.clone());
+                *self.frames[frame].cleanups[*index]
+                    .guard_mut()
+                    .expect("matched cleanup entries have a guard") = to.clone();
                 Ok(())
             }
             _ => Err(VmError::invariant(
@@ -614,25 +682,562 @@ impl<'program, 'host> Engine<'program, 'host> {
         }
     }
 
-    fn disarm_defer(&mut self, frame: usize, place: &BytecodePlace) -> Result<(), VmError> {
+    fn disarm_cleanup(&mut self, frame: usize, place: &BytecodePlace) -> Result<(), VmError> {
         let matches = self.frames[frame]
-            .defers
+            .cleanups
             .iter()
             .enumerate()
-            .filter_map(|(index, deferred)| {
-                (deferred.guard.as_ref() == Some(place)).then_some(index)
-            })
+            .filter_map(|(index, cleanup)| (cleanup.guard() == Some(place)).then_some(index))
             .collect::<Vec<_>>();
         match matches.as_slice() {
             [] => Ok(()),
             [index] => {
-                self.frames[frame].defers.remove(*index);
+                self.frames[frame].cleanups.remove(*index);
                 Ok(())
             }
             _ => Err(VmError::invariant(
                 "more than one defer guard matched a disarm place",
             )),
         }
+    }
+
+    fn register_fallback(
+        &mut self,
+        frame: usize,
+        scope: BytecodeScopeId,
+        owner: &BytecodePlace,
+    ) -> Result<(), VmError> {
+        let mut contained = Vec::new();
+        let mut already_guarded = false;
+        for (index, cleanup) in self.frames[frame].cleanups.iter().enumerate() {
+            match cleanup {
+                RuntimeCleanup::Explicit(deferred)
+                    if deferred.guard.as_ref().is_some_and(|guard| {
+                        place_contains(guard, owner) || place_contains(owner, guard)
+                    }) =>
+                {
+                    return Err(VmError::invariant(
+                        "terminal fallback overlaps an explicit cleanup guard",
+                    ));
+                }
+                RuntimeCleanup::Fallback(fallback) if place_contains(&fallback.owner, owner) => {
+                    already_guarded = true;
+                }
+                RuntimeCleanup::Fallback(fallback) if place_contains(owner, &fallback.owner) => {
+                    contained.push(index);
+                }
+                RuntimeCleanup::Explicit(_) | RuntimeCleanup::Fallback(_) => {}
+            }
+        }
+        if already_guarded {
+            return Ok(());
+        }
+        for index in contained.into_iter().rev() {
+            self.frames[frame].cleanups.remove(index);
+        }
+        self.frames[frame]
+            .cleanups
+            .push(RuntimeCleanup::Fallback(RuntimeFallback {
+                scope,
+                owner: owner.clone(),
+            }));
+        Ok(())
+    }
+
+    fn replace_fallback_with_explicit(
+        &mut self,
+        frame: usize,
+        guard: &BytecodePlace,
+    ) -> Result<(), VmError> {
+        let mut replaced = Vec::new();
+        for (index, cleanup) in self.frames[frame].cleanups.iter().enumerate() {
+            let RuntimeCleanup::Fallback(fallback) = cleanup else {
+                continue;
+            };
+            if place_contains(guard, &fallback.owner) {
+                replaced.push(index);
+            } else if place_contains(&fallback.owner, guard) {
+                return Err(VmError::invariant(
+                    "explicit cleanup guard is only part of an active terminal fallback",
+                ));
+            }
+        }
+        for index in replaced.into_iter().rev() {
+            self.frames[frame].cleanups.remove(index);
+        }
+        Ok(())
+    }
+
+    fn execute_terminal_fallback(
+        &mut self,
+        frame: usize,
+        fallback: RuntimeFallback,
+    ) -> Result<(), VmError> {
+        let owner = self.take_place(frame, &fallback.owner)?;
+        let mut pending = vec![(
+            RuntimeType {
+                ty: fallback.owner.ty,
+                substitutions: Vec::new(),
+            },
+            owner,
+        )];
+        while let Some((ty, value)) = pending.pop() {
+            self.step_budget()?;
+            let ty = self.resolve_runtime_type(ty)?;
+            let kind = self
+                .program
+                .ty(ty.ty)
+                .ok_or_else(|| VmError::invariant("fallback references an unknown type"))?
+                .kind
+                .clone();
+            match kind {
+                BytecodeTypeKind::Scalar(_)
+                | BytecodeTypeKind::Function(_)
+                | BytecodeTypeKind::OpaqueResult { .. } => {}
+                BytecodeTypeKind::GenericParameter(_) => {
+                    return Err(VmError::invariant(
+                        "terminal fallback retained an unresolved generic type",
+                    ));
+                }
+                BytecodeTypeKind::Tuple(items) => {
+                    let Value::Heap(handle) = value else {
+                        return Err(VmError::invariant(
+                            "terminal tuple fallback found a non-managed value",
+                        ));
+                    };
+                    let mut object = self.heap.get(handle)?.clone();
+                    let HeapObject::Tuple(values) = &mut object else {
+                        return Err(VmError::invariant(
+                            "terminal tuple fallback found a different heap object",
+                        ));
+                    };
+                    if values.len() != items.len() {
+                        return Err(VmError::invariant(
+                            "terminal tuple fallback found the wrong arity",
+                        ));
+                    }
+                    for (item, value) in items.into_iter().zip(values.iter_mut()) {
+                        if let Some(value) = value.take() {
+                            pending.push((ty.child(item), value));
+                        }
+                    }
+                    self.replace_fallback_object(handle, object)?;
+                }
+                BytecodeTypeKind::Option(item) => {
+                    let Value::Heap(handle) = value else {
+                        return Err(VmError::invariant(
+                            "terminal Option fallback found a non-managed value",
+                        ));
+                    };
+                    let mut object = self.heap.get(handle)?.clone();
+                    match &mut object {
+                        HeapObject::OptionNone => {}
+                        HeapObject::OptionSome(value) => {
+                            if let Some(value) = value.take() {
+                                pending.push((ty.child(item), value));
+                            }
+                        }
+                        _ => {
+                            return Err(VmError::invariant(
+                                "terminal Option fallback found a different heap object",
+                            ));
+                        }
+                    }
+                    self.replace_fallback_object(handle, object)?;
+                }
+                BytecodeTypeKind::Result { success, error } => {
+                    let Value::Heap(handle) = value else {
+                        return Err(VmError::invariant(
+                            "terminal Result fallback found a non-managed value",
+                        ));
+                    };
+                    let mut object = self.heap.get(handle)?.clone();
+                    match &mut object {
+                        HeapObject::ResultOk(value) => {
+                            if let Some(value) = value.take() {
+                                pending.push((ty.child(success), value));
+                            }
+                        }
+                        HeapObject::ResultErr(value) => {
+                            if let Some(value) = value.take() {
+                                pending.push((ty.child(error), value));
+                            }
+                        }
+                        _ => {
+                            return Err(VmError::invariant(
+                                "terminal Result fallback found a different heap object",
+                            ));
+                        }
+                    }
+                    self.replace_fallback_object(handle, object)?;
+                }
+                BytecodeTypeKind::Union(_) => {
+                    let Value::Heap(handle) = value else {
+                        return Err(VmError::invariant(
+                            "terminal union fallback found a non-managed value",
+                        ));
+                    };
+                    let mut object = self.heap.get(handle)?.clone();
+                    let HeapObject::Union { member, value } = &mut object else {
+                        return Err(VmError::invariant(
+                            "terminal union fallback found a different heap object",
+                        ));
+                    };
+                    if let Some(value) = value.take() {
+                        pending.push((ty.child(*member), value));
+                    }
+                    self.replace_fallback_object(handle, object)?;
+                }
+                BytecodeTypeKind::Intrinsic {
+                    constructor,
+                    arguments,
+                } => match constructor {
+                    BytecodeIntrinsicType::Join => {
+                        let action = constructor
+                            .terminal_contract()
+                            .ok_or_else(|| {
+                                VmError::invariant(
+                                    "terminal intrinsic has no sealed unwind contract",
+                                )
+                            })?
+                            .unwind;
+                        self.execute_direct_terminal_action(action, value)?;
+                    }
+                    BytecodeIntrinsicType::Array | BytecodeIntrinsicType::Set => {
+                        let [item] = arguments.as_slice() else {
+                            return Err(VmError::invariant(
+                                "terminal collection fallback has the wrong type arity",
+                            ));
+                        };
+                        let Value::Heap(handle) = value else {
+                            return Err(VmError::invariant(
+                                "terminal collection fallback found a non-managed value",
+                            ));
+                        };
+                        let mut object = self.heap.get(handle)?.clone();
+                        let values = match &mut object {
+                            HeapObject::Array(values)
+                                if constructor == BytecodeIntrinsicType::Array =>
+                            {
+                                values
+                            }
+                            HeapObject::Set(values)
+                                if constructor == BytecodeIntrinsicType::Set =>
+                            {
+                                values
+                            }
+                            _ => {
+                                return Err(VmError::invariant(
+                                    "terminal collection fallback found a different heap object",
+                                ));
+                            }
+                        };
+                        for value in values {
+                            if let Some(value) = value.take() {
+                                pending.push((ty.child(*item), value));
+                            }
+                        }
+                        self.replace_fallback_object(handle, object)?;
+                    }
+                    BytecodeIntrinsicType::Map => {
+                        let [key, item] = arguments.as_slice() else {
+                            return Err(VmError::invariant(
+                                "terminal Map fallback has the wrong type arity",
+                            ));
+                        };
+                        let Value::Heap(handle) = value else {
+                            return Err(VmError::invariant(
+                                "terminal Map fallback found a non-managed value",
+                            ));
+                        };
+                        let mut object = self.heap.get(handle)?.clone();
+                        let HeapObject::Map(entries) = &mut object else {
+                            return Err(VmError::invariant(
+                                "terminal Map fallback found a different heap object",
+                            ));
+                        };
+                        for (entry_key, entry_value) in entries {
+                            if let Some(entry_key) = entry_key.take() {
+                                pending.push((ty.child(*key), entry_key));
+                            }
+                            if let Some(entry_value) = entry_value.take() {
+                                pending.push((ty.child(*item), entry_value));
+                            }
+                        }
+                        self.replace_fallback_object(handle, object)?;
+                    }
+                    BytecodeIntrinsicType::Range => {
+                        let [item] = arguments.as_slice() else {
+                            return Err(VmError::invariant(
+                                "terminal Range fallback has the wrong type arity",
+                            ));
+                        };
+                        let Value::Heap(handle) = value else {
+                            return Err(VmError::invariant(
+                                "terminal Range fallback found a non-managed value",
+                            ));
+                        };
+                        let mut object = self.heap.get(handle)?.clone();
+                        let HeapObject::Range { start, end, .. } = &mut object else {
+                            return Err(VmError::invariant(
+                                "terminal Range fallback found a different heap object",
+                            ));
+                        };
+                        if let Some(start) = start.take() {
+                            pending.push((ty.child(*item), start));
+                        }
+                        if let Some(end) = end.take() {
+                            pending.push((ty.child(*item), end));
+                        }
+                        self.replace_fallback_object(handle, object)?;
+                    }
+                    BytecodeIntrinsicType::Ref
+                    | BytecodeIntrinsicType::Pointer
+                    | BytecodeIntrinsicType::Command
+                    | BytecodeIntrinsicType::Pipeline
+                    | BytecodeIntrinsicType::NumericConversionError => {}
+                },
+                BytecodeTypeKind::Nominal {
+                    nominal, arguments, ..
+                } => {
+                    let nominal = nominal.ok_or_else(|| {
+                        VmError::invariant(
+                            "terminal fallback references an unresolved nominal type",
+                        )
+                    })?;
+                    let metadata = self
+                        .program
+                        .nominals
+                        .get(nominal.index() as usize)
+                        .ok_or_else(|| {
+                            VmError::invariant(
+                                "terminal fallback references unknown nominal metadata",
+                            )
+                        })?
+                        .clone();
+                    let substitutions = arguments
+                        .into_iter()
+                        .map(|argument| ty.child(argument))
+                        .collect::<Vec<_>>();
+                    let child = |child| RuntimeType {
+                        ty: child,
+                        substitutions: substitutions.clone(),
+                    };
+                    let Value::Heap(handle) = value else {
+                        return Err(VmError::invariant(
+                            "terminal nominal fallback found a non-managed value",
+                        ));
+                    };
+                    let mut object = self.heap.get(handle)?.clone();
+                    match (&metadata.shape, &mut object) {
+                        (
+                            BytecodeNominalShape::Newtype { underlying },
+                            HeapObject::Newtype {
+                                nominal: actual,
+                                value,
+                            },
+                        ) if *actual == nominal => {
+                            if let Some(value) = value.take() {
+                                pending.push((child(*underlying), value));
+                            }
+                        }
+                        (
+                            BytecodeNominalShape::Record { fields: schema },
+                            HeapObject::Record {
+                                nominal: actual,
+                                fields,
+                            },
+                        ) if *actual == nominal => {
+                            for (member, value) in fields {
+                                let field = schema
+                                    .iter()
+                                    .find(|field| field.member == *member)
+                                    .ok_or_else(|| {
+                                        VmError::invariant(
+                                            "terminal record fallback found an unknown field",
+                                        )
+                                    })?;
+                                if let Some(value) = value.take() {
+                                    pending.push((child(field.ty), value));
+                                }
+                            }
+                        }
+                        (
+                            BytecodeNominalShape::Enum { variants },
+                            HeapObject::Variant { variant, payload },
+                        ) => {
+                            let variant = variants
+                                .iter()
+                                .find(|candidate| candidate.member == *variant)
+                                .ok_or_else(|| {
+                                    VmError::invariant(
+                                        "terminal enum fallback found an unknown variant",
+                                    )
+                                })?;
+                            match (&variant.payload, payload) {
+                                (BytecodeVariantPayload::Unit, AggregatePayload::Unit) => {}
+                                (
+                                    BytecodeVariantPayload::Tuple(schema),
+                                    AggregatePayload::Tuple(values),
+                                ) if schema.len() == values.len() => {
+                                    for (item, value) in schema.iter().zip(values) {
+                                        if let Some(value) = value.take() {
+                                            pending.push((child(*item), value));
+                                        }
+                                    }
+                                }
+                                (
+                                    BytecodeVariantPayload::Record(schema),
+                                    AggregatePayload::Record(fields),
+                                ) => {
+                                    for (member, value) in fields {
+                                        let field = schema
+                                            .iter()
+                                            .find(|field| field.member == *member)
+                                            .ok_or_else(|| {
+                                                VmError::invariant(
+                                                    "terminal variant fallback found an unknown field",
+                                                )
+                                            })?;
+                                        if let Some(value) = value.take() {
+                                            pending.push((child(field.ty), value));
+                                        }
+                                    }
+                                }
+                                _ => {
+                                    return Err(VmError::invariant(
+                                        "terminal enum fallback found the wrong payload shape",
+                                    ));
+                                }
+                            }
+                        }
+                        _ => {
+                            return Err(VmError::invariant(
+                                "terminal nominal fallback found a different heap object",
+                            ));
+                        }
+                    }
+                    self.replace_fallback_object(handle, object)?;
+                }
+                BytecodeTypeKind::Generated { .. } => {
+                    let captures = self
+                        .program
+                        .callables
+                        .iter()
+                        .find_map(|callable| {
+                            callable
+                                .closure
+                                .as_ref()
+                                .filter(|closure| closure.environment == ty.ty)
+                                .map(|closure| closure.captures.clone())
+                        })
+                        .ok_or_else(|| {
+                            VmError::invariant("terminal generated fallback has no closure schema")
+                        })?;
+                    let Value::Heap(handle) = value else {
+                        return Err(VmError::invariant(
+                            "terminal closure fallback found a non-managed value",
+                        ));
+                    };
+                    let mut object = self.heap.get(handle)?.clone();
+                    let HeapObject::Closure {
+                        captures: values, ..
+                    } = &mut object
+                    else {
+                        return Err(VmError::invariant(
+                            "terminal closure fallback found a different heap object",
+                        ));
+                    };
+                    if captures.len() != values.len() {
+                        return Err(VmError::invariant(
+                            "terminal closure fallback found the wrong capture arity",
+                        ));
+                    }
+                    for (capture, value) in captures.into_iter().zip(values) {
+                        if let Some(value) = value.take() {
+                            pending.push((ty.child(capture), value));
+                        }
+                    }
+                    self.replace_fallback_object(handle, object)?;
+                }
+                BytecodeTypeKind::Cursor { mode, collection } => {
+                    if mode == BytecodeCursorMode::Ref {
+                        continue;
+                    }
+                    let Value::Heap(handle) = value else {
+                        return Err(VmError::invariant(
+                            "terminal cursor fallback found a non-managed value",
+                        ));
+                    };
+                    let mut object = self.heap.get(handle)?.clone();
+                    let HeapObject::Iterator {
+                        mode: actual,
+                        source,
+                        ..
+                    } = &mut object
+                    else {
+                        return Err(VmError::invariant(
+                            "terminal cursor fallback found a different heap object",
+                        ));
+                    };
+                    if *actual != BytecodeCursorMode::Own {
+                        return Err(VmError::invariant(
+                            "terminal cursor fallback found a ref iterator",
+                        ));
+                    }
+                    if let Some(source) = source.take() {
+                        pending.push((ty.child(collection), source));
+                    }
+                    self.replace_fallback_object(handle, object)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn execute_direct_terminal_action(
+        &mut self,
+        action: BytecodeTerminalUnwindAction,
+        _value: Value,
+    ) -> Result<(), VmError> {
+        match action {
+            BytecodeTerminalUnwindAction::JoinTeardown => Err(VmError::invariant(
+                "Join teardown reached the synchronous VM before M7 supplied task state",
+            )),
+        }
+    }
+
+    fn resolve_runtime_type(&self, mut ty: RuntimeType) -> Result<RuntimeType, VmError> {
+        for _ in 0..=self.program.types.len() {
+            let kind = &self
+                .program
+                .ty(ty.ty)
+                .ok_or_else(|| VmError::invariant("fallback references an unknown type"))?
+                .kind;
+            let BytecodeTypeKind::GenericParameter(position) = kind else {
+                return Ok(ty);
+            };
+            ty = ty
+                .substitutions
+                .get(*position as usize)
+                .cloned()
+                .ok_or_else(|| {
+                    VmError::invariant(
+                        "terminal fallback cannot resolve a generic nominal component",
+                    )
+                })?;
+        }
+        Err(VmError::invariant(
+            "terminal fallback type substitution contains a cycle",
+        ))
+    }
+
+    fn replace_fallback_object(
+        &mut self,
+        handle: HeapHandle,
+        object: HeapObject,
+    ) -> Result<(), VmError> {
+        self.heap.replace(handle, object, &[], &mut self.statistics)
     }
 
     fn reserve_loan(&mut self, frame: usize, id: BytecodeLoanId) -> Result<(), VmError> {
@@ -882,7 +1487,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     }
                     Ok(None) => {
                         if let Some(guard) = exhaustion_guard {
-                            self.disarm_defer(frame, guard)?;
+                            self.disarm_cleanup(frame, guard)?;
                         }
                         self.jump(frame, *exhausted);
                     }
@@ -930,12 +1535,16 @@ impl<'program, 'host> Engine<'program, 'host> {
                 unwind,
             } => {
                 let continuation = self.frames[frame].block;
-                let next = self.frames[frame]
-                    .defers
-                    .iter()
-                    .rposition(|deferred| scopes.contains(&deferred.scope));
+                let next = self.frames[frame].cleanups.iter().rposition(|cleanup| {
+                    matches!(cleanup, RuntimeCleanup::Explicit(_))
+                        && scopes.contains(&cleanup.scope())
+                });
                 if let Some(index) = next {
-                    let deferred = self.frames[frame].defers.remove(index);
+                    let RuntimeCleanup::Explicit(deferred) =
+                        self.frames[frame].cleanups.remove(index)
+                    else {
+                        unreachable!("normal defer drains select explicit entries");
+                    };
                     let span = deferred.span;
                     match self.evaluate_deferred_operation(frame, deferred)? {
                         OperationResult::Value(Value::Unit) => {
@@ -971,12 +1580,61 @@ impl<'program, 'host> Engine<'program, 'host> {
                     self.jump(frame, *target);
                 }
             }
+            BytecodeTerminatorKind::DrainUnwind { target } => {
+                let continuation = self.frames[frame].block;
+                let Some(cleanup) = self.frames[frame].cleanups.pop() else {
+                    self.jump(frame, *target);
+                    return Ok(None);
+                };
+                match cleanup {
+                    RuntimeCleanup::Explicit(deferred) => {
+                        let span = deferred.span;
+                        match self.evaluate_deferred_operation(frame, deferred)? {
+                            OperationResult::Value(Value::Unit) => {
+                                self.jump(frame, continuation);
+                            }
+                            OperationResult::Value(_) => {
+                                return Err(VmError::invariant(
+                                    "deferred invocation returned a non-Unit value",
+                                ));
+                            }
+                            OperationResult::Call {
+                                function,
+                                arguments,
+                            } => {
+                                self.push_frame(
+                                    function,
+                                    arguments,
+                                    Some(CallContinuation {
+                                        destination: None,
+                                        target: Some(continuation),
+                                        unwind: continuation,
+                                        call_span: span,
+                                    }),
+                                )?;
+                            }
+                            OperationResult::Panic(code, message) => {
+                                self.begin_panic(frame, code, message, span, continuation)?;
+                            }
+                        }
+                    }
+                    RuntimeCleanup::Fallback(fallback) => {
+                        self.execute_terminal_fallback(frame, fallback)?;
+                        self.jump(frame, continuation);
+                    }
+                }
+            }
             BytecodeTerminatorKind::Return => {
-                if !self.frames[frame].defers.is_empty() {
+                if self.frames[frame]
+                    .cleanups
+                    .iter()
+                    .any(|cleanup| matches!(cleanup, RuntimeCleanup::Explicit(_)))
+                {
                     return Err(VmError::invariant(
-                        "a function returned with registered defer entries",
+                        "a function returned with registered explicit cleanup entries",
                     ));
                 }
+                self.frames[frame].cleanups.clear();
                 if self.frames[frame].loans.iter().any(Option::is_some) {
                     return Err(VmError::invariant(
                         "a function returned with an active loan reservation",
@@ -1013,9 +1671,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
             }
             BytecodeTerminatorKind::ResumePanic => {
-                if !self.frames[frame].defers.is_empty() {
+                if !self.frames[frame].cleanups.is_empty() {
                     return Err(VmError::invariant(
-                        "panic unwinding abandoned registered defer entries",
+                        "panic unwinding abandoned registered cleanup entries",
                     ));
                 }
                 if self.pending_panic.is_none() {
@@ -4793,6 +5451,17 @@ fn queue_payload_equality(
         }
         _ => false,
     })
+}
+
+fn place_contains(outer: &BytecodePlace, inner: &BytecodePlace) -> bool {
+    outer.slot == inner.slot
+        && outer.source_loan == inner.source_loan
+        && outer.projections.len() <= inner.projections.len()
+        && outer
+            .projections
+            .iter()
+            .zip(&inner.projections)
+            .all(|(left, right)| left == right)
 }
 
 fn convert_numeric(target: BytecodeScalarType, value: &Value) -> Result<Value, u32> {

@@ -463,11 +463,15 @@ pub enum BytecodeInstructionKind {
         action: BytecodeOperation,
         guard: Option<BytecodePlace>,
     },
-    RetargetDefer {
+    RegisterFallback {
+        scope: BytecodeScopeId,
+        owner: BytecodePlace,
+    },
+    RetargetCleanup {
         from: BytecodePlace,
         to: BytecodePlace,
     },
-    DisarmDefer(BytecodePlace),
+    DisarmCleanup(BytecodePlace),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -891,6 +895,9 @@ pub enum BytecodeTerminatorKind {
         scopes: Vec<BytecodeScopeId>,
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
+    },
+    DrainUnwind {
+        target: BytecodeBlockId,
     },
     Return,
     ResumePanic,

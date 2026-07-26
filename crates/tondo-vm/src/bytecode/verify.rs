@@ -2508,7 +2508,24 @@ impl Verifier<'_> {
                     }
                 }
             }
-            BytecodeInstructionKind::RetargetDefer { from, to } => {
+            BytecodeInstructionKind::RegisterFallback { owner, .. } => {
+                if block_kind != BytecodeBlockKind::Normal {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "cleanup block registers a terminal fallback",
+                    ));
+                }
+                self.verify_place(function, owner, context)?;
+                if owner.source_loan.is_some()
+                    || self.terminal_status(owner.ty, context)? != BytecodeTerminalStatus::Present
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "terminal fallback owner is borrowed or has no closed terminal token",
+                    ));
+                }
+            }
+            BytecodeInstructionKind::RetargetCleanup { from, to } => {
                 if block_kind != BytecodeBlockKind::Normal {
                     return Err(BytecodeVerificationError::new(
                         context,
@@ -2527,7 +2544,7 @@ impl Verifier<'_> {
                     ));
                 }
             }
-            BytecodeInstructionKind::DisarmDefer(place) => {
+            BytecodeInstructionKind::DisarmCleanup(place) => {
                 if block_kind != BytecodeBlockKind::Normal {
                     return Err(BytecodeVerificationError::new(
                         context,
@@ -4529,6 +4546,18 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            BytecodeTerminatorKind::DrainUnwind { target } => {
+                if block.kind != BytecodeBlockKind::Cleanup
+                    || *target != function.unwind
+                    || !block.instructions.is_empty()
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "unwind drain is not an empty cleanup block targeting the function unwind",
+                    ));
+                }
+                self.cleanup_target(function, *target, context)?;
+            }
             BytecodeTerminatorKind::Return => {
                 if block.kind != BytecodeBlockKind::Normal
                     || self.is_scalar(
@@ -4719,6 +4748,35 @@ impl Verifier<'_> {
         function: &BytecodeFunction,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
+        self.verify_fallback_coverage(function, context)?;
+        let entry = self.block(function, function.entry, context)?;
+        let registered_entry_owners = entry
+            .instructions
+            .iter()
+            .take_while(|instruction| {
+                matches!(
+                    instruction.kind,
+                    BytecodeInstructionKind::RegisterFallback { .. }
+                )
+            })
+            .filter_map(|instruction| match &instruction.kind {
+                BytecodeInstructionKind::RegisterFallback { owner, .. } => {
+                    Some(LocalAccess::from_place(owner))
+                }
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        for owner in self.terminal_entry_owners(function, context)? {
+            if !registered_entry_owners.contains(&LocalAccess::from_place(&owner)) {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    format!(
+                        "terminal entry owner rooted at slot#{} has no entry fallback registration",
+                        owner.slot.index()
+                    ),
+                ));
+            }
+        }
         let registered_scopes = function
             .blocks
             .iter()
@@ -4765,10 +4823,10 @@ impl Verifier<'_> {
                 for (index, instruction) in block.instructions.iter().enumerate() {
                     let instruction_context = format!("{block_context} instruction#{index}");
                     let advances_pending = match &instruction.kind {
-                        BytecodeInstructionKind::RetargetDefer { from, .. } => state
+                        BytecodeInstructionKind::RetargetCleanup { from, .. } => state
                             .pending_moves
                             .contains_key(&LocalAccess::from_place(from)),
-                        BytecodeInstructionKind::DisarmDefer(place) => state
+                        BytecodeInstructionKind::DisarmCleanup(place) => state
                             .pending_moves
                             .contains_key(&LocalAccess::from_place(place)),
                         _ => false,
@@ -4783,7 +4841,17 @@ impl Verifier<'_> {
                         BytecodeInstructionKind::RegisterDefer { scope, guard, .. } => {
                             state.activate_scope(*scope, &instruction_context)?;
                             let registration = (block_id, index);
-                            if state.registrations.insert(registration, *scope).is_some() {
+                            if state
+                                .registrations
+                                .insert(
+                                    registration,
+                                    ActiveCleanupRegistration {
+                                        scope: *scope,
+                                        kind: CleanupEntryKind::Explicit,
+                                    },
+                                )
+                                .is_some()
+                            {
                                 return Err(BytecodeVerificationError::new(
                                     instruction_context,
                                     "defer registration is re-executed before it is drained or disarmed",
@@ -4791,6 +4859,19 @@ impl Verifier<'_> {
                             }
                             if let Some(guard) = guard {
                                 let guard = LocalAccess::from_place(guard);
+                                let replaced = state
+                                    .guards
+                                    .iter()
+                                    .filter_map(|(existing, active)| {
+                                        (active.kind == CleanupEntryKind::Fallback
+                                            && local_access_contains(&guard, existing))
+                                        .then_some((existing.clone(), *active))
+                                    })
+                                    .collect::<Vec<_>>();
+                                for (existing, active) in replaced {
+                                    state.guards.remove(&existing);
+                                    state.registrations.remove(&active.registration);
+                                }
                                 if state
                                     .guards
                                     .keys()
@@ -4806,13 +4887,70 @@ impl Verifier<'_> {
                                     ActiveDeferGuard {
                                         scope: *scope,
                                         registration,
+                                        kind: CleanupEntryKind::Explicit,
                                     },
                                 );
                             } else {
                                 state.unguarded_scopes.insert(*scope);
                             }
                         }
-                        BytecodeInstructionKind::RetargetDefer { from, to } => {
+                        BytecodeInstructionKind::RegisterFallback { scope, owner } => {
+                            let owner = LocalAccess::from_place(owner);
+                            if state.guards.iter().any(|(existing, active)| {
+                                active.kind == CleanupEntryKind::Explicit
+                                    && local_accesses_overlap(existing, &owner)
+                            }) {
+                                return Err(BytecodeVerificationError::new(
+                                    instruction_context,
+                                    "terminal fallback overlaps an active explicit cleanup guard",
+                                ));
+                            }
+                            if state.guards.iter().any(|(existing, active)| {
+                                active.kind == CleanupEntryKind::Fallback
+                                    && local_access_contains(existing, &owner)
+                            }) {
+                                continue;
+                            }
+                            let folded = state
+                                .guards
+                                .iter()
+                                .filter_map(|(existing, active)| {
+                                    (active.kind == CleanupEntryKind::Fallback
+                                        && local_access_contains(&owner, existing))
+                                    .then_some((existing.clone(), *active))
+                                })
+                                .collect::<Vec<_>>();
+                            for (existing, active) in folded {
+                                state.guards.remove(&existing);
+                                state.registrations.remove(&active.registration);
+                            }
+                            let registration = (block_id, index);
+                            if state
+                                .registrations
+                                .insert(
+                                    registration,
+                                    ActiveCleanupRegistration {
+                                        scope: *scope,
+                                        kind: CleanupEntryKind::Fallback,
+                                    },
+                                )
+                                .is_some()
+                            {
+                                return Err(BytecodeVerificationError::new(
+                                    instruction_context,
+                                    "terminal fallback registration is re-executed while active",
+                                ));
+                            }
+                            state.guards.insert(
+                                owner,
+                                ActiveDeferGuard {
+                                    scope: *scope,
+                                    registration,
+                                    kind: CleanupEntryKind::Fallback,
+                                },
+                            );
+                        }
+                        BytecodeInstructionKind::RetargetCleanup { from, to } => {
                             let from = LocalAccess::from_place(from);
                             let to = LocalAccess::from_place(to);
                             if let Some(guard) = state.guards.remove(&from) {
@@ -4837,21 +4975,45 @@ impl Verifier<'_> {
                                 state.guards.insert(to, guard);
                             }
                         }
-                        BytecodeInstructionKind::DisarmDefer(place) => {
+                        BytecodeInstructionKind::DisarmCleanup(place) => {
                             let place = LocalAccess::from_place(place);
                             let pending = state.pending_moves.remove(&place);
                             if let Some(guard) = state.guards.remove(&place) {
-                                if !defer_disarm_is_confirmed(
-                                    function,
-                                    block,
-                                    index,
-                                    &place,
-                                    guard.scope,
-                                    pending,
-                                ) {
+                                let confirmed = match guard.kind {
+                                    CleanupEntryKind::Explicit => defer_disarm_is_confirmed(
+                                        function,
+                                        block,
+                                        index,
+                                        &place,
+                                        guard.scope,
+                                        pending,
+                                    ),
+                                    CleanupEntryKind::Fallback => {
+                                        pending == Some(PendingDeferTransition::Disarm)
+                                            || (place.slot == function.return_slot
+                                                && place.path.is_empty()
+                                                && matches!(
+                                                    block.terminator.kind,
+                                                    BytecodeTerminatorKind::Return
+                                                ))
+                                            || (pending.is_none()
+                                                && defer_disarm_is_confirmed(
+                                                    function,
+                                                    block,
+                                                    index,
+                                                    &place,
+                                                    guard.scope,
+                                                    None,
+                                                ))
+                                    }
+                                };
+                                if !confirmed {
                                     return Err(BytecodeVerificationError::new(
                                         instruction_context,
-                                        "defer guard is disarmed without an immediate consuming handoff or scope exit",
+                                        format!(
+                                            "{:?} cleanup guard is disarmed without an immediate consuming handoff or scope exit (pending {pending:?}, terminator {:?})",
+                                            guard.kind, block.terminator.kind
+                                        ),
                                     ));
                                 }
                                 state.registrations.remove(&guard.registration);
@@ -4861,14 +5023,15 @@ impl Verifier<'_> {
                         BytecodeInstructionKind::Store { destination, value } => {
                             let destination_place = destination;
                             let destination = LocalAccess::from_place(destination_place);
-                            if state
-                                .guards
-                                .keys()
-                                .any(|guard| local_accesses_overlap(guard, &destination))
-                            {
+                            if state.guards.iter().any(|(guard, active)| {
+                                local_accesses_overlap(guard, &destination)
+                                    && (active.kind == CleanupEntryKind::Explicit
+                                        || !local_access_contains(guard, &destination)
+                                        || guard == &destination)
+                            }) {
                                 return Err(BytecodeVerificationError::new(
                                     instruction_context,
-                                    "store overwrites an active defer guard",
+                                    "store overwrites an active cleanup guard",
                                 ));
                             }
                             let mut events = Vec::new();
@@ -4879,32 +5042,55 @@ impl Verifier<'_> {
                             }) {
                                 let overlapping = state
                                     .guards
-                                    .keys()
-                                    .filter(|guard| local_accesses_overlap(guard, &access))
-                                    .cloned()
+                                    .iter()
+                                    .filter(|(guard, _)| local_accesses_overlap(guard, &access))
+                                    .map(|(guard, active)| (guard.clone(), *active))
                                     .collect::<Vec<_>>();
-                                if overlapping.iter().any(|guard| guard != &access) {
-                                    return Err(BytecodeVerificationError::new(
-                                        &instruction_context,
-                                        "store partially moves an active defer guard",
-                                    ));
-                                }
-                                if let Some(guard) = state.guards.get(&access) {
-                                    let transition = defer_assignment_transition(
-                                        function,
-                                        block,
-                                        destination_place,
-                                        value,
-                                        &access,
-                                        guard.scope,
-                                    )
-                                    .ok_or_else(|| {
-                                        BytecodeVerificationError::new(
+                                for (guard_place, guard) in overlapping {
+                                    if guard_place != access {
+                                        if guard.kind == CleanupEntryKind::Fallback
+                                            && local_access_contains(&guard_place, &access)
+                                        {
+                                            continue;
+                                        }
+                                        return Err(BytecodeVerificationError::new(
                                             &instruction_context,
-                                            "store embeds an active defer guard instead of retargeting or handing it off",
+                                            "store partially moves an explicit guard or embeds a fallback owner",
+                                        ));
+                                    }
+                                    let transition = match guard.kind {
+                                        CleanupEntryKind::Explicit => defer_assignment_transition(
+                                            function,
+                                            block,
+                                            destination_place,
+                                            value,
+                                            &access,
+                                            guard.scope,
                                         )
-                                    })?;
-                                    state.pending_moves.insert(access, transition);
+                                        .ok_or_else(|| {
+                                            BytecodeVerificationError::new(
+                                                &instruction_context,
+                                                "store embeds an active defer guard instead of retargeting or handing it off",
+                                            )
+                                        })?,
+                                        CleanupEntryKind::Fallback => {
+                                            if assignment_directly_moves(value, &access) {
+                                                PendingDeferTransition::Retarget
+                                            } else {
+                                                PendingDeferTransition::Disarm
+                                            }
+                                        }
+                                    };
+                                    if state
+                                        .pending_moves
+                                        .insert(access.clone(), transition)
+                                        .is_some()
+                                    {
+                                        return Err(BytecodeVerificationError::new(
+                                            &instruction_context,
+                                            "one cleanup owner is moved more than once by one store",
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -4946,6 +5132,7 @@ impl Verifier<'_> {
                     | BytecodeTerminatorKind::IteratorNext { .. }
                     | BytecodeTerminatorKind::ValidateLoan { .. }
                     | BytecodeTerminatorKind::DrainDefers { .. }
+                    | BytecodeTerminatorKind::DrainUnwind { .. }
                     | BytecodeTerminatorKind::Return
                     | BytecodeTerminatorKind::ResumePanic
                     | BytecodeTerminatorKind::Unreachable => {}
@@ -4974,13 +5161,21 @@ impl Verifier<'_> {
                 }
                 if matches!(
                     block.terminator.kind,
-                    BytecodeTerminatorKind::Return | BytecodeTerminatorKind::ResumePanic
-                ) && !state.is_empty()
-                {
-                    return Err(BytecodeVerificationError::new(
-                        &block_context,
-                        "terminal control flow abandons registered defer entries",
-                    ));
+                    BytecodeTerminatorKind::DrainUnwind { .. }
+                ) {
+                    state.drain_unwind();
+                }
+                match block.terminator.kind {
+                    BytecodeTerminatorKind::Return => {
+                        state.finish_normal(&block_context)?;
+                    }
+                    BytecodeTerminatorKind::ResumePanic if !state.is_empty() => {
+                        return Err(BytecodeVerificationError::new(
+                            &block_context,
+                            "panic resume abandons registered cleanup entries",
+                        ));
+                    }
+                    _ => {}
                 }
                 outgoing.insert(state);
             }
@@ -5030,6 +5225,168 @@ impl Verifier<'_> {
             }
         }
         Ok(())
+    }
+
+    fn verify_fallback_coverage(
+        &self,
+        function: &BytecodeFunction,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        for (block_index, block) in function.blocks.iter().enumerate() {
+            let block_context = format!("{context} block#{block_index}");
+            for (index, instruction) in block.instructions.iter().enumerate() {
+                let BytecodeInstructionKind::Store { destination, value } = &instruction.kind
+                else {
+                    continue;
+                };
+                if self.terminal_status(destination.ty, &block_context)?
+                    != BytecodeTerminalStatus::Present
+                {
+                    continue;
+                }
+                if let Some((from, to)) = store_cleanup_transfer(destination, value) {
+                    if !matches!(
+                        block.instructions.get(index + 1).map(|instruction| &instruction.kind),
+                        Some(BytecodeInstructionKind::RetargetCleanup {
+                            from: actual_from,
+                            to: actual_to,
+                        }) if actual_from == &from && actual_to == &to
+                    ) {
+                        return Err(BytecodeVerificationError::new(
+                            format!("{block_context} instruction#{index}"),
+                            "terminal store has no immediate cleanup retarget",
+                        ));
+                    }
+                    continue;
+                }
+                let mut next = index + 1;
+                while matches!(
+                    block
+                        .instructions
+                        .get(next)
+                        .map(|instruction| &instruction.kind),
+                    Some(BytecodeInstructionKind::DisarmCleanup(_))
+                ) {
+                    next += 1;
+                }
+                if !matches!(
+                    block.instructions.get(next).map(|instruction| &instruction.kind),
+                    Some(BytecodeInstructionKind::RegisterFallback { owner, .. })
+                        if owner == destination
+                ) {
+                    return Err(BytecodeVerificationError::new(
+                        format!("{block_context} instruction#{index}"),
+                        "terminal store result has no immediate fallback registration",
+                    ));
+                }
+            }
+            match &block.terminator.kind {
+                BytecodeTerminatorKind::Invoke {
+                    destination: Some(destination),
+                    target: Some(target),
+                    ..
+                } if self.terminal_status(destination.ty, &block_context)?
+                    == BytecodeTerminalStatus::Present =>
+                {
+                    let target = self.block(function, *target, &block_context)?;
+                    if !matches!(
+                        target.instructions.first().map(|instruction| &instruction.kind),
+                        Some(BytecodeInstructionKind::RegisterFallback { owner, .. })
+                            if owner == destination
+                    ) {
+                        return Err(BytecodeVerificationError::new(
+                            &block_context,
+                            "terminal invocation result edge has no fallback registration",
+                        ));
+                    }
+                }
+                BytecodeTerminatorKind::IteratorNext {
+                    destination,
+                    has_value,
+                    ..
+                } if self.terminal_status(destination.ty, &block_context)?
+                    == BytecodeTerminalStatus::Present =>
+                {
+                    let target = self.block(function, *has_value, &block_context)?;
+                    if !matches!(
+                        target.instructions.first().map(|instruction| &instruction.kind),
+                        Some(BytecodeInstructionKind::RegisterFallback { owner, .. })
+                            if owner == destination
+                    ) {
+                        return Err(BytecodeVerificationError::new(
+                            &block_context,
+                            "terminal iterator value edge has no fallback registration",
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn terminal_entry_owners(
+        &self,
+        function: &BytecodeFunction,
+        context: &str,
+    ) -> Result<Vec<BytecodePlace>, BytecodeVerificationError> {
+        let callable = self.program.callable(function.callable).ok_or_else(|| {
+            BytecodeVerificationError::new(context, "function references an unknown callable")
+        })?;
+        let hidden_environment = usize::from(callable.closure.is_some());
+        let mut candidates = Vec::new();
+        if let Some(closure) = &callable.closure {
+            let environment = function.parameters.first().copied().ok_or_else(|| {
+                BytecodeVerificationError::new(
+                    context,
+                    "closure function has no hidden environment parameter",
+                )
+            })?;
+            for (index, ty) in closure.captures.iter().copied().enumerate() {
+                candidates.push(BytecodePlace {
+                    slot: environment,
+                    ty,
+                    projections: vec![BytecodeProjection {
+                        ty,
+                        kind: BytecodeProjectionKind::ClosureCapture {
+                            callable: function.callable,
+                            index: index as u32,
+                        },
+                    }],
+                    source_loan: None,
+                });
+            }
+        }
+        for (index, slot) in function
+            .parameters
+            .iter()
+            .copied()
+            .skip(hidden_environment)
+            .enumerate()
+        {
+            let parameter = callable.parameters.get(index).ok_or_else(|| {
+                BytecodeVerificationError::new(
+                    context,
+                    "function parameter index exceeds its callable signature",
+                )
+            })?;
+            if parameter.mode == BytecodeParameterMode::Value && !parameter.receiver {
+                candidates.push(BytecodePlace {
+                    slot,
+                    ty: self.slot(function, slot, context)?.ty,
+                    projections: Vec::new(),
+                    source_loan: None,
+                });
+            }
+        }
+        candidates
+            .into_iter()
+            .filter_map(|owner| {
+                self.terminal_status(owner.ty, context)
+                    .map(|status| (status == BytecodeTerminalStatus::Present).then_some(owner))
+                    .transpose()
+            })
+            .collect()
     }
 
     fn verify_loan_flow(
@@ -5326,6 +5683,9 @@ impl Verifier<'_> {
                 BytecodeTerminatorKind::DrainDefers { target, unwind, .. } => {
                     propagate(*target, state)?;
                     propagate(*unwind, LoanFlowState::default())?;
+                }
+                BytecodeTerminatorKind::DrainUnwind { target } => {
+                    propagate(*target, LoanFlowState::default())?;
                 }
                 BytecodeTerminatorKind::Return => {
                     if !state.active.is_empty()
@@ -6897,7 +7257,7 @@ fn is_iterator_defer_target(place: &BytecodePlace) -> bool {
 struct DeferFlowState {
     unguarded_scopes: BTreeSet<BytecodeScopeId>,
     guards: BTreeMap<LocalAccess, ActiveDeferGuard>,
-    registrations: BTreeMap<(BytecodeBlockId, usize), BytecodeScopeId>,
+    registrations: BTreeMap<(BytecodeBlockId, usize), ActiveCleanupRegistration>,
     scope_order: Vec<BytecodeScopeId>,
     pending_moves: BTreeMap<LocalAccess, PendingDeferTransition>,
     consumed: BTreeSet<LocalAccess>,
@@ -6907,6 +7267,19 @@ struct DeferFlowState {
 struct ActiveDeferGuard {
     scope: BytecodeScopeId,
     registration: (BytecodeBlockId, usize),
+    kind: CleanupEntryKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ActiveCleanupRegistration {
+    scope: BytecodeScopeId,
+    kind: CleanupEntryKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CleanupEntryKind {
+    Explicit,
+    Fallback,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -6918,10 +7291,9 @@ enum PendingDeferTransition {
 impl DeferFlowState {
     fn scope_is_active(&self, scope: BytecodeScopeId) -> bool {
         self.unguarded_scopes.contains(&scope)
-            || self
-                .guards
-                .values()
-                .any(|candidate| candidate.scope == scope)
+            || self.guards.values().any(|candidate| {
+                candidate.kind == CleanupEntryKind::Explicit && candidate.scope == scope
+            })
     }
 
     fn activate_scope(
@@ -6967,18 +7339,53 @@ impl DeferFlowState {
                 "defer drain skips a still-active inner scope",
             ));
         }
-        self.consumed.extend(
-            self.guards.iter().filter_map(|(place, guard)| {
-                selected.contains(&guard.scope).then_some(place.clone())
-            }),
-        );
+        self.consumed
+            .extend(self.guards.iter().filter_map(|(place, guard)| {
+                (guard.kind == CleanupEntryKind::Explicit && selected.contains(&guard.scope))
+                    .then_some(place.clone())
+            }));
         self.unguarded_scopes
             .retain(|scope| !selected.contains(scope));
-        self.guards
-            .retain(|_, guard| !selected.contains(&guard.scope));
-        self.registrations
-            .retain(|_, scope| !selected.contains(scope));
+        self.guards.retain(|_, guard| {
+            guard.kind != CleanupEntryKind::Explicit || !selected.contains(&guard.scope)
+        });
+        self.registrations.retain(|_, registration| {
+            registration.kind != CleanupEntryKind::Explicit
+                || !selected.contains(&registration.scope)
+        });
         self.scope_order.retain(|scope| !selected.contains(scope));
+        Ok(())
+    }
+
+    fn drain_unwind(&mut self) {
+        self.consumed.extend(self.guards.keys().cloned());
+        self.unguarded_scopes.clear();
+        self.guards.clear();
+        self.registrations.clear();
+        self.scope_order.clear();
+        self.pending_moves.clear();
+    }
+
+    fn finish_normal(&mut self, context: &str) -> Result<(), BytecodeVerificationError> {
+        let has_explicit = !self.unguarded_scopes.is_empty()
+            || !self.scope_order.is_empty()
+            || self
+                .guards
+                .values()
+                .any(|guard| guard.kind == CleanupEntryKind::Explicit)
+            || self
+                .registrations
+                .values()
+                .any(|registration| registration.kind == CleanupEntryKind::Explicit)
+            || !self.pending_moves.is_empty();
+        if has_explicit {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "normal return abandons an explicit defer entry",
+            ));
+        }
+        self.guards.clear();
+        self.registrations.clear();
         Ok(())
     }
 
@@ -6999,18 +7406,7 @@ fn defer_assignment_transition(
     guard: &LocalAccess,
     scope: BytecodeScopeId,
 ) -> Option<PendingDeferTransition> {
-    let directly_retargeted = match &value.kind {
-        BytecodeRvalueKind::Use(BytecodeOperand {
-            kind: BytecodeOperandKind::Move(place),
-            ..
-        })
-        | BytecodeRvalueKind::IteratorState(BytecodeOperand {
-            kind: BytecodeOperandKind::Move(place),
-            ..
-        }) => LocalAccess::from_place(place) == *guard,
-        _ => false,
-    };
-    if directly_retargeted {
+    if assignment_directly_moves(value, guard) {
         return Some(PendingDeferTransition::Retarget);
     }
 
@@ -7029,6 +7425,48 @@ fn defer_assignment_transition(
     (exits_scope && confirmed_handoff).then_some(PendingDeferTransition::Disarm)
 }
 
+fn assignment_directly_moves(value: &BytecodeRvalue, guard: &LocalAccess) -> bool {
+    match &value.kind {
+        BytecodeRvalueKind::Use(BytecodeOperand {
+            kind: BytecodeOperandKind::Move(place),
+            ..
+        })
+        | BytecodeRvalueKind::IteratorState(BytecodeOperand {
+            kind: BytecodeOperandKind::Move(place),
+            ..
+        }) => LocalAccess::from_place(place) == *guard,
+        _ => false,
+    }
+}
+
+fn store_cleanup_transfer(
+    destination: &BytecodePlace,
+    value: &BytecodeRvalue,
+) -> Option<(BytecodePlace, BytecodePlace)> {
+    let (from, to) = match &value.kind {
+        BytecodeRvalueKind::Use(BytecodeOperand {
+            kind: BytecodeOperandKind::Move(from),
+            ..
+        }) => (from.clone(), destination.clone()),
+        BytecodeRvalueKind::IteratorState(BytecodeOperand {
+            kind: BytecodeOperandKind::Move(from),
+            ..
+        }) => {
+            let mut to = destination.clone();
+            to.ty = from.ty;
+            to.projections.push(BytecodeProjection {
+                ty: from.ty,
+                kind: BytecodeProjectionKind::IteratorSource,
+            });
+            (from.clone(), to)
+        }
+        _ => return None,
+    };
+    (is_complete_defer_owner_place(&from)
+        && (is_complete_defer_owner_place(&to) || is_iterator_defer_target(&to)))
+    .then_some((from, to))
+}
+
 fn defer_disarm_is_confirmed(
     function: &BytecodeFunction,
     block: &BytecodeBlock,
@@ -7042,7 +7480,7 @@ fn defer_disarm_is_confirmed(
         .any(|instruction| {
             !matches!(
                 instruction.kind,
-                BytecodeInstructionKind::ReleaseLoan(_) | BytecodeInstructionKind::DisarmDefer(_)
+                BytecodeInstructionKind::ReleaseLoan(_) | BytecodeInstructionKind::DisarmCleanup(_)
             )
         })
     {
@@ -7281,14 +7719,20 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
                 push_defer_operation_events(action, guard.as_ref(), &mut local);
                 events.extend(local.into_iter().map(LoanEvent::Local));
             }
-            BytecodeInstructionKind::RetargetDefer { .. }
-            | BytecodeInstructionKind::DisarmDefer(_) => {}
+            BytecodeInstructionKind::RegisterFallback { owner, .. } => {
+                let mut local = Vec::new();
+                push_place_events(owner, true, &mut local);
+                events.extend(local.into_iter().map(LoanEvent::Local));
+            }
+            BytecodeInstructionKind::RetargetCleanup { .. }
+            | BytecodeInstructionKind::DisarmCleanup(_) => {}
         }
     }
     let mut local = Vec::new();
     match &block.terminator.kind {
         BytecodeTerminatorKind::Goto { .. }
         | BytecodeTerminatorKind::DrainDefers { .. }
+        | BytecodeTerminatorKind::DrainUnwind { .. }
         | BytecodeTerminatorKind::ResumePanic
         | BytecodeTerminatorKind::Unreachable => {}
         BytecodeTerminatorKind::BranchBool { condition, .. } => {
@@ -7444,6 +7888,7 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
         | BytecodeTerminatorKind::DrainDefers { target, unwind, .. } => {
             vec![edge(*target), edge(*unwind)]
         }
+        BytecodeTerminatorKind::DrainUnwind { target } => vec![edge(*target)],
         BytecodeTerminatorKind::Return
         | BytecodeTerminatorKind::ResumePanic
         | BytecodeTerminatorKind::Unreachable => Vec::new(),
@@ -7990,6 +8435,7 @@ fn static_integer_slots(
             | BytecodeTerminatorKind::ValidatePlaces { .. }
             | BytecodeTerminatorKind::ValidateLoan { .. }
             | BytecodeTerminatorKind::DrainDefers { .. }
+            | BytecodeTerminatorKind::DrainUnwind { .. }
             | BytecodeTerminatorKind::Return
             | BytecodeTerminatorKind::ResumePanic
             | BytecodeTerminatorKind::Unreachable => {}
@@ -8154,13 +8600,17 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
             BytecodeInstructionKind::RegisterDefer { action, guard, .. } => {
                 push_defer_operation_events(action, guard.as_ref(), &mut events);
             }
-            BytecodeInstructionKind::RetargetDefer { .. }
-            | BytecodeInstructionKind::DisarmDefer(_) => {}
+            BytecodeInstructionKind::RegisterFallback { owner, .. } => {
+                push_place_events(owner, true, &mut events);
+            }
+            BytecodeInstructionKind::RetargetCleanup { .. }
+            | BytecodeInstructionKind::DisarmCleanup(_) => {}
         }
     }
     match &block.terminator.kind {
         BytecodeTerminatorKind::Goto { .. }
         | BytecodeTerminatorKind::DrainDefers { .. }
+        | BytecodeTerminatorKind::DrainUnwind { .. }
         | BytecodeTerminatorKind::ResumePanic
         | BytecodeTerminatorKind::Unreachable => {}
         BytecodeTerminatorKind::BranchBool { condition, .. } => {
@@ -8226,8 +8676,9 @@ fn tag_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<TagEven
             | BytecodeInstructionKind::StorageDead(_)
             | BytecodeInstructionKind::ReserveLoan(_)
             | BytecodeInstructionKind::ReleaseLoan(_)
-            | BytecodeInstructionKind::RetargetDefer { .. }
-            | BytecodeInstructionKind::DisarmDefer(_) => {}
+            | BytecodeInstructionKind::RegisterFallback { .. }
+            | BytecodeInstructionKind::RetargetCleanup { .. }
+            | BytecodeInstructionKind::DisarmCleanup(_) => {}
             BytecodeInstructionKind::Store { destination, value } => {
                 push_tag_rvalue(function, value, &mut events);
                 push_tag_place(function, destination, true, &mut events);
@@ -8240,6 +8691,7 @@ fn tag_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<TagEven
     match &block.terminator.kind {
         BytecodeTerminatorKind::Goto { .. }
         | BytecodeTerminatorKind::DrainDefers { .. }
+        | BytecodeTerminatorKind::DrainUnwind { .. }
         | BytecodeTerminatorKind::Return
         | BytecodeTerminatorKind::ResumePanic
         | BytecodeTerminatorKind::Unreachable => {}

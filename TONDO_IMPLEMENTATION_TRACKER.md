@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.49
+**Versión del tracker:** 0.50
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** implementar acciones cerradas de fallback terminal
-durante unwind (TERM-004).
+**Objetivo inmediato:** demostrar exclusión exacta entre guard explícito y
+fallback terminal (TERM-005).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1416,8 +1416,8 @@ lifetimes escritos por el usuario.
 - [x] **TERM-003 — Implementar `defer` LIFO y desarme al registrar guards
   terminales.** HIR asigna IDs estables a los scopes, valida acciones síncronas
   infalibles `Unit`, captura operands `Copy` y permite un único owner afín
-  completo. MIR y bytecode materializan `RegisterDefer`, `RetargetDefer`,
-  `DisarmDefer` y `DrainDefers`; sus verificadores independientes demuestran
+  completo. MIR y bytecode materializan `RegisterDefer`, `RetargetCleanup`,
+  `DisarmCleanup` y `DrainDefers`; sus verificadores independientes demuestran
   scopes exactos, LIFO, guard único, transiciones inmediatas, lifetimes y
   ausencia de entradas abandonadas. La VM drena en salidas normales y pánico,
   conserva la prioridad de pánico y adjunta los secundarios como suprimidos, y
@@ -1429,8 +1429,18 @@ lifetimes escritos por el usuario.
   genérico se cierra como `Copy`, la misma especialización lo convierte en un
   snapshot de registro y elimina únicamente sus transiciones ya vacías.
 
-- [ ] **TERM-004 — Implementar acciones de unwind cerradas para pánico,
-  cancelación y teardown estructurado.**
+- [x] **TERM-004 — Implementar acciones de unwind cerradas para pánico,
+  cancelación y teardown estructurado.** MIR y bytecode registran fallbacks en
+  parámetros/capturas propietarios y en cada resultado terminal de store,
+  llamada o iteración, los especializan a presencia concreta y los verifican
+  independientemente. `DrainUnwind` consume el ledger unificado en LIFO durante
+  pánico; la VM recorre compounds, nominales, colecciones, environments y
+  cursores en orden inverso de construcción y despacha raíces directas mediante
+  el registro sellado. Los retornos normales omiten el fallback después de la
+  prueba TERM-002 y nunca omiten un `defer` explícito. La identidad
+  `JoinTeardown` y su ruta anormal quedan cerradas; SPAWN/JOIN/CANCEL de M7
+  aportarán el estado de task y la suspensión necesarios para ejecutarla sobre
+  un `Join` activo, forma que todavía no puede construirse en la VM síncrona.
 
 - [ ] **TERM-005 — Probar que cleanup explícito y unwind fallback nunca se
   ejecutan ambos.**
@@ -2004,16 +2014,33 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es TERM-004: materializar las acciones cerradas de
-fallback que TERM-001 registró para cada token terminal vivo, seguirlas a través
-de handoffs confirmados y ejecutarlas durante pánico o cancelación solo cuando
-no existe un guard explícito. Debe reutilizar el ledger y los cleanup edges de
-TERM-003, sin convertir el fallback en destructor visible ni ejecutarlo en una
-salida normal.
+La siguiente acción activa es TERM-005: probar por mutación y ejecución que un
+token protegido por un `defer` explícito ha perdido antes su fallback y que
+ninguna ruta —retarget, agregado, llamada, iteración, pánico o salida normal—
+puede ejecutar ambos. Debe cubrir MIR, bytecode y VM sin adelantar el estado
+suspendible de `Join` que pertenece a M7.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.50 — 2026-07-25
+
+- Se completa TERM-004 con `RegisterFallback` y `DrainUnwind` sobre el mismo
+  ledger LIFO de TERM-003. Las transiciones compartidas siguen handoffs y el
+  retorno normal elimina únicamente marcadores anormales.
+- MIR y bytecode exigen cobertura en parámetros, capturas, stores, resultados
+  de llamada y valores de iteración; la especialización elimina fallbacks
+  genéricos cerrados como no terminales y rechaza cualquier `Potential`
+  ejecutable.
+- La VM ejecuta el teardown estructural inverso de tuples, sums, colecciones,
+  nominales, closures y cursores, preserva el pánico principal y consulta el
+  contrato sellado para raíces directas. El estado activo y suspendible de
+  `JoinTeardown` permanece asignado explícitamente a M7.
+- La puerta completa pasa con 538 tests —484 del compilador, 12 de la VM y 42
+  de CLI/integración—, `cargo fmt --check`, `cargo check`, `cargo build`,
+  Clippy con warnings como error, rustdoc con warnings como error y
+  `git diff --check`.
 
 ### 0.49 — 2026-07-25
 

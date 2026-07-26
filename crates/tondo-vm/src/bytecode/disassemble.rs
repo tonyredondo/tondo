@@ -142,11 +142,20 @@ fn instruction_text(instruction: &BytecodeInstructionKind) -> String {
             action.ty.index(),
             guard.as_ref().map(place_text)
         ),
-        BytecodeInstructionKind::RetargetDefer { from, to } => {
-            format!("retarget_defer {} -> {}", place_text(from), place_text(to))
+        BytecodeInstructionKind::RegisterFallback { scope, owner } => format!(
+            "register_fallback scope{} {}",
+            scope.index(),
+            place_text(owner)
+        ),
+        BytecodeInstructionKind::RetargetCleanup { from, to } => {
+            format!(
+                "retarget_cleanup {} -> {}",
+                place_text(from),
+                place_text(to)
+            )
         }
-        BytecodeInstructionKind::DisarmDefer(place) => {
-            format!("disarm_defer {}", place_text(place))
+        BytecodeInstructionKind::DisarmCleanup(place) => {
+            format!("disarm_cleanup {}", place_text(place))
         }
     }
 }
@@ -233,6 +242,9 @@ fn terminator_text(terminator: &BytecodeTerminatorKind) -> String {
             target.index(),
             unwind.index()
         ),
+        BytecodeTerminatorKind::DrainUnwind { target } => {
+            format!("drain_unwind -> b{}", target.index())
+        }
         BytecodeTerminatorKind::Return => "return".into(),
         BytecodeTerminatorKind::ResumePanic => "resume_panic".into(),
         BytecodeTerminatorKind::Unreachable => "unreachable".into(),

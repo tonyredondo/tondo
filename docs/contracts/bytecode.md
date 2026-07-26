@@ -12,7 +12,7 @@ BORROW-002 inferred pattern regions, BORROW-003 reborrow permissions, BORROW-004
 static collection disjunction, BORROW-005 runtime overlap proofs, BORROW-006
 borrowed-iterator boundaries, TERM-001 independent terminal classification,
 TERM-002 normal-path terminal ownership, TERM-003 explicit defer/guard cleanup,
-and the M3 VM admission path implemented
+TERM-004 closed abnormal fallbacks, and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -316,7 +316,39 @@ normal destination/target and cleanup target. This includes checked arithmetic,
 map construction, indexing, slicing, calls, `assert`, and `panic`. Other
 terminators cover direct branches, boolean and discriminant dispatch,
 iterator-next, atomic destination validation, loan validation, return, panic
-resumption, scope-specific defer drain, and unreachable code. `ValidateLoan`
+resumption, scope-specific defer drain, unified abnormal drain, and unreachable
+code. Every potentially panicking edge in one function targets the same empty
+`DrainUnwind` cleanup block, whose only successor is the distinguished
+`ResumePanic` block.
+
+`RegisterFallback` arms one closed structural action for a concrete `Present`
+owner. Monomorphization removes registrations whose generic MIR owner closes as
+`Absent` and rejects `Potential` executable state. Entry parameters and closure
+capture slots register before ordinary instructions; terminal stores,
+successful invocation results, and owning iterator values register on the
+exact materialization edge. `RetargetCleanup` and `DisarmCleanup` are shared by
+explicit guards and fallback owners. Registering an explicit guard removes the
+enclosed fallback only after capture succeeds, so a failed registration leaves
+the original entry armed.
+
+`DrainDefers` selects only explicit entries in the abandoned lexical scopes.
+`DrainUnwind` instead pops the unified vector in exact LIFO order, including
+structural fallbacks. The runtime walker consumes tuple, option, result, union,
+array, map, set, range, nominal, closure-environment, and owning-cursor state in
+reverse construction order, replacing extracted heap fields with holes so a
+transferred child cannot be consumed twice. A normal return discards fallback
+markers without executing them only after the verified TERM-002 source proof;
+it still rejects any explicit entry.
+
+The walker dispatches a direct terminal root through the sealed bytecode
+registry. Its only current action is `JoinTeardown`, declared as may-suspend.
+No active `Join` representation, `spawn`, cancellation edge, or suspendable
+frame exists in the synchronous bootstrap VM, so M7 supplies that action's task
+state and resumption mechanics. All currently constructible structural-empty
+fallbacks and the complete non-suspending traversal execute now; the VM fails
+closed if malformed pre-M7 execution fabricates an active `Join`.
+
+`ValidateLoan`
 must resolve to a normal block
 whose first instruction reserves the same loan. A read validation aligns each
 destination with no replacement;
@@ -407,11 +439,14 @@ Before execution, the verifier proves:
   snapshots all closed `Copy` operands, retains at most one complete affine
   guard in a local or closure-capture owner slot, and belongs to a live lexical
   scope;
-- the independent defer dataflow rejects duplicate live registrations,
-  overlapping guards, partial or embedded guarded moves, non-immediate
-  retarget/disarm transitions, post-drain access before complete
-  reinitialization, incompatible joins, incorrect scope drains, and any active
-  entry at `Return` or `ResumePanic`;
+- every concrete terminal entry parameter/capture and every terminal store,
+  successful invocation result, and iterator-value edge has an immediate
+  fallback or cleanup retarget;
+- the independent cleanup dataflow rejects duplicate live registrations,
+  explicit/fallback overlap, partial or embedded explicit-guard moves,
+  non-immediate retarget/disarm transitions, post-drain access before complete
+  reinitialization, incompatible joins, incorrect scope drains, explicit
+  entries at `Return`, and any entry at `ResumePanic`;
 - an own intrinsic `IteratorNext` has an exhaustion guard exactly when its
   closed collection status is `Present`; the guard is the exact cursor-source
   path and is removed only on the exhausted edge, while ref cursors never carry
@@ -452,13 +487,15 @@ positions that can carry a token; own cursors and closure environments follow
 owned state, while ref cursors and safe/raw references do not acquire ownership.
 Executable opaque witnesses must be `Absent`. TERM-002 consumes the corresponding
 HIR proof before executable lowering and the bytecode move verifier preserves
-the admitted handoffs. TERM-003 adds `RegisterDefer`, `RetargetDefer`,
-`DisarmDefer`, and `DrainDefers`, with a separate exact verifier ledger rather
+the admitted handoffs. TERM-003 adds `RegisterDefer`, `RetargetCleanup`,
+`DisarmCleanup`, and `DrainDefers`, with a separate exact verifier ledger rather
 than trusting MIR. Monomorphization resolves a generic intrinsic iterator's
 `Potential` exhaustion marker against the closed catalog: it retains the marker
 for `Present`, removes it for `Absent`, and rejects any remaining `Potential`
-executable state. There is still no `await` or closed intrinsic fallback
-operation; TERM-004 adds that second side of the terminal cleanup ledger.
+executable state. TERM-004 adds `RegisterFallback` and `DrainUnwind`, closes the
+same specialization for fallback owners, and makes the VM execute structural
+fallbacks from the sealed registry. `await`, active `Join` task state, and
+suspendable teardown remain the explicit M7 boundary.
 
 ## Determinism, limits, and tooling
 

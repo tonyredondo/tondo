@@ -11,7 +11,7 @@ explicit reservation/release, BORROW-003 permission-preserving reborrows,
 BORROW-004 static collection disjunction, BORROW-005 runtime overlap proofs,
 BORROW-006 borrowed-iteration boundary verification, TERM-001/TERM-002 terminal
 classification and normal-path ownership, and TERM-003 explicit defer/guard
-cleanup lowering implemented
+cleanup plus TERM-004 closed abnormal fallback lowering implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -353,29 +353,41 @@ Loan release is already explicit on normal last-use edges, control transfers,
 and early function exits; an unwind edge closes the abandoned frame's
 reservations as part of panic propagation.
 
-TERM-003 populates those blocks with four explicit forms:
+TERM-003 and TERM-004 populate those blocks with six explicit forms:
 
 - `RegisterDefer { scope, action, guard }` stores one already checked
   synchronous `Unit` invocation. Copy operands are snapshots; an optional guard
   names its unique complete affine owner slot, including one environment
   capture slot while lowering a closure body.
-- `RetargetDefer { from, to }` follows an immediately preceding whole-value move
-  of that guard to an equal-typed complete owner slot. The sole non-slot target
-  is the intrinsic owning cursor's exact `IteratorSource` projection.
-- `DisarmDefer(place)` removes the guarded registration only after an immediate
-  confirmed consuming handoff, terminal operation, or proved natural
-  exhaustion.
+- `RegisterFallback { scope, owner }` arms the sealed structural unwind action
+  for a non-absent terminal owner. Owning parameters register at entry,
+  closure environments register each terminal capture independently, and
+  terminal store, call-result, and iterator-value edges register immediately
+  after materialization.
+- `RetargetCleanup { from, to }` follows an immediately preceding whole-value move
+  of either cleanup kind to an equal-typed complete owner slot. The sole
+  non-slot target is the intrinsic owning cursor's exact `IteratorSource`
+  projection.
+- `DisarmCleanup(place)` removes an explicit guard or transfers/discharges an
+  abnormal fallback only after an immediate confirmed handoff, terminal
+  operation, or proved natural exhaustion.
 - `DrainDefers { scopes, target, unwind }` executes registrations belonging to
-  the exact abandoned scopes in global LIFO order and branches according to
-  whether cleanup completed or panicked. Every drained guard is consumed on
-  both successors and remains unavailable until a complete owner write
-  reinitializes it.
+  the exact abandoned scopes in global LIFO order, but selects only explicit
+  entries. It branches according to whether cleanup completed or panicked.
+  Every drained guard is consumed on both successors and remains unavailable
+  until a complete owner write reinitializes it.
+- `DrainUnwind { target }` pops the unified ledger in exact reverse
+  registration order, executing both explicit entries and armed structural
+  fallbacks before reaching the distinguished panic-resume block.
 
 Normal completion and `return`, `fail`, `?`, `break`, and `continue` route
-through the exact inner-to-outer drain set. Checked-operation panic edges use
-the same cleanup chain, so explicit defers execute while unwinding. The ledger
-is independent of loan state: reservations are released before a normal drain
-or invalidated when the frame begins unwinding.
+through the exact inner-to-outer explicit drain set. Remaining fallback markers
+are removed without execution only at a normal return, after TERM-002 has
+already proved the visible consumption or handoff; an explicit registration
+may never be abandoned there. Every checked-operation panic edge targets one
+shared `DrainUnwind` block, which then reaches `ResumePanic`. The ledger is
+independent of loan state: reservations are released before a normal drain or
+invalidated when the frame begins unwinding.
 
 An owning intrinsic `IteratorNext` additionally records an optional
 `exhaustion_guard` naming the exact `IteratorSource` projection in its state.
@@ -388,16 +400,20 @@ marker.
 
 TERM-001 supplies MIR with the verified closed registry and structural status.
 TERM-002 rejects unconsumed normal-path owners. TERM-003 materializes explicit
-defer registrations and guards without inventing a destructor. TERM-004 will
-populate the same unwind capacity with the closed intrinsic fallback actions
-that remain armed only when no explicit guard owns the token.
+defer registrations and guards without inventing a destructor. TERM-004
+materializes the other side of that same ledger: closed structural fallbacks,
+coverage at every ownership-materialization edge, and one abnormal LIFO drain.
+Registering an explicit affine guard replaces the enclosed fallback atomically;
+the verifier rejects any remaining overlap.
 
 M7 represents `await` and structured teardown with a suspension terminator.
 Its successors distinguish resume, cancellation, and panic/unwind. Values live
 across that terminator become explicit frame locals. An exclusive loan may not
 be live there; the BORROW-006 boundary check is reused for the exact active set,
 and all surviving values must satisfy the required `Send` contract before
-bytecode generation.
+bytecode generation. The abnormal ledger and sealed `JoinTeardown` identity are
+already fixed; M7 supplies the concrete task state and suspension needed to
+execute that one may-suspend action on panic or cancellation.
 
 ## MIR verification layers
 
@@ -449,13 +465,17 @@ The structural verifier introduced in M3 proves at minimum:
 - every borrowed iterator has one stable source-region origin, one canonical
   position producer, and only shared region loans crossing its advance
   boundary;
-- every defer registration belongs to a currently active lexical scope, no
-  dynamic registration is repeated before drain/disarm, guard places are
-  pairwise disjoint, and every guarded move has one immediate exact
+- every explicit or fallback registration is type-valid, no dynamic
+  registration is repeated before drain/disarm, cleanup places are pairwise
+  compatible, and every guarded move has one immediate exact
   retarget/disarm transition;
-- every drain names exactly the scopes abandoned by its edge, preserves LIFO
-  order, marks its guards consumed until complete reinitialization, and no
-  return or panic-resume can abandon an active registration;
+- every owning terminal entry parameter/capture and every terminal store,
+  successful invocation result, and iterator-value edge has its required
+  fallback or retarget, including conservative `Potential` generic MIR;
+- every normal drain names exactly the explicit scopes abandoned by its edge,
+  while the single abnormal drain targets `ResumePanic`, preserves unified
+  LIFO order, and leaves no registration at panic resume; a normal return may
+  discard fallback markers but never an explicit entry;
 - an intrinsic own iterator carries the exact source exhaustion guard if and
   only if its contextual collection status is non-absent, and only its
   exhausted successor removes that guard;
@@ -475,9 +495,9 @@ on their successful edge, and the return place must be initialized on every
 `Return`. Payload refinement is a separate forward analysis so initialization
 alone cannot authorize an invalid projection.
 
-Later TERM-004 work adds closed intrinsic fallback entries. M7 adds concrete
-suspension/frame/`Send` invariants while reusing the existing BORROW-006
-loan-boundary proof. Verification always precedes bytecode lowering.
+M7 adds concrete suspension/frame/`Send` invariants and the active `Join` task
+state while reusing the existing BORROW-006 loan-boundary and TERM-004 abnormal
+drain proofs. Verification always precedes bytecode lowering.
 
 ## Determinism and resource limits
 

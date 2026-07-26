@@ -264,7 +264,7 @@ as the same resource. The availability state follows every non-absent terminal
 owner through bindings, compounds, closures, consuming patterns, calls,
 assignments, observed temporaries, loops, and control transfers. A normal path
 may leave a scope only after a visible consumption or confirmed handoff; panic
-paths deliberately keep the future fallback armed. Synchronous closure
+paths deliberately keep the closed fallback armed. Synchronous closure
 invocation crosses this boundary with an explicit exact signature and selected
 call protocol. Every lexical block has a stable cleanup-scope identity. Checked
 `defer` actions capture `Copy` operands at registration and reserve at most one
@@ -273,8 +273,12 @@ temporary; MIR and bytecode may represent the same owner as a local slot or one
 closure-capture slot. The availability proof rejects
 duplicate guards, partial moves, embedding and overwrite, follows a permitted
 whole-owner move, and disarms only after a confirmed handoff or intrinsic
-natural exhaustion. Closed intrinsic fallback actions remain the next terminal
-analysis.
+natural exhaustion. TERM-004 materializes closed fallbacks at owning entry
+slots and every terminal result edge, specializes generic registrations to
+concrete presence, and drains them with explicit entries through one abnormal
+LIFO ledger. Structural fallback traversal handles all current aggregate
+layouts; M7 supplies the suspendable task state needed by direct
+`JoinTeardown`.
 
 Type IDs are request-local interned handles; only canonical recursive type
 strings are observable. Alias expansion, union normalization, nominal identity,
@@ -301,15 +305,17 @@ verifier propagates exact active sets across that same CFG, rejects incompatible
 fixed-place overlap and illegal reborrows, and confines each loan operand to its
 call. Last-use pattern regions, static collection-region disjunction, and
 runtime-dependent overlap checks use the same paths. TERM-003 adds
-`RegisterDefer`, `RetargetDefer`, `DisarmDefer`, and scope-specific
+`RegisterDefer`, `RetargetCleanup`, `DisarmCleanup`, and scope-specific
 `DrainDefers` operations plus a second exact dataflow ledger for registrations
-and affine guards. Normal completion and every transfer that abandons a scope
-drain its entries in LIFO order; unwind uses the same chain. An owning intrinsic
-iterator carries an edge-specific exhaustion guard when its collection may be
-terminal, so only the exhausted edge disarms it. Monomorphization removes that
-marker for a closed nonterminal specialization. Async later adds suspension,
-resume, cancellation, and frame-state edges without moving source semantic
-decisions into a backend.
+and affine guards. TERM-004 extends it with `RegisterFallback` and one
+`DrainUnwind`: normal completion drains only explicit scope entries and drops
+abnormal markers after the frontend proof, while panic drains both kinds in
+unified LIFO order. An owning intrinsic iterator carries an edge-specific
+exhaustion guard when its collection may be terminal, so only the exhausted
+edge disarms it. Monomorphization removes that marker and nonterminal fallback
+registrations for a closed specialization. Async later adds suspension,
+resume, cancellation, active `Join` state, and frame-state edges without moving
+source semantic decisions into a backend.
 
 Before bytecode lowering, the MIR verifier proves:
 

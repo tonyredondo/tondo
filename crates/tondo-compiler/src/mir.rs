@@ -278,11 +278,15 @@ pub enum MirStatementKind {
         action: MirOperation,
         guard: Option<MirPlace>,
     },
-    RetargetDefer {
+    RegisterFallback {
+        scope: HirScopeId,
+        owner: MirPlace,
+    },
+    RetargetCleanup {
         from: MirPlace,
         to: MirPlace,
     },
-    DisarmDefer(MirPlace),
+    DisarmCleanup(MirPlace),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -715,6 +719,9 @@ pub enum MirTerminatorKind {
         scopes: Vec<HirScopeId>,
         target: MirBlockId,
         unwind: MirBlockId,
+    },
+    DrainUnwind {
+        target: MirBlockId,
     },
     Return,
     ResumePanic,

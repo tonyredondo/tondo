@@ -269,7 +269,7 @@ fn is_iterator_defer_target(place: &MirPlace) -> bool {
 struct DeferFlowState {
     unguarded_scopes: BTreeSet<crate::hir::HirScopeId>,
     guards: BTreeMap<LocalAccess, ActiveDeferGuard>,
-    registrations: BTreeMap<(MirBlockId, usize), crate::hir::HirScopeId>,
+    registrations: BTreeMap<(MirBlockId, usize), ActiveCleanupRegistration>,
     scope_order: Vec<crate::hir::HirScopeId>,
     pending_moves: BTreeMap<LocalAccess, PendingDeferTransition>,
     consumed: BTreeSet<LocalAccess>,
@@ -279,6 +279,19 @@ struct DeferFlowState {
 struct ActiveDeferGuard {
     scope: crate::hir::HirScopeId,
     registration: (MirBlockId, usize),
+    kind: CleanupEntryKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct ActiveCleanupRegistration {
+    scope: crate::hir::HirScopeId,
+    kind: CleanupEntryKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum CleanupEntryKind {
+    Explicit,
+    Fallback,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -290,10 +303,9 @@ enum PendingDeferTransition {
 impl DeferFlowState {
     fn scope_is_active(&self, scope: crate::hir::HirScopeId) -> bool {
         self.unguarded_scopes.contains(&scope)
-            || self
-                .guards
-                .values()
-                .any(|candidate| candidate.scope == scope)
+            || self.guards.values().any(|candidate| {
+                candidate.kind == CleanupEntryKind::Explicit && candidate.scope == scope
+            })
     }
 
     fn activate_scope(
@@ -339,18 +351,53 @@ impl DeferFlowState {
                 "defer drain skips a still-active inner scope",
             ));
         }
-        self.consumed.extend(
-            self.guards.iter().filter_map(|(place, guard)| {
-                selected.contains(&guard.scope).then_some(place.clone())
-            }),
-        );
+        self.consumed
+            .extend(self.guards.iter().filter_map(|(place, guard)| {
+                (guard.kind == CleanupEntryKind::Explicit && selected.contains(&guard.scope))
+                    .then_some(place.clone())
+            }));
         self.unguarded_scopes
             .retain(|scope| !selected.contains(scope));
-        self.guards
-            .retain(|_, guard| !selected.contains(&guard.scope));
-        self.registrations
-            .retain(|_, scope| !selected.contains(scope));
+        self.guards.retain(|_, guard| {
+            guard.kind != CleanupEntryKind::Explicit || !selected.contains(&guard.scope)
+        });
+        self.registrations.retain(|_, registration| {
+            registration.kind != CleanupEntryKind::Explicit
+                || !selected.contains(&registration.scope)
+        });
         self.scope_order.retain(|scope| !selected.contains(scope));
+        Ok(())
+    }
+
+    fn drain_unwind(&mut self) {
+        self.consumed.extend(self.guards.keys().cloned());
+        self.unguarded_scopes.clear();
+        self.guards.clear();
+        self.registrations.clear();
+        self.scope_order.clear();
+        self.pending_moves.clear();
+    }
+
+    fn finish_normal(&mut self, context: &str) -> Result<(), MirInvariantError> {
+        let has_explicit = !self.unguarded_scopes.is_empty()
+            || !self.scope_order.is_empty()
+            || self
+                .guards
+                .values()
+                .any(|guard| guard.kind == CleanupEntryKind::Explicit)
+            || self
+                .registrations
+                .values()
+                .any(|registration| registration.kind == CleanupEntryKind::Explicit)
+            || !self.pending_moves.is_empty();
+        if has_explicit {
+            return Err(MirInvariantError::new(
+                context,
+                "normal return abandons an explicit defer entry",
+            ));
+        }
+        self.guards.clear();
+        self.registrations.clear();
         Ok(())
     }
 
@@ -371,21 +418,7 @@ fn defer_assignment_transition(
     guard: &LocalAccess,
     scope: crate::hir::HirScopeId,
 ) -> Option<PendingDeferTransition> {
-    let directly_retargeted = match value.kind() {
-        MirRvalueKind::Use(MirOperand {
-            kind: MirOperandKind::Move(place),
-            ..
-        })
-        | MirRvalueKind::IteratorState {
-            source:
-                MirOperand {
-                    kind: MirOperandKind::Move(place),
-                    ..
-                },
-        } => LocalAccess::from_place(place) == *guard,
-        _ => false,
-    };
-    if directly_retargeted {
+    if assignment_directly_moves(value, guard) {
         return Some(PendingDeferTransition::Retarget);
     }
 
@@ -404,6 +437,54 @@ fn defer_assignment_transition(
     (exits_scope && confirmed_handoff).then_some(PendingDeferTransition::Disarm)
 }
 
+fn assignment_directly_moves(value: &MirRvalue, guard: &LocalAccess) -> bool {
+    match value.kind() {
+        MirRvalueKind::Use(MirOperand {
+            kind: MirOperandKind::Move(place),
+            ..
+        })
+        | MirRvalueKind::IteratorState {
+            source:
+                MirOperand {
+                    kind: MirOperandKind::Move(place),
+                    ..
+                },
+        } => LocalAccess::from_place(place) == *guard,
+        _ => false,
+    }
+}
+
+fn assignment_cleanup_transfer(
+    destination: &MirPlace,
+    value: &MirRvalue,
+) -> Option<(MirPlace, MirPlace)> {
+    let (from, to) = match value.kind() {
+        MirRvalueKind::Use(MirOperand {
+            kind: MirOperandKind::Move(from),
+            ..
+        }) => (from.clone(), destination.clone()),
+        MirRvalueKind::IteratorState {
+            source:
+                MirOperand {
+                    kind: MirOperandKind::Move(from),
+                    ..
+                },
+        } => {
+            let mut to = destination.clone();
+            to.ty = from.ty();
+            to.projections.push(MirProjection {
+                ty: from.ty(),
+                kind: MirProjectionKind::IteratorSource,
+            });
+            (from.clone(), to)
+        }
+        _ => return None,
+    };
+    (is_complete_defer_owner_place(&from)
+        && (is_complete_defer_owner_place(&to) || is_iterator_defer_target(&to)))
+    .then_some((from, to))
+}
+
 fn defer_disarm_is_confirmed(
     function: &MirFunction,
     block: &MirBasicBlock,
@@ -415,7 +496,7 @@ fn defer_disarm_is_confirmed(
     if block.statements[statement + 1..].iter().any(|statement| {
         !matches!(
             statement.kind,
-            MirStatementKind::ReleaseLoan(_) | MirStatementKind::DisarmDefer(_)
+            MirStatementKind::ReleaseLoan(_) | MirStatementKind::DisarmCleanup(_)
         )
     }) {
         return false;
@@ -1248,7 +1329,25 @@ impl Verifier<'_> {
                         }
                     }
                 }
-                MirStatementKind::RetargetDefer { from, to } => {
+                MirStatementKind::RegisterFallback { owner, .. } => {
+                    if block.kind != MirBlockKind::Normal {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "cleanup block registers a terminal fallback",
+                        ));
+                    }
+                    self.verify_place(function, owner, &context)?;
+                    if owner.source_loan.is_some()
+                        || self.terminal_status(function.id, owner.ty, &context)?
+                            == HirTerminalStatus::Absent
+                    {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "terminal fallback owner is borrowed or has no terminal token",
+                        ));
+                    }
+                }
+                MirStatementKind::RetargetCleanup { from, to } => {
                     if block.kind != MirBlockKind::Normal {
                         return Err(MirInvariantError::new(
                             &context,
@@ -1267,7 +1366,7 @@ impl Verifier<'_> {
                         ));
                     }
                 }
-                MirStatementKind::DisarmDefer(place) => {
+                MirStatementKind::DisarmCleanup(place) => {
                     if block.kind != MirBlockKind::Normal {
                         return Err(MirInvariantError::new(
                             &context,
@@ -1644,6 +1743,23 @@ impl Verifier<'_> {
                     return Err(MirInvariantError::new(
                         &context,
                         "defer drain block contains ordinary statements",
+                    ));
+                }
+            }
+            MirTerminatorKind::DrainUnwind { target } => {
+                if block.kind != MirBlockKind::Cleanup
+                    || *target != function.unwind
+                    || !block.statements.is_empty()
+                {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "unwind drain is not an empty cleanup block targeting the function unwind",
+                    ));
+                }
+                if self.block(function, *target, &context)?.kind != MirBlockKind::Cleanup {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "unwind drain target is not cleanup code",
                     ));
                 }
             }
@@ -4427,6 +4543,32 @@ impl Verifier<'_> {
         function: &MirFunction,
         context: &str,
     ) -> Result<(), MirInvariantError> {
+        self.verify_fallback_coverage(function, context)?;
+        let entry = self.block(function, function.entry, context)?;
+        let registered_entry_owners = entry
+            .statements
+            .iter()
+            .take_while(|statement| {
+                matches!(statement.kind, MirStatementKind::RegisterFallback { .. })
+            })
+            .filter_map(|statement| match &statement.kind {
+                MirStatementKind::RegisterFallback { owner, .. } => {
+                    Some(LocalAccess::from_place(owner))
+                }
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        for owner in self.terminal_entry_owners(function, context)? {
+            if !registered_entry_owners.contains(&LocalAccess::from_place(&owner)) {
+                return Err(MirInvariantError::new(
+                    context,
+                    format!(
+                        "terminal entry owner rooted at local#{} has no entry fallback registration",
+                        owner.local.index()
+                    ),
+                ));
+            }
+        }
         let registered_scopes = function
             .blocks
             .iter()
@@ -4473,10 +4615,10 @@ impl Verifier<'_> {
                 for (index, statement) in block.statements.iter().enumerate() {
                     let statement_context = format!("{block_context} statement#{index}");
                     let advances_pending = match &statement.kind {
-                        MirStatementKind::RetargetDefer { from, .. } => state
+                        MirStatementKind::RetargetCleanup { from, .. } => state
                             .pending_moves
                             .contains_key(&LocalAccess::from_place(from)),
-                        MirStatementKind::DisarmDefer(place) => state
+                        MirStatementKind::DisarmCleanup(place) => state
                             .pending_moves
                             .contains_key(&LocalAccess::from_place(place)),
                         _ => false,
@@ -4491,7 +4633,17 @@ impl Verifier<'_> {
                         MirStatementKind::RegisterDefer { scope, guard, .. } => {
                             state.activate_scope(*scope, &statement_context)?;
                             let registration = (block_id, index);
-                            if state.registrations.insert(registration, *scope).is_some() {
+                            if state
+                                .registrations
+                                .insert(
+                                    registration,
+                                    ActiveCleanupRegistration {
+                                        scope: *scope,
+                                        kind: CleanupEntryKind::Explicit,
+                                    },
+                                )
+                                .is_some()
+                            {
                                 return Err(MirInvariantError::new(
                                     statement_context,
                                     "defer registration is re-executed before it is drained or disarmed",
@@ -4499,6 +4651,19 @@ impl Verifier<'_> {
                             }
                             if let Some(guard) = guard {
                                 let guard = LocalAccess::from_place(guard);
+                                let replaced = state
+                                    .guards
+                                    .iter()
+                                    .filter_map(|(existing, active)| {
+                                        (active.kind == CleanupEntryKind::Fallback
+                                            && local_access_contains(&guard, existing))
+                                        .then_some((existing.clone(), *active))
+                                    })
+                                    .collect::<Vec<_>>();
+                                for (existing, active) in replaced {
+                                    state.guards.remove(&existing);
+                                    state.registrations.remove(&active.registration);
+                                }
                                 if state
                                     .guards
                                     .keys()
@@ -4514,13 +4679,70 @@ impl Verifier<'_> {
                                     ActiveDeferGuard {
                                         scope: *scope,
                                         registration,
+                                        kind: CleanupEntryKind::Explicit,
                                     },
                                 );
                             } else {
                                 state.unguarded_scopes.insert(*scope);
                             }
                         }
-                        MirStatementKind::RetargetDefer { from, to } => {
+                        MirStatementKind::RegisterFallback { scope, owner } => {
+                            let owner = LocalAccess::from_place(owner);
+                            if state.guards.iter().any(|(existing, active)| {
+                                active.kind == CleanupEntryKind::Explicit
+                                    && local_accesses_overlap(existing, &owner)
+                            }) {
+                                return Err(MirInvariantError::new(
+                                    statement_context,
+                                    "terminal fallback overlaps an active explicit cleanup guard",
+                                ));
+                            }
+                            if state.guards.iter().any(|(existing, active)| {
+                                active.kind == CleanupEntryKind::Fallback
+                                    && local_access_contains(existing, &owner)
+                            }) {
+                                continue;
+                            }
+                            let folded = state
+                                .guards
+                                .iter()
+                                .filter_map(|(existing, active)| {
+                                    (active.kind == CleanupEntryKind::Fallback
+                                        && local_access_contains(&owner, existing))
+                                    .then_some((existing.clone(), *active))
+                                })
+                                .collect::<Vec<_>>();
+                            for (existing, active) in folded {
+                                state.guards.remove(&existing);
+                                state.registrations.remove(&active.registration);
+                            }
+                            let registration = (block_id, index);
+                            if state
+                                .registrations
+                                .insert(
+                                    registration,
+                                    ActiveCleanupRegistration {
+                                        scope: *scope,
+                                        kind: CleanupEntryKind::Fallback,
+                                    },
+                                )
+                                .is_some()
+                            {
+                                return Err(MirInvariantError::new(
+                                    statement_context,
+                                    "terminal fallback registration is re-executed while active",
+                                ));
+                            }
+                            state.guards.insert(
+                                owner,
+                                ActiveDeferGuard {
+                                    scope: *scope,
+                                    registration,
+                                    kind: CleanupEntryKind::Fallback,
+                                },
+                            );
+                        }
+                        MirStatementKind::RetargetCleanup { from, to } => {
                             let from = LocalAccess::from_place(from);
                             let to = LocalAccess::from_place(to);
                             if let Some(guard) = state.guards.remove(&from) {
@@ -4545,21 +4767,45 @@ impl Verifier<'_> {
                                 state.guards.insert(to, guard);
                             }
                         }
-                        MirStatementKind::DisarmDefer(place) => {
+                        MirStatementKind::DisarmCleanup(place) => {
                             let place = LocalAccess::from_place(place);
                             let pending = state.pending_moves.remove(&place);
                             if let Some(guard) = state.guards.remove(&place) {
-                                if !defer_disarm_is_confirmed(
-                                    function,
-                                    block,
-                                    index,
-                                    &place,
-                                    guard.scope,
-                                    pending,
-                                ) {
+                                let confirmed = match guard.kind {
+                                    CleanupEntryKind::Explicit => defer_disarm_is_confirmed(
+                                        function,
+                                        block,
+                                        index,
+                                        &place,
+                                        guard.scope,
+                                        pending,
+                                    ),
+                                    CleanupEntryKind::Fallback => {
+                                        pending == Some(PendingDeferTransition::Disarm)
+                                            || (place.local == function.return_local
+                                                && place.path.is_empty()
+                                                && matches!(
+                                                    block.terminator.kind,
+                                                    MirTerminatorKind::Return
+                                                ))
+                                            || (pending.is_none()
+                                                && defer_disarm_is_confirmed(
+                                                    function,
+                                                    block,
+                                                    index,
+                                                    &place,
+                                                    guard.scope,
+                                                    None,
+                                                ))
+                                    }
+                                };
+                                if !confirmed {
                                     return Err(MirInvariantError::new(
                                         statement_context,
-                                        "defer guard is disarmed without an immediate consuming handoff or scope exit",
+                                        format!(
+                                            "{:?} cleanup guard is disarmed without an immediate consuming handoff or scope exit (pending {pending:?}, terminator {:?})",
+                                            guard.kind, block.terminator.kind
+                                        ),
                                     ));
                                 }
                                 state.registrations.remove(&guard.registration);
@@ -4569,14 +4815,15 @@ impl Verifier<'_> {
                         MirStatementKind::Assign { destination, value } => {
                             let destination_place = destination;
                             let destination = LocalAccess::from_place(destination_place);
-                            if state
-                                .guards
-                                .keys()
-                                .any(|guard| local_accesses_overlap(guard, &destination))
-                            {
+                            if state.guards.iter().any(|(guard, active)| {
+                                local_accesses_overlap(guard, &destination)
+                                    && (active.kind == CleanupEntryKind::Explicit
+                                        || !local_access_contains(guard, &destination)
+                                        || guard == &destination)
+                            }) {
                                 return Err(MirInvariantError::new(
                                     statement_context,
-                                    "assignment overwrites an active defer guard",
+                                    "assignment overwrites an active cleanup guard",
                                 ));
                             }
                             let mut events = Vec::new();
@@ -4587,32 +4834,55 @@ impl Verifier<'_> {
                             }) {
                                 let overlapping = state
                                     .guards
-                                    .keys()
-                                    .filter(|guard| local_accesses_overlap(guard, &access))
-                                    .cloned()
+                                    .iter()
+                                    .filter(|(guard, _)| local_accesses_overlap(guard, &access))
+                                    .map(|(guard, active)| (guard.clone(), *active))
                                     .collect::<Vec<_>>();
-                                if overlapping.iter().any(|guard| guard != &access) {
-                                    return Err(MirInvariantError::new(
-                                        &statement_context,
-                                        "assignment partially moves an active defer guard",
-                                    ));
-                                }
-                                if let Some(guard) = state.guards.get(&access) {
-                                    let transition = defer_assignment_transition(
-                                        function,
-                                        block,
-                                        destination_place,
-                                        value,
-                                        &access,
-                                        guard.scope,
-                                    )
-                                    .ok_or_else(|| {
-                                        MirInvariantError::new(
+                                for (guard_place, guard) in overlapping {
+                                    if guard_place != access {
+                                        if guard.kind == CleanupEntryKind::Fallback
+                                            && local_access_contains(&guard_place, &access)
+                                        {
+                                            continue;
+                                        }
+                                        return Err(MirInvariantError::new(
                                             &statement_context,
-                                            "assignment embeds an active defer guard instead of retargeting or handing it off",
+                                            "assignment partially moves an explicit guard or embeds a fallback owner",
+                                        ));
+                                    }
+                                    let transition = match guard.kind {
+                                        CleanupEntryKind::Explicit => defer_assignment_transition(
+                                            function,
+                                            block,
+                                            destination_place,
+                                            value,
+                                            &access,
+                                            guard.scope,
                                         )
-                                    })?;
-                                    state.pending_moves.insert(access, transition);
+                                        .ok_or_else(|| {
+                                            MirInvariantError::new(
+                                                &statement_context,
+                                                "assignment embeds an active defer guard instead of retargeting or handing it off",
+                                            )
+                                        })?,
+                                        CleanupEntryKind::Fallback => {
+                                            if assignment_directly_moves(value, &access) {
+                                                PendingDeferTransition::Retarget
+                                            } else {
+                                                PendingDeferTransition::Disarm
+                                            }
+                                        }
+                                    };
+                                    if state
+                                        .pending_moves
+                                        .insert(access.clone(), transition)
+                                        .is_some()
+                                    {
+                                        return Err(MirInvariantError::new(
+                                            &statement_context,
+                                            "one cleanup owner is moved more than once by one assignment",
+                                        ));
+                                    }
                                 }
                             }
                         }
@@ -4653,6 +4923,7 @@ impl Verifier<'_> {
                     | MirTerminatorKind::IteratorNext { .. }
                     | MirTerminatorKind::ValidateLoan { .. }
                     | MirTerminatorKind::DrainDefers { .. }
+                    | MirTerminatorKind::DrainUnwind { .. }
                     | MirTerminatorKind::Return
                     | MirTerminatorKind::ResumePanic
                     | MirTerminatorKind::Unreachable => {}
@@ -4679,15 +4950,20 @@ impl Verifier<'_> {
                 if let MirTerminatorKind::DrainDefers { scopes, .. } = &block.terminator.kind {
                     state.drain(scopes, &block_context)?;
                 }
-                if matches!(
-                    block.terminator.kind,
-                    MirTerminatorKind::Return | MirTerminatorKind::ResumePanic
-                ) && !state.is_empty()
-                {
-                    return Err(MirInvariantError::new(
-                        &block_context,
-                        "terminal control flow abandons registered defer entries",
-                    ));
+                if matches!(block.terminator.kind, MirTerminatorKind::DrainUnwind { .. }) {
+                    state.drain_unwind();
+                }
+                match block.terminator.kind {
+                    MirTerminatorKind::Return => {
+                        state.finish_normal(&block_context)?;
+                    }
+                    MirTerminatorKind::ResumePanic if !state.is_empty() => {
+                        return Err(MirInvariantError::new(
+                            &block_context,
+                            "panic resume abandons registered cleanup entries",
+                        ));
+                    }
+                    _ => {}
                 }
                 outgoing.insert(state);
             }
@@ -4746,6 +5022,186 @@ impl Verifier<'_> {
             }
         }
         Ok(())
+    }
+
+    fn verify_fallback_coverage(
+        &self,
+        function: &MirFunction,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        for (block_index, block) in function.blocks.iter().enumerate() {
+            let block_context = format!("{context} block#{block_index}");
+            for (index, statement) in block.statements.iter().enumerate() {
+                let MirStatementKind::Assign { destination, value } = &statement.kind else {
+                    continue;
+                };
+                if self.terminal_status(function.id, destination.ty, &block_context)?
+                    == HirTerminalStatus::Absent
+                {
+                    continue;
+                }
+                if let Some((from, to)) = assignment_cleanup_transfer(destination, value) {
+                    if !matches!(
+                        block
+                            .statements
+                            .get(index + 1)
+                            .map(|statement| statement.kind()),
+                        Some(MirStatementKind::RetargetCleanup {
+                            from: actual_from,
+                            to: actual_to,
+                        }) if actual_from == &from && actual_to == &to
+                    ) {
+                        return Err(MirInvariantError::new(
+                            format!("{block_context} statement#{index}"),
+                            "terminal assignment has no immediate cleanup retarget",
+                        ));
+                    }
+                    continue;
+                }
+                let mut next = index + 1;
+                while matches!(
+                    block.statements.get(next).map(|statement| statement.kind()),
+                    Some(MirStatementKind::DisarmCleanup(_))
+                ) {
+                    next += 1;
+                }
+                if !matches!(
+                    block
+                        .statements
+                        .get(next)
+                        .map(|statement| statement.kind()),
+                    Some(MirStatementKind::RegisterFallback { owner, .. })
+                        if owner == destination
+                ) {
+                    return Err(MirInvariantError::new(
+                        format!("{block_context} statement#{index}"),
+                        "terminal assignment result has no immediate fallback registration",
+                    ));
+                }
+            }
+            match &block.terminator.kind {
+                MirTerminatorKind::Invoke {
+                    destination: Some(destination),
+                    target: Some(target),
+                    ..
+                } if self.terminal_status(function.id, destination.ty, &block_context)?
+                    != HirTerminalStatus::Absent =>
+                {
+                    let target = self.block(function, *target, &block_context)?;
+                    if !matches!(
+                        target.statements.first().map(|statement| statement.kind()),
+                        Some(MirStatementKind::RegisterFallback { owner, .. })
+                            if owner == destination
+                    ) {
+                        return Err(MirInvariantError::new(
+                            &block_context,
+                            "terminal invocation result edge has no fallback registration",
+                        ));
+                    }
+                }
+                MirTerminatorKind::IteratorNext {
+                    destination,
+                    has_value,
+                    ..
+                } if self.terminal_status(function.id, destination.ty, &block_context)?
+                    != HirTerminalStatus::Absent =>
+                {
+                    let target = self.block(function, *has_value, &block_context)?;
+                    if !matches!(
+                        target.statements.first().map(|statement| statement.kind()),
+                        Some(MirStatementKind::RegisterFallback { owner, .. })
+                            if owner == destination
+                    ) {
+                        return Err(MirInvariantError::new(
+                            &block_context,
+                            "terminal iterator value edge has no fallback registration",
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn terminal_entry_owners(
+        &self,
+        function: &MirFunction,
+        context: &str,
+    ) -> Result<Vec<MirPlace>, MirInvariantError> {
+        let mut candidates = Vec::new();
+        match function.id {
+            MirFunctionId::Callable(callable) => {
+                let callable = self.hir.callable(callable).ok_or_else(|| {
+                    MirInvariantError::new(context, "function has no typed HIR signature")
+                })?;
+                for (index, local) in function.parameters.iter().copied().enumerate() {
+                    let parameter = callable.parameters().get(index).ok_or_else(|| {
+                        MirInvariantError::new(
+                            context,
+                            "MIR parameter index exceeds its HIR signature",
+                        )
+                    })?;
+                    if parameter.mode() == ParameterMode::Value && !parameter.is_receiver() {
+                        candidates.push(MirPlace {
+                            local,
+                            ty: self.local(function, local, context)?.ty,
+                            projections: Vec::new(),
+                            source_loan: None,
+                        });
+                    }
+                }
+            }
+            MirFunctionId::Closure(closure_id) => {
+                let closure = self.hir.closure(closure_id).ok_or_else(|| {
+                    MirInvariantError::new(context, "closure function has no typed HIR body")
+                })?;
+                let environment = function.parameters.first().copied().ok_or_else(|| {
+                    MirInvariantError::new(
+                        context,
+                        "closure function has no hidden environment parameter",
+                    )
+                })?;
+                for (index, capture) in closure.captures().iter().enumerate() {
+                    candidates.push(MirPlace {
+                        local: environment,
+                        ty: capture.ty(),
+                        projections: vec![MirProjection {
+                            ty: capture.ty(),
+                            kind: MirProjectionKind::ClosureCapture {
+                                closure: closure_id,
+                                index: index as u32,
+                            },
+                        }],
+                        source_loan: None,
+                    });
+                }
+                for (index, local) in function.parameters.iter().copied().skip(1).enumerate() {
+                    let parameter = closure.parameters().get(index).ok_or_else(|| {
+                        MirInvariantError::new(
+                            context,
+                            "MIR closure parameter index exceeds its HIR signature",
+                        )
+                    })?;
+                    if parameter.mode() == ParameterMode::Value {
+                        candidates.push(MirPlace {
+                            local,
+                            ty: self.local(function, local, context)?.ty,
+                            projections: Vec::new(),
+                            source_loan: None,
+                        });
+                    }
+                }
+            }
+        }
+        candidates
+            .into_iter()
+            .filter_map(|owner| {
+                self.terminal_status(function.id, owner.ty, context)
+                    .map(|status| (status != HirTerminalStatus::Absent).then_some(owner))
+                    .transpose()
+            })
+            .collect()
     }
 
     fn verify_loan_flow(
@@ -5036,6 +5492,9 @@ impl Verifier<'_> {
                 MirTerminatorKind::DrainDefers { target, unwind, .. } => {
                     propagate(*target, state)?;
                     propagate(*unwind, LoanFlowState::default())?;
+                }
+                MirTerminatorKind::DrainUnwind { target } => {
+                    propagate(*target, LoanFlowState::default())?;
                 }
                 MirTerminatorKind::Return => {
                     if !state.active.is_empty()
@@ -5941,12 +6400,16 @@ impl Verifier<'_> {
                 MirStatementKind::RegisterDefer { action, guard, .. } => {
                     push_defer_operation_events(action, guard.as_ref(), &mut events);
                 }
-                MirStatementKind::RetargetDefer { .. } | MirStatementKind::DisarmDefer(_) => {}
+                MirStatementKind::RegisterFallback { owner, .. } => {
+                    push_place_events(owner, true, &mut events);
+                }
+                MirStatementKind::RetargetCleanup { .. } | MirStatementKind::DisarmCleanup(_) => {}
             }
         }
         match &block.terminator.kind {
             MirTerminatorKind::Goto { .. }
             | MirTerminatorKind::DrainDefers { .. }
+            | MirTerminatorKind::DrainUnwind { .. }
             | MirTerminatorKind::ResumePanic
             | MirTerminatorKind::Unreachable => {}
             MirTerminatorKind::SwitchBool { condition, .. } => {
@@ -6211,13 +6674,19 @@ fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEve
                 push_defer_operation_events(action, guard.as_ref(), &mut local);
                 events.extend(local.into_iter().map(LoanEvent::Local));
             }
-            MirStatementKind::RetargetDefer { .. } | MirStatementKind::DisarmDefer(_) => {}
+            MirStatementKind::RegisterFallback { owner, .. } => {
+                let mut local = Vec::new();
+                push_place_events(owner, true, &mut local);
+                events.extend(local.into_iter().map(LoanEvent::Local));
+            }
+            MirStatementKind::RetargetCleanup { .. } | MirStatementKind::DisarmCleanup(_) => {}
         }
     }
     let mut local = Vec::new();
     match &block.terminator.kind {
         MirTerminatorKind::Goto { .. }
         | MirTerminatorKind::DrainDefers { .. }
+        | MirTerminatorKind::DrainUnwind { .. }
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => {}
         MirTerminatorKind::SwitchBool { condition, .. } => {
@@ -6318,8 +6787,9 @@ fn tag_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<TagEvent> {
             | MirStatementKind::StorageDead(_)
             | MirStatementKind::ReserveLoan(_)
             | MirStatementKind::ReleaseLoan(_)
-            | MirStatementKind::RetargetDefer { .. }
-            | MirStatementKind::DisarmDefer(_) => {}
+            | MirStatementKind::RegisterFallback { .. }
+            | MirStatementKind::RetargetCleanup { .. }
+            | MirStatementKind::DisarmCleanup(_) => {}
             MirStatementKind::Assign { destination, value } => {
                 push_tag_rvalue(function, value, &mut events);
                 push_tag_place(function, destination, true, &mut events);
@@ -6332,6 +6802,7 @@ fn tag_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<TagEvent> {
     match &block.terminator.kind {
         MirTerminatorKind::Goto { .. }
         | MirTerminatorKind::DrainDefers { .. }
+        | MirTerminatorKind::DrainUnwind { .. }
         | MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => {}
@@ -6649,6 +7120,7 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
         | MirTerminatorKind::DrainDefers { target, unwind, .. } => {
             vec![edge(*target), edge(*unwind)]
         }
+        MirTerminatorKind::DrainUnwind { target } => vec![edge(*target)],
         MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => Vec::new(),
