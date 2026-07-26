@@ -28,6 +28,13 @@ uses the same scoped roots. The host boundary exchanges detached snapshots and
 therefore owns no VM handles; suspended-frame containers are absent until M7
 registers them explicitly.
 
+A private test adapter uses the production heap, descriptor validation, roots,
+allocation threshold, and mark-and-sweep pass. Under sustained allocation it
+keeps a rooted cycle spanning a `Ref` cell, array, and closure environment,
+reclaims equivalent unrooted cycles repeatedly, and reclaims the retained cycle
+after root withdrawal. It does not expose a source intrinsic or an alternate
+collector; public identity remains deferred to REF-001.
+
 The bootstrap representation remains deliberately explicit and more expensive
 than a compact production layout. The native runtime may later use ARC plus
 cycle collection without changing source semantics, provided it preserves the

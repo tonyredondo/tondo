@@ -440,8 +440,12 @@ Closure environments remain ordinary traced objects. Host values are detached
 snapshots rather than handles; suspended-frame containers remain absent until
 M7 registers them as a new root source. The VM rejects effectful ordinary calls
 and effectful root entries, so retaining an async or unsafe callable cannot
-activate an unfinished runtime. Its exact object, tracing, panic, host, and
-admission boundary is recorded in
+activate an unfinished runtime. A test-only memory adapter drives the same
+allocator, descriptors, root enumeration, and pressure trigger to keep a mixed
+`Ref`/array/closure cycle alive, repeatedly reclaim unrooted peers, and reclaim
+the retained graph after root withdrawal. This validates cycle collection
+without inventing source-visible `Ref` construction before REF-001. Its exact
+object, tracing, panic, host, and admission boundary is recorded in
 `docs/contracts/vm-runtime.md`.
 The sole M3 standard-library bridge, capability-gated
 `std.console.print(String): Unit`, is isolated by

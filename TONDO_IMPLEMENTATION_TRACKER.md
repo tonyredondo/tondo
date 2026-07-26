@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.53
+**Versión del tracker:** 0.54
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** probar ciclos alcanzables e inalcanzables a través de
-programas completos y recuperación sostenida bajo presión (GC-003).
+**Objetivo inmediato:** probar la recolección completa previa a OOM y el único
+reintento permitido de la asignación (GC-004).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1469,7 +1469,12 @@ lifetimes escritos por el usuario.
   intercambia snapshots sin handles y M7 conserva como frontera explícita los
   frames suspendidos todavía inexistentes.
 
-- [ ] **GC-003 — Trazar ciclos y recuperar objetos inalcanzables bajo presión.**
+- [x] **GC-003 — Trazar ciclos y recuperar objetos inalcanzables bajo presión.**
+  Un adaptador privado de test usa el allocator, descriptors, roots y trigger de
+  presión reales para construir `Ref -> Array -> Closure -> Ref`. Conserva un
+  ciclo publicado durante 32 rondas, recupera ciclos pares inalcanzables sin
+  invocar una colección especial y recupera también el retenido al retirar su
+  último root. REF-001 conserva para sí la construcción de identidad pública.
 
 - [ ] **GC-004 — Recolectar antes de declarar OOM por heap y reintentar una
   vez.**
@@ -2029,14 +2034,30 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es GC-003: ampliar la prueba de tracing cíclico desde
-el heap aislado hasta programas completos, conservar ciclos alcanzables a
-través de frames/environments y demostrar recuperación repetida de ciclos
-inalcanzables bajo presión.
+La siguiente acción activa es GC-004: ejecutar una colección completa antes de
+declarar OOM por objetos o bytes, reintentar exactamente una vez y demostrar que
+el estado pendiente de allocation o replacement permanece atómico.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.54 — 2026-07-25
+
+- Se completa GC-003 mediante el adaptador privado requerido por la
+  especificación, conectado al `Heap` y al collector distribuidos, sin un modo
+  alternativo ni una operación fuente oculta.
+- Un ciclo mixto atraviesa una celda `Ref`, una colección y un environment de
+  closure. Un root conserva sus tres nodos durante presión sostenida, mientras
+  32 ciclos independientes se recuperan; retirar el root hace recuperable el
+  original.
+- Esta es la frontera honesta anterior a REF-001: values y captures actuales no
+  pueden crear back-edges por fuente. La futura identidad pública reutilizará
+  esta misma ruta de trazado.
+- La puerta completa pasa con 551 tests —488 del compilador, 21 de la VM y 42
+  de CLI/integración—, `cargo fmt --check`, `cargo check`, `cargo build`,
+  Clippy con warnings como error, rustdoc con warnings como error y
+  `git diff --check`.
 
 ### 0.53 — 2026-07-25
 

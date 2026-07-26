@@ -10,7 +10,8 @@ BORROW-002 last-use regions, BORROW-003 fixed versus structural mutation, and
 BORROW-004 static collection-region disjunction, BORROW-005 dynamic overlap
 proofs, BORROW-006 borrowed iteration, TERM-003 synchronous defer/guard
 execution, TERM-004/005 structural unwind exclusivity, and GC-001 verified
-trace descriptors plus GC-002 complete synchronous root lifetimes
+trace descriptors, GC-002 complete synchronous root lifetimes, and GC-003
+cycle recovery under sustained allocation pressure
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -232,6 +233,22 @@ children are temporary roots for that collection. Growth of an existing object
 uses the same rule. Only after a complete collection still cannot satisfy the
 request does execution report VM exhaustion.
 
+The runtime test build has a private memory adapter over these exact allocation,
+replacement, root, descriptor, and pressure paths. It can connect managed nodes
+without exposing a source operation. Its mixed graph
+`Ref -> Array -> Closure -> Ref` proves that one published root preserves the
+whole cycle through repeated collections, that peer cycles without roots are
+reclaimed on every pressure round, and that withdrawing the final root makes
+the retained cycle reclaimable too. The adapter never calls a separate test
+collector or marks slots directly.
+
+This is the executable GC-003 boundary before REF-001. Ordinary safe values use
+copy semantics, closures capture snapshots, and the future `Ref[T].value`
+projection is read-only, so the current source and bytecode instruction sets
+cannot create a back-edge. REF-001 must add the public identity construction
+without changing the collector path; later conformance reuses a private runtime
+adapter for graphs that are not necessarily constructible through source alone.
+
 Object and byte accounting uses saturating checked budgets. Collection order,
 free-list order, slot addresses, and threshold timing are not observable Tondo
 semantics.
@@ -323,6 +340,9 @@ building and updating collections and records, copying nested slices, and
 performing elevated array arithmetic. A structured pending value must survive
 while published and become reclaimable after withdrawal. A retained detached
 host snapshot must remain valid without keeping its former heap object alive.
+The private memory adapter must additionally retain a mixed reachable cycle
+through sustained pressure, reclaim independent cycles without explicit
+collection calls, and reclaim the retained cycle after its root is withdrawn.
 
 Loan regressions execute shared temporaries, root and projected exclusive
 write-through, nested and closure-capture reborrows, statically disjoint fields,

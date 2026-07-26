@@ -225,7 +225,7 @@ impl From<BytecodeVerificationError> for VmError {
 mod tests {
     use crate::bytecode::{BytecodeCallableId, BytecodeTraceDescriptor, BytecodeTypeId};
 
-    use super::heap::{Heap, HeapObject};
+    use super::heap::{Heap, HeapHandle, HeapObject};
     use super::value::{Value, snapshot_value};
     use super::*;
 
@@ -252,6 +252,109 @@ mod tests {
                 },
             ],
         )
+    }
+
+    struct MemoryTestAdapter {
+        heap: Heap,
+        roots: Vec<Value>,
+        statistics: VmStatistics,
+    }
+
+    impl MemoryTestAdapter {
+        fn new() -> Self {
+            Self {
+                heap: Heap::new(
+                    limits(),
+                    vec![
+                        BytecodeTraceDescriptor::String,
+                        BytecodeTraceDescriptor::Ref {
+                            value: BytecodeTypeId::new(2),
+                        },
+                        BytecodeTraceDescriptor::Array {
+                            element: BytecodeTypeId::new(3),
+                        },
+                        BytecodeTraceDescriptor::Closure {
+                            callable: BytecodeCallableId::new(7),
+                            captures: vec![BytecodeTypeId::new(1)],
+                        },
+                    ],
+                ),
+                roots: Vec::new(),
+                statistics: VmStatistics::default(),
+            }
+        }
+
+        fn active_roots(&self, temporary: &[HeapHandle]) -> Vec<Value> {
+            self.roots
+                .iter()
+                .cloned()
+                .chain(temporary.iter().copied().map(Value::Heap))
+                .collect()
+        }
+
+        fn allocate(
+            &mut self,
+            descriptor: BytecodeTypeId,
+            object: HeapObject,
+            temporary: &[HeapHandle],
+        ) -> HeapHandle {
+            let roots = self.active_roots(temporary);
+            self.heap
+                .allocate(descriptor, object, &roots, &mut self.statistics)
+                .unwrap()
+        }
+
+        fn replace(&mut self, handle: HeapHandle, object: HeapObject, temporary: &[HeapHandle]) {
+            let roots = self.active_roots(temporary);
+            self.heap
+                .replace(handle, object, &roots, &mut self.statistics)
+                .unwrap();
+        }
+
+        fn create_mixed_cycle(&mut self) -> [HeapHandle; 3] {
+            let reference = self.allocate(BytecodeTypeId::new(1), HeapObject::Ref(None), &[]);
+            let closure = self.allocate(
+                BytecodeTypeId::new(3),
+                HeapObject::Closure {
+                    callable: BytecodeCallableId::new(7),
+                    captures: vec![Some(Value::Heap(reference))],
+                },
+                &[reference],
+            );
+            let array = self.allocate(
+                BytecodeTypeId::new(2),
+                HeapObject::Array(vec![Some(Value::Heap(closure))]),
+                &[reference, closure],
+            );
+            self.replace(
+                reference,
+                HeapObject::Ref(Some(Value::Heap(array))),
+                &[reference, closure, array],
+            );
+            [reference, array, closure]
+        }
+
+        fn retain(&mut self, handle: HeapHandle) {
+            self.roots.push(Value::Heap(handle));
+        }
+
+        fn release_all(&mut self) {
+            self.roots.clear();
+        }
+
+        fn apply_pressure(&mut self, allocations: usize) {
+            for index in 0..allocations {
+                self.allocate(
+                    BytecodeTypeId::new(0),
+                    HeapObject::String(format!("pressure-{index}")),
+                    &[],
+                );
+            }
+        }
+
+        fn is_live(&self, handle: HeapHandle) -> bool {
+            self.heap.get(handle).is_ok()
+        }
     }
 
     #[test]
@@ -289,6 +392,40 @@ mod tests {
         heap.collect(&[], &mut statistics).unwrap();
         assert_eq!(heap.live_objects(), 0);
         assert_eq!(statistics.reclaimed_objects, 2);
+    }
+
+    #[test]
+    fn private_memory_adapter_reclaims_mixed_cycles_under_sustained_pressure() {
+        let mut memory = MemoryTestAdapter::new();
+        let retained = memory.create_mixed_cycle();
+        memory.retain(retained[0]);
+
+        for _ in 0..32 {
+            let garbage = memory.create_mixed_cycle();
+            memory.apply_pressure(8);
+
+            assert!(retained.iter().all(|handle| memory.is_live(*handle)));
+            assert!(garbage.iter().all(|handle| !memory.is_live(*handle)));
+        }
+        assert_eq!(
+            snapshot_value(&Value::Heap(retained[0]), &memory.heap, &[], &[]).unwrap(),
+            RuntimeValue::Ref(Some(Box::new(RuntimeValue::Array(vec![
+                RuntimeValue::Closure {
+                    callable: 7,
+                    captures: vec![RuntimeValue::Cycle(0)],
+                },
+            ]))))
+        );
+
+        let reclaimed_before_release = memory.statistics.reclaimed_objects;
+        memory.release_all();
+        memory.apply_pressure(8);
+
+        assert!(retained.iter().all(|handle| !memory.is_live(*handle)));
+        assert!(memory.statistics.collections > 32);
+        assert!(
+            memory.statistics.reclaimed_objects >= reclaimed_before_release + retained.len() as u64
+        );
     }
 
     #[test]
