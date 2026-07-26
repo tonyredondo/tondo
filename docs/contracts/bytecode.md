@@ -19,7 +19,8 @@ indexing, ARRAY-003 checked slicing, ARRAY-004 logical slice snapshots,
 ARRAY-005 fixed versus structural array mutation, ARRAY-006 closed lifted
 arithmetic, ARRAY-007 named concatenation/repetition, ITER-001/002 static user
 iterators plus all four intrinsic iteration forms, and the M3 VM admission
-path implemented
+path implemented, plus TEXT-001 immutable UTF-8 strings and TEXT-004 distinct
+text and byte domains
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -247,6 +248,16 @@ non-normative. Immediate float spellings must parse finitely at their declared
 precision and may not carry the opposite precision's suffix. Runtime-generated
 infinity and NaN therefore remain values, while a source literal that rounds to
 infinity is rejected before execution.
+
+Immediate `String` and `Char` constants retain their source spelling so tooling
+can reproduce the program, but admission decodes that spelling independently.
+The verifier rejects malformed delimiters, escapes, Unicode scalar values, and
+surrogates before execution. A verified string therefore always materializes
+as valid UTF-8 and a verified character as exactly one Unicode scalar.
+`String`, `Char`, `Byte`, and `Array[Byte]` have distinct descriptors and no
+representation-preserving coercion between them. Bytecode intentionally has no
+intrinsic `Bytes` descriptor; encoded buffers remain a future standard-library
+abstraction over language-level values.
 
 An Array aggregate stores its complete ordered operand list while its result
 type is only `Array[T]`; operand count is runtime data, not type metadata.

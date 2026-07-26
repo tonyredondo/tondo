@@ -75,11 +75,14 @@ arithmetic, division, remainder, shifts, bitwise operations, and their normative
 panic classes are likewise executable. `Float32` and `Float64` preserve their
 IEEE precision at every operation, including ties-to-even rounding, gradual
 underflow, infinities, NaN, signed zero, and the prohibition on implicit FMA
-contraction. Complete HIR lowers through a verified typed MIR and then to
-verified in-memory slot bytecode with source maps. Reached generic functions
-are monomorphized deterministically; equal concrete substitutions share one
-body, direct bytecode calls carry no runtime type pack, and expanding recursion
-is stopped by an explicit request limit. `tondo run` executes a synchronous
+contraction. Immutable strings retain valid UTF-8, exact scalar equality and
+ordering, and linear Unicode-scalar iteration; `String`, `Char`, `Byte`, and
+`Array[Byte]` remain distinct, while `Bytes` is deliberately reserved for the
+future standard library. Complete HIR lowers through a verified typed MIR and
+then to verified in-memory slot bytecode with source maps. Reached generic
+functions are monomorphized deterministically; equal concrete substitutions
+share one body, direct bytecode calls carry no runtime type pack, and expanding
+recursion is stopped by an explicit request limit. `tondo run` executes a synchronous
 explicit `main` in an iterative VM with checked operations,
 normative panics, precise generational mark-and-sweep collection, defensive
 limits, and a provisional capability-gated `std.console.print` host shim. Async

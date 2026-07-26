@@ -7847,6 +7847,67 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
     }
 
     #[test]
+    fn verifier_rejects_malformed_immediate_text_literals() {
+        let mut string = lowered("fn value(): String { \"valid\" }\n");
+        let spelling =
+            string
+                .functions
+                .iter_mut()
+                .flat_map(|function| &mut function.blocks)
+                .flat_map(|block| &mut block.instructions)
+                .find_map(|instruction| match &mut instruction.kind {
+                    bc::BytecodeInstructionKind::Store {
+                        value:
+                            bc::BytecodeRvalue {
+                                kind:
+                                    bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                                        kind:
+                                            bc::BytecodeOperandKind::Constant(
+                                                bc::BytecodeConstant::String(spelling),
+                                            ),
+                                        ..
+                                    }),
+                                ..
+                            },
+                        ..
+                    } => Some(spelling),
+                    _ => None,
+                })
+                .unwrap();
+        *spelling = "\"unterminated".into();
+        assert!(bc::verify_bytecode(&string).is_err());
+
+        let mut character = lowered("fn value(): Char { 'x' }\n");
+        let spelling =
+            character
+                .functions
+                .iter_mut()
+                .flat_map(|function| &mut function.blocks)
+                .flat_map(|block| &mut block.instructions)
+                .find_map(|instruction| match &mut instruction.kind {
+                    bc::BytecodeInstructionKind::Store {
+                        value:
+                            bc::BytecodeRvalue {
+                                kind:
+                                    bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                                        kind:
+                                            bc::BytecodeOperandKind::Constant(
+                                                bc::BytecodeConstant::Char(spelling),
+                                            ),
+                                        ..
+                                    }),
+                                ..
+                            },
+                        ..
+                    } => Some(spelling),
+                    _ => None,
+                })
+                .unwrap();
+        *spelling = "'\\u{d800}'".into();
+        assert!(bc::verify_bytecode(&character).is_err());
+    }
+
+    #[test]
     fn verifier_budget_and_disassembler_are_explicit_tooling_boundaries() {
         let program = lowered("fn answer(): Int { 20 + 22 }\n");
         let error = bc::verify_bytecode_with_limits(

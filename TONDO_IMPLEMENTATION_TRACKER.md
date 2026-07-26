@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.72
+**Versión del tracker:** 0.73
 
 **Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** familia NUM cerrada; iniciar `String` UTF-8 inmutable
-(TEXT-001) cuando se reanude la implementación.
+**Objetivo inmediato:** TEXT-001 y TEXT-004 cerrados; implementar longitud,
+indexación y slicing Unicode de `String` (TEXT-002).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1673,7 +1673,10 @@ lifetimes escritos por el usuario.
 
 ### 11.4 Texto
 
-- [ ] **TEXT-001 — Implementar `String` UTF-8 inmutable.**
+- [x] **TEXT-001 — Implementar `String` UTF-8 inmutable.** Cada valor mantiene
+  UTF-8 válido por construcción, copia con semántica de valor, compara y ordena
+  secuencias escalares exactas sin normalización e itera `Char` en tiempo
+  lineal mediante offsets internos de byte no observables.
 
 - [ ] **TEXT-002 — Implementar longitud, indexación y slicing por escalares
   Unicode según el spec.**
@@ -1681,8 +1684,10 @@ lifetimes escritos por el usuario.
 - [ ] **TEXT-003 — Implementar `Char`, escapes e interpolación mediante
   `Display`.**
 
-- [ ] **TEXT-004 — Separar claramente texto y `Byte`; `Bytes` permanece en la
-  stdlib.**
+- [x] **TEXT-004 — Separar claramente texto y `Byte`; `Bytes` permanece en la
+  stdlib.** `String`, `Char`, `Byte` y `Array[Byte]` conservan identidades
+  distintas sin coerciones implícitas; el bytecode no introduce un descriptor
+  intrínseco provisional para `Bytes`.
 
 ### 11.5 Variádicos y spread
 
@@ -2147,12 +2152,27 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-NUM-001 a NUM-005 quedan cerrados. La siguiente acción, al reanudar el trabajo,
-es TEXT-001: `String` UTF-8 inmutable.
+NUM-001 a NUM-005 y TEXT-001/TEXT-004 quedan cerrados. La siguiente acción es
+TEXT-002: longitud, indexación y slicing de `String` por escalares Unicode.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.73 — 2026-07-26
+
+- Se cierra TEXT-001 conservando `String` como objeto gestionado UTF-8
+  inmutable, con igualdad y orden exactos sin normalización automática,
+  pertenencia por `Char` e iteración escalar en tiempo lineal.
+- El cursor de texto avanza con un offset interno que siempre cae en una
+  frontera UTF-8; ese detalle no cruza el bytecode ni es observable desde
+  fuente.
+- El verificador vuelve a decodificar literales inmediatos `String` y `Char` y
+  rechaza delimitadores, escapes, escalares o sustitutos Unicode malformados
+  antes de ejecutar una instrucción.
+- Se cierra TEXT-004 manteniendo separados `String`, `Char`, `Byte` y
+  `Array[Byte]`, sin reservar una representación intrínseca para el futuro
+  `Bytes` de la stdlib.
 
 ### 0.72 — 2026-07-26
 

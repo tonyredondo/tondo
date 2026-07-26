@@ -3285,10 +3285,34 @@ impl Verifier<'_> {
                         ));
                     }
                 }
-                BytecodeConstant::Char(_)
-                    if self.is_scalar(operand.ty, BytecodeScalarType::Char) => {}
-                BytecodeConstant::String(_)
-                    if self.is_scalar(operand.ty, BytecodeScalarType::String) => {}
+                BytecodeConstant::Char(spelling) => {
+                    if !self.is_scalar(operand.ty, BytecodeScalarType::Char) {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "immediate character constant has a non-Char type",
+                        ));
+                    }
+                    if literal::character(spelling).is_none() {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "immediate character constant is malformed",
+                        ));
+                    }
+                }
+                BytecodeConstant::String(spelling) => {
+                    if !self.is_scalar(operand.ty, BytecodeScalarType::String) {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "immediate string constant has a non-String type",
+                        ));
+                    }
+                    if literal::string(spelling).is_none() {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "immediate string constant is malformed",
+                        ));
+                    }
+                }
                 BytecodeConstant::Named(id) => {
                     let constant =
                         self.program

@@ -26,7 +26,8 @@ RANGE-001 lazy discrete ranges with checked boundaries, and ITER-001/002 static
 user iterators plus `for`, `for ref`, `for mut`, and `for var`, NUM-001 exact
 intrinsic widths, and NUM-002/005 closed numeric conversion with stable
 recoverable errors, NUM-003 fixed-width integer operators, and NUM-004 strict
-IEEE arithmetic at each declared precision
+IEEE arithmetic at each declared precision, plus TEXT-001 immutable UTF-8
+strings and TEXT-004 distinct text and byte domains
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -79,6 +80,21 @@ rounding occurs at each source operation, subnormals are not flushed, signed
 zero and IEEE comparisons remain visible, and a multiply followed by an add is
 two operations rather than an implicit FMA. Named constants use the same
 canonical envelope representation, including constant infinities and NaNs.
+
+Every managed string contains one host `String`, so allocation, constant
+materialization, host conversion, logical copy, and GC tracing preserve valid
+UTF-8 by construction. Source equality and ordering compare exact Unicode
+scalar sequences without normalization, membership observes one `Char`, and
+string iteration yields those scalars in order. The intrinsic cursor stores a
+UTF-8 byte boundary internally and advances by the yielded scalar width, making
+a complete traversal linear while keeping byte offsets unobservable. Logical
+copies may share the immutable object because no source operation can mutate
+it or observe its identity.
+
+`String`, `Char`, `Byte`, and `Array[Byte]` remain distinct runtime and bytecode
+types with no implicit conversion. The language core has no intrinsic `Bytes`
+type; that name and any explicit text encoding or decoding API belong to the
+future standard library.
 
 An array object owns one ordered vector of optional value slots. The vector
 length is the array's runtime length; it is not duplicated in bytecode type

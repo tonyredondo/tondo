@@ -5727,10 +5727,16 @@ impl Engine<'_, '_> {
                 Ok((Some(tuple), 0))
             }
             HeapObject::String(text) => {
-                let Some(value) = text.chars().nth(next) else {
+                let suffix = text.get(next..).ok_or_else(|| {
+                    VmError::invariant("String iterator offset is not a UTF-8 boundary")
+                })?;
+                let Some(value) = suffix.chars().next() else {
                     return Ok((None, usize::MAX));
                 };
-                Ok((Some(Value::Char(value)), next.saturating_add(1)))
+                let next = next
+                    .checked_add(value.len_utf8())
+                    .ok_or_else(|| VmError::invariant("String iterator offset overflowed"))?;
+                Ok((Some(Value::Char(value)), next))
             }
             HeapObject::Range { kind, start, end } => {
                 let start = present(&start, "range start")?;
