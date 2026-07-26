@@ -11,7 +11,6 @@ use crate::bytecode::{BytecodeSpan, BytecodeVerificationError};
 
 mod execute;
 mod heap;
-mod literal;
 mod value;
 
 pub use execute::{RejectingHost, VmExecution, VmHost, VmOutcome, execute, execute_with_limits};

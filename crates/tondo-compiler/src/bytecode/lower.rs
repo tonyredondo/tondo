@@ -7772,6 +7772,42 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
     }
 
     #[test]
+    fn verifier_rejects_malformed_or_out_of_range_immediate_integers() {
+        let mut program = lowered("fn value(): Int8 { 1i8 }\n");
+        fn integer_spelling(program: &mut bc::BytecodeProgram) -> &mut String {
+            program
+                .functions
+                .iter_mut()
+                .flat_map(|function| &mut function.blocks)
+                .flat_map(|block| &mut block.instructions)
+                .find_map(|instruction| match &mut instruction.kind {
+                    bc::BytecodeInstructionKind::Store {
+                        value:
+                            bc::BytecodeRvalue {
+                                kind:
+                                    bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                                        kind:
+                                            bc::BytecodeOperandKind::Constant(
+                                                bc::BytecodeConstant::Integer(spelling),
+                                            ),
+                                        ..
+                                    }),
+                                ..
+                            },
+                        ..
+                    } => Some(spelling),
+                    _ => None,
+                })
+                .unwrap()
+        }
+        *integer_spelling(&mut program) = "128i8".into();
+        assert!(bc::verify_bytecode(&program).is_err());
+
+        *integer_spelling(&mut program) = "not-an-integer".into();
+        assert!(bc::verify_bytecode(&program).is_err());
+    }
+
+    #[test]
     fn verifier_budget_and_disassembler_are_explicit_tooling_boundaries() {
         let program = lowered("fn answer(): Int { 20 + 22 }\n");
         let error = bc::verify_bytecode_with_limits(

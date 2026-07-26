@@ -25,7 +25,7 @@ content equality, SET-001 insertion-ordered unique sets and membership, and
 RANGE-001 lazy discrete ranges with checked boundaries, and ITER-001/002 static
 user iterators plus `for`, `for ref`, `for mut`, and `for var`, NUM-001 exact
 intrinsic widths, and NUM-002/005 closed numeric conversion with stable
-recoverable errors
+recoverable errors, plus NUM-003 fixed-width integer operators
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -61,6 +61,14 @@ observable order `NotFinite`, `NotIntegral`, then `OutOfRange`; integer
 narrowing and finite `Float64` to overflowing `Float32` use `OutOfRange`.
 Identity and total conversions never allocate a result and a failure on either
 verified path is a VM invariant violation, not a source-level fallback.
+
+Integer `+`, `-`, `*`, `/`, `%`, and signed negation check the exact destination
+width and produce `P0005` on overflow. Division and remainder by zero produce
+`P0003`; signed minimum divided by `-1` overflows while its remainder is zero.
+A shift count outside `0..width` produces `P0010`. A valid left shift masks back
+to the operand width instead of raising overflow, and right shift is arithmetic
+for signed integers and logical for unsigned integers and `Byte`. Bitwise
+operations and compound assignments preserve the same fixed-width patterns.
 
 An array object owns one ordered vector of optional value slots. The vector
 length is the array's runtime length; it is not duplicated in bytecode type

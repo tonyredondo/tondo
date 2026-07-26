@@ -17,9 +17,9 @@ use crate::bytecode::{
     BytecodeVerificationLimits, normalize_array_index, normalize_array_slice_indices,
     verify_bytecode_with_trace_metadata,
 };
+use crate::literal;
 
 use super::heap::{Heap, HeapHandle, HeapObject};
-use super::literal;
 use super::value::{AggregatePayload, RuntimeLoan, Value, snapshot_value};
 use super::{PanicCode, RuntimeValue, VmError, VmLimits, VmPanic, VmStackFrame, VmStatistics};
 
@@ -2135,9 +2135,17 @@ impl Engine<'_, '_> {
         match constant {
             BytecodeConstant::Unit => Ok(Value::Unit),
             BytecodeConstant::Bool(value) => Ok(Value::Bool(*value)),
-            BytecodeConstant::Integer(spelling) => literal::integer(spelling)
-                .map(Value::Integer)
-                .ok_or_else(|| VmError::invariant("verified integer literal is malformed")),
+            BytecodeConstant::Integer(spelling) => {
+                let value = literal::integer(spelling)
+                    .ok_or_else(|| VmError::invariant("verified integer literal is malformed"))?;
+                if self.scalar(ty)? == BytecodeScalarType::Byte {
+                    u8::try_from(value)
+                        .map(Value::Byte)
+                        .map_err(|_| VmError::invariant("verified Byte literal is out of range"))
+                } else {
+                    Ok(Value::Integer(value))
+                }
+            }
             BytecodeConstant::Float(spelling) => {
                 let single = self.scalar(ty)? == BytecodeScalarType::Float32;
                 literal::float(spelling, single)
@@ -2169,7 +2177,15 @@ impl Engine<'_, '_> {
         match &constant.kind {
             BytecodeConstantValueKind::Unit => Ok(Value::Unit),
             BytecodeConstantValueKind::Bool(value) => Ok(Value::Bool(*value)),
-            BytecodeConstantValueKind::Integer(value) => Ok(Value::Integer(*value)),
+            BytecodeConstantValueKind::Integer(value) => {
+                if self.scalar(constant.ty)? == BytecodeScalarType::Byte {
+                    u8::try_from(*value).map(Value::Byte).map_err(|_| {
+                        VmError::invariant("verified Byte constant is outside its range")
+                    })
+                } else {
+                    Ok(Value::Integer(*value))
+                }
+            }
             BytecodeConstantValueKind::Float(bits) => {
                 let value = if self.scalar(constant.ty)? == BytecodeScalarType::Float32 {
                     f64::from(f32::from_bits(*bits as u32))
@@ -4762,7 +4778,7 @@ impl Engine<'_, '_> {
                 }
             }
             Op::ShiftLeft | Op::ShiftRight => {
-                let (_, bits) = if scalar == BytecodeScalarType::Byte {
+                let (signed, bits) = if scalar == BytecodeScalarType::Byte {
                     (false, 8)
                 } else {
                     integer_shape(scalar).ok_or_else(|| {
@@ -4781,11 +4797,21 @@ impl Engine<'_, '_> {
                             format!("shift count must be between 0 and {}", bits - 1),
                         )
                     })?;
-                if operator == Op::ShiftLeft {
-                    left.checked_shl(count)
+                let mask = (1_u128 << bits) - 1;
+                let source = (left as u128) & mask;
+                let shifted = if operator == Op::ShiftLeft {
+                    (source << count) & mask
+                } else if signed {
+                    ((left >> count) as u128) & mask
                 } else {
-                    left.checked_shr(count)
-                }
+                    source >> count
+                };
+                let sign = 1_u128 << (bits - 1);
+                Some(if signed && shifted & sign != 0 {
+                    shifted as i128 - (1_i128 << bits)
+                } else {
+                    shifted as i128
+                })
             }
             Op::BitwiseAnd
             | Op::BitwiseXor
@@ -6299,13 +6325,14 @@ fn collection_length_fits_int(length: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::bytecode::{
-        BytecodeConstantValue, BytecodeConstantValueKind, BytecodeCursorMode,
-        BytecodeIntrinsicType, BytecodeProgram, BytecodeRangeKind, BytecodeScalarType,
-        BytecodeType, BytecodeTypeId, BytecodeTypeKind, derive_trace_metadata,
+        BytecodeBinaryOperator, BytecodeConstantValue, BytecodeConstantValueKind,
+        BytecodeCursorMode, BytecodeIntrinsicType, BytecodeProgram, BytecodeRangeKind,
+        BytecodeScalarType, BytecodeType, BytecodeTypeId, BytecodeTypeKind, derive_trace_metadata,
     };
 
     use super::{
-        Engine, RejectingHost, RuntimeType, RuntimeValue, Value, VmLimits, snapshot_value,
+        Engine, PanicCode, RejectingHost, RuntimeType, RuntimeValue, Value, VmLimits,
+        snapshot_value,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -6374,6 +6401,169 @@ mod tests {
             max_heap_bytes: 64 * 1024,
             initial_gc_threshold: 1,
             ..VmLimits::default()
+        }
+    }
+
+    #[test]
+    fn fixed_width_integer_shifts_wrap_and_all_invalid_counts_use_p0010() {
+        use BytecodeBinaryOperator::{ShiftLeft, ShiftRight};
+
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let engine = Engine::new(&program, &mut host, VmLimits::default(), trace);
+        for (scalar, signed, bits, minimum, maximum) in [
+            (BytecodeScalarType::Byte, false, 8, 0, 255),
+            (BytecodeScalarType::UInt8, false, 8, 0, u8::MAX as i128),
+            (BytecodeScalarType::UInt16, false, 16, 0, u16::MAX as i128),
+            (BytecodeScalarType::UInt32, false, 32, 0, u32::MAX as i128),
+            (BytecodeScalarType::UInt64, false, 64, 0, u64::MAX as i128),
+            (
+                BytecodeScalarType::Int8,
+                true,
+                8,
+                i8::MIN as i128,
+                i8::MAX as i128,
+            ),
+            (
+                BytecodeScalarType::Int16,
+                true,
+                16,
+                i16::MIN as i128,
+                i16::MAX as i128,
+            ),
+            (
+                BytecodeScalarType::Int32,
+                true,
+                32,
+                i32::MIN as i128,
+                i32::MAX as i128,
+            ),
+            (
+                BytecodeScalarType::Int,
+                true,
+                64,
+                i64::MIN as i128,
+                i64::MAX as i128,
+            ),
+        ] {
+            let high_bit = 1_i128 << (bits - 1);
+            assert_eq!(
+                engine
+                    .checked_integer_binary(ShiftLeft, scalar, 1, bits - 1)
+                    .unwrap(),
+                if signed { -high_bit } else { high_bit }
+            );
+            assert_eq!(
+                engine
+                    .checked_integer_binary(ShiftLeft, scalar, maximum, 1)
+                    .unwrap(),
+                if signed { -2 } else { maximum - 1 }
+            );
+            assert_eq!(
+                engine
+                    .checked_integer_binary(ShiftLeft, scalar, minimum, 1)
+                    .unwrap(),
+                0
+            );
+            assert_eq!(
+                engine
+                    .checked_integer_binary(
+                        ShiftRight,
+                        scalar,
+                        if signed { -2 } else { maximum },
+                        bits - 1,
+                    )
+                    .unwrap(),
+                if signed { -1 } else { 1 }
+            );
+            assert_eq!(
+                engine
+                    .checked_integer_binary(ShiftLeft, scalar, maximum, 0)
+                    .unwrap(),
+                maximum
+            );
+            for invalid in [-1, bits, i128::from(u64::MAX)] {
+                assert_eq!(
+                    engine
+                        .checked_integer_binary(ShiftLeft, scalar, 1, invalid)
+                        .unwrap_err()
+                        .0,
+                    PanicCode::InvalidShiftCount
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn checked_integer_arithmetic_uses_the_normative_panic_classes() {
+        use BytecodeBinaryOperator::{Add, Divide, Remainder, Subtract};
+
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let engine = Engine::new(&program, &mut host, VmLimits::default(), trace);
+        for (scalar, minimum, maximum) in [
+            (BytecodeScalarType::UInt8, 0, u8::MAX as i128),
+            (BytecodeScalarType::UInt16, 0, u16::MAX as i128),
+            (BytecodeScalarType::UInt32, 0, u32::MAX as i128),
+            (BytecodeScalarType::UInt64, 0, u64::MAX as i128),
+            (BytecodeScalarType::Int8, i8::MIN as i128, i8::MAX as i128),
+            (
+                BytecodeScalarType::Int16,
+                i16::MIN as i128,
+                i16::MAX as i128,
+            ),
+            (
+                BytecodeScalarType::Int32,
+                i32::MIN as i128,
+                i32::MAX as i128,
+            ),
+            (BytecodeScalarType::Int, i64::MIN as i128, i64::MAX as i128),
+        ] {
+            assert_eq!(
+                engine
+                    .checked_integer_binary(Add, scalar, maximum, 1)
+                    .unwrap_err()
+                    .0,
+                PanicCode::CheckedOverflow
+            );
+            assert_eq!(
+                engine
+                    .checked_integer_binary(Subtract, scalar, minimum, 1)
+                    .unwrap_err()
+                    .0,
+                PanicCode::CheckedOverflow
+            );
+            assert_eq!(
+                engine
+                    .checked_integer_binary(Divide, scalar, maximum, 0)
+                    .unwrap_err()
+                    .0,
+                PanicCode::IntegerDivisionByZero
+            );
+            assert_eq!(
+                engine
+                    .checked_integer_binary(Remainder, scalar, maximum, 0)
+                    .unwrap_err()
+                    .0,
+                PanicCode::IntegerDivisionByZero
+            );
+            if minimum < 0 {
+                assert_eq!(
+                    engine
+                        .checked_integer_binary(Divide, scalar, minimum, -1)
+                        .unwrap_err()
+                        .0,
+                    PanicCode::CheckedOverflow
+                );
+                assert_eq!(
+                    engine
+                        .checked_integer_binary(Remainder, scalar, minimum, -1)
+                        .unwrap(),
+                    0
+                );
+            }
         }
     }
 

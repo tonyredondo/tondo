@@ -3,5 +3,7 @@
 pub mod bytecode;
 pub mod runtime;
 
+mod literal;
+
 /// Human-readable identifier for the initial execution backend.
 pub const BACKEND_NAME: &str = "bytecode-vm";

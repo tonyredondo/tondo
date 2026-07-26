@@ -70,8 +70,10 @@ sets with content-based equality, plus lazy integer and Unicode-scalar ranges
 whose inclusive maximum does not require an overflowing successor. The closed
 121-pair numeric conversion matrix also reaches execution. Checked conversions
 return the intrinsic, exhaustively matchable `NumericConversionError`, with
-identical classification in constants and at runtime. Complete HIR lowers
-through a verified typed MIR and then to
+identical classification in constants and at runtime. Fixed-width integer
+arithmetic, division, remainder, shifts, bitwise operations, and their normative
+panic classes are likewise executable. Complete HIR lowers through a verified
+typed MIR and then to
 verified in-memory slot bytecode with source maps. Reached generic functions
 are monomorphized deterministically; equal concrete substitutions share one
 body, direct bytecode calls carry no runtime type pack, and expanding recursion

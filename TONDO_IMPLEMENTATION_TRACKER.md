@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.70
+**Versión del tracker:** 0.71
 
 **Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** NUM-001/002/005 cerrados; completar la semántica entera
-de operadores (NUM-003).
+**Objetivo inmediato:** NUM-001/002/003/005 cerrados; completar la semántica
+IEEE observable (NUM-004).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1653,7 +1653,11 @@ lifetimes escritos por el usuario.
   identidad, total o comprobada. Las parejas no numéricas se rechazan y la
   clasificación se rederiva en HIR, MIR y bytecode antes de ejecutar.
 
-- [ ] **NUM-003 — Implementar overflow, división, resto, shifts y bitwise.**
+- [x] **NUM-003 — Implementar overflow, división, resto, shifts y bitwise.**
+  La aritmética comprueba el ancho exacto, división/resto conservan `P0003` y
+  la excepción mínimo/`-1`, los conteos inválidos conservan `P0010`, y los
+  shifts válidos transforman el patrón de ancho fijo sin convertir el descarte
+  de bits altos en overflow. Operadores simples y compuestos comparten lowering.
 
 - [ ] **NUM-004 — Conservar semántica IEEE sin fast-math observable.**
 
@@ -2139,12 +2143,25 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-NUM-001, NUM-002 y NUM-005 quedan cerrados. La siguiente acción es NUM-003:
-operadores enteros, overflow, división, resto, shifts y bitwise.
+NUM-001, NUM-002, NUM-003 y NUM-005 quedan cerrados. La siguiente acción es
+NUM-004: semántica IEEE observable sin fast-math.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.71 — 2026-07-26
+
+- Se cierra NUM-003 corrigiendo `<<` para descartar bits altos en cada ancho,
+  manteniendo `>>` aritmético o lógico según signo y reservando `P0010`
+  exclusivamente para conteos inválidos.
+- Aritmética, división, resto, complemento, bitwise y asignaciones compuestas se
+  prueban en fuente y VM. La matriz de bordes cubre todos los anchos, overflow
+  firmado/sin signo, cero, mínimo dividido por `-1` y su resto representable.
+- La aceptación negativa conserva `P0003`, `P0005`, `P0010` y rechaza dominios
+  de operador fuera del conjunto cerrado antes de generar bytecode.
+- Las constantes enteras se vuelven a validar contra su ancho en la frontera de
+  bytecode; una constante `Byte` se materializa como byte y no como `Int`.
 
 ### 0.70 — 2026-07-26
 

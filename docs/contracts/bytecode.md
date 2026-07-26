@@ -226,6 +226,20 @@ reject any other ordinal or payload shape. Checked conversion must return
 `Result[target, NumericConversionError]`, while identity and total conversion
 must return the target directly.
 
+Integer arithmetic and signed negation use the checked invocation path.
+Division or remainder by zero, signed-minimum division by `-1`, and every
+out-of-range arithmetic result retain distinct normative panic classes. Shifts
+use that path only to validate the right operand; once valid, they transform the
+left operand's fixed-width bit pattern. Left shift discards high bits, signed
+right shift extends the sign bit, and unsigned or `Byte` right shift introduces
+zeroes. The verifier requires an integer non-`Byte` count and preserves the
+left type exactly. Bitwise operands must have that identical integer or `Byte`
+type.
+
+Named integer constants are admitted only when their mathematical value fits
+their exact scalar descriptor. `Byte` uses that same checked constant spelling
+in bytecode but materializes as the VM's distinct byte value, never as `Int`.
+
 An Array aggregate stores its complete ordered operand list while its result
 type is only `Array[T]`; operand count is runtime data, not type metadata.
 `Length` is the internal shape observation used by array-pattern lowering. The

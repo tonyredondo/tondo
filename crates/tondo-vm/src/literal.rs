@@ -1,4 +1,9 @@
-pub(super) fn integer(spelling: &str) -> Option<i128> {
+pub(crate) fn integer(spelling: &str) -> Option<i128> {
+    let (negative, spelling) = if let Some(body) = spelling.strip_prefix('-') {
+        (true, body)
+    } else {
+        (false, spelling)
+    };
     let suffix = ["i16", "i32", "i64", "u16", "u32", "u64", "i8", "u8"]
         .into_iter()
         .find(|suffix| spelling.ends_with(suffix));
@@ -15,10 +20,18 @@ pub(super) fn integer(spelling: &str) -> Option<i128> {
         (10, body)
     };
     let magnitude = u128::from_str_radix(&digits.replace('_', ""), radix).ok()?;
-    i128::try_from(magnitude).ok()
+    if negative {
+        if magnitude == 1_u128 << 127 {
+            Some(i128::MIN)
+        } else {
+            i128::try_from(magnitude).ok()?.checked_neg()
+        }
+    } else {
+        i128::try_from(magnitude).ok()
+    }
 }
 
-pub(super) fn float(spelling: &str, single_precision: bool) -> Option<f64> {
+pub(crate) fn float(spelling: &str, single_precision: bool) -> Option<f64> {
     let suffix = ["f32", "f64"]
         .into_iter()
         .find(|suffix| spelling.ends_with(suffix));
@@ -35,7 +48,7 @@ pub(super) fn float(spelling: &str, single_precision: bool) -> Option<f64> {
     }
 }
 
-pub(super) fn character(spelling: &str) -> Option<char> {
+pub(crate) fn character(spelling: &str) -> Option<char> {
     let body = spelling.strip_prefix('\'')?.strip_suffix('\'')?;
     let decoded = escaped(body, false)?;
     let mut characters = decoded.chars();
@@ -43,7 +56,7 @@ pub(super) fn character(spelling: &str) -> Option<char> {
     characters.next().is_none().then_some(value)
 }
 
-pub(super) fn string(spelling: &str) -> Option<String> {
+pub(crate) fn string(spelling: &str) -> Option<String> {
     let (raw, multiline, opening, closing) = if spelling.starts_with("r\"\"\"") {
         (true, true, "r\"\"\"", "\"\"\"")
     } else if spelling.starts_with("r\"") {
@@ -150,6 +163,7 @@ mod tests {
     fn literals_decode_to_runtime_values_without_host_locale() {
         assert_eq!(integer("0xffu16"), Some(255));
         assert_eq!(integer("9_223"), Some(9_223));
+        assert_eq!(integer("-128i8"), Some(-128));
         assert_eq!(float("1.5f32", true), Some(1.5));
         assert_eq!(character("'\\u{1f642}'"), Some('🙂'));
         assert_eq!(string("\"left{{right}}\\n\""), Some("left{right}\n".into()));

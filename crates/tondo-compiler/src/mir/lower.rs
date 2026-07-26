@@ -833,6 +833,31 @@ impl<'a> FunctionBuilder<'a> {
                 tail,
             } => self.lower_block(&expression, *scope, statements, *tail, destination, block),
             HirExpressionKind::Prefix { operator, operand } => {
+                if *operator == crate::hir::HirPrefixOperator::Negate
+                    && let HirExpressionKind::Literal(HirLiteral::Integer(spelling)) =
+                        self.expression(*operand)?.kind()
+                {
+                    // The checker admits the asymmetric signed minimum as
+                    // `-(maximum + 1)`. Keep it representable in MIR by
+                    // canonicalizing the already-validated literal instead of
+                    // materializing its out-of-range positive magnitude.
+                    let operand = MirOperand {
+                        ty: expression.ty(),
+                        kind: MirOperandKind::Constant(MirConstant::Integer(format!(
+                            "-{spelling}"
+                        ))),
+                    };
+                    self.assign(
+                        block,
+                        span,
+                        destination,
+                        MirRvalue {
+                            ty: expression.ty(),
+                            kind: MirRvalueKind::Use(operand),
+                        },
+                    )?;
+                    return Ok(Some(block));
+                }
                 let Some((block, operand)) = self.lower_value(*operand, block)? else {
                     return Ok(None);
                 };

@@ -3,6 +3,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::error::Error;
 use std::fmt;
 
+use crate::literal;
+
 use super::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2136,7 +2138,14 @@ impl Verifier<'_> {
                 if matches!(ty, BytecodeTypeKind::Scalar(BytecodeScalarType::Unit)) => {}
             BytecodeConstantValueKind::Bool(_)
                 if matches!(ty, BytecodeTypeKind::Scalar(BytecodeScalarType::Bool)) => {}
-            BytecodeConstantValueKind::Integer(_) if is_integer_kind(ty) => {}
+            BytecodeConstantValueKind::Integer(integer) => {
+                let BytecodeTypeKind::Scalar(scalar) = ty else {
+                    return Err(constant_shape_error(context));
+                };
+                if !integer_value_fits(*integer, *scalar) {
+                    return Err(constant_shape_error(context));
+                }
+            }
             BytecodeConstantValueKind::Float(_) if is_float_kind(ty) => {}
             BytecodeConstantValueKind::Char(_)
                 if matches!(ty, BytecodeTypeKind::Scalar(BytecodeScalarType::Char)) => {}
@@ -3223,8 +3232,27 @@ impl Verifier<'_> {
                 BytecodeConstant::Unit if self.is_scalar(operand.ty, BytecodeScalarType::Unit) => {}
                 BytecodeConstant::Bool(_)
                     if self.is_scalar(operand.ty, BytecodeScalarType::Bool) => {}
-                BytecodeConstant::Integer(_)
-                    if is_integer_kind(&self.ty(operand.ty, context)?.kind) => {}
+                BytecodeConstant::Integer(spelling) => {
+                    let BytecodeTypeKind::Scalar(scalar) = &self.ty(operand.ty, context)?.kind
+                    else {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "immediate integer constant has a non-scalar type",
+                        ));
+                    };
+                    let Some(value) = literal::integer(spelling) else {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "immediate integer constant is malformed",
+                        ));
+                    };
+                    if !integer_value_fits(value, *scalar) {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            format!("immediate integer constant `{spelling}` exceeds `{scalar:?}`"),
+                        ));
+                    }
+                }
                 BytecodeConstant::Float(_)
                     if is_float_kind(&self.ty(operand.ty, context)?.kind) => {}
                 BytecodeConstant::Char(_)
@@ -7494,8 +7522,16 @@ fn bytecode_type_children(kind: &BytecodeTypeKind) -> Vec<BytecodeTypeId> {
     }
 }
 
-fn is_integer_kind(kind: &BytecodeTypeKind) -> bool {
-    matches!(kind, BytecodeTypeKind::Scalar(scalar) if is_integer(*scalar) || *scalar == BytecodeScalarType::Byte)
+fn integer_value_fits(value: i128, scalar: BytecodeScalarType) -> bool {
+    let Some(NumericShape::Integer(shape)) = numeric_shape(scalar) else {
+        return false;
+    };
+    if shape.signed {
+        let magnitude = 1_i128 << (shape.bits - 1);
+        (-magnitude..=magnitude - 1).contains(&value)
+    } else {
+        value >= 0 && (value as u128) < (1_u128 << shape.bits)
+    }
 }
 
 fn is_float_kind(kind: &BytecodeTypeKind) -> bool {
@@ -10047,6 +10083,60 @@ mod tests {
         };
         *invalid = BytecodeConstantVariantValue::Tuple(Vec::new());
         assert!(verify_bytecode(&payload).is_err());
+    }
+
+    #[test]
+    fn named_integer_constants_must_fit_their_exact_scalar_type() {
+        for (scalar, minimum, maximum) in [
+            (BytecodeScalarType::Byte, 0, u8::MAX as i128),
+            (BytecodeScalarType::UInt8, 0, u8::MAX as i128),
+            (BytecodeScalarType::UInt16, 0, u16::MAX as i128),
+            (BytecodeScalarType::UInt32, 0, u32::MAX as i128),
+            (BytecodeScalarType::UInt64, 0, u64::MAX as i128),
+            (BytecodeScalarType::Int8, i8::MIN as i128, i8::MAX as i128),
+            (
+                BytecodeScalarType::Int16,
+                i16::MIN as i128,
+                i16::MAX as i128,
+            ),
+            (
+                BytecodeScalarType::Int32,
+                i32::MIN as i128,
+                i32::MAX as i128,
+            ),
+            (BytecodeScalarType::Int, i64::MIN as i128, i64::MAX as i128),
+        ] {
+            let mut program = terminal_program(false);
+            let ty = if scalar == BytecodeScalarType::Int {
+                BytecodeTypeId::new(0)
+            } else {
+                let ty = BytecodeTypeId::new(program.types.len() as u32);
+                program.types.push(BytecodeType {
+                    name: format!("{scalar:?}"),
+                    kind: BytecodeTypeKind::Scalar(scalar),
+                });
+                ty
+            };
+            program.constants = [("minimum", minimum), ("maximum", maximum)]
+                .into_iter()
+                .map(|(name, value)| BytecodeNamedConstant {
+                    name: name.into(),
+                    value: BytecodeConstantValue {
+                        ty,
+                        kind: BytecodeConstantValueKind::Integer(value),
+                    },
+                })
+                .collect();
+            verify_bytecode(&program).unwrap();
+
+            let mut below = program.clone();
+            below.constants[0].value.kind = BytecodeConstantValueKind::Integer(minimum - 1);
+            assert!(verify_bytecode(&below).is_err(), "{scalar:?} below minimum");
+
+            let mut above = program;
+            above.constants[1].value.kind = BytecodeConstantValueKind::Integer(maximum + 1);
+            assert!(verify_bytecode(&above).is_err(), "{scalar:?} above maximum");
+        }
     }
 
     #[test]

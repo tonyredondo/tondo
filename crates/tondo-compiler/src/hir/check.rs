@@ -23015,6 +23015,7 @@ mod tests {
             "const Invalid: Int = 1 / 0\n",
             "const Invalid: Array[Int] = [1, 2] + [3]\n",
             "const Invalid: Int8 = 1i8 << 8\n",
+            "const Invalid: Int8 = 1i8 << -1\n",
             "const Invalid: Int = [1][2]\n",
             "const Invalid: Int = [1][-2]\n",
             "const Invalid: Int = [1][-9223372036854775808]\n",
