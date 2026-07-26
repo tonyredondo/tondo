@@ -25,7 +25,8 @@ content equality, SET-001 insertion-ordered unique sets and membership, and
 RANGE-001 lazy discrete ranges with checked boundaries, and ITER-001/002 static
 user iterators plus `for`, `for ref`, `for mut`, and `for var`, NUM-001 exact
 intrinsic widths, and NUM-002/005 closed numeric conversion with stable
-recoverable errors, plus NUM-003 fixed-width integer operators
+recoverable errors, NUM-003 fixed-width integer operators, and NUM-004 strict
+IEEE arithmetic at each declared precision
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -69,6 +70,15 @@ A shift count outside `0..width` produces `P0010`. A valid left shift masks back
 to the operand width instead of raising overflow, and right shift is arithmetic
 for signed integers and logical for unsigned integers and `Byte`. Bitwise
 operations and compound assignments preserve the same fixed-width patterns.
+
+The VM stores scalar floats in one `f64` envelope, but the bytecode type remains
+authoritative. Every `Float32` input boundary and every `Float32` arithmetic
+operation converts through native binary32 before returning the exact widened
+value to that envelope; `Float64` operates directly in binary64. Consequently
+rounding occurs at each source operation, subnormals are not flushed, signed
+zero and IEEE comparisons remain visible, and a multiply followed by an add is
+two operations rather than an implicit FMA. Named constants use the same
+canonical envelope representation, including constant infinities and NaNs.
 
 An array object owns one ordered vector of optional value slots. The vector
 length is the array's runtime length; it is not duplicated in bytecode type

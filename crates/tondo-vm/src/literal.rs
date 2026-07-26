@@ -35,6 +35,12 @@ pub(crate) fn float(spelling: &str, single_precision: bool) -> Option<f64> {
     let suffix = ["f32", "f64"]
         .into_iter()
         .find(|suffix| spelling.ends_with(suffix));
+    if matches!(
+        (single_precision, suffix),
+        (true, Some("f64")) | (false, Some("f32"))
+    ) {
+        return None;
+    }
     let body = suffix.map_or(spelling, |suffix| {
         &spelling[..spelling.len() - suffix.len()]
     });
@@ -165,6 +171,9 @@ mod tests {
         assert_eq!(integer("9_223"), Some(9_223));
         assert_eq!(integer("-128i8"), Some(-128));
         assert_eq!(float("1.5f32", true), Some(1.5));
+        assert_eq!(float("1.5f64", true), None);
+        assert_eq!(float("1.5f32", false), None);
+        assert_eq!(float("3.4028236e38f32", true), None);
         assert_eq!(character("'\\u{1f642}'"), Some('🙂'));
         assert_eq!(string("\"left{{right}}\\n\""), Some("left{right}\n".into()));
         assert_eq!(

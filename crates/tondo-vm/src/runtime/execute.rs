@@ -2186,14 +2186,7 @@ impl Engine<'_, '_> {
                     Ok(Value::Integer(*value))
                 }
             }
-            BytecodeConstantValueKind::Float(bits) => {
-                let value = if self.scalar(constant.ty)? == BytecodeScalarType::Float32 {
-                    f64::from(f32::from_bits(*bits as u32))
-                } else {
-                    f64::from_bits(*bits)
-                };
-                Ok(Value::Float(value))
-            }
+            BytecodeConstantValueKind::Float(bits) => Ok(Value::Float(f64::from_bits(*bits))),
             BytecodeConstantValueKind::Char(value) => Ok(Value::Char(*value)),
             BytecodeConstantValueKind::String(value) => {
                 self.allocate(constant.ty, HeapObject::String(value.clone()), &[])
@@ -2879,7 +2872,7 @@ impl Engine<'_, '_> {
     fn pure_binary(
         &mut self,
         operator: BytecodeBinaryOperator,
-        _left_ty: BytecodeTypeId,
+        left_ty: BytecodeTypeId,
         _right_ty: BytecodeTypeId,
         left: Value,
         right: Value,
@@ -2917,14 +2910,45 @@ impl Engine<'_, '_> {
             }
             Op::Multiply | Op::Divide | Op::Remainder | Op::Add | Op::Subtract => {
                 match (left, right) {
-                    (Value::Float(left), Value::Float(right)) => Ok(Value::Float(match operator {
-                        Op::Multiply => left * right,
-                        Op::Divide => left / right,
-                        Op::Remainder => left % right,
-                        Op::Add => left + right,
-                        Op::Subtract => left - right,
-                        _ => unreachable!(),
-                    })),
+                    (Value::Float(left), Value::Float(right)) => {
+                        let scalar = self.scalar(left_ty)?;
+                        let value = match scalar {
+                            BytecodeScalarType::Float32 => {
+                                let left = left as f32;
+                                let right = right as f32;
+                                f64::from(match operator {
+                                    Op::Multiply => left * right,
+                                    Op::Divide => left / right,
+                                    Op::Add => left + right,
+                                    Op::Subtract => left - right,
+                                    Op::Remainder => {
+                                        return Err(VmError::invariant(
+                                            "float remainder bypassed bytecode verification",
+                                        ));
+                                    }
+                                    _ => unreachable!(),
+                                })
+                            }
+                            BytecodeScalarType::Float => match operator {
+                                Op::Multiply => left * right,
+                                Op::Divide => left / right,
+                                Op::Add => left + right,
+                                Op::Subtract => left - right,
+                                Op::Remainder => {
+                                    return Err(VmError::invariant(
+                                        "float remainder bypassed bytecode verification",
+                                    ));
+                                }
+                                _ => unreachable!(),
+                            },
+                            _ => {
+                                return Err(VmError::invariant(
+                                    "float value has a non-float bytecode type",
+                                ));
+                            }
+                        };
+                        Ok(Value::Float(value))
+                    }
                     _ => Err(VmError::invariant(
                         "non-float arithmetic bypassed checked execution",
                     )),
@@ -5435,10 +5459,12 @@ impl Engine<'_, '_> {
                 ),
                 RuntimeValue::Integer(value),
             ) => Ok(Value::Integer(value)),
-            (
-                BytecodeTypeKind::Scalar(BytecodeScalarType::Float | BytecodeScalarType::Float32),
-                RuntimeValue::Float(value),
-            ) => Ok(Value::Float(value)),
+            (BytecodeTypeKind::Scalar(BytecodeScalarType::Float), RuntimeValue::Float(value)) => {
+                Ok(Value::Float(value))
+            }
+            (BytecodeTypeKind::Scalar(BytecodeScalarType::Float32), RuntimeValue::Float(value)) => {
+                Ok(Value::Float(f64::from(value as f32)))
+            }
             (BytecodeTypeKind::Scalar(BytecodeScalarType::Byte), RuntimeValue::Byte(value)) => {
                 Ok(Value::Byte(value))
             }
@@ -6402,6 +6428,138 @@ mod tests {
             initial_gc_threshold: 1,
             ..VmLimits::default()
         }
+    }
+
+    #[test]
+    fn float32_rounds_each_operation_and_preserves_ieee_special_values() {
+        use BytecodeBinaryOperator::{Add, Divide, Equal, Less, Multiply, NotEqual};
+
+        fn binary(
+            engine: &mut Engine<'_, '_>,
+            operator: BytecodeBinaryOperator,
+            ty: BytecodeTypeId,
+            left: f64,
+            right: f64,
+        ) -> Value {
+            engine
+                .pure_binary(operator, ty, ty, Value::Float(left), Value::Float(right))
+                .unwrap()
+        }
+
+        fn float(value: Value) -> f64 {
+            let Value::Float(value) = value else {
+                panic!("operation did not produce a float")
+            };
+            value
+        }
+
+        let mut program = root_pressure_program();
+        let float32 = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Float32".into(),
+            kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Float32),
+        });
+        let float64 = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Float".into(),
+            kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Float),
+        });
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(&program, &mut host, VmLimits::default(), trace);
+
+        assert_eq!(
+            float(binary(&mut engine, Add, float32, 16_777_216.0, 1.0)),
+            16_777_216.0
+        );
+        assert_eq!(
+            float(binary(&mut engine, Add, float64, 16_777_216.0, 1.0)),
+            16_777_217.0
+        );
+
+        let half_ulp = f64::from(f32::from_bits(0x3380_0000));
+        assert_eq!(
+            float(binary(&mut engine, Add, float32, 1.0, half_ulp)),
+            f64::from(f32::from_bits(0x3f80_0000))
+        );
+        assert_eq!(
+            float(binary(
+                &mut engine,
+                Add,
+                float32,
+                f64::from(f32::from_bits(0x3f80_0001)),
+                half_ulp,
+            )),
+            f64::from(f32::from_bits(0x3f80_0002))
+        );
+
+        let factor = f64::from(f32::from_bits(0x3f80_0001));
+        let product = float(binary(&mut engine, Multiply, float32, factor, factor));
+        assert_eq!(product, f64::from(f32::from_bits(0x3f80_0002)));
+        let separate = float(binary(
+            &mut engine,
+            Add,
+            float32,
+            product,
+            f64::from(f32::from_bits(0xbf80_0002)),
+        ));
+        assert_eq!(separate.to_bits(), 0.0_f64.to_bits());
+
+        let factor64 = f64::from_bits(0x3ff0_0000_0000_0001);
+        let product64 = float(binary(&mut engine, Multiply, float64, factor64, factor64));
+        assert_eq!(product64.to_bits(), 0x3ff0_0000_0000_0002);
+        let separate64 = float(binary(
+            &mut engine,
+            Add,
+            float64,
+            product64,
+            f64::from_bits(0xbff0_0000_0000_0002),
+        ));
+        assert_eq!(separate64.to_bits(), 0.0_f64.to_bits());
+
+        let subnormal = float(binary(
+            &mut engine,
+            Divide,
+            float32,
+            f64::from(f32::from_bits(0x0080_0000)),
+            2.0,
+        ));
+        assert_eq!((subnormal as f32).to_bits(), 0x0040_0000);
+
+        let overflow = float(binary(
+            &mut engine,
+            Multiply,
+            float32,
+            f64::from(f32::MAX),
+            2.0,
+        ));
+        assert!(overflow.is_infinite() && overflow.is_sign_positive());
+
+        let negative_infinity = float(binary(&mut engine, Divide, float32, 1.0, -0.0));
+        assert!(negative_infinity.is_infinite() && negative_infinity.is_sign_negative());
+
+        let nan = float(binary(&mut engine, Divide, float32, 0.0, 0.0));
+        assert!(matches!(
+            binary(&mut engine, Equal, float32, nan, nan),
+            Value::Bool(false)
+        ));
+        assert!(matches!(
+            binary(&mut engine, NotEqual, float32, nan, nan),
+            Value::Bool(true)
+        ));
+        assert!(matches!(
+            binary(&mut engine, Less, float32, nan, 0.0),
+            Value::Bool(false)
+        ));
+
+        assert_eq!(
+            float(
+                engine
+                    .materialize_host_value(float32, RuntimeValue::Float(16_777_217.0))
+                    .unwrap()
+            ),
+            16_777_216.0
+        );
     }
 
     #[test]

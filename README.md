@@ -72,8 +72,10 @@ whose inclusive maximum does not require an overflowing successor. The closed
 return the intrinsic, exhaustively matchable `NumericConversionError`, with
 identical classification in constants and at runtime. Fixed-width integer
 arithmetic, division, remainder, shifts, bitwise operations, and their normative
-panic classes are likewise executable. Complete HIR lowers through a verified
-typed MIR and then to
+panic classes are likewise executable. `Float32` and `Float64` preserve their
+IEEE precision at every operation, including ties-to-even rounding, gradual
+underflow, infinities, NaN, signed zero, and the prohibition on implicit FMA
+contraction. Complete HIR lowers through a verified typed MIR and then to
 verified in-memory slot bytecode with source maps. Reached generic functions
 are monomorphized deterministically; equal concrete substitutions share one
 body, direct bytecode calls carry no runtime type pack, and expanding recursion

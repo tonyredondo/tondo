@@ -2146,7 +2146,14 @@ impl Verifier<'_> {
                     return Err(constant_shape_error(context));
                 }
             }
-            BytecodeConstantValueKind::Float(_) if is_float_kind(ty) => {}
+            BytecodeConstantValueKind::Float(bits) => {
+                let BytecodeTypeKind::Scalar(scalar) = ty else {
+                    return Err(constant_shape_error(context));
+                };
+                if !float_bits_fit_scalar(*bits, *scalar) {
+                    return Err(constant_shape_error(context));
+                }
+            }
             BytecodeConstantValueKind::Char(_)
                 if matches!(ty, BytecodeTypeKind::Scalar(BytecodeScalarType::Char)) => {}
             BytecodeConstantValueKind::String(_)
@@ -3253,8 +3260,31 @@ impl Verifier<'_> {
                         ));
                     }
                 }
-                BytecodeConstant::Float(_)
-                    if is_float_kind(&self.ty(operand.ty, context)?.kind) => {}
+                BytecodeConstant::Float(spelling) => {
+                    let BytecodeTypeKind::Scalar(scalar) = &self.ty(operand.ty, context)?.kind
+                    else {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "immediate float constant has a non-scalar type",
+                        ));
+                    };
+                    let single_precision = match scalar {
+                        BytecodeScalarType::Float32 => true,
+                        BytecodeScalarType::Float => false,
+                        _ => {
+                            return Err(BytecodeVerificationError::new(
+                                context,
+                                "immediate float constant has a non-float type",
+                            ));
+                        }
+                    };
+                    if literal::float(spelling, single_precision).is_none() {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "immediate float constant is malformed, overflows, or has the wrong suffix",
+                        ));
+                    }
+                }
                 BytecodeConstant::Char(_)
                     if self.is_scalar(operand.ty, BytecodeScalarType::Char) => {}
                 BytecodeConstant::String(_)
@@ -7534,8 +7564,15 @@ fn integer_value_fits(value: i128, scalar: BytecodeScalarType) -> bool {
     }
 }
 
-fn is_float_kind(kind: &BytecodeTypeKind) -> bool {
-    matches!(kind, BytecodeTypeKind::Scalar(scalar) if is_float(*scalar))
+fn float_bits_fit_scalar(bits: u64, scalar: BytecodeScalarType) -> bool {
+    match scalar {
+        BytecodeScalarType::Float => true,
+        BytecodeScalarType::Float32 => {
+            let value = f64::from_bits(bits);
+            value.is_nan() || f64::from(value as f32).to_bits() == bits
+        }
+        _ => false,
+    }
 }
 
 fn is_integer(scalar: BytecodeScalarType) -> bool {
@@ -10137,6 +10174,55 @@ mod tests {
             above.constants[1].value.kind = BytecodeConstantValueKind::Integer(maximum + 1);
             assert!(verify_bytecode(&above).is_err(), "{scalar:?} above maximum");
         }
+    }
+
+    #[test]
+    fn named_float_constants_use_canonical_f64_storage_for_their_declared_precision() {
+        let mut program = terminal_program(false);
+        let float32 = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Float32".into(),
+            kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Float32),
+        });
+        let float64 = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Float".into(),
+            kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Float),
+        });
+        program.constants = vec![
+            BytecodeNamedConstant {
+                name: "single".into(),
+                value: BytecodeConstantValue {
+                    ty: float32,
+                    kind: BytecodeConstantValueKind::Float(f64::from(1.5_f32).to_bits()),
+                },
+            },
+            BytecodeNamedConstant {
+                name: "double".into(),
+                value: BytecodeConstantValue {
+                    ty: float64,
+                    kind: BytecodeConstantValueKind::Float(1.000_000_000_000_000_2_f64.to_bits()),
+                },
+            },
+            BytecodeNamedConstant {
+                name: "single_nan".into(),
+                value: BytecodeConstantValue {
+                    ty: float32,
+                    kind: BytecodeConstantValueKind::Float(f64::NAN.to_bits()),
+                },
+            },
+        ];
+        verify_bytecode(&program).unwrap();
+
+        let mut excessive_precision = program.clone();
+        excessive_precision.constants[0].value.kind =
+            BytecodeConstantValueKind::Float(1.000_000_000_000_000_2_f64.to_bits());
+        assert!(verify_bytecode(&excessive_precision).is_err());
+
+        let mut width_specific_bits = program;
+        width_specific_bits.constants[0].value.kind =
+            BytecodeConstantValueKind::Float(u64::from(1.5_f32.to_bits()));
+        assert!(verify_bytecode(&width_specific_bits).is_err());
     }
 
     #[test]

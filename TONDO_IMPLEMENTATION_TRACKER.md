@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.71
+**Versión del tracker:** 0.72
 
 **Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** NUM-001/002/003/005 cerrados; completar la semántica
-IEEE observable (NUM-004).
+**Objetivo inmediato:** familia NUM cerrada; iniciar `String` UTF-8 inmutable
+(TEXT-001) cuando se reanude la implementación.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1659,7 +1659,11 @@ lifetimes escritos por el usuario.
   shifts válidos transforman el patrón de ancho fijo sin convertir el descarte
   de bits altos en overflow. Operadores simples y compuestos comparten lowering.
 
-- [ ] **NUM-004 — Conservar semántica IEEE sin fast-math observable.**
+- [x] **NUM-004 — Conservar semántica IEEE sin fast-math observable.**
+  `Float32` redondea como binario32 después de cada operación y `Float64` como
+  binario64. Constantes y ejecución coinciden en ties-to-even, subnormales,
+  infinidades, NaN y cero con signo; expresiones `a * b + c` conservan dos
+  redondeos salvo una futura operación FMA explícita.
 
 - [x] **NUM-005 — Implementar `NumericConversionError` y su clasificación
   estable.** `OutOfRange`, `NotFinite` y `NotIntegral` son discriminantes
@@ -2143,12 +2147,27 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-NUM-001, NUM-002, NUM-003 y NUM-005 quedan cerrados. La siguiente acción es
-NUM-004: semántica IEEE observable sin fast-math.
+NUM-001 a NUM-005 quedan cerrados. La siguiente acción, al reanudar el trabajo,
+es TEXT-001: `String` UTF-8 inmutable.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.72 — 2026-07-26
+
+- Se cierra NUM-004 ejecutando `Float32` con operaciones binarias reales de
+  precisión simple y `Float64` con precisión doble, redondeando en cada frontera
+  semántica sin contracción FMA.
+- Constantes nombradas y literales flotantes se verifican contra su precisión.
+  El pool usa bits canónicos de `f64` como envoltura: todo `Float32` no-NaN debe
+  ser la ampliación exacta de un binario32; el payload concreto de NaN permanece
+  no normativo.
+- La aceptación compara evaluación constante y runtime para ties-to-even,
+  gradual underflow, overflow a infinito, NaN, cero con signo y expresiones
+  deliberadamente sensibles a FMA en ambas precisiones.
+- Los valores `Float32` entregados por el bootstrap host se normalizan en la
+  frontera antes de entrar en el grafo de valores de la VM.
 
 ### 0.71 — 2026-07-26
 

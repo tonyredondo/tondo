@@ -240,6 +240,14 @@ Named integer constants are admitted only when their mathematical value fits
 their exact scalar descriptor. `Byte` uses that same checked constant spelling
 in bytecode but materializes as the VM's distinct byte value, never as `Int`.
 
+Named floating constants store the bits of the VM's canonical `f64` envelope.
+A non-NaN `Float32` value is admitted only when those bits are the exact
+binary64 widening of one binary32 value; NaN payload bits are deliberately
+non-normative. Immediate float spellings must parse finitely at their declared
+precision and may not carry the opposite precision's suffix. Runtime-generated
+infinity and NaN therefore remain values, while a source literal that rounds to
+infinity is rejected before execution.
+
 An Array aggregate stores its complete ordered operand list while its result
 type is only `Array[T]`; operand count is runtime data, not type metadata.
 `Length` is the internal shape observation used by array-pattern lowering. The

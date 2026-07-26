@@ -7808,6 +7808,45 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
     }
 
     #[test]
+    fn verifier_rejects_malformed_overflowing_or_mistyped_immediate_floats() {
+        let mut program = lowered("fn value(): Float32 { 1.0f32 }\n");
+        fn float_spelling(program: &mut bc::BytecodeProgram) -> &mut String {
+            program
+                .functions
+                .iter_mut()
+                .flat_map(|function| &mut function.blocks)
+                .flat_map(|block| &mut block.instructions)
+                .find_map(|instruction| match &mut instruction.kind {
+                    bc::BytecodeInstructionKind::Store {
+                        value:
+                            bc::BytecodeRvalue {
+                                kind:
+                                    bc::BytecodeRvalueKind::Use(bc::BytecodeOperand {
+                                        kind:
+                                            bc::BytecodeOperandKind::Constant(
+                                                bc::BytecodeConstant::Float(spelling),
+                                            ),
+                                        ..
+                                    }),
+                                ..
+                            },
+                        ..
+                    } => Some(spelling),
+                    _ => None,
+                })
+                .unwrap()
+        }
+        *float_spelling(&mut program) = "3.4028236e38f32".into();
+        assert!(bc::verify_bytecode(&program).is_err());
+
+        *float_spelling(&mut program) = "1.0f64".into();
+        assert!(bc::verify_bytecode(&program).is_err());
+
+        *float_spelling(&mut program) = "not-a-float".into();
+        assert!(bc::verify_bytecode(&program).is_err());
+    }
+
+    #[test]
     fn verifier_budget_and_disassembler_are_explicit_tooling_boundaries() {
         let program = lowered("fn answer(): Int { 20 + 22 }\n");
         let error = bc::verify_bytecode_with_limits(
