@@ -1961,6 +1961,7 @@ impl Verifier<'_> {
                 | HirConstantValueKind::Float(_)
                 | HirConstantValueKind::Char(_)
                 | HirConstantValueKind::String(_)
+                | HirConstantValueKind::NumericConversionError(_)
                 | HirConstantValueKind::OptionNone => {}
                 HirConstantValueKind::Function {
                     callable,
@@ -3275,6 +3276,20 @@ impl Verifier<'_> {
             HirPatternKind::Variant { variant, .. } => {
                 self.verify_member(*variant, &[MemberKind::EnumVariant], context)?;
             }
+            HirPatternKind::NumericConversionError(_) => {
+                if !matches!(
+                    self.program.interner.kind(pattern.ty),
+                    Ok(TypeKind::Intrinsic {
+                        constructor: IntrinsicType::NumericConversionError,
+                        arguments,
+                    }) if arguments.is_empty()
+                ) {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "numeric conversion error pattern has the wrong intrinsic type",
+                    ));
+                }
+            }
             HirPatternKind::Record { owner, fields, .. } => {
                 self.verify_symbol(*owner, &[SymbolKind::Type], context)?;
                 for field in fields {
@@ -3587,6 +3602,20 @@ impl Verifier<'_> {
             HirExpressionKind::Variant { variant, payload } => {
                 self.verify_member(*variant, &[MemberKind::EnumVariant], context)?;
                 self.verify_variant_value(payload, context)?;
+            }
+            HirExpressionKind::NumericConversionError(_) => {
+                if !matches!(
+                    self.program.interner.kind(expression.ty),
+                    Ok(TypeKind::Intrinsic {
+                        constructor: IntrinsicType::NumericConversionError,
+                        arguments,
+                    }) if arguments.is_empty()
+                ) {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "numeric conversion error value has the wrong intrinsic type",
+                    ));
+                }
             }
             HirExpressionKind::RecordUpdate { fields, .. } => {
                 self.verify_record_field_values(fields, MemberKind::RecordField, context)?;
@@ -5306,6 +5335,7 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
     match &expression.kind {
         HirExpressionKind::Recovery
         | HirExpressionKind::Literal(_)
+        | HirExpressionKind::NumericConversionError(_)
         | HirExpressionKind::Local(_)
         | HirExpressionKind::Constant(_)
         | HirExpressionKind::Function(_)
@@ -5518,6 +5548,7 @@ fn pattern_children(pattern: &HirPattern) -> Vec<HirPatternId> {
         | HirPatternKind::Binding(_)
         | HirPatternKind::BorrowBinding { .. }
         | HirPatternKind::Literal(_)
+        | HirPatternKind::NumericConversionError(_)
         | HirPatternKind::OptionNone => Vec::new(),
     }
 }

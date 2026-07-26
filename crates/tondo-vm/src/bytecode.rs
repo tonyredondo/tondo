@@ -849,6 +849,31 @@ pub enum BytecodeNumericConversion {
     Checked,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum BytecodeNumericConversionError {
+    OutOfRange,
+    NotFinite,
+    NotIntegral,
+}
+
+impl BytecodeNumericConversionError {
+    pub const ALL: [Self; 3] = [Self::OutOfRange, Self::NotFinite, Self::NotIntegral];
+
+    pub const fn index(self) -> u32 {
+        match self {
+            Self::OutOfRange => 0,
+            Self::NotFinite => 1,
+            Self::NotIntegral => 2,
+        }
+    }
+
+    pub fn from_index(index: u32) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|variant| variant.index() == index)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BytecodePrefixOperator {
     Negate,

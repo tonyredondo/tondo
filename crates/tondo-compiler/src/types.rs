@@ -168,6 +168,44 @@ pub enum NumericConversion {
     Checked,
 }
 
+/// Stable discriminants for the closed intrinsic numeric-conversion error.
+///
+/// The ordinal is part of verified bytecode because the VM materializes
+/// checked-conversion failures without consulting source-defined nominal
+/// metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum NumericConversionErrorVariant {
+    OutOfRange,
+    NotFinite,
+    NotIntegral,
+}
+
+impl NumericConversionErrorVariant {
+    pub const ALL: [Self; 3] = [Self::OutOfRange, Self::NotFinite, Self::NotIntegral];
+
+    pub const fn index(self) -> u32 {
+        match self {
+            Self::OutOfRange => 0,
+            Self::NotFinite => 1,
+            Self::NotIntegral => 2,
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OutOfRange => "OutOfRange",
+            Self::NotFinite => "NotFinite",
+            Self::NotIntegral => "NotIntegral",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|variant| variant.as_str() == name)
+    }
+}
+
 impl ParameterMode {
     fn prefix(self) -> &'static str {
         match self {
@@ -3189,6 +3227,55 @@ mod tests {
             Some(NumericConversion::Checked)
         );
         assert_eq!(numeric_conversion(ScalarType::Bool, ScalarType::Int), None);
+    }
+
+    #[test]
+    fn numeric_conversion_table_is_closed_and_exhaustive() {
+        use NumericConversion::{Checked as C, Identity as I, Total as T};
+        use ScalarType::{
+            Byte, Float, Float32, Int, Int8, Int16, Int32, UInt8, UInt16, UInt32, UInt64,
+        };
+
+        let numeric = [
+            Byte, UInt8, UInt16, UInt32, UInt64, Int8, Int16, Int32, Int, Float32, Float,
+        ];
+        let expected = [
+            [I, T, T, T, T, C, T, T, T, T, T],
+            [T, I, T, T, T, C, T, T, T, T, T],
+            [C, C, I, T, T, C, C, T, T, T, T],
+            [C, C, C, I, T, C, C, C, T, T, T],
+            [C, C, C, C, I, C, C, C, C, T, T],
+            [C, C, C, C, C, I, T, T, T, T, T],
+            [C, C, C, C, C, C, I, T, T, T, T],
+            [C, C, C, C, C, C, C, I, T, T, T],
+            [C, C, C, C, C, C, C, C, I, T, T],
+            [C, C, C, C, C, C, C, C, C, I, T],
+            [C, C, C, C, C, C, C, C, C, C, I],
+        ];
+
+        for (source_index, source) in numeric.into_iter().enumerate() {
+            for (target_index, target) in numeric.into_iter().enumerate() {
+                assert_eq!(
+                    numeric_conversion(source, target),
+                    Some(expected[source_index][target_index]),
+                    "{source} to {target}"
+                );
+            }
+        }
+
+        let nonnumeric = [
+            ScalarType::Bool,
+            ScalarType::Char,
+            ScalarType::String,
+            ScalarType::Unit,
+            ScalarType::Never,
+        ];
+        for source in ScalarType::ALL {
+            for target in nonnumeric {
+                assert_eq!(numeric_conversion(source, target), None);
+                assert_eq!(numeric_conversion(target, source), None);
+            }
+        }
     }
 
     #[test]

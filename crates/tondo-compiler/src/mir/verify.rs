@@ -2468,6 +2468,22 @@ impl Verifier<'_> {
                     context,
                 )?;
             }
+            MirAggregateKind::NumericConversionError(_) => {
+                if !values.is_empty()
+                    || !matches!(
+                        self.kind(ty, context)?,
+                        TypeKind::Intrinsic {
+                            constructor: IntrinsicType::NumericConversionError,
+                            arguments,
+                        } if arguments.is_empty()
+                    )
+                {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "numeric conversion error aggregate has an invalid type or payload",
+                    ));
+                }
+            }
             MirAggregateKind::OptionNone => {
                 if !values.is_empty() || !matches!(self.kind(ty, context)?, TypeKind::Option(_)) {
                     return Err(MirInvariantError::new(
@@ -3808,6 +3824,13 @@ impl Verifier<'_> {
         let valid = match (self.kind(value, context)?, tag) {
             (TypeKind::Option(_), MirTag::OptionNone | MirTag::OptionSome) => true,
             (TypeKind::Result { .. }, MirTag::ResultOk | MirTag::ResultErr) => true,
+            (
+                TypeKind::Intrinsic {
+                    constructor: IntrinsicType::NumericConversionError,
+                    arguments,
+                },
+                MirTag::NumericConversionError(_),
+            ) => arguments.is_empty(),
             (TypeKind::Union(members), MirTag::Union(member)) => {
                 self.verify_type(*member, context)?;
                 members.contains(member)
@@ -7436,7 +7459,7 @@ fn complementary_tag(tag: MirTag) -> Option<MirTag> {
         MirTag::OptionSome => Some(MirTag::OptionNone),
         MirTag::ResultOk => Some(MirTag::ResultErr),
         MirTag::ResultErr => Some(MirTag::ResultOk),
-        MirTag::Variant(_) | MirTag::Union(_) => None,
+        MirTag::Variant(_) | MirTag::NumericConversionError(_) | MirTag::Union(_) => None,
     }
 }
 

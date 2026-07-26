@@ -14,7 +14,10 @@ use crate::hir::{
 };
 use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::Span;
-use crate::types::{Assignability, NumericConversion, ParameterMode, ScalarType, TypeId};
+use crate::types::{
+    Assignability, NumericConversion, NumericConversionErrorVariant, ParameterMode, ScalarType,
+    TypeId,
+};
 
 mod lower;
 mod regions;
@@ -530,6 +533,7 @@ pub enum MirAggregateKind {
         variant: MemberId,
         fields: Vec<Option<MemberId>>,
     },
+    NumericConversionError(NumericConversionErrorVariant),
     OptionNone,
     OptionSome,
     ResultOk,
@@ -746,5 +750,6 @@ pub enum MirTag {
     ResultOk,
     ResultErr,
     Variant(MemberId),
+    NumericConversionError(NumericConversionErrorVariant),
     Union(TypeId),
 }

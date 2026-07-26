@@ -4,7 +4,8 @@ use tondo_vm::bytecode::{ArraySliceError, normalize_array_index, normalize_array
 
 use crate::source::Span;
 use crate::types::{
-    Assignability, IntrinsicType, NumericConversion, ScalarType, TypeError, TypeId, TypeKind,
+    Assignability, IntrinsicType, NumericConversion, NumericConversionErrorVariant, ScalarType,
+    TypeError, TypeId, TypeKind,
 };
 
 use super::{
@@ -278,6 +279,7 @@ fn constant_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
         HirExpressionKind::BootstrapHostCall { arguments, .. } => arguments.clone(),
         HirExpressionKind::Recovery
         | HirExpressionKind::Literal(_)
+        | HirExpressionKind::NumericConversionError(_)
         | HirExpressionKind::InterpolatedString { .. }
         | HirExpressionKind::Local(_)
         | HirExpressionKind::Constant(_)
@@ -422,6 +424,9 @@ fn evaluate_composite(
                 ),
             },
         },
+        HirExpressionKind::NumericConversionError(variant) => {
+            HirConstantValueKind::NumericConversionError(*variant)
+        }
         HirExpressionKind::RecordUpdate { base, fields } => {
             let base = value(*base)?;
             let HirConstantValueKind::Record {
@@ -899,79 +904,98 @@ fn comparison_kind(
 fn evaluate_numeric_conversion(
     program: &HirProgram,
     expression_ty: TypeId,
-    span: Span,
+    _span: Span,
     target: ScalarType,
     conversion: NumericConversion,
     source: HirConstantValue,
 ) -> Result<HirConstantValue, ConstantEvaluationError> {
     let source_scalar = scalar(program, source.ty)?;
     let target_ty = program.interner.scalar(target);
+    let expected = crate::types::numeric_conversion(source_scalar, target)
+        .ok_or(ConstantEvaluationError::Unavailable)?;
+    if expected != conversion {
+        return Err(ConstantEvaluationError::Unavailable);
+    }
     let converted = match source.kind {
         HirConstantValueKind::Integer(value) => match numeric_class(target) {
             NumericClass::Integer => {
                 if !integer_fits(value, target) {
-                    return Err(panic_error(
-                        span,
-                        "constant numeric conversion is out of range",
-                    ));
+                    Err(NumericConversionErrorVariant::OutOfRange)
+                } else {
+                    Ok(constant_value(
+                        target_ty,
+                        HirConstantValueKind::Integer(value),
+                    ))
                 }
-                constant_value(target_ty, HirConstantValueKind::Integer(value))
             }
-            NumericClass::Float => constant_value(
+            NumericClass::Float => Ok(constant_value(
                 target_ty,
                 HirConstantValueKind::Float(integer_to_float(value, target).to_bits()),
-            ),
+            )),
         },
         HirConstantValueKind::Float(bits) => {
             let value = f64::from_bits(bits);
             match numeric_class(target) {
                 NumericClass::Integer => {
                     if !value.is_finite() {
-                        return Err(panic_error(
-                            span,
-                            "constant float-to-integer conversion is not finite",
-                        ));
+                        Err(NumericConversionErrorVariant::NotFinite)
+                    } else if value.fract() != 0.0 {
+                        Err(NumericConversionErrorVariant::NotIntegral)
+                    } else if !float_fits_integer(value, target) {
+                        Err(NumericConversionErrorVariant::OutOfRange)
+                    } else {
+                        Ok(constant_value(
+                            target_ty,
+                            HirConstantValueKind::Integer(value as i128),
+                        ))
                     }
-                    if value.fract() != 0.0 {
-                        return Err(panic_error(
-                            span,
-                            "constant float-to-integer conversion is not integral",
-                        ));
-                    }
-                    if !float_fits_integer(value, target) {
-                        return Err(panic_error(
-                            span,
-                            "constant numeric conversion is out of range",
-                        ));
-                    }
-                    constant_value(target_ty, HirConstantValueKind::Integer(value as i128))
                 }
                 NumericClass::Float => {
                     let rounded = round_float(value, target);
                     if value.is_finite() && rounded.is_infinite() {
-                        return Err(panic_error(
-                            span,
-                            "constant numeric conversion is out of range",
-                        ));
+                        Err(NumericConversionErrorVariant::OutOfRange)
+                    } else {
+                        Ok(constant_value(
+                            target_ty,
+                            HirConstantValueKind::Float(rounded.to_bits()),
+                        ))
                     }
-                    constant_value(target_ty, HirConstantValueKind::Float(rounded.to_bits()))
                 }
             }
         }
         _ => return Err(ConstantEvaluationError::Unavailable),
     };
-    let expected = crate::types::numeric_conversion(source_scalar, target)
-        .ok_or(ConstantEvaluationError::Unavailable)?;
-    if expected != conversion {
-        return Err(ConstantEvaluationError::Unavailable);
-    }
-    if conversion == NumericConversion::Checked {
-        Ok(constant_value(
+    match (conversion, converted) {
+        (NumericConversion::Checked, Ok(converted)) => Ok(constant_value(
             expression_ty,
             HirConstantValueKind::ResultOk(Box::new(converted)),
-        ))
-    } else {
-        Ok(converted)
+        )),
+        (NumericConversion::Checked, Err(error)) => {
+            let error_ty = match program.interner.kind(expression_ty)? {
+                TypeKind::Result { success, error } if *success == target_ty => *error,
+                _ => return Err(ConstantEvaluationError::Unavailable),
+            };
+            if !matches!(
+                program.interner.kind(error_ty)?,
+                TypeKind::Intrinsic {
+                    constructor: IntrinsicType::NumericConversionError,
+                    arguments,
+                } if arguments.is_empty()
+            ) {
+                return Err(ConstantEvaluationError::Unavailable);
+            }
+            Ok(constant_value(
+                expression_ty,
+                HirConstantValueKind::ResultErr(Box::new(constant_value(
+                    error_ty,
+                    HirConstantValueKind::NumericConversionError(error),
+                ))),
+            ))
+        }
+        (NumericConversion::Identity | NumericConversion::Total, Ok(converted)) => Ok(converted),
+        (NumericConversion::Identity | NumericConversion::Total, Err(_)) => {
+            Err(ConstantEvaluationError::Unavailable)
+        }
     }
 }
 
@@ -1250,6 +1274,10 @@ pub(super) fn values_equal(
                 }
                 _ => return Ok(false),
             },
+            (
+                HirConstantValueKind::NumericConversionError(left),
+                HirConstantValueKind::NumericConversionError(right),
+            ) if left == right => {}
             (HirConstantValueKind::OptionSome(left), HirConstantValueKind::OptionSome(right))
             | (HirConstantValueKind::ResultOk(left), HirConstantValueKind::ResultOk(right))
             | (HirConstantValueKind::ResultErr(left), HirConstantValueKind::ResultErr(right))

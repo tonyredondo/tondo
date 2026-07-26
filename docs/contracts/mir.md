@@ -174,6 +174,13 @@ slicing, numeric conversions, calls, and both `Option` and `Result`
 propagation. Recovery and incomplete interpolation nodes cannot cross the HIR
 admission boundary and therefore have no executable MIR interpretation.
 
+Checked numeric conversion produces the exact
+`Result[target, NumericConversionError]` type. The three intrinsic error values
+lower through a dedicated zero-payload aggregate and dedicated MIR tags, so
+pattern exhaustiveness and branching do not depend on a fabricated nominal
+declaration. MIR verification rederives the closed conversion class, result
+shape, intrinsic error type, and valid tag before bytecode lowering.
+
 An array literal lowers to `MirAggregateKind::Array` with one operand per
 runtime element and an `Array[T]` result type that contains no length. Array
 pattern shape checks lower through `MirRvalueKind::Length`; the MIR verifier

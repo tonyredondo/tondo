@@ -918,7 +918,13 @@ Una constante debe poder evaluarse en compilación usando:
 - Operadores puros sobre constantes.
 - Otras constantes ya resueltas sin ciclos.
 
-Tondo 0.1 no introduce una keyword `comptime` ni permite llamar a funciones de usuario durante evaluación constante. Los constructores nominales y los intrinsics puros enumerados por el lenguaje no cuentan como llamadas de usuario. Una operación que produciría error recuperable o pánico durante evaluación constante es un error de compilación.
+Tondo 0.1 no introduce una keyword `comptime` ni permite llamar a funciones de
+usuario durante evaluación constante. Los constructores nominales y los
+intrinsics puros enumerados por el lenguaje no cuentan como llamadas de
+usuario. Un pánico que se produciría al evaluar una constante es un error de
+compilación. Un error recuperable representado como valor ordinario no lo es:
+por ejemplo, una conversión numérica comprobada conserva `ok(valor)` o
+`err(NumericConversionError...)` dentro de la constante.
 
 Las constantes no pueden realizar I/O, acceder al reloj o al entorno, crear identidad mediante `Ref`, construir punteros, tasks, cursores afines, handles de recursos ni asignar memoria mutable observable. Una constante pública debe declarar su tipo porque ese tipo forma parte de la API del módulo.
 
@@ -6511,6 +6517,10 @@ sobrecarga definida por el usuario. Para cada valor origen:
   destino. Clasifica el fallo como `NotFinite`, después `NotIntegral` y por último
   `OutOfRange`.
 
+Estas reglas no cambian durante evaluación constante. Una conversión comprobada
+produce el mismo `Result` que en ejecución; `err(...)` es un valor constante
+válido y no un `E1903`.
+
 Convertir entre dos grafías del mismo tipo, como `Int`/`Int64` o
 `Float`/`Float64`, es una identidad explícita que el linter puede señalar como
 redundante. El payload concreto de un NaN no forma parte de la semántica y no se
@@ -7662,7 +7672,7 @@ oculten un diagnóstico independiente.
 | `E1806` | `missing-main` | Un target ejecutable hosted no contiene `main` válido ni script raíz. |
 | `E1901` | `nonconstant-expression` | Un `const` usa una operación no evaluable en compilación. |
 | `E1902` | `constant-cycle` | Dependencias entre constantes forman un ciclo. |
-| `E1903` | `constant-panic` | La evaluación constante produciría error o pánico. |
+| `E1903` | `constant-panic` | La evaluación constante produciría un pánico. |
 
 #### Warnings
 

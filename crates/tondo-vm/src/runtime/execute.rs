@@ -7,14 +7,15 @@ use crate::bytecode::{
     BytecodeConstantValueKind, BytecodeConstantVariantValue, BytecodeContainmentKind,
     BytecodeCursorMode, BytecodeFunctionId, BytecodeIndexAccess, BytecodeInstruction,
     BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeLoanId, BytecodeLoanKind,
-    BytecodeNominalShape, BytecodeNumericConversion, BytecodeOperand, BytecodeOperandKind,
-    BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode, BytecodePlace,
-    BytecodePrefixOperator, BytecodeProgram, BytecodeProjection, BytecodeProjectionKind,
-    BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId,
-    BytecodeSlotId, BytecodeSpan, BytecodeTag, BytecodeTerminalUnwindAction, BytecodeTerminator,
-    BytecodeTerminatorKind, BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind,
-    BytecodeVariantPayload, BytecodeVerificationLimits, normalize_array_index,
-    normalize_array_slice_indices, verify_bytecode_with_trace_metadata,
+    BytecodeNominalShape, BytecodeNumericConversion, BytecodeNumericConversionError,
+    BytecodeOperand, BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind,
+    BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator, BytecodeProgram,
+    BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
+    BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId, BytecodeSlotId, BytecodeSpan,
+    BytecodeTag, BytecodeTerminalUnwindAction, BytecodeTerminator, BytecodeTerminatorKind,
+    BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind, BytecodeVariantPayload,
+    BytecodeVerificationLimits, normalize_array_index, normalize_array_slice_indices,
+    verify_bytecode_with_trace_metadata,
 };
 
 use super::heap::{Heap, HeapHandle, HeapObject};
@@ -3083,7 +3084,7 @@ impl Engine<'_, '_> {
                     let error = self.allocate(
                         *error_ty,
                         HeapObject::Variant {
-                            variant,
+                            variant: variant.index(),
                             payload: AggregatePayload::Unit,
                         },
                         &[],
@@ -6175,7 +6176,12 @@ fn place_contains(outer: &BytecodePlace, inner: &BytecodePlace) -> bool {
             .all(|(left, right)| left == right)
 }
 
-fn convert_numeric(target: BytecodeScalarType, value: &Value) -> Result<Value, u32> {
+fn convert_numeric(
+    target: BytecodeScalarType,
+    value: &Value,
+) -> Result<Value, BytecodeNumericConversionError> {
+    use BytecodeNumericConversionError as Error;
+
     let integer_target = integer_bounds(target);
     match value {
         Value::Integer(value) => {
@@ -6183,16 +6189,18 @@ fn convert_numeric(target: BytecodeScalarType, value: &Value) -> Result<Value, u
                 if (minimum..=maximum).contains(value) {
                     Ok(Value::Integer(*value))
                 } else {
-                    Err(0)
+                    Err(Error::OutOfRange)
                 }
             } else if target == BytecodeScalarType::Byte {
-                u8::try_from(*value).map(Value::Byte).map_err(|_| 0)
+                u8::try_from(*value)
+                    .map(Value::Byte)
+                    .map_err(|_| Error::OutOfRange)
             } else if target == BytecodeScalarType::Float32 {
                 Ok(Value::Float(f64::from(*value as f32)))
             } else if target == BytecodeScalarType::Float {
                 Ok(Value::Float(*value as f64))
             } else {
-                Err(0)
+                Err(Error::OutOfRange)
             }
         }
         Value::Byte(value) => {
@@ -6208,22 +6216,22 @@ fn convert_numeric(target: BytecodeScalarType, value: &Value) -> Result<Value, u
             } else if target == BytecodeScalarType::Float32 {
                 let converted = *value as f32;
                 if value.is_finite() && converted.is_infinite() {
-                    Err(0)
+                    Err(Error::OutOfRange)
                 } else {
                     Ok(Value::Float(f64::from(converted)))
                 }
             } else {
                 if !value.is_finite() {
-                    return Err(1);
+                    return Err(Error::NotFinite);
                 }
                 if value.fract() != 0.0 {
-                    return Err(2);
+                    return Err(Error::NotIntegral);
                 }
                 if target == BytecodeScalarType::Byte {
                     if (0.0..=255.0).contains(value) {
                         Ok(Value::Byte(*value as u8))
                     } else {
-                        Err(0)
+                        Err(Error::OutOfRange)
                     }
                 } else if let Some((minimum, maximum)) = integer_target {
                     if *value >= minimum as f64 && *value <= maximum as f64 {
@@ -6231,13 +6239,13 @@ fn convert_numeric(target: BytecodeScalarType, value: &Value) -> Result<Value, u
                         if converted >= minimum && converted <= maximum {
                             Ok(Value::Integer(converted))
                         } else {
-                            Err(0)
+                            Err(Error::OutOfRange)
                         }
                     } else {
-                        Err(0)
+                        Err(Error::OutOfRange)
                     }
                 } else {
-                    Err(0)
+                    Err(Error::OutOfRange)
                 }
             }
         }
@@ -6246,7 +6254,7 @@ fn convert_numeric(target: BytecodeScalarType, value: &Value) -> Result<Value, u
         | Value::Char(_)
         | Value::Function { .. }
         | Value::Loan(_)
-        | Value::Heap(_) => Err(0),
+        | Value::Heap(_) => Err(Error::OutOfRange),
     }
 }
 

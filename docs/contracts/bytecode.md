@@ -211,13 +211,20 @@ Ordinary instructions perform storage lifetime changes, reserve/release one
 loan identity, store one pure typed rvalue, register one deferred invocation,
 or retarget/disarm its unique affine guard. Rvalues cover loads,
 copies/moves, constants, pure arithmetic,
-construction, record update, coercion, total conversion, range, membership,
+construction, record update, coercion, closed numeric conversion, range, membership,
 length, and iterator-state creation. The latter accepts an intrinsic collection
 `C` and produces only its distinct `cursor[own,C]`, `cursor[ref,C]`, or
 `cursor[mut,C]` type; `IteratorNext` accepts that cursor rather than a
 collection-shaped alias. Ref and mut cursors additionally require a `Borrow`
 source operand with the exact root-loan mode, while an own cursor rejects one,
 so a backend cannot silently replace observation or mutation with a copy.
+
+`NumericConversionError` has an independently known intrinsic descriptor with
+three unit variants. Its verified ordinals are `OutOfRange = 0`,
+`NotFinite = 1`, and `NotIntegral = 2`; constants, aggregates, and branch tags
+reject any other ordinal or payload shape. Checked conversion must return
+`Result[target, NumericConversionError]`, while identity and total conversion
+must return the target directly.
 
 An Array aggregate stores its complete ordered operand list while its result
 type is only `Array[T]`; operand count is runtime data, not type metadata.

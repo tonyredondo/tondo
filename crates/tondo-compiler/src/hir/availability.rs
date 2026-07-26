@@ -500,6 +500,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         let flow = match expression.kind() {
             HirExpressionKind::Recovery
             | HirExpressionKind::Literal(_)
+            | HirExpressionKind::NumericConversionError(_)
             | HirExpressionKind::Constant(_)
             | HirExpressionKind::Function(_)
             | HirExpressionKind::SpecializedFunction { .. }
@@ -1471,6 +1472,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 | HirPatternKind::Wildcard
                 | HirPatternKind::Binding(_)
                 | HirPatternKind::Literal(_)
+                | HirPatternKind::NumericConversionError(_)
                 | HirPatternKind::OptionNone => {}
             }
         }
@@ -1527,6 +1529,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 | HirPatternKind::Wildcard
                 | HirPatternKind::BorrowBinding { .. }
                 | HirPatternKind::Literal(_)
+                | HirPatternKind::NumericConversionError(_)
                 | HirPatternKind::OptionNone => {}
             }
         }
@@ -2783,7 +2786,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             .expect("availability analysis receives verified pattern IDs")
             .clone();
         match pattern.kind() {
-            HirPatternKind::Recovery | HirPatternKind::Literal(_) | HirPatternKind::OptionNone => {}
+            HirPatternKind::Recovery
+            | HirPatternKind::Literal(_)
+            | HirPatternKind::NumericConversionError(_)
+            | HirPatternKind::OptionNone => {}
             HirPatternKind::Wildcard => {
                 if defer_terminal_wildcards {
                     self.activate_terminal_pattern(
@@ -2912,7 +2918,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             .expect("availability analysis receives verified match patterns")
             .clone();
         match pattern.kind() {
-            HirPatternKind::Recovery | HirPatternKind::Literal(_) | HirPatternKind::OptionNone => {}
+            HirPatternKind::Recovery
+            | HirPatternKind::Literal(_)
+            | HirPatternKind::NumericConversionError(_)
+            | HirPatternKind::OptionNone => {}
             HirPatternKind::Wildcard => {
                 if introduction.activate_terminals {
                     self.activate_terminal_pattern(
@@ -3094,6 +3103,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 }
                 HirPatternKind::Recovery
                 | HirPatternKind::Literal(_)
+                | HirPatternKind::NumericConversionError(_)
                 | HirPatternKind::OptionNone => {}
             }
         }
@@ -3757,6 +3767,7 @@ fn expression_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
     match kind {
         HirExpressionKind::Recovery
         | HirExpressionKind::Literal(_)
+        | HirExpressionKind::NumericConversionError(_)
         | HirExpressionKind::Local(_)
         | HirExpressionKind::Constant(_)
         | HirExpressionKind::Function(_)

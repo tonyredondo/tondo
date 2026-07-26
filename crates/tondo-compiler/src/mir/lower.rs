@@ -763,6 +763,21 @@ impl<'a> FunctionBuilder<'a> {
                 )?;
                 Ok(Some(current))
             }
+            HirExpressionKind::NumericConversionError(variant) => {
+                self.assign(
+                    block,
+                    span,
+                    destination,
+                    MirRvalue {
+                        ty: expression.ty(),
+                        kind: MirRvalueKind::Aggregate {
+                            shape: MirAggregateKind::NumericConversionError(*variant),
+                            values: Vec::new(),
+                        },
+                    },
+                )?;
+                Ok(Some(block))
+            }
             HirExpressionKind::RecordUpdate { base, fields } => {
                 let Some((mut current, base)) = self.lower_value(*base, block)? else {
                     return Ok(None);
@@ -2512,6 +2527,7 @@ impl<'a> FunctionBuilder<'a> {
                 }
                 Ok(Some(block))
             }
+            HirPatternKind::NumericConversionError(_) => Ok(Some(block)),
             HirPatternKind::OptionSome(item) => {
                 let projected = self.project_operand(
                     &value,
@@ -3356,6 +3372,7 @@ impl<'a> FunctionBuilder<'a> {
                     self.bind_match_pattern(*field, &projected, mode, phase, block)?;
                 }
             }
+            HirPatternKind::NumericConversionError(_) => {}
             HirPatternKind::Record { fields, .. } => {
                 for field in fields {
                     let projected = self.project_operand(
@@ -3584,6 +3601,15 @@ impl<'a> FunctionBuilder<'a> {
                 }
                 self.lower_pattern_sequence(&tests, payload, matched, failed, span)
             }
+            HirPatternKind::NumericConversionError(variant) => self.terminate(
+                block,
+                span,
+                MirTerminatorKind::SwitchTag {
+                    value: self.borrow_operand(&value, span)?,
+                    cases: vec![(super::MirTag::NumericConversionError(*variant), matched)],
+                    otherwise: failed,
+                },
+            ),
             HirPatternKind::Record { fields, .. } => {
                 let mut tests = Vec::with_capacity(fields.len());
                 for field in fields {

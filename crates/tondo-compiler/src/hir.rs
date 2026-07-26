@@ -14,8 +14,8 @@ use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::{FileId, SourceError, Span, TextRange};
 use crate::types::{
     Assignability, FunctionParameter, FunctionType, GeneratedTypeIdentity, GeneratedTypeKind,
-    InferenceError, NumericConversion, ParameterMode, ScalarType, TypeError, TypeId, TypeInterner,
-    TypeKind, TypeSubstitution,
+    InferenceError, NumericConversion, NumericConversionErrorVariant, ParameterMode, ScalarType,
+    TypeError, TypeId, TypeInterner, TypeKind, TypeSubstitution,
 };
 
 mod availability;
@@ -763,6 +763,7 @@ pub enum HirConstantValueKind {
         variant: MemberId,
         payload: HirConstantVariantValue,
     },
+    NumericConversionError(NumericConversionErrorVariant),
     OptionNone,
     OptionSome(Box<HirConstantValue>),
     ResultOk(Box<HirConstantValue>),
@@ -1728,6 +1729,7 @@ pub enum HirExpressionKind {
         variant: MemberId,
         payload: HirVariantValue,
     },
+    NumericConversionError(NumericConversionErrorVariant),
     RecordUpdate {
         base: HirExpressionId,
         fields: Vec<HirRecordFieldValue>,
@@ -2184,6 +2186,7 @@ pub enum HirPatternKind {
         variant: MemberId,
         fields: Vec<HirPatternId>,
     },
+    NumericConversionError(NumericConversionErrorVariant),
     Record {
         owner: SymbolId,
         fields: Vec<HirPatternField>,

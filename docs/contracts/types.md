@@ -142,6 +142,15 @@ integer-to-float rounding, `Float32` to `Float64`, narrowing float conversions,
 and float-to-integer checks follow section 18.6. Constructor expressions,
 contextual literals, suffixes, aliases, and every intrinsic numeric width now
 retain this canonical classification through HIR, MIR, bytecode, and the VM.
+The matrix test enumerates all 121 ordered pairs formed by the eleven numeric
+scalars and separately proves that every pair touching a nonnumeric scalar is
+absent.
+
+`NumericConversionError` is a closed intrinsic discriminated union, not
+source-defined nominal metadata. Its only variants are `OutOfRange`,
+`NotFinite`, and `NotIntegral`, in that stable semantic order. The ordinal is
+serialized only inside verified bytecode; source programs use names and
+exhaustive patterns.
 
 ## Resource-safe algorithms
 

@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.69
+**Versión del tracker:** 0.70
 
 **Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** NUM-001 cerrado; completar la conversión numérica y su
-error discriminado (NUM-002 y NUM-005).
+**Objetivo inmediato:** NUM-001/002/005 cerrados; completar la semántica entera
+de operadores (NUM-003).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1648,14 +1648,20 @@ lifetimes escritos por el usuario.
   `Int`/`Float`, no representaciones duplicadas, y todos los límites se validan
   antes de construir el valor.
 
-- [ ] **NUM-002 — Implementar la tabla cerrada de conversiones.**
+- [x] **NUM-002 — Implementar la tabla cerrada de conversiones.** Las 121
+  parejas ordenadas entre los once escalares numéricos se clasifican como
+  identidad, total o comprobada. Las parejas no numéricas se rechazan y la
+  clasificación se rederiva en HIR, MIR y bytecode antes de ejecutar.
 
 - [ ] **NUM-003 — Implementar overflow, división, resto, shifts y bitwise.**
 
 - [ ] **NUM-004 — Conservar semántica IEEE sin fast-math observable.**
 
-- [ ] **NUM-005 — Implementar `NumericConversionError` y su clasificación
-  estable.**
+- [x] **NUM-005 — Implementar `NumericConversionError` y su clasificación
+  estable.** `OutOfRange`, `NotFinite` y `NotIntegral` son discriminantes
+  intrínsecos cerrados con valores y patrones nombrados, exhaustividad, lowering
+  completo y tags verificados. Las conversiones comprobadas constantes
+  conservan el mismo `Result` que la VM.
 
 ### 11.4 Texto
 
@@ -2133,13 +2139,24 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-NUM-001 queda cerrado. La siguiente acción combina NUM-002 y NUM-005 para que la
-tabla cerrada de conversiones y su error discriminado nazcan como un único
-contrato verificable.
+NUM-001, NUM-002 y NUM-005 quedan cerrados. La siguiente acción es NUM-003:
+operadores enteros, overflow, división, resto, shifts y bitwise.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.70 — 2026-07-26
+
+- Se cierra NUM-002 con la matriz exhaustiva de 121 parejas numéricas, incluyendo
+  identidades canónicas, conversiones totales, conversiones comprobadas y
+  rechazo cerrado de cualquier escalar no numérico.
+- Se cierra NUM-005 con `NumericConversionError` como unión intrínseca cerrada:
+  sus tres valores y patrones atraviesan HIR, MIR, bytecode verificado, VM y
+  evaluación constante sin depender de metadata nominal inventada.
+- La aceptación pública cubre `Byte`, propagación con `?`, límites, NaN,
+  infinito, los tres errores, constantes `ok`/`err`, variantes desconocidas y
+  exhaustividad. El verificador rechaza discriminantes o payloads forjados.
 
 ### 0.69 — 2026-07-26
 

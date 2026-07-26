@@ -160,7 +160,8 @@ The implemented bootstrap subset includes:
 - a nonempty source representation of every `assert` condition, retained for
   the normative default panic message without keeping CST nodes alive;
 - explicit numeric conversions classified as identity, total, or checked by
-  the closed conversion table;
+  the closed conversion table, plus dedicated values and patterns for the three
+  closed `NumericConversionError` discriminants;
 - scalar and closed element-wise array arithmetic, plus the exact named
   `Array.concat` and `Array.repeat` operations;
 - simple, compound, discard, and nested tuple assignment with target resolution
@@ -633,9 +634,11 @@ function values, fully explicit generic function specializations, projections,
 indexing, slicing, closed numeric conversions, and pure intrinsic operators.
 Logical operators short-circuit. Element-wise array arithmetic checks every
 nested length before producing a value. Integer overflow, zero division,
-invalid shifts, invalid indices, zero slice steps, shape mismatches, and failed
-checked conversions become `E1903`; calls, interpolation through `Display`, and
-other runtime-only work become `E1901`. ARRAY-007 keeps its named sequence
+invalid shifts, invalid indices, zero slice steps, and shape mismatches become
+`E1903`; a checked conversion instead evaluates to the same `ResultOk` or
+`ResultErr(NumericConversionError)` value produced at runtime. Calls,
+interpolation through `Display`, and other runtime-only work become `E1901`.
+ARRAY-007 keeps its named sequence
 operations on that runtime-only side of the existing 0.1 constant-evaluation
 boundary; adding arbitrary call evaluation or an output-size budget is a
 separate constant-engine contract.

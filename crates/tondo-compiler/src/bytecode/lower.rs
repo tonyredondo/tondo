@@ -1692,6 +1692,7 @@ fn collect_constant_types(value: &HirConstantValue, types: &mut BTreeSet<TypeId>
         | HirConstantValueKind::Float(_)
         | HirConstantValueKind::Char(_)
         | HirConstantValueKind::String(_)
+        | HirConstantValueKind::NumericConversionError(_)
         | HirConstantValueKind::OptionNone => {}
     }
 }
@@ -1753,6 +1754,7 @@ fn collect_constant_function_references(
         | HirConstantValueKind::Float(_)
         | HirConstantValueKind::Char(_)
         | HirConstantValueKind::String(_)
+        | HirConstantValueKind::NumericConversionError(_)
         | HirConstantValueKind::OptionNone => {}
     }
 }
@@ -2579,6 +2581,12 @@ fn lower_constant_value(
                 )?,
             }
         }
+        HirConstantValueKind::NumericConversionError(variant) => {
+            bc::BytecodeConstantValueKind::Variant {
+                variant: variant.index(),
+                payload: bc::BytecodeConstantVariantValue::Unit,
+            }
+        }
         HirConstantValueKind::OptionNone => bc::BytecodeConstantValueKind::OptionNone,
         HirConstantValueKind::OptionSome(value) => {
             bc::BytecodeConstantValueKind::OptionSome(Box::new(lower_constant_value(
@@ -3396,6 +3404,10 @@ fn lower_aggregate(
                 .map(|field| field.map(|field| field.index()))
                 .collect(),
         },
+        MirAggregateKind::NumericConversionError(variant) => bc::BytecodeAggregateKind::Variant {
+            variant: variant.index(),
+            fields: Vec::new(),
+        },
         MirAggregateKind::OptionNone => bc::BytecodeAggregateKind::OptionNone,
         MirAggregateKind::OptionSome => bc::BytecodeAggregateKind::OptionSome,
         MirAggregateKind::ResultOk => bc::BytecodeAggregateKind::ResultOk,
@@ -3708,6 +3720,7 @@ fn lower_tag(
         MirTag::ResultOk => bc::BytecodeTag::ResultOk,
         MirTag::ResultErr => bc::BytecodeTag::ResultErr,
         MirTag::Variant(variant) => bc::BytecodeTag::Variant(variant.index()),
+        MirTag::NumericConversionError(variant) => bc::BytecodeTag::Variant(variant.index()),
         MirTag::Union(member) => {
             bc::BytecodeTag::Union(mapped_catalog_id(member, type_map, catalog)?)
         }

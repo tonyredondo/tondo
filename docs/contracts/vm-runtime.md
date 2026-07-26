@@ -23,7 +23,9 @@ ARRAY-006 closed lifted arithmetic, and ARRAY-007 named
 concatenation/repetition, MAP-001..003 insertion-ordered map operations and
 content equality, SET-001 insertion-ordered unique sets and membership, and
 RANGE-001 lazy discrete ranges with checked boundaries, and ITER-001/002 static
-user iterators plus `for`, `for ref`, `for mut`, and `for var`
+user iterators plus `for`, `for ref`, `for mut`, and `for var`, NUM-001 exact
+intrinsic widths, and NUM-002/005 closed numeric conversion with stable
+recoverable errors
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -51,6 +53,14 @@ Managed heap objects cover:
 - newtypes, records, enum variants, options, results, and union injections;
 - ranges and lazy iterator state; and
 - `Ref[T]` identity cells with one present traced payload.
+
+A checked numeric conversion allocates an ordinary `Result`. Success contains
+the target scalar; failure contains exactly one zero-payload intrinsic
+`NumericConversionError`. Float-to-integer failures are classified in the
+observable order `NotFinite`, `NotIntegral`, then `OutOfRange`; integer
+narrowing and finite `Float64` to overflowing `Float32` use `OutOfRange`.
+Identity and total conversions never allocate a result and a failure on either
+verified path is a VM invariant violation, not a source-level fallback.
 
 An array object owns one ordered vector of optional value slots. The vector
 length is the array's runtime length; it is not duplicated in bytecode type

@@ -437,9 +437,10 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 BytecodeIntrinsicType::NumericConversionError => BytecodeTraceDescriptor::Variant {
                     nominal: None,
                     arguments: Vec::new(),
-                    variants: (0..=2)
-                        .map(|member| BytecodeVariant {
-                            member,
+                    variants: BytecodeNumericConversionError::ALL
+                        .into_iter()
+                        .map(|variant| BytecodeVariant {
+                            member: variant.index(),
                             payload: BytecodeVariantPayload::Unit,
                         })
                         .collect(),
@@ -2231,14 +2232,34 @@ impl Verifier<'_> {
                 }
             }
             BytecodeConstantValueKind::Variant { variant, payload } => {
-                let (_, arguments, metadata) = self.nominal_instance(value.ty, context)?;
-                let BytecodeNominalShape::Enum { variants } = &metadata.shape else {
-                    return Err(constant_shape_error(context));
-                };
-                let Some(declaration) = variants.iter().find(|item| item.member == *variant) else {
-                    return Err(constant_shape_error(context));
-                };
-                self.verify_constant_variant(payload, &declaration.payload, arguments, context)?;
+                if matches!(
+                    ty,
+                    BytecodeTypeKind::Intrinsic {
+                        constructor: BytecodeIntrinsicType::NumericConversionError,
+                        arguments,
+                    } if arguments.is_empty()
+                ) {
+                    if BytecodeNumericConversionError::from_index(*variant).is_none()
+                        || !matches!(payload, BytecodeConstantVariantValue::Unit)
+                    {
+                        return Err(constant_shape_error(context));
+                    }
+                } else {
+                    let (_, arguments, metadata) = self.nominal_instance(value.ty, context)?;
+                    let BytecodeNominalShape::Enum { variants } = &metadata.shape else {
+                        return Err(constant_shape_error(context));
+                    };
+                    let Some(declaration) = variants.iter().find(|item| item.member == *variant)
+                    else {
+                        return Err(constant_shape_error(context));
+                    };
+                    self.verify_constant_variant(
+                        payload,
+                        &declaration.payload,
+                        arguments,
+                        context,
+                    )?;
+                }
             }
             BytecodeConstantValueKind::OptionNone if matches!(ty, BytecodeTypeKind::Option(_)) => {}
             BytecodeConstantValueKind::OptionSome(item) => {
@@ -3565,42 +3586,48 @@ impl Verifier<'_> {
                 }
             }
             BytecodeAggregateKind::Variant { variant, fields } => {
-                let (_, arguments, metadata) = self.nominal_instance(result, context)?;
-                let declaration = enum_variant(metadata, *variant, context)?;
-                match &declaration.payload {
-                    BytecodeVariantPayload::Unit if fields.is_empty() && values.is_empty() => {}
-                    BytecodeVariantPayload::Tuple(items)
-                        if fields.len() == items.len()
-                            && fields.iter().all(Option::is_none)
-                            && values.len() == items.len() =>
-                    {
-                        for (template, value) in items.iter().zip(values) {
-                            if !self.type_matches_substitution(
-                                *template, value.ty, arguments, context,
-                            )? {
-                                return Err(rvalue_error(context));
-                            }
-                        }
+                if self.numeric_conversion_error_variant(result, *variant, context)? {
+                    if !fields.is_empty() || !values.is_empty() {
+                        return Err(rvalue_error(context));
                     }
-                    BytecodeVariantPayload::Record(declared)
-                        if fields.len() == declared.len() && values.len() == declared.len() =>
-                    {
-                        for ((member, value), declaration) in
-                            fields.iter().zip(values).zip(declared)
+                } else {
+                    let (_, arguments, metadata) = self.nominal_instance(result, context)?;
+                    let declaration = enum_variant(metadata, *variant, context)?;
+                    match &declaration.payload {
+                        BytecodeVariantPayload::Unit if fields.is_empty() && values.is_empty() => {}
+                        BytecodeVariantPayload::Tuple(items)
+                            if fields.len() == items.len()
+                                && fields.iter().all(Option::is_none)
+                                && values.len() == items.len() =>
                         {
-                            if *member != Some(declaration.member)
-                                || !self.type_matches_substitution(
-                                    declaration.ty,
-                                    value.ty,
-                                    arguments,
-                                    context,
-                                )?
-                            {
-                                return Err(rvalue_error(context));
+                            for (template, value) in items.iter().zip(values) {
+                                if !self.type_matches_substitution(
+                                    *template, value.ty, arguments, context,
+                                )? {
+                                    return Err(rvalue_error(context));
+                                }
                             }
                         }
+                        BytecodeVariantPayload::Record(declared)
+                            if fields.len() == declared.len() && values.len() == declared.len() =>
+                        {
+                            for ((member, value), declaration) in
+                                fields.iter().zip(values).zip(declared)
+                            {
+                                if *member != Some(declaration.member)
+                                    || !self.type_matches_substitution(
+                                        declaration.ty,
+                                        value.ty,
+                                        arguments,
+                                        context,
+                                    )?
+                                {
+                                    return Err(rvalue_error(context));
+                                }
+                            }
+                        }
+                        _ => return Err(rvalue_error(context)),
                     }
-                    _ => return Err(rvalue_error(context)),
                 }
             }
             BytecodeAggregateKind::OptionNone => {
@@ -5143,6 +5170,22 @@ impl Verifier<'_> {
         Ok(())
     }
 
+    fn numeric_conversion_error_variant(
+        &self,
+        ty: BytecodeTypeId,
+        variant: u32,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        Ok(matches!(
+            &self.ty(ty, context)?.kind,
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::NumericConversionError,
+                arguments,
+            } if arguments.is_empty()
+                && BytecodeNumericConversionError::from_index(variant).is_some()
+        ))
+    }
+
     fn tag_matches(
         &self,
         ty: BytecodeTypeId,
@@ -5157,8 +5200,12 @@ impl Verifier<'_> {
                 matches!(self.ty(ty, context)?.kind, BytecodeTypeKind::Result { .. })
             }
             BytecodeTag::Variant(member) => {
-                let (_, _, metadata) = self.nominal_instance(ty, context)?;
-                matches!(&metadata.shape, BytecodeNominalShape::Enum { variants } if variants.iter().any(|variant| variant.member == member))
+                if self.numeric_conversion_error_variant(ty, member, context)? {
+                    true
+                } else {
+                    let (_, _, metadata) = self.nominal_instance(ty, context)?;
+                    matches!(&metadata.shape, BytecodeNominalShape::Enum { variants } if variants.iter().any(|variant| variant.member == member))
+                }
             }
             BytecodeTag::Union(member) => {
                 self.ty(member, context)?;
@@ -9954,6 +10001,52 @@ mod tests {
                 BytecodeTerminalStatus::Absent,
             ]
         );
+    }
+
+    #[test]
+    fn numeric_conversion_error_constants_use_only_the_closed_unit_variants() {
+        let mut program = terminal_program(false);
+        let error_ty = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "NumericConversionError".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::NumericConversionError,
+                arguments: Vec::new(),
+            },
+        });
+        program.constants = BytecodeNumericConversionError::ALL
+            .into_iter()
+            .map(|variant| BytecodeNamedConstant {
+                name: format!("error{}", variant.index()),
+                value: BytecodeConstantValue {
+                    ty: error_ty,
+                    kind: BytecodeConstantValueKind::Variant {
+                        variant: variant.index(),
+                        payload: BytecodeConstantVariantValue::Unit,
+                    },
+                },
+            })
+            .collect();
+        verify_bytecode(&program).unwrap();
+
+        let mut unknown = program.clone();
+        let BytecodeConstantValueKind::Variant { variant, .. } =
+            &mut unknown.constants[0].value.kind
+        else {
+            unreachable!()
+        };
+        *variant = BytecodeNumericConversionError::ALL.len() as u32;
+        assert!(verify_bytecode(&unknown).is_err());
+
+        let mut payload = program;
+        let BytecodeConstantValueKind::Variant {
+            payload: invalid, ..
+        } = &mut payload.constants[0].value.kind
+        else {
+            unreachable!()
+        };
+        *invalid = BytecodeConstantVariantValue::Tuple(Vec::new());
+        assert!(verify_bytecode(&payload).is_err());
     }
 
     #[test]

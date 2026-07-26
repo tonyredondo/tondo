@@ -13,8 +13,8 @@ use crate::syntax::{Parsed, SyntaxElement, SyntaxKind, SyntaxNodeRef, SyntaxToke
 use crate::types::{
     Assignability, CursorMode, FunctionParameter, FunctionType, GeneratedTypeIdentity,
     GeneratedTypeKind, InferenceContext, InferenceError, InferenceId, IntrinsicType,
-    NumericConversion, ParameterMode, ScalarType, TypeId, TypeKind, TypeSubstitution,
-    numeric_conversion,
+    NumericConversion, NumericConversionErrorVariant, ParameterMode, ScalarType, TypeId, TypeKind,
+    TypeSubstitution, numeric_conversion,
 };
 
 use super::capabilities::{CapabilityAnalysis, CapabilityAssumptions};
@@ -256,6 +256,7 @@ enum PatternConstructor {
     Newtype(SymbolId),
     Record(SymbolId),
     Variant(MemberId),
+    NumericConversionError(NumericConversionErrorVariant),
     Union(TypeId),
     ArrayEmpty,
     ArrayCons,
@@ -1860,6 +1861,7 @@ impl<'a> ExpressionChecker<'a> {
             match &expression.kind {
                 HirExpressionKind::Recovery
                 | HirExpressionKind::Literal(_)
+                | HirExpressionKind::NumericConversionError(_)
                 | HirExpressionKind::Local(_)
                 | HirExpressionKind::Constant(_)
                 | HirExpressionKind::Function(_)
@@ -3580,11 +3582,61 @@ impl<'a> ExpressionChecker<'a> {
         {
             return Ok(function);
         }
+        if let Some(error) = self.check_numeric_conversion_error_path(file, node)? {
+            return Ok(error);
+        }
         if let Some(variant) = self.check_unit_variant_path(file, node, expected)? {
             return Ok(variant);
         }
         let value = self.check_value_path(file, node, context, None)?;
         self.close_contextual_function_value(file, node.range(), value, expected, context)
+    }
+
+    fn check_numeric_conversion_error_path(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'_>,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let Some(path) = self.expression_path_info(file, node)? else {
+            return Ok(None);
+        };
+        let ResolvedName::Prelude { name, .. } = &path.resolved else {
+            return Ok(None);
+        };
+        if name.as_str() != "NumericConversionError" {
+            return Ok(None);
+        }
+        if path.suffix.len() != 1 {
+            self.emit(
+                self.sources.span(file, node.range())?,
+                "E1102",
+                "`NumericConversionError` values name exactly one of `OutOfRange`, `NotFinite`, or `NotIntegral`",
+                Vec::new(),
+                None,
+            )?;
+            return Ok(Some(self.recovery_expression(file, node.range())?));
+        }
+        let segment = &path.suffix[0];
+        let Some(variant) = NumericConversionErrorVariant::named(segment.name.as_str()) else {
+            self.emit(
+                segment.span,
+                "E1102",
+                "unknown `NumericConversionError` variant",
+                Vec::new(),
+                None,
+            )?;
+            return Ok(Some(self.recovery_expression(file, node.range())?));
+        };
+        let ty = self
+            .program
+            .interner
+            .intrinsic(IntrinsicType::NumericConversionError, Vec::new())?;
+        Ok(Some(self.allocate_expression(HirExpression {
+            span: self.sources.span(file, node.range())?,
+            ty,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::NumericConversionError(variant),
+        })?))
     }
 
     fn check_associated_function_value(
@@ -8610,6 +8662,63 @@ impl<'a> ExpressionChecker<'a> {
         let Some(path) = self.pattern_path_info(file, node)? else {
             return self.recovery_pattern(file, node.range());
         };
+        if matches!(
+            &path.resolved,
+            ResolvedName::Prelude { name, .. } if name.as_str() == "NumericConversionError"
+        ) {
+            let numeric_error = self
+                .program
+                .interner
+                .intrinsic(IntrinsicType::NumericConversionError, Vec::new())?;
+            let Some(member) = self.select_pattern_member_checked(expected, |candidate| {
+                Ok(candidate == numeric_error)
+            })?
+            else {
+                self.emit_pattern_type_mismatch(
+                    file,
+                    node.range(),
+                    "`NumericConversionError` variant pattern",
+                    expected,
+                )?;
+                return self.recovery_pattern(file, node.range());
+            };
+            if path.suffix.len() != 1 {
+                self.emit_invalid_pattern(
+                    file,
+                    node.range(),
+                    "`NumericConversionError` patterns name exactly one variant",
+                )?;
+                return self.recovery_pattern(file, node.range());
+            }
+            let Some(variant) = NumericConversionErrorVariant::named(path.suffix[0].name.as_str())
+            else {
+                self.emit_invalid_pattern(
+                    file,
+                    node.range(),
+                    "unknown `NumericConversionError` variant",
+                )?;
+                return self.recovery_pattern(file, node.range());
+            };
+            let id = self.allocate_pattern(HirPattern {
+                span: self.sources.span(file, node.range())?,
+                ty: member,
+                kind: HirPatternKind::NumericConversionError(variant),
+            })?;
+            return self.wrap_union_pattern(
+                file,
+                node.range(),
+                expected,
+                member,
+                CheckedPattern {
+                    id,
+                    shape: PatternShape::Constructor {
+                        key: PatternConstructor::NumericConversionError(variant),
+                        arguments: Vec::new(),
+                    },
+                    valid: true,
+                },
+            );
+        }
         let Some(member) = self.select_pattern_member_checked(expected, |candidate| {
             self.pattern_path_matches_type(&path, candidate)
         })?
@@ -9878,6 +9987,18 @@ impl<'a> ExpressionChecker<'a> {
                 (PatternConstructor::ArrayEmpty, Vec::new()),
                 (PatternConstructor::ArrayCons, vec![arguments[0], ty]),
             ],
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::NumericConversionError,
+                arguments,
+            } if arguments.is_empty() => NumericConversionErrorVariant::ALL
+                .into_iter()
+                .map(|variant| {
+                    (
+                        PatternConstructor::NumericConversionError(variant),
+                        Vec::new(),
+                    )
+                })
+                .collect(),
             TypeKind::Union(members) => members
                 .into_iter()
                 .map(|member| (PatternConstructor::Union(member), vec![member]))
@@ -10462,6 +10583,7 @@ impl<'a> ExpressionChecker<'a> {
                 | HirPatternKind::Wildcard
                 | HirPatternKind::BorrowBinding { .. }
                 | HirPatternKind::Literal(_)
+                | HirPatternKind::NumericConversionError(_)
                 | HirPatternKind::OptionNone => {}
             }
         }
@@ -10501,6 +10623,7 @@ impl<'a> ExpressionChecker<'a> {
                 | HirPatternKind::Wildcard
                 | HirPatternKind::Binding(_)
                 | HirPatternKind::Literal(_)
+                | HirPatternKind::NumericConversionError(_)
                 | HirPatternKind::OptionNone => {}
             }
         }
@@ -10549,6 +10672,7 @@ impl<'a> ExpressionChecker<'a> {
                 | HirPatternKind::Wildcard
                 | HirPatternKind::BorrowBinding { .. }
                 | HirPatternKind::Literal(_)
+                | HirPatternKind::NumericConversionError(_)
                 | HirPatternKind::OptionNone => {}
             }
         }
@@ -16113,6 +16237,7 @@ impl<'a> ExpressionChecker<'a> {
         match &expression.kind {
             HirExpressionKind::Recovery
             | HirExpressionKind::Literal(_)
+            | HirExpressionKind::NumericConversionError(_)
             | HirExpressionKind::Local(_)
             | HirExpressionKind::Constant(_)
             | HirExpressionKind::Function(_)
@@ -16650,6 +16775,7 @@ fn closure_protocol_expression_children(kind: &HirExpressionKind) -> Vec<HirExpr
     match kind {
         HirExpressionKind::Recovery
         | HirExpressionKind::Literal(_)
+        | HirExpressionKind::NumericConversionError(_)
         | HirExpressionKind::Local(_)
         | HirExpressionKind::Constant(_)
         | HirExpressionKind::Function(_)
@@ -22894,12 +23020,8 @@ mod tests {
             "const Invalid: Int = [1][-9223372036854775808]\n",
             "const Invalid: Int = [1][9223372036854775807]\n",
             "const Invalid: Array[Int] = [1, 2][::0]\n",
-            "const Invalid = Int8(128)\n",
             "const Invalid: Int8 = -128i8 / -1i8\n",
             "const Invalid: UInt8 = 0u8 - 1u8\n",
-            "const Invalid = Int(0.5)\n",
-            "const Invalid = Int(0.0 / 0.0)\n",
-            "const Invalid = Float32(3.4028236e38)\n",
         ] {
             let (_, _, output) = check(source);
             assert_eq!(codes(&output), ["E1903"], "{source}");
@@ -22918,6 +23040,52 @@ mod tests {
 
         let (_, _, identity) = check("const Invalid: Ref[Int] = Ref(1)\n");
         assert_eq!(codes(&identity), ["E1901"]);
+    }
+
+    #[test]
+    fn constant_checked_numeric_conversions_preserve_result_errors() {
+        let (_, resolved, output) = check(
+            "const Success = Int8(127)\n\
+             const RangeFailure = Int8(128)\n\
+             const Finite = Int(0.0 / 0.0)\n\
+             const Integral = Int(0.5)\n\
+             const FloatRange = Float32(3.4028236e38)\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+
+        let evaluated = |name: &str| {
+            resolved
+                .symbols()
+                .find(|symbol| symbol.name().as_str() == name)
+                .and_then(|symbol| output.program().constant(symbol.id()))
+                .and_then(HirConstant::evaluated)
+                .unwrap_or_else(|| panic!("{name} must be evaluated"))
+        };
+        assert!(matches!(
+            evaluated("Success").kind(),
+            crate::hir::HirConstantValueKind::ResultOk(value)
+                if matches!(value.kind(), crate::hir::HirConstantValueKind::Integer(127))
+        ));
+        for (name, expected) in [
+            ("RangeFailure", NumericConversionErrorVariant::OutOfRange),
+            ("Finite", NumericConversionErrorVariant::NotFinite),
+            ("Integral", NumericConversionErrorVariant::NotIntegral),
+            ("FloatRange", NumericConversionErrorVariant::OutOfRange),
+        ] {
+            assert!(matches!(
+                evaluated(name).kind(),
+                crate::hir::HirConstantValueKind::ResultErr(error)
+                    if matches!(
+                        error.kind(),
+                        crate::hir::HirConstantValueKind::NumericConversionError(actual)
+                            if *actual == expected
+                    )
+            ));
+        }
     }
 
     #[test]
