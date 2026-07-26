@@ -9076,6 +9076,57 @@ mod tests {
     }
 
     #[test]
+    fn operation_temporaries_survive_gc_between_left_to_right_evaluations() {
+        let program = lowered(
+            "type Pair = { left: String, right: String }\n\
+             fn key(value: String): String { value }\n\
+             fn execute(): Int {\n\
+                 assert(\"same\" == \"same\")\n\
+                 assert(\"needle\" in [\"other\", \"needle\"])\n\
+                 let entries = [\n\
+                     key(\"first\"): [\"one\", \"two\"],\n\
+                     key(\"second\"): [\"three\", \"four\"],\n\
+                 ]\n\
+                 assert(\"first\" in entries)\n\
+                 let pair = Pair { left: \"old-left\", right: \"old-right\" }\n\
+                 let updated = pair with {\n\
+                     left: \"new-left\",\n\
+                     right: \"new-right\",\n\
+                 }\n\
+                 assert(updated.left == \"new-left\")\n\
+                 assert(updated.right == \"new-right\")\n\
+                 let groups = [[\"a\"], [\"b\"], [\"c\"], [\"d\"]]\n\
+                 let copied = groups[:]\n\
+                 assert(copied[3][0] == \"d\")\n\
+                 let totals = [[1, 2], [3, 4]] + [[10, 20], [30, 40]]\n\
+                 assert(totals[1][1] == 44)\n\
+                 assert(true, \"message-left\", \"message-right\")\n\
+                 42\n\
+             }\n",
+        );
+        let entry = function_id(&program, "execute");
+        let mut host = RejectingHost;
+        let execution = execute_with_limits(
+            &program,
+            entry,
+            &mut host,
+            VmLimits {
+                max_heap_objects: 256,
+                max_heap_bytes: 256 * 1024,
+                initial_gc_threshold: 1,
+                ..VmLimits::default()
+            },
+        )
+        .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
+        assert_eq!(
+            execution.outcome,
+            VmOutcome::Returned(RuntimeValue::Integer(42))
+        );
+        assert!(execution.statistics.collections > 0);
+        assert!(execution.statistics.reclaimed_objects > 0);
+    }
+
+    #[test]
     fn closures_execute_with_call_call_mut_call_once_and_fn_erasure_semantics() {
         assert_eq!(
             execute_function(

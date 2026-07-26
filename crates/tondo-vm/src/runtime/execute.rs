@@ -24,6 +24,10 @@ use super::{PanicCode, RuntimeValue, VmError, VmLimits, VmPanic, VmStackFrame, V
 type HeapMapEntry = (Option<Value>, Option<Value>);
 
 /// Host boundary for callables that deliberately have no bytecode body.
+///
+/// Arguments and results are detached snapshots. A host may retain or mutate
+/// its own values, but it never receives a VM heap handle and therefore cannot
+/// keep a managed object alive accidentally.
 pub trait VmHost {
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError>;
 }
@@ -807,7 +811,19 @@ impl<'program, 'host> Engine<'program, 'host> {
         frame: usize,
         fallback: RuntimeFallback,
     ) -> Result<(), VmError> {
+        let marker = self.temporary_roots.len();
+        let result = self.execute_terminal_fallback_rooted(frame, fallback);
+        self.temporary_roots.truncate(marker);
+        result
+    }
+
+    fn execute_terminal_fallback_rooted(
+        &mut self,
+        frame: usize,
+        fallback: RuntimeFallback,
+    ) -> Result<(), VmError> {
         let owner = self.take_place(frame, &fallback.owner)?;
+        self.retain_temporary(&owner);
         let mut pending = vec![(
             RuntimeType {
                 ty: fallback.owner.ty,
@@ -852,7 +868,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     }
                     for (item, value) in items.into_iter().zip(values.iter_mut()) {
                         if let Some(value) = value.take() {
-                            pending.push((ty.child(item), value));
+                            self.queue_fallback_value(&mut pending, ty.child(item), value);
                         }
                     }
                     self.replace_fallback_object(handle, object)?;
@@ -868,7 +884,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                         HeapObject::OptionNone => {}
                         HeapObject::OptionSome(value) => {
                             if let Some(value) = value.take() {
-                                pending.push((ty.child(item), value));
+                                self.queue_fallback_value(&mut pending, ty.child(item), value);
                             }
                         }
                         _ => {
@@ -889,12 +905,12 @@ impl<'program, 'host> Engine<'program, 'host> {
                     match &mut object {
                         HeapObject::ResultOk(value) => {
                             if let Some(value) = value.take() {
-                                pending.push((ty.child(success), value));
+                                self.queue_fallback_value(&mut pending, ty.child(success), value);
                             }
                         }
                         HeapObject::ResultErr(value) => {
                             if let Some(value) = value.take() {
-                                pending.push((ty.child(error), value));
+                                self.queue_fallback_value(&mut pending, ty.child(error), value);
                             }
                         }
                         _ => {
@@ -918,7 +934,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                         ));
                     };
                     if let Some(value) = value.take() {
-                        pending.push((ty.child(*member), value));
+                        self.queue_fallback_value(&mut pending, ty.child(*member), value);
                     }
                     self.replace_fallback_object(handle, object)?;
                 }
@@ -968,7 +984,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                         };
                         for value in values {
                             if let Some(value) = value.take() {
-                                pending.push((ty.child(*item), value));
+                                self.queue_fallback_value(&mut pending, ty.child(*item), value);
                             }
                         }
                         self.replace_fallback_object(handle, object)?;
@@ -992,10 +1008,14 @@ impl<'program, 'host> Engine<'program, 'host> {
                         };
                         for (entry_key, entry_value) in entries {
                             if let Some(entry_key) = entry_key.take() {
-                                pending.push((ty.child(*key), entry_key));
+                                self.queue_fallback_value(&mut pending, ty.child(*key), entry_key);
                             }
                             if let Some(entry_value) = entry_value.take() {
-                                pending.push((ty.child(*item), entry_value));
+                                self.queue_fallback_value(
+                                    &mut pending,
+                                    ty.child(*item),
+                                    entry_value,
+                                );
                             }
                         }
                         self.replace_fallback_object(handle, object)?;
@@ -1018,10 +1038,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                             ));
                         };
                         if let Some(start) = start.take() {
-                            pending.push((ty.child(*item), start));
+                            self.queue_fallback_value(&mut pending, ty.child(*item), start);
                         }
                         if let Some(end) = end.take() {
-                            pending.push((ty.child(*item), end));
+                            self.queue_fallback_value(&mut pending, ty.child(*item), end);
                         }
                         self.replace_fallback_object(handle, object)?;
                     }
@@ -1072,7 +1092,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                             },
                         ) if *actual == nominal => {
                             if let Some(value) = value.take() {
-                                pending.push((child(*underlying), value));
+                                self.queue_fallback_value(&mut pending, child(*underlying), value);
                             }
                         }
                         (
@@ -1092,7 +1112,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                         )
                                     })?;
                                 if let Some(value) = value.take() {
-                                    pending.push((child(field.ty), value));
+                                    self.queue_fallback_value(&mut pending, child(field.ty), value);
                                 }
                             }
                         }
@@ -1116,7 +1136,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 ) if schema.len() == values.len() => {
                                     for (item, value) in schema.iter().zip(values) {
                                         if let Some(value) = value.take() {
-                                            pending.push((child(*item), value));
+                                            self.queue_fallback_value(
+                                                &mut pending,
+                                                child(*item),
+                                                value,
+                                            );
                                         }
                                     }
                                 }
@@ -1134,7 +1158,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                                                 )
                                             })?;
                                         if let Some(value) = value.take() {
-                                            pending.push((child(field.ty), value));
+                                            self.queue_fallback_value(
+                                                &mut pending,
+                                                child(field.ty),
+                                                value,
+                                            );
                                         }
                                     }
                                 }
@@ -1189,7 +1217,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     }
                     for (capture, value) in captures.into_iter().zip(values) {
                         if let Some(value) = value.take() {
-                            pending.push((ty.child(capture), value));
+                            self.queue_fallback_value(&mut pending, ty.child(capture), value);
                         }
                     }
                     self.replace_fallback_object(handle, object)?;
@@ -1220,13 +1248,23 @@ impl<'program, 'host> Engine<'program, 'host> {
                         ));
                     }
                     if let Some(source) = source.take() {
-                        pending.push((ty.child(collection), source));
+                        self.queue_fallback_value(&mut pending, ty.child(collection), source);
                     }
                     self.replace_fallback_object(handle, object)?;
                 }
             }
         }
         Ok(())
+    }
+
+    fn queue_fallback_value(
+        &mut self,
+        pending: &mut Vec<(RuntimeType, Value)>,
+        ty: RuntimeType,
+        value: Value,
+    ) {
+        self.retain_temporary(&value);
+        pending.push((ty, value));
     }
 
     fn execute_direct_terminal_action(
@@ -1271,7 +1309,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         handle: HeapHandle,
         object: HeapObject,
     ) -> Result<(), VmError> {
-        self.heap.replace(handle, object, &[], &mut self.statistics)
+        self.replace_object(handle, object, &[])
     }
 
     fn reserve_loan(&mut self, frame: usize, id: BytecodeLoanId) -> Result<(), VmError> {
@@ -1959,6 +1997,22 @@ impl<'program, 'host> Engine<'program, 'host> {
         Ok(roots)
     }
 
+    /// Protects operation-local values until an allocation-capable step has
+    /// either published them in a frame/object or failed.
+    fn with_temporary_roots<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> Result<T, VmError>,
+    ) -> Result<T, VmError> {
+        let marker = self.temporary_roots.len();
+        let result = operation(self);
+        self.temporary_roots.truncate(marker);
+        result
+    }
+
+    fn retain_temporary(&mut self, value: &Value) {
+        self.temporary_roots.push(value.clone());
+    }
+
     fn allocate(
         &mut self,
         descriptor: BytecodeTypeId,
@@ -2125,16 +2179,17 @@ impl Engine<'_, '_> {
                     &[],
                 )
             }
-            BytecodeConstantValueKind::Map(entries) => {
+            BytecodeConstantValueKind::Map(entries) => self.with_temporary_roots(|engine| {
                 let mut output = Vec::with_capacity(entries.len());
                 for (key, value) in entries {
-                    output.push((
-                        Some(self.materialize_constant(key)?),
-                        Some(self.materialize_constant(value)?),
-                    ));
+                    let key = engine.materialize_constant(key)?;
+                    engine.retain_temporary(&key);
+                    let value = engine.materialize_constant(value)?;
+                    engine.retain_temporary(&value);
+                    output.push((Some(key), Some(value)));
                 }
-                self.allocate(constant.ty, HeapObject::Map(output), &[])
-            }
+                engine.allocate(constant.ty, HeapObject::Map(output), &[])
+            }),
             BytecodeConstantValueKind::Set(values) => {
                 let values = self.materialize_constants(values)?;
                 self.allocate(
@@ -2155,22 +2210,22 @@ impl Engine<'_, '_> {
                 )
             }
             BytecodeConstantValueKind::Record { nominal, fields } => {
-                let mut output = Vec::with_capacity(fields.len());
-                for (field, value) in fields {
-                    output.push((*field, Some(self.materialize_constant(value)?)));
-                }
-                let roots = output
-                    .iter()
-                    .filter_map(|(_, value)| value.clone())
-                    .collect::<Vec<_>>();
-                self.allocate(
-                    constant.ty,
-                    HeapObject::Record {
-                        nominal: *nominal,
-                        fields: output,
-                    },
-                    &roots,
-                )
+                self.with_temporary_roots(|engine| {
+                    let mut output = Vec::with_capacity(fields.len());
+                    for (field, value) in fields {
+                        let value = engine.materialize_constant(value)?;
+                        engine.retain_temporary(&value);
+                        output.push((*field, Some(value)));
+                    }
+                    engine.allocate(
+                        constant.ty,
+                        HeapObject::Record {
+                            nominal: *nominal,
+                            fields: output,
+                        },
+                        &[],
+                    )
+                })
             }
             BytecodeConstantValueKind::Variant { variant, payload } => {
                 let payload = self.materialize_constant_payload(payload)?;
@@ -2213,17 +2268,20 @@ impl Engine<'_, '_> {
                 )
             }
             BytecodeConstantValueKind::Range { kind, start, end } => {
-                let start = self.materialize_constant(start)?;
-                let end = self.materialize_constant(end)?;
-                self.allocate(
-                    constant.ty,
-                    HeapObject::Range {
-                        kind: *kind,
-                        start: Some(start.clone()),
-                        end: Some(end.clone()),
-                    },
-                    &[start, end],
-                )
+                self.with_temporary_roots(|engine| {
+                    let start = engine.materialize_constant(start)?;
+                    engine.retain_temporary(&start);
+                    let end = engine.materialize_constant(end)?;
+                    engine.allocate(
+                        constant.ty,
+                        HeapObject::Range {
+                            kind: *kind,
+                            start: Some(start),
+                            end: Some(end),
+                        },
+                        &[],
+                    )
+                })
             }
         }
     }
@@ -2232,35 +2290,50 @@ impl Engine<'_, '_> {
         &mut self,
         constants: &[BytecodeConstantValue],
     ) -> Result<Vec<Value>, VmError> {
-        constants
-            .iter()
-            .map(|constant| self.materialize_constant(constant))
-            .collect()
+        self.with_temporary_roots(|engine| {
+            let mut values = Vec::with_capacity(constants.len());
+            for constant in constants {
+                let value = engine.materialize_constant(constant)?;
+                engine.retain_temporary(&value);
+                values.push(value);
+            }
+            Ok(values)
+        })
     }
 
     fn materialize_constant_payload(
         &mut self,
         payload: &BytecodeConstantVariantValue,
     ) -> Result<AggregatePayload, VmError> {
-        Ok(match payload {
-            BytecodeConstantVariantValue::Unit => AggregatePayload::Unit,
-            BytecodeConstantVariantValue::Tuple(values) => AggregatePayload::Tuple(
+        match payload {
+            BytecodeConstantVariantValue::Unit => Ok(AggregatePayload::Unit),
+            BytecodeConstantVariantValue::Tuple(values) => Ok(AggregatePayload::Tuple(
                 self.materialize_constants(values)?
                     .into_iter()
                     .map(Some)
                     .collect(),
-            ),
-            BytecodeConstantVariantValue::Record(fields) => {
+            )),
+            BytecodeConstantVariantValue::Record(fields) => self.with_temporary_roots(|engine| {
                 let mut output = Vec::with_capacity(fields.len());
                 for (field, value) in fields {
-                    output.push((*field, Some(self.materialize_constant(value)?)));
+                    let value = engine.materialize_constant(value)?;
+                    engine.retain_temporary(&value);
+                    output.push((*field, Some(value)));
                 }
-                AggregatePayload::Record(output)
-            }
-        })
+                Ok(AggregatePayload::Record(output))
+            }),
+        }
     }
 
     fn copy_value(&mut self, value: &Value) -> Result<Value, VmError> {
+        let marker = self.temporary_roots.len();
+        self.retain_temporary(value);
+        let result = self.copy_rooted_value(value);
+        self.temporary_roots.truncate(marker);
+        result
+    }
+
+    fn copy_rooted_value(&mut self, value: &Value) -> Result<Value, VmError> {
         if matches!(value, Value::Loan(_)) {
             return Err(VmError::invariant(
                 "a call-local loan was copied as a first-class value",
@@ -2337,15 +2410,9 @@ impl Engine<'_, '_> {
                 self.allocate_like(*handle, HeapObject::Union { member, value }, &[])
             }
             HeapObject::Range { kind, start, end } => {
-                let marker = self.temporary_roots.len();
-                let result: Result<(Option<Value>, Option<Value>), VmError> = (|| {
-                    let start = self.copy_optional_value(&start)?;
-                    self.retain_optional_temporary(&start);
-                    let end = self.copy_optional_value(&end)?;
-                    Ok((start, end))
-                })();
-                self.temporary_roots.truncate(marker);
-                let (start, end) = result?;
+                let start = self.copy_optional_value(&start)?;
+                self.retain_optional_temporary(&start);
+                let end = self.copy_optional_value(&end)?;
                 self.allocate_like(*handle, HeapObject::Range { kind, start, end }, &[])
             }
         }
@@ -2440,43 +2507,48 @@ impl Engine<'_, '_> {
                 operator,
                 left,
                 right,
-            } => {
-                let left_value = self.evaluate_operand(frame, left)?;
-                let right_value = self.evaluate_operand(frame, right)?;
-                self.pure_binary(*operator, left.ty, right.ty, left_value, right_value)
-            }
+            } => self.with_temporary_roots(|engine| {
+                let left_value = engine.evaluate_operand(frame, left)?;
+                engine.retain_temporary(&left_value);
+                let right_value = engine.evaluate_operand(frame, right)?;
+                engine.pure_binary(*operator, left.ty, right.ty, left_value, right_value)
+            }),
             BytecodeRvalueKind::Construct { shape, values } => {
                 let values = self.evaluate_operands(frame, values)?;
                 self.construct_aggregate(rvalue.ty, shape, values)
             }
             BytecodeRvalueKind::RecordUpdate { base, fields } => {
-                let base = self.evaluate_operand(frame, base)?;
-                let Value::Heap(handle) = base else {
-                    return Err(VmError::invariant("record update base is not managed"));
-                };
-                let HeapObject::Record {
-                    nominal,
-                    fields: mut output,
-                } = self.heap.get(handle)?.clone()
-                else {
-                    return Err(VmError::invariant("record update base is not a record"));
-                };
-                for (field, value) in fields {
-                    let value = self.evaluate_operand(frame, value)?;
-                    let destination = output
-                        .iter_mut()
-                        .find(|(candidate, _)| candidate == field)
-                        .ok_or_else(|| VmError::invariant("record update field is missing"))?;
-                    destination.1 = Some(value);
-                }
-                self.allocate(
-                    rvalue.ty,
-                    HeapObject::Record {
+                self.with_temporary_roots(|engine| {
+                    let base = engine.evaluate_operand(frame, base)?;
+                    engine.retain_temporary(&base);
+                    let Value::Heap(handle) = base else {
+                        return Err(VmError::invariant("record update base is not managed"));
+                    };
+                    let HeapObject::Record {
                         nominal,
-                        fields: output,
-                    },
-                    &[],
-                )
+                        fields: mut output,
+                    } = engine.heap.get(handle)?.clone()
+                    else {
+                        return Err(VmError::invariant("record update base is not a record"));
+                    };
+                    for (field, value) in fields {
+                        let value = engine.evaluate_operand(frame, value)?;
+                        engine.retain_temporary(&value);
+                        let destination = output
+                            .iter_mut()
+                            .find(|(candidate, _)| candidate == field)
+                            .ok_or_else(|| VmError::invariant("record update field is missing"))?;
+                        destination.1 = Some(value);
+                    }
+                    engine.allocate(
+                        rvalue.ty,
+                        HeapObject::Record {
+                            nominal,
+                            fields: output,
+                        },
+                        &[],
+                    )
+                })
             }
             BytecodeRvalueKind::Coerce { kind, value } => {
                 let value_result = self.evaluate_operand(frame, value)?;
@@ -2511,28 +2583,30 @@ impl Engine<'_, '_> {
                 let value = self.evaluate_operand(frame, value)?;
                 self.numeric_conversion(rvalue.ty, *target, *conversion, value)
             }
-            BytecodeRvalueKind::Range { kind, start, end } => {
-                let start = self.evaluate_operand(frame, start)?;
-                let end = self.evaluate_operand(frame, end)?;
-                self.allocate(
+            BytecodeRvalueKind::Range { kind, start, end } => self.with_temporary_roots(|engine| {
+                let start = engine.evaluate_operand(frame, start)?;
+                engine.retain_temporary(&start);
+                let end = engine.evaluate_operand(frame, end)?;
+                engine.allocate(
                     rvalue.ty,
                     HeapObject::Range {
                         kind: *kind,
-                        start: Some(start.clone()),
-                        end: Some(end.clone()),
+                        start: Some(start),
+                        end: Some(end),
                     },
-                    &[start, end],
+                    &[],
                 )
-            }
+            }),
             BytecodeRvalueKind::Contains {
                 kind,
                 item,
                 container,
-            } => {
-                let item = self.evaluate_operand(frame, item)?;
-                let container = self.evaluate_operand(frame, container)?;
-                Ok(Value::Bool(self.contains(*kind, &item, &container)?))
-            }
+            } => self.with_temporary_roots(|engine| {
+                let item = engine.evaluate_operand(frame, item)?;
+                engine.retain_temporary(&item);
+                let container = engine.evaluate_operand(frame, container)?;
+                Ok(Value::Bool(engine.contains(*kind, &item, &container)?))
+            }),
             BytecodeRvalueKind::Length(value) => {
                 let value = self.evaluate_operand(frame, value)?;
                 Ok(Value::Integer(self.length(&value)? as i128))
@@ -3124,6 +3198,19 @@ impl Engine<'_, '_> {
         parent: Value,
         projection: &BytecodeProjection,
     ) -> Result<Value, VmError> {
+        let marker = self.temporary_roots.len();
+        self.retain_temporary(&parent);
+        let result = self.read_rooted_projection(frame, parent, projection);
+        self.temporary_roots.truncate(marker);
+        result
+    }
+
+    fn read_rooted_projection(
+        &mut self,
+        frame: usize,
+        parent: Value,
+        projection: &BytecodeProjection,
+    ) -> Result<Value, VmError> {
         let Value::Heap(handle) = parent else {
             return Err(VmError::invariant("projection base is not a heap object"));
         };
@@ -3191,7 +3278,9 @@ impl Engine<'_, '_> {
                 }
                 let mut output = Vec::with_capacity(end - start);
                 for value in &values[start..end] {
-                    output.push(Some(self.copy_value(present(value, "array rest item")?)?));
+                    let value = Some(self.copy_value(present(value, "array rest item")?)?);
+                    self.retain_optional_temporary(&value);
+                    output.push(value);
                 }
                 self.allocate(projection.ty, HeapObject::Array(output), &[])
             }
@@ -3270,9 +3359,9 @@ impl Engine<'_, '_> {
                     .map_err(|_| VmError::invariant("unvalidated slice reached a projection"))?;
                 let mut output = Vec::with_capacity(indices.len());
                 for index in indices {
-                    output.push(Some(
-                        self.copy_value(present(&values[index], "slice item")?)?,
-                    ));
+                    let value = Some(self.copy_value(present(&values[index], "slice item")?)?);
+                    self.retain_optional_temporary(&value);
+                    output.push(value);
                 }
                 self.allocate(projection.ty, HeapObject::Array(output), &[])
             }
@@ -3396,6 +3485,21 @@ impl Engine<'_, '_> {
     }
 
     fn write_projection(
+        &mut self,
+        frame: usize,
+        parent: Value,
+        projection: &BytecodeProjection,
+        value: Value,
+    ) -> Result<(), VmError> {
+        let marker = self.temporary_roots.len();
+        self.retain_temporary(&parent);
+        self.retain_temporary(&value);
+        let result = self.write_rooted_projection(frame, parent, projection, value);
+        self.temporary_roots.truncate(marker);
+        result
+    }
+
+    fn write_rooted_projection(
         &mut self,
         frame: usize,
         parent: Value,
@@ -4052,11 +4156,12 @@ impl Engine<'_, '_> {
                 operator,
                 left,
                 right,
-            } => {
-                let left_value = self.evaluate_operand(frame, left)?;
-                let right_value = self.evaluate_operand(frame, right)?;
+            } => self.with_temporary_roots(|engine| {
+                let left_value = engine.evaluate_operand(frame, left)?;
+                engine.retain_temporary(&left_value);
+                let right_value = engine.evaluate_operand(frame, right)?;
                 Ok(
-                    match self.checked_binary(
+                    match engine.checked_binary(
                         *operator,
                         left.ty,
                         right.ty,
@@ -4068,22 +4173,23 @@ impl Engine<'_, '_> {
                         Err((code, message)) => OperationResult::Panic(code, message),
                     },
                 )
-            }
+            }),
             BytecodeOperationKind::BuildMap {
                 entries,
                 reject_dynamic_duplicates,
-            } => {
+            } => self.with_temporary_roots(|engine| {
                 let mut evaluated = Vec::with_capacity(entries.len());
                 for (key, value) in entries {
-                    evaluated.push((
-                        self.evaluate_operand(frame, key)?,
-                        self.evaluate_operand(frame, value)?,
-                    ));
+                    let key = engine.evaluate_operand(frame, key)?;
+                    engine.retain_temporary(&key);
+                    let value = engine.evaluate_operand(frame, value)?;
+                    engine.retain_temporary(&value);
+                    evaluated.push((key, value));
                 }
                 let mut output: Vec<(Option<Value>, Option<Value>)> =
                     Vec::with_capacity(entries.len());
                 for (key, value) in evaluated {
-                    if let Some(index) = self.find_map_entry(&output, &key)? {
+                    if let Some(index) = engine.find_map_entry(&output, &key)? {
                         if *reject_dynamic_duplicates {
                             return Ok(OperationResult::Panic(
                                 PanicCode::DuplicateDynamicMapKey,
@@ -4095,12 +4201,12 @@ impl Engine<'_, '_> {
                         output.push((Some(key), Some(value)));
                     }
                 }
-                Ok(OperationResult::Value(self.allocate(
+                Ok(OperationResult::Value(engine.allocate(
                     operation.ty,
                     HeapObject::Map(output),
                     &[],
                 )?))
-            }
+            }),
             BytecodeOperationKind::Index {
                 base,
                 index,
@@ -4119,14 +4225,18 @@ impl Engine<'_, '_> {
                         };
                     }
                 }
-                let base = self.evaluate_operand(frame, base)?;
-                let index = self.evaluate_operand(frame, index)?;
-                Ok(
-                    match self.index_value(operation.ty, base, index, *access)? {
-                        Ok(value) => OperationResult::Value(value),
-                        Err((code, message)) => OperationResult::Panic(code, message),
-                    },
-                )
+                self.with_temporary_roots(|engine| {
+                    let base = engine.evaluate_operand(frame, base)?;
+                    engine.retain_temporary(&base);
+                    let index = engine.evaluate_operand(frame, index)?;
+                    engine.retain_temporary(&index);
+                    Ok(
+                        match engine.index_value(operation.ty, base, index, *access)? {
+                            Ok(value) => OperationResult::Value(value),
+                            Err((code, message)) => OperationResult::Panic(code, message),
+                        },
+                    )
+                })
             }
             BytecodeOperationKind::Slice {
                 base,
@@ -4145,28 +4255,34 @@ impl Engine<'_, '_> {
                         };
                     }
                 }
-                let base = self.evaluate_operand(frame, base)?;
-                let start = bounds
-                    .start
-                    .as_ref()
-                    .map(|value| self.evaluate_operand(frame, value))
-                    .transpose()?;
-                let end = bounds
-                    .end
-                    .as_ref()
-                    .map(|value| self.evaluate_operand(frame, value))
-                    .transpose()?;
-                let step = bounds
-                    .step
-                    .as_ref()
-                    .map(|value| self.evaluate_operand(frame, value))
-                    .transpose()?;
-                Ok(
-                    match self.slice_value(operation.ty, base, start, end, step)? {
-                        Ok(value) => OperationResult::Value(value),
-                        Err((code, message)) => OperationResult::Panic(code, message),
-                    },
-                )
+                self.with_temporary_roots(|engine| {
+                    let base = engine.evaluate_operand(frame, base)?;
+                    engine.retain_temporary(&base);
+                    let start = bounds
+                        .start
+                        .as_ref()
+                        .map(|value| engine.evaluate_operand(frame, value))
+                        .transpose()?;
+                    engine.retain_optional_temporary(&start);
+                    let end = bounds
+                        .end
+                        .as_ref()
+                        .map(|value| engine.evaluate_operand(frame, value))
+                        .transpose()?;
+                    engine.retain_optional_temporary(&end);
+                    let step = bounds
+                        .step
+                        .as_ref()
+                        .map(|value| engine.evaluate_operand(frame, value))
+                        .transpose()?;
+                    engine.retain_optional_temporary(&step);
+                    Ok(
+                        match engine.slice_value(operation.ty, base, start, end, step)? {
+                            Ok(value) => OperationResult::Value(value),
+                            Err((code, message)) => OperationResult::Panic(code, message),
+                        },
+                    )
+                })
             }
             BytecodeOperationKind::Call {
                 callee, arguments, ..
@@ -4185,45 +4301,26 @@ impl Engine<'_, '_> {
                 condition,
                 condition_repr,
                 message_parts,
-            } => {
-                let condition = self.evaluate_operand(frame, condition)?;
+            } => self.with_temporary_roots(|engine| {
+                let condition = engine.evaluate_operand(frame, condition)?;
                 let Value::Bool(condition) = condition else {
                     return Err(VmError::invariant("assert condition is not Bool"));
                 };
                 let mut values = Vec::with_capacity(message_parts.len());
                 for part in message_parts {
-                    values.push((self.evaluate_operand(frame, &part.value)?, part.spread));
+                    let value = engine.evaluate_operand(frame, &part.value)?;
+                    engine.retain_temporary(&value);
+                    values.push((value, part.spread));
                 }
                 if condition {
                     Ok(OperationResult::Value(Value::Unit))
                 } else {
-                    let mut message = String::new();
-                    for (value, spread) in values {
-                        if spread {
-                            let Value::Heap(handle) = value else {
-                                return Err(VmError::invariant(
-                                    "spread assert message is not managed",
-                                ));
-                            };
-                            let HeapObject::Array(parts) = self.heap.get(handle)?.clone() else {
-                                return Err(VmError::invariant(
-                                    "spread assert message is not an Array",
-                                ));
-                            };
-                            for part in parts {
-                                let part = present(&part, "assert message part")?;
-                                message.push_str(self.string_value(part)?);
-                            }
-                        } else {
-                            message.push_str(self.string_value(&value)?);
-                        }
-                    }
-                    if message_parts.is_empty() {
-                        message = format!("assertion failed: {condition_repr}");
-                    }
-                    Ok(OperationResult::Panic(PanicCode::AssertionFailed, message))
+                    Ok(OperationResult::Panic(
+                        PanicCode::AssertionFailed,
+                        engine.assert_message(condition_repr, &values)?,
+                    ))
                 }
-            }
+            }),
             BytecodeOperationKind::BootstrapHostCall {
                 function,
                 arguments,
@@ -4435,6 +4532,25 @@ impl Engine<'_, '_> {
         left: Value,
         right: Value,
     ) -> Result<Result<Value, (PanicCode, String)>, VmError> {
+        let marker = self.temporary_roots.len();
+        self.retain_temporary(&left);
+        self.retain_temporary(&right);
+        let result =
+            self.checked_rooted_array_binary(operator, left_ty, right_ty, result_ty, left, right);
+        self.temporary_roots.truncate(marker);
+        result
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn checked_rooted_array_binary(
+        &mut self,
+        operator: BytecodeBinaryOperator,
+        left_ty: BytecodeTypeId,
+        right_ty: BytecodeTypeId,
+        result_ty: BytecodeTypeId,
+        left: Value,
+        right: Value,
+    ) -> Result<Result<Value, (PanicCode, String)>, VmError> {
         let left_element = self.array_element(left_ty);
         let right_element = self.array_element(right_ty);
         let result_element = self
@@ -4482,7 +4598,10 @@ impl Engine<'_, '_> {
                 right_value?,
             )?;
             match element {
-                Ok(value) => output.push(Some(value)),
+                Ok(value) => {
+                    self.retain_temporary(&value);
+                    output.push(Some(value));
+                }
                 Err(panic) => return Ok(Err(panic)),
             }
         }
@@ -4573,6 +4692,24 @@ impl Engine<'_, '_> {
         end: Option<Value>,
         step: Option<Value>,
     ) -> Result<Result<Value, (PanicCode, String)>, VmError> {
+        let marker = self.temporary_roots.len();
+        self.retain_temporary(&base);
+        self.retain_optional_temporary(&start);
+        self.retain_optional_temporary(&end);
+        self.retain_optional_temporary(&step);
+        let result = self.slice_rooted_value(result_ty, base, start, end, step);
+        self.temporary_roots.truncate(marker);
+        result
+    }
+
+    fn slice_rooted_value(
+        &mut self,
+        result_ty: BytecodeTypeId,
+        base: Value,
+        start: Option<Value>,
+        end: Option<Value>,
+        step: Option<Value>,
+    ) -> Result<Result<Value, (PanicCode, String)>, VmError> {
         let Value::Heap(handle) = base else {
             return Err(VmError::invariant("slice base is not managed"));
         };
@@ -4598,9 +4735,9 @@ impl Engine<'_, '_> {
         };
         let mut output = Vec::with_capacity(indices.len());
         for index in indices {
-            output.push(Some(
-                self.copy_value(present(&values[index], "slice item")?)?,
-            ));
+            let value = Some(self.copy_value(present(&values[index], "slice item")?)?);
+            self.retain_optional_temporary(&value);
+            output.push(value);
         }
         Ok(Ok(self.allocate(
             result_ty,
@@ -4894,15 +5031,15 @@ impl Engine<'_, '_> {
                     .first()
                     .copied()
                     .ok_or_else(|| VmError::invariant("verified array type has no element type"))?;
-                let mut materialized = Vec::with_capacity(values.len());
-                for value in values {
-                    materialized.push(self.materialize_host_value(element, value)?);
-                }
-                self.allocate(
-                    descriptor,
-                    HeapObject::Array(materialized.into_iter().map(Some).collect()),
-                    &[],
-                )
+                self.with_temporary_roots(|engine| {
+                    let mut materialized = Vec::with_capacity(values.len());
+                    for value in values {
+                        let value = engine.materialize_host_value(element, value)?;
+                        engine.retain_temporary(&value);
+                        materialized.push(Some(value));
+                    }
+                    engine.allocate(descriptor, HeapObject::Array(materialized), &[])
+                })
             }
             (BytecodeTypeKind::Option(_), RuntimeValue::OptionNone) => {
                 self.allocate(descriptor, HeapObject::OptionNone, &[])
@@ -4950,12 +5087,15 @@ impl Engine<'_, '_> {
                 "bootstrap host result has the wrong aggregate arity".into(),
             ));
         }
-        types
-            .iter()
-            .copied()
-            .zip(values)
-            .map(|(ty, value)| self.materialize_host_value(ty, value))
-            .collect()
+        self.with_temporary_roots(|engine| {
+            let mut materialized = Vec::with_capacity(values.len());
+            for (ty, value) in types.iter().copied().zip(values) {
+                let value = engine.materialize_host_value(ty, value)?;
+                engine.retain_temporary(&value);
+                materialized.push(value);
+            }
+            Ok(materialized)
+        })
     }
 
     fn value_tag(&self, value: &Value) -> Result<BytecodeTag, VmError> {
@@ -5783,4 +5923,308 @@ fn integer_bounds(scalar: BytecodeScalarType) -> Option<(i128, i128)> {
     } else {
         (0, (1_i128 << bits) - 1)
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::bytecode::{
+        BytecodeConstantValue, BytecodeConstantValueKind, BytecodeIntrinsicType, BytecodeProgram,
+        BytecodeRangeKind, BytecodeScalarType, BytecodeType, BytecodeTypeId, BytecodeTypeKind,
+        derive_trace_metadata,
+    };
+
+    use super::{
+        Engine, RejectingHost, RuntimeType, RuntimeValue, Value, VmLimits, snapshot_value,
+    };
+
+    fn root_pressure_program() -> BytecodeProgram {
+        let string = BytecodeTypeId::new(0);
+        let strings = BytecodeTypeId::new(1);
+        BytecodeProgram {
+            types: vec![
+                BytecodeType {
+                    name: "String".into(),
+                    kind: BytecodeTypeKind::Scalar(BytecodeScalarType::String),
+                },
+                BytecodeType {
+                    name: "Array[String]".into(),
+                    kind: BytecodeTypeKind::Intrinsic {
+                        constructor: BytecodeIntrinsicType::Array,
+                        arguments: vec![string],
+                    },
+                },
+                BytecodeType {
+                    name: "Map[String, Array[String]]".into(),
+                    kind: BytecodeTypeKind::Intrinsic {
+                        constructor: BytecodeIntrinsicType::Map,
+                        arguments: vec![string, strings],
+                    },
+                },
+                BytecodeType {
+                    name: "Range[String]".into(),
+                    kind: BytecodeTypeKind::Intrinsic {
+                        constructor: BytecodeIntrinsicType::Range,
+                        arguments: vec![string],
+                    },
+                },
+                BytecodeType {
+                    name: "(Array[String], Array[String])".into(),
+                    kind: BytecodeTypeKind::Tuple(vec![strings, strings]),
+                },
+            ],
+            nominals: Vec::new(),
+            callables: Vec::new(),
+            constants: Vec::new(),
+            functions: Vec::new(),
+        }
+    }
+
+    fn pressure_limits() -> VmLimits {
+        VmLimits {
+            max_heap_objects: 64,
+            max_heap_bytes: 64 * 1024,
+            initial_gc_threshold: 1,
+            ..VmLimits::default()
+        }
+    }
+
+    fn string_constant(value: &str) -> BytecodeConstantValue {
+        BytecodeConstantValue {
+            ty: BytecodeTypeId::new(0),
+            kind: BytecodeConstantValueKind::String(value.into()),
+        }
+    }
+
+    fn string_array_constant(values: &[&str]) -> BytecodeConstantValue {
+        BytecodeConstantValue {
+            ty: BytecodeTypeId::new(1),
+            kind: BytecodeConstantValueKind::Array(
+                values.iter().map(|value| string_constant(value)).collect(),
+            ),
+        }
+    }
+
+    #[test]
+    fn constant_materialization_roots_completed_children_under_gc_pressure() {
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(&program, &mut host, pressure_limits(), trace);
+        let constant = BytecodeConstantValue {
+            ty: BytecodeTypeId::new(4),
+            kind: BytecodeConstantValueKind::Tuple(vec![
+                string_array_constant(&["left", "right"]),
+                BytecodeConstantValue {
+                    ty: BytecodeTypeId::new(2),
+                    kind: BytecodeConstantValueKind::Map(vec![
+                        (
+                            string_constant("first"),
+                            string_array_constant(&["one", "two"]),
+                        ),
+                        (
+                            string_constant("second"),
+                            string_array_constant(&["three", "four"]),
+                        ),
+                    ]),
+                },
+            ]),
+        };
+
+        let value = engine.materialize_constant(&constant).unwrap();
+        let snapshot = snapshot_value(
+            &value,
+            &engine.heap,
+            &engine.callable_names,
+            &engine.nominal_names,
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot,
+            RuntimeValue::Tuple(vec![
+                RuntimeValue::Array(vec![
+                    RuntimeValue::String("left".into()),
+                    RuntimeValue::String("right".into()),
+                ]),
+                RuntimeValue::Map(vec![
+                    (
+                        RuntimeValue::String("first".into()),
+                        RuntimeValue::Array(vec![
+                            RuntimeValue::String("one".into()),
+                            RuntimeValue::String("two".into()),
+                        ]),
+                    ),
+                    (
+                        RuntimeValue::String("second".into()),
+                        RuntimeValue::Array(vec![
+                            RuntimeValue::String("three".into()),
+                            RuntimeValue::String("four".into()),
+                        ]),
+                    ),
+                ]),
+            ])
+        );
+
+        let range = BytecodeConstantValue {
+            ty: BytecodeTypeId::new(3),
+            kind: BytecodeConstantValueKind::Range {
+                kind: BytecodeRangeKind::Inclusive,
+                start: Box::new(string_constant("a")),
+                end: Box::new(string_constant("z")),
+            },
+        };
+        let value = engine.materialize_constant(&range).unwrap();
+        let snapshot = snapshot_value(
+            &value,
+            &engine.heap,
+            &engine.callable_names,
+            &engine.nominal_names,
+        )
+        .unwrap();
+        assert_eq!(
+            snapshot,
+            RuntimeValue::Range {
+                inclusive: true,
+                start: Box::new(RuntimeValue::String("a".into())),
+                end: Box::new(RuntimeValue::String("z".into())),
+            }
+        );
+        assert!(engine.statistics.collections > 0);
+    }
+
+    #[test]
+    fn host_materialization_roots_completed_children_under_gc_pressure() {
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(&program, &mut host, pressure_limits(), trace);
+        let returned = RuntimeValue::Tuple(vec![
+            RuntimeValue::Array(vec![
+                RuntimeValue::String("left".into()),
+                RuntimeValue::String("right".into()),
+            ]),
+            RuntimeValue::Array(vec![
+                RuntimeValue::String("up".into()),
+                RuntimeValue::String("down".into()),
+            ]),
+        ]);
+
+        let value = engine
+            .materialize_host_value(BytecodeTypeId::new(4), returned.clone())
+            .unwrap();
+        let snapshot = snapshot_value(
+            &value,
+            &engine.heap,
+            &engine.callable_names,
+            &engine.nominal_names,
+        )
+        .unwrap();
+        assert_eq!(snapshot, returned);
+        assert!(engine.statistics.collections > 0);
+    }
+
+    #[test]
+    fn detached_host_snapshots_do_not_become_vm_roots() {
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(&program, &mut host, pressure_limits(), trace);
+        let managed = engine
+            .allocate(
+                BytecodeTypeId::new(0),
+                super::HeapObject::String("host-owned".into()),
+                &[],
+            )
+            .unwrap();
+        let retained_by_host = snapshot_value(
+            &managed,
+            &engine.heap,
+            &engine.callable_names,
+            &engine.nominal_names,
+        )
+        .unwrap();
+
+        engine
+            .allocate(
+                BytecodeTypeId::new(0),
+                super::HeapObject::String("pressure".into()),
+                &[],
+            )
+            .unwrap();
+
+        assert_eq!(retained_by_host, RuntimeValue::String("host-owned".into()));
+        assert!(
+            snapshot_value(
+                &managed,
+                &engine.heap,
+                &engine.callable_names,
+                &engine.nominal_names,
+            )
+            .is_err()
+        );
+        assert!(engine.statistics.reclaimed_objects > 0);
+    }
+
+    #[test]
+    fn structured_pending_values_publish_and_withdraw_temporary_roots() {
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(&program, &mut host, pressure_limits(), trace);
+        let retained = engine
+            .allocate(
+                BytecodeTypeId::new(0),
+                super::HeapObject::String("retained".into()),
+                &[],
+            )
+            .unwrap();
+        let marker = engine.temporary_roots.len();
+        let mut pending = Vec::new();
+        engine.queue_fallback_value(
+            &mut pending,
+            RuntimeType {
+                ty: BytecodeTypeId::new(0),
+                substitutions: Vec::new(),
+            },
+            retained.clone(),
+        );
+
+        engine
+            .allocate(
+                BytecodeTypeId::new(0),
+                super::HeapObject::String("pressure".into()),
+                &[],
+            )
+            .unwrap();
+        assert_eq!(
+            snapshot_value(
+                &retained,
+                &engine.heap,
+                &engine.callable_names,
+                &engine.nominal_names,
+            )
+            .unwrap(),
+            RuntimeValue::String("retained".into())
+        );
+
+        pending.clear();
+        engine.temporary_roots.truncate(marker);
+        engine
+            .allocate(
+                BytecodeTypeId::new(0),
+                super::HeapObject::String("after-withdrawal".into()),
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(retained, Value::Heap(_)));
+        assert!(
+            snapshot_value(
+                &retained,
+                &engine.heap,
+                &engine.callable_names,
+                &engine.nominal_names,
+            )
+            .is_err()
+        );
+        assert!(engine.statistics.reclaimed_objects > 0);
+    }
 }

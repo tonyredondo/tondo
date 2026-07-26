@@ -43,8 +43,11 @@ stringly typed general-purpose FFI or through a callable with a missing body.
 
 Only verified bytecode can invoke the host. The VM passes detached
 `RuntimeValue` snapshots, never heap handles, frame references, or mutable VM
-state. The host must return `Unit`; any other value is a toolchain host error,
-not a Tondo value or panic.
+state. Retaining or mutating such a snapshot does not retain or mutate its
+former VM object. A returned compound snapshot would be rematerialized while
+completed children remain operation-local roots; the current `print` bridge
+must return `Unit`. Any other value is a toolchain host error, not a Tondo value
+or panic.
 
 The compiler driver's bootstrap host buffers bytes in evaluation order and
 places them in `CompilationOutput.stdout`. The CLI writes that buffer to process
@@ -63,5 +66,5 @@ capability admission, stream routing, evaluation order, and diagnostics.
 
 Required regression coverage includes accepted and rejected call shapes,
 capability-present and capability-absent imports, HIR-to-bytecode preservation,
-host argument snapshots, exact output without an implicit newline, and
-verification before the first possible host invocation.
+host argument snapshots that do not become VM roots, exact output without an
+implicit newline, and verification before the first possible host invocation.

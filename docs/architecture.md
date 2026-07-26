@@ -431,11 +431,17 @@ descriptor reusable by a future suspended frame. Opaque results reuse their
 witness layout; closure environments retain their unique callable and capture
 schema. `Ref[T]` has a traceable cell shape but does not gain source-visible
 identity until REF-001.
-The operation-local root stack protects both copied and moved captures while an
-environment is allocated. The VM rejects effectful ordinary calls and effectful
-root entries, so retaining an async or unsafe callable cannot activate an
-unfinished runtime. Its exact object,
-tracing, panic, host, and admission boundary is recorded in
+The operation-local root stack protects completed children and operands across
+every later allocation, including constants, compound host returns, recursive
+copies, projections, slices, array arithmetic, variadic packing, calls, and the
+structured terminal-fallback walker. Publication into a frame, cleanup, or
+managed object and withdrawal by move/death/pop have explicit transitions.
+Closure environments remain ordinary traced objects. Host values are detached
+snapshots rather than handles; suspended-frame containers remain absent until
+M7 registers them as a new root source. The VM rejects effectful ordinary calls
+and effectful root entries, so retaining an async or unsafe callable cannot
+activate an unfinished runtime. Its exact object, tracing, panic, host, and
+admission boundary is recorded in
 `docs/contracts/vm-runtime.md`.
 The sole M3 standard-library bridge, capability-gated
 `std.console.print(String): Unit`, is isolated by
@@ -455,8 +461,10 @@ ABI.
   canonical formatter bytes, plus later produced artifacts. After resolution
   it may also own a `SemanticModel` containing the exact source database,
   resolved program, and available typed HIR. It never borrows the request.
-- VM roots are explicit in frames, environments, host handles, and suspended
-  task state.
+- Current VM roots are explicit in active frames and cleanups, the
+  operation-local root stack, pending publications, and managed-object edges.
+  Host values are detached and no suspended task state exists yet; any future
+  handle or suspended-frame container must register a new explicit root source.
 
 This model avoids self-referential Rust structures and lets a phase be tested
 from immutable snapshots.

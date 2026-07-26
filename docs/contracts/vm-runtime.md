@@ -10,7 +10,7 @@ BORROW-002 last-use regions, BORROW-003 fixed versus structural mutation, and
 BORROW-004 static collection-region disjunction, BORROW-005 dynamic overlap
 proofs, BORROW-006 borrowed iteration, TERM-003 synchronous defer/guard
 execution, TERM-004/005 structural unwind exclusivity, and GC-001 verified
-trace descriptors
+trace descriptors plus GC-002 complete synchronous root lifetimes
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -152,17 +152,36 @@ cannot execute twice. The guarded frame place is consumed by that invocation;
 verified code cannot access it again unless a complete write reinitializes it.
 
 At every possible collection, roots are enumerated precisely from every live
-value in every frame plus an explicit stack of operation-local values that have
-not yet been stored. Multi-operand aggregate construction and recursive value
-copy push each completed temporary until its parent object has been allocated.
-Managed objects trace only their actual managed children. Iterator state and
-partially moved aggregate fields participate in the same tracing walk. Moving
-an affine array rest takes its contiguous elements into a new owning array,
-leaves holes in the compiler-owned scrutinee, and roots both parent and moved
-children across the allocation. Closure construction uses the same temporary
-root stack for Copy and Move capture operands. Later suspended tasks and host
-handles must add explicit root sources; they may not rely on conservative stack
-scanning.
+value in every active frame, captured values in its explicit cleanup entries,
+and one explicit stack of operation-local values that have not yet been
+published. A store, frame push, cleanup registration, or heap publication
+transfers reachability to that owning container. Move, `storage_dead`, cleanup
+removal, frame pop, and a temporary-scope marker withdraw it. Every
+allocation-capable path restores its marker on success and VM error.
+
+The operation-local stack covers completed constant and host-result children,
+left-to-right operands, dynamic map entries, record updates, assertion parts,
+recursive copies, projection and slice copies, nested array arithmetic,
+variadic packing, and call preparation. The object being allocated is traced as
+a pending object during the same collection, so a completed parent does not
+need a second publication step. Moving an affine array rest takes its
+contiguous elements into a new owning array, leaves holes in the
+compiler-owned scrutinee, and roots both parent and moved children across the
+allocation.
+
+Terminal fallback traversal is structured runtime state outside a frame slot:
+the removed owner and every child queued for reverse-order teardown remain on
+the same temporary-root stack until traversal completes or fails. Object
+replacement enumerates those roots too. Closure environments require no
+parallel root registry; they are ordinary managed objects reached through a
+closure value in a frame, cleanup, temporary, or another object.
+
+The synchronous host ABI has no handle container. It receives detached,
+recursively owned `RuntimeValue` snapshots, so retaining a host argument does
+not retain its former VM object. Returned snapshots are materialized under a
+temporary scope until their full managed result is published. Suspended task
+frames do not exist before M7 and are therefore an explicit absent boundary,
+not a fictitious root source.
 
 Bytecode admission derives one immutable frame descriptor per function and
 checks that its slot vector exactly matches the verified function. Pushing a
@@ -172,9 +191,9 @@ carrier: a function-typed slot can contain either an immediate named function
 or a managed erased closure, so static type alone is not a safe root bitmap.
 The descriptor instead proves which schema is being interpreted. A future
 suspended frame retains the same function identity and slot representation, so
-it selects the same descriptor without copying its schema; GC-002 and M7 must
-register the suspended-frame container as an explicit root source, but do not
-need another frame layout.
+it selects the same descriptor without copying its schema. M7 must register
+that new container as an explicit root source before suspension can become
+constructible, but it does not need another frame layout.
 
 ## Collector
 
@@ -260,7 +279,10 @@ the verified source representation while the panic span supplies the location.
 
 Host functions are reached only through verified bytecode identities. The host
 receives detached `RuntimeValue` snapshots and returns another detached value;
-it never receives heap handles or mutable access to VM frames.
+it never receives heap handles or mutable access to VM frames. A host may keep
+or mutate its snapshots after invocation without extending the reachability of
+any VM object. Materializing a compound return keeps each completed child
+temporarily rooted while later children allocate.
 
 ## Admission and defensive limits
 
@@ -294,6 +316,13 @@ fixtures must prove that their respective admission gates reject forged closure
 identity, schema, protocol, signature, access, erasure, and effectful ordinary
 calls before execution. Entry tests must also reject async and unsafe callable
 bodies while their runtime contexts remain unimplemented.
+
+Root-lifetime regressions force collection at every allocation while
+materializing nested constants and host returns, evaluating compound operands,
+building and updating collections and records, copying nested slices, and
+performing elevated array arithmetic. A structured pending value must survive
+while published and become reclaimable after withdrawal. A retained detached
+host snapshot must remain valid without keeping its former heap object alive.
 
 Loan regressions execute shared temporaries, root and projected exclusive
 write-through, nested and closure-capture reborrows, statically disjoint fields,

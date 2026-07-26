@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.52
+**Versión del tracker:** 0.53
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** cerrar el inventario de roots del runtime y sus
-transiciones de vida (GC-002).
+**Objetivo inmediato:** probar ciclos alcanzables e inalcanzables a través de
+programas completos y recuperación sostenida bajo presión (GC-003).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1462,8 +1462,12 @@ lifetimes escritos por el usuario.
   obtiene además un descriptor exacto de slots reutilizable por un futuro frame
   suspendido, sin implementar todavía identidad pública de `Ref` ni scheduling.
 
-- [ ] **GC-002 — Mantener roots en frames, environments, VM host handles y
-  estado estructurado.**
+- [x] **GC-002 — Mantener roots en frames, environments, frontera host y
+  estado estructurado.** Frames y cleanups publican valores vivos; scopes
+  temporales protegen evaluaciones, copias, materialización y walkers hasta su
+  publicación o error; environments siguen edges ordinarios del heap. El host
+  intercambia snapshots sin handles y M7 conserva como frontera explícita los
+  frames suspendidos todavía inexistentes.
 
 - [ ] **GC-003 — Trazar ciclos y recuperar objetos inalcanzables bajo presión.**
 
@@ -2025,15 +2029,32 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es GC-002: inventariar y probar cada fuente de roots
-y cada transición que publica o retira esos roots en frames, environments,
-handles del host y estado estructurado. Los handles y frames suspendidos que
-todavía no son constructibles deben quedar como fronteras explícitas, no como
-roots ficticios.
+La siguiente acción activa es GC-003: ampliar la prueba de tracing cíclico desde
+el heap aislado hasta programas completos, conservar ciclos alcanzables a
+través de frames/environments y demostrar recuperación repetida de ciclos
+inalcanzables bajo presión.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.53 — 2026-07-25
+
+- Se completa GC-002 con transiciones explícitas entre frames, cleanups, roots
+  temporales, objetos pendientes y edges administrados. Move, muerte de slot,
+  retirada de cleanup, pop de frame y cierre de scope retiran cada fuente.
+- Constantes y resultados host compuestos, operandos evaluados de izquierda a
+  derecha, mapas dinámicos, record updates, copias recursivas, proyecciones,
+  slices, aritmética elevada, variádicos y calls conservan cada valor completado
+  durante cualquier asignación posterior.
+- El walker de fallback publica el owner retirado y todos sus hijos pendientes
+  hasta completar o fallar. Environments siguen siendo objetos trazados
+  ordinarios; el host solo conserva snapshots detached y los futuros frames
+  suspendidos permanecen una frontera explícita de M7.
+- La puerta completa pasa con 550 tests —488 del compilador, 20 de la VM y 42
+  de CLI/integración—, `cargo fmt --check`, `cargo check`, `cargo build`,
+  Clippy con warnings como error, rustdoc con warnings como error y
+  `git diff --check`.
 
 ### 0.52 — 2026-07-25
 
