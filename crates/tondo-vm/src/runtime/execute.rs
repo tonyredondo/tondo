@@ -507,21 +507,23 @@ impl<'program, 'host> Engine<'program, 'host> {
                 let span = self.resolve_span(frame, instruction.span)?;
                 let marker = self.temporary_roots.len();
                 let deferred = self.capture_defer(frame, *scope, span, action, guard.as_ref());
-                match deferred {
+                let registration = match deferred {
                     Ok(deferred) => {
-                        if let Some(guard) = deferred.guard.as_ref() {
-                            self.replace_fallback_with_explicit(frame, guard)?;
+                        let replacement = match deferred.guard.as_ref() {
+                            Some(guard) => self.replace_fallback_with_explicit(frame, guard),
+                            None => Ok(()),
+                        };
+                        if replacement.is_ok() {
+                            self.frames[frame]
+                                .cleanups
+                                .push(RuntimeCleanup::Explicit(deferred));
                         }
-                        self.frames[frame]
-                            .cleanups
-                            .push(RuntimeCleanup::Explicit(deferred));
+                        replacement
                     }
-                    Err(error) => {
-                        self.temporary_roots.truncate(marker);
-                        return Err(error);
-                    }
-                }
+                    Err(error) => Err(error),
+                };
                 self.temporary_roots.truncate(marker);
+                registration?;
             }
             BytecodeInstructionKind::RegisterFallback { scope, owner } => {
                 self.register_fallback(frame, *scope, owner)?;
@@ -761,6 +763,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                     "explicit cleanup guard is only part of an active terminal fallback",
                 ));
             }
+        }
+        if replaced.len() > 1 {
+            return Err(VmError::invariant(
+                "terminal explicit cleanup would replace more than one fallback",
+            ));
         }
         for index in replaced.into_iter().rev() {
             self.frames[frame].cleanups.remove(index);

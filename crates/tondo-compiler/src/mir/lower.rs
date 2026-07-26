@@ -8921,6 +8921,90 @@ mod tests {
     }
 
     #[test]
+    fn terminal_explicit_cleanup_replaces_exactly_one_mir_fallback() {
+        let (resolved, hir) = checked(
+            "fn cleanup(value: Join[Int, String]?) {\n\
+                 panic(\"cleanup\")\n\
+             }\n\
+             fn guarded(owner: Join[Int, String]?) {\n\
+                 defer cleanup(owner)\n\
+                 let moved = owner\n\
+                 panic(\"primary\")\n\
+             }\n",
+        );
+        let guarded = function_id(&resolved, "guarded");
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let function = mir.function(guarded).unwrap();
+        let guard = function
+            .blocks()
+            .flat_map(MirBasicBlock::statements)
+            .find_map(|statement| match statement.kind() {
+                MirStatementKind::RegisterDefer {
+                    guard: Some(guard), ..
+                } => Some(guard.clone()),
+                _ => None,
+            })
+            .expect("terminal defer has one explicit guard");
+        assert_eq!(
+            function
+                .blocks()
+                .flat_map(MirBasicBlock::statements)
+                .filter(|statement| matches!(
+                    statement.kind(),
+                    MirStatementKind::RegisterFallback { owner, .. } if owner == &guard
+                ))
+                .count(),
+            1,
+            "the explicit terminal guard has exactly one fallback predecessor"
+        );
+
+        let mut rearmed = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let function = rearmed
+            .functions
+            .get_mut(&MirFunctionId::Callable(guarded))
+            .unwrap();
+        let (block, index, scope, owner, span) = function
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.statements
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, statement)| match &statement.kind {
+                        MirStatementKind::RegisterDefer {
+                            scope,
+                            guard: Some(guard),
+                            ..
+                        } => Some((
+                            block,
+                            index,
+                            scope.to_owned(),
+                            guard.clone(),
+                            statement.span,
+                        )),
+                        _ => None,
+                    })
+            })
+            .expect("terminal defer registration is present before mutation");
+        function.blocks[block].statements.insert(
+            index + 1,
+            MirStatement {
+                span,
+                kind: MirStatementKind::RegisterFallback { scope, owner },
+            },
+        );
+        let error = verify_mir(&resolved, &hir, &rearmed).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("terminal fallback overlaps an active explicit cleanup guard"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn terminal_parameters_register_one_closed_unwind_fallback() {
         let (resolved, hir) = checked(
             "fn stop(task: Join[Int, String]): Never {\n\

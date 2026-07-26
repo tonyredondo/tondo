@@ -11,7 +11,8 @@ explicit reservation/release, BORROW-003 permission-preserving reborrows,
 BORROW-004 static collection disjunction, BORROW-005 runtime overlap proofs,
 BORROW-006 borrowed-iteration boundary verification, TERM-001/TERM-002 terminal
 classification and normal-path ownership, and TERM-003 explicit defer/guard
-cleanup plus TERM-004 closed abnormal fallback lowering implemented
+cleanup, TERM-004 closed abnormal fallback lowering, and TERM-005 exact
+explicit/fallback exclusion implemented
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -74,7 +75,7 @@ They remain queryable but can never be lowered or executed.
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
 | Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, selected synchronous-safe call access, value/place category, pattern coverage, source evaluation order, and source-level control targets |
 | MIR construction (M3/M4/M5) | Typed locals and temporaries, explicit CFG, places, synchronous-safe calls, effect-preserving closure bodies with a hidden environment, contextual Copy/Move closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
-| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, call-local `ref`/`mut`/`var` loans, inferred last-use pattern regions, static and runtime-checked collection regions, canonical borrowed-iterator boundaries, and explicit scope-nested defer registrations with affine guard transitions; the next M5 step adds closed intrinsic fallback actions |
+| Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, call-local `ref`/`mut`/`var` loans, inferred last-use pattern regions, static and runtime-checked collection regions, canonical borrowed-iterator boundaries, explicit scope-nested defer registrations with affine guard transitions, and closed intrinsic fallback actions |
 | Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
 
@@ -403,8 +404,14 @@ TERM-002 rejects unconsumed normal-path owners. TERM-003 materializes explicit
 defer registrations and guards without inventing a destructor. TERM-004
 materializes the other side of that same ledger: closed structural fallbacks,
 coverage at every ownership-materialization edge, and one abnormal LIFO drain.
-Registering an explicit affine guard replaces the enclosed fallback atomically;
-the verifier rejects any remaining overlap.
+TERM-005 closes their exclusion proof. For a `Present` or `Potential` terminal
+guard, `RegisterDefer` must replace exactly one fallback contained by that
+complete guard before it can become active; replacing zero or more than one is
+invalid. A later `RegisterFallback` may not overlap that explicit guard.
+Because retarget and disarm transitions address the sole active entry, no
+move, aggregate, call, or iterator edge can duplicate the obligation. Capture
+failure occurs before the replacement and therefore leaves the original
+fallback armed.
 
 M7 represents `await` and structured teardown with a suspension terminator.
 Its successors distinguish resume, cancellation, and panic/unwind. Values live
@@ -467,8 +474,9 @@ The structural verifier introduced in M3 proves at minimum:
   boundary;
 - every explicit or fallback registration is type-valid, no dynamic
   registration is repeated before drain/disarm, cleanup places are pairwise
-  compatible, and every guarded move has one immediate exact
-  retarget/disarm transition;
+  compatible, every terminal explicit guard replaces exactly one fallback,
+  neither kind can be rearmed across the other, and every guarded move has one
+  immediate exact retarget/disarm transition;
 - every owning terminal entry parameter/capture and every terminal store,
   successful invocation result, and iterator-value edge has its required
   fallback or retarget, including conservative `Potential` generic MIR;

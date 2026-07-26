@@ -8468,6 +8468,230 @@ mod tests {
     }
 
     #[test]
+    fn terminal_explicit_cleanup_replaces_exactly_one_bytecode_fallback() {
+        let mut program = lowered(
+            "fn cleanup(value: Join[Int, String]?) {\n\
+                 panic(\"cleanup\")\n\
+             }\n\
+             fn guarded(owner: Join[Int, String]?) {\n\
+                 defer cleanup(owner)\n\
+                 let moved = owner\n\
+                 panic(\"primary\")\n\
+             }\n",
+        );
+        let guarded = function_id(&program, "guarded");
+        let body = &program.functions[guarded.index() as usize];
+        let guard = body
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .find_map(|instruction| match &instruction.kind {
+                bc::BytecodeInstructionKind::RegisterDefer {
+                    guard: Some(guard), ..
+                } => Some(guard.clone()),
+                _ => None,
+            })
+            .expect("terminal defer has one explicit guard");
+        assert_eq!(
+            body.blocks
+                .iter()
+                .flat_map(|block| &block.instructions)
+                .filter(|instruction| matches!(
+                    &instruction.kind,
+                    bc::BytecodeInstructionKind::RegisterFallback { owner, .. }
+                        if owner == &guard
+                ))
+                .count(),
+            1,
+            "the explicit terminal guard has exactly one fallback predecessor"
+        );
+
+        let body = &mut program.functions[guarded.index() as usize];
+        let (block, index, scope, owner, span) = body
+            .blocks
+            .iter()
+            .enumerate()
+            .find_map(|(block, body)| {
+                body.instructions
+                    .iter()
+                    .enumerate()
+                    .find_map(|(index, instruction)| match &instruction.kind {
+                        bc::BytecodeInstructionKind::RegisterDefer {
+                            scope,
+                            guard: Some(guard),
+                            ..
+                        } => Some((block, index, *scope, guard.clone(), instruction.span)),
+                        _ => None,
+                    })
+            })
+            .expect("terminal defer registration is present before mutation");
+        body.blocks[block].instructions.insert(
+            index + 1,
+            bc::BytecodeInstruction {
+                span,
+                kind: bc::BytecodeInstructionKind::RegisterFallback { scope, owner },
+            },
+        );
+        let error = bc::verify_bytecode(&program).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("terminal fallback overlaps an active explicit cleanup guard"),
+            "{error}"
+        );
+        let mut host = RejectingHost;
+        let error = execute(&program, guarded, &mut host).unwrap_err();
+        assert!(
+            matches!(error, VmError::InvalidBytecode(_)),
+            "the VM must reject a double-armed terminal owner: {error}"
+        );
+    }
+
+    #[test]
+    fn runtime_excludes_terminal_fallbacks_across_every_explicit_cleanup_transition() {
+        let program = lowered(
+            "fn cleanup(value: Join[Int, String]?) {\n\
+                 panic(\"cleanup\")\n\
+             }\n\
+             fn cleanupMarked(value: Join[Int, String]?, marker: Int) {\n\
+                 panic(\"cleanup\")\n\
+             }\n\
+             fn cleanupAll(values: Array[Join[Int, String]?]) {\n\
+                 panic(\"cleanup\")\n\
+             }\n\
+             fn cleanupPair(value: (Join[Int, String]?, Int)) {\n\
+                 panic(\"cleanup\")\n\
+             }\n\
+             fn primary(owner: Join[Int, String]?) {\n\
+                 defer cleanup(owner)\n\
+                 let moved = owner\n\
+                 panic(\"primary\")\n\
+             }\n\
+             fn normal(owner: Join[Int, String]?) {\n\
+                 defer cleanup(owner)\n\
+             }\n\
+             fn aggregate(owner: Join[Int, String]?) {\n\
+                 let wrapped = (owner, 1)\n\
+                 defer cleanupPair(wrapped)\n\
+                 let moved = wrapped\n\
+                 panic(\"aggregate\")\n\
+             }\n\
+             fn sink(owner: Join[Int, String]?) {\n\
+                 panic(\"sink\")\n\
+             }\n\
+             fn call(owner: Join[Int, String]?) {\n\
+                 defer cleanup(owner)\n\
+                 sink(owner)\n\
+             }\n\
+             fn iteration(values: Array[Join[Int, String]?]) {\n\
+                 defer cleanupAll(values)\n\
+                 for value in values {\n\
+                     panic(\"item\")\n\
+                 }\n\
+             }\n\
+             fn registration(owner: Join[Int, String]?) {\n\
+                 defer cleanupMarked(owner, panic(\"registration\"))\n\
+             }\n\
+             fn runPrimary() {\n\
+                 let owner: Join[Int, String]? = none\n\
+                 primary(owner)\n\
+             }\n\
+             fn runNormal() {\n\
+                 let owner: Join[Int, String]? = none\n\
+                 normal(owner)\n\
+             }\n\
+             fn runAggregate() {\n\
+                 let owner: Join[Int, String]? = none\n\
+                 aggregate(owner)\n\
+             }\n\
+             fn runCall() {\n\
+                 let owner: Join[Int, String]? = none\n\
+                 call(owner)\n\
+             }\n\
+             fn runIteration() {\n\
+                 let values: Array[Join[Int, String]?] = []\n\
+                 iteration(values)\n\
+             }\n\
+             fn runRegistration() {\n\
+                 let owner: Join[Int, String]? = none\n\
+                 registration(owner)\n\
+             }\n",
+        );
+
+        let mut host = RejectingHost;
+        let outcome = execute(&program, function_id(&program, "runPrimary"), &mut host)
+            .unwrap()
+            .outcome;
+        let VmOutcome::Panicked(panic) = outcome else {
+            panic!("the body panic must remain primary")
+        };
+        assert_eq!(panic.message, "primary");
+        assert_eq!(
+            panic
+                .suppressed
+                .iter()
+                .map(|panic| panic.message.as_str())
+                .collect::<Vec<_>>(),
+            ["cleanup"]
+        );
+
+        let outcome = execute(&program, function_id(&program, "runNormal"), &mut host)
+            .unwrap()
+            .outcome;
+        let VmOutcome::Panicked(panic) = outcome else {
+            panic!("normal scope exit must execute the explicit cleanup")
+        };
+        assert_eq!(panic.message, "cleanup");
+        assert!(panic.suppressed.is_empty());
+
+        let outcome = execute(&program, function_id(&program, "runAggregate"), &mut host)
+            .unwrap()
+            .outcome;
+        let VmOutcome::Panicked(panic) = outcome else {
+            panic!("the aggregate path must retain the primary panic")
+        };
+        assert_eq!(panic.message, "aggregate");
+        assert_eq!(
+            panic
+                .suppressed
+                .iter()
+                .map(|panic| panic.message.as_str())
+                .collect::<Vec<_>>(),
+            ["cleanup"]
+        );
+
+        let outcome = execute(&program, function_id(&program, "runCall"), &mut host)
+            .unwrap()
+            .outcome;
+        let VmOutcome::Panicked(panic) = outcome else {
+            panic!("the consuming call must keep its own panic")
+        };
+        assert_eq!(panic.message, "sink");
+        assert!(panic.suppressed.is_empty());
+
+        assert_eq!(
+            execute(&program, function_id(&program, "runIteration"), &mut host)
+                .unwrap()
+                .outcome,
+            VmOutcome::Returned(RuntimeValue::Unit),
+            "natural exhaustion must disarm the explicit cleanup and its former fallback"
+        );
+
+        let outcome = execute(
+            &program,
+            function_id(&program, "runRegistration"),
+            &mut host,
+        )
+        .unwrap()
+        .outcome;
+        let VmOutcome::Panicked(panic) = outcome else {
+            panic!("registration-time panic must preserve the original fallback")
+        };
+        assert_eq!(panic.message, "registration");
+        assert!(panic.suppressed.is_empty());
+    }
+
+    #[test]
     fn terminal_fallbacks_are_closed_per_bytecode_instance() {
         let mut terminal = lowered(
             "fn stop(task: Join[Int, String]): Never {\n\

@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.50
+**Versión del tracker:** 0.51
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** demostrar exclusión exacta entre guard explícito y
-fallback terminal (TERM-005).
+**Objetivo inmediato:** extender el collector bootstrap a todas las formas
+administradas mediante descriptors verificables (GC-001).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1442,8 +1442,15 @@ lifetimes escritos por el usuario.
   aportarán el estado de task y la suspensión necesarios para ejecutarla sobre
   un `Join` activo, forma que todavía no puede construirse en la VM síncrona.
 
-- [ ] **TERM-005 — Probar que cleanup explícito y unwind fallback nunca se
-  ejecutan ambos.**
+- [x] **TERM-005 — Probar que cleanup explícito y unwind fallback nunca se
+  ejecutan ambos.** MIR exige que un guard terminal `Present` o `Potential`
+  sustituya exactamente un fallback; el bytecode vuelve a derivar `Present` y
+  exige la misma cardinalidad. Ambos verificadores rechazan el rearmado
+  inverso y toda superposición. La VM conserva el fallback durante la captura,
+  valida la sustitución antes de mutar el ledger y publica el cleanup explícito
+  solo al completarla. Tests de mutación y ejecución cubren retarget, agregado,
+  llamada consumidora, agotamiento de iteración, salida normal, pánico y fallo
+  durante el registro sin construir estado suspendible de `Join`.
 
 ### 10.4 Memoria e identidad
 
@@ -2014,15 +2021,30 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es TERM-005: probar por mutación y ejecución que un
-token protegido por un `defer` explícito ha perdido antes su fallback y que
-ninguna ruta —retarget, agregado, llamada, iteración, pánico o salida normal—
-puede ejecutar ambos. Debe cubrir MIR, bytecode y VM sin adelantar el estado
-suspendible de `Join` que pertenece a M7.
+La siguiente acción activa es GC-001: ampliar el collector bootstrap desde los
+objetos de heap actuales a environments, `Ref`, colecciones y futuros frames
+suspendibles mediante descriptors de trazado cerrados y verificados, sin
+introducir todavía la identidad pública de `Ref` ni el scheduler de M7.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.51 — 2026-07-25
+
+- Se completa TERM-005 con una obligación de cardinalidad independiente:
+  todo guard terminal explícito sustituye exactamente un fallback y ningún
+  fallback puede rearmarse sobre él.
+- La VM hace atómica la publicación del cleanup: una captura fallida conserva
+  el fallback, una sustitución inválida no muta el ledger y los roots
+  temporales se liberan en todas las rutas.
+- Las mutaciones de MIR y bytecode prueban el rechazo del doble armado; la
+  ejecución cubre retarget, aggregates terminales, handoff a llamada,
+  agotamiento natural de iteración, salida normal, pánico y fallo de registro.
+- La puerta completa pasa con 541 tests —487 del compilador, 12 de la VM y 42
+  de CLI/integración—, `cargo fmt --check`, `cargo check`, `cargo build`,
+  Clippy con warnings como error, rustdoc con warnings como error y
+  `git diff --check`.
 
 ### 0.50 — 2026-07-25
 

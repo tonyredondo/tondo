@@ -12,7 +12,8 @@ BORROW-002 inferred pattern regions, BORROW-003 reborrow permissions, BORROW-004
 static collection disjunction, BORROW-005 runtime overlap proofs, BORROW-006
 borrowed-iterator boundaries, TERM-001 independent terminal classification,
 TERM-002 normal-path terminal ownership, TERM-003 explicit defer/guard cleanup,
-TERM-004 closed abnormal fallbacks, and the M3 VM admission path implemented
+TERM-004 closed abnormal fallbacks, TERM-005 exact explicit/fallback exclusion,
+and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -329,7 +330,11 @@ successful invocation results, and owning iterator values register on the
 exact materialization edge. `RetargetCleanup` and `DisarmCleanup` are shared by
 explicit guards and fallback owners. Registering an explicit guard removes the
 enclosed fallback only after capture succeeds, so a failed registration leaves
-the original entry armed.
+the original entry armed. The independent verifier requires a concrete
+terminal guard to replace exactly one fallback and rejects any later overlap.
+The VM validates multiplicity before mutating its ledger, removes the fallback,
+and only then appends the explicit entry; captured temporary roots are released
+on every success or failure path.
 
 `DrainDefers` selects only explicit entries in the abandoned lexical scopes.
 `DrainUnwind` instead pops the unified vector in exact LIFO order, including
@@ -443,10 +448,11 @@ Before execution, the verifier proves:
   successful invocation result, and iterator-value edge has an immediate
   fallback or cleanup retarget;
 - the independent cleanup dataflow rejects duplicate live registrations,
-  explicit/fallback overlap, partial or embedded explicit-guard moves,
-  non-immediate retarget/disarm transitions, post-drain access before complete
-  reinitialization, incompatible joins, incorrect scope drains, explicit
-  entries at `Return`, and any entry at `ResumePanic`;
+  terminal explicit guards that do not replace exactly one fallback,
+  explicit/fallback overlap or rearming, partial or embedded explicit-guard
+  moves, non-immediate retarget/disarm transitions, post-drain access before
+  complete reinitialization, incompatible joins, incorrect scope drains,
+  explicit entries at `Return`, and any entry at `ResumePanic`;
 - an own intrinsic `IteratorNext` has an exhaustion guard exactly when its
   closed collection status is `Present`; the guard is the exact cursor-source
   path and is removed only on the exhausted edge, while ref cursors never carry
@@ -494,7 +500,9 @@ than trusting MIR. Monomorphization resolves a generic intrinsic iterator's
 for `Present`, removes it for `Absent`, and rejects any remaining `Potential`
 executable state. TERM-004 adds `RegisterFallback` and `DrainUnwind`, closes the
 same specialization for fallback owners, and makes the VM execute structural
-fallbacks from the sealed registry. `await`, active `Join` task state, and
+fallbacks from the sealed registry. TERM-005 independently requires every
+terminal explicit guard to replace exactly one fallback and rejects rearming
+the fallback after replacement. `await`, active `Join` task state, and
 suspendable teardown remain the explicit M7 boundary.
 
 ## Determinism, limits, and tooling

@@ -310,12 +310,15 @@ runtime-dependent overlap checks use the same paths. TERM-003 adds
 and affine guards. TERM-004 extends it with `RegisterFallback` and one
 `DrainUnwind`: normal completion drains only explicit scope entries and drops
 abnormal markers after the frontend proof, while panic drains both kinds in
-unified LIFO order. An owning intrinsic iterator carries an edge-specific
-exhaustion guard when its collection may be terminal, so only the exhausted
-edge disarms it. Monomorphization removes that marker and nonterminal fallback
-registrations for a closed specialization. Async later adds suspension,
-resume, cancellation, active `Join` state, and frame-state edges without moving
-source semantic decisions into a backend.
+unified LIFO order. TERM-005 requires each terminal explicit guard to replace
+exactly one fallback atomically and forbids rearming either representation
+across the other. Retarget and disarm therefore move the single obligation,
+never a pair. An owning intrinsic iterator carries an edge-specific exhaustion
+guard when its collection may be terminal, so only the exhausted edge disarms
+it. Monomorphization removes that marker and nonterminal fallback registrations
+for a closed specialization. Async later adds suspension, resume, cancellation,
+active `Join` state, and frame-state edges without moving source semantic
+decisions into a backend.
 
 Before bytecode lowering, the MIR verifier proves:
 
@@ -371,9 +374,10 @@ trusting a compiler-produced boolean. It likewise rederives terminal presence
 from a sealed `Join` contract and the concrete ownership graph, rejecting an
 opaque witness that would hide a terminal token. Its independent defer ledger
 rechecks scope nesting, unique registration, complete affine guards, immediate
-retarget/disarm transitions, and exact draining. Closed specialization also
-rederives whether an intrinsic owning cursor needs its edge-specific natural
-exhaustion disarm.
+retarget/disarm transitions, exact terminal fallback replacement, exclusion
+between explicit and fallback entries, and exact draining. Closed
+specialization also rederives whether an intrinsic owning cursor needs its
+edge-specific natural exhaustion disarm.
 
 Before those tables are allocated, a bounded deterministic worklist
 monomorphizes every generic callable reached from non-generic roots, constants,

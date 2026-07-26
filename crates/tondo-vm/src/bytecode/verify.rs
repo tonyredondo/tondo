@@ -4858,6 +4858,9 @@ impl Verifier<'_> {
                                 ));
                             }
                             if let Some(guard) = guard {
+                                let terminal = self
+                                    .terminal_status(guard.ty, &instruction_context)?
+                                    == BytecodeTerminalStatus::Present;
                                 let guard = LocalAccess::from_place(guard);
                                 let replaced = state
                                     .guards
@@ -4868,6 +4871,12 @@ impl Verifier<'_> {
                                         .then_some((existing.clone(), *active))
                                     })
                                     .collect::<Vec<_>>();
+                                if terminal && replaced.len() != 1 {
+                                    return Err(BytecodeVerificationError::new(
+                                        instruction_context,
+                                        "terminal explicit cleanup guard does not replace exactly one fallback",
+                                    ));
+                                }
                                 for (existing, active) in replaced {
                                     state.guards.remove(&existing);
                                     state.registrations.remove(&active.registration);
