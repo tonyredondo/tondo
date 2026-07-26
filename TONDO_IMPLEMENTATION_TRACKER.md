@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.68
+**Versión del tracker:** 0.69
 
 **Última actualización:** 2026-07-26
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** checkpoint de ITER-001/ITER-002 cerrado; la siguiente
-fase pendiente es NUM-001 y no se ha iniciado.
+**Objetivo inmediato:** NUM-001 cerrado; completar la conversión numérica y su
+error discriminado (NUM-002 y NUM-005).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1642,7 +1642,11 @@ lifetimes escritos por el usuario.
 
 ### 11.3 Numéricos
 
-- [ ] **NUM-001 — Implementar todos los enteros y floats intrínsecos.**
+- [x] **NUM-001 — Implementar todos los enteros y floats intrínsecos.** Los diez
+  tipos canónicos conservan ancho y signo desde literals contextuales o con
+  sufijo hasta HIR, MIR, bytecode y VM. `Int64`/`Float64` son aliases exactos de
+  `Int`/`Float`, no representaciones duplicadas, y todos los límites se validan
+  antes de construir el valor.
 
 - [ ] **NUM-002 — Implementar la tabla cerrada de conversiones.**
 
@@ -2129,12 +2133,22 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-ITER-001/ITER-002 quedan cerrados. La siguiente acción de la cola es NUM-001,
-pero permanece sin iniciar en este checkpoint.
+NUM-001 queda cerrado. La siguiente acción combina NUM-002 y NUM-005 para que la
+tabla cerrada de conversiones y su error discriminado nazcan como un único
+contrato verificable.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.69 — 2026-07-26
+
+- Se cierra NUM-001 sobre una única representación canónica por ancho: `Int64`
+  comparte identidad con `Int` y `Float64` con `Float`; los demás enteros y
+  `Float32` conservan tipos distintos a través de todo el pipeline.
+- La aceptación pública cubre mínimos y máximos de cada entero, ambos floats,
+  sufijos, inferencia por tipo esperado y los aliases canónicos. Los rechazos
+  cubren overflow literal, overflow contextual y ausencia de promoción implícita.
 
 ### 0.68 — 2026-07-26
 

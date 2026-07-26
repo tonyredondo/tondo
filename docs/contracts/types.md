@@ -139,9 +139,9 @@ into the union.
 classifies identity spellings, total conversions, and conversions returning
 `NumericConversionError`; nonnumeric pairs are absent. Integer range inclusion,
 integer-to-float rounding, `Float32` to `Float64`, narrowing float conversions,
-and float-to-integer checks follow section 18.6. These algorithms are
-implemented and unit-tested; constructor-expression integration belongs to
-CHECK-010.
+and float-to-integer checks follow section 18.6. Constructor expressions,
+contextual literals, suffixes, aliases, and every intrinsic numeric width now
+retain this canonical classification through HIR, MIR, bytecode, and the VM.
 
 ## Resource-safe algorithms
 
