@@ -1,19 +1,20 @@
 use std::cmp::Ordering;
 
 use crate::bytecode::{
-    BytecodeAggregateKind, BytecodeBinaryOperator, BytecodeBlockId, BytecodeBootstrapHostFunction,
-    BytecodeCallArgument, BytecodeCallArgumentTarget, BytecodeCoercion, BytecodeConstant,
-    BytecodeConstantValue, BytecodeConstantValueKind, BytecodeConstantVariantValue,
-    BytecodeContainmentKind, BytecodeCursorMode, BytecodeFunctionId, BytecodeIndexAccess,
-    BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType, BytecodeLoanId,
-    BytecodeLoanKind, BytecodeNominalShape, BytecodeNumericConversion, BytecodeOperand,
-    BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode,
-    BytecodePlace, BytecodePrefixOperator, BytecodeProgram, BytecodeProjection,
-    BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue, BytecodeRvalueKind,
-    BytecodeScalarType, BytecodeScopeId, BytecodeSlotId, BytecodeSpan, BytecodeTag,
-    BytecodeTerminalUnwindAction, BytecodeTerminator, BytecodeTerminatorKind,
+    ArraySliceError, BytecodeAggregateKind, BytecodeBinaryOperator, BytecodeBlockId,
+    BytecodeBootstrapHostFunction, BytecodeCallArgument, BytecodeCallArgumentTarget,
+    BytecodeCoercion, BytecodeConstant, BytecodeConstantValue, BytecodeConstantValueKind,
+    BytecodeConstantVariantValue, BytecodeContainmentKind, BytecodeCursorMode, BytecodeFunctionId,
+    BytecodeIndexAccess, BytecodeInstruction, BytecodeInstructionKind, BytecodeIntrinsicType,
+    BytecodeLoanId, BytecodeLoanKind, BytecodeNominalShape, BytecodeNumericConversion,
+    BytecodeOperand, BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind,
+    BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator, BytecodeProgram,
+    BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
+    BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId, BytecodeSlotId, BytecodeSpan,
+    BytecodeTag, BytecodeTerminalUnwindAction, BytecodeTerminator, BytecodeTerminatorKind,
     BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind, BytecodeVariantPayload,
-    BytecodeVerificationLimits, normalize_array_index, verify_bytecode_with_trace_metadata,
+    BytecodeVerificationLimits, normalize_array_index, normalize_array_slice_indices,
+    verify_bytecode_with_trace_metadata,
 };
 
 use super::heap::{Heap, HeapHandle, HeapObject};
@@ -5492,55 +5493,13 @@ fn slice_indices(
     step: Option<i128>,
     length: usize,
 ) -> Result<Vec<usize>, (PanicCode, String)> {
-    let step = step.unwrap_or(1);
-    if step == 0 {
-        return Err((PanicCode::ZeroSliceStep, "slice step cannot be zero".into()));
-    }
-    let length = i128::try_from(length).map_err(|_| {
-        (
+    normalize_array_slice_indices(start, end, step, length).map_err(|error| match error {
+        ArraySliceError::ZeroStep => (PanicCode::ZeroSliceStep, "slice step cannot be zero".into()),
+        ArraySliceError::LengthNotRepresentable => (
             PanicCode::Bounds,
             "array length is not representable as Int".into(),
-        )
-    })?;
-    let normalize_positive = |value: i128| {
-        let value = if value < 0 {
-            length.saturating_add(value)
-        } else {
-            value
-        };
-        value.clamp(0, length)
-    };
-    let normalize_negative = |value: i128| {
-        let value = if value < 0 {
-            length.saturating_add(value)
-        } else {
-            value
-        };
-        value.clamp(-1, length.saturating_sub(1))
-    };
-    let mut output = Vec::new();
-    if step > 0 {
-        let mut index = start.map_or(0, normalize_positive);
-        let end = end.map_or(length, normalize_positive);
-        while index < end {
-            output.push(index as usize);
-            let Some(next) = index.checked_add(step) else {
-                break;
-            };
-            index = next;
-        }
-    } else {
-        let mut index = start.map_or(length - 1, normalize_negative);
-        let end = end.map_or(-1, normalize_negative);
-        while index > end {
-            output.push(index as usize);
-            let Some(next) = index.checked_add(step) else {
-                break;
-            };
-            index = next;
-        }
-    }
-    Ok(output)
+        ),
+    })
 }
 
 fn clone_index(values: &[Option<Value>], index: u32, label: &str) -> Result<Value, VmError> {

@@ -20942,6 +20942,18 @@ mod tests {
     }
 
     #[test]
+    fn array_slice_bounds_require_int_independently() {
+        for source in [
+            "fn invalid(values: Array[Int]) {\n    _ = values[true:]\n}\n",
+            "fn invalid(values: Array[Int]) {\n    _ = values[:true]\n}\n",
+            "fn invalid(values: Array[Int]) {\n    _ = values[::true]\n}\n",
+        ] {
+            let (_, _, output) = check(source);
+            assert_eq!(codes(&output), ["E1102"], "{source}");
+        }
+    }
+
+    #[test]
     fn assignment_supports_fields_tuple_slots_arrays_slices_and_maps() {
         let (_, _, output) = check(
             "type State = { count: Int, values: Array[Int] }\n\
@@ -21900,6 +21912,67 @@ mod tests {
                 .collect::<Vec<_>>(),
             [4, 3, 2, 1]
         );
+    }
+
+    #[test]
+    fn constant_array_slices_share_runtime_normalization() {
+        let (_, resolved, output) = check(
+            "const Values: Array[Int] = [0, 1, 2, 3, 4]\n\
+             const Full: Array[Int] = Values[:]\n\
+             const Middle: Array[Int] = Values[1:4]\n\
+             const Clipped: Array[Int] = Values[-100:100]\n\
+             const Alternate: Array[Int] = Values[::2]\n\
+             const Reversed: Array[Int] = Values[::-1]\n\
+             const ExplicitNegativeEnd: Array[Int] = Values[:-1:-1]\n\
+             const ReverseStride: Array[Int] = Values[4:0:-2]\n\
+             const NegativeBounds: Array[Int] = Values[-1:-6:-2]\n\
+             const ExtremeClipped: Array[Int] = Values[-9223372036854775808:9223372036854775807]\n\
+             const ExtremeReversed: Array[Int] = Values[9223372036854775807:-9223372036854775808:-1]\n\
+             const MinimumStep: Array[Int] = Values[::-9223372036854775808]\n\
+             const Empty: Array[Int] = []\n\
+             const EmptyReversed: Array[Int] = Empty[::-1]\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+
+        let values = |name: &str| {
+            let value = resolved
+                .symbols()
+                .find(|symbol| symbol.name().as_str() == name)
+                .and_then(|symbol| output.program().constant(symbol.id()))
+                .and_then(HirConstant::evaluated)
+                .unwrap_or_else(|| panic!("{name} must be evaluated"));
+            let crate::hir::HirConstantValueKind::Array(items) = value.kind() else {
+                panic!("{name} must be an array");
+            };
+            items
+                .iter()
+                .map(|item| match item.kind() {
+                    crate::hir::HirConstantValueKind::Integer(value) => *value,
+                    other => panic!("unexpected {name} item: {other:?}"),
+                })
+                .collect::<Vec<_>>()
+        };
+        for (name, expected) in [
+            ("Full", vec![0, 1, 2, 3, 4]),
+            ("Middle", vec![1, 2, 3]),
+            ("Clipped", vec![0, 1, 2, 3, 4]),
+            ("Alternate", vec![0, 2, 4]),
+            ("Reversed", vec![4, 3, 2, 1, 0]),
+            ("ExplicitNegativeEnd", vec![]),
+            ("ReverseStride", vec![4, 2]),
+            ("NegativeBounds", vec![4, 2, 0]),
+            ("ExtremeClipped", vec![0, 1, 2, 3, 4]),
+            ("ExtremeReversed", vec![4, 3, 2, 1, 0]),
+            ("MinimumStep", vec![4]),
+            ("EmptyReversed", vec![]),
+        ] {
+            assert_eq!(values(name), expected, "{name}");
+        }
     }
 
     #[test]

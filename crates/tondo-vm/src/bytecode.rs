@@ -61,6 +61,62 @@ pub fn normalize_array_index(index: i128, length: usize) -> Option<usize> {
     (normalized < length).then_some(normalized)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArraySliceError {
+    ZeroStep,
+    LengthNotRepresentable,
+}
+
+/// Returns the exact ordered indices selected by one Tondo array slice.
+///
+/// Explicit negative bounds are offset from the end before clamping. Omitted
+/// bounds retain their sign-dependent sentinels, which deliberately makes
+/// `[::-1]` different from `[:-1:-1]`. Progress checks avoid overflowing even
+/// for the minimum signed step.
+pub fn normalize_array_slice_indices(
+    start: Option<i128>,
+    end: Option<i128>,
+    step: Option<i128>,
+    length: usize,
+) -> Result<Vec<usize>, ArraySliceError> {
+    let step = step.unwrap_or(1);
+    if step == 0 {
+        return Err(ArraySliceError::ZeroStep);
+    }
+    let length = i64::try_from(length)
+        .map(i128::from)
+        .map_err(|_| ArraySliceError::LengthNotRepresentable)?;
+    let explicit_bound = |value: i128, minimum: i128, maximum: i128| {
+        let offset = if value < 0 { length + value } else { value };
+        offset.clamp(minimum, maximum)
+    };
+
+    let mut output = Vec::new();
+    if step > 0 {
+        let mut index = start.map_or(0, |value| explicit_bound(value, 0, length));
+        let end = end.map_or(length, |value| explicit_bound(value, 0, length));
+        while index < end {
+            output.push(index as usize);
+            if step >= end - index {
+                break;
+            }
+            index += step;
+        }
+    } else {
+        let maximum = length - 1;
+        let mut index = start.map_or(maximum, |value| explicit_bound(value, -1, maximum));
+        let end = end.map_or(-1, |value| explicit_bound(value, -1, maximum));
+        while index > end {
+            output.push(index as usize);
+            if step.unsigned_abs() >= (index - end) as u128 {
+                break;
+            }
+            index += step;
+        }
+    }
+    Ok(output)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct BytecodeSpan {
     pub file: u32,
@@ -1054,6 +1110,42 @@ mod tests {
         assert_eq!(normalize_array_index(i64::MAX as i128, 4), None);
         assert_eq!(normalize_array_index(i64::MIN as i128, 4), None);
         assert_eq!(normalize_array_index(i128::MIN, 4), None);
+    }
+
+    #[test]
+    fn array_slice_normalization_preserves_defaults_clamping_and_extremes() {
+        let indices = |start, end, step, length| {
+            normalize_array_slice_indices(start, end, step, length).unwrap()
+        };
+
+        assert_eq!(indices(None, None, None, 5), [0, 1, 2, 3, 4]);
+        assert_eq!(indices(Some(1), Some(4), None, 5), [1, 2, 3]);
+        assert_eq!(indices(Some(-100), Some(100), None, 5), [0, 1, 2, 3, 4]);
+        assert_eq!(indices(None, None, Some(2), 5), [0, 2, 4]);
+        assert_eq!(indices(None, None, Some(-1), 5), [4, 3, 2, 1, 0]);
+        assert_eq!(indices(None, Some(-1), Some(-1), 5), []);
+        assert_eq!(indices(Some(4), Some(0), Some(-2), 5), [4, 2]);
+        assert_eq!(indices(Some(-1), Some(-6), Some(-2), 5), [4, 2, 0]);
+        assert_eq!(
+            indices(Some(i64::MIN as i128), Some(i64::MAX as i128), None, 5,),
+            [0, 1, 2, 3, 4]
+        );
+        assert_eq!(
+            indices(Some(i64::MAX as i128), Some(i64::MIN as i128), Some(-1), 5,),
+            [4, 3, 2, 1, 0]
+        );
+        assert_eq!(indices(None, None, Some(i64::MIN as i128), 5), [4]);
+        assert_eq!(indices(None, None, None, 0), []);
+        assert_eq!(indices(None, None, Some(-1), 0), []);
+        assert_eq!(
+            normalize_array_slice_indices(None, None, Some(0), 5),
+            Err(ArraySliceError::ZeroStep)
+        );
+        #[cfg(target_pointer_width = "64")]
+        assert_eq!(
+            normalize_array_slice_indices(None, None, None, usize::MAX),
+            Err(ArraySliceError::LengthNotRepresentable)
+        );
     }
 
     #[test]

@@ -16,7 +16,7 @@ pre-exhaustion collection and atomic publication, REF-001 managed identity
 construction/shared content projection, and REF-002 equality and collection
 keys by identity, VALUE-001 exhaustive eager logical copies, and VALUE-002
 representation-independent copy observations, plus ARRAY-001 runtime array
-length and ARRAY-002 checked array indexing
+length, ARRAY-002 checked array indexing, and ARRAY-003 checked slicing
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -61,6 +61,15 @@ every other invalid value produce `P0001 bounds` at runtime without an
 overflowing intermediate. A simple assignment evaluates its index once and its
 complete RHS before bounds validation, then performs no write if validation
 panics.
+
+All runtime slice reads and projected place/loan paths call the same normalizer
+as constant evaluation. Omitted bounds retain their sign-dependent meaning;
+only explicit negative bounds are offset from the current runtime length and
+then clipped. Both stride signs, empty arrays, and the full `Int` range use
+distance-before-advance checks, so `Int.min` is a valid negative step rather
+than an overflow case. The selected ordered indices back reads, writes,
+borrowed paths, and overlap proofs uniformly. Step zero produces `P0002`
+before a callee or store can observe the slice.
 
 Closures pair a concrete bytecode callable identity with a managed environment
 whose capture fields use the same optional-value move representation as other
@@ -422,6 +431,13 @@ failures, value reads, writes, and borrowed places. They must prove constant
 and runtime normalization share one implementation, invalid access produces
 `P0001`, a simple-write RHS completes before bounds validation, and forged
 non-`Int` bytecode is rejected before execution.
+
+Array-slice regressions must cover omitted and explicit bounds, clipping in both
+directions, positive and negative strides, the distinct `[::-1]` and
+`[:-1:-1]` cases, empty arrays, both `Int` extremes, and `Int.min` as a step.
+They must prove constant and runtime normalization share one implementation,
+zero step produces `P0002`, stored and borrowed paths retain their ownership
+rules, and forged non-`Int` bounds are rejected before execution.
 
 Loan regressions execute shared temporaries, root and projected exclusive
 write-through, nested and closure-capture reborrows, statically disjoint fields,

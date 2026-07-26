@@ -4325,6 +4325,145 @@ fn verifierTarget(index: Int, flag: Bool): Int {
     }
 
     #[test]
+    fn array_slices_share_defaults_clamping_extreme_steps_and_verification() {
+        let source = r#"fn values(): Array[Int] {
+    [0, 1, 2, 3, 4]
+}
+
+fn full(): Array[Int] {
+    values()[:]
+}
+
+fn middle(): Array[Int] {
+    values()[1:4]
+}
+
+fn clipped(): Array[Int] {
+    values()[-100:100]
+}
+
+fn alternate(): Array[Int] {
+    values()[::2]
+}
+
+fn reversed(): Array[Int] {
+    values()[::-1]
+}
+
+fn explicitNegativeEnd(): Array[Int] {
+    values()[:-1:-1]
+}
+
+fn reverseStride(): Array[Int] {
+    values()[4:0:-2]
+}
+
+fn negativeBounds(): Array[Int] {
+    values()[-1:-6:-2]
+}
+
+fn extremeClipped(): Array[Int] {
+    let minimum = -9223372036854775808
+    let maximum = 9223372036854775807
+    values()[minimum:maximum]
+}
+
+fn extremeReversed(): Array[Int] {
+    let minimum = -9223372036854775808
+    let maximum = 9223372036854775807
+    values()[maximum:minimum:-1]
+}
+
+fn minimumStep(): Array[Int] {
+    let step = -9223372036854775808
+    values()[::step]
+}
+
+fn emptyReversed(): Array[Int] {
+    let empty: Array[Int] = []
+    empty[::-1]
+}
+
+fn zeroStep(): Array[Int] {
+    let step = 0
+    values()[::step]
+}
+
+fn verifierTarget(start: Int, flag: Bool): Array[Int] {
+    _ = flag
+    values()[start:]
+}
+"#;
+        let program = lowered(source);
+        let run = |name| {
+            let mut host = RejectingHost;
+            execute(&program, function_id(&program, name), &mut host)
+                .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)))
+                .outcome
+        };
+        let array = |items: &[i128]| {
+            RuntimeValue::Array(items.iter().copied().map(RuntimeValue::Integer).collect())
+        };
+        for (name, expected) in [
+            ("full", array(&[0, 1, 2, 3, 4])),
+            ("middle", array(&[1, 2, 3])),
+            ("clipped", array(&[0, 1, 2, 3, 4])),
+            ("alternate", array(&[0, 2, 4])),
+            ("reversed", array(&[4, 3, 2, 1, 0])),
+            ("explicitNegativeEnd", array(&[])),
+            ("reverseStride", array(&[4, 2])),
+            ("negativeBounds", array(&[4, 2, 0])),
+            ("extremeClipped", array(&[0, 1, 2, 3, 4])),
+            ("extremeReversed", array(&[4, 3, 2, 1, 0])),
+            ("minimumStep", array(&[4])),
+            ("emptyReversed", array(&[])),
+        ] {
+            assert_eq!(run(name), VmOutcome::Returned(expected), "{name}");
+        }
+
+        let VmOutcome::Panicked(panic) = run("zeroStep") else {
+            panic!("zeroStep must panic");
+        };
+        assert_eq!(panic.code, PanicCode::ZeroSliceStep);
+        assert_eq!(panic.code.code(), "P0002");
+
+        let mut forged = program;
+        let target = function_id(&forged, "verifierTarget");
+        let function = &mut forged.functions[target.index() as usize];
+        let bool_slot = function.parameters[1];
+        let bool_type = function.slots[bool_slot.index() as usize].ty;
+        let bounds = function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Slice { bounds, .. },
+                            ..
+                        },
+                    ..
+                } => Some(bounds),
+                _ => None,
+            })
+            .expect("verifierTarget must contain a slice operation");
+        bounds.start = Some(bc::BytecodeOperand {
+            ty: bool_type,
+            kind: bc::BytecodeOperandKind::Copy(bc::BytecodePlace {
+                slot: bool_slot,
+                ty: bool_type,
+                projections: Vec::new(),
+                source_loan: None,
+            }),
+        });
+        let error = bc::verify_bytecode(&forged).unwrap_err();
+        assert!(
+            error.message().contains("operation") || error.message().contains("projection"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn lowering_is_deterministic_and_preserves_slots_spans_and_edges() {
         let source = "fn choose(flag: Bool): Int {\n    if flag { 20 + 22 } else { 0 }\n}\n";
         let first = lowered(source);

@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use tondo_vm::bytecode::normalize_array_index;
+use tondo_vm::bytecode::{ArraySliceError, normalize_array_index, normalize_array_slice_indices};
 
 use crate::source::Span;
 use crate::types::{
@@ -1042,39 +1042,17 @@ fn evaluate_slice(
     };
     let start = optional_integer(start)?;
     let end = optional_integer(end)?;
-    let step = optional_integer(step)?.unwrap_or(1);
-    if step == 0 {
-        return Err(panic_error(span, "constant slice step is zero"));
-    }
-    let length = i128::try_from(items.len()).map_err(|_| ConstantEvaluationError::Unavailable)?;
-    let mut output = Vec::new();
-    if step > 0 {
-        let start = normalize_slice_bound(start.unwrap_or(0), length, true);
-        let end = normalize_slice_bound(end.unwrap_or(length), length, true);
-        let mut index = start;
-        while index < end {
-            output.push(items[index as usize].clone());
-            if step >= end - index {
-                break;
-            }
-            index += step;
-        }
-    } else {
-        let start = start
-            .map(|value| normalize_slice_bound(value, length, false))
-            .unwrap_or(length - 1);
-        let end = end
-            .map(|value| normalize_slice_bound(value, length, false))
-            .unwrap_or(-1);
-        let mut index = start;
-        while index > end {
-            output.push(items[index as usize].clone());
-            if step.unsigned_abs() >= (index - end) as u128 {
-                break;
-            }
-            index += step;
-        }
-    }
+    let step = optional_integer(step)?;
+    let indices = normalize_array_slice_indices(start, end, step, items.len()).map_err(
+        |error| match error {
+            ArraySliceError::ZeroStep => panic_error(span, "constant slice step is zero"),
+            ArraySliceError::LengthNotRepresentable => ConstantEvaluationError::Unavailable,
+        },
+    )?;
+    let output = indices
+        .into_iter()
+        .map(|index| items[index].clone())
+        .collect();
     Ok(constant_value(ty, HirConstantValueKind::Array(output)))
 }
 
@@ -1087,17 +1065,6 @@ fn optional_integer(
             _ => Err(ConstantEvaluationError::Unavailable),
         })
         .transpose()
-}
-
-fn normalize_slice_bound(mut value: i128, length: i128, positive: bool) -> i128 {
-    if value < 0 {
-        value = value.saturating_add(length);
-    }
-    if positive {
-        value.clamp(0, length)
-    } else {
-        value.clamp(-1, length - 1)
-    }
 }
 
 pub(super) fn values_equal(

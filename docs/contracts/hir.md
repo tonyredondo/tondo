@@ -16,7 +16,7 @@ normal-path terminal ownership, TERM-003 checked synchronous `defer` actions
 and affine guards, TERM-004 downstream closed-fallback admission, and verified
 MIR admission, REF-001 safe identity construction and shared content
 projection, REF-002 identity equality/key admission, ARRAY-001 runtime length,
-and ARRAY-002 typed array indexing implemented
+ARRAY-002 typed array indexing, and ARRAY-003 typed slicing implemented
 
 ## Boundary
 
@@ -567,6 +567,14 @@ observation place retains the projection without moving the element. Negative
 indices remain signed operands because their meaning depends on runtime length;
 HIR neither rewrites them nor manufactures a static length.
 
+Array slicing records one `Array[T]` base and up to three independently checked
+`Int` expressions for start, exclusive end, and step. Each omitted expression
+remains `None`; in particular, HIR never turns the omitted end of a negative
+slice into the explicit value `-1`. A materialized slice has type `Array[T]`
+and requires `T: Copy`, while a call argument such as `ref values[start:end]`
+retains one projected loan over the original array and can therefore observe an
+affine element without copying it.
+
 Record construction, update, projection, and inherent calls enforce visibility
 against the declaring module. External construction of a record with hidden
 representation emits one non-revealing `E1502`; diagnostics for omitted fields
@@ -594,6 +602,10 @@ other runtime-only work become `E1901`.
 Constant array indexing calls the same normalization function as bytecode
 execution, so `0`, `n - 1`, `-1`, `-n`, empty arrays, and both `Int` extremes
 cannot drift between compile-time and runtime behavior.
+Constant array slicing likewise calls the runtime normalizer with its exact
+optional bounds. Sign-dependent defaults, explicit negative bounds, clipping,
+positive and negative strides, empty arrays, and `Int.min` steps therefore
+cannot drift; a zero step remains the compile-time panic `E1903`.
 
 Evaluated scalars retain their exact semantic payload: integers use a
 mathematical signed representation constrained by their `TypeId`, and floats

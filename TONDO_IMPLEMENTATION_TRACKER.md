@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.60
+**Versión del tracker:** 0.61
 
 **Última actualización:** 2026-07-25
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** consolidar slicing, normalización de extremos, pasos
-positivos/negativos y sus pánicos normativos (ARRAY-003).
+**Objetivo inmediato:** fijar los snapshots lógicos de slices con una
+implementación inicial independiente y verificable (ARRAY-004).
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1545,7 +1545,13 @@ lifetimes escritos por el usuario.
   `0..n - 1` y `-1..-n`; el resto produce `P0001`. El verificador sella
   `Array[T]` + `Int` + `T` antes de ejecutar.
 
-- [ ] **ARRAY-003 — Implementar slicing y normalización de extremos.**
+- [x] **ARRAY-003 — Implementar slicing y normalización de extremos.** HIR,
+  MIR y bytecode conservan start/end/step como tres operandos `Int` opcionales,
+  sin convertir omisiones en sentinels. Evaluación constante y todos los
+  caminos de la VM comparten `normalize_array_slice_indices`: aplica defaults
+  según el signo, desplaza solo extremos negativos explícitos, recorta sin
+  panic y avanza sin overflow incluso con `Int.min`. Paso cero produce
+  `P0002`; el verificador rechaza bases, resultados o bounds incompatibles.
 
 - [ ] **ARRAY-004 — Implementar snapshots lógicos de slices.** La
   representación inicial puede copiar.
@@ -2067,14 +2073,36 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-La siguiente acción activa es ARRAY-003: auditar el algoritmo de slicing ya
-ejecutable, unificar la normalización de start/end/step para ambos signos,
-comprobar `Int.min`, extremos recortados y `P0002`, y cerrar cualquier hueco
-entre constantes, préstamos, MIR, bytecode y VM.
+La siguiente acción activa es ARRAY-004: fijar que cada slice materializado sea
+un snapshot lógico independiente, demostrar separación tras escrituras en
+ambas direcciones y conservar los préstamos `ref`/`mut` como vistas sobre el
+array original sin comprometer una representación física concreta.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.61 — 2026-07-25
+
+- Se cierra ARRAY-003 con una única función
+  `normalize_array_slice_indices` compartida por evaluación constante y VM.
+  Los defaults dependen del signo del paso; un end omitido conserva su
+  sentinel estructural y sigue siendo distinto de un `-1` explícito.
+- La matriz cubre slices completos y parciales, clipping, pasos positivos y
+  negativos, `[::-1]`, `[:-1:-1]`, array vacío, ambos extremos de `Int` y
+  `Int.min` como paso. Paso cero conserva `P0002` y una mutación adversarial a
+  un bound `Bool` es rechazada por el verificador antes de ejecutar.
+- HIR exige `Int` independientemente para start/end/step. Los slices almacenados
+  siguen requiriendo `T: Copy`, mientras `ref`/`mut` conserva una región sobre
+  el array original; MIR y bytecode reutilizan los operandos ya evaluados sin
+  normalizarlos prematuramente.
+- Los fixtures públicos `m6-array-003-slice.to` y
+  `m6-array-003-zero-step.to` fijan el resultado observable y el pánico. Ambos
+  son puntos fijos del formatter.
+- La puerta completa pasa con 573 tests —503 del núcleo del compilador, 27 de
+  la VM y 43 de CLI/integración—, `cargo fmt --check`, `cargo check`,
+  `cargo build`, Clippy y rustdoc con warnings como error, y
+  `git diff --check`.
 
 ### 0.60 — 2026-07-25
 

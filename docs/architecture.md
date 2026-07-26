@@ -202,6 +202,9 @@ while compile-time panics, nonconstant work, duplicate collection entries, and
 known NaN comparisons receive their normative diagnostics.
 Constant and runtime array indexing share the bytecode boundary's single
 overflow-free positive/negative index normalizer.
+Constant and runtime array slicing likewise share one normalizer for optional
+start/end/step operands, including direction-dependent defaults, clipping,
+`Int.min`, and the zero-step panic.
 The driver retains those facts in an immutable semantic snapshot. It provides
 structured type, entity, reference, member, signature, and closed-call-error
 queries without making tooling re-resolve the CST; partial snapshots have an
@@ -388,6 +391,9 @@ catalog; the verifier seals the internal `Length` operation to
 `Length(Array[T]) : Int`.
 Array indexing likewise retains one signed `Int` operand, while the verifier
 seals both value operations and place projections to `Array[T]`.
+Array slicing retains three optional `Int` operands without inventing sentinels;
+the verifier seals its operation and projections to `Array[T]`, and the VM
+normalizes the exact operands only after the runtime length is known.
 
 Before those tables are allocated, a bounded deterministic worklist
 monomorphizes every generic callable reached from non-generic roots, constants,
@@ -435,6 +441,9 @@ argument passing, and return preserve that vector length independently of the
 single canonical `Array[T]` type.
 Every read, write, borrowed place, and constant array access uses the same
 normalization rule; invalid endpoints unwind as `P0001`.
+Every slice read, projected write, loan path, overlap proof, and constant slice
+uses the same direction-aware normalization rule; a zero step unwinds as
+`P0002`.
 
 The implemented synchronous engine uses iterative frames, checked slot states,
 normal/unwind continuations, call-local reservation tables, normalized

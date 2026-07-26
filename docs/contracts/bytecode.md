@@ -15,7 +15,7 @@ TERM-002 normal-path terminal ownership, TERM-003 explicit defer/guard cleanup,
 TERM-004 closed abnormal fallbacks, TERM-005 exact explicit/fallback exclusion,
 REF-001 managed identity cells/shared projections, REF-002 identity
 equality/keys, ARRAY-001 runtime array length, ARRAY-002 checked array
-indexing, and the M3 VM admission path implemented
+indexing, ARRAY-003 checked slicing, and the M3 VM admission path implemented
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -429,6 +429,17 @@ the original signed operand. `normalize_array_index` is the single checked
 normalizer shared by runtime value reads, place reads/moves/writes, loan paths,
 and compiler constant evaluation. It computes negative indices by distance from
 the end, avoiding an overflowing signed `n + i` intermediate.
+
+Every array `Slice` operation or projection has an `Array[T]` base, zero to
+three `Int` operands, and result `Array[T]`; the verifier rederives that complete
+shape and rejects forged bound types before execution. Bytecode preserves
+omitted start, end, and step as independent `None` values.
+`normalize_array_slice_indices` is the single normalizer shared by compiler
+constant evaluation and every VM slice path. It applies sign-dependent defaults,
+offsets only explicit negative bounds, clips them to the direction's exact
+domain, and checks remaining distance before advancing, so even `Int.min` cannot
+overflow. A zero step maps to `P0002`; an omitted negative end remains distinct
+from an explicit `-1`.
 
 The VM resolves each protected path to normalized runtime components: negative
 indices use the current array length, slices become their exact selected-index
