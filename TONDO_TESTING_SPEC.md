@@ -1,17 +1,18 @@
 # Tondo: especificación del lenguaje y toolchain de testing
 
 - **Estado:** diseño normativo aprobado para Tondo 0.2; todavía no implementado.
-- **Revisión:** 0.2-draft.1 — 2026-07-28.
+- **Revisión:** 0.2-draft.2 — 2026-07-28.
 - **Edición objetivo:** Tondo 0.2.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
 - **SHA-256 de la base:** `ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084`.
-- **Formatos de tooling:** `tondo-test-report-0.2/1` y
-  `tondo-test-list-0.2/1`.
+- **Formatos de tooling:** `tondo-test-report-0.2/2` y
+  `tondo-test-list-0.2/2`.
 
-Esta especificación añade a Tondo una única declaración de test y define cómo el
-toolchain descubre, compila, ejecuta y reporta tests. Complementa Tondo 0.1; no
-modifica retroactivamente esa edición ni la suite publicada
-`tondo-conformance-0.1`.
+Esta especificación añade a Tondo las declaraciones `suite` y `test` y define
+cómo el toolchain descubre, compila, ejecuta y reporta árboles estáticos de
+tests. `suite` es un contenedor léxico con lifecycle compartido; `test` es
+siempre una hoja ejecutable. Complementa Tondo 0.1; no modifica
+retroactivamente esa edición ni la suite publicada `tondo-conformance-0.1`.
 
 La próxima especificación consolidada de Tondo debe incorporar normativamente
 estas reglas sin cambiar sus decisiones, resolver las referencias de sección
@@ -27,7 +28,7 @@ recomienda** expresa orientación no obligatoria.
 
 1. [Propósito y principios](#1-propósito-y-principios)
 2. [Compatibilidad y límite de edición](#2-compatibilidad-y-límite-de-edición)
-3. [Declaración `test`](#3-declaración-test)
+3. [Declaraciones `suite` y `test`](#3-declaraciones-suite-y-test)
 4. [Semántica estática](#4-semántica-estática)
 5. [Source sets y descubrimiento](#5-source-sets-y-descubrimiento)
 6. [Construcción del target de test](#6-construcción-del-target-de-test)
@@ -47,15 +48,17 @@ recomienda** expresa orientación no obligatoria.
 
 ## 1. Propósito y principios
 
-El sistema de testing de Tondo persigue cinco objetivos:
+El sistema de testing de Tondo persigue seis objetivos:
 
 1. Escribir un test ordinario requiere únicamente un nombre y un bloque.
-2. El test utiliza exactamente el lenguaje normal: `assert`, `?`, `match`,
+2. Agrupar tests y compartir un recurso costoso requiere únicamente una `suite`
+   léxica; no clases, annotations ni registro runtime.
+3. El test utiliza exactamente el lenguaje normal: `assert`, `?`, `match`,
    `defer`, `for`, `scope`, `spawn`, `await`, ownership y préstamos conservan su
    significado.
-3. Descubrimiento, ejecución y reporte son deterministas y observables.
-4. El código y las dependencias de test no cambian el artefacto de producción.
-5. El núcleo no introduce clases de test, annotations, macros, reflection ni
+4. Descubrimiento, ejecución y reporte son deterministas y observables.
+5. El código y las dependencias de test no cambian el artefacto de producción.
+6. El núcleo no introduce clases de test, annotations, macros, reflection ni
    hooks de ciclo de vida.
 
 Forma mínima:
@@ -66,10 +69,29 @@ test addReturnsSum {
 }
 ~~~
 
-`test` existe porque el registro estático de tests, su aislamiento y su acceso
-unitario a declaraciones privadas no pueden expresarse como una función de
-librería sin introducir registro en runtime, efectos top-level, reflection,
-convenciones mágicas de nombres o boilerplate manual.
+Forma jerárquica:
+
+~~~tondo
+suite arithmetic {
+    let offset = 20
+
+    test addsValues {
+        assert(offset + 22 == 42)
+    }
+
+    test subtractsValues {
+        assert(22 - offset == 2)
+    }
+}
+~~~
+
+`test` existe porque el registro estático de entradas, su aislamiento y su
+acceso unitario a declaraciones privadas no pueden expresarse como una función
+de librería sin introducir registro en runtime, efectos top-level, reflection,
+convenciones mágicas de nombres o boilerplate manual. `suite` existe porque el
+lifecycle de un grupo seleccionado, la identidad jerárquica y el teardown
+posterior a todos sus descendientes tampoco pueden expresarse mediante un bloque
+ordinario sin exponer el runner dentro del programa.
 
 La declaración no sustituye a una librería de assertions. El lenguaje define
 el test como unidad ejecutable; `assert` proporciona la comprobación mínima y
@@ -79,29 +101,30 @@ el test como unidad ejecutable; `assert` proporciona la comprobación mínima y
 
 ### 2.1 Tondo 0.1 permanece inmutable
 
-Tondo 0.1 no contiene una keyword ni una declaración `test`. Su especificación,
-diagnósticos, grammar, formatter y suite de conformidad permanecen byte a byte
-independientes de esta extensión.
+Tondo 0.1 no contiene las keywords ni las declaraciones `test` y `suite`. Su
+especificación, diagnósticos, grammar, formatter y suite de conformidad
+permanecen byte a byte independientes de esta extensión.
 
-Una implementación no puede anunciar soporte Tondo 0.1 y aceptar `test` como
-extensión silenciosa. Debe seleccionar explícitamente la edición 0.2 o una
-edición posterior que incorpore este contrato.
+Una implementación no puede anunciar soporte Tondo 0.1 y aceptar `test` o
+`suite` como extensión silenciosa. Debe seleccionar explícitamente la edición
+0.2 o una edición posterior que incorpore este contrato.
 
-### 2.2 `test` es keyword en Tondo 0.2
+### 2.2 `test` y `suite` son keywords en Tondo 0.2
 
-La edición 0.2 añade `test` a la lista de palabras reservadas. Por tanto:
+La edición 0.2 añade `test` y `suite` a la lista de palabras reservadas. Por
+tanto:
 
-- `test` no puede utilizarse como identificador no calificado.
+- Ninguna de las dos puede utilizarse como identificador no calificado.
 - Una función, variable, tipo, módulo o parámetro de usuario no puede llamarse
-  `test`.
+  `test` ni `suite`.
 - La API estándar utiliza el nombre de módulo `std.testing`, no `std.test`.
-- Código Tondo 0.1 que utilizara `test` como identificador requiere renombrarlo
-  al migrar de edición.
+- Código Tondo 0.1 que utilizara cualquiera de ambos nombres como identificador
+  requiere renombrarlo al migrar de edición.
 
-Reservarla globalmente evita una keyword contextual cuya interpretación dependa
+Reservarlas globalmente evita keywords contextuales cuya interpretación dependa
 del source set o del lugar del parser.
 
-### 2.3 Una sola forma
+### 2.3 Una sola forma por concepto
 
 No existen formas equivalentes como:
 
@@ -111,15 +134,19 @@ No existen formas equivalentes como:
 test fn name()
 fn testName(test: Test)
 testing.register(...)
+describe name { ... }
+beforeAll(...)
+afterAll(...)
 ~~~
 
-La única forma canónica es:
+Las dos formas canónicas son:
 
 ~~~text
 test identifier block
+suite identifier suite-block
 ~~~
 
-## 3. Declaración `test`
+## 3. Declaraciones `suite` y `test`
 
 ### 3.1 Sintaxis
 
@@ -132,19 +159,33 @@ test parsesNegativeNumbers {
 Gramática:
 
 ~~~ebnf
-top_decl_0_2 = top_decl_0_1 | test_decl ;
-test_decl     = "test", identifier, block ;
+top_decl_0_2  = top_decl_0_1 | test_decl | suite_decl ;
+test_decl      = "test", identifier, block ;
+suite_decl     = "suite", identifier, suite_block ;
+suite_block    = "{", { NL | statement },
+                 { suite_member, { NL } }, "}" ;
+suite_member   = test_decl | suite_decl ;
 ~~~
 
-`test_decl` es una declaración de nivel superior. No puede aparecer dentro de
-una función, cierre, `impl`, trait, bloque, otro test ni script.
+`test_decl` puede aparecer en nivel superior o como miembro directo de una
+`suite`. `suite_decl` puede aparecer en nivel superior o como miembro directo de
+otra `suite`. Ninguna puede aparecer dentro de una función, cierre, `impl`,
+trait, bloque ordinario, body de `test`, sentencia, `if`, `for` ni script.
 
-El parser de edición 0.2 reconoce `test_decl` dentro de una forma módulo y
-conserva el nodo aunque la comprobación posterior determine que la fuente es
-`production`. Esa separación permite emitir `E2001` con el range de toda la
-declaración. La edición 0.1 sigue utilizando exactamente `top_decl_0_1`.
+El prefijo de un `suite_block` contiene cero o más sentencias ordinarias de
+setup. Después del primer `suite_member` solo pueden aparecer otros miembros y
+saltos de línea; no existe una expresión final ni un epílogo implícito. La
+gramática conserva una suite vacía para recovery y tooling, pero la comprobación
+emite `E2004`: cada suite válida contiene al menos un miembro directo. Puesto que
+la regla se aplica recursivamente, toda suite válida contiene al menos un `test`
+descendiente.
 
-No admite:
+El parser de edición 0.2 reconoce ambos nodos dentro de una forma módulo y los
+conserva aunque la comprobación posterior determine que la fuente es
+`production`. Esa separación permite emitir `E2001` con el range completo. La
+edición 0.1 sigue utilizando exactamente `top_decl_0_1`.
+
+Ninguna declaración admite:
 
 - `pub` ni `priv`.
 - Parámetros.
@@ -155,8 +196,8 @@ No admite:
 - Atributos.
 - Nombre string alternativo.
 
-Una descripción humana opcional se escribe como documentación sobre la
-declaración. El identificador continúa siendo la identidad estable:
+Una descripción humana opcional se escribe como documentación. El identificador
+continúa siendo la identidad estable:
 
 ~~~tondo
 /// Verifica el redondeo simétrico alrededor de cero.
@@ -166,40 +207,62 @@ test roundsHalfAwayFromZero {
 }
 ~~~
 
-### 3.2 Nombre e identidad
+### 3.2 Árbol estático
 
-El nombre sigue la convención `camelCase` de las funciones. Incumplirla produce
-el warning de naming ordinario. `_` es un descarte, no una identidad de test, y
-no puede ocupar esta posición.
+`suite` es siempre un contenedor y `test` es siempre una hoja. Un test no puede
+contener tests ni suites. Todas las sentencias del prefijo de una suite
+pertenecen a su setup; un `assert` allí comprueba ese setup y su fallo pertenece
+a la suite, no a uno de sus descendientes.
 
-La identidad semántica exacta de un test es:
+Los miembros directos de un mismo nivel forman un namespace de tooling único.
+Dos miembros `suite`/`test` con el mismo identificador son `E2002`, incluso si
+proceden de archivos distintos. Las suites no se reabren, fusionan ni extienden
+por repetir su nombre.
+
+El árbol completo se construye durante compilación. Nombres calculados, registro
+runtime, suites dentro de control de flujo y generación de subtests desde un
+`for` están prohibidos. Por tanto, `--list` nunca necesita ejecutar setup para
+descubrir un nodo.
+
+### 3.3 Nombre e identidad
+
+Los nombres de suites y tests siguen la convención `camelCase` de las funciones.
+Incumplirla produce el warning de naming ordinario. `_` es un descarte, no una
+identidad de tooling, y no puede ocupar ninguna de estas posiciones.
+
+La identidad semántica exacta de un nodo incluye:
 
 ~~~text
-PackageId + module path + test identifier
+PackageId + source class + module path + ordered node path + node kind
 ~~~
 
-La identidad visible del runner es:
+Las identidades visibles del runner son:
 
 ~~~text
 package-name::unit::module.path::testName
+package-name::unit::module.path::suiteName::testName
 package-name::integration::relative.path::testName
+package-name::integration::relative.path::suiteName::nestedSuite::testName
 ~~~
 
 Tooling la interpreta con la forma cerrada:
 
 ~~~ebnf
-visible_test_id = package_name, "::", test_kind, "::",
-                  logical_module_path, "::", identifier ;
-test_kind       = "unit" | "integration" ;
+visible_node_id = package_name, "::", source_kind, "::",
+                  logical_module_path, "::",
+                  identifier, { "::", identifier } ;
+source_kind     = "unit" | "integration" ;
 ~~~
 
 El nombre de paquete mostrado es el nombre local declarado por el manifiesto;
 la identidad interna conserva el `PackageId` completo para distinguir versiones
 u orígenes diferentes. El segmento de clase evita que un unit test y una raíz
-de integración produzcan selectores visibles ambiguos.
+de integración produzcan selectores visibles ambiguos. Cada descriptor indica
+además si el ID corresponde a una `suite` o un `test`; dos nodos de distinto kind
+no pueden compartir el mismo ID.
 
-Los tests forman un registro de tooling separado de los namespaces de tipos y
-valores. Puede coexistir una función y un test con el mismo identificador:
+Suites y tests forman un registro de tooling separado de los namespaces de tipos
+y valores. Puede coexistir una función y un nodo con el mismo identificador:
 
 ~~~tondo
 fn normalize(value: String): String {
@@ -211,11 +274,11 @@ test normalize {
 }
 ~~~
 
-Dos tests con el mismo identificador dentro del mismo módulo son un error aunque
-se encuentren en archivos distintos. Un test no puede referenciarse, importarse,
-llamarse ni convertirse a un valor de función.
+Un nodo no puede referenciarse, importarse, llamarse ni convertirse a un valor
+de función. La única relación entre suite y descendiente es la arista estática
+registrada por el toolchain.
 
-### 3.3 Formato canónico
+### 3.4 Formato canónico
 
 El formatter emite:
 
@@ -223,16 +286,25 @@ El formatter emite:
 test name {
     body
 }
+
+suite name {
+    setup
+
+    test child {
+        body
+    }
+}
 ~~~
 
-Hay exactamente un espacio entre `test` y el identificador y otro antes de `{`.
-El body utiliza las reglas ordinarias de bloques. Dos declaraciones consecutivas
-se separan igual que dos funciones de módulo. El formatter nunca transforma una
-función en test ni infiere un test a partir de su nombre.
+Hay exactamente un espacio después de `test` o `suite` y otro antes de `{`. El
+body de test utiliza las reglas ordinarias de bloques. En una suite, el formatter
+separa mediante una línea vacía el setup de su primer miembro y dos miembros
+consecutivos igual que dos declaraciones de módulo. Nunca transforma una función
+en test, un test en suite ni infiere nodos a partir de nombres.
 
 ## 4. Semántica estática
 
-### 4.1 Entrada oculta
+### 4.1 Entradas ocultas
 
 Cada test se comprueba como una entrada privada no direccionable equivalente a:
 
@@ -258,15 +330,42 @@ Una expresión final distinta de `Unit`, un `return` con valor incompatible o
 cualquier error de tipos utiliza los diagnósticos ordinarios. No existe un tipo
 especial `TestResult`.
 
+El prefijo de setup de cada suite se comprueba como otra entrada privada
+equivalente a `async? fn <suite-setup>(): Unit ! E`, con unión cerrada inferida
+`E: Discard`. Su entorno local permanece vivo mientras el runner ejecuta los
+descendientes seleccionados y abandona después el scope léxico de la suite. Ese
+entorno y sus entradas de ejecución no son valores Tondo, no tienen ABI pública
+y no pueden observarse desde fuente.
+
+El setup admite `fail` y `?`, que hacen fallar la fase, pero no `return`: una
+suite no puede terminar normalmente ocultando descendientes registrados. La
+transferencia de control que intente abandonar el setup utiliza `E1205`. Una
+suite tampoco produce un `SuiteResult` visible; el runner conserva su lifecycle
+en el reporte de tooling.
+
 ### 4.2 Async y concurrencia
 
-No se escribe `async test`. La necesidad de async se infiere porque la
-declaración no forma parte de una API invocable.
+No se escribe `async test` ni `async suite`. La necesidad de async se infiere
+porque ninguna declaración forma parte de una API invocable.
 
 ~~~tondo
 test loadsConfiguration {
     let config = await loadConfiguration()?
     assert(config.port > 0)
+}
+~~~
+
+El setup de suite puede suspender y propagar errores:
+
+~~~tondo
+suite remoteApi {
+    let service = await TestService.start()?
+    let endpoint: String = service.endpoint()
+    defer TestService.stop(service)
+
+    test reportsHealth {
+        assert((await readHealth(endpoint)?).ready)
+    }
 }
 ~~~
 
@@ -286,12 +385,12 @@ test downloadsBothDocuments {
 ~~~
 
 El scope raíz creado por el runner no cuenta como `scope` léxico para `spawn`.
-Un test escribe `scope` de forma explícita igual que un script.
+Una suite o test escribe `scope` de forma explícita igual que un script.
 
 ### 4.3 Ownership, préstamos y `defer`
 
-Un test no relaja ownership. Todo valor afín, obligación terminal, préstamo o
-cleanup debe satisfacer las mismas reglas que en una función normal.
+Una suite o test no relaja ownership. Todo valor afín, obligación terminal,
+préstamo o cleanup debe satisfacer las mismas reglas que en una función normal.
 
 `defer` es la única construcción de teardown del lenguaje:
 
@@ -305,12 +404,56 @@ test writesAndReadsRecord {
 }
 ~~~
 
-Un pánico, error, `return` o cancelación ejecuta el unwind estructurado antes de
-entregar el resultado al runner.
+Dentro de una suite, un `defer` registrado por el setup pertenece al scope
+léxico de esa suite. Se ejecuta después de que terminen todos sus descendientes
+seleccionados, en LIFO y con las reglas ordinarias. Si el setup falla antes de
+alcanzar los miembros, se ejecutan los defers que ya hubiera registrado. No
+existe una variante async de `defer` ni una excepción de testing a sus
+restricciones de resultado y sincronía.
+
+Un descendiente puede leer un binding de setup de sus suites ancestras solo
+cuando:
+
+- Fue declarado con `let`.
+- Su tipo cumple `Copy + Send + Share`.
+- La referencia no mueve, presta con `mut`/`var` ni consume el binding ancestral.
+
+El runner construye un snapshot lógico de esas capturas para cada hijo antes de
+programarlo. Un binding `var`, un préstamo `ref`/`mut`/`var`, un valor afín o un
+valor con obligación terminal no puede cruzar esa frontera y produce `E2005`.
+Constantes, funciones y declaraciones de módulo se resuelven por nombre y no son
+capturas.
+
+Así la suite conserva ownership del recurso costoso y expone a sus tests solo
+datos compartibles:
+
+~~~tondo
+suite userApi {
+    let service = TestService.start()?
+    let endpoint: String = service.endpoint()
+    defer TestService.stop(service)
+
+    test createsUser {
+        let client = ApiClient.connect(endpoint)?
+        defer ApiClient.close(client)
+
+        assert(client.createUser("Ada")?.name == "Ada")
+    }
+}
+~~~
+
+Compartir identidad deliberadamente requiere un tipo que satisfaga el mismo
+contrato, por ejemplo un `Ref[T]` cuyo tipo completo cumpla `Send + Share`.
+`suite` nunca convierte estado mutable ordinario en estado concurrente seguro.
+
+Un pánico, error, `return` o cancelación estructurada de lenguaje de un test
+ejecuta su unwind antes de entregar el resultado al runner. Los terminales de
+suite siguen el lifecycle definido en la sección 7.
 
 ### 4.4 Unsafe
 
-No existe `unsafe test`. Una operación raw requiere una región `unsafe` local:
+No existe `unsafe test` ni `unsafe suite`. Una operación raw requiere una región
+`unsafe` local:
 
 ~~~tondo
 test readsAlignedByte {
@@ -323,28 +466,29 @@ test readsAlignedByte {
 }
 ~~~
 
-La presencia de un test nunca rebaja las obligaciones de procedencia,
+La presencia de una suite o test nunca rebaja las obligaciones de procedencia,
 alineación, inicialización, aliasing o lifetime.
 
 ### 4.5 Visibilidad
 
-Un test unitario ve las declaraciones privadas del módulo al que acompaña. Esa
-es una concesión estática de visibilidad, no reflection ni acceso raw.
+Una suite o test unitario ve las declaraciones privadas del módulo al que
+acompaña. Esa es una concesión estática de visibilidad, no reflection ni acceso
+raw.
 
-Un test de integración pertenece a un consumidor separado y solo ve la API
-pública importada. No existe una opción del runner que eleve su visibilidad.
+Una suite o test de integración pertenece a un consumidor separado y solo ve la
+API pública importada. No existe una opción del runner que eleve su visibilidad.
 
 Los campos privados, nombres ocultos y tipos opacos continúan ausentes de
 diagnósticos y reportes cuando el test no tiene visibilidad válida.
 
 ### 4.6 Ausencia de efectos de importación
 
-Un test solo se ejecuta cuando el runner invoca su entrada. Importar un módulo
-que contiene un overlay de test no ejecuta tests ni registra callbacks en
-runtime.
+Un setup de suite o body de test solo se ejecuta cuando el runner invoca su
+entrada. Importar un módulo que contiene un overlay de test no ejecuta nodos ni
+registra callbacks en runtime.
 
-El orden textual de los tests no produce inicialización global. Tondo continúa
-sin globals mutables ni efectos de importación.
+El orden textual de suites y tests no produce inicialización global. Tondo
+continúa sin globals mutables ni efectos de importación.
 
 ## 5. Source sets y descubrimiento
 
@@ -362,8 +506,8 @@ La clase, path lógico, edición, target, capacidades y contenido forman parte d
 la identidad del build de test. La clase no se deduce dentro del compilador a
 partir de un path físico; el frontend recibe el plan ya resuelto.
 
-Solo una fuente `unit-test` o `integration-test` puede contener `test_decl`.
-Encontrarlo en `production` produce `E2001`.
+Solo una fuente `unit-test` o `integration-test` puede contener `test_decl` o
+`suite_decl`. Encontrar cualquiera en `production` produce `E2001`.
 
 ### 5.2 Descubrimiento convencional de `tondo test`
 
@@ -407,7 +551,7 @@ fases:
 2. Sobre esa unidad semántica sellada se aplica el overlay unitario.
 
 El overlay puede leer declaraciones privadas y añadir imports, declaraciones
-privadas auxiliares y tests. No puede:
+privadas auxiliares, suites y tests. No puede:
 
 - Hacer que una fuente de producción inválida compile.
 - Reabrir ni volver a resolver bodies de producción.
@@ -416,7 +560,8 @@ privadas auxiliares y tests. No puede:
 - Ser importado desde un source set de producción.
 
 Una colisión entre una declaración auxiliar y una declaración ya visible utiliza
-las reglas ordinarias de nombres. Los tests permanecen en su registro separado.
+las reglas ordinarias de nombres. Suites y tests permanecen en su registro
+separado.
 
 ### 5.4 Integration test roots
 
@@ -431,7 +576,7 @@ lógico relativo a `tests/`, sin extensión. Por ejemplo,
 `application::integration::http.client::...`; el PackageId sintético permanece
 en la identidad semántica interna y evita conceder visibilidad privada.
 
-Por ello un test de integración:
+Por ello una raíz de integración:
 
 - No comparte scope de módulo con las fuentes de producción.
 - No accede a declaraciones privadas.
@@ -456,19 +601,21 @@ El build de producción debe producir la misma interfaz y artefacto
 independientemente de que existan, cambien o desaparezcan tests y
 dev-dependencies.
 
-### 5.6 Suite vacía
+### 5.6 Invocación o selección vacía
 
-Una invocación normal que descubre cero tests o cuyo selector no selecciona
+Una invocación normal que descubre cero tests hoja o cuyo selector no selecciona
 ninguno falla con un diagnóstico de tooling. No se considera éxito silencioso.
-`--allow-empty` permite solicitar explícitamente exit status exitoso para
-workspaces en los que una partición pueda no contener tests.
+Una declaración `suite` vacía ya fue rechazada estáticamente y no altera este
+conteo. `--allow-empty` permite solicitar explícitamente exit status exitoso
+para workspaces en los que una partición pueda no contener tests.
 
 ## 6. Construcción del target de test
 
 ### 6.1 Compilación completa antes de ejecutar
 
 El runner debe resolver, comprobar, bajar y verificar todas las fuentes activas
-antes de iniciar el primer test. Si existe cualquier error de compilación:
+antes de iniciar la primera entrada de usuario. Si existe cualquier error de
+compilación:
 
 - No se ejecuta ningún test.
 - Se emiten los diagnostics ordinarios.
@@ -485,8 +632,10 @@ El artefacto contiene:
 - Identidad del package graph y lockfile.
 - Edición, target, perfil y capacidades.
 - Source sets y paths lógicos activos.
-- Registro ordenado de tests y sus source ranges.
-- Entradas ejecutables privadas.
+- Árbol ordenado de suites/tests, parent IDs y source ranges.
+- Entradas privadas de setup y de tests hoja.
+- Layout comprobado de los snapshots `Copy + Send + Share` que cruzan cada
+  arista del árbol.
 - Hashes necesarios para reproducir el build.
 
 No contiene un registro mutable de funciones ni descubre tests mediante
@@ -503,33 +652,86 @@ Un target de test no busca ni ejecuta `main`. Si el módulo probado contiene un
 point del test.
 
 Una fuente de test no puede contener sentencias top-level ni un script raíz. Los
-helpers son declaraciones y los efectos comienzan dentro de cada `test`.
+helpers son declaraciones y los efectos comienzan dentro del setup de una suite
+seleccionada o del body de un test hoja.
 
 ## 7. Modelo de ejecución
 
-### 7.1 Aislamiento por test
+### 7.1 Árbol de ejecución y aislamiento
 
-Cada test obtiene:
+Después de seleccionar tests hoja, el runner construye el bosque mínimo que los
+contiene: cada test seleccionado y todas sus suites ancestras. Ningún otro nodo
+se ejecuta.
+
+Cada test hoja obtiene:
 
 - Un scope raíz nuevo.
-- Estado de runtime y heap no observable desde otros tests.
+- Estado de runtime, roots, tasks y handles no observable desde otra hoja salvo
+  los snapshots de suite permitidos por 4.3.
 - Captura separada de stdout y stderr del runtime Tondo.
 - Presupuesto de recursos independiente.
 - Un resultado independiente.
 
+Cada suite ejecutada obtiene un entorno de lifecycle separado que conserva
+sus bindings de setup y su pila de cleanup hasta que terminan los descendientes.
+Los hijos solo observan sus snapshots `Copy + Send + Share`; no reciben acceso
+general al heap, stack, préstamos ni propietarios de la suite.
+
 Una implementación puede reutilizar threads, allocators o procesos internos
-solo si esa reutilización no permite observar valores, roots, tasks, handles,
-buffers, pánicos ni output de otro test.
+solo si esa reutilización no expone otros valores, roots, tasks, handles,
+buffers, pánicos u output. No existen globals mutables Tondo que sobrevivan
+entre entradas. Los efectos externos —filesystem, procesos, red, reloj o
+servicios— no se revierten mágicamente y deben aislarse mediante nombres,
+recursos y cleanup explícitos.
 
-No existen variables globales mutables Tondo que sobrevivan entre entradas. Los
-efectos externos —filesystem, procesos, red, reloj o servicios— no se revierten
-mágicamente; un test debe aislarlos mediante paths, recursos y cleanup
-explícitos.
+### 7.2 Lifecycle de suite
 
-### 7.2 Inicio y terminación
+Una suite se ejecuta de esta forma:
 
-El runner invoca la entrada oculta y, si es async, conduce su scope raíz hasta
-uno de estos terminales:
+1. Si no contiene ningún test seleccionado, no se entra en ella.
+2. El runner ejecuta su setup exactamente una vez.
+3. Tras éxito, materializa los snapshots permitidos y ejecuta sus miembros
+   seleccionados. Una suite hija repite el mismo protocolo.
+4. El fallo de una hoja se registra y no impide ejecutar sus hermanos.
+5. Cuando han terminado todos los descendientes seleccionados, el runner
+   abandona el scope de la suite y ejecuta su cleanup ordinario. Por estructura,
+   suites internas terminan antes que sus ancestras.
+
+No existe lifecycle por orden textual entre hojas. Todos los miembros de una
+suite deben poder ejecutarse en cualquier orden y un test individual seleccionado
+mediante `--exact` ejecuta primero las mismas suites ancestras.
+
+Si el setup termina por error, pánico, resource limit, timeout o infraestructura:
+
+- La suite conserva ese estado y fase `setup`.
+- Se ejecuta el unwind de lenguaje que realmente sea observable, incluidos los
+  `defer` ya registrados cuando el terminal lo permita.
+- Ningún descendiente suyo comienza.
+- Cada test hoja seleccionado bajo ella queda `blocked-setup` e identifica la
+  suite que lo bloqueó.
+- Suites y tests hermanos fuera de ese subárbol continúan cuando el aislamiento
+  sigue siendo fiable.
+
+Si un `defer` produce pánico durante el unwind de un setup fallido, se aplica la
+prioridad de terminales de Tondo 0.1 y la fase continúa siendo `setup`: la suite
+nunca llegó a admitir descendientes. `teardown` designa exclusivamente el
+cleanup iniciado después de que un setup correcto y todos sus descendientes
+seleccionados hayan terminado.
+
+Un fallo durante ese teardown conserva fase `teardown`. Los resultados ya
+producidos por los descendientes no cambian ni se reetiquetan; la suite añade su
+propio fallo y hace fallar la invocación. El estado `passed` de una suite
+significa únicamente que su setup y teardown terminaron correctamente, no que
+todos sus descendientes pasaron.
+
+Este lifecycle equivale a setup/teardown una vez por contenedor. No implica
+`beforeEach` ni `afterEach`: cada hoja construye sus fixtures propias mediante
+helpers y `defer`.
+
+### 7.3 Inicio y terminación de entradas
+
+El runner conduce cada body de test y setup de suite —síncronos o async según la
+inferencia ordinaria— y cada teardown síncrono hasta uno de estos terminales:
 
 - Retorno normal.
 - Error recuperable no manejado.
@@ -539,34 +741,39 @@ uno de estos terminales:
 - Fallo de infraestructura.
 
 Antes de registrar un terminal de lenguaje, el runtime ejecuta cleanup y cancela
-y espera hijos estructurados según la especificación base. Un test no se marca
-como finalizado mientras quede cleanup estructurado pendiente.
+y espera hijos estructurados según la especificación base. Una entrada no se
+marca como finalizada mientras quede cleanup estructurado pendiente. El tiempo
+durante el que una suite solo espera a sus descendientes no ejecuta código de
+usuario y no constituye una cuarta fase.
 
-### 7.3 Pánico y continuidad de la suite
+### 7.4 Pánico y continuidad
 
-Un pánico termina el test actual después del unwind, no el proceso completo de
-la suite. El runner conserva el código `P`, ubicación y stack trace disponibles
-y continúa con tests posteriores cuando el aislamiento sigue siendo válido.
+Un pánico termina el test actual después del unwind, no el proceso completo del
+runner. El runner conserva el código `P`, ubicación y stack trace disponibles y
+continúa con tests posteriores cuando el aislamiento sigue siendo válido.
 
-Un abort fuera del modelo de pánico, corrupción del runtime o imposibilidad de
-restablecer aislamiento se clasifica como fallo de infraestructura. El runner
-puede detener la suite porque ya no puede garantizar resultados fiables.
+Un pánico en setup o teardown pertenece a la suite y sigue 7.2. Un abort fuera
+del modelo de pánico, corrupción del runtime o imposibilidad de restablecer
+aislamiento se clasifica como fallo de infraestructura. El runner puede detener
+el bosque restante porque ya no puede garantizar resultados fiables. En ese
+caso termina con exit `3` y no emite un reporte canónico incompleto; todo reporte
+`tondo-test-report-0.2/2` válido clasifica cada hoja seleccionada.
 
-### 7.4 Errores recuperables
+### 7.5 Errores recuperables
 
-Un valor que alcanza el canal `E` inferido hace fallar el test. El reporte
-conserva como mínimo la identidad nominal visible de su tipo y la ubicación del
-terminal. Su presentación humana sigue las reglas de la frontera de `main`: no
-usa reflection para revelar campos privados ni promete serialización estable del
-payload.
+Un valor que alcanza el canal `E` inferido hace fallar el test o fase de suite
+actual. El reporte conserva como mínimo la identidad nominal visible de su tipo
+y la ubicación del terminal. Su presentación humana sigue las reglas de la
+frontera de `main`: no usa reflection para revelar campos privados ni promete
+serialización estable del payload.
 
 Para verificar un error esperado, el test lo consume localmente con `match`; no
 deja que alcance al runner.
 
-### 7.5 Inputs de host
+### 7.6 Inputs de host
 
-El runner no proporciona parámetros mágicos al body. Los argumentos de proceso
-del programa Tondo son vacíos.
+El runner no proporciona parámetros mágicos a suites ni tests. Los argumentos
+de proceso del programa Tondo son vacíos.
 
 Entorno, cwd, filesystem, red, reloj, entropía y procesos solo existen mediante
 sus APIs y capabilities normales. El plan de test registra los inputs de host
@@ -582,68 +789,93 @@ declarados. La invocación oficial:
 Una implementación puede ofrecer un target de test con capacidades adicionales,
 pero ese target es distinto y debe quedar visible en el reporte.
 
-### 7.6 Límites y timeouts
+### 7.7 Límites y timeouts
 
-Todo test se ejecuta con límites finitos de instrucciones o trabajo, memoria,
-profundidad y output. El toolchain publica sus defaults y registra los valores
-efectivos o el hash de su resource profile en el reporte.
+Cada test hoja y cada fase activa de setup o teardown se ejecuta con límites
+finitos de instrucciones o trabajo, memoria, profundidad y output. El toolchain
+publica sus defaults y registra los valores efectivos o el hash de su resource
+profile en el reporte.
+
+`--timeout` aplica de forma independiente a un body de test, a un setup de suite
+y a un teardown de suite. El reloj de una suite se pausa mientras solo espera
+descendientes; por tanto, una suite grande no consume el timeout por sumar la
+duración de sus tests.
 
 Un timeout wall-clock es un límite del runner, no un error Tondo ni un pánico. El
 runner debe poder terminar la entrada aislada incluso si el código no llega a un
 punto cooperativo de cancelación. No puede dejar un proceso o thread de usuario
-ejecutándose después de reportar el test.
+ejecutándose después de reportar el terminal.
 
 Los presupuestos estructurales y de runtime siempre permanecen finitos. El
 timeout wall-clock puede desactivarse únicamente mediante `--timeout none`; esa
 opción no desactiva ningún otro presupuesto. Un timeout o resource limit nunca
 se convierte automáticamente en test ignorado.
 
-Timeout y agotamiento de un presupuesto pueden impedir que el código Tondo
-complete sus `defer`; no son terminales del lenguaje con garantía de unwind. El
-runner sí debe limpiar su propia frontera de aislamiento y declarar el estado
-correspondiente. Un test con efectos externos no puede confiar en teardown de
-usuario después de una terminación forzada.
+Timeout y agotamiento de presupuesto pueden impedir que el código Tondo complete
+sus `defer`; no son terminales del lenguaje con garantía de unwind. El runner sí
+debe limpiar su propia frontera de aislamiento y declarar el estado
+correspondiente. Una suite o test con efectos externos no puede confiar en
+teardown de usuario después de una terminación forzada.
 
 ## 8. Selección, orden y paralelismo
 
 ### 8.1 Orden canónico
 
-El registro y la presentación de resultados se ordenan lexicográficamente por la
-identidad visible completa del test usando bytes UTF-8.
+El registro, los descriptores y los resultados de suites y tests se ordenan
+lexicográficamente por identidad visible completa usando bytes UTF-8. Los
+descendientes de una suite forman así un rango contiguo.
 
-La ejecución por defecto utiliza `--jobs 1` y ese mismo orden. Esto proporciona
-feedback reproducible sin depender del número de CPUs de la máquina.
+La ejecución por defecto utiliza `--jobs 1` y recorre los tests hoja en ese
+orden, entrando en una suite justo antes de su primer descendiente seleccionado
+y abandonándola después del último. Esto proporciona feedback reproducible sin
+depender del número de CPUs de la máquina.
 
 ### 8.2 Selección
 
 El runner ofrece exactamente dos selectores básicos:
 
 - `--filter text`: substring bytewise, case-sensitive, sobre la identidad
-  visible completa.
-- `--exact id`: igualdad bytewise con una identidad visible completa.
+  visible completa de cada test hoja.
+- `--exact id`: igualdad bytewise con la identidad visible de un test o suite.
 
 Son mutuamente excluyentes y cada uno aparece como máximo una vez. No hay regex,
 glob ni interpretación locale-dependent.
 
-`--list` compila y valida la suite, aplica el selector y emite las identidades
-sin ejecutar bodies.
+Un exact match de test selecciona esa hoja. Un exact match de suite selecciona
+todos sus tests descendientes. Puesto que el ID de suite es prefijo de sus
+descendientes, un filtro que contiene su path los selecciona naturalmente, pero
+`--filter` nunca devuelve una suite sin hojas.
+
+Toda selección incorpora las suites ancestras necesarias. `--list` compila y
+valida el árbol, aplica el selector y emite los tests seleccionados junto con
+esas suites sin ejecutar ningún setup ni body.
 
 ### 8.3 Paralelismo explícito
 
-`--jobs N`, con `N > 0`, permite ejecutar hasta `N` tests simultáneamente. El
-resultado final y la salida capturada continúan presentándose en orden canónico,
-no en orden de finalización.
+`--jobs N`, con `N > 0`, permite ejecutar simultáneamente hasta `N` entradas de
+usuario entre setup, test y teardown. Una suite termina su setup antes de
+programar hijos y no comienza teardown hasta que todos sus descendientes
+seleccionados han terminado.
+
+El resultado final y la salida capturada continúan presentándose en orden
+canónico, no en orden de finalización.
 
 El runner no garantiza un orden de efectos externos entre tests paralelos. Una
-suite que use `--jobs N` es responsable de que sus recursos de host no
-colisionen. El aislamiento de runtime sí permanece obligatorio.
+suite que comparta un servicio bajo `--jobs N` es responsable de que ese servicio
+admita concurrencia o de solicitar `--jobs 1`. Los snapshots estáticos impiden
+data races de lenguaje; el aislamiento de runtime y el máximo global permanecen
+obligatorios.
 
 ### 8.4 Sin dependencias entre tests
 
 No existe sintaxis para ordenar tests, declarar dependencias ni compartir una
-fixture mutable entre ellos. Cada test debe poder ejecutarse solo mediante
-`--exact` y producir el mismo resultado de lenguaje que dentro de la suite con
-los mismos inputs declarados.
+fixture mutable ordinaria entre ellos. Una suite puede compartir snapshots
+inmutables y efectos externos explícitos, pero ningún hijo puede preparar estado
+para otro.
+
+Cada test debe poder ejecutarse solo mediante `--exact`; el runner entra en las
+mismas suites ancestras y debe producir el mismo resultado de lenguaje que
+dentro del árbol completo con los mismos inputs declarados.
 
 ### 8.5 Sin retries implícitos
 
@@ -656,9 +888,11 @@ registrar cada intento y no sustituir la regresión determinista.
 
 ## 9. Resultados, diagnósticos y salida
 
-### 9.1 Estados
+### 9.1 Estados de test y suite
 
-Cada test termina exactamente en uno de estos estados:
+Cuando la compilación termina correctamente y el runner puede producir un
+reporte fiable, cada test seleccionado termina exactamente en uno de estos
+estados:
 
 | Estado | Significado |
 |---|---|
@@ -668,15 +902,35 @@ Cada test termina exactamente en uno de estos estados:
 | `resource-limit` | Se agotó un presupuesto configurado. |
 | `timeout` | Venció el límite wall-clock del runner. |
 | `infrastructure` | El harness, runtime o aislamiento dejó de ser fiable. |
+| `blocked-setup` | No se invocó porque falló una suite ancestral seleccionada. |
 
-No existe `ignored`, `expected-failure`, `flaky` ni `passed-after-retry` en el
-contrato inicial.
+`blocked-setup` no contiene un `failure` duplicado; identifica mediante
+`blocked_by` la suite que conserva la causa. No significa ignored, skipped ni
+éxito.
+
+Cada suite necesaria conserva uno de los seis estados ejecutados anteriores o
+`blocked-setup` cuando una suite ancestral impidió incluso su setup. Para una
+suite ejecutada, `phase` vale `setup` o `teardown` en un fallo y `null` al pasar.
+El estado `passed` solo describe su lifecycle propio y no agrega resultados de
+descendientes.
+
+Las combinaciones válidas son cerradas:
+
+- `passed` y `blocked-setup` siempre usan `phase: null`.
+- Cualquiera de los cinco estados de fallo ejecutado puede usar
+  `phase: setup`.
+- `phase: teardown` admite `failed-panic`, `resource-limit`, `timeout` o
+  `infrastructure`. No admite `failed-error`, porque `defer` es infallible desde
+  el sistema de tipos y no puede propagar un error recuperable.
+
+No existe `ignored`, `expected-failure`, `flaky` ni `passed-after-retry` en este
+contrato.
 
 ### 9.2 `assert`
 
 `assert(false)` conserva el pánico `P0007`. Dentro de un test, el runner lo
-clasifica como `failed-panic`; no introduce un segundo código ni una excepción
-recuperable.
+clasifica como `failed-panic`; dentro de setup o teardown hace fallar esa fase de
+suite. No introduce un segundo código ni una excepción recuperable.
 
 La representación fuente de la condición, el mensaje, la ubicación y el stack
 trace se conservan según la especificación base. Una librería puede construir
@@ -684,13 +938,13 @@ mensajes mejores, pero no alterar el terminal.
 
 ### 9.3 Captura de output
 
-Stdout y stderr de cada entrada se capturan por separado como UTF-8. El modo
-humano:
+Stdout y stderr de cada entrada de suite o test se capturan por separado como
+UTF-8. El modo humano:
 
 - Muestra siempre la identidad y el estado.
-- Muestra output de tests fallidos.
-- Oculta output de tests que pasan salvo `--show-output`.
-- Nunca intercala bytes de dos tests.
+- Muestra output de tests o suites fallidos.
+- Oculta output de entradas que pasan salvo `--show-output`.
+- Nunca intercala bytes de dos entradas.
 
 El output de procesos hijos solo pertenece a la captura si el programa lo
 redirige explícitamente a los streams Tondo. Heredar descriptores del runner no
@@ -699,6 +953,10 @@ constituye captura conforme.
 El diagnóstico que el runner construye para error, pánico, timeout o
 infraestructura pertenece a `failure`; no se añade artificialmente al
 `stderr` capturado del programa.
+
+En una suite, cada stream concatena los bytes producidos por su setup y por su
+teardown posterior en ese orden, sin incluir output de descendientes. Si la
+suite queda `blocked-setup`, ambos streams están vacíos.
 
 ### 9.4 Duración
 
@@ -712,8 +970,8 @@ canónico reproducible.
 
 | Exit | Condición |
 |---|---|
-| `0` | Compilación correcta y todos los tests seleccionados `passed`; o selección vacía solicitada con `--allow-empty`. |
-| `1` | Error de compilación, suite vacía no permitida o al menos un test no pasó. |
+| `0` | Compilación correcta, todas las suites necesarias y tests seleccionados `passed`; o selección vacía solicitada con `--allow-empty`. |
+| `1` | Error de compilación, selección vacía no permitida o al menos una suite/test no pasó. |
 | `2` | Uso inválido de CLI. |
 | `3` | Fallo interno del toolchain antes de producir un reporte fiable. |
 
@@ -727,7 +985,7 @@ Interfaz mínima:
 
 ~~~text
 tondo test [--manifest <path>]
-           [--filter <text> | --exact <test-id>]
+           [--filter <text> | --exact <node-id>]
            [--list]
            [--jobs <positive-int>]
            [--timeout <duration|none>]
@@ -744,10 +1002,11 @@ Reglas:
 - `--filter` y `--exact` seleccionan ejecución, no compilación.
 - `--list` no ejecuta bodies y no admite `--show-output`.
 - `--jobs` vale `1` por defecto.
-- `--timeout` aplica por test, no a la suite completa.
+- `--timeout` aplica por test hoja y por fase activa de suite, no al tiempo total
+  del subárbol.
 - `--test-format human` es el default interactivo.
 - `--test-format json` emite exactamente un reporte
-  `tondo-test-report-0.2/1`, o una lista `tondo-test-list-0.2/1` con `--list`.
+  `tondo-test-report-0.2/2`, o una lista `tondo-test-list-0.2/2` con `--list`.
 - Los diagnostics de compilación conservan `--diagnostic-format` y su schema
   propio; no se insertan como strings ambiguos dentro de resultados de test.
 - Opciones desconocidas, repetidas cuando no son repetibles o combinaciones
@@ -790,11 +1049,12 @@ considerar:
 
 Sus funciones pueden terminar mediante `assert`/pánico o devolver un error
 documentado. No reciben acceso reflectivo a valores privados ni pueden registrar
-tests en runtime.
+suites o tests en runtime.
 
 ### 11.3 Setup y teardown
 
-Setup compartido es una función normal:
+Setup reutilizable por cada test es una función normal y se invoca
+explícitamente:
 
 ~~~tondo
 fn configuredStore(): Store ! StoreError {
@@ -809,8 +1069,40 @@ test readsExistingValue {
 }
 ~~~
 
-Teardown utiliza `defer`. No existen `beforeEach`, `afterEach`, constructors de
-suite ni orden implícito de fixtures.
+Teardown por test utiliza `defer`. No existen `beforeEach`, `afterEach` ni orden
+implícito de fixtures.
+
+Cuando una inicialización costosa debe ejecutarse una vez para varias hojas se
+utiliza una suite:
+
+~~~tondo
+suite persistentStore {
+    let service = StoreService.start()?
+    let endpoint: String = service.endpoint()
+    defer StoreService.stop(service)
+
+    test readsWrittenValue {
+        let store = Store.connect(endpoint)?
+        defer Store.close(store)
+
+        store.write("persistentStore.readsWrittenValue", "Ada")?
+        assert(store.read("persistentStore.readsWrittenValue")? == "Ada")
+    }
+
+    test writesNewValue {
+        let store = Store.connect(endpoint)?
+        defer Store.close(store)
+
+        store.write("persistentStore.writesNewValue", "Grace")?
+        assert(store.read("persistentStore.writesNewValue")? == "Grace")
+    }
+}
+~~~
+
+El setup de `persistentStore` y su `defer` forman el equivalente explícito de
+`beforeAll`/`afterAll`, pero su orden es léxico, existe un solo scope propietario
+y no hay callbacks heredados. Cada test continúa construyendo y cerrando su
+estado particular. Una suite no ejecutada por el selector tampoco ejecuta setup.
 
 ### 11.4 Tests parametrizados
 
@@ -832,7 +1124,8 @@ test dividesIntegers {
 
 No existe otra sintaxis de parameterized tests. Una librería puede mejorar el
 mensaje de cada fila, pero el registro contiene una sola entrada
-`dividesIntegers`.
+`dividesIntegers`. Un `for` no registra subtests dinámicos y sus valores no
+pueden cambiar la identidad estática del árbol.
 
 ### 11.5 Fakes y mocks
 
@@ -909,6 +1202,45 @@ test releasesResourceOnFailure {
 
 El runner registra `failed-panic` solo después de ejecutar el `defer`.
 
+### 12.5 Servicio de integración compartido
+
+Archivo `tests/users.to`:
+
+~~~tondo
+import application.client
+
+suite userApi {
+    let service = TestApplication.start()?
+    let endpoint: String = service.endpoint()
+    defer TestApplication.stop(service)
+
+    test createsUser {
+        let api = client.connect(endpoint)?
+        defer client.close(api)
+
+        let user = api.createUser("create-user@example.test")?
+        assert(user.email == "create-user@example.test")
+    }
+
+    suite validation {
+        test rejectsEmptyEmail {
+            let api = client.connect(endpoint)?
+            defer client.close(api)
+
+            match api.createUser("") {
+                err(ApiError.EmptyEmail) => ()
+                ok(_) => panic("expected EmptyEmail")
+                err(_) => panic("expected EmptyEmail, found another error")
+            }
+        }
+    }
+}
+~~~
+
+Seleccionar `...::userApi::validation::rejectsEmptyEmail` ejecuta únicamente los
+setups de `userApi` y `validation`, esa hoja y los teardowns correspondientes.
+No ejecuta `createsUser`.
+
 ## 13. Características deliberadamente ausentes
 
 El contrato inicial no incluye:
@@ -918,7 +1250,8 @@ El contrato inicial no incluye:
 - Macros de assertions.
 - Descubrimiento por reflection o prefijo de función.
 - Registro de tests en runtime.
-- Tests anidados o subtests con identidad propia.
+- Tests o suites con nombres calculados o creados dentro de control de flujo.
+- Subtests dinámicos registrados desde un `for` o callback.
 - Hooks `beforeAll`, `afterAll`, `beforeEach` o `afterEach`.
 - Orden o dependencias entre tests.
 - Estado mutable compartido de suite.
@@ -945,26 +1278,28 @@ La edición 0.2 añade estos códigos al registro normativo:
 
 | Código | Nombre estable | Condición primaria |
 |---|---|---|
-| `E2001` | `test-outside-test-source` | Una declaración `test` aparece en una fuente `production`, script o forma no clasificada como test. |
-| `E2002` | `duplicate-test` | Dos declaraciones producen la misma identidad de test dentro del mismo package/module overlay. |
+| `E2001` | `test-node-outside-test-source` | Una declaración `suite` o `test` aparece en una fuente `production`, script o forma no clasificada como test. |
+| `E2002` | `duplicate-test-node` | Dos miembros suite/test producen la misma identidad o nombre de hermano dentro del mismo árbol. |
 | `E2003` | `invalid-test-source-declaration` | Una fuente de test intenta exportar API, alterar la unidad de producción sellada o ser consumida desde producción. |
+| `E2004` | `empty-test-suite` | Una suite no contiene ningún miembro directo y, por tanto, ningún test descendiente. |
+| `E2005` | `invalid-suite-capture` | Un descendiente intenta capturar `var`, préstamo, valor afín/terminal o un tipo que no cumple `Copy + Send + Share`. |
 
 El resto reutiliza diagnósticos existentes:
 
-- Sintaxis de test inválida: `E0004`.
-- `test` usado como identificador reservado: `E1005`.
+- Sintaxis de suite/test inválida: `E0004`.
+- `test` o `suite` usado como identificador reservado: `E1005`.
 - Colisión de helpers ordinarios: `E1002`.
 - Identidad `_` u otra declaración semánticamente mal formada: `E1115`.
 - Tipo final distinto de `Unit`: `E1102`.
 - Error inferido sin `Discard`: `E1105`.
-- Transferencia de control inválida: `E1205`.
+- Transferencia de control inválida, incluido `return` desde setup: `E1205`.
 - Error o `?` incompatible: `E1301`/`E1302`.
 - Ownership, préstamos y cleanup: familia `E14xx`.
 - Async y concurrencia: familia `E16xx`.
 - Unsafe: familia `E17xx`.
 
-Suite vacía, selector vacío, timeout e infraestructura son diagnósticos del
-toolchain, no nuevos errores de compilación `E`.
+Selector vacío, timeout e infraestructura son diagnósticos del toolchain, no
+nuevos errores de compilación `E`.
 
 ## 15. Formato machine-readable
 
@@ -976,7 +1311,7 @@ ejemplo; la forma y los tipos de los campos son normativos:
 
 ~~~json
 {
-  "format": "tondo-test-report-0.2/1",
+  "format": "tondo-test-report-0.2/2",
   "edition": "0.2",
   "target": {
     "name": "tondo-vm-hosted",
@@ -993,14 +1328,34 @@ ejemplo; la forma y los tipos de los campos son normativos:
     "timeout_ms": 30000,
     "resource_profile_sha256": "2abaca4911e68fa9bfbf88195b6c8bca41fd731d5a45f9b51a2bca9234e0c83f"
   },
-  "tests": [
+  "suites": [
     {
-      "id": "application::unit::math::addReturnsSum",
+      "id": "application::unit::math::arithmetic",
+      "parent": null,
       "package": "application",
       "kind": "unit",
       "module": "math",
+      "path": ["arithmetic"],
+      "name": "arithmetic",
+      "status": "passed",
+      "phase": null,
+      "blocked_by": null,
+      "failure": null,
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "tests": [
+    {
+      "id": "application::unit::math::arithmetic::addReturnsSum",
+      "parent": "application::unit::math::arithmetic",
+      "package": "application",
+      "kind": "unit",
+      "module": "math",
+      "path": ["arithmetic", "addReturnsSum"],
       "name": "addReturnsSum",
       "status": "passed",
+      "blocked_by": null,
       "failure": null,
       "stdout": "",
       "stderr": ""
@@ -1008,12 +1363,18 @@ ejemplo; la forma y los tipos de los campos son normativos:
   ],
   "summary": {
     "selected": 1,
+    "executed": 1,
     "passed": 1,
+    "blocked_setup": 0,
     "failed_error": 0,
     "failed_panic": 0,
     "resource_limit": 0,
     "timeout": 0,
     "infrastructure": 0,
+    "suite_selected": 1,
+    "suite_passed": 1,
+    "suite_blocked_setup": 0,
+    "suite_failed": 0,
     "failed": 0
   }
 }
@@ -1025,29 +1386,54 @@ texto exacto en los otros casos. `timeout_ms` es `null` solo para
 del frontend, verifiers y runtime y se distribuye de forma recuperable por el
 toolchain; el hash del reporte identifica exactamente sus bytes canónicos.
 
-`tests` contiene únicamente entradas seleccionadas y ejecutadas. Todos sus
-campos aparecen incluso cuando están vacíos o son `null`; `kind` es `unit` o
-`integration`. No se admiten campos de extensión sin cambiar el identificador
+`suites` contiene el bosque mínimo necesario para los tests seleccionados,
+incluidos nodos `blocked-setup`. `tests` contiene todas las hojas seleccionadas,
+se hayan ejecutado o bloqueado. Todos los campos aparecen incluso cuando están
+vacíos o son `null`; `kind` es `unit` o `integration`.
+
+`parent` contiene el ID de la suite inmediata o `null` para un nodo top-level.
+`path` contiene únicamente los identificadores de suite y test posteriores al
+module path. En una suite termina en su propio nombre; en un test termina en el
+nombre del test.
+
+Para una suite:
+
+- `phase` es `setup` o `teardown` cuando su propio lifecycle falla.
+- `phase` es `null` cuando pasa o queda bloqueada.
+- `blocked_by` es el ID de la primera suite fallida que impidió entrar en ella,
+  y es `null` en otro caso.
+- La pareja `status`/`phase` debe pertenecer al conjunto cerrado definido en
+  9.1.
+
+Para un test, `blocked_by` sigue la misma regla y solo es no nulo con estado
+`blocked-setup`. No se admiten campos de extensión sin cambiar el identificador
 de formato.
 
 ### 15.2 Orden y estabilidad
 
 - `capabilities` se ordena por bytes.
+- `suites` se ordena por `id`.
 - `tests` se ordena por `id`.
 - Keys conocidas se serializan en el orden mostrado por el schema del
   toolchain.
 - `stdout` y `stderr` contienen texto UTF-8 exacto.
-- `summary.failed` cuenta todo estado distinto de `passed`.
-- `summary.failed` es la suma exacta de los otros cinco contadores de fallo y
-  `summary.selected` es `passed + failed`.
+- `summary.selected = summary.executed + summary.blocked_setup`.
+- `summary.executed` es la suma exacta de `passed` y los cinco contadores de
+  fallo de test ejecutado.
+- `summary.suite_selected` es la suma exacta de `suite_passed`,
+  `suite_blocked_setup` y `suite_failed`.
+- `summary.suite_failed` cuenta suites en cualquiera de los cinco estados de
+  fallo ejecutado; las suites bloqueadas no vuelven a contar la causa.
+- `summary.failed` es la suma de los cinco contadores de fallo de test y
+  `suite_failed`. Las hojas bloqueadas tampoco duplican el fallo de setup.
 - Duración, timestamps, PID, número de CPU, paths físicos y direcciones no
   aparecen en la forma canónica.
 - Paths de source dentro de failures son lógicos.
 
 ### 15.3 Failure
 
-Cuando `status` es `passed`, `failure` es `null`. En otro estado contiene
-exactamente:
+Cuando `status` es `passed` o `blocked-setup`, `failure` es `null`. En un estado
+de fallo ejecutado contiene exactamente:
 
 ~~~json
 {
@@ -1062,7 +1448,7 @@ exactamente:
   },
   "stack": [
     {
-      "function": "application::unit::math::addReturnsSum",
+      "function": "application::unit::math::arithmetic::addReturnsSum",
       "file": "src/math_test.to",
       "start": 20,
       "end": 63
@@ -1081,17 +1467,21 @@ exactamente:
 - `source` es una ubicación lógica o `null`.
 - `stack` es un array posiblemente vacío de frames Tondo, sin paths físicos.
 
+Un test o suite `blocked-setup` explica su causa únicamente mediante
+`blocked_by`; el nodo señalado contiene el único objeto `failure` normativo. Un
+fallo de teardown de suite no reemplaza failures de tests ya ejecutados.
+
 Campos privados y payloads opacos no se serializan por reflection.
 
 ### 15.4 Lista machine-readable
 
-`--list --test-format json` emite `tondo-test-list-0.2/1`. Comparte `edition`,
-`target`, `compiled` y `selection`, pero contiene descriptores sin estado,
-failure ni output:
+`--list --test-format json` emite `tondo-test-list-0.2/2`. Comparte `edition`,
+`target`, `compiled` y `selection`, pero contiene descriptores separados sin
+estado, phase, failure, bloqueo ni output:
 
 ~~~json
 {
-  "format": "tondo-test-list-0.2/1",
+  "format": "tondo-test-list-0.2/2",
   "edition": "0.2",
   "target": {
     "name": "tondo-vm-hosted",
@@ -1103,27 +1493,42 @@ failure ni output:
     "kind": "all",
     "value": null
   },
-  "tests": [
+  "suites": [
     {
-      "id": "application::unit::math::addReturnsSum",
+      "id": "application::unit::math::arithmetic",
+      "parent": null,
       "package": "application",
       "kind": "unit",
       "module": "math",
+      "path": ["arithmetic"],
+      "name": "arithmetic"
+    }
+  ],
+  "tests": [
+    {
+      "id": "application::unit::math::arithmetic::addReturnsSum",
+      "parent": "application::unit::math::arithmetic",
+      "package": "application",
+      "kind": "unit",
+      "module": "math",
+      "path": ["arithmetic", "addReturnsSum"],
       "name": "addReturnsSum"
     }
   ]
 }
 ~~~
 
-Los descriptores se ordenan por `id`. `--allow-empty` permite un array vacío;
-sin esa opción, una selección vacía conserva exit `1`.
+Ambos arrays se ordenan por `id`. `suites` contiene las ancestras necesarias y
+las suites descendientes seleccionadas; `tests` contiene las hojas
+seleccionadas. `--allow-empty` permite ambos arrays vacíos; sin esa opción, una
+selección vacía conserva exit `1`.
 
 ### 15.5 Fallo de compilación
 
 Si la compilación falla:
 
 - `compiled` vale `false`.
-- `tests` está vacío porque ningún body se ejecutó.
+- `suites` y `tests` están vacíos porque ningún setup ni body se ejecutó.
 - En un reporte de ejecución, todos los contadores de `summary` valen `0`.
 - Los diagnostics se emiten por stderr mediante el formato solicitado con
   `--diagnostic-format`.
@@ -1134,25 +1539,36 @@ Si la compilación falla:
 Una implementación de esta extensión debe publicar una suite distinta a
 `tondo-conformance-0.1`. La suite cubre como mínimo:
 
-1. Token, CST lossless, parser y formatter de `test_decl`.
-2. Rechazo de cada forma alternativa deliberadamente ausente.
-3. Reserva de `test` como identificador.
-4. Identidad y duplicados entre varios archivos.
-5. Unit overlay con acceso privado.
-6. Integration root sin acceso privado.
-7. Separación exacta entre grafo de producción y dev-dependencies.
-8. Producción inválida que no puede ser reparada por el overlay.
-9. Retorno normal, error, pánico, assert, resource limit y timeout.
-10. `defer`, terminal obligations y unwind en cada terminal.
-11. Async, `scope`, `spawn`, cancelación y pánico de hijos.
-12. Filtros, exact match, list, suite vacía y allow-empty.
-13. Orden serial y presentación estable bajo `--jobs N`.
-14. Captura separada de stdout/stderr.
-15. Reporte JSON canónico y rechazo de schema inválido.
-16. Targets y capabilities distintos.
-17. Ausencia total de tests y dev-dependencies en productos de producción.
-18. Ejecución individual mediante `--exact` equivalente a la misma entrada en
-    suite bajo inputs idénticos.
+1. Tokens, CST lossless, parser y formatter de `suite_decl` y `test_decl`.
+2. Reserva de `suite` y `test` únicamente en edición 0.2.
+3. Rechazo de cada forma alternativa, hook y registro dinámico ausente.
+4. Árbol estático, suites vacías, nesting y colisiones de hermanos entre
+   archivos.
+5. Identidad de suite/test, parent IDs y orden independiente del orden de
+   archivos.
+6. Capturas válidas `let: Copy + Send + Share` y rechazo de `var`, préstamos,
+   valores afines y obligaciones terminales.
+7. Setup síncrono, async, infallible y fallible inferido.
+8. Ejecución de setup exactamente una vez y solo para subárboles seleccionados.
+9. Nesting exterior-interior, teardown interior-exterior y LIFO de `defer`.
+10. Fallo de setup, `blocked-setup`, causa única y continuidad de hermanos.
+11. Fallo de teardown sin reescribir resultados de descendientes.
+12. Retorno normal, error, pánico, assert, resource limit y timeout de tests.
+13. `defer`, terminal obligations y unwind en terminales de suite/test.
+14. Async, `scope`, `spawn`, cancelación y pánico de hijos.
+15. Unit overlay con acceso privado que no repara producción inválida.
+16. Integration root sin acceso privado.
+17. Separación exacta entre grafo de producción y dev-dependencies.
+18. Filtros, exact match de suite/test, list, selección vacía y allow-empty.
+19. Orden serial, lifecycle jerárquico y presentación estable bajo `--jobs N`.
+20. Captura separada de stdout/stderr para suites y tests.
+21. Reportes `tondo-test-report-0.2/2` y `tondo-test-list-0.2/2`, invariantes de
+    summary, bloqueos y rechazo de schema inválido.
+22. Targets y capabilities distintos.
+23. Ausencia total de suites, tests y dev-dependencies en productos de
+    producción.
+24. Ejecución individual mediante `--exact` equivalente a la misma hoja dentro
+    del árbol completo bajo inputs idénticos.
 
 La VM de referencia y cada backend nativo deben ejecutar las mismas fuentes y
 producir el mismo estado, código de pánico, output y reporte canónico. Duración
@@ -1165,6 +1581,26 @@ no participa en la comparación.
 ~~~tondo
 test behaviorName {
     assert(condition)
+}
+~~~
+
+### Suite
+
+~~~tondo
+suite behaviorGroup {
+    let resource = Resource.acquire()?
+    let configuration: String = resource.configuration()
+    defer Resource.release(resource)
+
+    test firstBehavior {
+        assert(run(configuration))
+    }
+
+    suite nestedGroup {
+        test secondBehavior {
+            assert(runAgain(configuration))
+        }
+    }
 }
 ~~~
 
@@ -1194,11 +1630,13 @@ tondo test
 tondo test --list
 tondo test --filter parser
 tondo test --exact application::unit::parser::rejectsInvalidToken
+tondo test --exact application::integration::users::userApi
 tondo test --jobs 4
 tondo test --test-format json
 ~~~
 
 ### Regla de diseño
 
-> El lenguaje identifica y aísla tests; el código del test sigue siendo Tondo
-> ordinario y la ergonomía adicional pertenece a `std.testing`.
+> `suite` aporta jerarquía y lifecycle léxico; `test` identifica una hoja
+> aislada. El código de ambos sigue siendo Tondo ordinario y la ergonomía
+> adicional pertenece a `std.testing`.

@@ -2,7 +2,7 @@
 
 **Estado:** M10 y Gate G5 cerrados; M10.5 es el siguiente milestone
 
-**Versión del tracker:** 0.84
+**Versión del tracker:** 0.85
 
 **Última actualización:** 2026-07-28
 
@@ -235,13 +235,14 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   COW, async, FFI privilegiada y estrategia de verificación.
 
 - [x] **DEC-015 — Testing first-class y límite de edición.** La especificación
-  [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) reserva una única
-  declaración `test name { ... }` para Tondo 0.2, mantiene Tondo 0.1 y
+  [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) reserva `suite` y `test`
+  para Tondo 0.2: `suite` es un contenedor estático con setup léxico y teardown
+  por `defer`; `test` es siempre una hoja. Mantiene Tondo 0.1 y
   `tondo-conformance-0.1` inmutables, separa unit overlays de integration roots
-  y fija inferencia de error/async, aislamiento, selección, límites, output,
-  exit status, reporte `tondo-test-report-0.2/1` y listado
-  `tondo-test-list-0.2/1`. No se introducen attributes, clases, reflection,
-  registro runtime ni retries implícitos.
+  y fija árbol/identidad, capturas `Copy + Send + Share`, inferencia de
+  error/async, aislamiento, selección, límites, output, exit status, reporte
+  `tondo-test-report-0.2/2` y listado `tondo-test-list-0.2/2`. No se introducen
+  attributes, clases, reflection, registro runtime, hooks ni retries implícitos.
 
 ### 3.3 Estructura inicial recomendada
 
@@ -2324,10 +2325,11 @@ de M10.6, STD-0.1, M11 y STD-0.2.
 
 **Objetivo:** implementar la extensión
 [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) como la primera ampliación
-de lenguaje posterior a Tondo 0.1. El resultado es una única declaración
-`test name { ... }`, unit tests con acceso privado controlado, integration
-tests contra API pública y un runner determinista que pueda utilizarse para
-construir y validar la stdlib.
+de lenguaje posterior a Tondo 0.1. El resultado es una declaración
+`test name { ... }` para cada hoja y una declaración `suite name { ... }` para
+jerarquía y lifecycle compartido, unit tests con acceso privado controlado,
+integration tests contra API pública y un runner determinista que pueda
+utilizarse para construir y validar la stdlib.
 
 **Dependencia:** la implementación comienza únicamente después de Gate H0. El
 diseño queda fijado antes para que inventario, matriz normativa y CI conozcan el
@@ -2336,22 +2338,23 @@ privada mientras H0 permanezca abierto.
 
 **Compatibilidad:** `TONDO_LANGUAGE_SPEC.md`, su hash normativo y
 `tondo-conformance-0.1` permanecen inmutables. Ningún binario puede aceptar
-`test` bajo `--edition 0.1`; la nueva superficie se anuncia solo al seleccionar
-la edición 0.2.
+`test` ni `suite` bajo `--edition 0.1`; la nueva superficie se anuncia solo al
+seleccionar la edición 0.2.
 
 ### 17.1 Spec, edición y plan cerrado
 
 - [x] **UTEST-SPEC-001 — Fijar el contrato normativo de testing.**
-  `TONDO_TESTING_SPEC.md` define keyword, grammar, formato, identidad,
-  source classes, overlays, inferencia, aislamiento, resultados, CLI, reporte,
-  stdlib boundary, diagnósticos y conformidad sin depender de una
-  implementación provisional.
+  `TONDO_TESTING_SPEC.md` define keywords, grammar, árbol suite/test, formato,
+  identidad, source classes, overlays, capturas, lifecycle, inferencia,
+  aislamiento, resultados, CLI, reporte, stdlib boundary, diagnósticos y
+  conformidad sin depender de una implementación provisional.
 
 - [ ] **UTEST-EDITION-001 — Materializar Tondo 0.2 como edición separada.**
-  Consolidar la especificación de lenguaje 0.2, añadir `test` a su registry de
-  keywords y diagnósticos y versionar los formatos afectados. La edición 0.1
-  debe seguir seleccionable y byte-compatible; un test de migración prueba que
-  un identificador `test` válido en 0.1 recibe `E1005` únicamente bajo 0.2.
+  Consolidar la especificación de lenguaje 0.2, añadir `suite` y `test` a su
+  registry de keywords y diagnósticos y versionar los formatos afectados. La
+  edición 0.1 debe seguir seleccionable y byte-compatible; tests de migración
+  prueban que identificadores `suite`/`test` válidos en 0.1 reciben `E1005`
+  únicamente bajo 0.2.
 
 - [ ] **UTEST-PLAN-001 — Extender el project plan con source classes de test.**
   Representar exactamente `production`, `unit-test` e `integration-test`,
@@ -2371,24 +2374,35 @@ la edición 0.2.
 
 ### 17.2 Frontend y semántica estática
 
-- [ ] **UTEST-LEX-001 — Añadir `test` a la tabla de keywords de edición 0.2.**
-  Lexer, token registry, Unicode/NFC, diagnostics y reconstrucción CST deben
-  continuar dependiendo de la edición declarada, nunca de un path físico o del
-  comando que invoca el parser.
+- [ ] **UTEST-LEX-001 — Añadir `suite` y `test` a las keywords de edición
+  0.2.** Lexer, token registry, Unicode/NFC, diagnostics y reconstrucción CST
+  deben continuar dependiendo de la edición declarada, nunca de un path físico
+  o del comando que invoca el parser.
 
-- [ ] **UTEST-CST-001 — Parsear `test identifier block` sin pérdida.**
-  Añadir la declaración a CST/AST y recuperación, rechazando modifiers,
-  parámetros, firmas, forms anidadas y todas las alternativas ausentes. Edición
-  0.1 conserva su parseo anterior.
+- [ ] **UTEST-CST-001 — Parsear `test` y `suite` sin pérdida.** Añadir
+  `test identifier block` y `suite identifier suite-block` a CST/AST y
+  recovery. El suite-block admite setup ordinario seguido solo de miembros
+  estáticos; se rechazan modifiers, parámetros, firmas, nodos bajo control de
+  flujo, sentencias posteriores al primer miembro y todas las alternativas
+  ausentes. Edición 0.1 conserva su parseo anterior.
 
-- [ ] **UTEST-FMT-001 — Formatear tests canónicamente.** Cubrir bodies vacíos y
-  multiline, comentarios, documentación, declaraciones adyacentes, recovery e
-  idempotencia en ambas ediciones. `fmt` no depende de discovery runtime.
+- [ ] **UTEST-FMT-001 — Formatear suites y tests canónicamente.** Cubrir bodies
+  y setups vacíos/multiline, nesting, comentarios, documentación, separación
+  setup-members, declaraciones adyacentes, recovery e idempotencia en ambas
+  ediciones. `fmt` no depende de discovery runtime.
 
-- [ ] **UTEST-ID-001 — Construir el registro estático de tests.** La identidad
-  interna usa PackageId + module path + identifier; la visible usa
-  `package::unit|integration::path::name`. Orden, duplicados `E2002`, naming
-  warnings y source ranges deben ser deterministas entre archivos permutados.
+- [ ] **UTEST-ID-001 — Construir el árbol estático suite/test.** La identidad
+  interna usa PackageId + source class + module path + ordered node path + kind;
+  la visible usa `package::unit|integration::path::suite...::test`. Registrar
+  parents, rechazar suites vacías `E2004`, nombres hermanos duplicados `E2002`
+  y cualquier intento de reabrir/mezclar suites. Orden, warnings y source
+  ranges deben ser deterministas entre archivos permutados.
+
+- [ ] **UTEST-CAPTURE-001 — Comprobar entornos de suite.** Un descendiente solo
+  captura bindings ancestrales `let: Copy + Send + Share` mediante snapshot.
+  Rechazar con `E2005` `var`, préstamos, moves, valores afines/terminales y
+  cualquier bypass a través de suites anidadas. Constantes y funciones de
+  módulo continúan resolviéndose por nombre.
 
 - [ ] **UTEST-OVERLAY-001 — Implementar el overlay unitario sellado.** Resolver
   y comprobar producción primero, después permitir lectura privada y helpers
@@ -2402,93 +2416,113 @@ la edición 0.2.
   reutilización accidental del scope unitario.
 
 - [ ] **UTEST-CHECK-001 — Inferir el contrato exacto del body.** Comprobar cada
-  test como entrada privada `async? fn(): Unit ! E`, inferir una unión cerrada
-  `E: Discard`, admitir `return`, `fail`, `?`, `await` y `scope` y reutilizar
-  todos los checks ordinarios de tipos, ownership, préstamos, terminales,
-  `defer`, `Send`, `Share` y `unsafe`.
+  test como entrada privada `async? fn(): Unit ! E` y cada setup de suite como
+  otra entrada privada `async? fn(): Unit ! E` sin `return`; inferir una unión
+  cerrada `E: Discard`, admitir `fail`, `?`, `await` y `scope` donde corresponda
+  y reutilizar todos los checks ordinarios de tipos, ownership, préstamos,
+  terminales, `defer`, `Send`, `Share` y `unsafe`.
 
 ### 17.3 Lowering, runtime y CLI
 
 - [ ] **UTEST-LOWER-001 — Bajar entradas de test por el pipeline común.** HIR,
-  MIR, bytecode y sus admission verifiers representan identidad, source span,
-  error, async, cleanup y terminales sin crear un segundo frontend o una ruta
-  de ejecución no verificada. `main` nunca se ejecuta en un test target.
+  MIR, bytecode y sus admission verifiers representan árbol/parent, entradas de
+  setup, snapshots de entorno, identidad, source span, error, async, cleanup y
+  terminales sin crear un segundo frontend o una ruta de ejecución no
+  verificada. `main` nunca se ejecuta en un test target.
 
-- [ ] **UTEST-RUNTIME-001 — Ejecutar cada test en una raíz aislada.** Estado,
+- [ ] **UTEST-RUNTIME-001 — Ejecutar cada hoja en una raíz aislada.** Estado,
   roots, heap observable, tasks, handles, pánicos, stdout, stderr y presupuestos
-  no cruzan entradas. Retorno, error, pánico, resource limit, timeout e
-  infrastructure producen exactamente los estados normativos; los terminales
-  de lenguaje completan unwind y cleanup, mientras una terminación forzada
-  garantiza aislamiento sin fingir que ejecutó `defer`.
+  no cruzan hojas salvo snapshots de suite comprobados. Retorno, error, pánico,
+  resource limit, timeout e infrastructure producen exactamente los estados
+  normativos; los terminales de lenguaje completan unwind y cleanup, mientras
+  una terminación forzada garantiza aislamiento sin fingir que ejecutó `defer`.
+
+- [ ] **UTEST-SUITE-001 — Implementar lifecycle jerárquico de suite.** Ejecutar
+  setup una vez y solo si existe una hoja seleccionada, conservar su entorno y
+  guards, entrar de fuera hacia dentro y hacer teardown de dentro hacia fuera
+  después de todos los descendientes. Un fallo de setup bloquea solo su
+  subárbol, ejecuta cleanup realmente observable y permite continuar hermanos;
+  un fallo de teardown no reescribe resultados ya emitidos.
 
 - [ ] **UTEST-LIMIT-001 — Hacer límites y timeout terminales reales.** Publicar
-  defaults finitos, registrar valores efectivos y garantizar que una entrada
-  no cooperativa no continúa ejecutándose tras `timeout`. OOM, abort o pérdida
-  de aislamiento nunca se presentan como assertion failure ordinario.
+  defaults finitos, aplicar `--timeout` por hoja y por fase setup/teardown sin
+  contar la espera de descendientes, registrar valores efectivos y garantizar
+  que una entrada no cooperativa no continúa tras `timeout`. OOM, abort o
+  pérdida de aislamiento nunca se presentan como assertion failure ordinario.
 
 - [ ] **UTEST-CLI-001 — Añadir `tondo test`.** Implementar manifest/default
   discovery, `--filter`, `--exact`, `--list`, `--jobs`, `--timeout`,
   `--test-format`, `--show-output` y `--allow-empty`, incluidas exclusiones,
   parsing estricto y exit codes 0/1/2/3. Primero compila toda la suite y el
-  selector solo limita ejecución.
+  selector solo limita ejecución. `--filter` compara hojas; `--exact` acepta una
+  hoja o una suite y en este último caso selecciona su subárbol.
 
 - [ ] **UTEST-SCHED-001 — Fijar orden y paralelismo observable.** El default
-  ejecuta con jobs=1 en orden de ID. Jobs explícitos pueden cambiar completion
-  order, pero captura, resultados y reporte final permanecen ordenados y nunca
-  intercalan streams.
+  ejecuta hojas con jobs=1 en orden de ID y respeta el bracketing de suites.
+  Jobs explícitos limitan conjuntamente setup/test/teardown y pueden cambiar
+  completion order, pero setup precede hijos, teardown los espera, captura,
+  resultados y reporte final permanecen ordenados y nunca intercalan streams.
 
 - [ ] **UTEST-REPORT-001 — Implementar los formatos machine-readable.**
-  Serializar `tondo-test-report-0.2/1` y `tondo-test-list-0.2/1` con target,
-  selection, resource profile, resultados/descriptores, failure y summary de
-  forma canónica, sin reloj, duración, PID, paths físicos ni direcciones. Fallos
-  de compilación continúan usando diagnostics estructurados y no ejecutan
-  bodies.
+  Serializar `tondo-test-report-0.2/2` y `tondo-test-list-0.2/2` con arrays
+  separados de suites/tests, parents, paths, phase, `blocked_by`, selection,
+  resource profile, failure, streams separados y las invariantes exactas de
+  summary y status/phase. No incluir reloj, duración, PID, paths físicos ni
+  direcciones. Fallos de compilación continúan usando diagnostics estructurados
+  y no ejecutan setup ni bodies.
 
 ### 17.4 Evidencia, conformidad y dogfooding
 
 - [ ] **UTEST-CONF-001 — Crear una suite de conformidad Tondo 0.2 nueva.** No
   mutar manifests, cases, hashes ni observations de 0.1. La suite 0.2 cubre los
-  dieciocho grupos mínimos enumerados por la spec de testing y tiene adaptador
+  veinticuatro grupos mínimos enumerados por la spec de testing y tiene adaptador
   público para VM y futuros backends.
 
 - [ ] **UTEST-PROJECTS-001 — Añadir proyectos de aceptación completos.**
-  Incluir package unitario, integration roots, dev-dependency, async/error,
-  pánico/cleanup, host capabilities, filtros, suite vacía y reporter JSON. Cada
-  proyecto debe poder ejecutarse desde una copia en otro path físico con
-  observaciones canónicas iguales.
+  Incluir package unitario, integration roots, dev-dependency, suites anidadas,
+  servicio compartido, captura válida/inválida, async/error, fallos de
+  setup/teardown, `blocked-setup`, pánico/cleanup, host capabilities, filtros,
+  selección vacía y reporter JSON. Cada proyecto debe poder ejecutarse desde
+  una copia en otro path físico con observaciones canónicas iguales.
 
 - [ ] **UTEST-PLATFORM-001 — Validar la matriz publicada.** Linux ejecuta el
   gate canónico completo; Linux ARM64, macOS Intel/ARM64 y Windows ejecutan
-  discovery, paths, filtros, aislamiento, timeout, captura y reporte aplicables
-  además del smoke test de binario.
+  discovery, paths jerárquicos, filtros de suite/test, lifecycle, aislamiento,
+  timeout, captura y reporte aplicables además del smoke test de binario.
 
 - [ ] **UTEST-DOGFOOD-001 — Probar componentes Tondo mediante `tondo test`.**
   Antes de Gate T0, mantener una pequeña biblioteca de aceptación escrita en
-  Tondo con unit e integration tests reales. No sustituye los tests Rust ni la
-  conformidad; demuestra que la experiencia pública funciona sin harness
-  privado.
+  Tondo con unit/integration tests y al menos una suite que comparta un recurso
+  real. No sustituye los tests Rust ni la conformidad; demuestra que la
+  experiencia pública funciona sin harness privado.
 
 ### Gate T0 — Testing first-class conforme
 
 - [ ] Tondo 0.1, su spec, suite, diagnostics y comportamiento permanecen
   inmutables y pasan Gate H0.
 - [ ] La edición 0.2 consolidada incorpora el contrato de testing y solo ella
-  reserva `test`.
+  reserva `suite` y `test`.
 - [ ] Lexer, CST, parser, formatter, HIR, MIR, bytecode y VM recorren la ruta
-  común y sus verifiers aceptan o rechazan tests con diagnostics exactos.
+  común y sus verifiers aceptan o rechazan árboles suite/test con diagnostics
+  exactos.
 - [ ] Unit overlays ven privados sin alterar producción; integration roots solo
   ven API pública; dev-dependencies nunca entran en productos publicables.
+- [ ] Suites ejecutan setup una vez solo para subárboles seleccionados, permiten
+  únicamente snapshots `let: Copy + Send + Share`, hacen teardown tras todos los
+  descendientes y reportan setup, teardown y bloqueo sin duplicar causas.
 - [ ] Retorno, error, `assert`, pánico, async, cancelación, ownership y `defer`
   conservan cleanup; resource limits y timeout terminan la entrada sin romper
   aislamiento ni afirmar cleanup de usuario no observado.
 - [ ] `tondo test` implementa discovery, compilación completa, selección,
-  ejecución serial/paralela, captura, exit codes y suite vacía según contrato.
+  selección exacta de suite/test, ejecución serial/paralela, captura, exit codes
+  y selección vacía según contrato.
 - [ ] El reporte JSON es canónico y reproducible; la salida humana no intercala
-  tests y muestra fallos accionables.
+  suites/tests y muestra fallos accionables.
 - [ ] La suite Tondo 0.2 pasa en la VM y la matriz de plataformas aplicable está
   verde.
 - [ ] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
-  registration APIs, annotations, reflection ni hooks ocultos.
+  registration APIs, annotations, reflection, subtests dinámicos ni hooks
+  ocultos.
 
 ---
 
@@ -2912,10 +2946,11 @@ pública definitiva hasta ser fijados por la especificación estándar.
 | `R-017` | Empezar el backend nativo antes de Gate H0 | Dos runtimes divergen sin poder localizar la causa | CI, fuzzing, modelos y oracle VM antes de NATIVE-001 |
 | `R-018` | Diseñar runtime/ABI antes de STD-0.1 | Host calls y layouts condicionan una API todavía provisional | Spec estándar y corpus real antes de seleccionar backend |
 | `R-019` | Convertir la stdlib 0.1 en un proyecto ilimitado | El backend queda bloqueado por APIs de aplicación no esenciales | STD-0.1 contiene solo Core + Hosted; Concurrency/Application quedan en STD-0.2 |
-| `R-020` | Añadir `test` retroactivamente a la edición publicada | Rompe identificadores válidos, hashes y conformidad 0.1 | Keyword exclusiva de 0.2, spec y suite nuevas; 0.1 permanece inmutable |
+| `R-020` | Añadir `suite`/`test` retroactivamente a la edición publicada | Rompe identificadores válidos, hashes y conformidad 0.1 | Keywords exclusivas de 0.2, spec y conformidad nuevas; 0.1 permanece inmutable |
 | `R-021` | Permitir que unit tests cambien la compilación de producción | Código solo correcto bajo test y artefactos distintos | Unidad production sellada antes del overlay y comparación exacta de productos |
 | `R-022` | Ocultar flakiness mediante paralelismo o retries | Suites verdes no reproducibles | jobs=1 y una ejecución por default; orden/reportes canónicos y paralelismo explícito |
-| `R-023` | Convertir testing en attributes, reflection y hooks especiales | Segundo sublenguaje con boilerplate y semántica oculta | Una declaración `test`; helpers, fixtures y doubles como Tondo/stdlib ordinarios |
+| `R-023` | Convertir testing en attributes, reflection y hooks especiales | Segundo sublenguaje con boilerplate y semántica oculta | Dos roles canónicos: `suite` contenedor y `test` hoja; helpers, fixtures y doubles como Tondo/stdlib ordinarios |
+| `R-024` | Convertir suites en globals mutables u orden implícito | Data races, tests dependientes y resultados distintos bajo `--exact` | Capturas `let: Copy + Send + Share`, ownership del recurso en la suite, sin dependencias ni orden entre hojas y lifecycle reportado |
 
 ---
 
@@ -2974,6 +3009,26 @@ S1. No se inicia STD-0.2 antes de Gate N1.
 ---
 
 ## 24. Historial del tracker
+
+### 0.85 — 2026-07-28
+
+- La extensión de testing sube a `0.2-draft.2`: `suite` es un contenedor
+  estático y léxico; `test` permanece exclusivamente como hoja ejecutable.
+  Suites pueden anidarse, ejecutan setup una vez solo para descendientes
+  seleccionados y hacen teardown por `defer` después de todos ellos.
+- Se fijan capturas ancestrales `let: Copy + Send + Share`, prohibición de
+  estado mutable/afín compartido, IDs jerárquicos, exact match de suite como
+  selección de subárbol y ausencia de subtests dinámicos o lifecycle hooks.
+- Los fallos de setup y teardown quedan como resultados propios de la suite; un
+  fallo de setup produce `blocked-setup` sin duplicar la causa y un fallo de
+  teardown conserva los resultados de las hojas. Timeouts se aplican por hoja y
+  fase activa, no a la espera de descendientes.
+- Los schemas incompatibles se versionan como `tondo-test-report-0.2/2` y
+  `tondo-test-list-0.2/2`, con arrays separados de suites/tests, parent/path,
+  phase, `blocked_by` e invariantes de summary.
+- M10.6 añade comprobación de capturas y lifecycle jerárquico a frontend,
+  lowering, runtime, scheduling, conformidad, aceptación, plataformas y Gate
+  T0. La ruta inmediata continúa empezando en TEST-001 y Gate H0.
 
 ### 0.84 — 2026-07-28
 
