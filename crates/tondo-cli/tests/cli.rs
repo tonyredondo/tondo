@@ -240,6 +240,7 @@ fn project_check_uses_the_default_lockfile_and_emits_canonical_products() {
     let artifact = BuildArtifact::decode(&fs::read(&artifact_path).unwrap()).unwrap();
     assert_eq!(interface.package_id(), package_id);
     assert_eq!(interface.target(), "tondo-vm-hosted");
+    assert_eq!(artifact.source_form(), "module");
     assert_eq!(artifact.interface_hash(), interface.content_hash().unwrap());
     assert!(artifact.reproducible());
 

@@ -129,7 +129,26 @@ plans; only four closed `|` compositions exist, argv never passes through a
 shell, and shell execution is explicitly named. Async terminal operations use
 direct OS pipes, concurrent draining, typed status/output/errors, affine
 `ProcessHandle` cleanup, and host workers that do not block runnable Tondo
-tasks. Unsafe entry contexts remain under construction.
+tasks.
+
+Unsafe effects are now explicit end to end. Functions and closures preserve the
+four sync/async and safe/unsafe combinations; lexical `unsafe` regions admit
+only matching callables and the six closed raw Pointer operations. Safe
+closures cannot capture Pointer-containing values. HIR, MIR, bytecode, and
+their independent verifiers preserve the effect bit and exact raw-operation
+types, while the VM delegates dynamic pointer behavior only to a pinned
+privileged target adapter rather than inventing a stable layout or FFI ABI.
+
+Closed project builds are also implemented. A strict manifest and lockfile
+select target, profile, capabilities, features, exact PackageIds, aliases,
+source sets, sources, dependency interfaces, generator inputs, and privileged
+units before lexing. The pure project planner accepts only declared
+hash-matching bytes and performs no filesystem, environment, network, process,
+or clock access. Versioned canonical interfaces reject incompatible compiler,
+edition, package, target, capability, feature, module, source-set, or transitive
+dependency identities before frontend work. Successful builds can emit
+canonical interface and artifact metadata, including public API and complete
+build-input hashes; identical declared inputs produce identical bytes.
 
 Ownership already distinguishes contextual copies, affine moves, immediate
 observations,
@@ -157,6 +176,9 @@ not claim full Tondo conformance.
 
 ## Project documentation
 
+- `TONDO_LANGUAGE_SPEC.md` is the normative language definition.
+- `TONDO_TOOLCHAIN_SPEC.md` defines the implemented manifest, lockfile,
+  interface, artifact, and privileged-unit formats.
 - `docs/architecture.md` describes the compiler pipeline and phase invariants.
 - `docs/adr/` records accepted architectural decisions.
 - `docs/contracts/` records bootstrap interfaces that later milestones build on.
@@ -175,6 +197,10 @@ not claim full Tondo conformance.
   capability boundary.
 - `docs/contracts/process-host.md` records the closed process API, scheduling,
   pipe, and cleanup boundary.
+- `docs/contracts/unsafe.md` records unsafe-region proofs, raw Pointer
+  operations, undefined behavior, and the privileged host boundary.
+- `docs/contracts/targets.md` records the exact bootstrap target registry and
+  capability set.
 - `docs/contracts/semantic-queries.md` records the request-owned tooling
   snapshot and CHECK-009 query boundary.
 - `docs/contracts/types.md` records the canonical semantic type representation.

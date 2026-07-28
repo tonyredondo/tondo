@@ -40,10 +40,14 @@ not used as a substitute for module design.
 
 ## Public compilation path
 
-All entry points construct one `CompilationRequest` and call one driver:
+Loose-file entry points construct one `CompilationRequest` directly. Project
+entry points first pass manifest and lockfile bytes through the pure closed
+planner:
 
 ~~~text
 CLI or embedding host
+  -> ProjectPlan (project mode)
+  -> exact declared byte inputs
   -> CompilationRequest
   -> source validation
   -> lossless CST
@@ -53,8 +57,14 @@ CLI or embedding host
   -> MIR
   -> verified bytecode
   -> VM
-  -> CompilationOutput
+  -> CompilationOutput + canonical interface/artifact
 ~~~
+
+`ProjectPlan` imports no filesystem, environment, network, process, clock, or
+random API. It receives bytes, returns the exact paths and hashes still needed,
+and resolves only the supplied map. Filesystem ingress remains in `tondo-cli`.
+The concrete manifest, lockfile, interface, artifact, and privileged-unit
+formats live in `TONDO_TOOLCHAIN_SPEC.md`.
 
 The request carries every build input that may affect results:
 
@@ -68,6 +78,9 @@ The request carries every build input that may affect results:
 - Closed package graph with exact package, standard-library, dependency, and
   module identities.
 - Closed source database and root file.
+- Declared features and source sets.
+- Manifest, lockfile, generator-input, privileged-unit, and dependency-interface
+  hashes when compiling a project.
 
 No phase reads process environment, current directory, network, locale, wall
 clock, or random state. The CLI may read a physical file to construct the
@@ -158,9 +171,11 @@ Copy/Move decision as an ordinary value transfer to every capture, marks an
 affine outer binding unavailable at construction, and derives repeatable call
 protocols from environment writes and moves. OWN-007 derives `CallOnce` only
 when every capture is `Discard` or leaves its environment slot on every normal,
-return, failure, and propagation exit. Ordinary invocation still accepts only
-synchronous-safe signatures. Safe async initiation has distinct `Await` and
-`Spawn` HIR nodes, while unsafe context validation remains in M9. Open
+return, failure, and propagation exit. Ordinary invocation remains synchronous
+and carries an effect bit that must match the selected callable. Async
+initiation has distinct `Await` and `Spawn` HIR nodes. M9 supplies the lexical
+unsafe-region proof, rejects safe Pointer captures, and lowers the six closed raw
+operations without weakening ordinary checking. Open
 source/prelude trait obligations use coherent static selection. Trait declarations
 carry a sorted method table, contextual `Self`, default-body and async-receiver
 requirements. Default bodies are checked once with rigid trait binders; calls to
@@ -352,9 +367,10 @@ Before bytecode lowering, the MIR verifier proves:
   move each capture from its declared outer source binding in HIR order.
 - Closure bodies rederive their protocol row from writes and moves of the exact
   hidden-environment paths.
-- The ordinary call operation carries only a synchronous-safe signature;
-  `Await` and `Spawn` carry safe async initiation, while unsafe initiation
-  remains unavailable without M9's context proof.
+- The ordinary call operation carries only a synchronous signature and an
+  `unsafe_call` bit equal to the selected callable effect; `Await` and `Spawn`
+  preserve the same agreement for async initiation after HIR proves the lexical
+  unsafe region.
 - Capability-sensitive equality, membership, and map lookup agree with the
   independently verified HIR capability table.
 - Defer registrations form one exact scope-nested LIFO ledger, every affine
@@ -428,9 +444,10 @@ non-`Discard` capture is completely transferred on every reachable return.
 Monomorphization specializes the source-generic row against concrete `Discard`
 facts before that independent verification.
 All four closure effect signatures survive in the callable catalog. The
-ordinary call operation rejects `async` or `unsafe`; `Await` and `Spawn` admit
-only safe async signatures, and unsafe remains unavailable until its
-effect-aware M9 context exists.
+ordinary call operation rejects `async` and rederives its explicit unsafe bit;
+`Await` and `Spawn` require async and rederive the same unsafe agreement.
+Pointer reads, writes, offsets, casts and address conversions keep distinct
+verified privileged-host identities.
 Generic nominal declarations remain compact layout templates checked with their
 concrete arguments by the verifier.
 
@@ -512,8 +529,8 @@ are detached snapshots rather than VM handles. Opaque process values use a
 separate typed run-local registry identity and never expose a heap or OS
 address. Each task owns its active or parked frame vector, and every such frame
 plus each completed child return remains a registered root source. The VM
-rejects effectful ordinary calls; async work reaches only `Await`, `Spawn`, or
-a safe async root. Blocking process waits and pipe drains run on host workers;
+rejects async ordinary calls and rechecks the unsafe bit on every call; async
+work reaches only `Await`, `Spawn`, or a safe async root. Blocking process waits and pipe drains run on host workers;
 the cooperative executor polls completions between runnable tasks and blocks
 for one only when its runnable queue is empty. Unsafe root entries remain
 rejected. A test-only memory adapter drives the same
@@ -531,7 +548,9 @@ The capability-gated standard-library bridges are
 `std.console.print(String): Unit` and the closed `std.process` surface. They are
 isolated by `docs/contracts/bootstrap-host.md` and
 `docs/contracts/process-host.md`; neither is a general FFI or a frozen stdlib
-ABI.
+ABI. Raw Pointer operations use six separate verified privileged-host
+identities described by `docs/contracts/unsafe.md`; the target does not invent
+layout or address semantics without a pinned adapter.
 
 ## Data ownership across phases
 
@@ -543,9 +562,10 @@ ABI.
 - Each phase consumes or immutably observes the previous phase; it does not
   mutate source or reinterpret prior diagnostics.
 - `CompilationOutput` owns resolved diagnostics and command stdout, including
-  canonical formatter bytes, plus later produced artifacts. After resolution
-  it may also own a `SemanticModel` containing the exact source database,
-  resolved program, and available typed HIR. It never borrows the request.
+  canonical formatter bytes. A completed semantic build also owns its canonical
+  compiled interface and build artifact metadata. After resolution it may own a
+  `SemanticModel` containing the exact source database, resolved program, and
+  available typed HIR. It never borrows the request.
 - Current VM roots are explicit in every active or parked task frame and its
   cleanups, completed child return values, the operation-local root stack,
   pending publications, and managed-object edges. Host values are detached;
@@ -576,6 +596,8 @@ implementation yet; `T0002` reports an explicit implementation resource limit.
 
 - Invalid Tondo source produces diagnostics and exit code 1.
 - Invalid CLI usage or unreadable CLI input produces exit code 2.
+- Invalid manifest, lockfile, input hash, interface, or privileged descriptor
+  is a typed project/toolchain error before source analysis.
 - An internal toolchain failure produces exit code 3.
 - Panics represent compiler defects, not user diagnostics.
 - The driver returns typed errors to embedding callers; only `tondo-cli` decides

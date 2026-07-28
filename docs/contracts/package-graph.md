@@ -10,9 +10,12 @@ before source analysis begins. The graph is a build input beside edition,
 target, profile, capabilities, resource limits, source snapshots, and the root
 file.
 
-Manifest parsing, version selection, source-set selection, fetching, and
-lockfile maintenance remain toolchain responsibilities. They cannot be invoked
-from the compiler or inferred from a physical path.
+Version selection, fetching, generator execution, and lockfile maintenance
+remain external toolchain responsibilities. M9 adds a pure project planner that
+parses the concrete manifest and lockfile contract, selects source sets, checks
+all hashes and interfaces, and then constructs this graph from explicitly
+supplied bytes. It cannot infer an input from a physical path. The wire formats
+are defined in `../../TONDO_TOOLCHAIN_SPEC.md`.
 
 ## Package nodes
 
@@ -97,4 +100,7 @@ Unit and driver tests cover exact alias/module lookup, standard-package lookup,
 missing modules, invalid aliases and module paths, non-closed dependency edges,
 source ownership, loose graph construction, and canonical nominal names. A
 compilation request whose source set disagrees with its graph is rejected before
-lexing.
+lexing. Project tests additionally cover inactive malformed source sets,
+missing/additional/hash-mismatched inputs, exact dependency interfaces, locked
+transitive aliases and PackageIds, canonical privileged units, deterministic
+products, and the absence of ambient I/O APIs from the planner.

@@ -330,10 +330,13 @@ call-local loans and every live exclusive region are rejected, surviving
 ordinary owners must satisfy `Send`, and only a `Join` owned by the current
 task scope receives its sealed exception. `Spawn` admits its explicit
 structured shared loans and retains them until the corresponding handle is
-consumed or torn down. The ordinary MIR call operation still rejects an
-`async` or `unsafe` function signature. Async-safe work uses `Await` or `Spawn`;
-M9 must introduce its own unsafe context proof rather than weakening any of
-those operations.
+consumed or torn down. The ordinary MIR call operation remains synchronous and
+retains an explicit `unsafe_call` bit. That bit must agree exactly with the
+selected callable signature; it is true only after HIR proved an active unsafe
+region. `Await` and `Spawn` carry the same exact call operation for async work,
+including the independently verified unsafe bit. Raw Pointer operations have
+six distinct host-operation identities and complete receiver, argument, and
+result type checks; they cannot be forged from a safe host call.
 
 Checked operations use `Invoke`; indexed and sliced reads therefore cannot
 bypass their bounds/unwind edge. Assignment first resolves all destination

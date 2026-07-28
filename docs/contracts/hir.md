@@ -81,12 +81,12 @@ specialization, static source/prelude trait selection, declaration-owned opaque
 results, trait default bodies, exact implementation bodies, trait-provided
 iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   `Key`, `Send`, and `Share`, all four closure effect identities and exact
-  signatures, synchronous-safe closure invocation, exact closure-to-`fn`
-  coercion, safe async initiation, structured task scopes, `Join` ownership,
-  async liveness/capability rules, implicit script entry bodies, and the closed
-  `Command`/`Pipeline` process surface. Concrete external implementations,
-  unsafe-region proofs, and raw operations remain explicit later boundaries
-  rather than receiving provisional semantics. Persistent
+  signatures, region-checked unsafe invocation, exact closure-to-`fn`
+  coercion, safe and unsafe async initiation, structured task scopes, `Join`
+  ownership, async liveness/capability rules, implicit script entry bodies, the
+  closed `Command`/`Pipeline` process surface, and the six typed raw Pointer
+  operations. Concrete external implementations remain an explicit privileged
+  target boundary rather than receiving provisional semantics. Persistent
   source-visible partial owner states are deliberately absent from Tondo 0.1;
   OWN-005 implements the typed internal paths needed by complete destructuring
   without adding such a state.
@@ -304,9 +304,11 @@ closure signature;
 the conversion then requires that exact signature, `Call`, and an environment
 that proves `Copy + Send + Share`, otherwise it emits `E1108`. CALL-004 permits
 all four effect kinds to be constructed, copied, discarded, and converted to an
-identical uniform function signature. It does not make an async or unsafe body
-invocable: ASYNC-002 owns `await`/`spawn`, while UNSAFE-001 owns unsafe regions,
-raw operations, and raw-pointer capture validation.
+identical uniform function signature. Invocation keeps each effect visible:
+ASYNC-002 owns `await`/`spawn`, while the M9 unsafe boundary admits an unsafe
+call only when body checking carries an active lexical region. Raw operations
+and recursively Pointer-containing captures use that same proof and emit
+`E1701` or `E1702` rather than erasing the effect.
 
 Protocol derivation walks only reachable operations in the closure's own body.
 An assignment rooted in a captured place, a `CallMut` through a captured
@@ -1255,14 +1257,16 @@ type used as a trait, a trait used as a value, an invalid arity, and malformed
 declaration structure produce semantic diagnostics instead of recovery types
 with invented meaning.
 
-For a source-less dependency module, resolution can currently provide only an
-external symbol identity. Such a type remains an opaque nominal application and
-such a bound remains an external trait reference. A source-less external trait
-cannot yet admit an `impl`: exact checking produces `E1114` instead of guessing
-its methods. Generic arity, declaration kind, and contract data for compiled
-dependencies will become checkable when the versioned module interface of M9
-exists; source modules present in the request are always checked against their
-real declaration now.
+For a source-less dependency module, resolution can provide only an external
+symbol identity. Such a type remains an opaque nominal application and such a
+bound remains an external trait reference. A source-less external trait cannot
+admit an `impl`: exact checking produces `E1114` instead of guessing its
+methods. The M9 interface format pins compiler, edition, PackageId, target,
+profile, capabilities, features, selected modules/source sets, exact
+dependencies, and a public API hash before lexing. The bootstrap format does not
+serialize declaration bodies or reconstruct a source-less HIR; project builds
+therefore still supply selected dependency sources and rederive the pinned API
+hash after checking them.
 
 ## Recovery
 

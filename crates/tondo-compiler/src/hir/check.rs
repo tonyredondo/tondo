@@ -14018,6 +14018,18 @@ impl<'a> ExpressionChecker<'a> {
                 return Ok(None);
             };
             if resolved_index + 1 < tokens.len() {
+                if let Some(call) = self.check_qualified_raw_pointer_call(
+                    file,
+                    range,
+                    suffix,
+                    explicit_bracket,
+                    &tokens,
+                    resolved_index,
+                    &resolved,
+                    context,
+                )? {
+                    return Ok(Some(call));
+                }
                 if let Some(call) = self.check_qualified_prelude_trait_call(
                     file,
                     range,
@@ -14176,6 +14188,275 @@ impl<'a> ExpressionChecker<'a> {
             );
         }
         Ok(None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_qualified_raw_pointer_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        tokens: &[SyntaxTokenRef<'_>],
+        resolved_index: usize,
+        resolved: &ResolvedName,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let ResolvedName::Prelude {
+            namespace: Namespace::Type,
+            name,
+        } = resolved
+        else {
+            return Ok(None);
+        };
+        if resolved_index + 2 != tokens.len() {
+            return Ok(None);
+        }
+        let member_token = *tokens
+            .last()
+            .expect("a qualified raw operation has a member token");
+        let member = member_token.token().normalized_identifier().unwrap_or("");
+        let operation = match (name.as_str(), member) {
+            ("Pointer", "read") => HirBootstrapHostFunction::PointerRead,
+            ("Pointer", "write") => HirBootstrapHostFunction::PointerWrite,
+            ("Pointer", "offset") => HirBootstrapHostFunction::PointerOffset,
+            ("Pointer", "cast") => HirBootstrapHostFunction::PointerCast,
+            ("Pointer", "address") => HirBootstrapHostFunction::PointerAddress,
+            ("UInt64", "toPointer") => HirBootstrapHostFunction::PointerFromAddress,
+            _ => return Ok(None),
+        };
+        if !context.in_unsafe_region {
+            self.emit(
+                self.sources.span(file, member_token.range())?,
+                "E1701",
+                format!(
+                    "raw operation `{}` may only be invoked inside an `unsafe` region",
+                    operation.name()
+                ),
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+
+        let explicit_bracket = explicit_bracket.or_else(|| {
+            self.raw_operation_type_arguments(file, member_token.range(), suffix.range())
+        });
+        let type_argument = if matches!(
+            operation,
+            HirBootstrapHostFunction::PointerCast | HirBootstrapHostFunction::PointerFromAddress
+        ) {
+            let Some(bracket) = explicit_bracket else {
+                self.emit(
+                    self.sources.span(file, member_token.range())?,
+                    "E1104",
+                    format!("`{member}` requires exactly one explicit target type"),
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range).map(Some);
+            };
+            let Some(arguments) =
+                self.expression_generic_arguments(file, bracket, Some(context))?
+            else {
+                return self.recovery_expression(file, range).map(Some);
+            };
+            let [argument] = arguments.as_slice() else {
+                self.emit(
+                    self.sources.span(file, bracket.range())?,
+                    "E1104",
+                    format!(
+                        "`{member}` expects one type argument, found {}",
+                        arguments.len()
+                    ),
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range).map(Some);
+            };
+            Some(*argument)
+        } else {
+            if let Some(bracket) = explicit_bracket {
+                self.emit(
+                    self.sources.span(file, bracket.range())?,
+                    "E1104",
+                    format!("`{member}` does not declare type parameters"),
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range).map(Some);
+            }
+            None
+        };
+
+        let arguments = suffix
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::CallArgument)
+            .collect::<Vec<_>>();
+        let expected_arity = match operation {
+            HirBootstrapHostFunction::PointerWrite | HirBootstrapHostFunction::PointerOffset => 2,
+            HirBootstrapHostFunction::PointerRead
+            | HirBootstrapHostFunction::PointerCast
+            | HirBootstrapHostFunction::PointerAddress
+            | HirBootstrapHostFunction::PointerFromAddress => 1,
+            _ => unreachable!("qualified raw pointer operation selection is closed"),
+        };
+        let mut valid = arguments.len() == expected_arity;
+        if !valid {
+            self.emit(
+                self.sources.span(file, suffix.range())?,
+                "E1102",
+                format!(
+                    "{} expects {expected_arity} qualified argument(s), found {}",
+                    operation.name(),
+                    arguments.len()
+                ),
+                Vec::new(),
+                None,
+            )?;
+        }
+
+        let int = self.program.interner.scalar(ScalarType::Int);
+        let uint64 = self.program.interner.scalar(ScalarType::UInt64);
+        let mut values = Vec::with_capacity(arguments.len());
+        let mut receiver_type = None;
+        let mut pointer_element = None;
+        for (index, argument) in arguments.iter().copied().enumerate() {
+            let argument_tokens = argument
+                .child_tokens()
+                .filter(|token| !token.kind().is_trivia())
+                .collect::<Vec<_>>();
+            if argument_tokens.iter().any(|token| {
+                matches!(
+                    token.kind(),
+                    TokenKind::Colon
+                        | TokenKind::Ellipsis
+                        | TokenKind::Ref
+                        | TokenKind::Mut
+                        | TokenKind::Var
+                )
+            }) {
+                self.emit(
+                    self.sources.span(file, argument.range())?,
+                    "E1407",
+                    format!(
+                        "{} uses positional value arguments without explicit modes",
+                        operation.name()
+                    ),
+                    Vec::new(),
+                    None,
+                )?;
+                valid = false;
+            }
+            let Some(expression) = argument
+                .child_nodes()
+                .find(|child| AstExpression::cast(*child).is_some())
+            else {
+                valid = false;
+                continue;
+            };
+            let expected = match (operation, index) {
+                (HirBootstrapHostFunction::PointerFromAddress, 0) => Some(uint64),
+                (HirBootstrapHostFunction::PointerWrite, 1) => pointer_element,
+                (HirBootstrapHostFunction::PointerOffset, 1) => Some(int),
+                _ => None,
+            };
+            let value = self.check_expression(
+                file,
+                expression,
+                expected.map(ExpressionExpectation::Direct),
+                context,
+            )?;
+            if index == 0 {
+                let ty = self.expression_type(value);
+                receiver_type = Some(ty);
+                if operation == HirBootstrapHostFunction::PointerFromAddress {
+                    if ty != uint64 {
+                        if ty != self.program.interner.error() {
+                            self.emit(
+                                self.program
+                                    .expression(value)
+                                    .expect("checked receiver remains indexed")
+                                    .span(),
+                                "E1102",
+                                "UInt64.toPointer receiver is not UInt64",
+                                Vec::new(),
+                                None,
+                            )?;
+                        }
+                        valid = false;
+                    }
+                } else {
+                    pointer_element = self
+                        .intrinsic_arguments(ty, IntrinsicType::Pointer)?
+                        .map(|arguments| arguments[0]);
+                    if pointer_element.is_none() {
+                        if ty != self.program.interner.error() {
+                            self.emit(
+                                self.program
+                                    .expression(value)
+                                    .expect("checked receiver remains indexed")
+                                    .span(),
+                                "E1102",
+                                format!("{} receiver is not a Pointer", operation.name()),
+                                Vec::new(),
+                                None,
+                            )?;
+                        }
+                        valid = false;
+                    }
+                }
+            }
+            values.push(value);
+        }
+        let Some(receiver_type) = receiver_type else {
+            return self.recovery_expression(file, range).map(Some);
+        };
+        if values.len() == expected_arity {
+            let expected_value = match operation {
+                HirBootstrapHostFunction::PointerWrite => pointer_element,
+                HirBootstrapHostFunction::PointerOffset => Some(int),
+                _ => None,
+            };
+            if let Some(expected_value) = expected_value {
+                valid &= self.expression_type(values[1]) == expected_value;
+            }
+            self.check_method_receiver(
+                values[0],
+                ParameterMode::Ref,
+                Some(receiver_type),
+                context,
+            )?;
+        }
+        if !valid || values.len() != expected_arity {
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let outcome = match operation {
+            HirBootstrapHostFunction::PointerRead => {
+                pointer_element.expect("Pointer.read has a pointer receiver")
+            }
+            HirBootstrapHostFunction::PointerWrite => {
+                self.program.interner.scalar(ScalarType::Unit)
+            }
+            HirBootstrapHostFunction::PointerOffset => receiver_type,
+            HirBootstrapHostFunction::PointerCast
+            | HirBootstrapHostFunction::PointerFromAddress => self.program.interner.intrinsic(
+                IntrinsicType::Pointer,
+                vec![type_argument.expect("cast operations have a target type")],
+            )?,
+            HirBootstrapHostFunction::PointerAddress => uint64,
+            _ => unreachable!("qualified raw pointer operation selection is closed"),
+        };
+        self.allocate_expression(HirExpression {
+            span: self.sources.span(file, range)?,
+            ty: outcome,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::BootstrapHostCall {
+                function: operation,
+                arguments: values,
+            },
+        })
+        .map(Some)
     }
 
     fn reject_explicit_array_sequence_owner_arguments(
@@ -19702,7 +19983,14 @@ mod tests {
              let bytes = advanced.cast[Byte]()\n\
              let reconstructed = address.toPointer[Int]()\n\
              _ = reconstructed\n\
-             bytes.address()\n\
+             _ = bytes.address()\n\
+             let qualifiedValue = Pointer.read(pointer)\n\
+             Pointer.write(pointer, qualifiedValue)\n\
+             let qualifiedAdvanced = Pointer.offset(pointer, 1)\n\
+             let qualifiedBytes = Pointer.cast[Byte](qualifiedAdvanced)\n\
+             let qualifiedReconstructed = UInt64.toPointer[Int](address)\n\
+             _ = qualifiedReconstructed\n\
+             Pointer.address(qualifiedBytes)\n\
          }\n";
         let (_, _, output) = check(source);
         assert!(
@@ -19731,14 +20019,38 @@ mod tests {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        assert_eq!(operations.len(), 6);
+        assert_eq!(operations.len(), 12);
 
         for invalid in [
             "fn invalid(pointer: Pointer[Int]) {\n    _ = pointer.read()\n}\n",
             "fn invalid(address: UInt64) {\n    _ = address.toPointer[Int]()\n}\n",
+            "fn invalid(pointer: Pointer[Int]) {\n    _ = Pointer.read(pointer)\n}\n",
+            "fn invalid(address: UInt64) {\n    _ = UInt64.toPointer[Int](address)\n}\n",
         ] {
             let (_, _, output) = check(invalid);
             assert_eq!(codes(&output), ["E1701"], "{invalid}");
+        }
+
+        for invalid in [
+            "unsafe fn invalid(pointer: Pointer[Int]) {\n    _ = pointer.read(1)\n}\n",
+            "unsafe fn invalid(pointer: Pointer[Int]) {\n    pointer.write()\n}\n",
+            "unsafe fn invalid(pointer: Pointer[Int]) {\n    _ = pointer.offset(\"one\")\n}\n",
+            "unsafe fn invalid(pointer: Pointer[Int]) {\n    _ = pointer.cast()\n}\n",
+            "unsafe fn invalid(pointer: Pointer[Int]) {\n    _ = pointer.cast[Int, Byte]()\n}\n",
+            "unsafe fn invalid(pointer: Pointer[Int]) {\n    _ = pointer.address[Int]()\n}\n",
+            "unsafe fn invalid(address: UInt64) {\n    _ = address.toPointer()\n}\n",
+            "unsafe fn invalid(pointer: Pointer[Int]) {\n    _ = Pointer.read(pointer, 1)\n}\n",
+            "unsafe fn invalid(address: UInt64) {\n    _ = UInt64.toPointer(address)\n}\n",
+        ] {
+            let (_, _, output) = check(invalid);
+            assert!(
+                codes(&output)
+                    .iter()
+                    .all(|code| matches!(*code, "E1102" | "E1104")),
+                "{invalid}\n{:#?}",
+                output.diagnostics()
+            );
+            assert!(!output.diagnostics().is_empty(), "{invalid}");
         }
     }
 

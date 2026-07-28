@@ -1,6 +1,6 @@
 # Bootstrap standard-library host boundary
 
-**Status:** implemented M8 bootstrap boundary
+**Status:** implemented through M9
 **Language baseline:** Tondo 0.1-draft.8
 
 This contract makes hosted effects observable without freezing a native ABI.
@@ -50,6 +50,14 @@ Process plans and opaque results use typed run-local host identities; process
 waits run independently and enter the VM again only through the verified async
 completion path. Any shape mismatch is a toolchain host error, not a Tondo
 value or panic.
+
+M9 adds six separate raw Pointer host-operation identities. They are not part
+of `std.console` or `std.process`, cannot be selected by an arbitrary source
+name, and preserve their concrete receiver, arguments, result, and unsafe
+effect through every verifier. Their dynamic implementation requires a pinned
+privileged target adapter; the bootstrap target exposes no allocator, stable
+layout, or safe native-address source. See [`unsafe.md`](./unsafe.md) and
+`../../TONDO_TOOLCHAIN_SPEC.md`.
 
 The compiler driver's bootstrap host buffers bytes in evaluation order and
 places them in `CompilationOutput.stdout`. The CLI writes that buffer to process

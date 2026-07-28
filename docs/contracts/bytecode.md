@@ -424,13 +424,15 @@ indirect shared/exclusive callees, intrinsic ref/mut-cursor construction, and
 the replacement witness attached to write validation. Stores, aggregates,
 returns, every call argument, and unrelated operations reject it.
 
-The bootstrap `Call` operation remains deliberately synchronous and safe. Its
-signature must have both effect bits clear; the verifier rejects a forged async
-or unsafe call before execution. `Await` and `Spawn` are the only async-safe
-initiation terminators and rederive their operation's effect, protocol, outcome,
-arguments, capabilities, and control-flow contract. Unsafe lowering remains an
-M9 boundary and cannot reuse any of the three operations without its explicit
-context proof.
+The bootstrap `Call` operation remains deliberately synchronous. Its signature
+must have the async bit clear and its explicit `unsafe_call` bit must equal the
+callable's unsafe effect. `Await` and `Spawn` are the only async initiation
+terminators and rederive their operation's effect, protocol, outcome, arguments,
+capabilities, and control-flow contract, including the same unsafe-bit
+agreement. HIR supplies that bit only after proving a lexical unsafe region.
+The six raw Pointer host operations keep separate enum identities; the verifier
+rederives their concrete Pointer element, `Int` offset, `UInt64` address, value,
+and result types before execution.
 
 `BytecodeCoercion::Opaque` and `BytecodeCoercion::CallableErasure` are verified
 runtime no-ops: execution forwards the already materialized value unchanged.

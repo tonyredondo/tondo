@@ -8,12 +8,14 @@
 tondo fmt [--check] [--diagnostic-format <human|json>] <source.to>
 tondo check [--diagnostic-format <human|json>] <source.to>
 tondo run [--diagnostic-format <human|json>] <source.to> [-- <argument>...]
+tondo check [--diagnostic-format <human|json>] --manifest <tondo.json>
+tondo run [--diagnostic-format <human|json>] --manifest <tondo.json> [-- <argument>...]
 tondo --help
 tondo --version
 ~~~
 
-The bootstrap accepts exactly one source file. Multiple-file package builds are
-added only after the manifest and package graph contract exists.
+The bootstrap accepts either exactly one loose source file or one closed project
+manifest. The two forms cannot be combined.
 
 - `fmt` and `check` classify the loose root as a module.
 - `run` classifies the loose root as a script.
@@ -30,6 +32,27 @@ added only after the manifest and package graph contract exists.
 - Program arguments must be valid UTF-8 and reach `std.process.args()` in
   their original order. Flags after `--` are program data, not CLI options.
 
+Build and project options are:
+
+~~~text
+--lockfile <path>
+--emit-interface <path>
+--emit-artifact <path>
+~~~
+
+Without `--lockfile`, the CLI uses `tondo.lock.json` beside the manifest.
+`--lockfile` requires `--manifest`. `--emit-interface` and `--emit-artifact`
+are valid for `check` or `run`, in loose-source or project mode, and write
+canonical products only after successful compilation. The two outputs must
+differ and cannot overwrite the source, manifest, lockfile, active project
+source, dependency interface, generator input, or privileged unit named by the
+invocation. `fmt` accepts neither a project nor build products.
+
+The CLI parses the manifest and lockfile, asks the pure project plan for its
+exact required inputs, reads only those relative to the manifest directory, and
+passes their bytes back to the compiler. It performs no directory scan,
+dependency lookup, network access, or implicit generator execution.
+
 ## Logical identity for a loose source
 
 The CLI reads the physical path, but the bootstrap driver receives:
@@ -44,8 +67,9 @@ edition   = 0.1
 package   = synthetic loose root selected before compilation
 ~~~
 
-This rule is intentionally limited to one loose file. A package invocation will
-derive identity from the resolved package graph instead.
+This rule is intentionally limited to one loose file. A project invocation
+derives identity from the exact `PackageId`, module, logical path, target, and
+source-set selection recorded by its closed manifest and lockfile.
 
 ## Streams
 

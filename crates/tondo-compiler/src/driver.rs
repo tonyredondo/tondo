@@ -70,6 +70,16 @@ pub enum SourceForm {
     Fragment,
 }
 
+impl SourceForm {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Module => "module",
+            Self::Script => "script",
+            Self::Fragment => "fragment",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticFormat {
     Human,
@@ -1265,6 +1275,7 @@ fn semantic_output(
     }
     let products = build_products(
         request.edition.as_str(),
+        request.source_form.as_str(),
         request.target.name(),
         request.profile.as_str(),
         request
@@ -2634,6 +2645,13 @@ fn main() {
                     let advanced = pointer.offset(1)\n\
                     let bytes = advanced.cast[Byte]()\n\
                     _ = bytes.address()\n\
+                    let qualifiedValue = Pointer.read(pointer)\n\
+                    Pointer.write(pointer, qualifiedValue)\n\
+                    let qualifiedAdvanced = Pointer.offset(pointer, 1)\n\
+                    let qualifiedBytes = Pointer.cast[Byte](qualifiedAdvanced)\n\
+                    let qualifiedPointer = UInt64.toPointer[Int](1u64)\n\
+                    _ = qualifiedPointer\n\
+                    _ = Pointer.address(qualifiedBytes)\n\
                 }\n\
             }\n\
         }\n";

@@ -1013,9 +1013,12 @@ Reglas:
   seguir reclamando un build reproducible. El toolchain registra esas entradas o
   marca el artefacto como no reproducible.
 
-El schema concreto del manifiesto, el algoritmo de versiones y los comandos del
-gestor de paquetes pertenecen a la especificación del toolchain; no pueden
-cambiar estas identidades ni introducir semántica fuente oculta.
+El schema concreto del manifiesto, lockfile, interfaces, artefactos y unidades
+privilegiadas se define en
+[`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md). El algoritmo de versiones
+y los comandos de un futuro gestor de paquetes permanecen fuera de 0.1; ninguna
+de esas herramientas puede cambiar estas identidades ni introducir semántica
+fuente oculta.
 
 ---
 
@@ -1792,10 +1795,12 @@ cruzarlo; un wrapper que necesite recuperación convierte antes el fallo en un
 valor o protocolo nativo explícito. De forma simétrica, una excepción extranjera
 no entra en frames Tondo: el adaptador la convierte o aborta.
 
-El mecanismo 0.1 para intrinsics y bindings nativos utiliza unidades privilegiadas
-o descriptores del toolchain. No añade declaraciones `extern`, atributos
-arbitrarios ni pragmas a un archivo `.to` ordinario. Incorporar después nueva
-sintaxis fuente para FFI requerirá una edición que la incluya en su gramática.
+El mecanismo 0.1 para intrinsics y bindings nativos utiliza las unidades
+privilegiadas fijadas por
+[`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md). No añade declaraciones
+`extern`, atributos arbitrarios ni pragmas a un archivo `.to` ordinario.
+Incorporar después nueva sintaxis fuente para FFI requerirá una edición que la
+incluya en su gramática.
 
 ---
 
@@ -5981,12 +5986,15 @@ una precondición ejecutada se incumple:
   documentada es un defecto de la implementación o de la API, no una obligación
   inventada para el llamador.
 
-Entre las infracciones que producen comportamiento indefinido se incluyen:
+Las únicas clases de infracción que pueden producir comportamiento indefinido
+son:
 
-- Leer o escribir mediante un puntero con procedencia, alineación, tamaño,
-  inicialización, vida o representación de `T` inválidas.
-- Acceder fuera del objeto o región que concede la procedencia, aunque la
-  dirección numérica coincida con memoria asignada.
+- Construir, derivar, leer o escribir mediante un puntero sin la procedencia,
+  vida, alineación, tamaño, inicialización o representación de `T` exigida por
+  esa operación.
+- Desbordar un cálculo de offset, derivar un puntero fuera del objeto o región
+  concedida por su procedencia, o acceder fuera de ella, aunque la dirección
+  numérica coincida con memoria asignada.
 - Escribir almacenamiento inmutable o mientras existe un alias incompatible.
 - Provocar una data race mediante código unsafe o nativo.
 - Invocar código nativo con firma o calling convention incorrectas, o utilizar un
@@ -6008,7 +6016,31 @@ Reglas:
 - `Pointer[T]?` representa un puntero que también puede contener ausencia; Tondo no introduce `null`.
 - `Pointer[T]` no cumple `Key`; para identidad estable se utiliza `Ref[T]` o un handle nominal.
 - No existe dereference automático.
-- Lectura, escritura, offsets, casts y construcción desde direcciones son operaciones nombradas y unsafe.
+- Lectura, escritura, offsets, casts, observación de la dirección y construcción
+  desde direcciones forman el catálogo cerrado descrito a continuación.
+
+El catálogo exacto de operaciones raw es:
+
+~~~tondo
+pointer.read(): T
+pointer.write(value: T)
+pointer.offset(count: Int): Pointer[T]
+pointer.cast[U](): Pointer[U]
+pointer.address(): UInt64
+address.toPointer[T](): Pointer[T] // receptor `address: UInt64`
+~~~
+
+Las seis operaciones son unsafe. `cast` y `toPointer` exigen exactamente un
+argumento de tipo explícito; las restantes no aceptan argumentos de tipo.
+`write` exige exactamente un valor `T`, `offset` exactamente un `Int`, y las
+demás ningún argumento ordinario. Como en todo método, la forma calificada
+escribe primero el receptor y deduce `T` desde él:
+`Pointer.read(pointer)`, `Pointer.write(pointer, value)`,
+`Pointer.offset(pointer, count)`, `Pointer.cast[U](pointer)`,
+`Pointer.address(pointer)` y `UInt64.toPointer[T](address)`.
+
+Reglas adicionales:
+
 - No existen operadores aritméticos especiales sobre punteros.
 - El programador debe garantizar alineación, tamaño, inicialización, mutabilidad, procedencia y vida suficiente.
 - Un puntero solo puede capturarse por un cierre `unsafe` o `async unsafe`; así la
@@ -7943,9 +7975,10 @@ mismos órdenes.
 
 La interfaz compilada registra al menos versión de formato, compilador, edición,
 target, perfil, capacidades, features, `PackageId`, hash de API y hashes de
-dependencias. Un artefacto registra además los source sets, hashes de fuente y
-todos los inputs declarados utilizados por generadores. Esos metadatos sirven
-para rechazar mezclas incompatibles; no crean la ABI binaria estable que 8.13
+dependencias. Un artefacto registra además la forma de fuente
+(`module`/`script`/`fragment`), los source sets, hashes de fuente y todos los
+inputs declarados utilizados por generadores. Esos metadatos sirven para
+rechazar mezclas incompatibles; no crean la ABI binaria estable que 8.13
 excluye.
 
 La reproducibilidad bit a bit del artefacto es un objetivo de implementación,

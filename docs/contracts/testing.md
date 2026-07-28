@@ -191,6 +191,33 @@ runnable and forbid the blocking host wait on that path. Unix cleanup tests
 retain child PIDs only long enough to prove that cancel and host destruction
 reap them.
 
+## Unsafe, targets, and closed builds
+
+M9 runtime fixtures execute direct, indirect, closure, and async unsafe
+callables only through lexical regions. Compile-fail cases fix `E1701` for
+missing regions and `E1702` for direct and recursively Pointer-containing safe
+captures. The six raw operations run through dot and qualified HIR forms,
+retain exact arity and type-argument errors, and lower through independently
+verified MIR and bytecode on an unexecuted synthetic-address branch. No test
+dereferences an address without a conforming privileged adapter.
+
+Target tests distinguish an unknown registry name, a registered but unsupported
+capability, and a supported capability omitted from the selected set. Missing
+`console` or `process` removes the module and produces `E1008` before runtime.
+
+Project tests construct complete manifest/lockfile byte fixtures. They prove
+selection before lexing with invalid bytes in an inactive source set; reject
+missing, undeclared, or hash-mismatched inputs; pin aliases and exact
+PackageIds; decode canonical privileged units; and reject dependency interfaces
+with incompatible compiler, edition, package, target, profile, capabilities,
+features, modules, source sets, or transitive API hashes before frontend work.
+
+The same resolved project is compiled twice and its canonical interface and
+artifact bytes must match exactly. The planner source is also guarded against
+imports of filesystem, environment, network, process, or clock APIs. CLI
+coverage exercises the default sibling lockfile, project input loading, product
+collision rejection, and canonical interface/artifact emission.
+
 ## Conformance separation
 
 Implementation fixtures may test private invariants and `T` diagnostics. The

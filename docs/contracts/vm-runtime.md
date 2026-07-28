@@ -549,13 +549,16 @@ The source remains available only in the Copy case; an affine source is
 unavailable after the call. Named spread has the same runtime path and differs
 only in its verifier-proved association with the exact variadic parameter.
 
-The ordinary call path admits only signatures with neither `async` nor
-`unsafe`. `Await` and `Spawn` reuse the same associated operation preparation
-but require `async` and reject `unsafe`; the public execution entry accepts a
-safe sync or async body and rejects only an unsafe one. Effectful closures retain
-their exact type through construction, copying, tracing, snapshots, and erasure,
-so async initiation cannot erase its structured context and unsafe execution
-cannot bypass its future M9 proof.
+The ordinary call path admits only synchronous signatures and requires its
+verified `unsafe_call` bit to agree with the callable. `Await` and `Spawn` reuse
+the same associated operation preparation for async signatures and preserve
+that agreement. The public execution entry accepts a safe sync or async body
+and rejects an unsafe root; nested unsafe execution has already crossed a
+verified lexical region. Effectful closures retain their exact type through
+construction, copying, tracing, snapshots, and erasure. Raw Pointer operations
+cross only their distinct typed privileged-host boundary; the bootstrap exposes
+no allocator, stable layout, or safe address source and therefore invents no
+native semantics without a pinned adapter.
 
 A panic stores its normative `P` code, stable name, message, primary source
 span, and a canonical innermost-first call stack. Cleanup blocks execute while

@@ -483,7 +483,7 @@ impl ProjectPlan {
         }
 
         let root_package = PackageId::new(manifest.root.package)?;
-        let root_physical_path = canonical_input_path(&manifest.root.source)?;
+        let root_physical_path = canonical_tondo_source_path(&manifest.root.source)?;
         let root_form = parse_source_form(&manifest.root.form)?;
         let mut packages = BTreeMap::new();
         let mut manifest_sources = BTreeMap::<(PackageId, String), ManifestSourceRecord>::new();
@@ -498,6 +498,11 @@ impl ProjectPlan {
                     "the compiler-owned standard package must not appear in `packages`".into(),
                 ));
             }
+            if package.source_sets.is_empty() {
+                return Err(ProjectError::InvalidManifest(format!(
+                    "package `{id}` must declare at least one source set"
+                )));
+            }
             let local_name = PackageAlias::new(package.local_name)?;
             let edition = parse_edition(&package.edition)?;
             let dependencies = validated_dependencies(package.dependencies)?;
@@ -511,13 +516,14 @@ impl ProjectPlan {
                     });
                 }
                 let selected = source_set.when.matches(&target)?;
-                let global_id = SourceSetId::new(format!("{}#{local_id}", id.as_str()))?;
+                let global_id = SourceSetId::for_package(&id, &local_id)?;
                 if selected {
                     selected_source_sets.insert(global_id);
                 }
                 for source in source_set.sources {
-                    let physical_path = canonical_input_path(&source.physical_path)?;
+                    let physical_path = canonical_tondo_source_path(&source.physical_path)?;
                     let logical_path = LogicalPath::new(&source.logical_path)?;
+                    require_tondo_source_extension(logical_path.as_str())?;
                     let module = ModulePath::new(&source.module)?;
                     if !physical_paths.insert(physical_path.clone()) {
                         return Err(ProjectError::DuplicatePhysicalInput(physical_path));
@@ -688,6 +694,9 @@ impl ProjectPlan {
             )?;
         }
 
+        for input in &manifest.generator_inputs {
+            validate_generator_input_name(&input.name)?;
+        }
         let (generator_names, locked_generators) = validate_named_inputs(
             manifest.generator_inputs,
             lockfile.generator_inputs,
@@ -720,7 +729,7 @@ impl ProjectPlan {
 
         let root = PlannedRoot {
             package: root_package,
-            physical_path: canonical_input_path(&manifest.root.source)?,
+            physical_path: canonical_tondo_source_path(&manifest.root.source)?,
             form: root_form,
         };
         Ok(Self {
@@ -1331,6 +1340,22 @@ fn canonical_input_path(value: &str) -> Result<String, ProjectError> {
     Ok(LogicalPath::new(value)?.to_string())
 }
 
+fn canonical_tondo_source_path(value: &str) -> Result<String, ProjectError> {
+    let path = canonical_input_path(value)?;
+    require_tondo_source_extension(&path)?;
+    Ok(path)
+}
+
+fn require_tondo_source_extension(path: &str) -> Result<(), ProjectError> {
+    if path.ends_with(".to") {
+        Ok(())
+    } else {
+        Err(ProjectError::InvalidManifest(format!(
+            "Tondo source path `{path}` must use the `.to` extension"
+        )))
+    }
+}
+
 fn package_source_id(package: &PackageId) -> Result<SourceId, SourceError> {
     SourceId::new(format!(
         "pkg:{}:{}",
@@ -1367,6 +1392,16 @@ fn validate_unit_id(value: &str) -> Result<(), ProjectError> {
     } else {
         Err(ProjectError::InvalidPrivilegedUnitId(value.into()))
     }
+}
+
+fn validate_generator_input_name(value: &str) -> Result<(), ProjectError> {
+    validate_identity_field("generator input name", value)?;
+    if value.starts_with("privileged:") {
+        return Err(ProjectError::InvalidManifest(format!(
+            "generator input name `{value}` uses the reserved `privileged:` prefix"
+        )));
+    }
+    Ok(())
 }
 
 fn is_kebab_identifier(value: &str) -> bool {
@@ -1424,8 +1459,9 @@ fn validated_lock_packages(
             )));
         }
         for source in &mut package.sources {
-            source.physical_path = canonical_input_path(&source.physical_path)?;
+            source.physical_path = canonical_tondo_source_path(&source.physical_path)?;
             source.logical_path = LogicalPath::new(&source.logical_path)?.to_string();
+            require_tondo_source_extension(&source.logical_path)?;
             source.module = ModulePath::new(&source.module)?.to_string();
             validate_source_set_name(&source.source_set)?;
             validate_sha256(&source.sha256)?;
@@ -1642,7 +1678,7 @@ mod tests {
                 .iter()
                 .map(ToString::to_string)
                 .collect::<Vec<_>>(),
-            ["workspace:app@1#common"]
+            ["@15:workspace:app@1#common"]
         );
         let request = plan
             .resolve(&supplied)
@@ -1662,7 +1698,7 @@ mod tests {
         );
         assert_eq!(
             output.interface().unwrap().source_sets(),
-            ["workspace:app@1#common"]
+            ["@15:workspace:app@1#common"]
         );
         assert_eq!(output.artifact().unwrap().features(), ["fast"]);
         assert!(output.artifact().unwrap().reproducible());
@@ -1777,13 +1813,24 @@ mod tests {
             Err(ProjectError::DuplicateLogicalSource { .. })
                 | Err(ProjectError::LockGraphMismatch(_))
         ));
+
+        let mut empty_sets: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        empty_sets["packages"][0]["source_sets"] = json!([]);
+        let empty_sets = serde_json::to_vec(&empty_sets).unwrap();
+        let mut lock: serde_json::Value = serde_json::from_slice(&lockfile).unwrap();
+        lock["manifest_hash"] = json!(sha256(&empty_sets));
+        assert!(matches!(
+            ProjectPlan::parse(&empty_sets, &serde_json::to_vec(&lock).unwrap()),
+            Err(ProjectError::InvalidManifest(message))
+                if message.contains("at least one source set")
+        ));
     }
 
     #[test]
     fn dependency_interfaces_are_compatible_before_sources_are_lexed() {
         let app = PackageId::new("workspace:app@1").unwrap();
         let dependency = PackageId::new("registry:util@1#sha256-demo").unwrap();
-        let source_sets = vec!["registry:util@1#sha256-demo#common".to_owned()];
+        let source_sets = vec!["@27:registry:util@1#sha256-demo#common".to_owned()];
         let interface = CompiledInterface::new(
             "0.1".into(),
             dependency.to_string(),
@@ -1938,7 +1985,7 @@ mod tests {
     fn exact_dependency_interfaces_link_and_pin_api_hashes() {
         let app = PackageId::new("workspace:app@1").unwrap();
         let dependency = PackageId::new("registry:util@1#content").unwrap();
-        let source_sets = vec!["registry:util@1#content#common".to_owned()];
+        let source_sets = vec!["@23:registry:util@1#content#common".to_owned()];
         let interface = CompiledInterface::new(
             "0.1".into(),
             dependency.to_string(),
@@ -1995,6 +2042,17 @@ mod tests {
         assert_eq!(dependencies[0].alias(), "util");
         assert_eq!(dependencies[0].package_id(), dependency.as_str());
         assert_eq!(dependencies[0].api_hash(), sha256(b""));
+        assert_eq!(
+            output.interface().unwrap().source_sets(),
+            ["@15:workspace:app@1#common"]
+        );
+        assert_eq!(
+            output.artifact().unwrap().source_sets(),
+            [
+                "@15:workspace:app@1#common",
+                "@23:registry:util@1#content#common"
+            ]
+        );
     }
 
     #[test]
@@ -2054,6 +2112,29 @@ mod tests {
                 "project planner imports ambient API `{forbidden}`"
             );
         }
+    }
+
+    #[test]
+    fn generator_inputs_cannot_collide_with_privileged_artifact_identities() {
+        assert!(validate_generator_input_name("schema").is_ok());
+        assert!(matches!(
+            validate_generator_input_name("privileged:vendor.native"),
+            Err(ProjectError::InvalidManifest(message))
+                if message.contains("reserved `privileged:` prefix")
+        ));
+    }
+
+    #[test]
+    fn project_source_paths_require_the_language_extension() {
+        assert_eq!(
+            canonical_tondo_source_path("src/main.to").unwrap(),
+            "src/main.to"
+        );
+        assert!(matches!(
+            canonical_tondo_source_path("src/main.txt"),
+            Err(ProjectError::InvalidManifest(message))
+                if message.contains("must use the `.to` extension")
+        ));
     }
 
     fn two_package_project(

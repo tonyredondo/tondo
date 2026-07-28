@@ -259,19 +259,23 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
                 .join("tondo.lock.json")
         });
         for output in [&emit_interface, &emit_artifact].into_iter().flatten() {
-            if output == manifest_path || output == resolved_lockfile {
+            if paths_refer_to_same_location(output, manifest_path)
+                || paths_refer_to_same_location(output, resolved_lockfile)
+            {
                 return Err(
                     "an emitted product must not overwrite the manifest or lockfile".into(),
                 );
             }
         }
     }
-    if emit_interface.is_some() && emit_interface == emit_artifact {
-        return Err("interface and artifact outputs require distinct paths".into());
+    if let (Some(interface), Some(artifact)) = (&emit_interface, &emit_artifact) {
+        if paths_refer_to_same_location(interface, artifact) {
+            return Err("interface and artifact outputs require distinct paths".into());
+        }
     }
     if let Some(source_path) = &source {
         for output in [&emit_interface, &emit_artifact].into_iter().flatten() {
-            if output == source_path {
+            if paths_refer_to_same_location(output, source_path) {
                 return Err("an emitted product must not overwrite the source file".into());
             }
         }
@@ -303,6 +307,7 @@ fn compilation_request(invocation: &Invocation) -> Result<PreparedCompilation, S
         let mut supplied = BTreeMap::new();
         for input in plan.required_inputs() {
             let physical = base.join(input.path());
+            reject_product_input_collision(invocation, &physical, input.path())?;
             let bytes = read_input(
                 &physical,
                 &format!("{} input `{}`", input.kind().as_str(), input.path()),
@@ -355,6 +360,55 @@ fn compilation_request(invocation: &Invocation) -> Result<PreparedCompilation, S
     )
     .map_err(|error| error.to_string())?;
     Ok((request, Some(bytes)))
+}
+
+fn reject_product_input_collision(
+    invocation: &Invocation,
+    physical_input: &Path,
+    logical_input: &str,
+) -> Result<(), String> {
+    for output in [&invocation.emit_interface, &invocation.emit_artifact]
+        .into_iter()
+        .flatten()
+    {
+        if paths_refer_to_same_location(output, physical_input) {
+            return Err(format!(
+                "an emitted product must not overwrite project input `{logical_input}`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn paths_refer_to_same_location(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    if let (Ok(left), Ok(right)) = (fs::canonicalize(left), fs::canonicalize(right)) {
+        return left == right;
+    }
+    match (
+        normalized_absolute_path(left),
+        normalized_absolute_path(right),
+    ) {
+        (Some(left), Some(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn normalized_absolute_path(path: &Path) -> Option<PathBuf> {
+    let path = std::path::absolute(path).ok()?;
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normalized.pop();
+            }
+            component => normalized.push(component.as_os_str()),
+        }
+    }
+    Some(normalized)
 }
 
 fn read_input(path: &Path, description: &str) -> Result<Vec<u8>, String> {
@@ -477,5 +531,35 @@ mod tests {
                 .unwrap_err()
                 .contains("valid UTF-8")
         );
+    }
+
+    #[test]
+    fn project_products_cannot_overwrite_a_declared_input() {
+        let arguments = [
+            "check",
+            "--manifest",
+            "project/tondo.json",
+            "--emit-interface",
+            "project/src/main.to",
+        ]
+        .map(OsString::from)
+        .to_vec();
+        let invocation = parse_invocation(&arguments).unwrap();
+        assert!(matches!(
+            reject_product_input_collision(
+                &invocation,
+                Path::new("project/src/main.to"),
+                "src/main.to"
+            ),
+            Err(message) if message.contains("must not overwrite project input")
+        ));
+        assert!(paths_refer_to_same_location(
+            Path::new("project/build/../src/main.to"),
+            Path::new("project/src/main.to")
+        ));
+        assert!(paths_refer_to_same_location(
+            Path::new("project/out/../interface.ti"),
+            Path::new("project/interface.ti")
+        ));
     }
 }

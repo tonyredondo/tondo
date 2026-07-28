@@ -1,6 +1,6 @@
 # Bootstrap target contract
 
-**Status:** accepted for M0
+**Status:** implemented through M9
 
 The initial target is:
 
@@ -24,3 +24,16 @@ The VM target is a real target identity, not shorthand for the current host
 machine. Adding a capability changes build identity and applicable conformance
 cases. A missing capability must eventually reject the API during compilation;
 it cannot install a runtime stub that always fails.
+
+The versioned registry is `tondo-capabilities/1` and recognizes exactly
+`process`, `threads`, `filesystem`, `network`, `console`, `environment`,
+`clock`, `entropy`, and `dynamic-linking`. Recognition is distinct from target
+support: `tondo-vm-hosted` supports only `console` and `process`, so requesting
+the registered `network` capability is a project error rather than a silently
+ignored feature.
+
+Project manifests record registry, target, profile, selected capabilities, and
+features. Source-set conditions are resolved against those values before any
+source bytes are requested or lexed. Interfaces and artifacts retain the same
+identity and are rejected when mixed across targets. The concrete format is
+defined in `../../TONDO_TOOLCHAIN_SPEC.md`.

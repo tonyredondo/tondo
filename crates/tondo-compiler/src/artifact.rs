@@ -54,7 +54,7 @@ pub struct SourceSetId(String);
 impl SourceSetId {
     pub fn new(value: impl Into<String>) -> Result<Self, ArtifactError> {
         let value = value.into();
-        if value.is_empty() || value.contains(['\n', '\r']) {
+        if source_set_parts(&value).is_none() {
             return Err(ArtifactError::InvalidSourceSet(value));
         }
         Ok(Self(value))
@@ -62,6 +62,22 @@ impl SourceSetId {
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    pub fn for_package(package: &PackageId, local: &str) -> Result<Self, ArtifactError> {
+        if !is_kebab_identifier(local) {
+            return Err(ArtifactError::InvalidSourceSet(local.into()));
+        }
+        Self::new(format!(
+            "@{}:{}#{local}",
+            package.as_str().len(),
+            package.as_str()
+        ))
+    }
+
+    fn belongs_to(&self, package: &PackageId) -> bool {
+        source_set_parts(self.as_str())
+            .is_some_and(|(owner, _)| owner.as_bytes() == package.as_str().as_bytes())
     }
 }
 
@@ -328,6 +344,16 @@ impl CompiledInterface {
         require_sorted_unique("capabilities", &self.capabilities)?;
         require_sorted_unique("features", &self.features)?;
         require_sorted_unique("source sets", &self.source_sets)?;
+        let package = PackageId::new(self.package_id.clone())
+            .map_err(|error| ArtifactError::InvalidInterface(error.to_string()))?;
+        for source_set in &self.source_sets {
+            let source_set = SourceSetId::new(source_set.clone())?;
+            if !source_set.belongs_to(&package) {
+                return Err(ArtifactError::InvalidInterface(format!(
+                    "source set `{source_set}` belongs to another package"
+                )));
+            }
+        }
         require_sorted_unique("modules", &self.modules)?;
         let dependency_keys = self
             .dependencies
@@ -380,6 +406,7 @@ pub struct BuildArtifact {
     format: String,
     compiler: String,
     edition: String,
+    source_form: String,
     package_id: String,
     target: String,
     profile: String,
@@ -424,6 +451,10 @@ impl BuildArtifact {
         &self.edition
     }
 
+    pub fn source_form(&self) -> &str {
+        &self.source_form
+    }
+
     pub fn package_id(&self) -> &str {
         &self.package_id
     }
@@ -434,6 +465,10 @@ impl BuildArtifact {
 
     pub fn profile(&self) -> &str {
         &self.profile
+    }
+
+    pub fn capability_registry(&self) -> &str {
+        &self.capability_registry
     }
 
     pub fn capabilities(&self) -> &[String] {
@@ -460,6 +495,18 @@ impl BuildArtifact {
         &self.source_sets
     }
 
+    pub fn manifest_hash(&self) -> Option<&str> {
+        self.manifest_hash.as_deref()
+    }
+
+    pub fn lockfile_hash(&self) -> Option<&str> {
+        self.lockfile_hash.as_deref()
+    }
+
+    pub fn generator_inputs(&self) -> &BTreeMap<String, String> {
+        &self.generator_inputs
+    }
+
     pub fn reproducible(&self) -> bool {
         self.reproducible
     }
@@ -478,8 +525,15 @@ impl BuildArtifact {
                 self.capability_registry.clone(),
             ));
         }
+        if !matches!(self.source_form.as_str(), "module" | "script" | "fragment") {
+            return Err(ArtifactError::InvalidArtifact(format!(
+                "unknown source form `{}`",
+                self.source_form
+            )));
+        }
         for value in [
             self.edition.as_str(),
+            self.source_form.as_str(),
             self.package_id.as_str(),
             self.target.as_str(),
             self.profile.as_str(),
@@ -493,6 +547,9 @@ impl BuildArtifact {
         require_sorted_unique("capabilities", &self.capabilities)?;
         require_sorted_unique("features", &self.features)?;
         require_sorted_unique("source sets", &self.source_sets)?;
+        for source_set in &self.source_sets {
+            SourceSetId::new(source_set.clone())?;
+        }
         if let Some(hash) = &self.manifest_hash {
             validate_sha256(hash)?;
         }
@@ -531,7 +588,36 @@ impl BuildArtifact {
         }
         validate_sha256(&self.interface_hash)?;
         validate_sha256(&self.build_hash)?;
+        let expected_build_hash = self.calculated_build_hash()?;
+        if self.build_hash != expected_build_hash {
+            return Err(ArtifactError::InvalidArtifact(format!(
+                "build hash `{}` does not match `{expected_build_hash}` derived from the artifact",
+                self.build_hash
+            )));
+        }
         Ok(())
+    }
+
+    fn calculated_build_hash(&self) -> Result<String, ArtifactError> {
+        let fingerprint = BuildFingerprint {
+            compiler: &self.compiler,
+            edition: &self.edition,
+            source_form: &self.source_form,
+            package_id: &self.package_id,
+            target: &self.target,
+            profile: &self.profile,
+            capabilities: &self.capabilities,
+            features: &self.features,
+            source_sets: &self.source_sets,
+            manifest_hash: self.manifest_hash.as_deref(),
+            lockfile_hash: self.lockfile_hash.as_deref(),
+            generator_inputs: &self.generator_inputs,
+            source_hashes: &self.source_hashes,
+            interface_hash: &self.interface_hash,
+        };
+        let bytes = serde_json::to_vec(&fingerprint)
+            .map_err(|error| ArtifactError::Serialization(error.to_string()))?;
+        Ok(sha256(&bytes))
     }
 }
 
@@ -650,6 +736,7 @@ impl From<TypeError> for ArtifactError {
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_products(
     edition: &str,
+    source_form: &str,
     target: &str,
     profile: &str,
     capabilities: impl IntoIterator<Item = String>,
@@ -773,27 +860,11 @@ pub(crate) fn build_products(
             ))
     });
     let interface_hash = interface.content_hash()?;
-    let fingerprint = BuildFingerprint {
-        compiler: COMPILER_ID,
-        edition,
-        package_id: root.as_str(),
-        target,
-        profile,
-        capabilities: &capabilities,
-        features: &features,
-        source_sets: &source_sets,
-        manifest_hash: inputs.manifest_hash(),
-        lockfile_hash: inputs.lockfile_hash(),
-        generator_inputs: inputs.generator_inputs(),
-        source_hashes: &source_hashes,
-        interface_hash: &interface_hash,
-    };
-    let fingerprint = serde_json::to_vec(&fingerprint)
-        .map_err(|error| ArtifactError::Serialization(error.to_string()))?;
-    let artifact = BuildArtifact {
+    let mut artifact = BuildArtifact {
         format: ARTIFACT_FORMAT.into(),
         compiler: COMPILER_ID.into(),
         edition: edition.into(),
+        source_form: source_form.into(),
         package_id: root.to_string(),
         target: target.into(),
         profile: profile.into(),
@@ -806,9 +877,11 @@ pub(crate) fn build_products(
         generator_inputs: inputs.generator_inputs.clone(),
         source_hashes,
         interface_hash,
-        build_hash: sha256(&fingerprint),
+        build_hash: String::new(),
         reproducible: true,
     };
+    artifact.build_hash = artifact.calculated_build_hash()?;
+    artifact.validate()?;
     Ok(BuildProducts {
         interface,
         artifact,
@@ -940,11 +1013,10 @@ pub(crate) fn validate_dependency_interfaces(
 }
 
 fn package_source_sets(inputs: &DeclaredBuildInputs, package: &PackageId) -> Vec<String> {
-    let prefix = format!("{}#", package.as_str());
     inputs
         .source_sets()
         .iter()
-        .filter(|source_set| source_set.as_str().starts_with(&prefix))
+        .filter(|source_set| source_set.belongs_to(package))
         .map(ToString::to_string)
         .collect()
 }
@@ -1463,6 +1535,7 @@ fn member_owner_package(owner: MemberOwner, resolved: &ResolvedProgram) -> Optio
 struct BuildFingerprint<'a> {
     compiler: &'a str,
     edition: &'a str,
+    source_form: &'a str,
     package_id: &'a str,
     target: &'a str,
     profile: &'a str,
@@ -1515,9 +1588,32 @@ fn is_kebab_identifier(value: &str) -> bool {
         && bytes.all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
+fn source_set_parts(value: &str) -> Option<(&str, &str)> {
+    if value.contains(['\n', '\r']) {
+        return None;
+    }
+    let (length, remainder) = value.strip_prefix('@')?.split_once(':')?;
+    if length.is_empty()
+        || !length.bytes().all(|byte| byte.is_ascii_digit())
+        || (length.starts_with('0') && length != "0")
+    {
+        return None;
+    }
+    let length = length.parse::<usize>().ok()?;
+    if length == 0 || length >= remainder.len() || !remainder.is_char_boundary(length) {
+        return None;
+    }
+    let (package, local) = remainder.split_at(length);
+    let local = local.strip_prefix('#')?;
+    PackageId::new(package.to_owned()).ok()?;
+    is_kebab_identifier(local).then_some((package, local))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::package::{Edition, PackageAlias, PackageNode};
+    use crate::source::{ModulePath, SourceId};
 
     #[test]
     fn hashes_and_names_have_closed_canonical_forms() {
@@ -1529,7 +1625,12 @@ mod tests {
         assert!(validate_sha256("SHA256:00").is_err());
         assert!(FeatureName::new("native-ffi").is_ok());
         assert!(FeatureName::new("Native").is_err());
-        assert!(SourceSetId::new("pkg:app#hosted").is_ok());
+        assert!(SourceSetId::for_package(&PackageId::new("pkg:app@1").unwrap(), "hosted").is_ok());
+        assert_ne!(
+            SourceSetId::for_package(&PackageId::new("a").unwrap(), "b-c").unwrap(),
+            SourceSetId::for_package(&PackageId::new("a#b").unwrap(), "c").unwrap()
+        );
+        assert!(SourceSetId::new("@01:a#common").is_err());
         assert!(SourceSetId::new("").is_err());
     }
 
@@ -1542,7 +1643,7 @@ mod tests {
             "hosted".into(),
             vec!["console".into(), "process".into()],
             vec!["logging".into()],
-            vec!["pkg:app@1#common".into()],
+            vec!["@9:pkg:app@1#common".into()],
             vec!["main".into()],
             sha256(b"api"),
             Vec::new(),
@@ -1588,7 +1689,7 @@ mod tests {
             "hosted".into(),
             expected_capabilities.clone(),
             expected_features.clone(),
-            vec!["registry:dependency@1#content#common".into()],
+            vec!["@29:registry:dependency@1#content#common".into()],
             vec!["api".into()],
             sha256(b"api"),
             Vec::new(),
@@ -1639,8 +1740,8 @@ mod tests {
         let inputs = DeclaredBuildInputs::new(
             BTreeSet::new(),
             [
-                SourceSetId::new("registry:dependency@1#content#common").unwrap(),
-                SourceSetId::new("workspace:app@1#common").unwrap(),
+                SourceSetId::new("@29:registry:dependency@1#content#common").unwrap(),
+                SourceSetId::new("@15:workspace:app@1#common").unwrap(),
             ]
             .into_iter()
             .collect(),
@@ -1650,23 +1751,24 @@ mod tests {
                 &inputs,
                 &PackageId::new("registry:dependency@1#content").unwrap()
             ),
-            ["registry:dependency@1#content#common"]
+            ["@29:registry:dependency@1#content#common"]
         );
     }
 
     #[test]
     fn artifacts_require_canonical_bytes_and_exact_compiler_identity() {
-        let artifact = BuildArtifact {
+        let mut artifact = BuildArtifact {
             format: ARTIFACT_FORMAT.into(),
             compiler: COMPILER_ID.into(),
             edition: "0.1".into(),
+            source_form: "module".into(),
             package_id: "workspace:app@1".into(),
             target: "tondo-vm-hosted".into(),
             profile: "hosted".into(),
             capability_registry: CAPABILITY_REGISTRY.into(),
             capabilities: vec!["console".into(), "process".into()],
             features: vec!["fast".into()],
-            source_sets: vec!["workspace:app@1#common".into()],
+            source_sets: vec!["@15:workspace:app@1#common".into()],
             manifest_hash: Some(sha256(b"manifest")),
             lockfile_hash: Some(sha256(b"lockfile")),
             generator_inputs: BTreeMap::new(),
@@ -1677,9 +1779,10 @@ mod tests {
                 sha256: sha256(b"fn main() {}\n"),
             }],
             interface_hash: sha256(b"interface"),
-            build_hash: sha256(b"build"),
+            build_hash: String::new(),
             reproducible: true,
         };
+        artifact.build_hash = artifact.calculated_build_hash().unwrap();
         let bytes = artifact.encode().unwrap();
         assert_eq!(BuildArtifact::decode(&bytes).unwrap(), artifact);
 
@@ -1690,11 +1793,165 @@ mod tests {
             Err(ArtifactError::NonCanonicalArtifact)
         ));
 
+        let mut forged = artifact.clone();
+        forged.build_hash = sha256(b"forged");
+        assert!(matches!(
+            forged.encode(),
+            Err(ArtifactError::InvalidArtifact(message))
+                if message.contains("does not match")
+        ));
+
         let mut incompatible = artifact;
         incompatible.compiler = "another-compiler/1".into();
         assert!(matches!(
             incompatible.encode(),
             Err(ArtifactError::IncompatibleCompiler(_))
+        ));
+    }
+
+    #[test]
+    fn dependency_modules_source_sets_and_transitive_edges_must_match() {
+        let root = PackageId::new("workspace:app@1").unwrap();
+        let dependency = PackageId::new("registry:util@1#content").unwrap();
+        let transitive = PackageId::new("registry:core@1#content").unwrap();
+        let standard = PackageId::new("toolchain:std@1").unwrap();
+        let graph = PackageGraph::new(
+            root.clone(),
+            standard.clone(),
+            [
+                PackageNode::new(
+                    root,
+                    SourceId::new("pkg:app").unwrap(),
+                    PackageAlias::new("app").unwrap(),
+                    Edition::V0_1,
+                    [ModulePath::new("main").unwrap()],
+                    [(PackageAlias::new("util").unwrap(), dependency.clone())],
+                )
+                .unwrap(),
+                PackageNode::new(
+                    dependency.clone(),
+                    SourceId::new("pkg:util").unwrap(),
+                    PackageAlias::new("utilPackage").unwrap(),
+                    Edition::V0_1,
+                    [ModulePath::new("util").unwrap()],
+                    [(PackageAlias::new("core").unwrap(), transitive.clone())],
+                )
+                .unwrap(),
+                PackageNode::new(
+                    transitive.clone(),
+                    SourceId::new("pkg:core").unwrap(),
+                    PackageAlias::new("corePackage").unwrap(),
+                    Edition::V0_1,
+                    [ModulePath::new("core").unwrap()],
+                    [],
+                )
+                .unwrap(),
+                PackageNode::new(
+                    standard,
+                    SourceId::new("pkg:std").unwrap(),
+                    PackageAlias::new("tondoStd").unwrap(),
+                    Edition::V0_1,
+                    [],
+                    [],
+                )
+                .unwrap(),
+            ],
+        )
+        .unwrap();
+        let capabilities = vec!["console".into(), "process".into()];
+        let features = vec!["fast".into()];
+        let core_api = sha256(b"core-api");
+        let core = CompiledInterface::new(
+            "0.1".into(),
+            transitive.to_string(),
+            "tondo-vm-hosted".into(),
+            "hosted".into(),
+            capabilities.clone(),
+            features.clone(),
+            vec!["@23:registry:core@1#content#common".into()],
+            vec!["core".into()],
+            core_api.clone(),
+            Vec::new(),
+        )
+        .unwrap();
+        let util = CompiledInterface::new(
+            "0.1".into(),
+            dependency.to_string(),
+            "tondo-vm-hosted".into(),
+            "hosted".into(),
+            capabilities.clone(),
+            features.clone(),
+            vec!["@23:registry:util@1#content#common".into()],
+            vec!["util".into()],
+            sha256(b"util-api"),
+            vec![InterfaceDependency {
+                alias: "core".into(),
+                package_id: transitive.to_string(),
+                api_hash: core_api,
+            }],
+        )
+        .unwrap();
+        let inputs = DeclaredBuildInputs::new(
+            [FeatureName::new("fast").unwrap()].into_iter().collect(),
+            [
+                SourceSetId::new("@23:registry:core@1#content#common").unwrap(),
+                SourceSetId::new("@23:registry:util@1#content#common").unwrap(),
+                SourceSetId::new("@15:workspace:app@1#common").unwrap(),
+            ]
+            .into_iter()
+            .collect(),
+        )
+        .with_dependency_interfaces(
+            BTreeMap::from([(dependency.clone(), util), (transitive, core)]),
+            true,
+        );
+        let validate = |inputs: &DeclaredBuildInputs| {
+            validate_dependency_interfaces(
+                "0.1",
+                "tondo-vm-hosted",
+                "hosted",
+                capabilities.clone(),
+                inputs,
+                &graph,
+            )
+        };
+        validate(&inputs).unwrap();
+
+        let mut wrong_modules = inputs.clone();
+        wrong_modules
+            .dependency_interfaces
+            .get_mut(&dependency)
+            .unwrap()
+            .modules = vec!["other".into()];
+        assert!(matches!(
+            validate(&wrong_modules),
+            Err(ArtifactError::IncompatibleDependencyInterface { reason, .. })
+                if reason == "module set differs for the selected target"
+        ));
+
+        let mut wrong_source_sets = inputs.clone();
+        wrong_source_sets
+            .dependency_interfaces
+            .get_mut(&dependency)
+            .unwrap()
+            .source_sets = vec!["@23:registry:util@1#content#other".into()];
+        assert!(matches!(
+            validate(&wrong_source_sets),
+            Err(ArtifactError::IncompatibleDependencyInterface { reason, .. })
+                if reason == "selected source-set identity differs"
+        ));
+
+        let mut wrong_transitive_hash = inputs;
+        wrong_transitive_hash
+            .dependency_interfaces
+            .get_mut(&dependency)
+            .unwrap()
+            .dependencies[0]
+            .api_hash = sha256(b"wrong-core-api");
+        assert!(matches!(
+            validate(&wrong_transitive_hash),
+            Err(ArtifactError::IncompatibleDependencyInterface { reason, .. })
+                if reason.contains("API hash differs")
         ));
     }
 }
