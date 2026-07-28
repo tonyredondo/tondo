@@ -31,7 +31,7 @@ fn every_tondo_fence_in_the_pinned_spec_is_lexically_well_formed() {
         let logical_path = format!("spec/fence-{:04}.to", fence.index);
         let file = sources
             .add(SourceInput::virtual_file(
-                SourceId::new(format!("spec:0.1-draft.8:fence-{:04}", fence.index)).unwrap(),
+                SourceId::new(format!("spec:0.1:fence-{:04}", fence.index)).unwrap(),
                 ModulePath::new("spec").unwrap(),
                 LogicalPath::new(logical_path).unwrap(),
                 Arc::<[u8]>::from(fence.source.as_bytes()),
@@ -89,7 +89,7 @@ fn executable_spec_fences_reach_their_expected_syntax_result() {
         let mut sources = SourceDatabase::new();
         let file = sources
             .add(SourceInput::virtual_file(
-                SourceId::new(format!("spec:0.1-draft.8:fence-{:04}", fence.index)).unwrap(),
+                SourceId::new(format!("spec:0.1:fence-{:04}", fence.index)).unwrap(),
                 ModulePath::new("spec").unwrap(),
                 LogicalPath::new(format!("spec/fence-{:04}.to", fence.index)).unwrap(),
                 Arc::<[u8]>::from(fence.source.as_bytes()),
@@ -163,7 +163,7 @@ fn syntax_spec_fences_match_one_of_the_normative_parser_surfaces() {
             let mut sources = SourceDatabase::new();
             let file = sources
                 .add(SourceInput::virtual_file(
-                    SourceId::new(format!("spec:0.1-draft.8:fence-{:04}", fence.index)).unwrap(),
+                    SourceId::new(format!("spec:0.1:fence-{:04}", fence.index)).unwrap(),
                     ModulePath::new("spec").unwrap(),
                     LogicalPath::new(format!("spec/fence-{:04}.to", fence.index)).unwrap(),
                     Arc::<[u8]>::from(fence.source.as_bytes()),
@@ -369,9 +369,11 @@ fn every_syntactically_valid_spec_fence_formats_reparses_and_is_idempotent() {
 fn specification_path() -> PathBuf {
     std::env::var_os("TONDO_LANGUAGE_SPEC")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../TONDO_LANGUAGE_SPEC.md")
-        })
+        .unwrap_or_else(default_specification_path)
+}
+
+fn default_specification_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../TONDO_LANGUAGE_SPEC.md")
 }
 
 fn extract_tondo_fences(markdown: &str) -> Vec<Fence> {
@@ -414,4 +416,15 @@ fn fence_extraction_is_closed_and_stable() {
     assert_eq!(fences[0].line, 2);
     assert_eq!(fences[0].info, "fragment demo");
     assert_eq!(fences[0].source, "let value = 1\n");
+}
+
+#[test]
+fn default_specification_path_is_owned_by_the_workspace() {
+    let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap();
+    let specification = default_specification_path().canonicalize().unwrap();
+
+    assert_eq!(specification.parent(), Some(workspace.as_path()));
 }

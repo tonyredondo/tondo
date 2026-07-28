@@ -1,12 +1,20 @@
 # Tondo
 
-Bootstrap workspace for the Tondo compiler.
+**Released:** Tondo 0.1 language edition, reference toolchain 0.1.0
 
-The workspace is organized into three boundaries:
+**Conformant target:** `tondo-vm-hosted` / `hosted` / `[console, process]`
+
+Reference workspace for the Tondo compiler.
+
+The compiler and runtime are organized into three production boundaries:
 
 - `tondo-cli` owns the command-line entry point.
 - `tondo-compiler` owns the lossless frontend and compilation pipeline.
 - `tondo-vm` owns the verified bytecode contract and its runtime boundary.
+
+`tondo-conformance` is the implementation-independent runner, while
+`tondo-reference-adapter` connects that protocol to the public compiler and VM
+paths plus the isolated collector observations.
 
 The CLI recognizes `fmt`, `check`, and `run`. Source validation, Unicode 16
 lexing, the lossless CST, recoverable parsing, the typed AST facade, and the
@@ -126,10 +134,11 @@ share one body, direct bytecode calls carry no runtime type pack, and expanding
 recursion is stopped by an explicit request limit. `tondo run` executes a safe
 sync or async explicit `main`, or an inferred implicit script entry, in an
 iterative VM with checked operations, normative panics, precise generational
-mark-and-sweep collection, defensive limits, and capability-gated
-`std.console` and `std.process` host bridges. Root scripts support shebangs,
-top-level statements, inferred closed error unions, and automatic async entry
-when they use `await` or `scope`. `Command` and `Pipeline` are inert copied
+handles, non-moving mark-and-sweep collection, defensive limits, and
+capability-gated `std.console` and `std.process` host bridges. Root scripts
+support shebangs, top-level statements, inferred closed error unions, and
+automatic async entry when they use `await` or `scope`. `Command` and
+`Pipeline` are inert copied
 plans; only four closed `|` compositions exist, argv never passes through a
 shell, and shell execution is explicitly named. Async terminal operations use
 direct OS pipes, concurrent draining, typed status/output/errors, affine
@@ -176,8 +185,9 @@ drains lexical scopes in LIFO order on normal and panic exits, and follows or
 disarms a unique affine guard through verified ownership transfers. Async
 cleanup cannot itself suspend; structured task teardown runs before the defers
 of the abandoned task scope and cannot leak cancellation into a recoverable
-error type. The workspace therefore identifies itself as a bootstrap and does
-not claim full Tondo conformance.
+error type. This exact toolchain and target are covered by the portable Tondo
+0.1 conformance suite; the claim does not extend to another backend, profile,
+or capability set.
 
 ## Project documentation
 
@@ -208,13 +218,29 @@ not claim full Tondo conformance.
   capability set.
 - `docs/contracts/semantic-queries.md` records the request-owned tooling
   snapshot and the complete Tondo 0.1 semantic serialization.
+- `docs/contracts/diagnostics-json.md` freezes the machine-readable diagnostics
+  format for Tondo 0.1.
+- `docs/contracts/conformance.md` defines the portable suite, adapter boundary,
+  and Gate G5 release checks.
 - `docs/contracts/types.md` records the canonical semantic type representation.
+- `docs/releases/0.1.0.md` records the exact release matrix, limitations, and
+  reproducible conformance evidence.
 
 ## Local validation
 
 ~~~text
 cargo fmt --all -- --check
+cargo check --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --all-targets --locked
 RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --locked
+cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
+cargo run -p tondo-conformance --locked -- validate \
+  --root . \
+  --manifest conformance/0.1/manifest.json
+cargo run -p tondo-conformance --locked -- run \
+  --root . \
+  --manifest conformance/0.1/manifest.json \
+  --adapter target/debug/tondo-reference-adapter \
+  --output /tmp/tondo-reference-0.1.0.json
 ~~~

@@ -1,6 +1,6 @@
 # Canonical formatter contract
 
-**Status:** implemented for Tondo 0.1-draft.8
+**Status:** implemented and conformant for Tondo 0.1
 
 ## Public boundary
 

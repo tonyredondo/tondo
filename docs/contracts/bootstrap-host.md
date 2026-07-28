@@ -1,7 +1,7 @@
 # Bootstrap standard-library host boundary
 
-**Status:** implemented through M9
-**Language baseline:** Tondo 0.1-draft.8
+**Status:** implemented and conformant for Tondo 0.1
+**Language baseline:** Tondo 0.1
 
 This contract makes hosted effects observable without freezing a native ABI.
 It defines the console bridge here and delegates the process surface to

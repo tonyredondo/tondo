@@ -1,6 +1,6 @@
 # Bootstrap target contract
 
-**Status:** implemented through M9
+**Status:** released for Tondo 0.1
 
 The initial target is:
 

@@ -1,6 +1,6 @@
 # Tondo 0.1 conformance suite
 
-**Status:** M10 portable contract
+**Status:** released with Tondo 0.1.0
 
 `tondo-conformance-0.1` is an immutable corpus and a runner protocol, not a
 test-only view of the reference compiler. The suite distribution contains:
@@ -60,3 +60,68 @@ in the observation. `positive_for` requires a neighboring case where that code
 does not occur. Release validation additionally requires complete registry,
 warning-profile, panic, formatter, query, memory, concurrency and determinism
 coverage before Gate G5 can close.
+
+## Closed auxiliary observations
+
+The release suite uses three additional closed schemas:
+
+- `tondo-semantic-observation-0.1/1` for public semantic queries;
+- `tondo-memory-observation-0.1/1` for the four private collector scenarios;
+  and
+- `tondo-determinism-observation-0.1/1` for closed-project builds under a
+  perturbed source insertion order.
+
+The memory schema records the scenario, allocations, collections, reclaimed
+objects, peak live objects, and the exact root/cycle/retry property being
+proved. It does not expose VM addresses or private collector layout.
+
+The determinism adapter compiles the same declared project twice: once with the
+canonical logical source order and once with its exact inverse. Only insertion
+order changes. The schema records SHA-256 hashes of the interface, artifact,
+and diagnostics for both executions, and the runner requires every pair to be
+equal. The case repeats three times.
+
+Concurrency cases run 32 repetitions each. This is a bounded stability
+calibration, not a probabilistic replacement for the closed outcome contract:
+each repetition must independently match an allowed observation and preserve
+structured cleanup.
+
+## Release validation
+
+Loading the Tondo 0.1 release manifest verifies all hashes and additionally
+requires:
+
+- the exact target `tondo-vm-hosted`, profile `hosted`, and capabilities
+  `[console, process]`;
+- at least one case in every one of the ten groups;
+- primary and positive-neighbor coverage for all 78 `E` diagnostics;
+- all normative `P` classes and every warning in the `core` profile;
+- exact formatter bytes and idempotence;
+- exact semantic schemas, stable IDs, spans, ordering, and replayed safe fixes;
+- all four private memory scenarios exactly once;
+- one three-repetition closed-project determinism case;
+- at least 32 repetitions for every concurrency case; and
+- an `E1008` boundary proof for every target capability that a case omits.
+
+The generic runner validates this contract without linking compiler or VM
+internals. The release result uses
+`tondo-conformance-result-0.1/1`; it records the manifest hash, exact adapter
+description, target declaration, per-case repetition count, and canonical
+observation hashes.
+
+From a repository root, the portable verification commands are:
+
+~~~text
+cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
+cargo run -p tondo-conformance --locked -- validate \
+  --root . \
+  --manifest conformance/0.1/manifest.json
+cargo run -p tondo-conformance --locked -- run \
+  --root . \
+  --manifest conformance/0.1/manifest.json \
+  --adapter target/debug/tondo-reference-adapter \
+  --output conformance/0.1/results/tondo-reference-0.1.0-tondo-vm-hosted.json
+~~~
+
+Running the final command twice against an unchanged tree must produce
+byte-identical result files.

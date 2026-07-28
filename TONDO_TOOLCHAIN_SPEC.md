@@ -4,7 +4,7 @@
 
 **Versión:** `tondo-toolchain-0.1/1`
 
-**Especificación de lenguaje:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)
+**Especificación de lenguaje:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md)
 
 Esta especificación define la frontera de proyecto del toolchain Tondo 0.1:
 manifiesto, lockfile, selección de fuentes, grafo de paquetes, interfaces
@@ -426,7 +426,7 @@ layout, no fija name mangling y no promete una ABI.
 ~~~json
 {
   "format": "tondo-interface-0.1/1",
-  "compiler": "tondo-bootstrap/0.0.0",
+  "compiler": "tondo-bootstrap/0.1.0",
   "edition": "0.1",
   "package_id": "registry:util@2#sha256-content",
   "target": "tondo-vm-hosted",
@@ -486,7 +486,7 @@ Una discrepancia nunca intenta enlazar “por parecido” ni cae a búsqueda nom
 ~~~json
 {
   "format": "tondo-artifact-0.1/1",
-  "compiler": "tondo-bootstrap/0.0.0",
+  "compiler": "tondo-bootstrap/0.1.0",
   "edition": "0.1",
   "source_form": "module",
   "package_id": "workspace:app@1",
@@ -549,7 +549,7 @@ roots, threads y unwind.
   "format": "tondo-privileged-unit-0.1/1",
   "id": "vendor.native",
   "provider": "registry:vendor-native@1#sha256-content",
-  "compiler": "tondo-bootstrap/0.0.0",
+  "compiler": "tondo-bootstrap/0.1.0",
   "target": "tondo-vm-hosted",
   "profile": "hosted",
   "capability_registry": "tondo-capabilities/1",

@@ -35,7 +35,7 @@ measured and differentially validated collection copy-on-write, plus
 ASYNC-001..004, EXEC-001/002, SCOPE-001, SPAWN-001, JOIN-001,
 CANCEL-001/002, PANIC-ASYNC-001, SEND-001, SHARE-001, and MAIN-ASYNC-001
 
-**Language baseline:** Tondo 0.1-draft.8
+**Language baseline:** Tondo 0.1
 
 This contract fixes the bootstrap object model selected by DEC-006. It is an
 implementation boundary, not a source-visible memory layout or a promise for a

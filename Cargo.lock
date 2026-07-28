@@ -179,7 +179,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "tondo-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "tondo-compiler",
  "tondo-vm",
@@ -187,7 +187,7 @@ dependencies = [
 
 [[package]]
 name = "tondo-compiler"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -200,7 +200,7 @@ dependencies = [
 
 [[package]]
 name = "tondo-conformance"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -209,7 +209,7 @@ dependencies = [
 
 [[package]]
 name = "tondo-reference-adapter"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -220,7 +220,7 @@ dependencies = [
 
 [[package]]
 name = "tondo-vm"
-version = "0.0.0"
+version = "0.1.0"
 
 [[package]]
 name = "typenum"

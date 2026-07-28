@@ -2310,6 +2310,26 @@ fn main() {
     }
 
     #[test]
+    fn warning_profiles_never_relax_language_errors() {
+        let source = b"fn invalid(): Int { \"wrong\" }\n";
+        let baseline = execute(source_request(
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        let with_core = execute(
+            source_request(source, SourceForm::Module, ResourceLimits::default())
+                .with_warning_profiles([WarningProfile::Core]),
+        )
+        .unwrap();
+        for output in [&baseline, &with_core] {
+            assert_eq!(output.status(), CompilationStatus::Rejected);
+            assert_eq!(output.diagnostics().diagnostics()[0].code(), "E1102");
+        }
+    }
+
+    #[test]
     fn type_node_and_hir_diagnostic_budgets_are_enforced_through_the_driver() {
         let type_limits = ResourceLimits {
             max_type_nodes: 16,

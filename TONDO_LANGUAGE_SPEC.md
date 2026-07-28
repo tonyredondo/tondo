@@ -1,7 +1,8 @@
 # Tondo: especificación del lenguaje
 
-**Estado:** borrador de diseño 0.1  
-**Revisión del Markdown:** 0.1-draft.8 — 2026-07-21  
+**Estado:** especificación publicada Tondo 0.1
+
+**Revisión del Markdown:** 0.1 — 2026-07-28
 **Nombre:** Tondo  
 **Extensión:** `.to`  
 **Lema:** **Pequeño por diseño, completo en la práctica.**
@@ -5711,79 +5712,24 @@ asignación. Si el live set, fragmentación inevitable o límites del host todav
 impiden satisfacerla, se aplica el aborto de 15.7. Terminar el proceso no exige
 recorrer el heap ni simular cleanup de recursos.
 
-#### Diseño de la implementación de referencia (no normativo)
+#### Estrategia de la implementación de referencia (no normativo)
 
-La implementación de referencia de Tondo 0.1 se diseñará alrededor de **ARC con
-recolección diferida de ciclos**. Esta elección no forma parte de la conformidad
-del lenguaje ni de su ABI y puede sustituirse sin cambiar semántica de código
-fuente.
+El target de referencia Tondo 0.1 utiliza una VM con collector **mark-and-sweep
+preciso, no móvil y stop-the-world**. El bytecode verificado aporta descriptores
+cerrados de trazado para cada forma administrada; frames síncronos, frames
+async, tasks estructuradas y registros del host publican sus roots de manera
+explícita. El collector no ejecuta código Tondo y recupera ciclos
+inalcanzables.
 
-El diseño previsto es:
+`String`, `Array[T]`, `Map[K, V]` y `Set[T]` pueden compartir buffers mediante
+copy-on-write cuando su representación lo permite. Esa optimización no
+sustituye al tracing de identidades administradas ni cambia el contrato de
+copia lógica.
 
-- Representar inline o en stack los valores que no necesiten escapar.
-- Administrar mediante ARC los buffers compartidos de `String`, `Array[T]`,
-  `Map[K, V]` y `Set[T]`. El mismo contador permite comprobar unicidad para
-  copy-on-write: un buffer único puede mutarse in place; uno compartido se copia
-  antes de la mutación.
-- Administrar también mediante ARC las identidades `Ref[T]` y, cuando escapen,
-  cierres, entornos capturados y frames asíncronos.
-- Mantener por separado las referencias fuertes y débiles de una eventual
-  `WeakRef[T]`; una referencia débil nunca mantiene vivo su destino.
-- Introducir en la IR operaciones internas equivalentes a `retain`, `release`,
-  `is_unique` y `trace_edges`. No son operaciones del lenguaje fuente. Los moves
-  transfieren ownership sin incrementar el contador y el análisis de último uso
-  puede eliminar pares de retención y liberación redundantes.
-- Emitir para cada tipo administrado que pueda contener referencias fuertes un
-  descriptor o función de trazado. Un decremento que no alcance cero puede
-  registrar el objeto como candidato; el recolector de ciclos utiliza esas aristas
-  para liberar componentes inalcanzables sin explorar innecesariamente objetos
-  hoja.
-- Ejecutar las cascadas de liberación de forma acotada o iterativa. Recolectar un
-  objeto o un ciclo nunca ejecuta código Tondo de usuario.
-
-El baseline inicial del runtime de referencia concreta ese diseño así:
-
-- Todo bloque administrado es no móvil y comienza con un header privado que
-  contiene contador fuerte atómico, contador débil atómico, flags y un descriptor
-  de tipo. La estabilidad física no se expone como identidad ni se promete a
-  código fuente.
-- El descriptor enumera aristas administradas y las operaciones internas para
-  destruir almacenamiento. No contiene finalizadores ni callbacks Tondo.
-- Cada owner lógico en stack, agregado, buffer o frame posee una referencia
-  fuerte. Un move transfiere ese token sin tocar el contador; una copia lógica
-  que comparte bloque ejecuta `retain`.
-- Mientras el contador fuerte sea distinto de cero existe una referencia débil
-  implícita al header. El último `release` fuerte marca el payload como muerto de
-  forma linealizable, invalida futuros upgrades, libera sus aristas mediante una
-  cola iterativa que no asigna memoria administrada y retira la débil implícita.
-  El header desaparece al llegar a cero el contador débil.
-- `WeakRef.upgrade`, cuando la librería lo exponga, intenta incrementar
-  atómicamente un contador fuerte todavía no nulo. Su éxito o ausencia es
-  linealizable respecto al último release o a la decisión del recolector de
-  ciclos.
-- Un decremento que no llegue a cero registra como candidato únicamente un bloque
-  cuyo descriptor contenga aristas fuertes. Bloques hoja no entran en el
-  recolector de ciclos.
-- Al superar un umbral de candidatos o presión de asignación, el runtime detiene
-  en safepoints a los threads Tondo adjuntos, obtiene un snapshot de los
-  candidatos y aplica trial deletion: descuenta aristas internas, marca desde los
-  nodos con referencias externas y reclama el resto. Reanuda threads solo después
-  de dejar coherentes contadores y weak refs. Un thread extranjero que ejecute un
-  callback Tondo debe haberse adjuntado y cooperar con ese protocolo.
-- Antes de informar un OOM irrecuperable por heap, el runtime ejecuta una pasada
-  completa de ciclos, libera sus colas pendientes y reintenta una vez la
-  asignación. Si todavía falla, conserva la política de aborto sin unwind de
-  15.7.
-- `is_unique` solo permite mutación in place cuando existe exactamente un owner
-  fuerte del buffer y el análisis de préstamos ya concedió acceso exclusivo. Un
-  contador igual a uno nunca sustituye al borrow checking.
-
-Este baseline utiliza contadores atómicos también para bloques confinados a un
-thread, priorizando una representación única. El compilador puede eliminar
-retenciones, asignar valores en stack o reemplazar internamente el contador por
-una variante local cuando demuestre que una identidad no cruza una frontera; no
-puede alterar `Send`, `Share`, liveness, COW ni el resultado de `WeakRef.upgrade`.
-Otras implementaciones conservan libertad para tracing GC o diseños híbridos.
+Un backend nativo futuro puede utilizar ARC con recolección de ciclos, escape
+analysis u otra estrategia. Tal elección pertenece a la implementación: no
+puede alterar `Copy`, `Send`, `Share`, liveness, identidad, COW, cleanup ni
+ningún resultado observable definido por esta edición.
 
 ### 16.8 Recursos externos
 
@@ -8068,9 +8014,9 @@ del target. Un modo estricto puede promoverlos, pero conserva el código `W`.
 
 La conformidad completa de la edición 0.1 requiere una suite versionada denominada
 `tondo-conformance-0.1`. Los ejemplos y doc-tests de esta especificación ayudan a
-detectar inconsistencias editoriales, pero no sustituyen esa suite. Este Markdown
-define su contrato, no afirma que el artefacto ya exista: una publicación final de
-la edición debe distribuir la suite y una release de conformidad publica:
+detectar inconsistencias editoriales, pero no sustituyen esa suite. La
+distribución oficial de Tondo 0.1 incluye un manifiesto portátil de la suite y
+una release de conformidad publica:
 
 - Un manifiesto con versión de suite, edición y hashes de todos los casos.
 - El target, perfil de host y capacidades exigidos por cada grupo.
@@ -8120,11 +8066,10 @@ ciclo sin roots se recupera bajo presión y que se intenta una pasada completa
 antes de OOM. El adaptador usa el allocator y collector reales y no es accesible
 desde fuente Tondo.
 
-La implementación de referencia dispone además de una suite propia que comprueba
-contadores atómicos, upgrade linealizable de `WeakRef`, liberación iterativa y
-trial deletion. Sus hooks para forzar una pasada de ciclos solo existen en builds
-de test del runtime: no forman parte del lenguaje ni pueden cambiar la semántica
-del programa probado.
+La implementación de referencia comprueba su collector mark-and-sweep mediante
+el adaptador privado de la suite. Sus hooks para construir ciclos, mantener
+roots y aplicar presión solo existen en builds de conformidad del runtime: no
+forman parte del lenguaje ni pueden cambiar la semántica del programa probado.
 
 Ningún modo oculto de conformidad puede relajar checks, cambiar overflow,
 scheduling observable o sustituir una ruta real por un resultado prefabricado.

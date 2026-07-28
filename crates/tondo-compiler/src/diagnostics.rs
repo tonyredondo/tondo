@@ -769,6 +769,41 @@ mod tests {
     }
 
     #[test]
+    fn json_lines_bytes_are_frozen_for_tondo_0_1() {
+        let mut sources = SourceDatabase::new();
+        let file = add_source(
+            &mut sources,
+            "root:test",
+            "app",
+            "main.to",
+            "abc".as_bytes(),
+        );
+        let span = sources.span(file, TextRange::new(0, 1).unwrap()).unwrap();
+        let diagnostic = Diagnostic::new(
+            Severity::Error,
+            DiagnosticCode::new("E1001").unwrap(),
+            "unknown name",
+            PrimaryLocation::Source(span),
+        )
+        .unwrap()
+        .with_expected_actual(Some("value".into()), Some("other".into()));
+        let mut bag = DiagnosticBag::new();
+        bag.push(diagnostic);
+
+        assert_eq!(
+            bag.resolve("0.1", &sources).unwrap().json_lines().unwrap(),
+            concat!(
+                "{\"id\":\"diag:402e26f2d8ee789c629ef886a2f409307dda697c52ccc063a378faaa1477e9f8\",",
+                "\"severity\":\"error\",\"code\":\"E1001\",\"message\":\"unknown name\",",
+                "\"source_id\":\"root:test\",\"module\":\"app\",\"file\":\"main.to\",",
+                "\"range\":{\"start\":{\"byte\":0,\"line\":0,\"column\":0},",
+                "\"end\":{\"byte\":1,\"line\":0,\"column\":1}},",
+                "\"expected\":\"value\",\"actual\":\"other\",\"related\":[],\"fixes\":[]}\n"
+            )
+        );
+    }
+
+    #[test]
     fn fixes_reject_overlapping_edits() {
         let mut sources = SourceDatabase::new();
         let file = add_source(

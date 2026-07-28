@@ -1,10 +1,11 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use tondo_compiler::driver::{
     BuildTarget, CompilationRequest, CompilationStatus, DiagnosticFormat, Edition, HostProfile,
-    Operation, ResourceLimits, SourceForm, execute,
+    Operation, ResourceLimits, SourceForm, WarningProfile, execute,
 };
 use tondo_compiler::package::PackageGraph;
 use tondo_compiler::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
@@ -90,7 +91,8 @@ impl Fixture {
             sources,
             root,
         )
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| error.to_string())?
+        .with_warning_profiles(read_warning_profiles(&self.sidecar("profiles"))?);
         let output = execute(request).map_err(|error| error.to_string())?;
         let codes = output
             .diagnostics()
@@ -227,6 +229,38 @@ fn required_codes(path: &Path) -> Result<Vec<String>, String> {
         .filter(|line| !line.is_empty())
         .map(str::to_owned)
         .collect())
+}
+
+fn read_warning_profiles(path: &Path) -> Result<Vec<WarningProfile>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let contents = fs::read_to_string(path).map_err(|error| error.to_string())?;
+    let mut profiles = BTreeSet::new();
+    for name in contents.lines().filter(|line| !line.is_empty()) {
+        let profile = match name {
+            "core" => WarningProfile::Core,
+            _ => {
+                return Err(format!(
+                    "{} declares unknown warning profile `{name}`",
+                    path.display()
+                ));
+            }
+        };
+        if !profiles.insert(profile) {
+            return Err(format!(
+                "{} declares warning profile `{name}` more than once",
+                path.display()
+            ));
+        }
+    }
+    if profiles.is_empty() {
+        return Err(format!(
+            "{} must declare at least one warning profile",
+            path.display()
+        ));
+    }
+    Ok(profiles.into_iter().collect())
 }
 
 fn compare_optional_text(path: &Path, actual: &str) -> Result<(), String> {

@@ -1,17 +1,16 @@
 # Tondo: tracker de implementación
 
-**Estado:** activo  
+**Estado:** M10 y Gate G5 cerrados; Tondo 0.1.0 publicado
 
-**Versión del tracker:** 0.80
+**Versión del tracker:** 0.82
 
 **Última actualización:** 2026-07-28
 
-**Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
+**Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md)
 
-**Objetivo inmediato:** M9 y Gate G4 cerrados con unsafe explícito, targets,
-proyectos cerrados, interfaces y artefactos deterministas. La siguiente unidad
-de trabajo, cuando se reanude, es CONF-001; esta entrega se detiene antes de
-iniciar M10.
+**Objetivo inmediato:** Tondo 0.1.0 queda publicado y certificado para
+`tondo-vm-hosted` / `hosted` / `[console, process]`. Esta entrega se detiene al
+cerrar M10; cuando el trabajo se reanude, M11 comienza por NATIVE-001.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -262,19 +261,22 @@ necesaria; la fragmentación del workspace no.
 | **M7 — Async y concurrencia estructurada** | Tasks conformes | Completado |
 | **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
-| **M10 — Conformidad y release** | Gate G5: Tondo 0.1 | Pendiente |
+| **M10 — Conformidad y release** | Gate G5: Tondo 0.1 | Completado |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 
 Estado observado del workspace:
 
-- Repositorio local: `/tmp/tondo`, branch `main`, con upstream en
+- Repositorio local: `/media/portable/Tony/Projects/tondo`, branch `main`, con
+  upstream en
   `github.com/tonyredondo/tondo`.
-- Workspace: `tondo-cli`, `tondo-compiler` y `tondo-vm`.
+- Workspace: `tondo-cli`, `tondo-compiler`, `tondo-conformance`,
+  `tondo-reference-adapter` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
-  mínima soportada aún no está fijada.
+  mínima soportada queda fijada en Rust 1.93.
 - Última validación: 2026-07-28, con formatter check, `cargo check` de todos los
-  targets, Clippy con warnings denegados, 659 tests, Rustdoc con warnings
-  denegados y metadatos locked.
+  targets, Clippy con warnings denegados, 685 tests, Rustdoc con warnings
+  denegados y metadatos locked. La suite oficial pasa 205 casos y 424
+  repeticiones byte-estables.
 
 ### 4.1 Ruta crítica
 
@@ -2033,13 +2035,13 @@ versionada y reproducible.
 
 - [x] **CONF-006 — Crear grupo de consultas semánticas y fixes JSON.**
 
-- [ ] **CONF-007 — Crear grupo runtime.**
+- [x] **CONF-007 — Crear grupo runtime.**
 
-- [ ] **CONF-008 — Crear grupo de concurrencia.**
+- [x] **CONF-008 — Crear grupo de concurrencia.**
 
-- [ ] **CONF-009 — Crear grupo `hosted`.**
+- [x] **CONF-009 — Crear grupo `hosted`.**
 
-- [ ] **CONF-010 — Crear adaptador privado de memoria.** Debe probar roots,
+- [x] **CONF-010 — Crear adaptador privado de memoria.** Debe probar roots,
   ciclos, presión y reintento previo a OOM usando el collector real.
 
 ### 15.2 Cobertura
@@ -2057,38 +2059,55 @@ versionada y reproducible.
 
 - [x] **QUERY-CONF-001 — Validar schema, IDs, orden, spans, related y fixes.**
 
-- [ ] **DETERMINISM-001 — Repetir builds con orden físico de archivos
+- [x] **DETERMINISM-001 — Repetir builds con orden físico de archivos
   perturbado.**
 
-- [ ] **MEM-CONF-001 — Probar reachability y ciclos bajo presión.**
+- [x] **MEM-CONF-001 — Probar reachability y ciclos bajo presión.**
 
-- [ ] **CONC-CONF-001 — Repetir litmus tests con límites calibrados.**
+- [x] **CONC-CONF-001 — Repetir litmus tests con límites calibrados.**
 
 ### 15.3 Release
 
-- [ ] **REL-001 — Publicar matriz exacta de target, perfil y capacidades.**
+- [x] **REL-001 — Publicar matriz exacta de target, perfil y capacidades.**
 
-- [ ] **REL-002 — Publicar versión de compilador, formatter, edición y suite.**
+- [x] **REL-002 — Publicar versión de compilador, formatter, edición y suite.**
 
-- [ ] **REL-003 — Publicar resultados reproducibles de conformidad.**
+- [x] **REL-003 — Publicar resultados reproducibles de conformidad.**
 
-- [ ] **REL-004 — Documentar limitaciones que no contradigan capacidades
+- [x] **REL-004 — Documentar limitaciones que no contradigan capacidades
   anunciadas.**
 
-- [ ] **REL-005 — Verificar que no existe modo oculto que relaje checks.**
+- [x] **REL-005 — Verificar que no existe modo oculto que relaje checks.**
 
-- [ ] **REL-006 — Congelar el formato público de diagnostics JSON 0.1.**
+- [x] **REL-006 — Congelar el formato público de diagnostics JSON 0.1.**
 
-- [ ] **REL-007 — Etiquetar Tondo 0.1 únicamente después de superar todos los
+- [x] **REL-007 — Etiquetar Tondo 0.1 únicamente después de superar todos los
   grupos aplicables.**
 
 ### Gate G5
 
-- La versión exacta del toolchain pasa `tondo-conformance-0.1`.
-- El target y sus capacidades están declarados.
-- No hay exclusiones sin justificar por capacidad.
-- Los artefactos, resultados y versiones pueden reproducirse.
-- La documentación no afirma soporte más amplio que la evidencia.
+- [x] La versión exacta del toolchain pasa `tondo-conformance-0.1`.
+- [x] El target y sus capacidades están declarados.
+- [x] No hay exclusiones sin justificar por capacidad.
+- [x] Los artefactos, resultados y versiones pueden reproducirse.
+- [x] La documentación no afirma soporte más amplio que la evidencia.
+
+Evidencia de cierre:
+
+~~~text
+suite            = tondo-conformance-0.1 0.1.0
+manifest_sha256  = 67f12434001d5d9d17b0f2181afe3ec38cb07d6207e431cca164ec4854f0148b
+result_sha256    = d44e8eb853ccdc208b8a8ea044ddd2222a7e5ef148e91edc7c08ebec17425693
+cases            = 205
+repetitions      = 424
+workspace_tests  = 685
+target           = tondo-vm-hosted
+profile          = hosted
+capabilities     = [console, process]
+~~~
+
+El resultado estructurado se conserva en
+`conformance/0.1/results/tondo-reference-0.1.0-tondo-vm-hosted.json`.
 
 ---
 
@@ -2265,13 +2284,40 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-M4, M5, M6, M7, M8, M9 y Gate G4 quedan cerrados. La siguiente acción, cuando
-el trabajo se reanude, es CONF-001; esta entrega se detiene antes de iniciar
-M10.
+M4, M5, M6, M7, M8, M9, M10 y Gates G4/G5 quedan cerrados. La siguiente
+acción, únicamente cuando el trabajo se reanude, es NATIVE-001 de M11. Esta
+entrega se detiene antes de iniciar el backend nativo.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.82 — 2026-07-28
+
+- Se cierra M10 y Gate G5 con `tondo-conformance-0.1` versión `0.1.0`: 205
+  casos distribuidos en los diez grupos obligatorios y 424 repeticiones
+  completas para `tondo-vm-hosted` / `hosted` / `[console, process]`.
+- El manifiesto
+  `67f12434001d5d9d17b0f2181afe3ec38cb07d6207e431cca164ec4854f0148b`
+  fija todos los inputs. Dos ejecuciones completas producen bytes idénticos y
+  el resultado
+  `d44e8eb853ccdc208b8a8ea044ddd2222a7e5ef148e91edc7c08ebec17425693`.
+- Quedan cubiertos los 78 errores con vecino positivo, las once clases de
+  pánico, los nueve warnings `core`, formato idempotente, queries semánticas,
+  runtime, 32 repeticiones por litmus concurrente, host, los cuatro escenarios
+  privados de memoria, determinismo con orden inverso y documentación
+  normativa.
+- Diagnostics JSON 0.1 queda congelado con schema, IDs, ranges, children,
+  fixes y orden exactos. El perfil `core` solo añade warnings; un test verifica
+  que nunca relaja errores. El feature privado de conformidad no introduce un
+  dialecto ni cambia la ruta pública.
+- La revisión final corrige dos dependencias ambientales descubiertas por la
+  puerta completa: los fixtures declaran su warning profile mediante sidecar y
+  el spec queda anclado a la raíz real del workspace, con una regresión que
+  impide aceptar copias externas accidentales.
+- Formatter, check, Clippy con warnings denegados, 685 tests y Rustdoc pasan con
+  Rust/Cargo 1.93.0. La release se publica como `v0.1.0`; M11 queda fuera de
+  esta entrega.
 
 ### 0.81 — 2026-07-28
 

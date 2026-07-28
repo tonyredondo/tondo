@@ -1,6 +1,6 @@
 # Bootstrap resource limits
 
-**Status:** accepted defaults for implementation version 0.0.x
+**Status:** released defaults for implementation version 0.1.0
 
 These limits defend the compiler from untrusted inputs. They are implementation
 budgets, not Tondo language semantics. Embedding hosts may construct a request
