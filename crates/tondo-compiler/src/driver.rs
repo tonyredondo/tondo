@@ -872,6 +872,10 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
         Err(error) => return Err(error.into()),
     };
     let (hir_program, mut expression_diagnostics, expression_check_complete) = checked.into_parts();
+    let core_warnings = request.warning_profiles.contains(&WarningProfile::Core);
+    if !core_warnings {
+        expression_diagnostics.retain(|diagnostic| diagnostic.severity() != Severity::Warning);
+    }
     if expression_diagnostics
         .iter()
         .any(|diagnostic| diagnostic.severity() == Severity::Error)
@@ -893,7 +897,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
             products: None,
         });
     }
-    if request.warning_profiles.contains(&WarningProfile::Core) {
+    if core_warnings {
         let available = remaining_diagnostics.saturating_sub(expression_diagnostics.len());
         match crate::resolve::lint_core(&request.sources, &resolved_program, available) {
             Ok(warnings) => expression_diagnostics.extend(warnings),
@@ -2233,18 +2237,25 @@ fn main() {
 
     #[test]
     fn expression_warnings_do_not_reject_a_completed_check() {
-        let output = execute(source_request(
-            b"fn main() {\n    return\n    let unreachable = 1\n}\n",
-            SourceForm::Module,
-            ResourceLimits::default(),
-        ))
+        let output = execute(
+            source_request(
+                b"fn main() {\n    return\n    let unreachable = 1\n}\n",
+                SourceForm::Module,
+                ResourceLimits::default(),
+            )
+            .with_warning_profiles([WarningProfile::Core]),
+        )
         .unwrap();
         let diagnostics = output.diagnostics().diagnostics();
         assert_eq!(output.status(), CompilationStatus::Success);
-        assert_eq!(diagnostics.len(), 1);
         assert!(diagnostics.iter().any(|diagnostic| {
             diagnostic.code() == "W1006" && diagnostic.severity() == Severity::Warning
         }));
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| diagnostic.severity() == Severity::Warning)
+        );
         assert!(
             !diagnostics
                 .iter()
@@ -2264,11 +2275,10 @@ fn main() {
                 "W1008",
             ),
         ] {
-            let output = execute(source_request(
-                source,
-                SourceForm::Module,
-                ResourceLimits::default(),
-            ))
+            let output = execute(
+                source_request(source, SourceForm::Module, ResourceLimits::default())
+                    .with_warning_profiles([WarningProfile::Core]),
+            )
             .unwrap();
             let diagnostics = output.diagnostics().diagnostics();
             assert_eq!(output.status(), CompilationStatus::Success);
@@ -2278,6 +2288,25 @@ fn main() {
             }));
             assert!(!diagnostics.iter().any(|diagnostic| diagnostic.code() == "T0001"));
         }
+    }
+
+    #[test]
+    fn warning_profiles_are_closed_and_opt_in() {
+        let source = b"fn main() {\n    return\n    let unreachable = 1\n}\n";
+        let without_profile = execute(source_request(
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert!(without_profile.diagnostics().is_empty());
+
+        let with_core = execute(
+            source_request(source, SourceForm::Module, ResourceLimits::default())
+                .with_warning_profiles([WarningProfile::Core]),
+        )
+        .unwrap();
+        assert_eq!(with_core.diagnostics().diagnostics()[0].code(), "W1006");
     }
 
     #[test]

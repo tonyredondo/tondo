@@ -9,8 +9,8 @@ use serde_json::Value;
 
 use crate::document::extract_fences;
 use crate::manifest::{
-    CaseAction, ConformanceCase, DeterminismAction, Expectation, LoadedSuite, SemanticQuery,
-    SourceAction, SourceForm, SourceOperation,
+    CaseAction, ConformanceCase, DeterminismAction, Expectation, LoadedSuite, MemoryScenario,
+    SemanticQuery, SourceAction, SourceForm, SourceOperation,
 };
 use crate::protocol::{
     AdapterAction, AdapterRequest, AdapterResponse, AdapterResult, CompilationState, DocCategory,
@@ -659,6 +659,18 @@ fn assert_expected(
             }
         })?;
     }
+    if let CaseAction::Determinism(action) = &case.action {
+        validate_determinism_protocol(action, observation).map_err(|message| RunError::Case {
+            id: case.id.clone(),
+            message,
+        })?;
+    }
+    if let CaseAction::Memory { scenario } = &case.action {
+        validate_memory_protocol(*scenario, observation).map_err(|message| RunError::Case {
+            id: case.id.clone(),
+            message,
+        })?;
+    }
     let expected = expected
         .iter()
         .map(|value| {
@@ -873,6 +885,171 @@ fn validate_semantic_protocol(
             .map_err(|message| format!("semantic query {index}: {message}"))?;
     }
     validate_semantic_tree(&observation.data, "semantic observation")
+}
+
+fn validate_determinism_protocol(
+    action: &DeterminismAction,
+    observation: &Observation,
+) -> Result<(), String> {
+    let object = observation
+        .data
+        .as_object()
+        .ok_or_else(|| "determinism observation data must be an object".to_owned())?;
+    require_exact_keys(
+        object,
+        &["identical", "permutations", "schema"],
+        "determinism observation",
+    )?;
+    if string_field(object, "schema")? != "tondo-determinism-observation-0.1/1" {
+        return Err("determinism observation uses an unknown schema".into());
+    }
+    if object["identical"].as_bool() != Some(true) {
+        return Err("determinism observation must report identical products".into());
+    }
+    let permutations = object["permutations"]
+        .as_array()
+        .ok_or_else(|| "determinism `permutations` must be an array".to_owned())?;
+    if permutations.len() != 2 {
+        return Err("determinism observation must contain canonical and reverse builds".into());
+    }
+    let declared_inputs = action
+        .inputs
+        .iter()
+        .map(|input| input.logical_path.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut records = Vec::with_capacity(2);
+    for (expected_name, value) in ["canonical", "reverse"].into_iter().zip(permutations) {
+        let record = value
+            .as_object()
+            .ok_or_else(|| "determinism permutation must be an object".to_owned())?;
+        require_exact_keys(
+            record,
+            &[
+                "artifact_sha256",
+                "diagnostics_sha256",
+                "interface_sha256",
+                "name",
+                "source_order",
+            ],
+            "determinism permutation",
+        )?;
+        if string_field(record, "name")? != expected_name {
+            return Err(format!(
+                "determinism permutation must be named `{expected_name}`"
+            ));
+        }
+        let artifact = string_field(record, "artifact_sha256")?;
+        let diagnostics = string_field(record, "diagnostics_sha256")?;
+        let interface = string_field(record, "interface_sha256")?;
+        validate_sha256(artifact)?;
+        validate_sha256(diagnostics)?;
+        validate_sha256(interface)?;
+        let source_order = record["source_order"]
+            .as_array()
+            .ok_or_else(|| "determinism `source_order` must be an array".to_owned())?
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .ok_or_else(|| "determinism source path must be a string".to_owned())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        if source_order.len() < 2 {
+            return Err("determinism audit must perturb at least two source files".into());
+        }
+        if source_order
+            .iter()
+            .any(|path| !declared_inputs.contains(path))
+        {
+            return Err("determinism source order contains an undeclared input".into());
+        }
+        let unique = source_order
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        if unique.len() != source_order.len() {
+            return Err("determinism source order contains duplicates".into());
+        }
+        records.push((
+            artifact.to_owned(),
+            diagnostics.to_owned(),
+            interface.to_owned(),
+            source_order
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+        ));
+    }
+    if records[0].3.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err("canonical determinism source order is not sorted and unique".into());
+    }
+    let reversed = records[0].3.iter().rev().cloned().collect::<Vec<_>>();
+    if records[1].3 != reversed {
+        return Err("reverse determinism source order is not the exact inverse".into());
+    }
+    if records[0].0 != records[1].0 || records[0].1 != records[1].1 || records[0].2 != records[1].2
+    {
+        return Err("determinism permutation hashes differ".into());
+    }
+    Ok(())
+}
+
+fn validate_memory_protocol(
+    scenario: MemoryScenario,
+    observation: &Observation,
+) -> Result<(), String> {
+    let object = observation
+        .data
+        .as_object()
+        .ok_or_else(|| "memory observation data must be an object".to_owned())?;
+    require_exact_keys(
+        object,
+        &[
+            "collections",
+            "cycles_reclaimed",
+            "peak_live_objects",
+            "reclaimed_objects",
+            "retry_before_oom",
+            "retry_before_success",
+            "roots_preserved",
+            "scenario",
+            "schema",
+        ],
+        "memory observation",
+    )?;
+    if string_field(object, "schema")? != "tondo-memory-observation-0.1/1" {
+        return Err("memory observation uses an unknown schema".into());
+    }
+    let expected_name = match scenario {
+        MemoryScenario::ReachableRoots => "reachable-roots",
+        MemoryScenario::UnreachableCycles => "unreachable-cycles",
+        MemoryScenario::SustainedPressure => "sustained-pressure",
+        MemoryScenario::RetryBeforeOom => "retry-before-oom",
+    };
+    if string_field(object, "scenario")? != expected_name {
+        return Err(format!(
+            "memory observation does not describe `{expected_name}`"
+        ));
+    }
+    for field in ["collections", "peak_live_objects", "reclaimed_objects"] {
+        if object[field].as_u64().is_none_or(|value| value == 0) {
+            return Err(format!("memory `{field}` must be a positive integer"));
+        }
+    }
+    for field in ["cycles_reclaimed", "roots_preserved"] {
+        if object[field].as_bool() != Some(true) {
+            return Err(format!("memory `{field}` must be true"));
+        }
+    }
+    let expects_retry = scenario == MemoryScenario::RetryBeforeOom;
+    for field in ["retry_before_oom", "retry_before_success"] {
+        if object[field].as_bool() != Some(expects_retry) {
+            return Err(format!(
+                "memory `{field}` must be {expects_retry} for `{expected_name}`"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_semantic_query_result(query: &SemanticQuery, value: &Value) -> Result<(), String> {
@@ -1512,6 +1689,45 @@ mod tests {
         });
         let error = validate_semantic_tree(&data, "test").unwrap_err();
         assert!(error.contains("not sorted"), "{error}");
+    }
+
+    #[test]
+    fn determinism_protocol_requires_a_real_inverse_permutation() {
+        let pinned = crate::manifest::PinnedFile {
+            path: "fixture".into(),
+            sha256: "0".repeat(64),
+        };
+        let action = DeterminismAction {
+            manifest: pinned.clone(),
+            lockfile: pinned.clone(),
+            inputs: ["a.to", "z.to"]
+                .into_iter()
+                .map(|logical_path| crate::manifest::BuildInput {
+                    logical_path: logical_path.into(),
+                    contents: pinned.clone(),
+                })
+                .collect(),
+        };
+        let hash = "1".repeat(64);
+        let record = |name: &str| {
+            serde_json::json!({
+                "name": name,
+                "source_order": ["a.to", "z.to"],
+                "interface_sha256": hash,
+                "artifact_sha256": hash,
+                "diagnostics_sha256": hash
+            })
+        };
+        let observation = Observation {
+            data: serde_json::json!({
+                "schema": "tondo-determinism-observation-0.1/1",
+                "identical": true,
+                "permutations": [record("canonical"), record("reverse")]
+            }),
+            ..Observation::empty()
+        };
+        let error = validate_determinism_protocol(&action, &observation).unwrap_err();
+        assert!(error.contains("exact inverse"), "{error}");
     }
 
     #[test]

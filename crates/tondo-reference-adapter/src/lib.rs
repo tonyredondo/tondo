@@ -363,7 +363,11 @@ fn observe_memory(scenario: MemoryScenario) -> Result<Observation, String> {
     let result = run_memory_scenario(vm_scenario).map_err(|error| error.to_string())?;
     let mut observation = Observation::empty();
     observation.data = json!({
+        "schema": "tondo-memory-observation-0.1/1",
         "scenario": result.scenario,
+        "collections": result.collections,
+        "reclaimed_objects": result.reclaimed_objects,
+        "peak_live_objects": result.peak_live_objects,
         "roots_preserved": result.roots_preserved,
         "cycles_reclaimed": result.cycles_reclaimed,
         "retry_before_success": result.retry_before_success,

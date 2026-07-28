@@ -6,16 +6,20 @@ use std::process::ExitCode;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tondo_compiler::artifact::{CAPABILITY_REGISTRY, sha256 as project_sha256};
+use tondo_compiler::project::{
+    BOOTSTRAP_STANDARD_PACKAGE, LOCKFILE_FORMAT, MANIFEST_FORMAT, bootstrap_standard_hash,
+};
 use tondo_conformance::document::{DocumentFence, extract_fences};
 use tondo_conformance::manifest::{
-    CaseAction, CaseGroup, ConformanceCase, DocumentAction, Expectation, MemoryScenario,
-    NormativeRegistry, PinnedFile, SemanticAction, SemanticQuery, SourceAction, SourceFile,
-    SourceForm, SourceOperation, SuiteManifest, TargetDeclaration,
+    BuildInput, CaseAction, CaseGroup, ConformanceCase, DeterminismAction, DocumentAction,
+    Expectation, MemoryScenario, NormativeRegistry, PinnedFile, SemanticAction, SemanticQuery,
+    SourceAction, SourceFile, SourceForm, SourceOperation, SuiteManifest, TargetDeclaration,
 };
 use tondo_conformance::protocol::{
     AdapterAction, AdapterRequest, AdapterResult, CompilationState, DocCategory, Observation,
-    TargetSelection, WireDocumentFenceAction, WireOperation, WireSemanticAction, WireSource,
-    WireSourceAction, WireSourceForm,
+    TargetSelection, WireBuildInput, WireDeterminismAction, WireDocumentFenceAction, WireOperation,
+    WireSemanticAction, WireSource, WireSourceAction, WireSourceForm,
 };
 use tondo_reference_adapter::ReferenceAdapter;
 
@@ -67,6 +71,7 @@ fn bless() -> Result<String, String> {
             cases.push(case);
         }
     }
+    bless_determinism_case(&root, &target, &mut adapter, &mut sequence, &mut cases)?;
     bless_memory_cases(&root, &target, &mut adapter, &mut sequence, &mut cases)?;
     bless_document_case(
         &root,
@@ -278,7 +283,16 @@ fn bless_source_case(
             queries: metadata.queries.clone(),
         })
     };
-    let request = AdapterRequest::new(*sequence, id.clone(), target.clone(), action);
+    let request = AdapterRequest::new(
+        *sequence,
+        id.clone(),
+        TargetSelection {
+            name: target.name.clone(),
+            profile: target.profile.clone(),
+            capabilities: capabilities.clone(),
+        },
+        action,
+    );
     *sequence = sequence.saturating_add(1);
     let observation = exchange(adapter, &request)?;
 
@@ -351,6 +365,11 @@ fn bless_source_case(
     positive_for.sort();
     positive_for.dedup();
     let mut requirements = metadata.requirements;
+    requirements.extend(
+        group_requirements(group)
+            .iter()
+            .map(|requirement| (*requirement).to_owned()),
+    );
     requirements.sort();
     requirements.dedup();
     let manifest_action = SourceAction {
@@ -368,7 +387,10 @@ fn bless_source_case(
         target: target.name.clone(),
         profile: target.profile.clone(),
         capabilities,
-        repeat: metadata.repeat.unwrap_or(1),
+        repeat: metadata.repeat.unwrap_or(match group {
+            CaseGroup::Concurrency => 32,
+            _ => 1,
+        }),
         covers,
         positive_for,
         requirements,
@@ -386,6 +408,181 @@ fn bless_source_case(
     })
 }
 
+#[derive(Debug, Clone, Serialize)]
+struct LockedSourceFixture {
+    source_set: String,
+    physical_path: String,
+    logical_path: String,
+    module: String,
+    sha256: String,
+}
+
+#[derive(Serialize)]
+struct PackageFingerprintFixture<'a> {
+    package_id: &'a str,
+    dependencies: &'a [Value],
+    sources: &'a [LockedSourceFixture],
+    interface_hash: Option<&'a str>,
+}
+
+fn bless_determinism_case(
+    root: &Path,
+    target: &TargetSelection,
+    adapter: &mut ReferenceAdapter,
+    sequence: &mut u64,
+    cases: &mut Vec<ConformanceCase>,
+) -> Result<(), String> {
+    let case_root = root.join(ROOT).join("cases/determinism/project");
+    let package = "workspace:determinism@1";
+    let source_descriptions = [
+        ("project/src/a.to", "src/a.to", "a.to"),
+        ("project/src/main.to", "src/main.to", "main.to"),
+        ("project/src/z.to", "src/z.to", "z.to"),
+    ];
+    let mut locked_sources = Vec::with_capacity(source_descriptions.len());
+    let mut manifest_inputs = Vec::with_capacity(source_descriptions.len());
+    let mut wire_inputs = Vec::with_capacity(source_descriptions.len());
+    let mut manifest_source_entries = Vec::with_capacity(source_descriptions.len());
+    for (physical_path, logical_source, fixture_name) in source_descriptions {
+        let fixture_path = case_root.join(fixture_name);
+        let bytes = fs::read(&fixture_path).map_err(io_error)?;
+        let fixture = pinned(root, &logical_path(root, &fixture_path)?)?;
+        locked_sources.push(LockedSourceFixture {
+            source_set: "common".into(),
+            physical_path: physical_path.into(),
+            logical_path: logical_source.into(),
+            module: "main".into(),
+            sha256: project_sha256(&bytes),
+        });
+        manifest_inputs.push(BuildInput {
+            logical_path: physical_path.into(),
+            contents: fixture,
+        });
+        wire_inputs.push(WireBuildInput {
+            logical_path: physical_path.into(),
+            contents_hex: tondo_conformance::encode_hex(&bytes),
+        });
+        manifest_source_entries.push(json!({
+            "physical_path": physical_path,
+            "logical_path": logical_source,
+            "module": "main"
+        }));
+    }
+
+    let manifest_bytes = serde_json::to_vec(&json!({
+        "format": MANIFEST_FORMAT,
+        "target": {
+            "name": target.name,
+            "profile": target.profile,
+            "capability_registry": CAPABILITY_REGISTRY,
+            "capabilities": target.capabilities,
+            "features": []
+        },
+        "root": {
+            "package": package,
+            "source": "project/src/main.to",
+            "form": "module"
+        },
+        "standard": BOOTSTRAP_STANDARD_PACKAGE,
+        "packages": [{
+            "id": package,
+            "local_name": "app",
+            "edition": "0.1",
+            "dependencies": [],
+            "source_sets": [{
+                "id": "common",
+                "sources": manifest_source_entries
+            }]
+        }],
+        "generator_inputs": [],
+        "privileged_units": []
+    }))
+    .map_err(|error| error.to_string())?;
+    let manifest_path = case_root.join("Tondo.json");
+    write_generated(&manifest_path, &manifest_bytes)?;
+
+    let empty_dependencies = Vec::<Value>::new();
+    let package_content_hash = project_sha256(
+        &serde_json::to_vec(&PackageFingerprintFixture {
+            package_id: package,
+            dependencies: &empty_dependencies,
+            sources: &locked_sources,
+            interface_hash: None,
+        })
+        .map_err(|error| error.to_string())?,
+    );
+    let lockfile_bytes = serde_json::to_vec(&json!({
+        "format": LOCKFILE_FORMAT,
+        "manifest_hash": project_sha256(&manifest_bytes),
+        "standard": {
+            "package_id": BOOTSTRAP_STANDARD_PACKAGE,
+            "content_hash": bootstrap_standard_hash()
+        },
+        "packages": [{
+            "id": package,
+            "content_hash": package_content_hash,
+            "dependencies": [],
+            "sources": locked_sources,
+            "interface": null
+        }],
+        "generator_inputs": [],
+        "privileged_units": []
+    }))
+    .map_err(|error| error.to_string())?;
+    let lockfile_path = case_root.join("Tondo.lock");
+    write_generated(&lockfile_path, &lockfile_bytes)?;
+
+    let id = "determinism/project-source-order".to_owned();
+    let request = AdapterRequest::new(
+        *sequence,
+        id.clone(),
+        target.clone(),
+        AdapterAction::Determinism(WireDeterminismAction {
+            manifest_hex: tondo_conformance::encode_hex(&manifest_bytes),
+            lockfile_hex: tondo_conformance::encode_hex(&lockfile_bytes),
+            inputs: wire_inputs,
+        }),
+    );
+    *sequence = sequence.saturating_add(1);
+    let observation = exchange(adapter, &request)?;
+    if observation.compilation != CompilationState::Success
+        || observation.exit_code != 0
+        || !observation.diagnostics.is_empty()
+        || observation.data["identical"] != true
+    {
+        return Err(format!(
+            "{id} did not reproduce exact build products: {}",
+            serde_json::to_string_pretty(&observation).map_err(|error| error.to_string())?
+        ));
+    }
+    let expectation = pattern(&observation, false)?;
+    let expectation_path = case_root.join("project-source-order.expect.json");
+    write_generated(
+        &expectation_path,
+        &serde_json::to_vec(&expectation).map_err(|error| error.to_string())?,
+    )?;
+    cases.push(ConformanceCase {
+        id,
+        group: CaseGroup::Determinism,
+        target: target.name.clone(),
+        profile: target.profile.clone(),
+        capabilities: target.capabilities.clone(),
+        repeat: 3,
+        covers: Vec::new(),
+        positive_for: Vec::new(),
+        requirements: vec!["DETERMINISM-001".into()],
+        action: CaseAction::Determinism(DeterminismAction {
+            manifest: pinned(root, &logical_path(root, &manifest_path)?)?,
+            lockfile: pinned(root, &logical_path(root, &lockfile_path)?)?,
+            inputs: manifest_inputs,
+        }),
+        expectation: Expectation::Exact {
+            observation: pinned(root, &logical_path(root, &expectation_path)?)?,
+        },
+    });
+    Ok(())
+}
+
 fn bless_memory_cases(
     root: &Path,
     target: &TargetSelection,
@@ -393,27 +590,11 @@ fn bless_memory_cases(
     sequence: &mut u64,
     cases: &mut Vec<ConformanceCase>,
 ) -> Result<(), String> {
-    for (name, scenario, requirement) in [
-        (
-            "reachable-roots",
-            MemoryScenario::ReachableRoots,
-            "MEM-CONF-001",
-        ),
-        (
-            "unreachable-cycles",
-            MemoryScenario::UnreachableCycles,
-            "MEM-CONF-001",
-        ),
-        (
-            "sustained-pressure",
-            MemoryScenario::SustainedPressure,
-            "CONF-010",
-        ),
-        (
-            "retry-before-oom",
-            MemoryScenario::RetryBeforeOom,
-            "CONF-010",
-        ),
+    for (name, scenario) in [
+        ("reachable-roots", MemoryScenario::ReachableRoots),
+        ("unreachable-cycles", MemoryScenario::UnreachableCycles),
+        ("sustained-pressure", MemoryScenario::SustainedPressure),
+        ("retry-before-oom", MemoryScenario::RetryBeforeOom),
     ] {
         let id = format!("memory/{name}");
         let request = AdapterRequest::new(
@@ -442,7 +623,7 @@ fn bless_memory_cases(
             repeat: 1,
             covers: Vec::new(),
             positive_for: Vec::new(),
-            requirements: vec![requirement.into()],
+            requirements: vec!["CONF-010".into(), "MEM-CONF-001".into()],
             action: CaseAction::Memory { scenario },
             expectation: Expectation::Exact {
                 observation: pinned(root, &logical_path(root, &expectation_path)?)?,
@@ -611,6 +792,17 @@ fn source_groups() -> [(&'static str, CaseGroup); 7] {
         ("concurrency", CaseGroup::Concurrency),
         ("hosted", CaseGroup::Hosted),
     ]
+}
+
+fn group_requirements(group: CaseGroup) -> &'static [&'static str] {
+    match group {
+        CaseGroup::LexParseFormat => &["CONF-004", "FMT-CONF-001"],
+        CaseGroup::CompilePass | CaseGroup::CompileFail => &["CONF-005"],
+        CaseGroup::Runtime => &["CONF-007"],
+        CaseGroup::Concurrency => &["CONC-CONF-001", "CONF-008"],
+        CaseGroup::Hosted => &["CONF-009"],
+        _ => &[],
+    }
 }
 
 fn wire_operation(operation: SourceOperation) -> WireOperation {

@@ -388,7 +388,259 @@ fn validate_manifest(manifest: &SuiteManifest) -> Result<(), ManifestError> {
     for case in &manifest.cases {
         validate_case(case, &manifest.registry, &target_profiles)?;
     }
+    validate_release_contract(manifest)?;
     Ok(())
+}
+
+fn validate_release_contract(manifest: &SuiteManifest) -> Result<(), ManifestError> {
+    let [target] = manifest.targets.as_slice() else {
+        return invalid("Tondo 0.1 must declare exactly one release target");
+    };
+    if target.name != "tondo-vm-hosted"
+        || target.profile != "hosted"
+        || target
+            .capabilities
+            .iter()
+            .map(String::as_str)
+            .ne(["console", "process"])
+    {
+        return invalid(
+            "Tondo 0.1 release target must be tondo-vm-hosted/hosted with [console, process]",
+        );
+    }
+
+    let groups = manifest
+        .cases
+        .iter()
+        .map(|case| case.group)
+        .collect::<BTreeSet<_>>();
+    for group in [
+        CaseGroup::LexParseFormat,
+        CaseGroup::CompilePass,
+        CaseGroup::CompileFail,
+        CaseGroup::SemanticQueries,
+        CaseGroup::Runtime,
+        CaseGroup::Concurrency,
+        CaseGroup::Hosted,
+        CaseGroup::Memory,
+        CaseGroup::Determinism,
+        CaseGroup::Documentation,
+    ] {
+        if !groups.contains(&group) {
+            return invalid(format!("release suite has no {group:?} cases"));
+        }
+    }
+
+    let requirements = manifest
+        .cases
+        .iter()
+        .flat_map(|case| case.requirements.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    for requirement in [
+        "CONF-002",
+        "CONF-003",
+        "CONF-004",
+        "CONF-005",
+        "CONF-006",
+        "CONF-007",
+        "CONF-008",
+        "CONF-009",
+        "CONF-010",
+        "CONC-CONF-001",
+        "DETERMINISM-001",
+        "FMT-CONF-001",
+        "MEM-CONF-001",
+        "QUERY-CONF-001",
+    ] {
+        if !requirements.contains(requirement) {
+            return invalid(format!(
+                "release suite has no case for requirement `{requirement}`"
+            ));
+        }
+    }
+
+    let covered = manifest
+        .cases
+        .iter()
+        .flat_map(|case| case.covers.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    let positive = manifest
+        .cases
+        .iter()
+        .flat_map(|case| case.positive_for.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    for code in &manifest.registry.errors {
+        if !covered.contains(code.as_str()) {
+            return invalid(format!("release suite does not cover `{code}`"));
+        }
+        if !positive.contains(code.as_str()) {
+            return invalid(format!(
+                "release suite has no positive neighbor for `{code}`"
+            ));
+        }
+    }
+    for code in &manifest.registry.panics {
+        if !covered.contains(code.as_str()) {
+            return invalid(format!("release suite does not cover `{code}`"));
+        }
+    }
+
+    let core_warning_codes = [
+        "W1001", "W1002", "W1003", "W1004", "W1005", "W1006", "W1007", "W1008", "W1011",
+    ];
+    let core_covered = manifest
+        .cases
+        .iter()
+        .filter(|case| {
+            case_source_action(case)
+                .is_some_and(|action| action.warning_profiles.iter().any(|name| name == "core"))
+        })
+        .flat_map(|case| case.covers.iter().map(String::as_str))
+        .collect::<BTreeSet<_>>();
+    for code in core_warning_codes {
+        if !core_covered.contains(code) {
+            return invalid(format!(
+                "core warning profile has no conformance case for `{code}`"
+            ));
+        }
+    }
+
+    let mut omitted_capabilities = BTreeSet::new();
+    let mut memory_scenarios = BTreeSet::new();
+    let mut determinism_cases = 0;
+    let mut documentation_cases = 0;
+    for case in &manifest.cases {
+        let group_requirements: &[&str] = match case.group {
+            CaseGroup::LexParseFormat => &["CONF-004", "FMT-CONF-001"],
+            CaseGroup::CompilePass | CaseGroup::CompileFail => &["CONF-005"],
+            CaseGroup::SemanticQueries => &["CONF-006", "QUERY-CONF-001"],
+            CaseGroup::Runtime => &["CONF-007"],
+            CaseGroup::Concurrency => &["CONC-CONF-001", "CONF-008"],
+            CaseGroup::Hosted => &["CONF-009"],
+            CaseGroup::Memory => &["CONF-010", "MEM-CONF-001"],
+            CaseGroup::Determinism => &["DETERMINISM-001"],
+            CaseGroup::Documentation => &["CONF-002", "CONF-003"],
+        };
+        for requirement in group_requirements {
+            if !case.requirements.iter().any(|actual| actual == requirement) {
+                return invalid(format!(
+                    "case `{}` lacks group requirement `{requirement}`",
+                    case.id
+                ));
+            }
+        }
+
+        if case.capabilities != target.capabilities {
+            if !case.covers.iter().any(|code| code == "E1008")
+                || !case
+                    .requirements
+                    .iter()
+                    .any(|requirement| requirement == "CONF-009")
+            {
+                return invalid(format!(
+                    "case `{}` omits a target capability without an E1008 boundary proof",
+                    case.id
+                ));
+            }
+            omitted_capabilities.extend(
+                target
+                    .capabilities
+                    .iter()
+                    .filter(|capability| !case.capabilities.contains(capability))
+                    .cloned(),
+            );
+        }
+        if case.group == CaseGroup::Concurrency && case.repeat < 32 {
+            return invalid(format!(
+                "concurrency case `{}` must run at least 32 calibrated repetitions",
+                case.id
+            ));
+        }
+
+        match (&case.group, &case.action) {
+            (
+                CaseGroup::Runtime | CaseGroup::Concurrency | CaseGroup::Hosted,
+                CaseAction::Source(action),
+            ) if action.operation == SourceOperation::Run => {}
+            (
+                CaseGroup::Runtime | CaseGroup::Concurrency | CaseGroup::Hosted,
+                CaseAction::Source(_),
+            ) => {
+                return invalid(format!("executable case `{}` must run", case.id));
+            }
+            (CaseGroup::CompilePass, CaseAction::Source(action))
+                if action.operation == SourceOperation::Check => {}
+            (CaseGroup::CompilePass, CaseAction::Source(_)) => {
+                return invalid(format!("compile-pass case `{}` must check", case.id));
+            }
+            (CaseGroup::Memory, CaseAction::Memory { scenario }) => {
+                memory_scenarios.insert(match scenario {
+                    MemoryScenario::ReachableRoots => "reachable-roots",
+                    MemoryScenario::UnreachableCycles => "unreachable-cycles",
+                    MemoryScenario::SustainedPressure => "sustained-pressure",
+                    MemoryScenario::RetryBeforeOom => "retry-before-oom",
+                });
+            }
+            (CaseGroup::Determinism, CaseAction::Determinism(_)) => {
+                determinism_cases += 1;
+                if case.repeat < 3 {
+                    return invalid("determinism case must run at least three repetitions");
+                }
+            }
+            (CaseGroup::Documentation, CaseAction::Document(_)) => {
+                documentation_cases += 1;
+            }
+            _ => {}
+        }
+    }
+    if omitted_capabilities != target.capabilities.iter().cloned().collect::<BTreeSet<_>>() {
+        return invalid("release suite does not prove every absent capability boundary");
+    }
+    if memory_scenarios
+        != [
+            "reachable-roots",
+            "retry-before-oom",
+            "sustained-pressure",
+            "unreachable-cycles",
+        ]
+        .into_iter()
+        .collect()
+        || manifest
+            .cases
+            .iter()
+            .filter(|case| case.group == CaseGroup::Memory)
+            .count()
+            != 4
+    {
+        return invalid("release suite must contain each private memory scenario exactly once");
+    }
+    if determinism_cases != 1 {
+        return invalid("release suite must contain exactly one closed-project determinism case");
+    }
+    if documentation_cases != 1 {
+        return invalid("release suite must contain exactly one normative documentation case");
+    }
+    if !manifest.cases.iter().any(|case| {
+        case.group == CaseGroup::LexParseFormat
+            && matches!(
+                &case.action,
+                CaseAction::Source(SourceAction {
+                    operation: SourceOperation::Format,
+                    ..
+                })
+            )
+    }) {
+        return invalid("release suite has no formatter case");
+    }
+    Ok(())
+}
+
+fn case_source_action(case: &ConformanceCase) -> Option<&SourceAction> {
+    match &case.action {
+        CaseAction::Source(action) => Some(action),
+        CaseAction::Semantic(action) => Some(&action.source),
+        CaseAction::Memory { .. } | CaseAction::Determinism(_) | CaseAction::Document(_) => None,
+    }
 }
 
 fn validate_registry(registry: &NormativeRegistry) -> Result<(), ManifestError> {
@@ -468,8 +720,28 @@ fn validate_case(
 
 fn validate_case_action(case: &ConformanceCase) -> Result<(), ManifestError> {
     match &case.action {
-        CaseAction::Source(action) => validate_source_action(&case.id, action),
+        CaseAction::Source(action) => {
+            if matches!(
+                case.group,
+                CaseGroup::SemanticQueries
+                    | CaseGroup::Memory
+                    | CaseGroup::Determinism
+                    | CaseGroup::Documentation
+            ) {
+                return invalid(format!(
+                    "source case `{}` cannot belong to the {:?} group",
+                    case.id, case.group
+                ));
+            }
+            validate_source_action(&case.id, action)
+        }
         CaseAction::Semantic(action) => {
+            if case.group != CaseGroup::SemanticQueries {
+                return invalid(format!(
+                    "semantic case `{}` must belong to the semantic-queries group",
+                    case.id
+                ));
+            }
             validate_source_action(&case.id, &action.source)?;
             if action.source.operation != SourceOperation::Check {
                 return invalid(format!(
@@ -495,6 +767,12 @@ fn validate_case_action(case: &ConformanceCase) -> Result<(), ManifestError> {
             Ok(())
         }
         CaseAction::Determinism(action) => {
+            if case.group != CaseGroup::Determinism {
+                return invalid(format!(
+                    "determinism case `{}` must belong to the determinism group",
+                    case.id
+                ));
+            }
             if action.inputs.is_empty() {
                 return invalid(format!(
                     "determinism case `{}` must declare project inputs",

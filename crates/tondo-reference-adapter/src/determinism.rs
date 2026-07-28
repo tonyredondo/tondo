@@ -4,10 +4,10 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use tondo_compiler::driver::{DiagnosticFormat, Operation, ResourceLimits, execute};
 use tondo_compiler::project::ProjectPlan;
-use tondo_conformance::decode_hex;
 use tondo_conformance::protocol::{
     AdapterRequest, CompilationState, Observation, WireDeterminismAction,
 };
+use tondo_conformance::{decode_hex, sha256};
 
 pub(crate) fn observe_determinism(
     _request: &AdapterRequest,
@@ -16,22 +16,30 @@ pub(crate) fn observe_determinism(
     let manifest = decode_hex(&action.manifest_hex)?;
     let lockfile = decode_hex(&action.lockfile_hex)?;
     let plan = ProjectPlan::parse(&manifest, &lockfile).map_err(|error| error.to_string())?;
-    let mut forward = BTreeMap::new();
+    let mut inputs = BTreeMap::new();
     for input in &action.inputs {
-        forward.insert(
-            input.logical_path.clone(),
-            Arc::<[u8]>::from(decode_hex(&input.contents_hex)?),
-        );
+        if inputs
+            .insert(
+                input.logical_path.clone(),
+                Arc::<[u8]>::from(decode_hex(&input.contents_hex)?),
+            )
+            .is_some()
+        {
+            return Err(format!(
+                "determinism input `{}` is duplicated",
+                input.logical_path
+            ));
+        }
     }
-    let reverse = forward
-        .iter()
-        .rev()
-        .map(|(path, bytes)| (path.clone(), Arc::clone(bytes)))
-        .collect::<BTreeMap<_, _>>();
-    let first = compile(&plan, &forward)?;
-    let second = compile(&plan, &reverse)?;
+    let canonical = plan
+        .selected_source_paths()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let reverse = canonical.iter().rev().cloned().collect::<Vec<_>>();
+    let first = compile(&plan, &inputs, &canonical)?;
+    let second = compile(&plan, &inputs, &reverse)?;
     let identical = first == second;
-    let (_interface, _artifact, diagnostics) = first;
+    let diagnostics = first.diagnostics.clone();
     let mut observation = Observation::empty();
     observation.compilation = if identical {
         CompilationState::Success
@@ -41,18 +49,46 @@ pub(crate) fn observe_determinism(
     observation.exit_code = i32::from(!identical);
     observation.diagnostics = diagnostics;
     observation.data = json!({
-        "identical": identical
+        "schema": "tondo-determinism-observation-0.1/1",
+        "identical": identical,
+        "permutations": [
+            first.record("canonical", canonical),
+            second.record("reverse", reverse)
+        ]
     });
     Ok(observation)
 }
 
-type BuildObservation = (Vec<u8>, Vec<u8>, Vec<Value>);
+#[derive(Debug, PartialEq, Eq)]
+struct BuildObservation {
+    interface: Vec<u8>,
+    artifact: Vec<u8>,
+    diagnostics: Vec<Value>,
+}
+
+impl BuildObservation {
+    fn record(&self, name: &str, source_order: Vec<String>) -> Value {
+        json!({
+            "name": name,
+            "source_order": source_order,
+            "interface_sha256": sha256(&self.interface),
+            "artifact_sha256": sha256(&self.artifact),
+            "diagnostics_sha256": sha256(
+                &serde_json::to_vec(&self.diagnostics)
+                    .expect("diagnostic observations are serializable")
+            )
+        })
+    }
+}
 
 fn compile(
     plan: &ProjectPlan,
     inputs: &BTreeMap<String, Arc<[u8]>>,
+    source_order: &[String],
 ) -> Result<BuildObservation, String> {
-    let project = plan.resolve(inputs).map_err(|error| error.to_string())?;
+    let project = plan
+        .resolve_with_source_order(inputs, source_order)
+        .map_err(|error| error.to_string())?;
     let request = project
         .into_compilation_request(
             Operation::Check,
@@ -78,5 +114,9 @@ fn compile(
         .ok_or_else(|| "determinism build produced no build artifact".to_owned())?
         .encode()
         .map_err(|error| error.to_string())?;
-    Ok((interface, artifact, diagnostics))
+    Ok(BuildObservation {
+        interface,
+        artifact,
+        diagnostics,
+    })
 }

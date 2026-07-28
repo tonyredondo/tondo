@@ -268,6 +268,13 @@ impl ProjectPlan {
         &self.selected_source_sets
     }
 
+    /// Physical source paths in the canonical production insertion order.
+    pub fn selected_source_paths(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.selected_sources
+            .iter()
+            .map(|source| source.physical_path.as_str())
+    }
+
     pub fn required_inputs(&self) -> impl ExactSizeIterator<Item = RequiredProjectInput> + '_ {
         self.required_inputs
             .iter()
@@ -281,6 +288,53 @@ impl ProjectPlan {
     pub fn resolve(
         &self,
         supplied: &BTreeMap<String, Arc<[u8]>>,
+    ) -> Result<ResolvedProject, ProjectError> {
+        let source_order = self.selected_sources.iter().collect::<Vec<_>>();
+        self.resolve_in_source_order(supplied, &source_order)
+    }
+
+    /// Resolves the same closed project while deliberately perturbing only
+    /// `SourceDatabase` insertion order.
+    ///
+    /// This hook exists for reproducibility audits. Production callers use
+    /// [`Self::resolve`], whose order is canonical. The supplied permutation
+    /// must contain every selected physical source path exactly once; it
+    /// cannot add, remove, or substitute an input.
+    pub fn resolve_with_source_order(
+        &self,
+        supplied: &BTreeMap<String, Arc<[u8]>>,
+        source_order: &[String],
+    ) -> Result<ResolvedProject, ProjectError> {
+        let expected = self
+            .selected_sources
+            .iter()
+            .map(|source| source.physical_path.as_str())
+            .collect::<BTreeSet<_>>();
+        let actual = source_order
+            .iter()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>();
+        if source_order.len() != expected.len() || actual != expected {
+            return Err(ProjectError::InvalidSourceOrder(
+                "source order must be an exact permutation of selected project sources".into(),
+            ));
+        }
+        let by_path = self
+            .selected_sources
+            .iter()
+            .map(|source| (source.physical_path.as_str(), source))
+            .collect::<BTreeMap<_, _>>();
+        let source_order = source_order
+            .iter()
+            .map(|path| by_path[path.as_str()])
+            .collect::<Vec<_>>();
+        self.resolve_in_source_order(supplied, &source_order)
+    }
+
+    fn resolve_in_source_order(
+        &self,
+        supplied: &BTreeMap<String, Arc<[u8]>>,
+        source_order: &[&PlannedSource],
     ) -> Result<ResolvedProject, ProjectError> {
         for path in supplied.keys() {
             if !self.required_inputs.contains_key(path) {
@@ -358,7 +412,7 @@ impl ProjectPlan {
 
         let mut sources = SourceDatabase::new();
         let mut source_files = BTreeMap::new();
-        for source in &self.selected_sources {
+        for source in source_order {
             let bytes = supplied
                 .get(&source.physical_path)
                 .expect("required source bytes were checked above");
@@ -806,6 +860,7 @@ pub enum ProjectError {
         value: String,
     },
     InvalidSourceSetName(String),
+    InvalidSourceOrder(String),
     InvalidPrivilegedUnitId(String),
     DuplicatePackage(String),
     DuplicateSourceSet {
@@ -894,6 +949,9 @@ impl fmt::Display for ProjectError {
             }
             Self::InvalidSourceSetName(name) => {
                 write!(formatter, "invalid source-set name `{name}`")
+            }
+            Self::InvalidSourceOrder(message) => {
+                write!(formatter, "invalid source order: {message}")
             }
             Self::InvalidPrivilegedUnitId(id) => {
                 write!(formatter, "invalid privileged-unit ID `{id}`")
@@ -1731,6 +1789,27 @@ mod tests {
             plan.resolve(&extra),
             Err(ProjectError::UndeclaredInput(path)) if path == "ambient.txt"
         ));
+    }
+
+    #[test]
+    fn audit_source_order_must_be_an_exact_project_permutation() {
+        let (manifest, lockfile, supplied) = root_project(b"fn main() {}\n", b"ignored");
+        let plan = ProjectPlan::parse(&manifest, &lockfile).unwrap();
+        assert_eq!(
+            plan.selected_source_paths().collect::<Vec<_>>(),
+            ["app/src/main.to"]
+        );
+        assert!(matches!(
+            plan.resolve_with_source_order(&supplied, &[]),
+            Err(ProjectError::InvalidSourceOrder(message))
+                if message.contains("exact permutation")
+        ));
+        assert!(matches!(
+            plan.resolve_with_source_order(&supplied, &["other.to".into()]),
+            Err(ProjectError::InvalidSourceOrder(_))
+        ));
+        plan.resolve_with_source_order(&supplied, &["app/src/main.to".into()])
+            .unwrap();
     }
 
     #[test]
