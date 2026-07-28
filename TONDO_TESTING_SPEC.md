@@ -1,20 +1,23 @@
 # Tondo: especificación del lenguaje y toolchain de testing
 
 - **Estado:** diseño normativo aprobado para Tondo 0.2; todavía no implementado.
-- **Revisión:** 0.2-draft.3 — 2026-07-28.
+- **Revisión:** 0.2-draft.4 — 2026-07-28.
 - **Edición objetivo:** Tondo 0.2.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
 - **SHA-256 de la base:** `ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084`.
-- **Formatos de tooling:** `tondo-test-report-0.2/3` y
-  `tondo-test-list-0.2/3`.
+- **Formatos de tooling:** `tondo-test-report-0.2/4`,
+  `tondo-test-list-0.2/4` y `tondo-junit-report-0.2/1`.
 
 Esta especificación añade a Tondo las declaraciones `suite` y `test` y define
 cómo el toolchain descubre, compila, ejecuta y reporta árboles estáticos de
 tests. `suite` es un contenedor léxico con lifecycle compartido; `test` es
 siempre una hoja ejecutable. Un núcleo sellado de `std.testing` permite registrar
-logs, fallar inmediatamente u omitir de forma explícita el nodo activo sin
-exponer un contexto de test como valor. Complementa Tondo 0.1; no modifica
-retroactivamente esa edición ni la suite publicada `tondo-conformance-0.1`.
+logs y tags, fallar inmediatamente u omitir de forma explícita el nodo activo
+sin exponer un contexto de test como valor. El runner resuelve ownership desde
+CODEOWNERS, particiona y ordena ejecuciones de forma reproducible y exporta
+reportes JSON o JUnit XML sin alterar el programa probado. Complementa Tondo
+0.1; no modifica retroactivamente esa edición ni la suite publicada
+`tondo-conformance-0.1`.
 
 La próxima especificación consolidada de Tondo debe incorporar normativamente
 estas reglas sin cambiar sus decisiones, resolver las referencias de sección
@@ -50,7 +53,7 @@ recomienda** expresa orientación no obligatoria.
 
 ## 1. Propósito y principios
 
-El sistema de testing de Tondo persigue siete objetivos:
+El sistema de testing de Tondo persigue nueve objetivos:
 
 1. Escribir un test ordinario requiere únicamente un nombre y un bloque.
 2. Agrupar tests y compartir un recurso costoso requiere únicamente una `suite`
@@ -58,11 +61,17 @@ El sistema de testing de Tondo persigue siete objetivos:
 3. El test utiliza exactamente el lenguaje normal: `assert`, `?`, `match`,
    `defer`, `for`, `scope`, `spawn`, `await`, ownership y préstamos conservan su
    significado.
-4. Logs, fallo inmediato y skip explícito funcionan también desde helpers y
-   concurrencia estructurada sin obligar a recibir ni propagar un `TestContext`.
-5. Descubrimiento, ejecución y reporte son deterministas y observables.
-6. El código y las dependencias de test no cambian el artefacto de producción.
-7. El núcleo no introduce clases de test, annotations, macros, reflection ni
+4. Logs, tags, fallo inmediato y skip explícito funcionan también desde helpers
+   y concurrencia estructurada sin obligar a recibir ni propagar un
+   `TestContext`.
+5. Ownership de código, partición y orden de ejecución son inputs explícitos,
+   auditables y reproducibles.
+6. Un mismo resultado alimenta salida humana, JSON canónico y JUnit XML sin
+   volver a ejecutar tests.
+7. Discovery, plan, orden y presentación canónica son deterministas y
+   observables; todo campo operacional no reproducible se identifica como tal.
+8. El código y las dependencias de test no cambian el artefacto de producción.
+9. El núcleo no introduce clases de test, annotations, macros, reflection ni
    hooks de ciclo de vida.
 
 Forma mínima:
@@ -99,8 +108,8 @@ ordinario sin exponer el runner dentro del programa.
 
 La declaración no sustituye a una librería de assertions. El lenguaje define
 el test como unidad ejecutable; `assert` proporciona la comprobación mínima y
-`std.testing` fija tres operaciones de control selladas y añadirá comparaciones,
-diffs y recursos de test como API ordinaria.
+`std.testing` fija cuatro operaciones selladas de control y metadata y añadirá
+comparaciones, diffs y recursos de test como API ordinaria.
 
 ## 2. Compatibilidad y límite de edición
 
@@ -129,7 +138,7 @@ tanto:
 Reservarlas globalmente evita keywords contextuales cuya interpretación dependa
 del source set o del lugar del parser.
 
-`log`, `failNow` y `skip` no son keywords ni nombres predeclarados. Son
+`log`, `tags`, `failNow` y `skip` no son keywords ni nombres predeclarados. Son
 declaraciones del módulo test-only `std.testing` y se resuelven mediante un
 `import` ordinario.
 
@@ -521,7 +530,7 @@ Solo una fuente `unit-test` o `integration-test` puede contener `test_decl` o
 
 `std.testing` es un módulo test-only. Solo forma parte del grafo cerrado de un
 artefacto de test; importarlo desde una fuente o dependencia activa de
-producción produce `E2003`. Esta restricción cubre tanto sus tres operaciones
+producción produce `E2003`. Esta restricción cubre tanto sus cuatro operaciones
 selladas como los helpers portables que se añadan posteriormente: ningún
 producto publicable adquiere una dependencia sobre el runner.
 
@@ -623,7 +632,76 @@ Una invocación normal que descubre cero tests hoja o cuyo selector no seleccion
 ninguno falla con un diagnóstico de tooling. No se considera éxito silencioso.
 Una declaración `suite` vacía ya fue rechazada estáticamente y no altera este
 conteo. `--allow-empty` permite solicitar explícitamente exit status exitoso
-para workspaces en los que una partición pueda no contener tests.
+cuando discovery o el selector básico puedan no producir tests.
+
+Una selección no vacía puede producir un shard vacío. Ese resultado es válido y
+termina con éxito sin exigir `--allow-empty`: el conjunto anterior al shard sí
+existía y la partición simplemente no asignó ninguna hoja a ese índice.
+
+### 5.7 Ownership mediante CODEOWNERS
+
+El plan de test puede asociar owners estáticos a cada suite y test a partir de
+un archivo CODEOWNERS. `--codeowners auto`, que es el default, busca en este
+orden desde la raíz lógica del repositorio y usa únicamente el primer archivo
+existente:
+
+~~~text
+.github/CODEOWNERS
+CODEOWNERS
+docs/CODEOWNERS
+~~~
+
+`--codeowners <path>` selecciona un archivo explícito y
+`--codeowners none` desactiva la resolución. Un path explícito es lógico,
+relativo a la raíz, no contiene `.`/`..`, no escapa mediante symlink y debe
+resolver a un archivo regular legible; incumplirlo es error de tooling. En modo
+`auto`, un candidato existente pero inválido o ilegible falla y no provoca
+fallback al siguiente. La raíz del repositorio y el path elegido se
+materializan antes de compilar; su forma física no aparece en identidades ni
+reportes.
+
+El archivo debe ser UTF-8 sin BOM. Se divide por `LF`, se elimina un `CR` final
+y se separa cada línea por espacios o tabs ASCII. Blank lines y líneas cuyo
+primer carácter no blank es `#` se ignoran. Una línea activa contiene
+exactamente un pattern no vacío seguido de uno o más owners no vacíos. No
+existe comentario inline.
+
+Tondo implementa el subset portable fijado aquí, no extensiones particulares de
+un proveedor. Cada pattern se compara de forma case-sensitive por scalars
+Unicode contra el path lógico relativo a la raíz, con `/` como único separador:
+
+- Un `/` inicial no forma parte del match y obliga a comenzar en el primer
+  segmento.
+- Sin ese anclaje, un pattern que no contiene `/` puede coincidir con cualquier
+  segmento completo.
+- Un pattern sin `/` que coincide con un segmento no final cubre su subárbol;
+  si está anclado, solo puede hacerlo desde el primer segmento.
+- Cualquier otro pattern se compara con el path completo desde la raíz.
+- Un `/` final equivale a añadir `**` y cubre el subárbol.
+- `*` consume cero o más scalars salvo `/`; `?` consume exactamente uno salvo
+  `/`; `**` consume cero o más scalars y puede cruzar `/`.
+- El resto de scalars es literal. Segmentos vacíos interiores, `.` y `..` son
+  inválidos.
+
+El subset no admite negación `!`, rangos `[]`, backslash ni escape de un `#`
+inicial. La última línea coincidente gana y aporta todos sus owners conservando
+el orden textual y duplicados.
+
+Un owner es el token UTF-8 opaco no vacío delimitado anteriormente, normalmente
+`@usuario`, `@organización/equipo` o un email. El runner nunca valida la
+identidad contra red, membresía, visibilidad ni permisos del proveedor. Un
+archivo o línea activa inválidos producen un diagnóstico de tooling: Tondo no
+ignora ownership roto de forma silenciosa.
+
+Cada nodo se resuelve contra el archivo lógico que contiene su declaración. Por
+ello todos los nodos declarados en un mismo archivo reciben el mismo resultado
+CODEOWNERS. Una fuente generada utiliza su origin path declarado; sin un origen
+lógico dentro del repositorio obtiene `owners: []`. Ausencia de archivo o de
+match también produce el array vacío y no falla por defecto.
+
+El plan registra modo, source path lógico, bytes y SHA-256 del CODEOWNERS
+efectivo. Cambiarlo altera el artefacto y reportes de test, pero nunca la
+interfaz ni el producto de producción.
 
 ## 6. Construcción del target de test
 
@@ -649,6 +727,7 @@ El artefacto contiene:
 - Edición, target, perfil y capacidades.
 - Source sets y paths lógicos activos.
 - Árbol ordenado de suites/tests, parent IDs y source ranges.
+- Configuración y resultado estático de ownership por nodo.
 - Entradas privadas de setup y de tests hoja.
 - Operaciones verificadas de control de testing y la asociación de cada entrada
   con su envelope privado de ejecución.
@@ -688,7 +767,7 @@ Cada test hoja obtiene:
 - Un scope raíz nuevo.
 - Estado de runtime, roots, tasks y handles no observable desde otra hoja salvo
   los snapshots de suite permitidos por 4.3.
-- Un envelope privado de control y un buffer ordenado de logs.
+- Un envelope privado de control, un buffer ordenado de logs y un mapa de tags.
 - Captura separada de stdout y stderr del runtime Tondo.
 - Presupuesto de recursos independiente.
 - Un resultado independiente.
@@ -713,6 +792,7 @@ Cada entrada ejecutada queda asociada internamente a un envelope conceptual:
 TestExecution {
     node_id
     log_sink
+    tag_sink
     stdout_sink
     stderr_sink
     cancellation
@@ -735,7 +815,8 @@ Esta forma explica el contrato; no declara un record Tondo. El envelope:
 
 Cada test hoja recibe un envelope distinto. El setup y teardown de una suite
 comparten el envelope de esa suite; sus descendientes reciben otros envelopes y
-no pueden escribir en el de la suite ancestral.
+no pueden escribir logs ni tags en el de la suite ancestral. No existe herencia
+implícita de tags entre suite y descendientes.
 
 Las operaciones selladas de `std.testing` emiten un evento o terminal hacia el
 envelope activo. No consultan una API `currentTest()`: el runner atribuye el
@@ -746,8 +827,8 @@ global mutable ni un thread-local observable.
 HIR, MIR y bytecode representan estas operaciones mediante un catálogo cerrado.
 Sus verifiers solo las admiten dentro de un artefacto de test y ningún backend
 puede implementarlas como una escritura a un contexto global compartido.
-`std.testing` no exige la capability `console`; sus logs utilizan el canal del
-runner, no stdout ni stderr.
+`std.testing` no exige la capability `console`; sus logs y tags utilizan canales
+del runner, no stdout ni stderr.
 
 ### 7.3 Lifecycle de suite
 
@@ -844,8 +925,9 @@ pánico del propietario o de un hijo prevalece sobre todos los skips.
 `testing.skip` no puede utilizarse para abandonar cleanup. Si se invoca durante
 un `defer`, unwind o teardown de suite, produce `P2001` y el nodo falla como
 `failed-panic`; un pánico primario anterior conserva la precedencia ordinaria.
-`testing.log` y `testing.failNow` sí conservan su significado durante cleanup:
-el primero registra contexto y el segundo produce el pánico `P0007`.
+`testing.log`, `testing.tags` y `testing.failNow` sí conservan su significado
+durante cleanup: las dos primeras registran contexto y metadata en el nodo
+activo y la última produce el pánico `P0007`.
 
 ### 7.5 Pánico y continuidad
 
@@ -858,7 +940,7 @@ del modelo de pánico, corrupción del runtime o imposibilidad de restablecer
 aislamiento se clasifica como fallo de infraestructura. El runner puede detener
 el bosque restante porque ya no puede garantizar resultados fiables. En ese
 caso termina con exit `3` y no emite un reporte canónico incompleto; todo reporte
-`tondo-test-report-0.2/3` válido clasifica cada hoja seleccionada.
+`tondo-test-report-0.2/4` válido clasifica cada hoja seleccionada.
 
 ### 7.6 Errores recuperables
 
@@ -894,10 +976,10 @@ pero ese target es distinto y debe quedar visible en el reporte.
 
 Cada test hoja y cada fase activa de setup o teardown se ejecuta con límites
 finitos de instrucciones o trabajo, memoria, profundidad y output. Los bytes de
-`testing.log`, stdout y stderr consumen el presupuesto de output del mismo nodo;
-un log no ofrece un canal ilimitado alternativo. El toolchain publica sus
-defaults y registra los valores efectivos o el hash de su resource profile en
-el reporte.
+keys/values de `testing.tags`, logs, stdout y stderr consumen el presupuesto de
+output del mismo nodo; metadata y logs no ofrecen canales ilimitados
+alternativos. El toolchain publica sus defaults y registra los valores efectivos
+o el hash de su resource profile en el reporte.
 
 `--timeout` aplica de forma independiente a un body de test, a un setup de suite
 y a un teardown de suite. El reloj de una suite se pausa mientras solo espera
@@ -928,8 +1010,8 @@ El registro, los descriptores y los resultados de suites y tests se ordenan
 lexicográficamente por identidad visible completa usando bytes UTF-8. Los
 descendientes de una suite forman así un rango contiguo.
 
-La ejecución por defecto utiliza `--jobs 1` y recorre los tests hoja en ese
-orden, entrando en una suite justo antes de su primer descendiente seleccionado
+La ejecución por defecto utiliza `--jobs 1 --order canonical` y recorre el árbol
+en ese orden, entrando en una suite antes de su primer descendiente seleccionado
 y abandonándola después del último. Esto proporciona feedback reproducible sin
 depender del número de CPUs de la máquina.
 
@@ -953,7 +1035,111 @@ Toda selección incorpora las suites ancestras necesarias. `--list` compila y
 valida el árbol, aplica el selector y emite los tests seleccionados junto con
 esas suites sin ejecutar ningún setup ni body.
 
-### 8.3 Paralelismo explícito
+`testing.tags` se ejecuta dentro de una entrada y, por tanto, no participa en
+discovery ni selección. No existe `--tag` en esta edición. Añadir filtrado por
+tags requerirá metadata declarativa disponible antes de ejecutar código; el
+runner nunca ejecuta setup o bodies para decidir qué debe ejecutar.
+
+### 8.3 Sharding estable
+
+`--shard index/count` particiona las hojas obtenidas por 8.2, con índices
+humanos desde `1` y `1 <= index <= count`. Ambos componentes son enteros
+decimales positivos sin signo ni padding y la opción aparece como máximo una
+vez.
+
+Cada ID visible se asigna exactamente a:
+
+~~~text
+1 + uint256_be(
+    SHA-256("tondo-test-shard-v1\0" || UTF8(test_id))
+) mod count
+~~~
+
+El string de dominio contiene los bytes ASCII mostrados y un byte `00`; el
+digest completo se interpreta como entero big-endian sin signo. El algoritmo
+estable se identifica como `sha256-mod-v1`.
+
+Vector normativo: para
+`application::unit::math::arithmetic::addReturnsSum`, el digest es
+`ee5252232b68a78e79fc22b6e8d761a22e2989369358efc402802d22989f2517`;
+con `count = 8` la hoja pertenece al shard `8/8`.
+
+La partición ocurre después de `--filter`/`--exact` y antes del orden de
+ejecución. Para una selección e igual `count`:
+
+- Cada hoja pertenece a un único shard.
+- Dos shards distintos son disjuntos.
+- La unión de `1/count` a `count/count` reconstruye exactamente la selección.
+- Cambiar el orden de archivos, `--jobs` o la seed no cambia la asignación.
+
+El runner compila el target completo en cada shard. Cada invocación construye el
+bosque mínimo de su propia partición; una suite con hojas en varios shards
+ejecuta setup y teardown independientemente en cada proceso. No existe fixture,
+envelope ni estado compartido entre shards.
+
+`--list` aplica el shard y permite inspeccionar su plan sin ejecutar código. Una
+selección previa vacía conserva la regla de 5.6; un shard vacío derivado de una
+selección previa no vacía es un resultado válido.
+
+### 8.4 Orden de ejecución y randomización reproducible
+
+`--order canonical|random` elige la prioridad de dispatch y aparece como máximo
+una vez. `canonical` es el default. `--seed hex` solo es válido con
+`--order random`; acepta de uno a dieciséis dígitos ASCII hexadecimales y se
+normaliza en reportes como dieciséis dígitos lowercase. No admite prefijo
+`0x`, signo, separadores ni whitespace.
+
+Si `random` no recibe seed, el runner obtiene un `U64` de la entropía del host
+durante la materialización del plan y antes de compilar, y lo registra. La salida
+humana lo muestra siempre; la salida JSON y JUnit lo conserva en sus campos
+normativos. No existe una seed ambiental ni oculta. Esa seed generada se
+convierte en un input efectivo de la invocación: para reproducirla debe
+reutilizarse explícitamente el valor mostrado.
+
+El modo random ordena los miembros directos seleccionados —tests y suites— de
+cada padre por el digest:
+
+~~~text
+SHA-256(
+    "tondo-test-order-v1\0" ||
+    seed_u64_be ||
+    00 ||
+    UTF8(parent_id) ||
+    00 ||
+    UTF8(child_id)
+)
+~~~
+
+La raíz utiliza `parent_id` vacío. Los digests se comparan completos en orden
+bytewise ascendente y los empates se resuelven por ID bytewise. El algoritmo se
+identifica como `sha256-tree-v1`; no depende del PRNG, hash map ni scheduler del
+host.
+
+Con seed normalizada `0000000000005eed` y parent
+`application::unit::math::arithmetic`, los hijos:
+
+~~~text
+application::unit::math::arithmetic::subtractReturnsDifference
+  -> 00c637b1e275874ed716704cd93b6b8928b23d378fd457c41a38060684094a68
+application::unit::math::arithmetic::addReturnsSum
+  -> 9bd8be59d09c20c60e7549466be069ce52f98d8cff6d608878d194029e9650cf
+~~~
+
+aparecen en ese orden.
+
+Una suite permanece estructuralmente atómica en la representación del plan:
+ejecuta setup, recorre su subárbol ordenado y ejecuta teardown. Los descendientes
+permanecen contiguos en el plan; esto no añade exclusión mutua entre entradas
+que `--jobs N` permite ejecutar concurrentemente. El modo canonical usa
+`id-byte-order-v1`. Ambos modos publican `execution_plan`, un array de IDs hoja
+en prioridad de dispatch; los arrays de descriptores y resultados continúan
+ordenados por ID.
+
+Con `--jobs 1`, repetir selección, shard y seed reproduce exactamente el orden
+observable. Con `--jobs N`, la seed reproduce la prioridad de dispatch, no el
+interleaving wall-clock de entradas concurrentes.
+
+### 8.5 Paralelismo explícito
 
 `--jobs N`, con `N > 0`, permite ejecutar simultáneamente hasta `N` entradas de
 usuario entre setup, test y teardown. Una suite termina su setup antes de
@@ -970,7 +1156,7 @@ admita concurrencia o de solicitar `--jobs 1`. Los snapshots estáticos impiden
 data races de lenguaje; el aislamiento de runtime y el máximo global permanecen
 obligatorios.
 
-### 8.4 Sin dependencias entre tests
+### 8.6 Sin dependencias entre tests
 
 No existe sintaxis para ordenar tests, declarar dependencias ni compartir una
 fixture mutable ordinaria entre ellos. Una suite puede compartir snapshots
@@ -979,9 +1165,11 @@ para otro.
 
 Cada test debe poder ejecutarse solo mediante `--exact`; el runner entra en las
 mismas suites ancestras y debe producir el mismo resultado de lenguaje que
-dentro del árbol completo con los mismos inputs declarados.
+dentro del árbol completo con los mismos inputs declarados. Sharding y
+randomización existen para descubrir dependencias accidentales, no para
+legitimarlas.
 
-### 8.5 Sin retries implícitos
+### 8.7 Sin retries implícitos
 
 El runner ejecuta cada test seleccionado exactamente una vez. No reintenta
 fallos, no decide que un test es flaky y no convierte éxito después de retry en
@@ -990,7 +1178,7 @@ verde.
 Campañas que repitan un test deben solicitarlo fuera del resultado canónico,
 registrar cada intento y no sustituir la regresión determinista.
 
-### 8.6 Sin fail-fast global
+### 8.8 Sin fail-fast global
 
 `testing.failNow` termina únicamente el nodo activo; no es una política del
 runner. Tras registrar el resultado y completar cleanup, continúan hermanos y
@@ -1070,10 +1258,15 @@ elemento nuevo; no añade prefijo, nivel, timestamp ni salto de línea implícit
 Los streams continúan siendo UTF-8. El modo humano:
 
 - Muestra siempre la identidad y el estado.
+- Muestra owners y tags no vacíos de nodos fallidos o skipped; para un nodo
+  bloqueado muestra la metadata del nodo causal, no la duplica.
 - Muestra siempre la razón y logs de nodos `skipped`.
 - Muestra logs y output de tests o suites fallidos.
-- Oculta logs y output de entradas que pasan salvo `--show-output`.
+- Oculta tags, logs y output de entradas que pasan salvo `--show-output`.
 - Nunca intercala bytes de dos entradas.
+
+La lista humana muestra cada ID con sus owners estáticos no vacíos. No muestra
+tags porque `--list` no ejecuta código.
 
 El output de procesos hijos solo pertenece a la captura si el programa lo
 redirige explícitamente a los streams Tondo. Heredar descriptores del runner no
@@ -1089,22 +1282,61 @@ suite queda `blocked-setup` o `blocked-skip`, ambos streams y sus logs están
 vacíos. Los logs de una suite ejecutada siguen el mismo orden setup-teardown y
 no incluyen logs de descendientes.
 
-### 9.4 Duración
+### 9.4 Tags de ejecución
+
+Cada entrada comienza con un `Map[String, String]` vacío y privado.
+`testing.tags(values)` fusiona sus pares en el mapa del envelope activo. La
+llamada completa es atómica:
+
+- Una key nueva conserva el `String` exacto recibido.
+- Repetir la misma key con el mismo valor es idempotente.
+- Si una o más keys ya tienen otro valor, no se fusiona ningún par y la llamada
+  produce `P2002` para la key conflictiva menor por bytes UTF-8. El valor
+  anterior se conserva; nunca existe last-write-wins.
+- Si el crecimiento de keys/values UTF-8 no cabe en el presupuesto de output,
+  no se fusiona ningún par y el nodo termina como `resource-limit`.
+- Un par idempotente no vuelve a cargar bytes al presupuesto; un mapa vacío es
+  un no-op.
+- Llamadas desde tasks distintas comparten las mismas reglas. Keys distintas no
+  entran en conflicto y el reporte las ordena por bytes UTF-8.
+- La operación conserva su significado durante cleanup mientras el envelope
+  siga activo.
+
+La operación valida conflictos, calcula el delta de presupuesto y publica el
+nuevo mapa en un único punto de linearización dentro del envelope. Como el
+lenguaje no fija el orden de avance de tasks concurrentes, código que necesite
+determinar qué writer de una misma key se observa debe sincronizarlos; sin
+sincronización el resultado sigue siendo un fallo `P2002`, pero la llamada que
+lo descubre puede variar.
+
+Los tags de una suite pertenecen únicamente a esa suite. No se heredan, copian
+ni mezclan en sus descendientes. Un nodo bloqueado nunca tuvo envelope y
+conserva `tags: {}`. Un nodo fallido o skipped conserva los tags registrados
+antes de completar su cleanup.
+
+El contenido registrado no concede capabilities ni se interpreta para cambiar
+identidad, estado, owners, selección, shard, orden o exit status. La operación
+sí puede terminar el nodo con `P2002` o agotar su presupuesto. Los tags son
+metadata no confiable escrita por el propio test; una integración no puede
+interpretar una key como autoridad de seguridad.
+
+### 9.5 Duración
 
 Una implementación puede mostrar duración como metadato informativo. La duración
 wall-clock no forma parte del resultado semántico, del orden ni del reporte
-canónico reproducible.
+JSON canónico reproducible. El exportador JUnit sí incluye duración observada
+porque ese formato es un artefacto operacional no canónico.
 
-### 9.5 Exit status
+### 9.6 Exit status
 
 `tondo test` utiliza:
 
 | Exit | Condición |
 |---|---|
 | `0` | Compilación correcta, ningún nodo falló ni quedó `blocked-setup`, y todo skip se permite por la política default; o selección vacía solicitada con `--allow-empty`. |
-| `1` | Error de compilación, selección vacía no permitida, algún nodo falló/quedó `blocked-setup`, o `--deny-skips` encontró `skipped`/`blocked-skip`. |
+| `1` | Error al materializar inputs del plan, error de compilación, selección vacía no permitida, algún nodo falló/quedó `blocked-setup`, o `--deny-skips` encontró `skipped`/`blocked-skip`. |
 | `2` | Uso inválido de CLI. |
-| `3` | Fallo interno del toolchain antes de producir un reporte fiable. |
+| `3` | Fallo interno del toolchain, pérdida de fiabilidad o imposibilidad de serializar/publicar un output solicitado. |
 
 Un test que llame a APIs de proceso no puede elegir el exit status del runner.
 Un estado `infrastructure` que todavía permite un reporte íntegro usa exit `1`;
@@ -1119,11 +1351,16 @@ Interfaz mínima:
 ~~~text
 tondo test [--manifest <path>]
            [--filter <text> | --exact <node-id>]
+           [--codeowners <auto|none|path>]
+           [--shard <index/count>]
+           [--order <canonical|random>]
+           [--seed <hex-u64>]
            [--list]
            [--jobs <positive-int>]
            [--timeout <duration|none>]
            [--diagnostic-format <human|json>]
            [--test-format <human|json>]
+           [--report <json|junit>=<path>]...
            [--show-output]
            [--deny-skips]
            [--allow-empty]
@@ -1134,7 +1371,10 @@ Reglas:
 - Sin `--manifest`, el toolchain descubre el proyecto mediante su contrato
   ordinario y materializa un plan cerrado antes de compilar.
 - `--filter` y `--exact` seleccionan ejecución, no compilación.
-- `--list` no ejecuta bodies y no admite `--show-output` ni `--deny-skips`.
+- `--codeowners auto` es el default y sigue 5.7.
+- `--shard` sigue 8.3 y `--order`/`--seed` siguen 8.4.
+- `--list` no ejecuta bodies y no admite `--show-output`, `--deny-skips` ni un
+  reporte `junit`; sí admite sharding, orden y reporte `json`.
 - `--jobs` vale `1` por defecto.
 - `--timeout` aplica por test hoja y por fase activa de suite, no al tiempo total
   del subárbol.
@@ -1142,11 +1382,29 @@ Reglas:
   suite/test queda `skipped` o `blocked-skip`.
 - `--test-format human` es el default interactivo.
 - `--test-format json` emite exactamente un reporte
-  `tondo-test-report-0.2/3`, o una lista `tondo-test-list-0.2/3` con `--list`.
+  `tondo-test-report-0.2/4`, o una lista `tondo-test-list-0.2/4` con `--list`.
+- `--report` es repetible y escribe el resultado de la misma ejecución sin
+  volver a compilar ni ejecutar. Se divide por el primer `=`; format y path
+  vacíos son inválidos.
+- `--report json=<path>` escribe exactamente los mismos bytes que el JSON
+  correspondiente de `--test-format json`.
+- `--report junit=<path>` escribe `tondo-junit-report-0.2/1` según 15.5.
+- Dos reportes no pueden resolver al mismo output ni sobrescribir un input,
+  source, manifest, lockfile o producto declarado. Cada archivo se publica
+  atómicamente después de completar su serialización.
 - Los diagnostics de compilación conservan `--diagnostic-format` y su schema
   propio; no se insertan como strings ambiguos dentro de resultados de test.
 - Opciones desconocidas, repetidas cuando no son repetibles o combinaciones
   incompatibles terminan con exit `2` sin compilar.
+
+Un argumento `--codeowners` sintácticamente inválido es uso de CLI y termina con
+exit `2`; un archivo seleccionado que falta, no puede leerse o no cumple 5.7 es
+un input de proyecto inválido y termina con exit `1` antes de compilar.
+
+Si un output solicitado no puede serializarse o publicarse después de ejecutar,
+el comando termina con exit `3` y no presenta el conjunto de reportes como
+completo. Un JSON ya publicado debe continuar siendo byte a byte válido; el
+toolchain no deja archivos parciales ni finge atomicidad entre paths distintos.
 
 El schema concreto del manifiesto, los defaults de límites y la representación
 de inputs de environment pertenecen a la especificación del toolchain, pero no
@@ -1170,11 +1428,12 @@ optimizados.
 
 ### 11.2 Núcleo sellado y responsabilidad de `std.testing`
 
-El control mínimo del runner forma parte de esta especificación y tiene tres
-firmas exactas:
+El control y la metadata mínimos del runner forman parte de esta especificación
+y tienen cuatro firmas exactas:
 
 ~~~tondo
 pub fn log(message: String)
+pub fn tags(values: Map[String, String])
 pub fn failNow(message: String): Never
 pub fn skip(reason: String): Never
 ~~~
@@ -1190,6 +1449,11 @@ fn connectService(): Client ! ConnectError {
 }
 
 test importsUsers {
+    testing.tags([
+        "component": "users",
+        "kind": "integration",
+    ])
+
     if not serviceAvailable() {
         testing.skip("requires the integration service")
     }
@@ -1203,14 +1467,16 @@ test importsUsers {
 }
 ~~~
 
-Las firmas son monomórficas y reciben un solo `String`; interpolación y
-formatting ocurren antes de la llamada. No existen niveles de log, campos
-estructurados, attachments, timestamps ni una sobrecarga variádica en 0.2.
+Las cuatro firmas son monomórficas. `log`, `failNow` y `skip` reciben un solo
+`String`; interpolación y formatting ocurren antes de la llamada. `tags` recibe
+exactamente un `Map[String, String]`. No existen niveles de log, attachments,
+timestamps, un tipo dinámico de metadata ni sobrecargas variádicas en 0.2.
 
-Estas tres funciones son operaciones intrínsecas y selladas del artefacto de
+Estas cuatro funciones son operaciones intrínsecas y selladas del artefacto de
 test:
 
 - `log` devuelve `Unit` y añade un elemento al buffer del nodo activo.
+- `tags` devuelve `Unit` y fusiona metadata conforme a 9.4.
 - `failNow` produce `P0007` y tiene resultado `Never`.
 - `skip` exige una razón, produce el terminal cooperativo de skip y tiene
   resultado `Never`.
@@ -1235,7 +1501,8 @@ debe considerar como mínimo:
 Sus funciones pueden terminar mediante `assert`/pánico o devolver un error
 documentado. No reciben acceso reflectivo a valores privados ni pueden registrar
 suites o tests en runtime. La especificación estándar puede añadir helpers, pero
-no cambiar las tres firmas, sus terminales ni el envelope fijado aquí.
+no cambiar las cuatro firmas, sus terminales, merge de tags ni el envelope
+fijado aquí.
 
 ### 11.3 Setup y teardown
 
@@ -1451,6 +1718,32 @@ queda `skipped` y `findsExactTitle` queda `blocked-skip`. El modo normal no lo
 convierte en fallo; `tondo test --deny-skips` termina con exit `1` conservando
 los mismos estados.
 
+### 12.7 Metadata operacional
+
+~~~tondo
+import std.testing
+
+fn identifyPaymentsScenario() {
+    testing.tags([
+        "component": "payments",
+        "kind": "integration",
+        "priority": "critical",
+    ])
+}
+
+test capturesPayment {
+    identifyPaymentsScenario()
+    testing.log("capturing authorized payment")
+
+    assert(capturePayment()?.status == PaymentStatus.Captured)
+}
+~~~
+
+Los tres tags pertenecen únicamente a `capturesPayment`. El helper no conoce su
+ID ni recibe contexto; el envelope atribuye la llamada. CODEOWNERS se resuelve
+por separado desde el path del archivo y no puede ser reemplazado por un tag
+`owner`.
+
 ## 13. Características deliberadamente ausentes
 
 El contrato inicial no incluye:
@@ -1463,8 +1756,9 @@ El contrato inicial no incluye:
 - Tests o suites con nombres calculados o creados dentro de control de flujo.
 - Subtests dinámicos registrados desde un `for` o callback.
 - Hooks `beforeAll`, `afterAll`, `beforeEach` o `afterEach`.
-- Orden o dependencias entre tests.
+- Orden declarado en fuente o dependencias entre tests.
 - Estado mutable compartido de suite.
+- Tags declarativos o filtrado por tags runtime.
 - Ignorados, disabled tests o expected failures estáticos dentro de fuente.
 - Skip sin razón explícita.
 - Retries automáticos.
@@ -1496,11 +1790,12 @@ La edición 0.2 añade estos códigos al registro normativo:
 | `E2004` | `empty-test-suite` | Una suite no contiene ningún miembro directo y, por tanto, ningún test descendiente. |
 | `E2005` | `invalid-suite-capture` | Un descendiente intenta capturar `var`, préstamo, valor afín/terminal o un tipo que no cumple `Copy + Send + Share`. |
 
-El runtime de test añade un único pánico:
+El runtime de test añade dos pánicos:
 
 | Código | Nombre estable | Condición primaria |
 |---|---|---|
 | `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo mientras ejecuta `defer`, unwind o teardown. |
+| `P2002` | `test-tag-conflict` | `testing.tags` intenta asociar una key ya registrada a un valor distinto dentro del mismo envelope. |
 
 `testing.failNow` reutiliza `P0007`; no añade otro código.
 
@@ -1518,20 +1813,21 @@ El resto reutiliza diagnósticos existentes:
 - Async y concurrencia: familia `E16xx`.
 - Unsafe: familia `E17xx`.
 
-Selector vacío, timeout e infraestructura son diagnósticos del toolchain, no
-nuevos errores de compilación `E`.
+Selector vacío, CODEOWNERS inválido, opciones de shard/order/report, timeout e
+infraestructura son diagnósticos del toolchain, no nuevos errores de compilación
+`E`.
 
 ## 15. Formato machine-readable
 
 ### 15.1 Forma canónica
 
-`--test-format json` emite un único objeto JSON UTF-8, sin BOM ni bytes
-posteriores salvo `LF`, por stdout. Los valores concretos siguientes son un
-ejemplo; la forma y los tipos de los campos son normativos:
+`--test-format json` y `--report json=<path>` emiten un único objeto JSON UTF-8,
+sin BOM ni bytes posteriores salvo `LF`. Los valores concretos siguientes son
+un ejemplo; la forma y los tipos de los campos son normativos:
 
 ~~~json
 {
-  "format": "tondo-test-report-0.2/3",
+  "format": "tondo-test-report-0.2/4",
   "edition": "0.2",
   "target": {
     "name": "tondo-vm-hosted",
@@ -1543,6 +1839,20 @@ ejemplo; la forma y los tipos de los campos son normativos:
     "kind": "all",
     "value": null
   },
+  "ownership": {
+    "mode": "auto",
+    "source": ".github/CODEOWNERS",
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "shard": null,
+  "order": {
+    "mode": "canonical",
+    "seed": null,
+    "algorithm": "id-byte-order-v1"
+  },
+  "execution_plan": [
+    "application::unit::math::arithmetic::addReturnsSum"
+  ],
   "policy": {
     "deny_skips": false
   },
@@ -1560,11 +1870,18 @@ ejemplo; la forma y los tipos de los campos son normativos:
       "module": "math",
       "path": ["arithmetic"],
       "name": "arithmetic",
+      "source": {
+        "file": "src/math_test.to",
+        "start": 0,
+        "end": 126
+      },
+      "owners": ["@tondo/math"],
       "status": "passed",
       "phase": null,
       "blocked_by": null,
       "failure": null,
       "skip": null,
+      "tags": {},
       "logs": [],
       "stdout": "",
       "stderr": ""
@@ -1579,10 +1896,20 @@ ejemplo; la forma y los tipos de los campos son normativos:
       "module": "math",
       "path": ["arithmetic", "addReturnsSum"],
       "name": "addReturnsSum",
+      "source": {
+        "file": "src/math_test.to",
+        "start": 32,
+        "end": 124
+      },
+      "owners": ["@tondo/math"],
       "status": "passed",
       "blocked_by": null,
       "failure": null,
       "skip": null,
+      "tags": {
+        "component": "math",
+        "kind": "unit"
+      },
       "logs": [],
       "stdout": "",
       "stderr": ""
@@ -1618,10 +1945,34 @@ profile contiene todos los presupuestos finitos del frontend, verifiers y
 runtime y se distribuye de forma recuperable por el toolchain; el hash del
 reporte identifica exactamente sus bytes canónicos.
 
-`suites` contiene el bosque mínimo necesario para los tests seleccionados,
-incluidos nodos `blocked-setup` y `blocked-skip`. `tests` contiene todas las
-hojas seleccionadas, se hayan ejecutado o bloqueado. Todos los campos aparecen
-incluso cuando están vacíos o son `null`; `kind` es `unit` o `integration`.
+`ownership.mode` es `auto`, `explicit` o `none`. `source` y `sha256` son strings
+cuando se utilizó un CODEOWNERS y `null` en otro caso. `source` siempre es
+lógico y relativo a la raíz del repositorio; `sha256` contiene exactamente
+sesenta y cuatro dígitos hexadecimales lowercase sobre los bytes originales.
+
+`shard` es `null` sin partición. Con `--shard 2/8` contiene exactamente:
+
+~~~json
+{
+  "index": 2,
+  "count": 8,
+  "algorithm": "sha256-mod-v1"
+}
+~~~
+
+`order` refleja la configuración efectiva. En modo random, `seed` contiene
+dieciséis dígitos hexadecimales lowercase y `algorithm` es
+`sha256-tree-v1`. `execution_plan` contiene una vez cada ID de test posterior al
+shard, en prioridad de dispatch; no contiene suites.
+
+`suites` contiene el bosque mínimo necesario para los tests del shard,
+incluidos nodos `blocked-setup` y `blocked-skip`. `tests` contiene todas sus
+hojas, se hayan ejecutado o bloqueado. Todos los campos aparecen incluso cuando
+están vacíos o son `null`; `kind` es `unit` o `integration`.
+
+`source` identifica la declaración mediante path lógico y rango bytewise.
+`owners` conserva el orden de la línea CODEOWNERS ganadora. `tags` es el mapa
+runtime del nodo; un descriptor nunca mezcla owners y tags.
 
 `parent` contiene el ID de la suite inmediata o `null` para un nodo top-level.
 `path` contiene únicamente los identificadores de suite y test posteriores al
@@ -1648,10 +1999,14 @@ formato.
 - `capabilities` se ordena por bytes.
 - `suites` se ordena por `id`.
 - `tests` se ordena por `id`.
+- `execution_plan` sigue 8.4 y no altera el orden de los arrays anteriores.
+- `owners` conserva el orden textual de su única línea ganadora.
+- Las keys de `tags` se ordenan por bytes UTF-8.
 - Keys conocidas se serializan en el orden mostrado por el schema del
   toolchain.
 - `logs` conserva el orden observado dentro de su único envelope.
 - `stdout` y `stderr` contienen texto UTF-8 exacto.
+- `summary.selected = execution_plan.length = tests.length`.
 - `summary.selected = summary.executed + summary.blocked_setup +
   summary.blocked_skip`.
 - `summary.executed` es la suma exacta de `passed`, `skipped` y los cinco
@@ -1665,8 +2020,8 @@ formato.
   `suite_failed`. Skips y hojas bloqueadas no duplican ni incrementan ese
   contador; `policy.deny_skips` puede producir exit `1` con `failed: 0`.
 - Duración, timestamps, PID, número de CPU, paths físicos y direcciones no
-  aparecen en la forma canónica.
-- Paths de source dentro de failures son lógicos.
+  aparecen en la forma JSON canónica.
+- Paths de source dentro de descriptors y failures son lógicos.
 
 ### 15.3 Failure y skip
 
@@ -1732,13 +2087,14 @@ Campos privados y payloads opacos no se serializan por reflection.
 
 ### 15.4 Lista machine-readable
 
-`--list --test-format json` emite `tondo-test-list-0.2/3`. Comparte `edition`,
-`target`, `compiled` y `selection`, pero contiene descriptores separados sin
-estado, phase, failure, skip, bloqueo, logs ni output:
+`--list --test-format json` emite `tondo-test-list-0.2/4`. Comparte `edition`,
+`target`, `compiled`, `selection`, `ownership`, `shard`, `order` y
+`execution_plan`, pero contiene descriptores sin estado, phase, failure, skip,
+tags, bloqueo, logs ni output:
 
 ~~~json
 {
-  "format": "tondo-test-list-0.2/3",
+  "format": "tondo-test-list-0.2/4",
   "edition": "0.2",
   "target": {
     "name": "tondo-vm-hosted",
@@ -1750,6 +2106,20 @@ estado, phase, failure, skip, bloqueo, logs ni output:
     "kind": "all",
     "value": null
   },
+  "ownership": {
+    "mode": "auto",
+    "source": ".github/CODEOWNERS",
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  },
+  "shard": null,
+  "order": {
+    "mode": "canonical",
+    "seed": null,
+    "algorithm": "id-byte-order-v1"
+  },
+  "execution_plan": [
+    "application::unit::math::arithmetic::addReturnsSum"
+  ],
   "suites": [
     {
       "id": "application::unit::math::arithmetic",
@@ -1758,7 +2128,13 @@ estado, phase, failure, skip, bloqueo, logs ni output:
       "kind": "unit",
       "module": "math",
       "path": ["arithmetic"],
-      "name": "arithmetic"
+      "name": "arithmetic",
+      "source": {
+        "file": "src/math_test.to",
+        "start": 0,
+        "end": 126
+      },
+      "owners": ["@tondo/math"]
     }
   ],
   "tests": [
@@ -1769,27 +2145,169 @@ estado, phase, failure, skip, bloqueo, logs ni output:
       "kind": "unit",
       "module": "math",
       "path": ["arithmetic", "addReturnsSum"],
-      "name": "addReturnsSum"
+      "name": "addReturnsSum",
+      "source": {
+        "file": "src/math_test.to",
+        "start": 32,
+        "end": 124
+      },
+      "owners": ["@tondo/math"]
     }
   ]
 }
 ~~~
 
 Ambos arrays se ordenan por `id`. `suites` contiene las ancestras necesarias y
-las suites descendientes seleccionadas; `tests` contiene las hojas
-seleccionadas. `--allow-empty` permite ambos arrays vacíos; sin esa opción, una
-selección vacía conserva exit `1`.
+las suites descendientes del shard; `tests` contiene sus hojas.
+`execution_plan` usa los mismos IDs exactamente una vez. `--allow-empty` permite
+una selección previa vacía; un shard vacío válido produce ambos arrays y el plan
+vacíos sin necesitar esa opción.
 
-### 15.5 Fallo de compilación
+### 15.5 Perfil JUnit XML
+
+`--report junit=<path>` genera `tondo-junit-report-0.2/1` como XML 1.0 UTF-8. Es
+un artefacto operacional para CI, no la fuente normativa ni reproducible del
+resultado: incluye duración wall-clock. El reporte JSON `/4` continúa siendo la
+forma canónica y sin pérdida.
+
+El archivo comienza con `<?xml version="1.0" encoding="UTF-8"?>`, no lleva BOM,
+usa `LF`, termina en un único `LF` y no contiene DTD, entities externas ni
+processing instructions adicionales.
+
+La raíz es `testsuites`. El exportador emite un `testsuite` plano por suite
+Tondo y uno por módulo que contenga tests top-level; la jerarquía se conserva
+mediante IDs y una property `tondo.parent`, no mediante nesting XML dependiente
+del consumidor. Cada hoja produce exactamente un `testcase` en su contenedor
+inmediato. El nombre de un `testsuite` es el ID completo de la suite Tondo o el
+prefijo visible `package::kind::module` del contenedor top-level. Un testcase de
+hoja usa su nombre local como `name`, el ID del contenedor como `classname` y su
+ID completo en `tondo.id`.
+
+La proyección de resultados es:
+
+| Estado Tondo | JUnit |
+|---|---|
+| `passed` | `testcase` sin outcome hijo |
+| `skipped`, `blocked-skip` | hijo `skipped` |
+| `failed-error`, `failed-panic` | hijo `failure` |
+| `resource-limit`, `timeout`, `infrastructure` | hijo `error` |
+| `blocked-setup` | hijo `skipped` con estado Tondo explícito |
+
+Un fallo de setup o teardown de suite produce además un único testcase sintético
+con name `@setup` o `@teardown`, classname igual al ID de suite y outcome
+`failure` o `error` según la tabla. Así el reporte JUnit queda rojo sin duplicar
+la causa en cada descendiente bloqueado. Usa
+`tondo.synthetic: "suite-lifecycle"` para distinguirlo de una hoja y el ID
+`<suite-id>::@setup` o `<suite-id>::@teardown`.
+
+Las `properties` con prefijo `tondo.` son la extensión versionada de este
+perfil. El primer `testsuite` en orden de ID actúa como portador de metadata de
+la ejecución y contiene:
+
+~~~text
+tondo.format
+tondo.json_format
+tondo.edition
+tondo.target
+tondo.compiled
+tondo.selection
+tondo.ownership
+tondo.shard
+tondo.order
+tondo.seed
+tondo.execution_plan
+tondo.policy
+tondo.limits
+tondo.summary
+~~~
+
+Cada `testsuite` que representa una suite Tondo y cada `testcase` contiene las
+properties de nodo aplicables:
+
+~~~text
+tondo.id
+tondo.parent
+tondo.package
+tondo.kind
+tondo.module
+tondo.path
+tondo.name
+tondo.status
+tondo.phase
+tondo.blocked_by
+tondo.source
+tondo.owners
+tondo.tags
+tondo.logs
+tondo.stdout
+tondo.stderr
+tondo.failure
+tondo.skip
+tondo.synthetic
+~~~
+
+Arrays, objetos y `null` se codifican como JSON compacto canónico dentro de
+`value`; booleanos y números usan su token JSON y un string escalar usa su
+contenido después del escaping XML ordinario. Las properties aparecen en el
+orden listado, sin nombres duplicados; una property no aplicable se omite y una
+aplicable cuyo valor es nulo se conserva como `null`. Los valores de ejecución
+son los mismos del JSON `/4`;
+`tondo.format` vale `tondo-junit-report-0.2/1` y `tondo.json_format` conserva
+`tondo-test-report-0.2/4`. Las properties forman la representación completa de
+los campos normativos; los elementos JUnit convencionales proyectan además el
+subconjunto que los consumidores suelen mostrar.
+
+En un hijo `failure` o `error`, el atributo `type` usa `failure.code` si existe y
+`failure.kind` en otro caso; `message` usa `failure.message` y el body contiene
+el objeto `failure` como JSON compacto. Un hijo `skipped` usa la razón como
+`message` para un skip propio y `blocked by <id>` para un bloqueo. Las
+properties conservan en ambos casos los objetos y IDs exactos.
+
+Todo scalar no representable por XML 1.0 que aparezca en un atributo o elemento
+JUnit convencional se muestra mediante el escape ASCII visible `\u{HEX}`; su
+property estructurada conserva el valor exacto como JSON. `system-out` y
+`system-err` proyectan los streams, mientras `tondo.stdout` y `tondo.stderr`
+contienen el `String` serializado como JSON. Los mismos bytes permanecen también
+disponibles en el reporte JSON canónico.
+
+Los atributos `tests`, `failures`, `errors`, `skipped` y `time` se calculan sobre
+los testcases realmente emitidos, incluidos lifecycle sintéticos. El orden de
+testsuites sigue el ID, no completion order. Dentro de cada testsuite se ordena
+`@setup`, después hojas por ID y por último `@teardown`. Shard, seed y algoritmo
+se incluyen aunque no haya hojas por `--allow-empty` o por un shard vacío. En
+ese caso se emite un único `testsuite` de cero casos llamado `@tondo-plan`, con
+`tondo.synthetic: "empty-plan"`, únicamente como portador de la metadata de
+ejecución.
+
+`time` usa segundos no negativos en decimal ASCII, sin exponente y con hasta
+nueve dígitos fraccionarios obtenidos de un reloj monotónico. En `testcase`
+representa su entrada o fase sintética; en `testsuite` es la suma de sus
+testcases y en `testsuites` la suma de sus suites hijas. Nunca representa el
+intervalo wall-clock del contenedor, para no contar paralelismo de forma
+dependiente del scheduler.
+
+El perfil no promete que cada consumidor muestre properties o jerarquía de la
+misma forma. Para preservar todos los campos y bytes, una invocación CI debe
+solicitar ambos formatos en la misma ejecución:
+
+~~~text
+tondo test \
+    --report junit=artifacts/tests.xml \
+    --report json=artifacts/tests.json
+~~~
+
+### 15.6 Fallo de compilación
 
 Si la compilación falla:
 
 - `compiled` vale `false`.
-- `suites` y `tests` están vacíos porque ningún setup ni body se ejecutó.
+- `suites`, `tests` y `execution_plan` están vacíos porque ningún setup ni body
+  se ejecutó.
 - En un reporte de ejecución, todos los contadores de `summary` valen `0`.
 - Los diagnostics se emiten por stderr mediante el formato solicitado con
   `--diagnostic-format`.
-- El reporte no copia diagnostics como strings.
+- El reporte JSON no copia diagnostics como strings.
+- No se produce JUnit, porque no existe una ejecución que proyectar.
 
 ## 16. Conformidad
 
@@ -1805,8 +2323,9 @@ Una implementación de esta extensión debe publicar una suite distinta a
    archivos.
 6. Capturas válidas `let: Copy + Send + Share` y rechazo de `var`, préstamos,
    valores afines y obligaciones terminales.
-7. Firmas exactas y test-only de `std.testing`, rechazo desde producción y
-   ausencia de `TestContext`, `currentTest()` o identidad observable.
+7. Las cuatro firmas exactas y test-only de `std.testing`, rechazo desde
+   producción y ausencia de `TestContext`, `currentTest()` o identidad
+   observable.
 8. Envelope no falsificable, propagación por helpers/closures/tasks
    estructuradas, aislamiento paralelo y rechazo verifier de operaciones
    forjadas.
@@ -1815,27 +2334,46 @@ Una implementación de esta extensión debe publicar una suite distinta a
 10. `testing.failNow: Never`, `P0007`, unwind y continuidad de hermanos.
 11. Skip de hoja/setup, razón única, `blocked-skip`, cleanup y precedencia,
     `P2001`, policy default y `--deny-skips`.
-12. Setup síncrono, async, infallible y fallible inferido.
-13. Ejecución de setup exactamente una vez y solo para subárboles seleccionados.
-14. Nesting exterior-interior, teardown interior-exterior y LIFO de `defer`.
-15. Fallo de setup, `blocked-setup`, causa única y continuidad de hermanos.
-16. Fallo de teardown sin reescribir resultados de descendientes.
-17. Retorno normal, error, pánico, assert, resource limit y timeout de tests.
-18. `defer`, terminal obligations y unwind en terminales de suite/test.
-19. Async, `scope`, `spawn`, cancelación y pánico de hijos.
-20. Unit overlay con acceso privado que no repara producción inválida.
-21. Integration root sin acceso privado.
-22. Separación exacta entre grafo de producción y dev-dependencies.
-23. Filtros, exact match de suite/test, list, selección vacía, allow-empty y
+12. `testing.tags`, merge idempotente, `P2002` por conflicto, atribución desde
+    helpers/tasks, uso durante cleanup, presupuesto de output y prohibición de
+    usar tags runtime para discovery, selección, sharding u orden.
+13. Setup síncrono, async, infallible y fallible inferido.
+14. Ejecución de setup exactamente una vez y solo para subárboles seleccionados.
+15. Nesting exterior-interior, teardown interior-exterior y LIFO de `defer`.
+16. Fallo de setup, `blocked-setup`, causa única y continuidad de hermanos.
+17. Fallo de teardown sin reescribir resultados de descendientes.
+18. Retorno normal, error, pánico, assert, resource limit y timeout de tests.
+19. `defer`, terminal obligations y unwind en terminales de suite/test.
+20. Async, `scope`, `spawn`, cancelación y pánico de hijos.
+21. Unit overlay con acceso privado que no repara producción inválida.
+22. Integration root sin acceso privado.
+23. Separación exacta entre grafo de producción y dev-dependencies.
+24. Resolución CODEOWNERS automática, explícita y desactivada; precedencia de
+    archivos, parsing estricto, última regla aplicable, paths lógicos, source y
+    hash reportados, owners opacos y ausencia de red o efecto en producción.
+25. Filtros, exact match de suite/test, list, selección vacía, allow-empty y
     combinaciones CLI de deny-skips.
-24. Orden serial, lifecycle jerárquico y presentación estable bajo `--jobs N`.
-25. Captura separada de logs/stdout/stderr para suites y tests.
-26. Reportes `tondo-test-report-0.2/3` y `tondo-test-list-0.2/3`, invariantes de
-    summary, skips, bloqueos y rechazo de schema inválido.
-27. Targets y capabilities distintos.
-28. Ausencia total de suites, tests, `std.testing` y dev-dependencies en
-    productos de producción.
-29. Ejecución individual mediante `--exact` equivalente a la misma hoja dentro
+26. Sharding `sha256-mod-v1` posterior a selección, validación de índices,
+    cobertura y disjunción entre shards, compilación completa, lifecycle
+    independiente y shard válido vacío.
+27. Orden canónico `id-byte-order-v1`, orden aleatorio `sha256-tree-v1`, seed
+    explícita/generada, suites estructuralmente atómicas, `execution_plan` y
+    alcance exacto de replay con uno o varios jobs.
+28. Orden serial, lifecycle jerárquico, límite conjunto de `--jobs N` y
+    presentación estable aunque cambie completion order.
+29. Captura separada de logs/stdout/stderr para suites y tests.
+30. Parsing y combinaciones de CLI, formatos stdout, reportes repetibles,
+    colisiones de paths, publicación atómica por archivo y exit `3`.
+31. Reportes `tondo-test-report-0.2/4` y `tondo-test-list-0.2/4`, ownership,
+    shard, order, tags, `execution_plan`, invariantes de summary, skips,
+    bloqueos y rechazo de schema inválido.
+32. Perfil `tondo-junit-report-0.2/1`, mapeo de estados, lifecycle sintético,
+    properties, streams, duración operacional, conteos y equivalencia con la
+    misma ejecución JSON.
+33. Targets y capabilities distintos.
+34. Ausencia total de suites, tests, `std.testing`, metadata y
+    dev-dependencies en productos de producción.
+35. Ejecución individual mediante `--exact` equivalente a la misma hoja dentro
     del árbol completo bajo inputs idénticos.
 
 La VM de referencia y cada backend nativo deben ejecutar las mismas fuentes y
@@ -1881,12 +2419,16 @@ test loadsValue {
 }
 ~~~
 
-### Log, fallo inmediato y skip
+### Log, tags, fallo inmediato y skip
 
 ~~~tondo
 import std.testing
 
 test externalBehavior {
+    testing.tags([
+        "component": "payments",
+        "kind": "integration",
+    ])
     testing.log("starting external behavior")
 
     if not prerequisiteAvailable() {
@@ -1918,13 +2460,20 @@ tondo test --filter parser
 tondo test --exact application::unit::parser::rejectsInvalidToken
 tondo test --exact application::integration::users::userApi
 tondo test --jobs 4
+tondo test --shard 2/8
+tondo test --order random --seed 5eed
+tondo test --codeowners auto
 tondo test --deny-skips
 tondo test --test-format json
+tondo test \
+    --report junit=artifacts/tests.xml \
+    --report json=artifacts/tests.json
 ~~~
 
 ### Regla de diseño
 
 > `suite` aporta jerarquía y lifecycle léxico; `test` identifica una hoja
-> aislada. `std.testing` controla el nodo mediante un envelope estructurado que
-> nunca se expone como valor; el resto del código continúa siendo Tondo
-> ordinario.
+> aislada. `std.testing` controla y anota el nodo mediante un envelope
+> estructurado que nunca se expone como valor. Ownership, sharding, orden y
+> reportes son políticas reproducibles del runner; el resto del código continúa
+> siendo Tondo ordinario.
