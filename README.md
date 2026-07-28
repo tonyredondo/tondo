@@ -226,6 +226,29 @@ or capability set.
 - `docs/releases/0.1.0.md` records the exact release matrix, limitations, and
   reproducible conformance evidence.
 
+## Prebuilt test binaries
+
+The
+[Build binaries](https://github.com/tonyredondo/tondo/actions/workflows/build-binaries.yml)
+workflow builds and smoke-tests the public `tondo` CLI on native runners for:
+
+- Linux x86_64 and ARM64;
+- macOS Intel and Apple Silicon;
+- Windows x86_64.
+
+It runs for version tags and can also be started manually from GitHub Actions.
+Each platform artifact is retained for 14 days and contains a native archive
+plus its SHA-256 checksum. The archive includes the CLI, this README, and both
+language and toolchain specifications. It also contains the same hello-world
+program exercised by the workflow:
+
+~~~text
+./tondo --version
+./tondo run examples/hello.to
+~~~
+
+On Windows, use `.\tondo.exe` in place of `./tondo`.
+
 ## Local validation
 
 ~~~text

@@ -1,0 +1,194 @@
+name: Build binaries
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux x86_64
+            runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            binary: tondo
+            asset-suffix: linux-x86_64
+            package-format: tar
+          - platform: Linux ARM64
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            binary: tondo
+            asset-suffix: linux-aarch64
+            package-format: tar
+          - platform: macOS Intel
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+            binary: tondo
+            asset-suffix: macos-x86_64
+            package-format: tar
+          - platform: macOS Apple Silicon
+            runner: macos-15
+            target: aarch64-apple-darwin
+            binary: tondo
+            asset-suffix: macos-aarch64
+            package-format: tar
+          - platform: Windows x86_64
+            runner: windows-2025
+            target: x86_64-pc-windows-msvc
+            binary: tondo.exe
+            asset-suffix: windows-x86_64
+            package-format: zip
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install Rust target
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          rustup target add "$TARGET"
+          rustc --version
+          cargo --version
+
+      - name: Build release binary
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: cargo build --release --locked --target "$TARGET" -p tondo-cli
+
+      - name: Smoke test native binary
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          BINARY: ${{ matrix.binary }}
+        run: |
+          set -euo pipefail
+          binary="target/$TARGET/release/$BINARY"
+          "$binary" --version
+          output="$("$binary" run tests/runtime/g2-002-hello-world.to)"
+          test "$output" = "Hello, world"
+
+      - name: Package Unix binary
+        if: matrix.package-format == 'tar'
+        id: package-unix
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          BINARY: ${{ matrix.binary }}
+          ASSET_SUFFIX: ${{ matrix.asset-suffix }}
+        run: |
+          set -euo pipefail
+          binary="target/$TARGET/release/$BINARY"
+          version="$("$binary" --version | awk '{ print $2 }')"
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]]
+
+          package_name="tondo-$version-$ASSET_SUFFIX"
+          staging="dist/$package_name"
+          archive="dist/$package_name.tar.gz"
+          checksum="$archive.sha256"
+          mkdir -p "$staging/examples"
+          install -m 755 "$binary" "$staging/tondo"
+          cp README.md TONDO_LANGUAGE_SPEC.md TONDO_TOOLCHAIN_SPEC.md "$staging/"
+          cp tests/runtime/g2-002-hello-world.to "$staging/examples/hello.to"
+          tar -C dist -czf "$archive" "$package_name"
+
+          archive_name="$(basename "$archive")"
+          checksum_name="$(basename "$checksum")"
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd dist && sha256sum "$archive_name" > "$checksum_name")
+          else
+            (cd dist && shasum -a 256 "$archive_name" > "$checksum_name")
+          fi
+
+          echo "name=$package_name" >> "$GITHUB_OUTPUT"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
+
+      - name: Package Windows binary
+        if: matrix.package-format == 'zip'
+        id: package-windows
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+          BINARY: ${{ matrix.binary }}
+          ASSET_SUFFIX: ${{ matrix.asset-suffix }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $binary = "target/$env:TARGET/release/$env:BINARY"
+          $versionLine = & $binary --version
+          if ($LASTEXITCODE -ne 0) {
+            throw "tondo --version failed with exit code $LASTEXITCODE"
+          }
+          $version = ($versionLine -split "\s+")[1]
+          if ($version -notmatch "^[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$") {
+            throw "Cannot extract a semantic version from: $versionLine"
+          }
+
+          $packageName = "tondo-$version-$env:ASSET_SUFFIX"
+          $staging = "dist/$packageName"
+          $archive = "dist/$packageName.zip"
+          $checksum = "$archive.sha256"
+          New-Item -ItemType Directory -Force -Path "$staging/examples" | Out-Null
+          Copy-Item -LiteralPath $binary -Destination "$staging/tondo.exe"
+          Copy-Item -LiteralPath README.md, TONDO_LANGUAGE_SPEC.md, TONDO_TOOLCHAIN_SPEC.md `
+            -Destination $staging
+          Copy-Item -LiteralPath tests/runtime/g2-002-hello-world.to `
+            -Destination "$staging/examples/hello.to"
+          Compress-Archive -Path $staging -DestinationPath $archive
+
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archive).Hash.ToLowerInvariant()
+          "$hash  $([IO.Path]::GetFileName($archive))" |
+            Set-Content -Encoding ascii -Path $checksum
+
+          "name=$packageName" >> $env:GITHUB_OUTPUT
+          "archive=$archive" >> $env:GITHUB_OUTPUT
+          "checksum=$checksum" >> $env:GITHUB_OUTPUT
+
+      - name: Select package metadata
+        id: package
+        shell: bash
+        env:
+          FORMAT: ${{ matrix.package-format }}
+          UNIX_NAME: ${{ steps.package-unix.outputs.name }}
+          UNIX_ARCHIVE: ${{ steps.package-unix.outputs.archive }}
+          UNIX_CHECKSUM: ${{ steps.package-unix.outputs.checksum }}
+          WINDOWS_NAME: ${{ steps.package-windows.outputs.name }}
+          WINDOWS_ARCHIVE: ${{ steps.package-windows.outputs.archive }}
+          WINDOWS_CHECKSUM: ${{ steps.package-windows.outputs.checksum }}
+        run: |
+          set -euo pipefail
+          if [[ "$FORMAT" == "tar" ]]; then
+            echo "name=$UNIX_NAME" >> "$GITHUB_OUTPUT"
+            echo "archive=$UNIX_ARCHIVE" >> "$GITHUB_OUTPUT"
+            echo "checksum=$UNIX_CHECKSUM" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=$WINDOWS_NAME" >> "$GITHUB_OUTPUT"
+            echo "archive=$WINDOWS_ARCHIVE" >> "$GITHUB_OUTPUT"
+            echo "checksum=$WINDOWS_CHECKSUM" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.checksum }}
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
