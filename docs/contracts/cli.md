@@ -7,7 +7,7 @@
 ~~~text
 tondo fmt [--check] [--diagnostic-format <human|json>] <source.to>
 tondo check [--diagnostic-format <human|json>] <source.to>
-tondo run [--diagnostic-format <human|json>] <source.to>
+tondo run [--diagnostic-format <human|json>] <source.to> [-- <argument>...]
 tondo --help
 tondo --version
 ~~~
@@ -25,6 +25,10 @@ added only after the manifest and package graph contract exists.
 - `--diagnostic-format=json` and the two-argument spelling are equivalent.
 - Unknown flags and additional source paths are usage errors.
 - `--check` on the `check` or `run` command is a usage error.
+- Only `run` accepts program arguments, and only after the exact `--`
+  separator. `fmt` and `check` reject the separator.
+- Program arguments must be valid UTF-8 and reach `std.process.args()` in
+  their original order. Flags after `--` are program data, not CLI options.
 
 ## Logical identity for a loose source
 
@@ -75,8 +79,8 @@ language error therefore returns only its normative diagnostics with exit code
 1 and no partial formatter output. `fmt` is complete for its one-file bootstrap
 surface and succeeds after syntax validation. `check` succeeds with exit code 0
 when expression checking reports a complete semantic snapshot; warnings are
-rendered without changing that status. `run` lowers a valid synchronous
-explicit `main` through verified HIR, MIR, and bytecode and executes it in the
-VM. Async entry points and implicit script bodies remain explicit later
-milestones and return `T0001`. The CLI never returns success for an
-unimplemented operation.
+rendered without changing that status. `run` lowers explicit sync or async
+`main` and implicit script entry bodies through verified HIR, MIR, and bytecode
+and executes them in the VM. Root scripts may use a shebang, top-level
+statements, `await`, structured scopes, and the capability-gated process API.
+The CLI never returns success for an unimplemented operation.

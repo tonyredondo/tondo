@@ -22,8 +22,8 @@ use crate::literal;
 use super::heap::{Heap, HeapHandle, HeapObject};
 use super::value::{AggregatePayload, RuntimeJoin, RuntimeLoan, Value, snapshot_value};
 use super::{
-    PanicCode, RuntimeValue, ValueCopyStrategy, VmError, VmLimits, VmPanic, VmStackFrame,
-    VmStatistics,
+    PanicCode, RuntimeHostValueKind, RuntimeValue, ValueCopyStrategy, VmError, VmLimits, VmPanic,
+    VmStackFrame, VmStatistics,
 };
 
 type HeapMapEntry = (Option<Value>, Option<Value>);
@@ -35,6 +35,37 @@ type HeapMapEntry = (Option<Value>, Option<Value>);
 /// keep a managed object alive accidentally.
 pub trait VmHost {
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError>;
+
+    /// Starts work that may block independently of the cooperative executor.
+    fn start_async(&mut self, name: &str, _arguments: &[RuntimeValue]) -> Result<u64, VmError> {
+        Err(VmError::UnsupportedHostCall(name.to_owned()))
+    }
+
+    /// Returns a completed async result without blocking.
+    fn poll_async(&mut self, _call: u64) -> Result<Option<RuntimeValue>, VmError> {
+        Ok(None)
+    }
+
+    /// Waits until one of the supplied host calls completes.
+    fn wait_async(&mut self, calls: &[u64]) -> Result<(u64, RuntimeValue), VmError> {
+        let call = calls
+            .first()
+            .copied()
+            .ok_or_else(|| VmError::invariant("host wait received no calls"))?;
+        Err(VmError::UnsupportedHostCall(format!(
+            "async host call #{call}"
+        )))
+    }
+
+    /// Requests cancellation without reporting completion before cleanup ends.
+    fn cancel_async(&mut self, _call: u64) -> Result<(), VmError> {
+        Ok(())
+    }
+
+    /// Defensively releases a terminal host value during VM unwinding.
+    fn cleanup(&mut self, _value: &RuntimeValue) -> Result<(), VmError> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -360,6 +391,18 @@ enum TaskWait {
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
     },
+    HostCall {
+        call: u64,
+        outcome: BytecodeTypeId,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+        completion: Option<RuntimeValue>,
+    },
+    HostTask {
+        call: u64,
+        outcome: BytecodeTypeId,
+    },
     Scope,
 }
 
@@ -524,6 +567,39 @@ impl<'program, 'host> Engine<'program, 'host> {
         };
         match wait {
             TaskWait::Scope => Ok(true),
+            TaskWait::HostTask { .. } => Err(VmError::invariant(
+                "a host-only child task entered the runnable queue",
+            )),
+            TaskWait::HostCall {
+                call,
+                outcome,
+                destination,
+                target,
+                unwind,
+                completion,
+            } => {
+                let frame = self
+                    .frames
+                    .len()
+                    .checked_sub(1)
+                    .ok_or_else(|| VmError::invariant("a resumed host await has no frame"))?;
+                let Some(completion) = completion else {
+                    return Err(VmError::invariant(format!(
+                        "host call #{call} resumed before completion"
+                    )));
+                };
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.host.cleanup(&completion)?;
+                    self.begin_cancel(frame, unwind)?;
+                    return Ok(true);
+                }
+                let value = self.materialize_host_value(outcome, completion)?;
+                self.write_place(frame, &destination, value)?;
+                self.jump(frame, target);
+                Ok(true)
+            }
             TaskWait::Join {
                 child,
                 owner,
@@ -596,31 +672,113 @@ impl<'program, 'host> Engine<'program, 'host> {
             task.pending_unwind = self.pending_unwind.take();
         }
 
-        while let Some(next) = self.runnable.pop_front() {
-            let task = self
-                .tasks
-                .get_mut(next)
-                .ok_or_else(|| VmError::invariant("the runnable queue contains an invalid task"))?;
-            task.queued = false;
-            if !matches!(task.status, TaskStatus::Runnable) {
-                continue;
+        self.poll_host_calls()?;
+        loop {
+            while let Some(next) = self.runnable.pop_front() {
+                let task = self.tasks.get_mut(next).ok_or_else(|| {
+                    VmError::invariant("the runnable queue contains an invalid task")
+                })?;
+                task.queued = false;
+                if !matches!(task.status, TaskStatus::Runnable) {
+                    continue;
+                }
+                task.status = TaskStatus::Running;
+                self.current_task = next;
+                self.frames = std::mem::take(&mut task.frames);
+                self.pending_unwind = task.pending_unwind.take();
+                return Ok(None);
             }
-            task.status = TaskStatus::Running;
-            self.current_task = next;
-            self.frames = std::mem::take(&mut task.frames);
-            self.pending_unwind = task.pending_unwind.take();
-            return Ok(None);
-        }
 
-        if matches!(
-            self.tasks.first().map(|task| &task.status),
-            Some(TaskStatus::Complete(_))
-        ) {
-            return self.finish_root_task().map(Some);
+            if matches!(
+                self.tasks.first().map(|task| &task.status),
+                Some(TaskStatus::Complete(_))
+            ) {
+                return self.finish_root_task().map(Some);
+            }
+            let calls = self.pending_host_calls();
+            if calls.is_empty() {
+                return Err(VmError::invariant(
+                    "the cooperative executor has no runnable task before root completion",
+                ));
+            }
+            let (call, value) = self.host.wait_async(&calls)?;
+            if !calls.contains(&call) {
+                return Err(VmError::Host(format!(
+                    "host completed unknown async call #{call}"
+                )));
+            }
+            self.complete_host_call(call, value)?;
+            self.poll_host_calls()?;
         }
-        Err(VmError::invariant(
-            "the cooperative executor has no runnable task before root completion",
-        ))
+    }
+
+    fn pending_host_calls(&self) -> Vec<u64> {
+        self.tasks
+            .iter()
+            .filter_map(|task| match &task.status {
+                TaskStatus::Waiting(TaskWait::HostCall {
+                    call,
+                    completion: None,
+                    ..
+                })
+                | TaskStatus::Waiting(TaskWait::HostTask { call, .. }) => Some(*call),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn poll_host_calls(&mut self) -> Result<(), VmError> {
+        for call in self.pending_host_calls() {
+            if let Some(value) = self.host.poll_async(call)? {
+                self.complete_host_call(call, value)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn complete_host_call(&mut self, call: u64, value: RuntimeValue) -> Result<(), VmError> {
+        let task = self
+            .tasks
+            .iter()
+            .position(|task| {
+                matches!(
+                    &task.status,
+                    TaskStatus::Waiting(TaskWait::HostCall {
+                        call: pending,
+                        completion: None,
+                        ..
+                    }) | TaskStatus::Waiting(TaskWait::HostTask { call: pending, .. })
+                        if *pending == call
+                )
+            })
+            .ok_or_else(|| VmError::Host(format!("host completed unknown async call #{call}")))?;
+
+        let host_task = match &self.tasks[task].status {
+            TaskStatus::Waiting(TaskWait::HostTask { outcome, .. }) => Some(*outcome),
+            TaskStatus::Waiting(TaskWait::HostCall { .. }) => None,
+            _ => {
+                return Err(VmError::invariant(
+                    "async host completion target changed status",
+                ));
+            }
+        };
+        if let Some(outcome) = host_task {
+            if self.tasks[task].cancel_requested {
+                self.host.cleanup(&value)?;
+                self.complete_task(task, TaskCompletion::Cancelled)
+            } else {
+                let value = self.materialize_host_value(outcome, value)?;
+                self.complete_task(task, TaskCompletion::Returned(value))
+            }
+        } else {
+            let TaskStatus::Waiting(TaskWait::HostCall { completion, .. }) =
+                &mut self.tasks[task].status
+            else {
+                unreachable!("host task shape was checked");
+            };
+            *completion = Some(value);
+            self.wake_task(task)
+        }
     }
 
     fn enqueue_task(&mut self, task: usize) -> Result<(), VmError> {
@@ -671,9 +829,13 @@ impl<'program, 'host> Engine<'program, 'host> {
     }
 
     fn complete_current_task(&mut self, completion: TaskCompletion) -> Result<(), VmError> {
+        self.complete_task(self.current_task, completion)
+    }
+
+    fn complete_task(&mut self, task: usize, completion: TaskCompletion) -> Result<(), VmError> {
         let panicked = matches!(completion, TaskCompletion::Panicked(_));
-        let parent_scope = self.tasks[self.current_task].parent_scope;
-        self.tasks[self.current_task].status = TaskStatus::Complete(Some(completion));
+        let parent_scope = self.tasks[task].parent_scope;
+        self.tasks[task].status = TaskStatus::Complete(Some(completion));
         if let Some(scope) = parent_scope {
             let (owner, siblings) = {
                 let scope = self
@@ -685,14 +847,14 @@ impl<'program, 'host> Engine<'program, 'host> {
             };
             if panicked {
                 for sibling in siblings {
-                    if sibling != self.current_task {
+                    if sibling != task {
                         self.request_cancel(sibling)?;
                     }
                 }
                 self.wake_task(owner)?;
             }
         }
-        let waiters = std::mem::take(&mut self.tasks[self.current_task].waiters);
+        let waiters = std::mem::take(&mut self.tasks[task].waiters);
         for waiter in waiters {
             self.wake_task(waiter)?;
         }
@@ -726,6 +888,14 @@ impl<'program, 'host> Engine<'program, 'host> {
             return Ok(());
         }
         record.cancel_requested = true;
+        let host_call = match &record.status {
+            TaskStatus::Waiting(TaskWait::HostCall { call, .. })
+            | TaskStatus::Waiting(TaskWait::HostTask { call, .. }) => Some(*call),
+            _ => None,
+        };
+        if let Some(call) = host_call {
+            return self.host.cancel_async(call);
+        }
         self.wake_task(task)
     }
 
@@ -796,6 +966,34 @@ impl<'program, 'host> Engine<'program, 'host> {
             .children
             .push(task);
         self.enqueue_task(task)?;
+        Ok(task)
+    }
+
+    fn spawn_host_task(
+        &mut self,
+        call: u64,
+        outcome: BytecodeTypeId,
+        scope: usize,
+    ) -> Result<usize, VmError> {
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            status: TaskStatus::Waiting(TaskWait::HostTask { call, outcome }),
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: Some(scope),
+            join_consumed: false,
+            panic_observed: false,
+        });
+        self.task_scopes
+            .get_mut(scope)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| VmError::invariant("host spawn targets a missing task scope"))?
+            .children
+            .push(task);
         Ok(task)
     }
 
@@ -1776,7 +1974,21 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::Pointer
                     | BytecodeIntrinsicType::Command
                     | BytecodeIntrinsicType::Pipeline
+                    | BytecodeIntrinsicType::Bytes
+                    | BytecodeIntrinsicType::ExitStatus
+                    | BytecodeIntrinsicType::ProcessOutput
+                    | BytecodeIntrinsicType::ProcessError
+                    | BytecodeIntrinsicType::ProcessExitError
+                    | BytecodeIntrinsicType::Utf8Error
                     | BytecodeIntrinsicType::NumericConversionError => {}
+                    BytecodeIntrinsicType::ProcessHandle => {
+                        let Value::Host(value) = value else {
+                            return Err(VmError::invariant(
+                                "ProcessHandle fallback found a non-host value",
+                            ));
+                        };
+                        self.host.cleanup(&value)?;
+                    }
                 },
                 BytecodeTypeKind::Nominal {
                     nominal, arguments, ..
@@ -2348,6 +2560,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                         };
                         self.push_frame(function, arguments, Some(continuation))?;
                     }
+                    OperationResult::HostAsync { .. } => {
+                        return Err(VmError::invariant(
+                            "an async host call appeared in a synchronous invocation",
+                        ));
+                    }
                     OperationResult::Panic(code, message) => {
                         self.begin_panic(frame, code, message, span, *unwind)?;
                     }
@@ -2386,6 +2603,24 @@ impl<'program, 'host> Engine<'program, 'host> {
                                         unwind: *unwind,
                                         call_span: span,
                                     }),
+                                )?;
+                            }
+                            OperationResult::HostAsync {
+                                name,
+                                arguments,
+                                outcome,
+                            } => {
+                                let call = self.host.start_async(&name, &arguments)?;
+                                self.park_current(
+                                    TaskWait::HostCall {
+                                        call,
+                                        outcome,
+                                        destination: destination.clone(),
+                                        target: *target,
+                                        unwind: *unwind,
+                                        completion: None,
+                                    },
+                                    &[],
                                 )?;
                             }
                             OperationResult::Panic(code, message) => {
@@ -2470,6 +2705,21 @@ impl<'program, 'host> Engine<'program, 'host> {
                     } => {
                         let scope = self.active_task_scope(frame, *scope)?;
                         let child = self.spawn_task(function, arguments, scope)?;
+                        self.write_place(
+                            frame,
+                            destination,
+                            Value::Join(RuntimeJoin { task: child, scope }),
+                        )?;
+                        self.jump(frame, *target);
+                    }
+                    OperationResult::HostAsync {
+                        name,
+                        arguments,
+                        outcome,
+                    } => {
+                        let scope = self.active_task_scope(frame, *scope)?;
+                        let call = self.host.start_async(&name, &arguments)?;
+                        let child = self.spawn_host_task(call, outcome, scope)?;
                         self.write_place(
                             frame,
                             destination,
@@ -2632,6 +2882,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                                     }),
                                 )?;
                             }
+                            OperationResult::HostAsync { .. } => {
+                                return Err(VmError::invariant(
+                                    "a deferred operation attempted an async host call",
+                                ));
+                            }
                             OperationResult::Panic(code, message) => {
                                 self.begin_panic(frame, code, message, span, continuation)?;
                             }
@@ -2766,6 +3021,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                             call_span: span,
                         }),
                     )?;
+                }
+                OperationResult::HostAsync { .. } => {
+                    return Err(VmError::invariant(
+                        "a deferred operation attempted an async host call",
+                    ));
                 }
                 OperationResult::Panic(code, message) => {
                     self.begin_panic(frame, code, message, span, continuation)?;
@@ -3083,11 +3343,38 @@ impl<'program, 'host> Engine<'program, 'host> {
     // Value evaluation, places, operators, iterators, and calls continue below.
 }
 
+fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostValueKind> {
+    Some(match constructor {
+        BytecodeIntrinsicType::Command => RuntimeHostValueKind::Command,
+        BytecodeIntrinsicType::Pipeline => RuntimeHostValueKind::Pipeline,
+        BytecodeIntrinsicType::Bytes => RuntimeHostValueKind::Bytes,
+        BytecodeIntrinsicType::ExitStatus => RuntimeHostValueKind::ExitStatus,
+        BytecodeIntrinsicType::ProcessOutput => RuntimeHostValueKind::ProcessOutput,
+        BytecodeIntrinsicType::ProcessHandle => RuntimeHostValueKind::ProcessHandle,
+        BytecodeIntrinsicType::ProcessError => RuntimeHostValueKind::ProcessError,
+        BytecodeIntrinsicType::ProcessExitError => RuntimeHostValueKind::ProcessExitError,
+        BytecodeIntrinsicType::Utf8Error => RuntimeHostValueKind::Utf8Error,
+        BytecodeIntrinsicType::Array
+        | BytecodeIntrinsicType::Map
+        | BytecodeIntrinsicType::Set
+        | BytecodeIntrinsicType::Range
+        | BytecodeIntrinsicType::Ref
+        | BytecodeIntrinsicType::Pointer
+        | BytecodeIntrinsicType::Join
+        | BytecodeIntrinsicType::NumericConversionError => return None,
+    })
+}
+
 enum OperationResult {
     Value(Value),
     Call {
         function: BytecodeFunctionId,
         arguments: Vec<Value>,
+    },
+    HostAsync {
+        name: String,
+        arguments: Vec<RuntimeValue>,
+        outcome: BytecodeTypeId,
     },
     Panic(PanicCode, String),
 }
@@ -5459,6 +5746,10 @@ impl Engine<'_, '_> {
                     (BytecodeBootstrapHostFunction::ConsolePrint, _) => Err(VmError::Host(
                         "std.console.print returned a non-Unit value".into(),
                     )),
+                    (function, _) => Err(VmError::invariant(format!(
+                        "non-Unit bootstrap host operation `{}` was registered as defer",
+                        function.name()
+                    ))),
                 }
             }
         }
@@ -5723,12 +6014,15 @@ impl Engine<'_, '_> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let returned = self.host.invoke(function.name(), &snapshots)?;
-                match (function, returned) {
+                match (*function, returned) {
                     (BytecodeBootstrapHostFunction::ConsolePrint, RuntimeValue::Unit) => {
                         Ok(OperationResult::Value(Value::Unit))
                     }
                     (BytecodeBootstrapHostFunction::ConsolePrint, _) => Err(VmError::Host(
                         "std.console.print returned a non-Unit value".into(),
+                    )),
+                    (_, returned) => Ok(OperationResult::Value(
+                        self.materialize_host_value(operation.ty, returned)?,
                     )),
                 }
             }
@@ -6771,10 +7065,27 @@ impl Engine<'_, '_> {
                         snapshot_value(value, &self.heap, &self.callable_names, &self.nominal_names)
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                let returned = self.host.invoke(&metadata.name, &snapshots)?;
-                Ok(OperationResult::Value(
-                    self.materialize_host_value(metadata.outcome, returned)?,
-                ))
+                let function_type = self
+                    .program
+                    .ty(metadata.function_type)
+                    .ok_or_else(|| VmError::invariant("host callable has no function type"))?;
+                let BytecodeTypeKind::Function(function_type) = &function_type.kind else {
+                    return Err(VmError::invariant(
+                        "host callable metadata does not reference a function type",
+                    ));
+                };
+                if function_type.is_async {
+                    Ok(OperationResult::HostAsync {
+                        name: metadata.name,
+                        arguments: snapshots,
+                        outcome: metadata.outcome,
+                    })
+                } else {
+                    let returned = self.host.invoke(&metadata.name, &snapshots)?;
+                    Ok(OperationResult::Value(
+                        self.materialize_host_value(metadata.outcome, returned)?,
+                    ))
+                }
             }
         })();
         self.temporary_roots.truncate(marker);
@@ -6867,6 +7178,11 @@ impl Engine<'_, '_> {
                     engine.allocate(descriptor, HeapObject::Array(materialized.into()), &[])
                 })
             }
+            (BytecodeTypeKind::Intrinsic { constructor, .. }, RuntimeValue::Host { kind, id })
+                if runtime_host_kind(constructor) == Some(kind) =>
+            {
+                Ok(Value::Host(RuntimeValue::Host { kind, id }))
+            }
             (BytecodeTypeKind::Option(_), RuntimeValue::OptionNone) => {
                 self.allocate(descriptor, HeapObject::OptionNone, &[])
             }
@@ -6891,6 +7207,60 @@ impl Engine<'_, '_> {
                 self.allocate(
                     descriptor,
                     HeapObject::ResultErr(Some(value.clone())),
+                    &[value],
+                )
+            }
+            (BytecodeTypeKind::Union(members), RuntimeValue::Union { member, value }) => {
+                let member = members
+                    .into_iter()
+                    .find(|candidate| candidate.index() == member)
+                    .ok_or_else(|| {
+                        VmError::Host(
+                            "bootstrap host selected a value outside the return union".into(),
+                        )
+                    })?;
+                let value = self.materialize_host_value(member, *value)?;
+                self.allocate(
+                    descriptor,
+                    HeapObject::Union {
+                        member,
+                        value: Some(value.clone()),
+                    },
+                    &[value],
+                )
+            }
+            (
+                BytecodeTypeKind::Union(members),
+                RuntimeValue::Host {
+                    kind: host_kind,
+                    id,
+                },
+            ) => {
+                let member = members
+                    .into_iter()
+                    .find(|member| {
+                        self.program.ty(*member).and_then(|ty| match ty.kind {
+                            BytecodeTypeKind::Intrinsic { constructor, .. } => {
+                                runtime_host_kind(constructor)
+                            }
+                            _ => None,
+                        }) == Some(host_kind)
+                    })
+                    .ok_or_else(|| {
+                        VmError::Host(
+                            "bootstrap host value does not belong to the return union".into(),
+                        )
+                    })?;
+                let value = Value::Host(RuntimeValue::Host {
+                    kind: host_kind,
+                    id,
+                });
+                self.allocate(
+                    descriptor,
+                    HeapObject::Union {
+                        member,
+                        value: Some(value.clone()),
+                    },
                     &[value],
                 )
             }
@@ -7673,6 +8043,7 @@ fn convert_numeric(
         | Value::Function { .. }
         | Value::Loan(_)
         | Value::Join(_)
+        | Value::Host(_)
         | Value::Heap(_) => Err(Error::OutOfRange),
     }
 }
@@ -7724,8 +8095,8 @@ mod tests {
     };
 
     use super::{
-        Engine, PanicCode, RejectingHost, RuntimeType, RuntimeValue, TaskRecord, TaskStatus,
-        TaskWait, Value, ValueCopyStrategy, VmLimits, snapshot_value,
+        Engine, PanicCode, RejectingHost, RuntimeType, RuntimeValue, TaskCompletion, TaskRecord,
+        TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits, snapshot_value,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -7843,6 +8214,61 @@ mod tests {
         assert!(engine.runnable.is_empty());
         assert!(engine.resume_current_task().unwrap());
         assert!(engine.tasks[0].resume.is_none());
+    }
+
+    #[test]
+    fn runnable_tasks_poll_host_completions_without_blocking_the_executor() {
+        #[derive(Default)]
+        struct ReadyHost {
+            polls: usize,
+        }
+
+        impl VmHost for ReadyHost {
+            fn invoke(
+                &mut self,
+                name: &str,
+                _arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                Err(VmError::UnsupportedHostCall(name.into()))
+            }
+
+            fn poll_async(&mut self, call: u64) -> Result<Option<RuntimeValue>, VmError> {
+                self.polls += 1;
+                Ok((call == 7).then_some(RuntimeValue::Integer(42)))
+            }
+
+            fn wait_async(&mut self, _calls: &[u64]) -> Result<(u64, RuntimeValue), VmError> {
+                panic!("the host must not block while a language task is runnable")
+            }
+        }
+
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = ReadyHost::default();
+        {
+            let mut engine = Engine::new(
+                &program,
+                &mut host,
+                VmLimits::default(),
+                ValueCopyStrategy::default(),
+                trace,
+            );
+            engine.tasks.push(scheduler_task(TaskStatus::Running));
+            engine
+                .tasks
+                .push(scheduler_task(TaskStatus::Waiting(TaskWait::HostTask {
+                    call: 7,
+                    outcome: BytecodeTypeId::new(5),
+                })));
+
+            assert!(engine.schedule_next().unwrap().is_none());
+            assert!(matches!(
+                engine.tasks[1].status,
+                TaskStatus::Complete(Some(TaskCompletion::Returned(Value::Integer(42))))
+            ));
+            assert_eq!(engine.current_task, 0);
+        }
+        assert_eq!(host.polls, 1);
     }
 
     #[test]

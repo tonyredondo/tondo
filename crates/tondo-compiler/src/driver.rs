@@ -14,6 +14,7 @@ use crate::hir::{
 use crate::mir::{MirError, MirLoweringLimits, lower_to_mir};
 pub use crate::package::Edition;
 use crate::package::{PackageGraph, PackageGraphError};
+use crate::process_host::BootstrapHost;
 use crate::resolve::{
     ResolveError, ResolvedProgram, SymbolKind, Visibility, is_script_statement, resolve,
 };
@@ -26,9 +27,7 @@ use crate::syntax::{
 use crate::types::TypeError;
 use crate::types::{ScalarType, TypeKind};
 use tondo_vm::bytecode::BytecodeSpan;
-use tondo_vm::runtime::{
-    RuntimeValue, VmError, VmHost, VmLimits, VmOutcome, VmPanic, execute_with_limits,
-};
+use tondo_vm::runtime::{RuntimeValue, VmError, VmLimits, VmOutcome, VmPanic, execute_with_limits};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Operation {
@@ -125,8 +124,12 @@ impl BuildTarget {
     }
 
     pub fn vm_hosted_capabilities() -> BTreeSet<CapabilityName> {
-        BTreeSet::from([CapabilityName::new("console")
-            .expect("console is a registered Tondo target capability")])
+        BTreeSet::from([
+            CapabilityName::new("console")
+                .expect("console is a registered Tondo target capability"),
+            CapabilityName::new("process")
+                .expect("process is a registered Tondo target capability"),
+        ])
     }
 }
 
@@ -218,6 +221,7 @@ pub struct CompilationRequest {
     packages: PackageGraph,
     sources: SourceDatabase,
     root: FileId,
+    program_arguments: Vec<String>,
 }
 
 impl CompilationRequest {
@@ -254,7 +258,14 @@ impl CompilationRequest {
             packages,
             sources,
             root,
+            program_arguments: Vec::new(),
         })
+    }
+
+    /// Supplies the values exposed by `std.process.args()` during `run`.
+    pub fn with_program_arguments(mut self, arguments: Vec<String>) -> Self {
+        self.program_arguments = arguments;
+        self
     }
 
     pub fn operation(&self) -> Operation {
@@ -299,6 +310,10 @@ impl CompilationRequest {
 
     pub fn root(&self) -> FileId {
         self.root
+    }
+
+    pub fn program_arguments(&self) -> &[String] {
+        &self.program_arguments
     }
 }
 
@@ -846,7 +861,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                             "selected main has no lowered bytecode implementation".into(),
                         )
                     })?;
-                let mut host = BootstrapHost::default();
+                let mut host = BootstrapHost::new(request.program_arguments.clone());
                 let execution = match execute_with_limits(
                     &bytecode,
                     function,
@@ -901,7 +916,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                     expression_diagnostics,
                     diagnostic,
                     exit_code,
-                    host.stdout,
+                    host.take_stdout(),
                 );
             }
         }
@@ -1157,26 +1172,6 @@ fn semantic_output(
         stdout,
         semantic_model: Some(SemanticModel::with_hir(request.sources, resolved, hir)),
     })
-}
-
-#[derive(Default)]
-struct BootstrapHost {
-    stdout: Vec<u8>,
-}
-
-impl VmHost for BootstrapHost {
-    fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
-        match (name, arguments) {
-            ("std.console.print", [RuntimeValue::String(text)]) => {
-                self.stdout.extend_from_slice(text.as_bytes());
-                Ok(RuntimeValue::Unit)
-            }
-            ("std.console.print", _) => Err(VmError::Host(
-                "std.console.print received an invalid bootstrap argument list".into(),
-            )),
-            _ => Err(VmError::UnsupportedHostCall(name.to_owned())),
-        }
-    }
 }
 
 fn unhandled_main_error_diagnostic(
@@ -1493,10 +1488,68 @@ mod tests {
         assert!(accepted.diagnostics().diagnostics().is_empty());
 
         assert!(CapabilityName::new("console").is_ok());
+        let process_source =
+            b"import std.process\nfn main() {\n    let command = process.cmd(\"true\")\n}\n";
+        let process_rejected = execute(operation_request_with_capabilities(
+            Operation::Check,
+            process_source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::from([CapabilityName::new("console").unwrap()]),
+        ))
+        .unwrap();
+        assert_eq!(process_rejected.status(), CompilationStatus::Rejected);
+        let diagnostic = &process_rejected.diagnostics().diagnostics()[0];
+        assert_eq!(diagnostic.code(), "E1008");
+        assert!(
+            diagnostic
+                .message()
+                .contains("capability `process` is missing")
+        );
+
+        let process_accepted = execute(operation_request(
+            Operation::Check,
+            process_source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(process_accepted.status(), CompilationStatus::Success);
+        assert!(CapabilityName::new("process").is_ok());
         assert!(matches!(
             CapabilityName::new("made-up-capability"),
             Err(DriverError::InvalidCapability(_))
         ));
+    }
+
+    #[test]
+    fn program_arguments_reach_process_args_without_cli_options() {
+        let source = br#"
+import std.console
+import std.process
+
+fn main() {
+    assert(process.args() == ["--flag", "two words", "*", "$HOME"])
+    console.print("args-ok\n")
+}
+"#;
+        let output = execute(
+            operation_request(
+                Operation::Run,
+                source,
+                SourceForm::Script,
+                ResourceLimits::default(),
+            )
+            .with_program_arguments(vec![
+                "--flag".into(),
+                "two words".into(),
+                "*".into(),
+                "$HOME".into(),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(output.stdout(), b"args-ok\n");
     }
 
     #[test]

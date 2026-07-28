@@ -1,0 +1,12 @@
+#!/usr/bin/env tondo
+
+import std.console
+import std.process
+
+let pipeline = (
+    process.cmd("git", "log", "--oneline") |
+    process.cmd("head", "-n", "5")
+)
+
+let output = await pipeline.check()?
+console.print(output.stdout.text()?)

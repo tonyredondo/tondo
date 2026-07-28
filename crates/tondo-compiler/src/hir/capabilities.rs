@@ -653,6 +653,31 @@ fn intrinsic_node(
                 fixed(HirCapabilityStatus::Unsatisfied)
             }
         }
+        IntrinsicType::ProcessHandle => {
+            if capability == HirCapability::Send {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
+        IntrinsicType::Bytes
+        | IntrinsicType::ExitStatus
+        | IntrinsicType::ProcessOutput
+        | IntrinsicType::ProcessError
+        | IntrinsicType::ProcessExitError
+        | IntrinsicType::Utf8Error => {
+            if matches!(
+                capability,
+                HirCapability::Copy
+                    | HirCapability::Discard
+                    | HirCapability::Send
+                    | HirCapability::Share
+            ) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
         IntrinsicType::NumericConversionError => satisfied(Vec::new()),
     }
 }

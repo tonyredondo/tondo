@@ -107,8 +107,9 @@ underflow, infinities, NaN, signed zero, and the prohibition on implicit FMA
 contraction. Immutable strings retain valid UTF-8, exact scalar equality and
 ordering, linear Unicode-scalar iteration, negative indexing to `Char`, and
 array-compatible scalar slicing back to `String`; `String`, `Char`, `Byte`, and
-`Array[Byte]` remain distinct, while `Bytes` is deliberately reserved for the
-future standard library. Normal and multiline interpolation now decodes escapes
+`Array[Byte]` remain distinct. Opaque `Bytes` values cross only the
+capability-gated process boundary and require an explicit fallible `.text()`
+decode. Normal and multiline interpolation now decodes escapes
 once, evaluates holes from left to right, and resolves the predeclared
 `Display` trait statically. Scalar and `String` display use a closed bootstrap
 intrinsic; user values call their selected implementation through a shared
@@ -118,10 +119,17 @@ then to verified in-memory slot bytecode with source maps. Reached generic
 functions are monomorphized deterministically; equal concrete substitutions
 share one body, direct bytecode calls carry no runtime type pack, and expanding
 recursion is stopped by an explicit request limit. `tondo run` executes a safe
-synchronous or async explicit `main` in an iterative VM with checked operations,
-normative panics, precise generational mark-and-sweep collection, defensive
-limits, and a provisional capability-gated `std.console.print` host shim.
-Unsafe entry contexts and implicit script bodies remain under construction.
+sync or async explicit `main`, or an inferred implicit script entry, in an
+iterative VM with checked operations, normative panics, precise generational
+mark-and-sweep collection, defensive limits, and capability-gated
+`std.console` and `std.process` host bridges. Root scripts support shebangs,
+top-level statements, inferred closed error unions, and automatic async entry
+when they use `await` or `scope`. `Command` and `Pipeline` are inert copied
+plans; only four closed `|` compositions exist, argv never passes through a
+shell, and shell execution is explicitly named. Async terminal operations use
+direct OS pipes, concurrent draining, typed status/output/errors, affine
+`ProcessHandle` cleanup, and host workers that do not block runnable Tondo
+tasks. Unsafe entry contexts remain under construction.
 
 Ownership already distinguishes contextual copies, affine moves, immediate
 observations,
@@ -165,6 +173,8 @@ not claim full Tondo conformance.
   admission model.
 - `docs/contracts/bootstrap-host.md` records the provisional console shim and
   capability boundary.
+- `docs/contracts/process-host.md` records the closed process API, scheduling,
+  pipe, and cleanup boundary.
 - `docs/contracts/semantic-queries.md` records the request-owned tooling
   snapshot and CHECK-009 query boundary.
 - `docs/contracts/types.md` records the canonical semantic type representation.

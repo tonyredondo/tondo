@@ -2,15 +2,15 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.78
+**Versión del tracker:** 0.79
 
 **Última actualización:** 2026-07-28
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** M7 cerrado con async y concurrencia estructurada
-ejecutables. La siguiente unidad de trabajo, cuando se reanude, es SCRIPT-001;
-esta entrega se detiene antes de iniciar M8.
+**Objetivo inmediato:** M8 cerrado con scripts raíz, procesos externos y
+pipelines ejecutables. La siguiente unidad de trabajo, cuando se reanude, es
+UNSAFE-001; esta entrega se detiene antes de iniciar M9.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -259,7 +259,7 @@ necesaria; la fragmentación del workspace no.
 | **M5 — Ownership, préstamos y memoria** | Modelo de valores completo | Completado |
 | **M6 — Colecciones, números y texto** | Gate G3: alpha utilizable | Completado |
 | **M7 — Async y concurrencia estructurada** | Tasks conformes | Completado |
-| **M8 — Scripts y procesos** | Experiencia de scripting | Pendiente |
+| **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Pendiente |
 | **M10 — Conformidad y release** | Gate G5: Tondo 0.1 | Pendiente |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
@@ -272,7 +272,7 @@ Estado observado del workspace:
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada aún no está fijada.
 - Última validación: 2026-07-28, con formatter check, `cargo check` de todos los
-  targets, Clippy con warnings denegados, 620 tests, Rustdoc con warnings
+  targets, Clippy con warnings denegados, 635 tests, Rustdoc con warnings
   denegados y metadatos locked.
 
 ### 4.1 Ruta crítica
@@ -1868,56 +1868,56 @@ shell implícito ni efectos de importación.
 
 ### 13.1 Script raíz
 
-- [ ] **SCRIPT-001 — Implementar sentencias top-level solo en el archivo raíz
+- [x] **SCRIPT-001 — Implementar sentencias top-level solo en el archivo raíz
   del modo script.**
 
-- [ ] **SCRIPT-002 — Construir un `main` privado implícito.**
+- [x] **SCRIPT-002 — Construir un `main` privado implícito.**
 
-- [ ] **SCRIPT-003 — Inferir localmente la unión cerrada de errores del script.**
+- [x] **SCRIPT-003 — Inferir localmente la unión cerrada de errores del script.**
 
-- [ ] **SCRIPT-004 — Convertir el `main` implícito en async cuando aparezca
+- [x] **SCRIPT-004 — Convertir el `main` implícito en async cuando aparezca
   `await` o `scope` top-level.**
 
-- [ ] **SCRIPT-005 — Prohibir importar un script y mezclarlo con `main`
+- [x] **SCRIPT-005 — Prohibir importar un script y mezclarlo con `main`
   explícito.**
 
-- [ ] **SCRIPT-006 — Implementar shebang sin convertirlo en sintaxis de módulo.**
+- [x] **SCRIPT-006 — Implementar shebang sin convertirlo en sintaxis de módulo.**
 
 ### 13.2 Command y Pipeline
 
-- [ ] **PROC-001 — Implementar `Command` y `Pipeline` como planes inertes
+- [x] **PROC-001 — Implementar `Command` y `Pipeline` como planes inertes
   `Copy + Send + Share`.**
 
-- [ ] **PROC-002 — Implementar únicamente las cuatro combinaciones cerradas de
+- [x] **PROC-002 — Implementar únicamente las cuatro combinaciones cerradas de
   `|`.**
 
-- [ ] **PROC-003 — Garantizar que construir un plan no inicia procesos.**
+- [x] **PROC-003 — Garantizar que construir un plan no inicia procesos.**
 
-- [ ] **PROC-004 — Definir en la stdlib las operaciones terminales `start`,
+- [x] **PROC-004 — Definir en la stdlib las operaciones terminales `start`,
   `status`, `output`, `run` y `check` antes de implementarlas públicamente.**
 
-- [ ] **PROC-005 — Pasar programa y argumentos sin parsing de shell.**
+- [x] **PROC-005 — Pasar programa y argumentos sin parsing de shell.**
 
-- [ ] **PROC-006 — Ofrecer shell solo mediante una API nombrada y explícita.**
+- [x] **PROC-006 — Ofrecer shell solo mediante una API nombrada y explícita.**
 
-- [ ] **PROC-007 — Modelar handles, streams y ownership one-shot como recursos
+- [x] **PROC-007 — Modelar handles, streams y ownership one-shot como recursos
   terminales.**
 
-- [ ] **PROC-008 — Integrar cancelación y cleanup con el scope raíz.**
+- [x] **PROC-008 — Integrar cancelación y cleanup con el scope raíz.**
 
-- [ ] **PROC-009 — Traducir exit status y errores de spawn a tipos nominales de
+- [x] **PROC-009 — Traducir exit status y errores de spawn a tipos nominales de
   stdlib.**
 
-- [ ] **PROC-010 — Rechazar la API antes de ejecutar cuando el target no
+- [x] **PROC-010 — Rechazar la API antes de ejecutar cuando el target no
   anuncie capacidad `process`.**
 
 ### Gate de salida de M8
 
-- El ejemplo 24.17 funciona sin invocar un shell implícito.
-- Un import nunca ejecuta código.
-- No quedan procesos huérfanos al terminar, cancelar o panicar un scope.
-- Los argumentos conservan exactamente sus caracteres.
-- Los pipes aplican backpressure y no bloquean el executor cooperativo.
+- [x] El ejemplo 24.17 funciona sin invocar un shell implícito.
+- [x] Un import nunca ejecuta código.
+- [x] No quedan procesos huérfanos al terminar, cancelar o panicar un scope.
+- [x] Los argumentos conservan exactamente sus caracteres.
+- [x] Los pipes aplican backpressure y no bloquean el executor cooperativo.
 
 ---
 
@@ -2242,12 +2242,42 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-M4, M5, M6, M7 y Gate G3 quedan cerrados. La siguiente acción, cuando el trabajo
-se reanude, es SCRIPT-001; esta entrega se detiene antes de iniciar M8.
+M4, M5, M6, M7, M8 y Gate G3 quedan cerrados. La siguiente acción, cuando el
+trabajo se reanude, es UNSAFE-001; esta entrega se detiene antes de iniciar M9.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.79 — 2026-07-28
+
+- Se completa M8 con scripts raíz de sentencias top-level, `main` privado
+  implícito, inferencia cerrada de errores, promoción async contextual y
+  shebang exclusivo del root. Los scripts no pueden importarse ni mezclarse
+  con un `main` explícito.
+- `std.process` queda cerrado por capacidad de target. `Command` y `Pipeline`
+  son planes inertes; `|` admite exactamente sus cuatro combinaciones y
+  `cmd` conserva argv sin parsing, expansión ni shell implícito. El shell solo
+  se alcanza mediante `process.shell`.
+- Las operaciones terminales `start`, `status`, `output`, `run`, `check` y
+  `cancel` usan `ProcessHandle` afín, resultados nominales y bytes con
+  decodificación UTF-8 estricta. `check` conserva los estados por etapa y trata
+  el cierre esperado de un pipe por un consumidor satisfactorio sin ocultar
+  fallos posteriores.
+- El host conecta pipes del sistema con backpressure, drena stdout y stderr
+  concurrentemente y ejecuta waits bloqueantes fuera del executor cooperativo.
+  Cancelación, pánico, unwind y destrucción del host convergen en terminación y
+  reap idempotentes; los grupos de procesos Unix incluyen descendientes de un
+  shell explícito.
+- La CLI expone exactamente los argumentos posteriores a `--` mediante
+  `process.args()`. Fixtures de runtime, compile-fail y tests directos cubren
+  argv literal, las cuatro formas de pipe, procesos inexistentes, exit status,
+  discriminación de errores, backpressure, cancelación, pánico, cleanup y el
+  ejemplo normativo 24.17.
+- La puerta acumulada pasa con 635 tests, formatter check, `cargo check` para
+  todos los targets, Clippy con warnings denegados y Rustdoc con warnings
+  denegados. M9 queda expresamente fuera de esta entrega; UNSAFE-001 es el
+  siguiente límite de trabajo.
 
 ### 0.78 — 2026-07-28
 

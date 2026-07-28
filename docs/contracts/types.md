@@ -112,9 +112,10 @@ invalid tuple arity, intrinsic arity errors, and nominal identities from the
 wrong namespace.
 
 Intrinsic arity is closed: `Array`, `Set`, `Range`, `Ref`, and `Pointer` take
-one argument; `Map` and `Join` take two; `Command`, `Pipeline`, and
-`NumericConversionError` take none. `Iterator[T]` is a trait bound, not a value
-type node.
+one argument; `Map` and `Join` take two; `Command`, `Pipeline`, `Bytes`,
+`ExitStatus`, `ProcessOutput`, `ProcessHandle`, `ProcessError`,
+`ProcessExitError`, `Utf8Error`, and `NumericConversionError` take none.
+`Iterator[T]` is a trait bound, not a value type node.
 
 `Array[T]` records only its element type. Its length is never a type argument,
 so empty and nonempty arrays with the same element type intern to the same

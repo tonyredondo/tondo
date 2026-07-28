@@ -83,10 +83,10 @@ iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   `Key`, `Send`, and `Share`, all four closure effect identities and exact
   signatures, synchronous-safe closure invocation, exact closure-to-`fn`
   coercion, safe async initiation, structured task scopes, `Join` ownership,
-  and async liveness/capability rules. Concrete external implementations,
-  unsafe-region proofs and raw operations, implicit script bodies, and process
-  operations remain explicit later boundaries rather than receiving
-  provisional semantics. Persistent
+  async liveness/capability rules, implicit script entry bodies, and the closed
+  `Command`/`Pipeline` process surface. Concrete external implementations,
+  unsafe-region proofs, and raw operations remain explicit later boundaries
+  rather than receiving provisional semantics. Persistent
   source-visible partial owner states are deliberately absent from Tondo 0.1;
   OWN-005 implements the typed internal paths needed by complete destructuring
   without adding such a state.

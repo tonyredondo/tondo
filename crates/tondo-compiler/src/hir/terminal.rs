@@ -27,12 +27,14 @@ pub enum HirTerminalStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HirTerminalOperation {
     JoinAwait,
+    ProcessFinish,
 }
 
 /// The closed fallback used only while unwinding a direct intrinsic root.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HirTerminalUnwindAction {
     JoinTeardown,
+    ProcessCleanup,
 }
 
 /// The complete language-owned contract for one direct terminal root.
@@ -63,6 +65,12 @@ const JOIN_CONTRACT: HirTerminalContract = HirTerminalContract {
     unwind_may_suspend: true,
 };
 
+const PROCESS_HANDLE_CONTRACT: HirTerminalContract = HirTerminalContract {
+    operation: HirTerminalOperation::ProcessFinish,
+    unwind: HirTerminalUnwindAction::ProcessCleanup,
+    unwind_may_suspend: true,
+};
+
 /// This match is the language-owned terminal registry. Source declarations
 /// cannot extend it. Privileged opaque library entries will be supplied by the
 /// future standard-library interface catalog rather than by a user trait.
@@ -71,6 +79,7 @@ pub(crate) const fn intrinsic_terminal_contract(
 ) -> Option<HirTerminalContract> {
     match constructor {
         IntrinsicType::Join => Some(JOIN_CONTRACT),
+        IntrinsicType::ProcessHandle => Some(PROCESS_HANDLE_CONTRACT),
         IntrinsicType::Array
         | IntrinsicType::Map
         | IntrinsicType::Set
@@ -79,6 +88,12 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::Pointer
         | IntrinsicType::Command
         | IntrinsicType::Pipeline
+        | IntrinsicType::Bytes
+        | IntrinsicType::ExitStatus
+        | IntrinsicType::ProcessOutput
+        | IntrinsicType::ProcessError
+        | IntrinsicType::ProcessExitError
+        | IntrinsicType::Utf8Error
         | IntrinsicType::NumericConversionError => None,
     }
 }
@@ -400,8 +415,16 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::Pointer
         | IntrinsicType::Command
         | IntrinsicType::Pipeline
+        | IntrinsicType::Bytes
+        | IntrinsicType::ExitStatus
+        | IntrinsicType::ProcessOutput
+        | IntrinsicType::ProcessError
+        | IntrinsicType::ProcessExitError
+        | IntrinsicType::Utf8Error
         | IntrinsicType::NumericConversionError => fixed(HirTerminalStatus::Absent),
-        IntrinsicType::Join => unreachable!("registered terminal roots return above"),
+        IntrinsicType::Join | IntrinsicType::ProcessHandle => {
+            unreachable!("registered terminal roots return above")
+        }
     }
 }
 
@@ -441,7 +464,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn intrinsic_terminal_registry_is_sealed_to_join() {
+    fn intrinsic_terminal_registry_is_sealed_to_language_resources() {
         let constructors = [
             IntrinsicType::Array,
             IntrinsicType::Map,
@@ -452,12 +475,19 @@ mod tests {
             IntrinsicType::Join,
             IntrinsicType::Command,
             IntrinsicType::Pipeline,
+            IntrinsicType::Bytes,
+            IntrinsicType::ExitStatus,
+            IntrinsicType::ProcessOutput,
+            IntrinsicType::ProcessHandle,
+            IntrinsicType::ProcessError,
+            IntrinsicType::ProcessExitError,
+            IntrinsicType::Utf8Error,
             IntrinsicType::NumericConversionError,
         ];
         let registered = constructors
             .into_iter()
             .filter_map(intrinsic_terminal_contract)
             .collect::<Vec<_>>();
-        assert_eq!(registered, [JOIN_CONTRACT]);
+        assert_eq!(registered, [JOIN_CONTRACT, PROCESS_HANDLE_CONTRACT]);
     }
 }

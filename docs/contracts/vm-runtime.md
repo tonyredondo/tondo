@@ -419,11 +419,12 @@ object intact. Copying an object preserves its original descriptor, including
 through callable erasure and opaque representation boundaries.
 
 `Join[T,E]` is an immediate VM-only pair of child-task and owning-scope
-identities, not a heap object and not a public address. `Pointer[T]`, `Command`,
-and `Pipeline` currently have no constructible managed bootstrap representation
-and therefore admit no heap object descriptor. Any later managed runtime shape
-must extend the sealed catalog; an ad-hoc object-side tracing method is not an
-extension point.
+identities, not a heap object and not a public address. `Pointer[T]` has no
+constructible managed bootstrap representation. `Command`, `Pipeline`, and the
+opaque process values are typed run-local host identities rather than managed
+heap objects; their payloads and live child resources remain in the hosted
+registry. Any later managed runtime shape must extend the sealed catalog; an
+ad-hoc object-side tracing method is not an extension point.
 
 Allocation may request a full collection when the object threshold, byte
 budget, or slot budget is approached. The object being allocated and all of its

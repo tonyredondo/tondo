@@ -452,7 +452,7 @@ impl PackageGraph {
             SourceId::new("toolchain:std:0.1-bootstrap")?,
             PackageAlias::new("tondoStd")?,
             Edition::V0_1,
-            [ModulePath::new("console")?],
+            [ModulePath::new("console")?, ModulePath::new("process")?],
             [],
         )?);
         Self::new(root_id, standard_id, nodes)
@@ -479,6 +479,7 @@ impl PackageGraph {
             .expect("the standard package was validated during graph construction");
         standard.modules.retain(|module| match module.as_str() {
             "console" => has_capability("console"),
+            "process" => has_capability("process"),
             _ => false,
         });
     }
@@ -582,17 +583,18 @@ impl PackageGraph {
                 package: package.clone(),
                 path: module_path,
             };
-            if package == &self.standard
-                && self.standard.as_str() == "toolchain:std:0.1-bootstrap"
-                && module.path().as_str() == "console"
+            if package == &self.standard && self.standard.as_str() == "toolchain:std:0.1-bootstrap"
             {
-                ImportResolutionError::MissingTargetCapability {
-                    module,
-                    capability: "console",
+                let capability = match module.path().as_str() {
+                    "console" => Some("console"),
+                    "process" => Some("process"),
+                    _ => None,
+                };
+                if let Some(capability) = capability {
+                    return ImportResolutionError::MissingTargetCapability { module, capability };
                 }
-            } else {
-                ImportResolutionError::UnknownModule(module)
             }
+            ImportResolutionError::UnknownModule(module)
         })
     }
 

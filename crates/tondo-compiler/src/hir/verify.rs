@@ -512,6 +512,13 @@ impl Verifier<'_> {
                         | IntrinsicType::Join
                         | IntrinsicType::Command
                         | IntrinsicType::Pipeline
+                        | IntrinsicType::Bytes
+                        | IntrinsicType::ExitStatus
+                        | IntrinsicType::ProcessOutput
+                        | IntrinsicType::ProcessHandle
+                        | IntrinsicType::ProcessError
+                        | IntrinsicType::ProcessExitError
+                        | IntrinsicType::Utf8Error
                         | IntrinsicType::NumericConversionError => None,
                     };
                     if let Some((required, capability, reason)) = requirement {
@@ -1424,7 +1431,9 @@ impl Verifier<'_> {
             .iter()
             .filter_map(|callable| match callable.id {
                 HirCallableId::Implementation(_) => Some(callable.id),
-                HirCallableId::Symbol(_) | HirCallableId::Member(_) => None,
+                HirCallableId::Symbol(_) | HirCallableId::Member(_) | HirCallableId::Host(_) => {
+                    None
+                }
             })
             .collect::<BTreeSet<_>>();
         if callable_ids != table_callables {
@@ -2702,7 +2711,9 @@ impl Verifier<'_> {
                         MemberKind::InherentMethod | MemberKind::AssociatedFunction
                     )
                 }) => {}
-            HirCallableId::Member(_) | HirCallableId::Implementation(_) => {
+            HirCallableId::Member(_)
+            | HirCallableId::Implementation(_)
+            | HirCallableId::Host(_) => {
                 return Err(HirInvariantError::new(
                     context,
                     "trait or implementation method owns an opaque result",
@@ -4182,15 +4193,75 @@ impl Verifier<'_> {
                 function,
                 arguments,
             } => {
-                if !matches!(function, super::HirBootstrapHostFunction::ConsolePrint)
-                    || arguments.len() != 1
-                    || self.expression(arguments[0], context)?.ty
-                        != self.program.interner.scalar(ScalarType::String)
-                    || expression.ty != self.program.interner.scalar(ScalarType::Unit)
-                {
+                let argument_types = arguments
+                    .iter()
+                    .map(|argument| self.expression(*argument, context).map(|value| value.ty))
+                    .collect::<Result<Vec<_>, _>>()?;
+                let intrinsic = |ty, expected| {
+                    matches!(
+                        self.program.interner.kind(ty),
+                        Ok(TypeKind::Intrinsic {
+                            constructor,
+                            arguments,
+                        }) if *constructor == expected && arguments.is_empty()
+                    )
+                };
+                let statuses = |ty| {
+                    matches!(
+                        self.program.interner.kind(ty),
+                        Ok(TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Array,
+                            arguments,
+                        }) if arguments.len() == 1
+                            && intrinsic(arguments[0], IntrinsicType::ExitStatus)
+                    )
+                };
+                let valid = match function {
+                    super::HirBootstrapHostFunction::ConsolePrint => {
+                        argument_types.as_slice()
+                            == [self.program.interner.scalar(ScalarType::String)]
+                            && expression.ty == self.program.interner.scalar(ScalarType::Unit)
+                    }
+                    super::HirBootstrapHostFunction::ProcessPipe => {
+                        argument_types.len() == 2
+                            && argument_types.iter().all(|ty| {
+                                intrinsic(*ty, IntrinsicType::Command)
+                                    || intrinsic(*ty, IntrinsicType::Pipeline)
+                            })
+                            && intrinsic(expression.ty, IntrinsicType::Pipeline)
+                    }
+                    super::HirBootstrapHostFunction::ProcessOutputStdout
+                    | super::HirBootstrapHostFunction::ProcessOutputStderr => {
+                        argument_types.len() == 1
+                            && intrinsic(argument_types[0], IntrinsicType::ProcessOutput)
+                            && intrinsic(expression.ty, IntrinsicType::Bytes)
+                    }
+                    super::HirBootstrapHostFunction::ProcessOutputStatuses => {
+                        argument_types.len() == 1
+                            && intrinsic(argument_types[0], IntrinsicType::ProcessOutput)
+                            && statuses(expression.ty)
+                    }
+                    super::HirBootstrapHostFunction::ExitStatusCode => {
+                        argument_types.len() == 1
+                            && intrinsic(argument_types[0], IntrinsicType::ExitStatus)
+                            && matches!(
+                                self.program.interner.kind(expression.ty),
+                                Ok(TypeKind::Option(item))
+                                    if *item
+                                        == self.program.interner.scalar(ScalarType::Int)
+                            )
+                    }
+                    super::HirBootstrapHostFunction::ExitStatusSuccess => {
+                        argument_types.len() == 1
+                            && intrinsic(argument_types[0], IntrinsicType::ExitStatus)
+                            && expression.ty == self.program.interner.scalar(ScalarType::Bool)
+                    }
+                    _ => false,
+                };
+                if !valid {
                     return Err(HirInvariantError::new(
                         context,
-                        "bootstrap console print requires one String and has type Unit",
+                        "bootstrap host operation does not match its closed contract",
                     ));
                 }
             }
@@ -5593,6 +5664,7 @@ impl Verifier<'_> {
                         ),
                     )
                 }),
+            HirCallableId::Host(_) => Ok(()),
         }
     }
 
@@ -5966,6 +6038,7 @@ fn callable_context(callable: HirCallableId) -> String {
             method.implementation().index(),
             method.index()
         ),
+        HirCallableId::Host(function) => format!("host callable {}", function.name()),
     }
 }
 

@@ -236,6 +236,13 @@ pub enum BytecodeIntrinsicType {
     Join,
     Command,
     Pipeline,
+    Bytes,
+    ExitStatus,
+    ProcessOutput,
+    ProcessHandle,
+    ProcessError,
+    ProcessExitError,
+    Utf8Error,
     NumericConversionError,
 }
 
@@ -325,11 +332,13 @@ pub struct BytecodeTraceMetadata {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BytecodeTerminalOperation {
     JoinAwait,
+    ProcessFinish,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BytecodeTerminalUnwindAction {
     JoinTeardown,
+    ProcessCleanup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -344,7 +353,16 @@ impl BytecodeIntrinsicType {
         match self {
             Self::Map | Self::Join => 2,
             Self::Array | Self::Set | Self::Range | Self::Ref | Self::Pointer => 1,
-            Self::Command | Self::Pipeline | Self::NumericConversionError => 0,
+            Self::Command
+            | Self::Pipeline
+            | Self::Bytes
+            | Self::ExitStatus
+            | Self::ProcessOutput
+            | Self::ProcessHandle
+            | Self::ProcessError
+            | Self::ProcessExitError
+            | Self::Utf8Error
+            | Self::NumericConversionError => 0,
         }
     }
 
@@ -359,6 +377,11 @@ impl BytecodeIntrinsicType {
                 unwind: BytecodeTerminalUnwindAction::JoinTeardown,
                 unwind_may_suspend: true,
             }),
+            Self::ProcessHandle => Some(BytecodeTerminalContract {
+                operation: BytecodeTerminalOperation::ProcessFinish,
+                unwind: BytecodeTerminalUnwindAction::ProcessCleanup,
+                unwind_may_suspend: true,
+            }),
             Self::Array
             | Self::Map
             | Self::Set
@@ -367,6 +390,12 @@ impl BytecodeIntrinsicType {
             | Self::Pointer
             | Self::Command
             | Self::Pipeline
+            | Self::Bytes
+            | Self::ExitStatus
+            | Self::ProcessOutput
+            | Self::ProcessError
+            | Self::ProcessExitError
+            | Self::Utf8Error
             | Self::NumericConversionError => None,
         }
     }
@@ -1016,12 +1045,24 @@ pub enum BytecodeCallProtocol {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BytecodeBootstrapHostFunction {
     ConsolePrint,
+    ProcessPipe,
+    ProcessOutputStdout,
+    ProcessOutputStderr,
+    ProcessOutputStatuses,
+    ExitStatusCode,
+    ExitStatusSuccess,
 }
 
 impl BytecodeBootstrapHostFunction {
     pub const fn name(self) -> &'static str {
         match self {
             Self::ConsolePrint => "std.console.print",
+            Self::ProcessPipe => "std.process.pipe",
+            Self::ProcessOutputStdout => "std.process.ProcessOutput.stdout",
+            Self::ProcessOutputStderr => "std.process.ProcessOutput.stderr",
+            Self::ProcessOutputStatuses => "std.process.ProcessOutput.statuses",
+            Self::ExitStatusCode => "std.process.ExitStatus.code",
+            Self::ExitStatusSuccess => "std.process.ExitStatus.success",
         }
     }
 }
@@ -1227,7 +1268,7 @@ mod tests {
     }
 
     #[test]
-    fn intrinsic_terminal_registry_is_sealed_to_join() {
+    fn intrinsic_terminal_registry_is_sealed_to_language_resources() {
         let all = [
             BytecodeIntrinsicType::Array,
             BytecodeIntrinsicType::Map,
@@ -1238,6 +1279,13 @@ mod tests {
             BytecodeIntrinsicType::Join,
             BytecodeIntrinsicType::Command,
             BytecodeIntrinsicType::Pipeline,
+            BytecodeIntrinsicType::Bytes,
+            BytecodeIntrinsicType::ExitStatus,
+            BytecodeIntrinsicType::ProcessOutput,
+            BytecodeIntrinsicType::ProcessHandle,
+            BytecodeIntrinsicType::ProcessError,
+            BytecodeIntrinsicType::ProcessExitError,
+            BytecodeIntrinsicType::Utf8Error,
             BytecodeIntrinsicType::NumericConversionError,
         ];
         let registered = all
@@ -1246,11 +1294,18 @@ mod tests {
             .collect::<Vec<_>>();
         assert_eq!(
             registered,
-            [BytecodeTerminalContract {
-                operation: BytecodeTerminalOperation::JoinAwait,
-                unwind: BytecodeTerminalUnwindAction::JoinTeardown,
-                unwind_may_suspend: true,
-            }]
+            [
+                BytecodeTerminalContract {
+                    operation: BytecodeTerminalOperation::JoinAwait,
+                    unwind: BytecodeTerminalUnwindAction::JoinTeardown,
+                    unwind_may_suspend: true,
+                },
+                BytecodeTerminalContract {
+                    operation: BytecodeTerminalOperation::ProcessFinish,
+                    unwind: BytecodeTerminalUnwindAction::ProcessCleanup,
+                    unwind_may_suspend: true,
+                },
+            ]
         );
     }
 

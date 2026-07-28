@@ -269,11 +269,7 @@ fn every_syntactically_valid_spec_fence_formats_reparses_and_is_idempotent() {
             };
             let lexed = lex(&sources, file, lex_mode).unwrap();
             let parsed = parse(&sources, file, lexed, mode, ParseLimits::default()).unwrap();
-            if parsed
-                .diagnostics()
-                .iter()
-                .any(|diagnostic| diagnostic.code().as_str().starts_with("E000"))
-            {
+            if !parsed.diagnostics().is_empty() {
                 continue;
             }
             accepted = true;

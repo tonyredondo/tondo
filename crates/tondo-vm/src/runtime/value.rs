@@ -22,6 +22,7 @@ pub(super) enum Value {
     },
     Loan(RuntimeLoan),
     Join(RuntimeJoin),
+    Host(RuntimeValue),
     Heap(HeapHandle),
 }
 
@@ -51,7 +52,8 @@ impl Value {
             | Self::Char(_)
             | Self::Function { .. }
             | Self::Loan(_)
-            | Self::Join(_) => None,
+            | Self::Join(_)
+            | Self::Host(_) => None,
         }
     }
 }
@@ -119,6 +121,7 @@ fn snapshot_value_inner(
                 "an affine Join escaped the structured runtime",
             ));
         }
+        Value::Host(value) => value.clone(),
         Value::Heap(handle) => {
             if let Some(id) = visiting.get(handle) {
                 return Ok(RuntimeValue::Cycle(*id));

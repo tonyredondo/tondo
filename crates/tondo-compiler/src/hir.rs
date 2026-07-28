@@ -14,8 +14,8 @@ use crate::resolve::{LocalId, MemberId, SymbolId};
 use crate::source::{FileId, SourceError, Span, TextRange};
 use crate::types::{
     Assignability, FunctionParameter, FunctionType, GeneratedTypeIdentity, GeneratedTypeKind,
-    InferenceError, NumericConversion, NumericConversionErrorVariant, ParameterMode, ScalarType,
-    TypeError, TypeId, TypeInterner, TypeKind, TypeSubstitution,
+    InferenceError, IntrinsicType, NumericConversion, NumericConversionErrorVariant, ParameterMode,
+    ScalarType, TypeError, TypeId, TypeInterner, TypeKind, TypeSubstitution,
 };
 
 mod availability;
@@ -43,6 +43,26 @@ pub(crate) use terminal::TerminalAnalysis;
 pub use terminal::{
     HirTerminalContract, HirTerminalOperation, HirTerminalStatus, HirTerminalUnwindAction,
 };
+
+fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<IntrinsicType> {
+    if module.package().as_str() != "toolchain:std:0.1-bootstrap"
+        || module.path().as_str() != "process"
+    {
+        return None;
+    }
+    Some(match name.as_str() {
+        "Command" => IntrinsicType::Command,
+        "Pipeline" => IntrinsicType::Pipeline,
+        "Bytes" => IntrinsicType::Bytes,
+        "ExitStatus" => IntrinsicType::ExitStatus,
+        "ProcessOutput" => IntrinsicType::ProcessOutput,
+        "ProcessHandle" => IntrinsicType::ProcessHandle,
+        "ProcessError" => IntrinsicType::ProcessError,
+        "ProcessExitError" => IntrinsicType::ProcessExitError,
+        "Utf8Error" => IntrinsicType::Utf8Error,
+        _ => return None,
+    })
+}
 pub(crate) use traits::{TraitQuery, TraitSelectionError, select_implementation};
 pub use verify::HirInvariantError;
 pub(crate) use verify::verify_typed_hir;
@@ -1263,6 +1283,7 @@ pub enum HirCallableId {
     Symbol(SymbolId),
     Member(MemberId),
     Implementation(HirImplementationMethodId),
+    Host(HirBootstrapHostFunction),
 }
 
 #[derive(Debug, Clone)]
@@ -1911,9 +1932,86 @@ pub enum HirExpressionKind {
     },
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HirBootstrapHostFunction {
     ConsolePrint,
+    ProcessArgs,
+    ProcessCmd,
+    ProcessShell,
+    CommandStart,
+    CommandStatus,
+    CommandOutput,
+    CommandRun,
+    CommandCheck,
+    PipelineStart,
+    PipelineStatus,
+    PipelineOutput,
+    PipelineRun,
+    PipelineCheck,
+    ProcessHandleStatus,
+    ProcessHandleOutput,
+    ProcessHandleRun,
+    ProcessHandleCheck,
+    ProcessHandleCancel,
+    BytesText,
+    ProcessOutputStdout,
+    ProcessOutputStderr,
+    ProcessOutputStatuses,
+    ExitStatusCode,
+    ExitStatusSuccess,
+    ProcessPipe,
+}
+
+impl HirBootstrapHostFunction {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::ConsolePrint => "std.console.print",
+            Self::ProcessArgs => "std.process.args",
+            Self::ProcessCmd => "std.process.cmd",
+            Self::ProcessShell => "std.process.shell",
+            Self::CommandStart => "std.process.Command.start",
+            Self::CommandStatus => "std.process.Command.status",
+            Self::CommandOutput => "std.process.Command.output",
+            Self::CommandRun => "std.process.Command.run",
+            Self::CommandCheck => "std.process.Command.check",
+            Self::PipelineStart => "std.process.Pipeline.start",
+            Self::PipelineStatus => "std.process.Pipeline.status",
+            Self::PipelineOutput => "std.process.Pipeline.output",
+            Self::PipelineRun => "std.process.Pipeline.run",
+            Self::PipelineCheck => "std.process.Pipeline.check",
+            Self::ProcessHandleStatus => "std.process.ProcessHandle.status",
+            Self::ProcessHandleOutput => "std.process.ProcessHandle.output",
+            Self::ProcessHandleRun => "std.process.ProcessHandle.run",
+            Self::ProcessHandleCheck => "std.process.ProcessHandle.check",
+            Self::ProcessHandleCancel => "std.process.ProcessHandle.cancel",
+            Self::BytesText => "std.process.Bytes.text",
+            Self::ProcessOutputStdout => "std.process.ProcessOutput.stdout",
+            Self::ProcessOutputStderr => "std.process.ProcessOutput.stderr",
+            Self::ProcessOutputStatuses => "std.process.ProcessOutput.statuses",
+            Self::ExitStatusCode => "std.process.ExitStatus.code",
+            Self::ExitStatusSuccess => "std.process.ExitStatus.success",
+            Self::ProcessPipe => "std.process.pipe",
+        }
+    }
+
+    pub const fn is_async(self) -> bool {
+        matches!(
+            self,
+            Self::CommandStatus
+                | Self::CommandOutput
+                | Self::CommandRun
+                | Self::CommandCheck
+                | Self::PipelineStatus
+                | Self::PipelineOutput
+                | Self::PipelineRun
+                | Self::PipelineCheck
+                | Self::ProcessHandleStatus
+                | Self::ProcessHandleOutput
+                | Self::ProcessHandleRun
+                | Self::ProcessHandleCheck
+                | Self::ProcessHandleCancel
+        )
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

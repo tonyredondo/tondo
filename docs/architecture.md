@@ -507,11 +507,15 @@ copies, projections, slices, array arithmetic, named array sequences, variadic
 packing, calls, and the structured terminal-fallback walker. Publication into a
 frame, cleanup, or managed object and withdrawal by move/death/pop have explicit
 transitions.
-Closure environments remain ordinary traced objects. Host values are detached
-snapshots rather than handles. Each task owns its active or parked frame vector,
-and every such frame plus each completed child return remains a registered root
-source. The VM rejects effectful ordinary calls; async work reaches only
-`Await`, `Spawn`, or a safe async root, while unsafe root entries remain
+Closure environments remain ordinary traced objects. General host arguments
+are detached snapshots rather than VM handles. Opaque process values use a
+separate typed run-local registry identity and never expose a heap or OS
+address. Each task owns its active or parked frame vector, and every such frame
+plus each completed child return remains a registered root source. The VM
+rejects effectful ordinary calls; async work reaches only `Await`, `Spawn`, or
+a safe async root. Blocking process waits and pipe drains run on host workers;
+the cooperative executor polls completions between runnable tasks and blocks
+for one only when its runnable queue is empty. Unsafe root entries remain
 rejected. A test-only memory adapter drives the same
 allocator, descriptors, root enumeration, and pressure trigger to keep a mixed
 `Ref`/array/closure cycle alive, repeatedly reclaim unrooted peers, and reclaim
@@ -523,9 +527,10 @@ at most one full collection, rechecks capacity, and publishes once.
 Replacement roots its target internally and remains unchanged if the retry
 cannot fit. The exact object, tracing, panic, host, and admission boundary is
 recorded in `docs/contracts/vm-runtime.md`.
-The sole M3 standard-library bridge, capability-gated
-`std.console.print(String): Unit`, is isolated by
-`docs/contracts/bootstrap-host.md` and is not a general FFI or a frozen stdlib
+The capability-gated standard-library bridges are
+`std.console.print(String): Unit` and the closed `std.process` surface. They are
+isolated by `docs/contracts/bootstrap-host.md` and
+`docs/contracts/process-host.md`; neither is a general FFI or a frozen stdlib
 ABI.
 
 ## Data ownership across phases

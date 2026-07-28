@@ -9,15 +9,16 @@ name                 = tondo-vm-hosted
 diagnostic source ID = target:tondo-vm-hosted
 profile              = hosted
 edition              = 0.1
-capabilities         = [console]
+capabilities         = [console, process]
 ~~~
 
-`console` exposes only the provisional `std.console.print(String): Unit` shim
-recorded in `bootstrap-host.md`. Process, filesystem, network, threads, FFI, and
-other hosted capabilities remain absent until their contracts and runtime paths
-exist. A custom request may omit `console`; its selected bootstrap standard
-package then omits `std.console`, and an import is rejected with `E1008` rather
-than reaching a failing runtime stub.
+`console` exposes the provisional `std.console.print(String): Unit` shim in
+`bootstrap-host.md`. `process` exposes the closed surface in
+`process-host.md`. Filesystem, network, FFI, and other hosted capabilities
+remain absent until their contracts and runtime paths exist. A custom request
+may omit either registered capability; its selected bootstrap standard package
+then omits the corresponding module, and an import is rejected with `E1008`
+rather than reaching a failing runtime stub.
 
 The VM target is a real target identity, not shorthand for the current host
 machine. Adding a capability changes build identity and applicable conformance

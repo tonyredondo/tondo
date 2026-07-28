@@ -1,11 +1,11 @@
 # Bootstrap standard-library host boundary
 
-**Status:** implemented M3 provisional boundary
+**Status:** implemented M8 bootstrap boundary
 **Language baseline:** Tondo 0.1-draft.8
 
-This contract exists only to make the first VM backend observable without
-freezing the future standard-library ABI. It defines one source-visible module
-and one typed host operation:
+This contract makes hosted effects observable without freezing a native ABI.
+It defines the console bridge here and delegates the process surface to
+[`process-host.md`](./process-host.md):
 
 ~~~tondo
 import std.console
@@ -22,12 +22,12 @@ newline.
 
 ## Target admission
 
-`std.console` is present only when the closed target capability set contains
-the registered `console` capability. The built-in `tondo-vm-hosted` CLI target
-declares exactly that capability during M3. A request without it removes the
-module from the selected bootstrap standard package; importing it produces
-`E1008` and names the missing capability. There is no runtime stub that always
-fails.
+`std.console` and `std.process` are present only when the closed target
+capability set contains `console` and `process`, respectively. The built-in
+`tondo-vm-hosted` CLI target declares both. A request without either capability
+removes that module from the selected bootstrap standard package; importing it
+produces `E1008` and names the missing capability. There is no runtime stub
+that always fails.
 
 The module is source-less and belongs to package
 `toolchain:std:0.1-bootstrap`. Resolution may expose only the exact `print`
@@ -44,10 +44,12 @@ stringly typed general-purpose FFI or through a callable with a missing body.
 Only verified bytecode can invoke the host. The VM passes detached
 `RuntimeValue` snapshots, never heap handles, frame references, or mutable VM
 state. Retaining or mutating such a snapshot does not retain or mutate its
-former VM object. A returned compound snapshot would be rematerialized while
-completed children remain operation-local roots; the current `print` bridge
-must return `Unit`. Any other value is a toolchain host error, not a Tondo value
-or panic.
+former VM object. A returned compound snapshot is rematerialized while
+completed children remain operation-local roots. `print` must return `Unit`.
+Process plans and opaque results use typed run-local host identities; process
+waits run independently and enter the VM again only through the verified async
+completion path. Any shape mismatch is a toolchain host error, not a Tondo
+value or panic.
 
 The compiler driver's bootstrap host buffers bytes in evaluation order and
 places them in `CompilationOutput.stdout`. The CLI writes that buffer to process
@@ -67,4 +69,5 @@ capability admission, stream routing, evaluation order, and diagnostics.
 Required regression coverage includes accepted and rejected call shapes,
 capability-present and capability-absent imports, HIR-to-bytecode preservation,
 host argument snapshots that do not become VM roots, exact output without an
-implicit newline, and verification before the first possible host invocation.
+implicit newline, async progress, cleanup, and verification before the first
+possible host invocation.

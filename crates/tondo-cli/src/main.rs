@@ -24,6 +24,7 @@ Tondo bootstrap toolchain
 
 Usage:
   tondo <command> [--diagnostic-format <human|json>] <source.to>
+  tondo run [--diagnostic-format <human|json>] <source.to> -- [argument ...]
 
 Commands:
   fmt      Format one Tondo source file
@@ -33,6 +34,7 @@ Commands:
 Options:
   --diagnostic-format <human|json>  Select diagnostic output
   --check                           Verify formatting without writing output (fmt only)
+  -- [argument ...]                 Pass UTF-8 arguments to a run script
   -h, --help                        Show this help
   -V, --version                     Show version information";
 
@@ -111,7 +113,8 @@ fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
         sources,
         root,
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| error.to_string())?
+    .with_program_arguments(invocation.program_arguments);
     let output = execute(request).map_err(|error| error.to_string())?;
 
     let format_check_failed = invocation.format_check
@@ -146,6 +149,7 @@ struct Invocation {
     diagnostic_format: DiagnosticFormat,
     format_check: bool,
     source: PathBuf,
+    program_arguments: Vec<String>,
 }
 
 fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
@@ -162,10 +166,28 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
     let mut diagnostic_format = DiagnosticFormat::Human;
     let mut format_check = false;
     let mut source: Option<PathBuf> = None;
+    let mut program_arguments = Vec::new();
     let mut index = 1;
     while index < arguments.len() {
         let argument = &arguments[index];
-        if argument == "--diagnostic-format" {
+        if argument == "--" {
+            if operation != Operation::Run {
+                return Err("program arguments are only valid with `tondo run`".into());
+            }
+            if source.is_none() {
+                return Err("the source file must appear before `--`".into());
+            }
+            program_arguments = arguments[index + 1..]
+                .iter()
+                .map(|argument| {
+                    argument
+                        .clone()
+                        .into_string()
+                        .map_err(|_| "program arguments must be valid UTF-8".to_owned())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            break;
+        } else if argument == "--diagnostic-format" {
             index += 1;
             let Some(value) = arguments.get(index).and_then(|value| value.to_str()) else {
                 return Err("`--diagnostic-format` requires `human` or `json`".into());
@@ -201,6 +223,7 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
         diagnostic_format,
         format_check,
         source,
+        program_arguments,
     })
 }
 
@@ -256,5 +279,42 @@ mod tests {
             let arguments = [command, "--check", "main.to"].map(OsString::from).to_vec();
             assert!(parse_invocation(&arguments).is_err());
         }
+    }
+
+    #[test]
+    fn run_preserves_arguments_after_separator() {
+        let arguments = ["run", "main.to", "--", "--flag", "two words"]
+            .map(OsString::from)
+            .to_vec();
+        let invocation = parse_invocation(&arguments).unwrap();
+        assert_eq!(invocation.program_arguments, ["--flag", "two words"]);
+    }
+
+    #[test]
+    fn non_run_commands_reject_program_arguments() {
+        for command in ["fmt", "check"] {
+            let arguments = [command, "main.to", "--", "argument"]
+                .map(OsString::from)
+                .to_vec();
+            assert!(parse_invocation(&arguments).is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_rejects_non_utf8_program_arguments() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let arguments = vec![
+            OsString::from("run"),
+            OsString::from("main.to"),
+            OsString::from("--"),
+            OsString::from_vec(vec![0xff]),
+        ];
+        assert!(
+            parse_invocation(&arguments)
+                .unwrap_err()
+                .contains("valid UTF-8")
+        );
     }
 }

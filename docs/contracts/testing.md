@@ -172,6 +172,25 @@ panic, stdout, write independence, identity, iteration, and GC survival.
 Internal allocation, collection, handle, and COW counters are deliberately
 absent from the observable oracle.
 
+## Scripts and processes
+
+M8 fixtures execute sync and inferred-async script roots, shebang admission,
+closed error-union inference, and the exact example in specification section
+24.17. Compile-fail cases cover script/module isolation, explicit-main
+conflicts, the four-form-only pipe operator, missing `std.process` imports,
+closed bootstrap names, and unconsumed `ProcessHandle` values.
+
+Process runtime coverage observes exact argv preservation without shell
+expansion, explicit shell use, all four `Command`/`Pipeline` compositions,
+status versus `check` errors, strict bytes-to-text decoding, spawn failures,
+handle consumption, cancellation, sibling-panic cleanup, and CLI arguments
+after `--`. A host-level producer writes more than one MiB through a direct OS
+pipe to prove concurrent draining and bounded kernel backpressure. Scheduler
+tests require ready host work to be polled while a language task remains
+runnable and forbid the blocking host wait on that path. Unix cleanup tests
+retain child PIDs only long enough to prove that cancel and host destruction
+reap them.
+
 ## Conformance separation
 
 Implementation fixtures may test private invariants and `T` diagnostics. The

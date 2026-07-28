@@ -6,7 +6,7 @@ use crate::resolve::{
     LocalId, LocalKind, MemberKind, ResolvedEntity, ResolvedName, ResolvedProgram, SymbolId,
     SymbolKind,
 };
-use crate::source::{FileId, SourceDatabase, Span, TextRange};
+use crate::source::{FileId, ModulePath, SourceDatabase, Span, TextRange};
 use crate::syntax::ast::Expression as AstExpression;
 use crate::syntax::{Parsed, SyntaxKind, SyntaxNodeRef, SyntaxTokenRef, TokenKind};
 use crate::types::{
@@ -17,12 +17,13 @@ use crate::types::{
 use super::capabilities::bounds_imply;
 use super::termination::{TraitTerminationEdge, TraitTerminationError, analyze_trait_termination};
 use super::{
-    HirCallableId, HirCallableSignature, HirCapability, HirConstant, HirError, HirField,
-    HirGenericParameter, HirImplementation, HirImplementationId, HirImplementationMethod,
-    HirImplementationMethodContract, HirImplementationMethodId, HirNominalDefinition,
-    HirNominalShape, HirOpaqueResult, HirOutput, HirParameter, HirPreludeTraitMethod, HirProgram,
-    HirTraitConstructor, HirTraitDefinition, HirTraitIdentity, HirTraitMethod, HirTraitMethodKey,
-    HirTraitReference, HirTypeDeclaration, HirTypeDeclarationKind, HirVariant, HirVariantPayload,
+    HirBootstrapHostFunction, HirCallableId, HirCallableSignature, HirCapability, HirConstant,
+    HirError, HirField, HirGenericParameter, HirImplementation, HirImplementationId,
+    HirImplementationMethod, HirImplementationMethodContract, HirImplementationMethodId,
+    HirNominalDefinition, HirNominalShape, HirOpaqueResult, HirOutput, HirParameter,
+    HirPreludeTraitMethod, HirProgram, HirTraitConstructor, HirTraitDefinition, HirTraitIdentity,
+    HirTraitMethod, HirTraitMethodKey, HirTraitReference, HirTypeDeclaration,
+    HirTypeDeclarationKind, HirVariant, HirVariantPayload,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -69,6 +70,7 @@ pub fn lower_types<'a>(
     lowerer.lower_aliases()?;
     lowerer.lower_declarations()?;
     lowerer.lower_remaining_source()?;
+    lowerer.lower_bootstrap_host_contracts()?;
     lowerer.validate_productivity()?;
     lowerer.callables.sort_by_key(|callable| callable.id);
     Ok(HirOutput {
@@ -177,6 +179,224 @@ struct TypeLowerer<'a> {
 }
 
 impl<'a> TypeLowerer<'a> {
+    fn lower_bootstrap_host_contracts(&mut self) -> Result<(), HirError> {
+        let process = ModulePath::new("process")?;
+        let Some(process_module) = self.packages.module(self.packages.standard(), &process) else {
+            return Ok(());
+        };
+        if !self.resolved.references().any(|reference| {
+            matches!(
+                reference.entity(),
+                ResolvedEntity::Module(module) if module == &process_module
+            )
+        }) {
+            return Ok(());
+        }
+        let file = *self
+            .parsed
+            .keys()
+            .next()
+            .expect("type lowering always receives at least the root source");
+        let span = self.sources.span(file, TextRange::empty(0))?;
+        let string = self.interner.scalar(ScalarType::String);
+        let bool_type = self.interner.scalar(ScalarType::Bool);
+        let int = self.interner.scalar(ScalarType::Int);
+        let command = self
+            .interner
+            .intrinsic(IntrinsicType::Command, Vec::new())?;
+        let pipeline = self
+            .interner
+            .intrinsic(IntrinsicType::Pipeline, Vec::new())?;
+        let bytes = self.interner.intrinsic(IntrinsicType::Bytes, Vec::new())?;
+        let exit_status = self
+            .interner
+            .intrinsic(IntrinsicType::ExitStatus, Vec::new())?;
+        let output = self
+            .interner
+            .intrinsic(IntrinsicType::ProcessOutput, Vec::new())?;
+        let handle = self
+            .interner
+            .intrinsic(IntrinsicType::ProcessHandle, Vec::new())?;
+        let process_error = self
+            .interner
+            .intrinsic(IntrinsicType::ProcessError, Vec::new())?;
+        let process_exit_error = self
+            .interner
+            .intrinsic(IntrinsicType::ProcessExitError, Vec::new())?;
+        let utf8_error = self
+            .interner
+            .intrinsic(IntrinsicType::Utf8Error, Vec::new())?;
+        let statuses = self
+            .interner
+            .intrinsic(IntrinsicType::Array, vec![exit_status])?;
+        let strings = self
+            .interner
+            .intrinsic(IntrinsicType::Array, vec![string])?;
+        let optional_int = self.interner.option(int)?;
+        let start_outcome = self.interner.result(handle, process_error)?;
+        let status_outcome = self.interner.result(statuses, process_error)?;
+        let output_outcome = self.interner.result(output, process_error)?;
+        let check_error = self.interner.union([process_error, process_exit_error])?;
+        let check_outcome = self.interner.result(output, check_error)?;
+        let text_outcome = self.interner.result(string, utf8_error)?;
+
+        self.push_bootstrap_host_callable(
+            span,
+            HirBootstrapHostFunction::ProcessArgs,
+            Vec::new(),
+            None,
+            strings,
+        )?;
+        self.push_bootstrap_host_callable(
+            span,
+            HirBootstrapHostFunction::ProcessCmd,
+            vec![(string, false)],
+            Some(string),
+            command,
+        )?;
+        self.push_bootstrap_host_callable(
+            span,
+            HirBootstrapHostFunction::ProcessShell,
+            vec![(string, false)],
+            None,
+            command,
+        )?;
+
+        for (owner, functions) in [
+            (
+                command,
+                [
+                    (HirBootstrapHostFunction::CommandStart, start_outcome),
+                    (HirBootstrapHostFunction::CommandStatus, status_outcome),
+                    (HirBootstrapHostFunction::CommandOutput, output_outcome),
+                    (HirBootstrapHostFunction::CommandRun, status_outcome),
+                    (HirBootstrapHostFunction::CommandCheck, check_outcome),
+                ],
+            ),
+            (
+                pipeline,
+                [
+                    (HirBootstrapHostFunction::PipelineStart, start_outcome),
+                    (HirBootstrapHostFunction::PipelineStatus, status_outcome),
+                    (HirBootstrapHostFunction::PipelineOutput, output_outcome),
+                    (HirBootstrapHostFunction::PipelineRun, status_outcome),
+                    (HirBootstrapHostFunction::PipelineCheck, check_outcome),
+                ],
+            ),
+        ] {
+            for (function, outcome) in functions {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(owner, true)],
+                    None,
+                    outcome,
+                )?;
+            }
+        }
+        for (function, outcome) in [
+            (
+                HirBootstrapHostFunction::ProcessHandleStatus,
+                status_outcome,
+            ),
+            (
+                HirBootstrapHostFunction::ProcessHandleOutput,
+                output_outcome,
+            ),
+            (HirBootstrapHostFunction::ProcessHandleRun, status_outcome),
+            (HirBootstrapHostFunction::ProcessHandleCheck, check_outcome),
+            (
+                HirBootstrapHostFunction::ProcessHandleCancel,
+                status_outcome,
+            ),
+        ] {
+            self.push_bootstrap_host_callable(span, function, vec![(handle, true)], None, outcome)?;
+        }
+        for (function, owner, outcome) in [
+            (HirBootstrapHostFunction::BytesText, bytes, text_outcome),
+            (HirBootstrapHostFunction::ProcessOutputStdout, output, bytes),
+            (HirBootstrapHostFunction::ProcessOutputStderr, output, bytes),
+            (
+                HirBootstrapHostFunction::ProcessOutputStatuses,
+                output,
+                statuses,
+            ),
+            (
+                HirBootstrapHostFunction::ExitStatusCode,
+                exit_status,
+                optional_int,
+            ),
+            (
+                HirBootstrapHostFunction::ExitStatusSuccess,
+                exit_status,
+                bool_type,
+            ),
+        ] {
+            self.push_bootstrap_host_callable(span, function, vec![(owner, true)], None, outcome)?;
+        }
+        Ok(())
+    }
+
+    fn push_bootstrap_host_callable(
+        &mut self,
+        span: Span,
+        function: HirBootstrapHostFunction,
+        fixed: Vec<(TypeId, bool)>,
+        variadic: Option<TypeId>,
+        outcome: TypeId,
+    ) -> Result<(), HirError> {
+        let function_parameters = fixed
+            .iter()
+            .map(|(ty, _)| FunctionParameter::new(ParameterMode::Value, *ty))
+            .collect::<Vec<_>>();
+        let mut parameters = fixed
+            .into_iter()
+            .map(|(ty, receiver)| HirParameter {
+                span,
+                local: None,
+                mode: ParameterMode::Value,
+                ty,
+                variadic_element: None,
+                receiver,
+                discard: false,
+            })
+            .collect::<Vec<_>>();
+        if let Some(element) = variadic {
+            let array = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![element])?;
+            parameters.push(HirParameter {
+                span,
+                local: None,
+                mode: ParameterMode::Value,
+                ty: array,
+                variadic_element: Some(element),
+                receiver: false,
+                discard: false,
+            });
+        }
+        let function_type = self.interner.function(FunctionType::new(
+            function.is_async(),
+            false,
+            function_parameters,
+            variadic,
+            outcome,
+        ))?;
+        self.callables.push(HirCallableSignature {
+            id: HirCallableId::Host(function),
+            span,
+            parameters,
+            generics: Vec::new(),
+            generic_arity: 0,
+            outcome,
+            function_type,
+            opaque_result: None,
+            body_source: None,
+            implicit_script: false,
+        });
+        Ok(())
+    }
+
     fn index_declarations(&mut self) -> Result<(), HirError> {
         let symbols_by_span = self
             .resolved
@@ -1104,6 +1324,25 @@ impl<'a> TypeLowerer<'a> {
                         range,
                         "E1115",
                         "external value declaration used as a type",
+                        None,
+                        None,
+                    )?;
+                    return Ok(self.interner.error());
+                }
+                if let Some(constructor) = super::bootstrap_process_intrinsic(&module, &name) {
+                    if !self.check_arity(file, range, name.as_str(), 0, arguments.len())? {
+                        return Ok(self.interner.error());
+                    }
+                    return Ok(self.interner.intrinsic(constructor, Vec::new())?);
+                }
+                if module.package().as_str() == "toolchain:std:0.1-bootstrap"
+                    && module.path().as_str() == "process"
+                {
+                    self.emit(
+                        file,
+                        range,
+                        "E1115",
+                        format!("`std.process` has no type named `{name}`"),
                         None,
                         None,
                     )?;
@@ -3077,7 +3316,7 @@ impl<'a> TypeLowerer<'a> {
                     )?,
                 ))
             }
-            HirCallableId::Implementation(_) => Ok(None),
+            HirCallableId::Implementation(_) | HirCallableId::Host(_) => Ok(None),
         }
     }
 
@@ -3321,6 +3560,13 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::Join
                         | IntrinsicType::Command
                         | IntrinsicType::Pipeline
+                        | IntrinsicType::Bytes
+                        | IntrinsicType::ExitStatus
+                        | IntrinsicType::ProcessOutput
+                        | IntrinsicType::ProcessHandle
+                        | IntrinsicType::ProcessError
+                        | IntrinsicType::ProcessExitError
+                        | IntrinsicType::Utf8Error
                         | IntrinsicType::NumericConversionError => values.push(true),
                     },
                 },

@@ -6,6 +6,7 @@ pub mod driver;
 pub mod hir;
 pub mod mir;
 pub mod package;
+mod process_host;
 pub mod resolve;
 pub mod semantic;
 pub mod source;

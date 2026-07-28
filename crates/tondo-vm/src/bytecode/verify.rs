@@ -450,7 +450,14 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 BytecodeIntrinsicType::Pointer
                 | BytecodeIntrinsicType::Join
                 | BytecodeIntrinsicType::Command
-                | BytecodeIntrinsicType::Pipeline => BytecodeTraceDescriptor::Inline,
+                | BytecodeIntrinsicType::Pipeline
+                | BytecodeIntrinsicType::Bytes
+                | BytecodeIntrinsicType::ExitStatus
+                | BytecodeIntrinsicType::ProcessOutput
+                | BytecodeIntrinsicType::ProcessHandle
+                | BytecodeIntrinsicType::ProcessError
+                | BytecodeIntrinsicType::ProcessExitError
+                | BytecodeIntrinsicType::Utf8Error => BytecodeTraceDescriptor::Inline,
             },
             BytecodeTypeKind::OpaqueResult { witness, .. } => self.opaque_descriptor(witness)?,
             BytecodeTypeKind::Generated { .. } => self
@@ -1021,6 +1028,21 @@ fn intrinsic_capability(
                     | ClosedCapability::Share
             ))
         }
+        BytecodeIntrinsicType::ProcessHandle => {
+            fixed_capability(capability == ClosedCapability::Send)
+        }
+        BytecodeIntrinsicType::Bytes
+        | BytecodeIntrinsicType::ExitStatus
+        | BytecodeIntrinsicType::ProcessOutput
+        | BytecodeIntrinsicType::ProcessError
+        | BytecodeIntrinsicType::ProcessExitError
+        | BytecodeIntrinsicType::Utf8Error => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Copy
+                | ClosedCapability::Discard
+                | ClosedCapability::Send
+                | ClosedCapability::Share
+        )),
         BytecodeIntrinsicType::NumericConversionError => fixed_capability(true),
     }
 }
@@ -1321,10 +1343,16 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::Pointer
         | BytecodeIntrinsicType::Command
         | BytecodeIntrinsicType::Pipeline
+        | BytecodeIntrinsicType::Bytes
+        | BytecodeIntrinsicType::ExitStatus
+        | BytecodeIntrinsicType::ProcessOutput
+        | BytecodeIntrinsicType::ProcessError
+        | BytecodeIntrinsicType::ProcessExitError
+        | BytecodeIntrinsicType::Utf8Error
         | BytecodeIntrinsicType::NumericConversionError => {
             fixed_terminal(BytecodeTerminalStatus::Absent)
         }
-        BytecodeIntrinsicType::Join => {
+        BytecodeIntrinsicType::Join | BytecodeIntrinsicType::ProcessHandle => {
             unreachable!("registered bytecode terminal roots return above")
         }
     }
@@ -1454,6 +1482,13 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::Join
                 | BytecodeIntrinsicType::Command
                 | BytecodeIntrinsicType::Pipeline
+                | BytecodeIntrinsicType::Bytes
+                | BytecodeIntrinsicType::ExitStatus
+                | BytecodeIntrinsicType::ProcessOutput
+                | BytecodeIntrinsicType::ProcessHandle
+                | BytecodeIntrinsicType::ProcessError
+                | BytecodeIntrinsicType::ProcessExitError
+                | BytecodeIntrinsicType::Utf8Error
                 | BytecodeIntrinsicType::NumericConversionError => None,
             };
             if let Some((required, capability, label)) = requirement {
@@ -5101,11 +5136,66 @@ impl Verifier<'_> {
                 for argument in arguments {
                     self.verify_operand(function, argument, context)?;
                 }
-                if !matches!(host_function, BytecodeBootstrapHostFunction::ConsolePrint)
-                    || arguments.len() != 1
-                    || !self.is_scalar(arguments[0].ty, BytecodeScalarType::String)
-                    || !self.is_scalar(operation.ty, BytecodeScalarType::Unit)
-                {
+                let intrinsic = |ty, expected| -> Result<bool, BytecodeVerificationError> {
+                    Ok(matches!(
+                        &self.ty(ty, context)?.kind,
+                        BytecodeTypeKind::Intrinsic {
+                            constructor,
+                            arguments,
+                        } if *constructor == expected && arguments.is_empty()
+                    ))
+                };
+                let statuses = |ty| -> Result<bool, BytecodeVerificationError> {
+                    Ok(matches!(
+                        &self.ty(ty, context)?.kind,
+                        BytecodeTypeKind::Intrinsic {
+                            constructor: BytecodeIntrinsicType::Array,
+                            arguments,
+                        } if arguments.len() == 1
+                            && intrinsic(arguments[0], BytecodeIntrinsicType::ExitStatus)?
+                    ))
+                };
+                let valid = match host_function {
+                    BytecodeBootstrapHostFunction::ConsolePrint => {
+                        arguments.len() == 1
+                            && self.is_scalar(arguments[0].ty, BytecodeScalarType::String)
+                            && self.is_scalar(operation.ty, BytecodeScalarType::Unit)
+                    }
+                    BytecodeBootstrapHostFunction::ProcessPipe => {
+                        arguments.len() == 2
+                            && (intrinsic(arguments[0].ty, BytecodeIntrinsicType::Command)?
+                                || intrinsic(arguments[0].ty, BytecodeIntrinsicType::Pipeline)?)
+                            && (intrinsic(arguments[1].ty, BytecodeIntrinsicType::Command)?
+                                || intrinsic(arguments[1].ty, BytecodeIntrinsicType::Pipeline)?)
+                            && intrinsic(operation.ty, BytecodeIntrinsicType::Pipeline)?
+                    }
+                    BytecodeBootstrapHostFunction::ProcessOutputStdout
+                    | BytecodeBootstrapHostFunction::ProcessOutputStderr => {
+                        arguments.len() == 1
+                            && intrinsic(arguments[0].ty, BytecodeIntrinsicType::ProcessOutput)?
+                            && intrinsic(operation.ty, BytecodeIntrinsicType::Bytes)?
+                    }
+                    BytecodeBootstrapHostFunction::ProcessOutputStatuses => {
+                        arguments.len() == 1
+                            && intrinsic(arguments[0].ty, BytecodeIntrinsicType::ProcessOutput)?
+                            && statuses(operation.ty)?
+                    }
+                    BytecodeBootstrapHostFunction::ExitStatusCode => {
+                        arguments.len() == 1
+                            && intrinsic(arguments[0].ty, BytecodeIntrinsicType::ExitStatus)?
+                            && matches!(
+                                &self.ty(operation.ty, context)?.kind,
+                                BytecodeTypeKind::Option(item)
+                                    if self.is_scalar(*item, BytecodeScalarType::Int)
+                            )
+                    }
+                    BytecodeBootstrapHostFunction::ExitStatusSuccess => {
+                        arguments.len() == 1
+                            && intrinsic(arguments[0].ty, BytecodeIntrinsicType::ExitStatus)?
+                            && self.is_scalar(operation.ty, BytecodeScalarType::Bool)
+                    }
+                };
+                if !valid {
                     return Err(operation_error(context));
                 }
             }
@@ -8920,8 +9010,13 @@ fn defer_disarm_is_confirmed(
 }
 
 fn terminator_moves_defer_guard(terminator: &BytecodeTerminatorKind, guard: &LocalAccess) -> bool {
-    let BytecodeTerminatorKind::Invoke { operation, .. } = terminator else {
-        return false;
+    let operation = match terminator {
+        BytecodeTerminatorKind::Invoke { operation, .. }
+        | BytecodeTerminatorKind::Await {
+            awaitable: BytecodeAwaitable::Call(operation),
+            ..
+        } => operation,
+        _ => return false,
     };
     operation_operands(operation).into_iter().any(|operand| {
         matches!(

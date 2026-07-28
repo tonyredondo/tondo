@@ -108,6 +108,13 @@ pub enum IntrinsicType {
     Join,
     Command,
     Pipeline,
+    Bytes,
+    ExitStatus,
+    ProcessOutput,
+    ProcessHandle,
+    ProcessError,
+    ProcessExitError,
+    Utf8Error,
     NumericConversionError,
 }
 
@@ -123,6 +130,13 @@ impl IntrinsicType {
             Self::Join => "Join",
             Self::Command => "Command",
             Self::Pipeline => "Pipeline",
+            Self::Bytes => "Bytes",
+            Self::ExitStatus => "ExitStatus",
+            Self::ProcessOutput => "ProcessOutput",
+            Self::ProcessHandle => "ProcessHandle",
+            Self::ProcessError => "ProcessError",
+            Self::ProcessExitError => "ProcessExitError",
+            Self::Utf8Error => "Utf8Error",
             Self::NumericConversionError => "NumericConversionError",
         }
     }
@@ -131,7 +145,16 @@ impl IntrinsicType {
         match self {
             Self::Map | Self::Join => 2,
             Self::Array | Self::Set | Self::Range | Self::Ref | Self::Pointer => 1,
-            Self::Command | Self::Pipeline | Self::NumericConversionError => 0,
+            Self::Command
+            | Self::Pipeline
+            | Self::Bytes
+            | Self::ExitStatus
+            | Self::ProcessOutput
+            | Self::ProcessHandle
+            | Self::ProcessError
+            | Self::ProcessExitError
+            | Self::Utf8Error
+            | Self::NumericConversionError => 0,
         }
     }
 }

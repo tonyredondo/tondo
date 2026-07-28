@@ -21,9 +21,12 @@ does not edit history silently: it adds a new ADR that supersedes the old one.
 | [014](014-in-memory-bytecode.md) | No stable serialized bootstrap bytecode | Accepted |
 | [015](015-bootstrap-is-not-a-dialect.md) | Bootstrap subset is not a source dialect | Accepted |
 | [016](016-verified-hir-mir-contract.md) | Verified HIR and explicit MIR effects | Accepted |
+| [017](017-hosted-process-workers.md) | Blocking process work outside the cooperative executor | Accepted |
 
 The detailed implemented object and tracing model selected collectively by
 ADR-006 through ADR-011 is recorded in
 [`docs/contracts/vm-runtime.md`](../contracts/vm-runtime.md).
 The provisional standard-library boundary selected for DEC-007 is recorded in
 [`docs/contracts/bootstrap-host.md`](../contracts/bootstrap-host.md).
+The hosted process scheduling decision is specified by ADR-017 and
+[`docs/contracts/process-host.md`](../contracts/process-host.md).

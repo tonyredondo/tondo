@@ -101,8 +101,28 @@ pub enum RuntimeValue {
         end: Box<Self>,
     },
     Ref(Option<Box<Self>>),
+    Host {
+        kind: RuntimeHostValueKind,
+        id: u64,
+    },
     /// Back-reference used only when snapshotting an identity graph with a cycle.
     Cycle(usize),
+}
+
+/// Closed identities for opaque values exchanged with the hosted standard
+/// library. The payload remains in the host registry; bytecode carries only a
+/// typed run-local token.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeHostValueKind {
+    Command,
+    Pipeline,
+    Bytes,
+    ExitStatus,
+    ProcessOutput,
+    ProcessHandle,
+    ProcessError,
+    ProcessExitError,
+    Utf8Error,
 }
 
 /// Per-run counters useful for testing limits and collector behavior.

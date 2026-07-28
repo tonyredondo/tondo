@@ -526,8 +526,13 @@ fn defer_disarm_is_confirmed(
 }
 
 fn terminator_moves_defer_guard(terminator: &MirTerminatorKind, guard: &LocalAccess) -> bool {
-    let MirTerminatorKind::Invoke { operation, .. } = terminator else {
-        return false;
+    let operation = match terminator {
+        MirTerminatorKind::Invoke { operation, .. }
+        | MirTerminatorKind::Await {
+            awaitable: MirAwaitable::Call(operation),
+            ..
+        } => operation,
+        _ => return false,
     };
     operation_operands(operation).into_iter().any(|operand| {
         matches!(
@@ -2681,14 +2686,70 @@ impl Verifier<'_> {
                 for argument in arguments {
                     self.verify_operand(function, argument, context)?;
                 }
-                if !matches!(host_function, super::MirBootstrapHostFunction::ConsolePrint)
-                    || arguments.len() != 1
-                    || arguments[0].ty != self.hir.interner().scalar(ScalarType::String)
-                    || operation.ty != self.hir.interner().scalar(ScalarType::Unit)
-                {
+                let intrinsic = |ty, expected| -> Result<bool, MirInvariantError> {
+                    Ok(matches!(
+                        self.kind(ty, context)?,
+                        TypeKind::Intrinsic {
+                            constructor,
+                            arguments,
+                        } if *constructor == expected && arguments.is_empty()
+                    ))
+                };
+                let statuses = |ty| -> Result<bool, MirInvariantError> {
+                    Ok(matches!(
+                        self.kind(ty, context)?,
+                        TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Array,
+                            arguments,
+                        } if arguments.len() == 1
+                            && intrinsic(arguments[0], IntrinsicType::ExitStatus)?
+                    ))
+                };
+                let valid = match host_function {
+                    super::MirBootstrapHostFunction::ConsolePrint => {
+                        arguments.len() == 1
+                            && arguments[0].ty == self.hir.interner().scalar(ScalarType::String)
+                            && operation.ty == self.hir.interner().scalar(ScalarType::Unit)
+                    }
+                    super::MirBootstrapHostFunction::ProcessPipe => {
+                        arguments.len() == 2
+                            && (intrinsic(arguments[0].ty, IntrinsicType::Command)?
+                                || intrinsic(arguments[0].ty, IntrinsicType::Pipeline)?)
+                            && (intrinsic(arguments[1].ty, IntrinsicType::Command)?
+                                || intrinsic(arguments[1].ty, IntrinsicType::Pipeline)?)
+                            && intrinsic(operation.ty, IntrinsicType::Pipeline)?
+                    }
+                    super::MirBootstrapHostFunction::ProcessOutputStdout
+                    | super::MirBootstrapHostFunction::ProcessOutputStderr => {
+                        arguments.len() == 1
+                            && intrinsic(arguments[0].ty, IntrinsicType::ProcessOutput)?
+                            && intrinsic(operation.ty, IntrinsicType::Bytes)?
+                    }
+                    super::MirBootstrapHostFunction::ProcessOutputStatuses => {
+                        arguments.len() == 1
+                            && intrinsic(arguments[0].ty, IntrinsicType::ProcessOutput)?
+                            && statuses(operation.ty)?
+                    }
+                    super::MirBootstrapHostFunction::ExitStatusCode => {
+                        arguments.len() == 1
+                            && intrinsic(arguments[0].ty, IntrinsicType::ExitStatus)?
+                            && matches!(
+                                self.kind(operation.ty, context)?,
+                                TypeKind::Option(item)
+                                    if *item
+                                        == self.hir.interner().scalar(ScalarType::Int)
+                            )
+                    }
+                    super::MirBootstrapHostFunction::ExitStatusSuccess => {
+                        arguments.len() == 1
+                            && intrinsic(arguments[0].ty, IntrinsicType::ExitStatus)?
+                            && operation.ty == self.hir.interner().scalar(ScalarType::Bool)
+                    }
+                };
+                if !valid {
                     return Err(MirInvariantError::new(
                         context,
-                        "bootstrap console print requires one String and produces Unit",
+                        "bootstrap host operation does not match its closed contract",
                     ));
                 }
             }
@@ -7766,6 +7827,9 @@ fn function_context(id: MirFunctionId) -> String {
             method.implementation().index(),
             method.index()
         ),
+        MirFunctionId::Callable(HirCallableId::Host(function)) => {
+            format!("MIR host function {}", function.name())
+        }
         MirFunctionId::Closure(closure) => {
             format!("MIR closure function#{}", closure.index())
         }

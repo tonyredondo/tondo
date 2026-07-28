@@ -1342,11 +1342,7 @@ impl<'a> FunctionBuilder<'a> {
                 let Some((block, arguments)) = self.lower_values(arguments, block)? else {
                     return Ok(None);
                 };
-                let function = match function {
-                    HirBootstrapHostFunction::ConsolePrint => {
-                        MirBootstrapHostFunction::ConsolePrint
-                    }
-                };
+                let function = bootstrap_host_function(*function, span)?;
                 self.invoke(
                     block,
                     span,
@@ -1730,11 +1726,7 @@ impl<'a> FunctionBuilder<'a> {
                     }
                     lowered.push(value);
                 }
-                let function = match function {
-                    HirBootstrapHostFunction::ConsolePrint => {
-                        MirBootstrapHostFunction::ConsolePrint
-                    }
-                };
+                let function = bootstrap_host_function(*function, span)?;
                 (
                     MirOperation {
                         ty: expression.ty(),
@@ -5229,6 +5221,36 @@ impl<'a> FunctionBuilder<'a> {
                 message: format!("missing verified expression#{}", id.index()),
             })
     }
+}
+
+fn bootstrap_host_function(
+    function: HirBootstrapHostFunction,
+    span: Span,
+) -> Result<MirBootstrapHostFunction, MirError> {
+    Ok(match function {
+        HirBootstrapHostFunction::ConsolePrint => MirBootstrapHostFunction::ConsolePrint,
+        HirBootstrapHostFunction::ProcessPipe => MirBootstrapHostFunction::ProcessPipe,
+        HirBootstrapHostFunction::ProcessOutputStdout => {
+            MirBootstrapHostFunction::ProcessOutputStdout
+        }
+        HirBootstrapHostFunction::ProcessOutputStderr => {
+            MirBootstrapHostFunction::ProcessOutputStderr
+        }
+        HirBootstrapHostFunction::ProcessOutputStatuses => {
+            MirBootstrapHostFunction::ProcessOutputStatuses
+        }
+        HirBootstrapHostFunction::ExitStatusCode => MirBootstrapHostFunction::ExitStatusCode,
+        HirBootstrapHostFunction::ExitStatusSuccess => MirBootstrapHostFunction::ExitStatusSuccess,
+        function => {
+            return Err(MirError::Construction {
+                span,
+                message: format!(
+                    "bootstrap host callable `{}` cannot appear as a direct operation",
+                    function.name()
+                ),
+            });
+        }
+    })
 }
 
 fn populate_runtime_loan_checks(

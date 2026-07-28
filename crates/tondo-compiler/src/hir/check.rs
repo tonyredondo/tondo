@@ -803,6 +803,13 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::Join
                         | IntrinsicType::Command
                         | IntrinsicType::Pipeline
+                        | IntrinsicType::Bytes
+                        | IntrinsicType::ExitStatus
+                        | IntrinsicType::ProcessOutput
+                        | IntrinsicType::ProcessHandle
+                        | IntrinsicType::ProcessError
+                        | IntrinsicType::ProcessExitError
+                        | IntrinsicType::Utf8Error
                         | IntrinsicType::NumericConversionError => None,
                     };
                     if let Some((required, capability, context)) = requirement {
@@ -1885,7 +1892,7 @@ impl<'a> ExpressionChecker<'a> {
 
     fn is_bootstrap_callable(&self, callable: &HirCallableSignature) -> bool {
         match callable.id {
-            HirCallableId::Symbol(_) => true,
+            HirCallableId::Symbol(_) | HirCallableId::Host(_) => true,
             HirCallableId::Member(member) => self.resolved.member(member).is_some_and(|member| {
                 matches!(
                     member.kind(),
@@ -1937,7 +1944,7 @@ impl<'a> ExpressionChecker<'a> {
 
     fn callable_contextual_self(&self, callable: HirCallableId) -> Option<TypeId> {
         match callable {
-            HirCallableId::Symbol(_) => None,
+            HirCallableId::Symbol(_) | HirCallableId::Host(_) => None,
             HirCallableId::Implementation(method) => self
                 .program
                 .implementation(method.implementation())
@@ -2007,7 +2014,7 @@ impl<'a> ExpressionChecker<'a> {
                     ));
                 }
             }
-            HirCallableId::Symbol(_) => {}
+            HirCallableId::Symbol(_) | HirCallableId::Host(_) => {}
         }
         assumptions.sort();
         assumptions.dedup();
@@ -5179,6 +5186,47 @@ impl<'a> ExpressionChecker<'a> {
                 category: HirValueCategory::Place,
                 kind: HirExpressionKind::RefValue { base },
             });
+        }
+
+        if let TypeKind::Intrinsic { constructor, .. } = self.program.interner.kind(base_type)? {
+            let name = token
+                .token()
+                .normalized_identifier()
+                .unwrap_or(self.token_text(file, token)?);
+            let function = match (*constructor, name) {
+                (IntrinsicType::ProcessOutput, "stdout") => {
+                    Some(HirBootstrapHostFunction::ProcessOutputStdout)
+                }
+                (IntrinsicType::ProcessOutput, "stderr") => {
+                    Some(HirBootstrapHostFunction::ProcessOutputStderr)
+                }
+                (IntrinsicType::ProcessOutput, "statuses") => {
+                    Some(HirBootstrapHostFunction::ProcessOutputStatuses)
+                }
+                (IntrinsicType::ExitStatus, "code") => {
+                    Some(HirBootstrapHostFunction::ExitStatusCode)
+                }
+                (IntrinsicType::ExitStatus, "success") => {
+                    Some(HirBootstrapHostFunction::ExitStatusSuccess)
+                }
+                _ => None,
+            };
+            if let Some(function) = function {
+                let outcome = self
+                    .program
+                    .callable(HirCallableId::Host(function))
+                    .expect("bootstrap process field accessor remains indexed")
+                    .outcome();
+                return self.allocate_expression(HirExpression {
+                    span: self.sources.span(file, range)?,
+                    ty: outcome,
+                    category: HirValueCategory::Value,
+                    kind: HirExpressionKind::BootstrapHostCall {
+                        function,
+                        arguments: vec![base],
+                    },
+                });
+            }
         }
 
         if self.is_inherent_method_member(file, base_type, token)? {
@@ -9732,6 +9780,18 @@ impl<'a> ExpressionChecker<'a> {
             {
                 Ok(self.program.local_type(*local))
             }
+            ResolvedName::External {
+                module,
+                namespace: Namespace::Type,
+                name,
+            } if arguments.is_empty() => {
+                let Some(constructor) = super::bootstrap_process_intrinsic(module, name) else {
+                    return Ok(None);
+                };
+                Ok(Some(
+                    self.program.interner.intrinsic(constructor, Vec::new())?,
+                ))
+            }
             ResolvedName::External { .. }
             | ResolvedName::Local(_)
             | ResolvedName::Receiver
@@ -9789,6 +9849,22 @@ impl<'a> ExpressionChecker<'a> {
                         _ => false,
                     },
                 )
+            }
+            ResolvedName::External {
+                module,
+                namespace: Namespace::Type,
+                name,
+            } => {
+                let Some(constructor) = super::bootstrap_process_intrinsic(module, name) else {
+                    return Ok(false);
+                };
+                Ok(matches!(
+                    self.program.interner.kind(candidate)?,
+                    TypeKind::Intrinsic {
+                        constructor: actual,
+                        arguments,
+                    } if *actual == constructor && arguments.is_empty()
+                ))
             }
             ResolvedName::External { .. } => Ok(false),
             ResolvedName::Local(_) | ResolvedName::Receiver | ResolvedName::ContextualSelf => {
@@ -12399,6 +12475,60 @@ impl<'a> ExpressionChecker<'a> {
             self.complete = false;
             return self.recovery_expression(file, node.range());
         };
+        if operator == HirBinaryOperator::BitwiseOr {
+            let left = self.check_expression(file, operands[0], None, context)?;
+            let right = self.check_expression(file, operands[1], None, context)?;
+            let left_type = self.expression_type(left);
+            let right_type = self.expression_type(right);
+            let process_plan = |ty| {
+                matches!(
+                    self.program.interner.kind(ty),
+                    Ok(TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Command | IntrinsicType::Pipeline,
+                        arguments,
+                    }) if arguments.is_empty()
+                )
+            };
+            if process_plan(left_type) && process_plan(right_type) {
+                let pipeline = self
+                    .program
+                    .interner
+                    .intrinsic(IntrinsicType::Pipeline, Vec::new())?;
+                return self.allocate_expression(HirExpression {
+                    span: self.sources.span(file, node.range())?,
+                    ty: pipeline,
+                    category: HirValueCategory::Value,
+                    kind: HirExpressionKind::BootstrapHostCall {
+                        function: HirBootstrapHostFunction::ProcessPipe,
+                        arguments: vec![left, right],
+                    },
+                });
+            }
+            if left_type == self.program.interner.error()
+                || right_type == self.program.interner.error()
+            {
+                return self.recovery_expression(file, node.range());
+            }
+            let Some(ty) = self.binary_result(operator, left_type, right_type)? else {
+                self.emit_invalid_operator(
+                    file,
+                    operator_token.range(),
+                    left_type,
+                    Some(right_type),
+                )?;
+                return self.recovery_expression(file, node.range());
+            };
+            return self.allocate_expression(HirExpression {
+                span: self.sources.span(file, node.range())?,
+                ty,
+                category: HirValueCategory::Value,
+                kind: HirExpressionKind::Binary {
+                    operator,
+                    left,
+                    right,
+                },
+            });
+        }
         let bool_type = self.program.interner.scalar(ScalarType::Bool);
         let arithmetic = matches!(
             operator,
@@ -12970,9 +13100,14 @@ impl<'a> ExpressionChecker<'a> {
             return self.check_expression(file, base_node, None, context);
         };
         if suffix.kind() == SyntaxKind::CallSuffix {
-            if let Some(call) =
-                self.check_bootstrap_host_call(file, node.range(), base_node, suffix, context)?
-            {
+            if let Some(call) = self.check_bootstrap_host_call(
+                file,
+                node.range(),
+                base_node,
+                suffix,
+                expected,
+                context,
+            )? {
                 return Ok(call);
             }
             if let Some(call) =
@@ -13051,6 +13186,7 @@ impl<'a> ExpressionChecker<'a> {
         range: TextRange,
         base: SyntaxNodeRef<'_>,
         suffix: SyntaxNodeRef<'_>,
+        expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<Option<HirExpressionId>, HirError> {
         if base.kind() != SyntaxKind::PathExpr {
@@ -13069,12 +13205,27 @@ impl<'a> ExpressionChecker<'a> {
         let ResolvedEntity::Module(module) = module_reference.entity() else {
             return Ok(None);
         };
-        if module.package().as_str() != "toolchain:std:0.1-bootstrap"
-            || module.path().as_str() != "console"
-            || function_token.token().normalized_identifier() != Some("print")
-        {
+        if module.package().as_str() != "toolchain:std:0.1-bootstrap" {
             return Ok(None);
         }
+        let function_name = function_token.token().normalized_identifier();
+        let host_function = match (module.path().as_str(), function_name) {
+            ("console", Some("print")) => HirBootstrapHostFunction::ConsolePrint,
+            ("process", Some("args")) => HirBootstrapHostFunction::ProcessArgs,
+            ("process", Some("cmd")) => HirBootstrapHostFunction::ProcessCmd,
+            ("process", Some("shell")) => HirBootstrapHostFunction::ProcessShell,
+            ("process", Some(name)) => {
+                self.emit(
+                    self.sources.span(file, function_token.range())?,
+                    "E1102",
+                    format!("`std.process` has no function named `{name}`"),
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range).map(Some);
+            }
+            _ => return Ok(None),
+        };
         let external_value = self
             .resolved
             .reference(file, function_token.range())
@@ -13083,19 +13234,41 @@ impl<'a> ExpressionChecker<'a> {
                     module: target,
                     namespace: Namespace::Value,
                     name,
-                }) => target == module && name.as_str() == "print",
+                }) => {
+                    target == module
+                        && name.as_str() == function_name.expect("host function has a name")
+                }
                 ResolvedEntity::ContextualCandidates { value_name, .. } => matches!(
                     value_name,
                     ResolvedName::External {
                         module: target,
                         namespace: Namespace::Value,
                         name,
-                    } if target == module && name.as_str() == "print"
+                    } if target == module
+                        && name.as_str() == function_name.expect("host function has a name")
                 ),
                 _ => false,
             });
         if !external_value {
             return Ok(None);
+        }
+        if host_function != HirBootstrapHostFunction::ConsolePrint {
+            let callee =
+                self.bootstrap_host_callee(host_function, self.sources.span(file, base.range())?)?;
+            return self
+                .check_call(
+                    CallSite {
+                        file,
+                        range,
+                        suffix,
+                        expected,
+                    },
+                    callee,
+                    None,
+                    None,
+                    context,
+                )
+                .map(Some);
         }
 
         let arguments = suffix
@@ -13147,10 +13320,30 @@ impl<'a> ExpressionChecker<'a> {
             ty: self.program.interner.scalar(ScalarType::Unit),
             category: HirValueCategory::Value,
             kind: HirExpressionKind::BootstrapHostCall {
-                function: HirBootstrapHostFunction::ConsolePrint,
+                function: host_function,
                 arguments: lowered,
             },
         })?))
+    }
+
+    fn bootstrap_host_callee(
+        &mut self,
+        function: HirBootstrapHostFunction,
+        span: Span,
+    ) -> Result<HirExpressionId, HirError> {
+        let id = HirCallableId::Host(function);
+        let callable =
+            self.program
+                .callable(id)
+                .ok_or_else(|| HirError::TraitSelectionInvariant {
+                    message: format!("bootstrap host callable `{}` is missing", function.name()),
+                })?;
+        self.allocate_expression(HirExpression {
+            span,
+            ty: callable.function_type(),
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Function(id),
+        })
     }
 
     fn check_prelude_runtime_call(
@@ -14598,6 +14791,19 @@ impl<'a> ExpressionChecker<'a> {
         if receiver_type == self.program.interner.error() {
             return self.recovery_expression(file, range).map(Some);
         }
+        if let Some(call) = self.check_process_method_call(
+            file,
+            range,
+            receiver,
+            receiver_type,
+            member_token,
+            suffix,
+            explicit_bracket,
+            expected,
+            context,
+        )? {
+            return Ok(Some(call));
+        }
         if let Some(call) = self.check_map_remove_call(
             file,
             range,
@@ -14833,6 +15039,86 @@ impl<'a> ExpressionChecker<'a> {
             },
             field,
             None,
+            None,
+            context,
+        )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_process_method_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        receiver: HirExpressionId,
+        receiver_type: TypeId,
+        member_token: SyntaxTokenRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let TypeKind::Intrinsic { constructor, .. } = self.program.interner.kind(receiver_type)?
+        else {
+            return Ok(None);
+        };
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?);
+        let function = match (*constructor, member) {
+            (IntrinsicType::Command, "start") => HirBootstrapHostFunction::CommandStart,
+            (IntrinsicType::Command, "status") => HirBootstrapHostFunction::CommandStatus,
+            (IntrinsicType::Command, "output") => HirBootstrapHostFunction::CommandOutput,
+            (IntrinsicType::Command, "run") => HirBootstrapHostFunction::CommandRun,
+            (IntrinsicType::Command, "check") => HirBootstrapHostFunction::CommandCheck,
+            (IntrinsicType::Pipeline, "start") => HirBootstrapHostFunction::PipelineStart,
+            (IntrinsicType::Pipeline, "status") => HirBootstrapHostFunction::PipelineStatus,
+            (IntrinsicType::Pipeline, "output") => HirBootstrapHostFunction::PipelineOutput,
+            (IntrinsicType::Pipeline, "run") => HirBootstrapHostFunction::PipelineRun,
+            (IntrinsicType::Pipeline, "check") => HirBootstrapHostFunction::PipelineCheck,
+            (IntrinsicType::ProcessHandle, "status") => {
+                HirBootstrapHostFunction::ProcessHandleStatus
+            }
+            (IntrinsicType::ProcessHandle, "output") => {
+                HirBootstrapHostFunction::ProcessHandleOutput
+            }
+            (IntrinsicType::ProcessHandle, "run") => HirBootstrapHostFunction::ProcessHandleRun,
+            (IntrinsicType::ProcessHandle, "check") => HirBootstrapHostFunction::ProcessHandleCheck,
+            (IntrinsicType::ProcessHandle, "cancel") => {
+                HirBootstrapHostFunction::ProcessHandleCancel
+            }
+            (IntrinsicType::Bytes, "text") => HirBootstrapHostFunction::BytesText,
+            _ => return Ok(None),
+        };
+        if self
+            .program
+            .callable(HirCallableId::Host(function))
+            .is_none()
+        {
+            return Ok(None);
+        }
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "process operations do not declare generic parameters",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let callee =
+            self.bootstrap_host_callee(function, self.sources.span(file, member_token.range())?)?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            Some(receiver),
             None,
             context,
         )

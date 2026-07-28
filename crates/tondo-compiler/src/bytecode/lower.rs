@@ -2491,6 +2491,7 @@ fn callable_name(resolved: &ResolvedProgram, id: HirCallableId) -> String {
             method.implementation().index(),
             method.index()
         ),
+        HirCallableId::Host(function) => function.name().to_owned(),
     }
 }
 
@@ -3649,6 +3650,24 @@ fn lower_operation(
                 crate::mir::MirBootstrapHostFunction::ConsolePrint => {
                     bc::BytecodeBootstrapHostFunction::ConsolePrint
                 }
+                crate::mir::MirBootstrapHostFunction::ProcessPipe => {
+                    bc::BytecodeBootstrapHostFunction::ProcessPipe
+                }
+                crate::mir::MirBootstrapHostFunction::ProcessOutputStdout => {
+                    bc::BytecodeBootstrapHostFunction::ProcessOutputStdout
+                }
+                crate::mir::MirBootstrapHostFunction::ProcessOutputStderr => {
+                    bc::BytecodeBootstrapHostFunction::ProcessOutputStderr
+                }
+                crate::mir::MirBootstrapHostFunction::ProcessOutputStatuses => {
+                    bc::BytecodeBootstrapHostFunction::ProcessOutputStatuses
+                }
+                crate::mir::MirBootstrapHostFunction::ExitStatusCode => {
+                    bc::BytecodeBootstrapHostFunction::ExitStatusCode
+                }
+                crate::mir::MirBootstrapHostFunction::ExitStatusSuccess => {
+                    bc::BytecodeBootstrapHostFunction::ExitStatusSuccess
+                }
             },
             arguments: arguments
                 .iter()
@@ -4029,6 +4048,13 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::Join => bc::BytecodeIntrinsicType::Join,
         IntrinsicType::Command => bc::BytecodeIntrinsicType::Command,
         IntrinsicType::Pipeline => bc::BytecodeIntrinsicType::Pipeline,
+        IntrinsicType::Bytes => bc::BytecodeIntrinsicType::Bytes,
+        IntrinsicType::ExitStatus => bc::BytecodeIntrinsicType::ExitStatus,
+        IntrinsicType::ProcessOutput => bc::BytecodeIntrinsicType::ProcessOutput,
+        IntrinsicType::ProcessHandle => bc::BytecodeIntrinsicType::ProcessHandle,
+        IntrinsicType::ProcessError => bc::BytecodeIntrinsicType::ProcessError,
+        IntrinsicType::ProcessExitError => bc::BytecodeIntrinsicType::ProcessExitError,
+        IntrinsicType::Utf8Error => bc::BytecodeIntrinsicType::Utf8Error,
         IntrinsicType::NumericConversionError => bc::BytecodeIntrinsicType::NumericConversionError,
     }
 }
