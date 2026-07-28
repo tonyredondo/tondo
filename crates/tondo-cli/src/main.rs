@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use tondo_compiler::driver::{
     BuildTarget, CompilationRequest, CompilationStatus, DiagnosticFormat, Edition, HostProfile,
-    Operation, ResourceLimits, SourceForm, execute,
+    Operation, ResourceLimits, SourceForm, WarningProfile, execute,
 };
 use tondo_compiler::package::PackageGraph;
 use tondo_compiler::project::ProjectPlan;
@@ -27,9 +27,9 @@ const USAGE: &str = "\
 Tondo bootstrap toolchain
 
 Usage:
-  tondo <command> [--diagnostic-format <human|json>] <source.to>
-  tondo <check|run> [--diagnostic-format <human|json>] --manifest <tondo.json>
-  tondo run [--diagnostic-format <human|json>] <source.to> -- [argument ...]
+  tondo <command> [--diagnostic-format <human|json>] [--warnings core] <source.to>
+  tondo <check|run> [--diagnostic-format <human|json>] [--warnings core] --manifest <tondo.json>
+  tondo run [--diagnostic-format <human|json>] [--warnings core] <source.to> -- [argument ...]
 
 Commands:
   fmt      Format one Tondo source file
@@ -38,6 +38,7 @@ Commands:
 
 Options:
   --diagnostic-format <human|json>  Select diagnostic output
+  --warnings <core>                 Enable a closed warning profile
   --check                           Verify formatting without writing output (fmt only)
   --manifest <path>                 Build a closed project manifest (check/run only)
   --lockfile <path>                 Use this lockfile (default: tondo.lock.json)
@@ -89,7 +90,9 @@ fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
             return Ok(ExitCode::from(EXIT_USAGE));
         }
     };
-    let request = request.with_program_arguments(invocation.program_arguments.clone());
+    let request = request
+        .with_warning_profiles(invocation.warning_profiles.iter().copied())
+        .with_program_arguments(invocation.program_arguments.clone());
     let output = execute(request).map_err(|error| error.to_string())?;
 
     let format_check_failed = invocation.format_check
@@ -125,6 +128,7 @@ struct Invocation {
     operation: Operation,
     source_form: SourceForm,
     diagnostic_format: DiagnosticFormat,
+    warning_profiles: BTreeSet<WarningProfile>,
     format_check: bool,
     source: Option<PathBuf>,
     manifest: Option<PathBuf>,
@@ -146,6 +150,7 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
     };
 
     let mut diagnostic_format = DiagnosticFormat::Human;
+    let mut warning_profiles = BTreeSet::new();
     let mut format_check = false;
     let mut source: Option<PathBuf> = None;
     let mut manifest: Option<PathBuf> = None;
@@ -184,6 +189,12 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
                 return Err("`--check` is only valid with `tondo fmt`".into());
             }
             format_check = true;
+        } else if argument == "--warnings" {
+            index += 1;
+            let Some(value) = arguments.get(index).and_then(|value| value.to_str()) else {
+                return Err("`--warnings` requires `core`".into());
+            };
+            warning_profiles.insert(parse_warning_profile(value)?);
         } else if argument == "--manifest" {
             index += 1;
             let Some(value) = arguments.get(index) else {
@@ -219,6 +230,8 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
         } else if let Some(argument) = argument.to_str() {
             if let Some(value) = argument.strip_prefix("--diagnostic-format=") {
                 diagnostic_format = parse_diagnostic_format(value)?;
+            } else if let Some(value) = argument.strip_prefix("--warnings=") {
+                warning_profiles.insert(parse_warning_profile(value)?);
             } else if argument.starts_with('-') {
                 return Err(format!("unknown option `{argument}`"));
             } else if source.replace(PathBuf::from(argument)).is_some() {
@@ -241,6 +254,9 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
     }
     if operation == Operation::Format && (emit_interface.is_some() || emit_artifact.is_some()) {
         return Err("build products are only available from `check` or `run`".into());
+    }
+    if operation == Operation::Format && !warning_profiles.is_empty() {
+        return Err("warning profiles are only available from `check` or `run`".into());
     }
     if lockfile.is_some() && manifest.is_none() {
         return Err("`--lockfile` requires `--manifest`".into());
@@ -284,6 +300,7 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
         operation,
         source_form,
         diagnostic_format,
+        warning_profiles,
         format_check,
         source,
         manifest,
@@ -448,6 +465,15 @@ fn parse_diagnostic_format(value: &str) -> Result<DiagnosticFormat, String> {
         "json" => Ok(DiagnosticFormat::Json),
         _ => Err(format!(
             "unknown diagnostic format `{value}`; expected `human` or `json`"
+        )),
+    }
+}
+
+fn parse_warning_profile(value: &str) -> Result<WarningProfile, String> {
+    match value {
+        "core" => Ok(WarningProfile::Core),
+        _ => Err(format!(
+            "unknown warning profile `{value}`; expected `core`"
         )),
     }
 }

@@ -82,6 +82,8 @@ pub struct SourceAction {
     pub root: String,
     pub sources: Vec<SourceFile>,
     #[serde(default)]
+    pub warning_profiles: Vec<String>,
+    #[serde(default)]
     pub arguments: Vec<String>,
     #[serde(default)]
     pub gc_threshold: Option<u32>,
@@ -544,6 +546,17 @@ fn validate_source_action(case_id: &str, action: &SourceAction) -> Result<(), Ma
         validate_identity("source ID", &source.source_id)?;
         validate_identity("module", &source.module)?;
         validate_logical_path(&source.logical_path)?;
+    }
+    require_sorted_unique(
+        &format!("source case `{case_id}` warning profiles"),
+        action.warning_profiles.iter().map(String::as_str),
+    )?;
+    for profile in &action.warning_profiles {
+        if profile != "core" {
+            return invalid(format!(
+                "source case `{case_id}` selects unknown warning profile `{profile}`"
+            ));
+        }
     }
     if action.operation != SourceOperation::Run && !action.arguments.is_empty() {
         return invalid(format!(

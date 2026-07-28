@@ -45,6 +45,7 @@ pub struct WireSourceAction {
     pub form: WireSourceForm,
     pub root: String,
     pub sources: Vec<WireSource>,
+    pub warning_profiles: Vec<String>,
     pub arguments: Vec<String>,
     pub gc_threshold: Option<u32>,
 }

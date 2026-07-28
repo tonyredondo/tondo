@@ -10550,13 +10550,33 @@ impl<'a> ExpressionChecker<'a> {
         assumptions: &CapabilityAssumptions,
         context: &str,
     ) -> Result<(), HirError> {
-        let _ = self.require_capability_with_generics(
-            span,
-            ty,
-            HirCapability::Discard,
-            assumptions,
-            context,
-        )?;
+        match self.capability_status_with_generics(ty, HirCapability::Discard, assumptions)? {
+            DiscardStatus::Satisfied => {}
+            DiscardStatus::Deferred => self.complete = false,
+            DiscardStatus::Unsatisfied => {
+                let actual = self.program.interner.canonical(ty)?;
+                if self
+                    .reported_capability_requirements
+                    .insert((span, ty, HirCapability::Discard))
+                {
+                    let code = if matches!(
+                        self.program.interner.kind(ty)?,
+                        TypeKind::GenericParameter(_)
+                    ) {
+                        "E1409"
+                    } else {
+                        "E1105"
+                    };
+                    self.emit(
+                        span,
+                        code,
+                        format!("type `{actual}` does not satisfy `Discard` required by {context}"),
+                        Vec::new(),
+                        Some(("Discard".to_owned(), actual)),
+                    )?;
+                }
+            }
+        }
         Ok(())
     }
 

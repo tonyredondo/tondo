@@ -121,8 +121,19 @@ struct SourceMeta {
     requirements: Vec<String>,
     arguments: Vec<String>,
     gc_threshold: Option<u32>,
+    warning_profiles: Vec<String>,
+    contents_hex: Option<String>,
+    additional_sources: Vec<AdditionalSource>,
     queries: Vec<SemanticQuery>,
     exact_diagnostics: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AdditionalSource {
+    path: String,
+    module: String,
+    logical_path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -194,18 +205,68 @@ fn bless_source_case(
         .capabilities
         .unwrap_or_else(|| target.capabilities.clone());
     require_sorted_unique(&format!("{id} capabilities"), &capabilities)?;
-    let source_bytes = fs::read(source).map_err(io_error)?;
-    let source_path = logical_path(root, source)?;
+    require_sorted_unique(
+        &format!("{id} warning profiles"),
+        &metadata.warning_profiles,
+    )?;
+    let (source_bytes, source_path) = if let Some(encoded) = &metadata.contents_hex {
+        let bytes = tondo_conformance::decode_hex(encoded)?;
+        let generated = source.with_extension("input");
+        write_generated(&generated, &bytes)?;
+        (bytes, logical_path(root, &generated)?)
+    } else {
+        (
+            fs::read(source).map_err(io_error)?,
+            logical_path(root, source)?,
+        )
+    };
+    let source_id = format!("suite:{id}");
+    let mut wire_sources = vec![WireSource {
+        source_id: source_id.clone(),
+        module: "main".into(),
+        logical_path: "case.to".into(),
+        contents_hex: tondo_conformance::encode_hex(&source_bytes),
+    }];
+    let mut manifest_sources = vec![SourceFile {
+        source_id: source_id.clone(),
+        module: "main".into(),
+        logical_path: "case.to".into(),
+        contents: PinnedFile {
+            path: source_path,
+            sha256: tondo_conformance::sha256(&source_bytes),
+        },
+    }];
+    for additional in &metadata.additional_sources {
+        validate_case_input_path(&additional.path)?;
+        let physical = source
+            .parent()
+            .expect("source cases have a parent directory")
+            .join(&additional.path);
+        let bytes = fs::read(&physical).map_err(io_error)?;
+        wire_sources.push(WireSource {
+            source_id: source_id.clone(),
+            module: additional.module.clone(),
+            logical_path: additional.logical_path.clone(),
+            contents_hex: tondo_conformance::encode_hex(&bytes),
+        });
+        manifest_sources.push(SourceFile {
+            source_id: source_id.clone(),
+            module: additional.module.clone(),
+            logical_path: additional.logical_path.clone(),
+            contents: PinnedFile {
+                path: logical_path(root, &physical)?,
+                sha256: tondo_conformance::sha256(&bytes),
+            },
+        });
+    }
+    wire_sources.sort_by(|left, right| left.logical_path.cmp(&right.logical_path));
+    manifest_sources.sort_by(|left, right| left.logical_path.cmp(&right.logical_path));
     let wire = WireSourceAction {
         operation: wire_operation(operation),
         form: wire_form(form),
         root: "case.to".into(),
-        sources: vec![WireSource {
-            source_id: format!("suite:{id}"),
-            module: "main".into(),
-            logical_path: "case.to".into(),
-            contents_hex: tondo_conformance::encode_hex(&source_bytes),
-        }],
+        sources: wire_sources,
+        warning_profiles: metadata.warning_profiles.clone(),
         arguments: metadata.arguments.clone(),
         gc_threshold: metadata.gc_threshold,
     };
@@ -296,15 +357,8 @@ fn bless_source_case(
         operation,
         form,
         root: "case.to".into(),
-        sources: vec![SourceFile {
-            source_id: format!("suite:{id}"),
-            module: "main".into(),
-            logical_path: "case.to".into(),
-            contents: PinnedFile {
-                path: source_path,
-                sha256: tondo_conformance::sha256(&source_bytes),
-            },
-        }],
+        sources: manifest_sources,
+        warning_profiles: metadata.warning_profiles,
         arguments: metadata.arguments,
         gc_threshold: metadata.gc_threshold,
     };
@@ -706,6 +760,18 @@ fn logical_path(root: &Path, path: &Path) -> Result<String, String> {
         })
         .collect::<Result<Vec<_>, _>>()
         .map(|parts| parts.join("/"))
+}
+
+fn validate_case_input_path(path: &str) -> Result<(), String> {
+    let path = Path::new(path);
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err("additional source paths must be relative normal paths".into());
+    }
+    Ok(())
 }
 
 fn collect_extension(

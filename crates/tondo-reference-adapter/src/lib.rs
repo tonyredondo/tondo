@@ -6,7 +6,7 @@ use std::sync::Arc;
 use serde_json::{Value, json};
 use tondo_compiler::driver::{
     BuildTarget, CapabilityName, CompilationOutput, CompilationRequest, CompilationStatus,
-    DiagnosticFormat, HostProfile, Operation, ResourceLimits, SourceForm, execute,
+    DiagnosticFormat, HostProfile, Operation, ResourceLimits, SourceForm, WarningProfile, execute,
 };
 use tondo_compiler::package::PackageGraph;
 use tondo_compiler::source::{
@@ -172,6 +172,14 @@ pub(crate) fn source_request(
             .unwrap_or(ResourceLimits::default().initial_vm_gc_threshold),
         ..ResourceLimits::default()
     };
+    let warning_profiles = action
+        .warning_profiles
+        .iter()
+        .map(|profile| match profile.as_str() {
+            "core" => Ok(WarningProfile::Core),
+            _ => Err(format!("unknown warning profile `{profile}`")),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     CompilationRequest::new(
         operation,
         tondo_compiler::package::Edition::V0_1,
@@ -185,7 +193,11 @@ pub(crate) fn source_request(
         prepared.sources,
         prepared.root,
     )
-    .map(|request| request.with_program_arguments(action.arguments.clone()))
+    .map(|request| {
+        request
+            .with_warning_profiles(warning_profiles)
+            .with_program_arguments(action.arguments.clone())
+    })
     .map_err(|error| error.to_string())
 }
 
@@ -412,6 +424,7 @@ mod tests {
                     b"import std.console\nconsole.print(\"ok\\n\")\n",
                 ),
             }],
+            warning_profiles: Vec::new(),
             arguments: Vec::new(),
             gc_threshold: None,
         };

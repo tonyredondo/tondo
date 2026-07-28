@@ -1,0 +1,3 @@
+fn same(value: Int): Int {
+    Int(value)
+}

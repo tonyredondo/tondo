@@ -18,8 +18,9 @@ struct ScopeEntry {
     span: Span,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct Scope {
+    id: u32,
     types: BTreeMap<Name, ScopeEntry>,
     values: BTreeMap<Name, ScopeEntry>,
 }
@@ -50,6 +51,7 @@ pub(super) fn resolve_names<'a>(
             diagnostics,
             max_diagnostics,
             scopes: Vec::new(),
+            next_scope: 0,
             contextual_self: false,
             receiver_available: false,
         };
@@ -67,6 +69,7 @@ struct NameResolver<'a> {
     diagnostics: &'a mut Vec<Diagnostic>,
     max_diagnostics: usize,
     scopes: Vec<Scope>,
+    next_scope: u32,
     contextual_self: bool,
     receiver_available: bool,
 }
@@ -80,7 +83,7 @@ enum ValuePathShape {
 
 impl NameResolver<'_> {
     fn resolve_file(&mut self, root: SyntaxNodeRef<'_>) -> Result<(), ResolveError> {
-        self.scopes.push(Scope::default());
+        self.push_scope();
         for child in root.child_nodes() {
             if root.kind() == SyntaxKind::Script && super::is_script_statement(child.kind()) {
                 continue;
@@ -99,7 +102,7 @@ impl NameResolver<'_> {
         }
         self.scopes.pop();
         if root.kind() == SyntaxKind::Script {
-            self.scopes.push(Scope::default());
+            self.push_scope();
             for child in root
                 .child_nodes()
                 .filter(|child| super::is_script_statement(child.kind()))
@@ -114,7 +117,7 @@ impl NameResolver<'_> {
     fn resolve_type_owner(&mut self, node: SyntaxNodeRef<'_>) -> Result<(), ResolveError> {
         let previous_contextual_self = self.contextual_self;
         self.contextual_self = matches!(node.kind(), SyntaxKind::TraitDecl | SyntaxKind::ImplDecl);
-        self.scopes.push(Scope::default());
+        self.push_scope();
         self.declare_generic_parameters(node)?;
         for child in node.child_nodes() {
             match child.kind() {
@@ -151,7 +154,7 @@ impl NameResolver<'_> {
     ) -> Result<(), ResolveError> {
         let previous_receiver = self.receiver_available;
         self.receiver_available = has_receiver(node);
-        self.scopes.push(Scope::default());
+        self.push_scope();
         if let Some(head) = head {
             let names = head
                 .child_tokens()
@@ -189,7 +192,7 @@ impl NameResolver<'_> {
                     self.walk(child, Some(SyntaxKind::Parameter))?;
                 }
             }
-            self.scopes.push(Scope::default());
+            self.push_scope();
             let parameter_tokens = parameters
                 .child_nodes()
                 .filter(|child| child.kind() == SyntaxKind::Parameter)
@@ -197,7 +200,7 @@ impl NameResolver<'_> {
                 .collect::<Vec<_>>();
             self.declare_tokens(parameter_tokens, Namespace::Value, LocalKind::Parameter)?;
         } else {
-            self.scopes.push(Scope::default());
+            self.push_scope();
         }
 
         for child in node.child_nodes() {
@@ -234,7 +237,7 @@ impl NameResolver<'_> {
     }
 
     fn resolve_block(&mut self, block: SyntaxNodeRef<'_>) -> Result<(), ResolveError> {
-        self.scopes.push(Scope::default());
+        self.push_scope();
         for item in block.child_nodes() {
             match item.kind() {
                 SyntaxKind::BindingDecl => self.resolve_binding(item)?,
@@ -276,7 +279,7 @@ impl NameResolver<'_> {
                 }
             }
         }
-        self.scopes.push(Scope::default());
+        self.push_scope();
         if let Some(pattern) = pattern {
             self.resolve_pattern_references(pattern)?;
             let mut tokens = Vec::new();
@@ -305,7 +308,7 @@ impl NameResolver<'_> {
     }
 
     fn resolve_match_arm(&mut self, arm: SyntaxNodeRef<'_>) -> Result<(), ResolveError> {
-        self.scopes.push(Scope::default());
+        self.push_scope();
         let pattern = arm.child_nodes().find(|child| is_pattern(child.kind()));
         if let Some(pattern) = pattern {
             self.resolve_pattern_references(pattern)?;
@@ -336,7 +339,7 @@ impl NameResolver<'_> {
                 }
             }
         }
-        self.scopes.push(Scope::default());
+        self.push_scope();
         if let Some(parameters) = parameters {
             let tokens = parameters
                 .child_nodes()
@@ -1079,6 +1082,7 @@ impl NameResolver<'_> {
                 .scopes
                 .last()
                 .expect("name resolution always has a lexical scope");
+            let scope = current.id;
             let current_map = scope_map(current, namespace);
             if let Some(previous) = current_map.get(&name) {
                 self.emit(
@@ -1124,6 +1128,7 @@ impl NameResolver<'_> {
                 name: name.clone(),
                 kind,
                 span,
+                scope,
             });
             scope_map_mut(
                 self.scopes
@@ -1141,6 +1146,19 @@ impl NameResolver<'_> {
             .iter()
             .rev()
             .find_map(|scope| scope_map(scope, namespace).get(name).cloned())
+    }
+
+    fn push_scope(&mut self) {
+        let id = self.next_scope;
+        self.next_scope = self
+            .next_scope
+            .checked_add(1)
+            .expect("local scope count is bounded by syntax nodes");
+        self.scopes.push(Scope {
+            id,
+            types: BTreeMap::new(),
+            values: BTreeMap::new(),
+        });
     }
 
     fn lookup_outer(&self, namespace: Namespace, name: &Name) -> Option<ScopeEntry> {

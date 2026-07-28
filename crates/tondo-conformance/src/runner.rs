@@ -239,9 +239,65 @@ fn execute_case(
         let observation = response_observation(case, response)?;
         assert_expected(case, &observation, &expected)?;
         validate_coverage_claims(case, &observation)?;
+        validate_format_idempotence(adapter, case, &action, &observation, repetition, sequence)?;
         observations.push(observation);
     }
     Ok(observations)
+}
+
+fn validate_format_idempotence(
+    adapter: &mut dyn Adapter,
+    case: &ConformanceCase,
+    action: &AdapterAction,
+    observation: &Observation,
+    repetition: u32,
+    sequence: &mut u64,
+) -> Result<(), RunError> {
+    let AdapterAction::Source(source) = action else {
+        return Ok(());
+    };
+    if source.operation != WireOperation::Format
+        || observation.compilation != CompilationState::Success
+    {
+        return Ok(());
+    }
+    let formatted = observation
+        .formatted_hex
+        .as_ref()
+        .ok_or_else(|| RunError::Case {
+            id: case.id.clone(),
+            message: "successful format observation omitted formatter bytes".into(),
+        })?;
+    let mut second = source.clone();
+    let root = second
+        .sources
+        .iter_mut()
+        .find(|candidate| candidate.logical_path == second.root)
+        .ok_or_else(|| RunError::Protocol("format action lost its root source".into()))?;
+    root.contents_hex.clone_from(formatted);
+    let request = AdapterRequest::new(
+        *sequence,
+        format!("{}#{repetition}/idempotence", case.id),
+        case_target(case),
+        AdapterAction::Source(second),
+    );
+    *sequence = sequence.saturating_add(1);
+    let second = response_observation(case, exchange(adapter, &request)?)?;
+    validate_diagnostic_protocol(&second).map_err(|message| RunError::Case {
+        id: case.id.clone(),
+        message,
+    })?;
+    if second.compilation != CompilationState::Success
+        || second.exit_code != 0
+        || !second.diagnostics.is_empty()
+        || second.formatted_hex.as_ref() != Some(formatted)
+    {
+        return case_failure(
+            case,
+            "formatting the canonical output did not reproduce identical bytes",
+        );
+    }
+    Ok(())
 }
 
 fn execute_document_case(
@@ -372,6 +428,7 @@ fn wire_source_action(suite: &LoadedSuite, action: &SourceAction) -> WireSourceA
                 contents_hex: encode_hex(suite.file(&source.contents)),
             })
             .collect(),
+        warning_profiles: action.warning_profiles.clone(),
         arguments: action.arguments.clone(),
         gc_threshold: action.gc_threshold,
     }

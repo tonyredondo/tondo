@@ -86,6 +86,23 @@ pub enum DiagnosticFormat {
     Json,
 }
 
+/// Closed warning profiles selected by an invocation.
+///
+/// Profiles add diagnostics only; they never relax language errors or change
+/// runtime semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum WarningProfile {
+    Core,
+}
+
+impl WarningProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Core => "core",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct CapabilityName(String);
 
@@ -257,6 +274,7 @@ pub struct CompilationRequest {
     program_arguments: Vec<String>,
     build_inputs: DeclaredBuildInputs,
     documentation_fixture: bool,
+    warning_profiles: BTreeSet<WarningProfile>,
 }
 
 impl CompilationRequest {
@@ -311,6 +329,7 @@ impl CompilationRequest {
             program_arguments: Vec::new(),
             build_inputs: DeclaredBuildInputs::default(),
             documentation_fixture: false,
+            warning_profiles: BTreeSet::new(),
         })
     }
 
@@ -330,6 +349,14 @@ impl CompilationRequest {
 
     pub fn with_declared_build_inputs(mut self, inputs: DeclaredBuildInputs) -> Self {
         self.build_inputs = inputs;
+        self
+    }
+
+    pub fn with_warning_profiles(
+        mut self,
+        profiles: impl IntoIterator<Item = WarningProfile>,
+    ) -> Self {
+        self.warning_profiles = profiles.into_iter().collect();
         self
     }
 
@@ -383,6 +410,10 @@ impl CompilationRequest {
 
     pub fn build_inputs(&self) -> &DeclaredBuildInputs {
         &self.build_inputs
+    }
+
+    pub fn warning_profiles(&self) -> &BTreeSet<WarningProfile> {
+        &self.warning_profiles
     }
 }
 
@@ -594,6 +625,23 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
         &request.build_inputs,
         &request.packages,
     )?;
+    if request.source_form == SourceForm::Fragment && request.operation == Operation::Run {
+        let mut bag = DiagnosticBag::new();
+        bag.push(Diagnostic::new(
+            Severity::Error,
+            DiagnosticCode::new("E0006")?,
+            "fragment source form cannot be executed",
+            PrimaryLocation::Source(request.sources.span(request.root, TextRange::empty(0))?),
+        )?);
+        return Ok(CompilationOutput {
+            status: CompilationStatus::Rejected,
+            exit_code: 1,
+            diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
+            stdout: Vec::new(),
+            semantic_model: None,
+            products: None,
+        });
+    }
     if let Some(diagnostic) = resource_limit_diagnostic(&request)? {
         let mut bag = DiagnosticBag::new();
         bag.push(diagnostic);
@@ -823,7 +871,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
         }
         Err(error) => return Err(error.into()),
     };
-    let (hir_program, expression_diagnostics, expression_check_complete) = checked.into_parts();
+    let (hir_program, mut expression_diagnostics, expression_check_complete) = checked.into_parts();
     if expression_diagnostics
         .iter()
         .any(|diagnostic| diagnostic.severity() == Severity::Error)
@@ -844,6 +892,16 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
             )),
             products: None,
         });
+    }
+    if request.warning_profiles.contains(&WarningProfile::Core) {
+        let available = remaining_diagnostics.saturating_sub(expression_diagnostics.len());
+        match crate::resolve::lint_core(&request.sources, &resolved_program, available) {
+            Ok(warnings) => expression_diagnostics.extend(warnings),
+            Err(ResolveError::DiagnosticLimit { file, offset }) => {
+                return syntax_resource_output(&request, file, "primary diagnostic count", offset);
+            }
+            Err(error) => return Err(error.into()),
+        }
     }
 
     if request.operation == Operation::Check && expression_check_complete {

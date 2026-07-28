@@ -1,0 +1,5 @@
+pub fn add(a: Int, b: Int): Int {
+    // preserved
+    a +
+        b
+}

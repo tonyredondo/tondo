@@ -13,8 +13,11 @@ use crate::source::{FileId, SourceDatabase, SourceError, Span, TextRange};
 use crate::syntax::{Parsed, SyntaxKind, SyntaxNodeRef, SyntaxTokenRef, TokenKind};
 
 mod api;
+mod lints;
 mod members;
 mod names;
+
+pub use lints::lint_core;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SymbolId(u32);
@@ -95,6 +98,7 @@ pub struct LocalBinding {
     name: Name,
     kind: LocalKind,
     span: Span,
+    scope: u32,
 }
 
 impl LocalBinding {
@@ -112,6 +116,11 @@ impl LocalBinding {
 
     pub fn span(&self) -> Span {
         self.span
+    }
+
+    /// Stable lexical scope identity within this resolved snapshot.
+    pub fn scope(&self) -> u32 {
+        self.scope
     }
 }
 
