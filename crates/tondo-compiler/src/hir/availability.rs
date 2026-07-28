@@ -23,6 +23,7 @@ struct AvailabilityState {
     defer_guards: BTreeMap<TerminalOwner, DeferGuard>,
     defer_reserved: BTreeMap<TerminalOwner, DeferGuard>,
     loans: BTreeMap<LoanIdentity, LoanReservation>,
+    spawn_joins: BTreeMap<TerminalOwner, BTreeMap<HirExpressionId, HirExpressionId>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +43,7 @@ pub(crate) enum AvailabilityFindingKind {
     DeferredCollectionLoanConflict,
     DeferredCollectionAccessConflict,
     TerminalNotConsumed,
+    JoinEscapes,
     TerminalOverwrite,
     InvalidDefer,
     NonSendAcrossSuspend,
@@ -134,6 +136,7 @@ struct MatchPatternIntroduction {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum LoanIdentity {
     Call(HirExpressionId),
+    Spawn(HirExpressionId, u32),
     Pattern(LocalId),
     Iteration(HirLoopId),
 }
@@ -416,6 +419,7 @@ struct Analyzer<'a, 'f> {
     break_liveness: BTreeMap<HirLoopId, BTreeSet<LocalId>>,
     continue_liveness: BTreeMap<HirLoopId, BTreeSet<LocalId>>,
     structured_scope_depth: u32,
+    structured_scopes: Vec<HirExpressionId>,
     findings: &'f mut BTreeSet<AvailabilityFinding>,
 }
 
@@ -449,6 +453,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             break_liveness: BTreeMap::new(),
             continue_liveness: BTreeMap::new(),
             structured_scope_depth: 0,
+            structured_scopes: Vec::new(),
             findings,
         }
     }
@@ -827,17 +832,73 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             }
             HirExpressionKind::Await { operation } => {
                 self.record_suspension_requirements(&state, live_after, expression.span())?;
-                self.expression(*operation, state, Demand::Transfer, live_after)?
+                let mut flow = self.expression(*operation, state, Demand::Transfer, live_after)?;
+                for state in flow
+                    .normal
+                    .iter_mut()
+                    .chain(flow.exits.iter_mut())
+                    .chain(flow.breaks.values_mut())
+                    .chain(flow.continues.values_mut())
+                {
+                    release_spawn_join(state, TerminalOwner::Temporary(*operation));
+                    if let Some(local) = self.direct_local(*operation) {
+                        release_spawn_join(state, TerminalOwner::Local(local));
+                    }
+                }
+                flow
             }
             HirExpressionKind::Spawn { operation } => {
-                self.expression(*operation, state, Demand::Transfer, live_after)?
+                let reservations = match self
+                    .program
+                    .expression(*operation)
+                    .map(super::HirExpression::kind)
+                {
+                    Some(HirExpressionKind::AsyncCall { arguments, .. }) => arguments
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, argument)| argument.mode() == ParameterMode::Ref)
+                        .map(|(index, argument)| {
+                            let value = argument.value();
+                            (
+                                LoanIdentity::Spawn(id, index as u32),
+                                self.loan_place_in_state(value, &state),
+                                self.program
+                                    .expression(value)
+                                    .expect("spawn ref argument remains indexed")
+                                    .span(),
+                                self.loan_origin_in_state(value, &state),
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                };
+                let mut flow = self.expression(*operation, state, Demand::Transfer, live_after)?;
+                if let Some(state) = &mut flow.normal {
+                    let owner = TerminalOwner::Temporary(id);
+                    for (identity, place, span, source) in reservations {
+                        self.reserve_loan(state, identity, place, ParameterMode::Ref, span, source);
+                    }
+                    if let Some(scope) = self.structured_scopes.last().copied() {
+                        state
+                            .spawn_joins
+                            .entry(owner)
+                            .or_default()
+                            .insert(id, scope);
+                    }
+                }
+                flow
             }
             HirExpressionKind::Scope { body } => {
                 self.record_suspension_requirements(&state, live_after, expression.span())?;
                 self.structured_scope_depth = self.structured_scope_depth.saturating_add(1);
+                self.structured_scopes.push(id);
                 let result = self.expression(*body, state, Demand::Transfer, live_after);
+                let popped = self.structured_scopes.pop();
                 self.structured_scope_depth -= 1;
-                result?
+                debug_assert_eq!(popped, Some(id));
+                let result = result?;
+                self.report_join_scope_escape(&result, id, expression.span());
+                result
             }
             HirExpressionKind::PreludePanic { message } => {
                 let mut flow =
@@ -917,6 +978,8 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 flow
             }
         };
+        let mut flow = flow;
+        self.propagate_spawn_join_result(id, &expression, demand, &mut flow)?;
         let mut flow = self.finish_expression(id, flow, live_after);
         self.finish_new_terminal_temporaries(&mut flow, &temporary_baseline);
         self.activate_projected_terminal_temporary(id, demand, &mut flow)?;
@@ -1012,7 +1075,18 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     .direct_local(*value)
                     .zip(self.direct_pattern_local(*pattern));
                 let mut guard = None;
+                let mut spawn_join = None;
                 if let Some(state) = &mut flow.normal {
+                    if self.direct_pattern_local(*pattern).is_some() {
+                        spawn_join = state
+                            .spawn_joins
+                            .remove(&TerminalOwner::Temporary(*value))
+                            .or_else(|| {
+                                self.direct_local(*value).and_then(|local| {
+                                    state.spawn_joins.remove(&TerminalOwner::Local(local))
+                                })
+                            });
+                    }
                     let newly_reserved = state
                         .defer_reserved
                         .iter()
@@ -1056,6 +1130,15 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                         state.terminal_live.remove(&owner);
                         state.terminal_reserved.remove(&owner);
                         state.defer_guards.insert(owner, guard);
+                    }
+                    if let (Some(destination), Some(loans)) =
+                        (self.direct_pattern_local(*pattern), spawn_join)
+                    {
+                        state
+                            .spawn_joins
+                            .entry(TerminalOwner::Local(destination))
+                            .or_default()
+                            .extend(loans);
                     }
                 }
                 Ok(flow)
@@ -1198,6 +1281,19 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 .flatten()
                 .zip((restorable.len() == 1).then(|| restorable[0].0));
             let mut guard = None;
+            let spawn_destination = (operator == HirAssignmentOperator::Assign
+                && restorable.len() == 1)
+                .then(|| restorable[0].0);
+            let spawn_join = spawn_destination.and_then(|_| {
+                state
+                    .spawn_joins
+                    .remove(&TerminalOwner::Temporary(value))
+                    .or_else(|| {
+                        self.direct_local(value).and_then(|source| {
+                            state.spawn_joins.remove(&TerminalOwner::Local(source))
+                        })
+                    })
+            });
             let newly_reserved = state
                 .defer_reserved
                 .iter()
@@ -1232,6 +1328,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 state.terminal_live.remove(&owner);
                 state.terminal_reserved.remove(&owner);
                 state.defer_guards.insert(owner, guard);
+            }
+            if let (Some(destination), Some(loans)) = (spawn_destination, spawn_join) {
+                state
+                    .spawn_joins
+                    .entry(TerminalOwner::Local(destination))
+                    .or_default()
+                    .extend(loans);
             }
         }
         restore_new_handoffs_in_controls(&mut flow, &baseline);
@@ -1409,6 +1512,33 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     loan_parent,
                 },
             )?;
+            if mode == HirMatchMode::Consume {
+                let source = TerminalOwner::Temporary(scrutinee);
+                if let Some(joins) = arm_entry.spawn_joins.remove(&source) {
+                    let mut destinations = Vec::new();
+                    for local in &pattern_locals {
+                        if let Some(ty) = self.program.local_type(*local)
+                            && self.is_terminal(ty)?
+                        {
+                            destinations.push(TerminalOwner::Local(*local));
+                        }
+                    }
+                    if destinations.is_empty() {
+                        arm_entry.spawn_joins.insert(source, joins);
+                        if !self.pattern_may_retain_spawn_join(arm.pattern())? {
+                            release_spawn_join(&mut arm_entry, source);
+                        }
+                    } else {
+                        for destination in destinations {
+                            arm_entry
+                                .spawn_joins
+                                .entry(destination)
+                                .or_default()
+                                .extend(joins.iter().map(|(spawn, scope)| (*spawn, *scope)));
+                        }
+                    }
+                }
+            }
             let guarded_entry = if let Some(guard) = arm.guard() {
                 let forbidden = self.affine_pattern_bindings(arm.pattern())?;
                 self.guard_forbidden.extend(forbidden.iter().copied());
@@ -1457,6 +1587,46 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             result.merge(body_flow);
         }
         Ok(result)
+    }
+
+    fn pattern_may_retain_spawn_join(&mut self, root: HirPatternId) -> Result<bool, TypeError> {
+        let mut pending = vec![root];
+        while let Some(id) = pending.pop() {
+            let pattern = self
+                .program
+                .pattern(id)
+                .expect("availability patterns retain their children")
+                .clone();
+            match pattern.kind() {
+                HirPatternKind::Recovery => return Ok(true),
+                HirPatternKind::Wildcard
+                | HirPatternKind::Binding(_)
+                | HirPatternKind::BorrowBinding { .. } => {
+                    if self.is_terminal(pattern.ty())? {
+                        return Ok(true);
+                    }
+                }
+                HirPatternKind::Tuple(items) | HirPatternKind::Variant { fields: items, .. } => {
+                    pending.extend(items.iter().copied());
+                }
+                HirPatternKind::OptionSome(item)
+                | HirPatternKind::ResultOk(item)
+                | HirPatternKind::ResultErr(item)
+                | HirPatternKind::Newtype { value: item, .. }
+                | HirPatternKind::UnionMember { pattern: item, .. } => pending.push(*item),
+                HirPatternKind::Record { fields, .. } => {
+                    pending.extend(fields.iter().map(super::HirPatternField::pattern));
+                }
+                HirPatternKind::Array { prefix, rest } => {
+                    pending.extend(prefix.iter().copied());
+                    pending.extend(*rest);
+                }
+                HirPatternKind::Literal(_)
+                | HirPatternKind::NumericConversionError(_)
+                | HirPatternKind::OptionNone => {}
+            }
+        }
+        Ok(false)
     }
 
     fn pattern_contains_borrow(&self, root: HirPatternId) -> bool {
@@ -1875,6 +2045,13 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             .expect("availability analysis receives verified place IDs")
             .clone();
         let (mut flow, place) = self.place_components(id, state, &live_within)?;
+        let transferred_owner = (demand == Demand::Transfer && place.complete_transfer)
+            .then(|| match place.root {
+                PlaceRoot::Local(local) => Some(TerminalOwner::Local(local)),
+                PlaceRoot::Receiver => None,
+                PlaceRoot::Temporary(expression) => Some(TerminalOwner::Temporary(expression)),
+            })
+            .flatten();
         if let Some(state) = &mut flow.normal {
             self.access_place(
                 state,
@@ -1884,6 +2061,9 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 demand,
                 true,
             )?;
+            if let Some(owner) = transferred_owner {
+                retarget_spawn_join(state, owner, TerminalOwner::Temporary(id));
+            }
         }
         Ok(self.finish_expression(id, flow, live_after))
     }
@@ -2638,6 +2818,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
 
     fn report_terminal_owner(&mut self, flow: &AvailabilityFlow, owner: TerminalOwner) {
         let mut origin = None;
+        let mut structured_join = false;
         for state in flow
             .normal
             .iter()
@@ -2654,12 +2835,20 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             {
                 origin = Some(origin.map_or(*candidate, |current: Span| current.min(*candidate)));
             }
+            structured_join |= state
+                .spawn_joins
+                .get(&owner)
+                .is_some_and(|joins| !joins.is_empty());
         }
         let Some(origin) = origin else {
             return;
         };
         self.findings.insert(AvailabilityFinding {
-            kind: AvailabilityFindingKind::TerminalNotConsumed,
+            kind: if structured_join {
+                AvailabilityFindingKind::JoinEscapes
+            } else {
+                AvailabilityFindingKind::TerminalNotConsumed
+            },
             local: match owner {
                 TerminalOwner::Local(local) => Some(local),
                 TerminalOwner::Iteration(_)
@@ -2807,6 +2996,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 state.defer_reserved.remove(&owner);
                 state.terminal_live.remove(&owner);
                 state.terminal_reserved.remove(&owner);
+                release_spawn_join(state, owner);
                 if let TerminalOwner::Local(local) = owner {
                     state.unavailable.entry(local).or_insert(guard.span);
                 }
@@ -2825,6 +3015,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         {
             state.terminal_live.remove(&owner);
             state.terminal_reserved.remove(&owner);
+            release_spawn_join(state, owner);
         }
     }
 
@@ -3403,6 +3594,156 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         match self.program.pattern(pattern)?.kind() {
             HirPatternKind::Binding(local) => Some(*local),
             _ => None,
+        }
+    }
+
+    fn propagate_spawn_join_result(
+        &mut self,
+        id: HirExpressionId,
+        expression: &super::HirExpression,
+        demand: Demand,
+        flow: &mut AvailabilityFlow,
+    ) -> Result<(), TypeError> {
+        if demand != Demand::Transfer || !self.is_terminal(expression.ty())? {
+            return Ok(());
+        }
+
+        let mut sources = Vec::new();
+        let mut expression_source = |source| {
+            sources.push(TerminalOwner::Temporary(source));
+        };
+        match expression.kind() {
+            HirExpressionKind::Closure(closure) => {
+                if let Some(closure) = self.program.closure(*closure) {
+                    sources.extend(
+                        closure
+                            .captures()
+                            .iter()
+                            .map(|capture| TerminalOwner::Local(capture.local())),
+                    );
+                }
+            }
+            HirExpressionKind::Tuple(values)
+            | HirExpressionKind::Array(values)
+            | HirExpressionKind::Set(values) => {
+                for value in values {
+                    expression_source(*value);
+                }
+            }
+            HirExpressionKind::Map { entries, .. } => {
+                for entry in entries {
+                    expression_source(entry.key());
+                    expression_source(entry.value());
+                }
+            }
+            HirExpressionKind::Newtype { value, .. }
+            | HirExpressionKind::Ref { value }
+            | HirExpressionKind::OptionSome { value }
+            | HirExpressionKind::ResultOk { value }
+            | HirExpressionKind::Coerce { value, .. }
+            | HirExpressionKind::PropagateOption { value }
+            | HirExpressionKind::PropagateResult { value, .. } => {
+                expression_source(*value);
+            }
+            HirExpressionKind::ResultErr { error } => expression_source(*error),
+            HirExpressionKind::Record { fields, .. } => {
+                for field in fields {
+                    expression_source(field.value());
+                }
+            }
+            HirExpressionKind::Variant { payload, .. } => match payload {
+                HirVariantValue::Unit => {}
+                HirVariantValue::Tuple(values) => {
+                    for value in values {
+                        expression_source(*value);
+                    }
+                }
+                HirVariantValue::Record(fields) => {
+                    for field in fields {
+                        expression_source(field.value());
+                    }
+                }
+            },
+            HirExpressionKind::RecordUpdate { base, fields } => {
+                expression_source(*base);
+                for field in fields {
+                    expression_source(field.value());
+                }
+            }
+            HirExpressionKind::Block { tail, .. } => {
+                if let Some(tail) = tail {
+                    expression_source(*tail);
+                }
+            }
+            HirExpressionKind::Call {
+                callee, arguments, ..
+            }
+            | HirExpressionKind::AsyncCall {
+                callee, arguments, ..
+            } => {
+                expression_source(*callee);
+                for argument in arguments {
+                    expression_source(argument.value());
+                }
+            }
+            HirExpressionKind::Scope { body } => expression_source(*body),
+            HirExpressionKind::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                expression_source(*then_branch);
+                if let Some(else_branch) = else_branch {
+                    expression_source(*else_branch);
+                }
+            }
+            HirExpressionKind::Match { arms, .. } => {
+                for arm in arms {
+                    expression_source(arm.body());
+                }
+            }
+            // Places are retargeted where their complete transfer is known.
+            // `spawn` creates its own provenance and `await` consumes it.
+            _ => {}
+        }
+
+        if let Some(state) = &mut flow.normal {
+            let destination = TerminalOwner::Temporary(id);
+            for source in sources {
+                retarget_spawn_join(state, source, destination);
+            }
+        }
+        Ok(())
+    }
+
+    fn report_join_scope_escape(
+        &mut self,
+        flow: &AvailabilityFlow,
+        scope: HirExpressionId,
+        span: Span,
+    ) {
+        for state in flow
+            .normal
+            .iter()
+            .chain(flow.exits.iter())
+            .chain(flow.breaks.values())
+            .chain(flow.continues.values())
+        {
+            for (owner, joins) in &state.spawn_joins {
+                if joins.values().any(|owner| *owner == scope) {
+                    self.findings.insert(AvailabilityFinding {
+                        kind: AvailabilityFindingKind::JoinEscapes,
+                        local: match owner {
+                            TerminalOwner::Local(local) => Some(*local),
+                            TerminalOwner::Iteration(_)
+                            | TerminalOwner::Pattern(_)
+                            | TerminalOwner::Temporary(_) => None,
+                        },
+                        use_span: span,
+                        move_span: None,
+                    });
+                }
+            }
         }
     }
 }
@@ -4020,7 +4361,7 @@ fn union_sets(left: &BTreeSet<LocalId>, right: &BTreeSet<LocalId>) -> BTreeSet<L
 
 fn retain_pattern_loans(state: &mut AvailabilityState, live: &BTreeSet<LocalId>) {
     state.loans.retain(|identity, _| match identity {
-        LoanIdentity::Call(_) | LoanIdentity::Iteration(_) => true,
+        LoanIdentity::Call(_) | LoanIdentity::Spawn(_, _) | LoanIdentity::Iteration(_) => true,
         LoanIdentity::Pattern(local) => live.contains(local),
     });
 }
@@ -4051,9 +4392,20 @@ fn merge_control_states(
 }
 
 fn merge_state(target: &mut AvailabilityState, source: AvailabilityState) {
-    target
-        .loans
-        .retain(|identity, loan| source.loans.get(identity) == Some(loan));
+    target.loans.retain(|identity, loan| {
+        matches!(identity, LoanIdentity::Spawn(_, _)) || source.loans.get(identity) == Some(loan)
+    });
+    for (identity, loan) in &source.loans {
+        if matches!(identity, LoanIdentity::Spawn(_, _)) {
+            target
+                .loans
+                .entry(*identity)
+                .or_insert_with(|| loan.clone());
+        }
+    }
+    for (owner, loans) in &source.spawn_joins {
+        target.spawn_joins.entry(*owner).or_default().extend(loans);
+    }
     target.defer_guards.retain(|owner, guard| {
         let Some(other) = source.defer_guards.get(owner) else {
             return false;
@@ -4126,6 +4478,7 @@ fn state_keys_equal(left: &AvailabilityState, right: &AvailabilityState) -> bool
                 .defer_reserved
                 .iter()
                 .map(|(owner, guard)| (owner, guard.scope)))
+        && left.spawn_joins == right.spawn_joins
         && left.loans == right.loans
 }
 
@@ -4136,7 +4489,42 @@ fn remove_local(state: &mut AvailabilityState, local: LocalId) {
     state.terminal_reserved.remove(&TerminalOwner::Local(local));
     state.defer_guards.remove(&TerminalOwner::Local(local));
     state.defer_reserved.remove(&TerminalOwner::Local(local));
+    release_spawn_join(state, TerminalOwner::Local(local));
     state.loans.remove(&LoanIdentity::Pattern(local));
+}
+
+fn release_spawn_join(state: &mut AvailabilityState, owner: TerminalOwner) {
+    if let Some(joins) = state.spawn_joins.remove(&owner) {
+        let retained = state
+            .spawn_joins
+            .values()
+            .flat_map(|remaining| remaining.keys().copied())
+            .collect::<BTreeSet<_>>();
+        state.loans.retain(|identity, _| {
+            !matches!(
+                identity,
+                LoanIdentity::Spawn(spawn, _)
+                    if joins.contains_key(spawn) && !retained.contains(spawn)
+            )
+        });
+    }
+}
+
+fn retarget_spawn_join(
+    state: &mut AvailabilityState,
+    source: TerminalOwner,
+    destination: TerminalOwner,
+) {
+    if source == destination {
+        return;
+    }
+    if let Some(joins) = state.spawn_joins.remove(&source) {
+        state
+            .spawn_joins
+            .entry(destination)
+            .or_default()
+            .extend(joins);
+    }
 }
 
 fn place_local(place: &PlaceInfo) -> Option<LocalId> {

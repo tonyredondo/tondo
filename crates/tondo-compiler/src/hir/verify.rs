@@ -170,6 +170,7 @@ impl Verifier<'_> {
         self.verify_patterns()?;
         let loops = self.collect_control_ids()?;
         self.verify_expressions(&loops)?;
+        self.verify_async_contexts()?;
         self.verify_call_protocol_contracts()?;
         self.verify_bodies()?;
         self.verify_availability()?;
@@ -237,6 +238,10 @@ impl Verifier<'_> {
                 ),
                 AvailabilityFindingKind::TerminalNotConsumed => format!(
                     "{local} retains a terminal obligation at normal exit from {}",
+                    finding.use_span().range()
+                ),
+                AvailabilityFindingKind::JoinEscapes => format!(
+                    "{local} lets a Join escape its owning structured scope at {}",
                     finding.use_span().range()
                 ),
                 AvailabilityFindingKind::TerminalOverwrite => format!(
@@ -3455,6 +3460,81 @@ impl Verifier<'_> {
                     "an async call must have exactly one await or spawn owner",
                 ));
             }
+        }
+        Ok(())
+    }
+
+    fn verify_async_contexts(&self) -> Result<(), HirInvariantError> {
+        for callable in self.program.callables() {
+            let Some(body) = self.program.body(callable.id()) else {
+                continue;
+            };
+            let TypeKind::Function(function) = self
+                .program
+                .interner()
+                .kind(callable.function_type())
+                .map_err(|error| HirInvariantError::new("async context", error.to_string()))?
+            else {
+                return Err(HirInvariantError::new(
+                    "async context",
+                    "callable contract is not a function",
+                ));
+            };
+            self.verify_async_body(
+                body.root(),
+                function.is_async(),
+                format!("callable {:?}", callable.id()),
+            )?;
+        }
+        for closure in self.program.closures() {
+            self.verify_async_body(
+                closure.body().root(),
+                closure.is_async(),
+                format!("closure#{}", closure.id().index()),
+            )?;
+        }
+        Ok(())
+    }
+
+    fn verify_async_body(
+        &self,
+        root: HirExpressionId,
+        is_async: bool,
+        context: String,
+    ) -> Result<(), HirInvariantError> {
+        let mut pending = vec![(root, 0_u32)];
+        while let Some((id, scope_depth)) = pending.pop() {
+            let expression = self.expression(id, &context)?;
+            match &expression.kind {
+                HirExpressionKind::Await { .. } if !is_async => {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        "await appears outside an async body",
+                    ));
+                }
+                HirExpressionKind::Spawn { .. } if !is_async || scope_depth == 0 => {
+                    return Err(HirInvariantError::new(
+                        &context,
+                        "spawn appears outside an async structured scope",
+                    ));
+                }
+                HirExpressionKind::Scope { body } => {
+                    if !is_async {
+                        return Err(HirInvariantError::new(
+                            &context,
+                            "task scope appears outside an async body",
+                        ));
+                    }
+                    pending.push((*body, scope_depth.saturating_add(1)));
+                    continue;
+                }
+                _ => {}
+            }
+            pending.extend(
+                expression_children(expression)
+                    .into_iter()
+                    .map(|child| (child, scope_depth)),
+            );
         }
         Ok(())
     }

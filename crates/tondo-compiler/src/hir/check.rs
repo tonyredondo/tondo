@@ -1252,6 +1252,13 @@ impl<'a> ExpressionChecker<'a> {
                     Vec::new(),
                     None,
                 )?,
+                AvailabilityFindingKind::JoinEscapes => self.emit(
+                    finding.use_span(),
+                    "E1603",
+                    "a `Join` cannot escape its owning structured scope",
+                    Vec::new(),
+                    None,
+                )?,
                 AvailabilityFindingKind::TerminalOverwrite => self.emit(
                     finding.use_span(),
                     "E1408",
@@ -1274,7 +1281,7 @@ impl<'a> ExpressionChecker<'a> {
                 )?,
                 AvailabilityFindingKind::NonSendAcrossSuspend => self.emit(
                     finding.use_span(),
-                    "E1613",
+                    "E1605",
                     format!(
                         "binding `{}` remains live across suspension but does not satisfy `Send`",
                         name.expect("non-Send suspension findings name a binding")
@@ -1284,7 +1291,7 @@ impl<'a> ExpressionChecker<'a> {
                 )?,
                 AvailabilityFindingKind::ExclusiveLoanAcrossSuspend => self.emit(
                     finding.use_span(),
-                    "E1614",
+                    "E1607",
                     "an exclusive `mut` or `var` loan cannot remain active across suspension",
                     finding
                         .move_span()
@@ -2341,6 +2348,7 @@ impl<'a> ExpressionChecker<'a> {
                 Vec::new(),
                 None,
             )?;
+            return self.recovery_expression(file, node.range());
         }
         match expression {
             AstExpression::Literal(_) => self.check_literal(file, node, expected),
@@ -2804,7 +2812,16 @@ impl<'a> ExpressionChecker<'a> {
             range: operand_node.range(),
             kind: AsyncInitiationKind::Await,
         });
-        let checked = self.check_expression(file, operand_node, expected, context);
+        // A contextual result type helps infer an immediately invoked async
+        // callable, but it is not the type of a `Join` operand. The enclosing
+        // expression checker applies the expectation to the logical result of
+        // `await` after this method returns.
+        let operand_expected = operand_node
+            .child_nodes()
+            .any(|child| child.kind() == SyntaxKind::CallSuffix)
+            .then_some(expected)
+            .flatten();
+        let checked = self.check_expression(file, operand_node, operand_expected, context);
         context.async_initiation = previous;
         let operation = checked?;
         let operation_type = self.expression_type(operation);
@@ -2988,12 +3005,13 @@ impl<'a> ExpressionChecker<'a> {
             .expect("async callee remains indexed")
             .span();
         let callee_type = self.expression_type(callee);
-        let _ = self.require_capability_with_generics(
+        let _ = self.require_async_capability(
             callee_span,
             callee_type,
             HirCapability::Send,
             &assumptions,
             "an async task callee",
+            "E1605",
         )?;
         for argument in arguments {
             let value = self
@@ -3002,20 +3020,22 @@ impl<'a> ExpressionChecker<'a> {
                 .expect("async call arguments remain indexed");
             let (value_span, value_type, value_category) =
                 (value.span(), value.ty(), value.category());
-            let _ = self.require_capability_with_generics(
+            let _ = self.require_async_capability(
                 value_span,
                 value_type,
                 HirCapability::Send,
                 &assumptions,
                 "an argument crossing an async suspension",
+                "E1605",
             )?;
             if initiation == AsyncInitiationKind::Spawn && argument.mode() == ParameterMode::Ref {
-                let _ = self.require_capability_with_generics(
+                let _ = self.require_async_capability(
                     value_span,
                     value_type,
                     HirCapability::Share,
                     &assumptions,
                     "a shared argument observed by a spawned task",
+                    "E1606",
                 )?;
                 if value_category != HirValueCategory::Place {
                     self.emit(
@@ -3034,7 +3054,7 @@ impl<'a> ExpressionChecker<'a> {
                 TypeKind::Result { success, error } => (*success, Some(*error)),
                 _ => (outcome, None),
             };
-            let _ = self.require_capability_with_generics(
+            let _ = self.require_async_capability(
                 self.program
                     .expression(operation)
                     .expect("async operation remains indexed")
@@ -3043,9 +3063,10 @@ impl<'a> ExpressionChecker<'a> {
                 HirCapability::Send,
                 &assumptions,
                 "a spawned task result",
+                "E1605",
             )?;
             if let Some(error) = error {
-                let _ = self.require_capability_with_generics(
+                let _ = self.require_async_capability(
                     self.program
                         .expression(operation)
                         .expect("async operation remains indexed")
@@ -3054,6 +3075,7 @@ impl<'a> ExpressionChecker<'a> {
                     HirCapability::Send,
                     &assumptions,
                     "a spawned task error",
+                    "E1605",
                 )?;
             }
         }
@@ -10173,6 +10195,44 @@ impl<'a> ExpressionChecker<'a> {
         Ok(satisfied)
     }
 
+    fn require_async_capability(
+        &mut self,
+        span: Span,
+        ty: TypeId,
+        capability: HirCapability,
+        assumptions: &CapabilityAssumptions,
+        context: &str,
+        code: &str,
+    ) -> Result<bool, HirError> {
+        let satisfied = match self.capability_status_with_generics(ty, capability, assumptions)? {
+            DiscardStatus::Satisfied => true,
+            DiscardStatus::Deferred => {
+                self.complete = false;
+                true
+            }
+            DiscardStatus::Unsatisfied => {
+                let actual = self.program.interner.canonical(ty)?;
+                if self
+                    .reported_capability_requirements
+                    .insert((span, ty, capability))
+                {
+                    self.emit(
+                        span,
+                        code,
+                        format!(
+                            "type `{actual}` does not satisfy `{}` required by {context}",
+                            capability.as_str()
+                        ),
+                        Vec::new(),
+                        Some((capability.as_str().to_owned(), actual)),
+                    )?;
+                }
+                false
+            }
+        };
+        Ok(satisfied)
+    }
+
     fn select_pattern_member(
         &self,
         expected: TypeId,
@@ -10568,7 +10628,22 @@ impl<'a> ExpressionChecker<'a> {
                                 unit,
                             )?;
                         }
-                        None
+                        if callable.error.is_some() {
+                            let unit = self.allocate_expression(HirExpression {
+                                span: self.sources.span(file, node.range())?,
+                                ty: unit,
+                                category: HirValueCategory::Value,
+                                kind: HirExpressionKind::Literal(HirLiteral::Unit),
+                            })?;
+                            Some(self.allocate_expression(HirExpression {
+                                span: self.sources.span(file, node.range())?,
+                                ty: callable.full,
+                                category: HirValueCategory::Value,
+                                kind: HirExpressionKind::ResultOk { value: unit },
+                            })?)
+                        } else {
+                            None
+                        }
                     }
                     (None, Some(callable)) if self.opaque_body.is_some() => {
                         Some(self.check_opaque_unit_return(
@@ -10579,7 +10654,22 @@ impl<'a> ExpressionChecker<'a> {
                     (None, Some(callable))
                         if callable.success == self.program.interner.scalar(ScalarType::Unit) =>
                     {
-                        None
+                        if callable.error.is_some() {
+                            let unit = self.allocate_expression(HirExpression {
+                                span: self.sources.span(file, node.range())?,
+                                ty: callable.success,
+                                category: HirValueCategory::Value,
+                                kind: HirExpressionKind::Literal(HirLiteral::Unit),
+                            })?;
+                            Some(self.allocate_expression(HirExpression {
+                                span: self.sources.span(file, node.range())?,
+                                ty: callable.full,
+                                category: HirValueCategory::Value,
+                                kind: HirExpressionKind::ResultOk { value: unit },
+                            })?)
+                        } else {
+                            None
+                        }
                     }
                     (None, Some(callable)) => {
                         self.emit(
@@ -15611,11 +15701,12 @@ impl<'a> ExpressionChecker<'a> {
                     Vec::new(),
                     None,
                 )?;
+                return self.recovery_expression(file, range);
             }
             if async_initiation.is_none() {
                 self.emit(
                     call_span,
-                    "E1612",
+                    "E1601",
                     "an async call must be initiated by `await` or `spawn`",
                     Vec::new(),
                     None,

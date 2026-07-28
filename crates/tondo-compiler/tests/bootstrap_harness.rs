@@ -160,3 +160,39 @@ fn variadic_pack_and_spread_observables_are_stable_under_gc_pressure() {
         assert_eq!(under_pressure, baseline);
     }
 }
+
+#[test]
+fn suspended_async_frames_and_completed_children_are_stable_under_gc_pressure() {
+    let fixtures = discover(FixtureKind::Runtime)
+        .unwrap()
+        .into_iter()
+        .filter(|fixture| {
+            fixture.source.file_stem().is_some_and(|name| {
+                matches!(
+                    name.to_str(),
+                    Some("m7-async-gc-roots" | "m7-structured-ref")
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(fixtures.len(), 2);
+
+    for fixture in fixtures {
+        let baseline = fixture.run().unwrap();
+        fixture.assert_matches(&baseline).unwrap();
+
+        let under_pressure = fixture
+            .run_with_limits(ResourceLimits {
+                initial_vm_gc_threshold: 1,
+                ..ResourceLimits::default()
+            })
+            .unwrap();
+        fixture.assert_matches(&under_pressure).unwrap();
+        assert_eq!(
+            under_pressure,
+            baseline,
+            "{} changed an observable while async frames were suspended under GC pressure",
+            fixture.source.display()
+        );
+    }
+}

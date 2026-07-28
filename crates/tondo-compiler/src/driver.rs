@@ -2676,6 +2676,49 @@ mod tests {
     }
 
     #[test]
+    fn structured_child_panics_use_creation_order_after_sibling_cleanup() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"async fn tick() {}\n\
+              async fn first() {\n\
+                  await tick()\n\
+                  await tick()\n\
+                  await tick()\n\
+                  panic(\"first child\")\n\
+              }\n\
+              async fn second() {\n\
+                  await tick()\n\
+                  await tick()\n\
+                  await tick()\n\
+                  panic(\"second child\")\n\
+              }\n\
+              async fn main() {\n\
+                  scope {\n\
+                      let firstJob = spawn first()\n\
+                      let secondJob = spawn second()\n\
+                      let _ = await firstJob\n\
+                      let _ = await secondJob\n\
+                  }\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert_eq!(output.exit_code(), 101);
+        let diagnostic = &output.diagnostics().diagnostics()[0];
+        assert_eq!(diagnostic.code(), "P0008");
+        assert!(diagnostic.message().ends_with("first child"));
+        assert!(
+            output
+                .diagnostics()
+                .json_lines()
+                .unwrap()
+                .contains("suppressed explicit-panic: second child")
+        );
+    }
+
+    #[test]
     fn g2_002_hello_world_is_captured_as_exact_program_stdout() {
         let output = execute(operation_request(
             Operation::Run,

@@ -248,7 +248,7 @@ impl RuntimeDefer {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct RuntimeFallback {
     scope: BytecodeScopeId,
     owner: BytecodePlace,
@@ -979,6 +979,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
             }
 
+            self.teardown_scope_join_fallbacks(frame, id)?;
             self.frames[frame].task_scopes.pop();
             self.task_scopes
                 .get_mut(id)
@@ -988,6 +989,109 @@ impl<'program, 'host> Engine<'program, 'host> {
             self.release_task_scope_if_consumed(id)?;
         }
         Ok(true)
+    }
+
+    fn teardown_scope_join_fallbacks(&mut self, frame: usize, scope: usize) -> Result<(), VmError> {
+        loop {
+            let candidates = self.frames[frame]
+                .cleanups
+                .iter()
+                .enumerate()
+                .filter_map(|(index, cleanup)| match cleanup {
+                    RuntimeCleanup::Fallback(fallback) => Some((index, fallback.clone())),
+                    RuntimeCleanup::Explicit(_) => None,
+                })
+                .collect::<Vec<_>>();
+            let mut selected = None;
+            for (index, fallback) in candidates.into_iter().rev() {
+                let value = self.read_place(frame, &fallback.owner)?;
+                if self.value_contains_scope_join(&value, scope, &mut Default::default())? {
+                    selected = Some((index, fallback));
+                    break;
+                }
+            }
+            let Some((index, fallback)) = selected else {
+                return Ok(());
+            };
+            self.frames[frame].cleanups.remove(index);
+            self.execute_terminal_fallback(frame, fallback)?;
+        }
+    }
+
+    fn value_contains_scope_join(
+        &self,
+        value: &Value,
+        scope: usize,
+        visited: &mut std::collections::BTreeSet<HeapHandle>,
+    ) -> Result<bool, VmError> {
+        let Value::Heap(handle) = value else {
+            return Ok(matches!(value, Value::Join(join) if join.scope == scope));
+        };
+        if !visited.insert(*handle) {
+            return Ok(false);
+        }
+        let object = self.heap.get(*handle)?;
+        let contains = match object {
+            HeapObject::String(_) | HeapObject::OptionNone => false,
+            HeapObject::Tuple(values)
+            | HeapObject::Closure {
+                captures: values, ..
+            } => self.any_value_contains_scope_join(values.iter().flatten(), scope, visited)?,
+            HeapObject::Array(values) | HeapObject::Set(values) => {
+                self.any_value_contains_scope_join(values.iter().flatten(), scope, visited)?
+            }
+            HeapObject::Map(entries) => self.any_value_contains_scope_join(
+                entries
+                    .iter()
+                    .flat_map(|(key, value)| key.iter().chain(value.iter())),
+                scope,
+                visited,
+            )?,
+            HeapObject::Newtype { value, .. }
+            | HeapObject::OptionSome(value)
+            | HeapObject::ResultOk(value)
+            | HeapObject::ResultErr(value)
+            | HeapObject::Union { value, .. }
+            | HeapObject::Ref(value)
+            | HeapObject::Iterator { source: value, .. } => match value {
+                Some(value) => self.value_contains_scope_join(value, scope, visited)?,
+                None => false,
+            },
+            HeapObject::Record { fields, .. } => self.any_value_contains_scope_join(
+                fields.iter().filter_map(|(_, value)| value.as_ref()),
+                scope,
+                visited,
+            )?,
+            HeapObject::Variant { payload, .. } => match payload {
+                AggregatePayload::Unit => false,
+                AggregatePayload::Tuple(values) => {
+                    self.any_value_contains_scope_join(values.iter().flatten(), scope, visited)?
+                }
+                AggregatePayload::Record(fields) => self.any_value_contains_scope_join(
+                    fields.iter().filter_map(|(_, value)| value.as_ref()),
+                    scope,
+                    visited,
+                )?,
+            },
+            HeapObject::Range { start, end, .. } => {
+                self.any_value_contains_scope_join(start.iter().chain(end.iter()), scope, visited)?
+            }
+        };
+        Ok(contains)
+    }
+
+    fn any_value_contains_scope_join<'value>(
+        &self,
+        values: impl IntoIterator<Item = &'value Value>,
+        scope: usize,
+        visited: &mut std::collections::BTreeSet<HeapHandle>,
+    ) -> Result<bool, VmError> {
+        for value in values {
+            if self.value_contains_scope_join(value, scope, visited)? {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn release_task_scope_if_consumed(&mut self, scope: usize) -> Result<(), VmError> {
@@ -7620,8 +7724,8 @@ mod tests {
     };
 
     use super::{
-        Engine, PanicCode, RejectingHost, RuntimeType, RuntimeValue, Value, ValueCopyStrategy,
-        VmLimits, snapshot_value,
+        Engine, PanicCode, RejectingHost, RuntimeType, RuntimeValue, TaskRecord, TaskStatus,
+        TaskWait, Value, ValueCopyStrategy, VmLimits, snapshot_value,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -7691,6 +7795,54 @@ mod tests {
             initial_gc_threshold: 1,
             ..VmLimits::default()
         }
+    }
+
+    fn scheduler_task(status: TaskStatus) -> TaskRecord {
+        TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            status,
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: None,
+            join_consumed: true,
+            panic_observed: false,
+        }
+    }
+
+    #[test]
+    fn cooperative_wakeups_are_idempotent_and_preserve_progress() {
+        let program = root_pressure_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        engine.tasks.push(scheduler_task(TaskStatus::Running));
+        engine.tasks.push(scheduler_task(TaskStatus::Runnable));
+
+        engine.park_current(TaskWait::Scope, &[1, 1]).unwrap();
+        assert_eq!(engine.tasks[1].waiters, [0]);
+
+        engine.wake_task(0).unwrap();
+        engine.wake_task(0).unwrap();
+        engine.enqueue_task(0).unwrap();
+        assert_eq!(engine.runnable.iter().copied().collect::<Vec<_>>(), [0]);
+        assert!(engine.tasks[0].queued);
+
+        assert!(engine.schedule_next().unwrap().is_none());
+        assert_eq!(engine.current_task, 0);
+        assert!(matches!(engine.tasks[0].status, TaskStatus::Running));
+        assert!(!engine.tasks[0].queued);
+        assert!(engine.runnable.is_empty());
+        assert!(engine.resume_current_task().unwrap());
+        assert!(engine.tasks[0].resume.is_none());
     }
 
     #[test]
