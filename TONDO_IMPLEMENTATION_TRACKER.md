@@ -2,7 +2,7 @@
 
 **Estado:** M10 y Gate G5 cerrados; M10.5 es el siguiente milestone
 
-**Versión del tracker:** 0.87
+**Versión del tracker:** 0.88
 
 **Última actualización:** 2026-07-28
 
@@ -241,11 +241,12 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   `tondo-conformance-0.1` inmutables, separa unit overlays de integration roots
   y fija árbol/identidad, capturas `Copy + Send + Share`, envelope estructurado,
   `std.testing.log/tags/failNow/skip`, inferencia de error/async, aislamiento,
-  selección, ownership por CODEOWNERS, sharding, orden aleatorio reproducible,
-  límites, output, exit status, reportes `tondo-test-report-0.2/4`,
-  `tondo-test-list-0.2/4` y `tondo-junit-report-0.2/1`. No se introducen
+  selección substring/glob/exact, ownership por CODEOWNERS, sharding, orden
+  aleatorio reproducible, retries explícitos en workers nuevos, límites, output,
+  exit status, reportes `tondo-test-report-0.2/5`,
+  `tondo-test-list-0.2/5` y `tondo-junit-report-0.2/2`. No se introducen
   `TestContext`, attributes, clases, reflection, registro runtime, hooks,
-  selección por tags runtime ni retries implícitos.
+  selección regex o por tags runtime ni retries implícitos.
 
 ### 3.3 Estructura inicial recomendada
 
@@ -2333,9 +2334,10 @@ de lenguaje posterior a Tondo 0.1. El resultado es una declaración
 jerarquía y lifecycle compartido, unit tests con acceso privado controlado,
 integration tests contra API pública, control y metadata sellados de
 log/tags/fallo/skip sin contexto visible, ownership resuelto desde CODEOWNERS,
-sharding estable, orden aleatorio reproducible y reportes JSON/JUnit desde una
-sola ejecución. El runner resultante puede utilizarse para construir y validar
-la stdlib.
+selección glob portable, sharding estable, orden aleatorio reproducible, retries
+explícitos y aislados con historial honesto y reportes JSON/JUnit desde una sola
+invocación. El runner resultante puede utilizarse para construir y validar la
+stdlib.
 
 **Dependencia:** la implementación comienza únicamente después de Gate H0. El
 diseño queda fijado antes para que inventario, matriz normativa y CI conozcan el
@@ -2353,7 +2355,8 @@ seleccionar la edición 0.2.
   `TONDO_TESTING_SPEC.md` define keywords, grammar, árbol suite/test, formato,
   identidad, source classes, overlays, capturas, lifecycle, envelope,
   `std.testing.log/tags/failNow/skip`, inferencia, aislamiento, resultados,
-  ownership, sharding, orden reproducible, CLI, JSON/JUnit, stdlib boundary,
+  ownership, selección substring/glob/exact, sharding, orden reproducible,
+  retries por rondas y workers nuevos, CLI, JSON/JUnit, stdlib boundary,
   diagnósticos y conformidad sin depender de una implementación provisional.
 
 - [ ] **UTEST-EDITION-001 — Materializar Tondo 0.2 como edición separada.**
@@ -2366,9 +2369,10 @@ seleccionar la edición 0.2.
 - [ ] **UTEST-PLAN-001 — Extender el project plan con source classes de test.**
   Representar exactamente `production`, `unit-test` e `integration-test`,
   dev-dependencies, roots, paths lógicos, raíz de repositorio, inputs
-  CODEOWNERS, selección, shard, orden, seed, reporters, target, capabilities y
-  límites. El plan fija bytes/hash de toda entrada y el hash de un artefacto de
-  producción no puede depender de metadata ni fuentes test-only.
+  CODEOWNERS, selector, shard, orden, seed, policy y plan de retry, reporters,
+  target, capabilities y límites. El plan fija bytes/hash de toda entrada y el
+  hash de un artefacto de producción no puede depender de metadata ni fuentes
+  test-only.
 
 - [ ] **UTEST-DISC-001 — Implementar descubrimiento convencional y explícito.**
   Soportar `_test.to` dentro de production roots y `.to` bajo `tests/`, con la
@@ -2471,37 +2475,54 @@ seleccionar la edición 0.2.
   Retorno, skip, error, pánico, resource limit, timeout e infrastructure
   producen exactamente los estados normativos; los terminales cooperativos
   completan unwind y cleanup, mientras una terminación forzada garantiza
-  aislamiento sin fingir que ejecutó `defer`.
+  aislamiento sin fingir que ejecutó `defer`. Exponer un bootstrap de worker que
+  pueda crear una VM realmente nueva desde el artefacto inmutable y rastrear
+  procesos/recursos de host hasta revocarlos, sin serializar heap, roots ni
+  handles como snapshot reutilizable.
 
 - [ ] **UTEST-SUITE-001 — Implementar lifecycle jerárquico de suite.** Ejecutar
-  setup una vez y solo si existe una hoja seleccionada, conservar su entorno y
-  guards, entrar de fuera hacia dentro y hacer teardown de dentro hacia fuera
-  después de todos los descendientes. Un fallo de setup bloquea solo su
-  subárbol, ejecuta cleanup realmente observable y permite continuar hermanos;
-  un fallo de teardown no reescribe resultados ya emitidos. Un skip de setup
-  produce `skipped`/`blocked-skip`; un fallo durante su cleanup prevalece y
-  convierte descendientes en `blocked-setup`.
+  setup una vez por participación y solo si existe una hoja seleccionada,
+  conservar su entorno y guards, entrar de fuera hacia dentro y hacer teardown
+  de dentro hacia fuera después de todos los descendientes. Un fallo de setup
+  bloquea solo su subárbol, ejecuta cleanup realmente observable y permite
+  continuar hermanos; un fallo de teardown no reescribe resultados ya emitidos.
+  Un skip de setup produce `skipped`/`blocked-skip`; un fallo durante su cleanup
+  prevalece y convierte descendientes en `blocked-setup`. La misma máquina de
+  lifecycle debe admitir una participación posterior en un worker de retry sin
+  reutilizar el entorno ni sus snapshots.
 
 - [ ] **UTEST-LIMIT-001 — Hacer límites y timeout terminales reales.** Publicar
   defaults finitos, aplicar `--timeout` por hoja y por fase setup/teardown sin
   contar la espera de descendientes, cargar tags/logs/stdout/stderr al mismo
   presupuesto de output, aplicar el delta de tags sin cambios parciales,
   registrar valores efectivos y garantizar que una entrada no cooperativa no
-  continúa tras `timeout`. OOM, abort o pérdida de aislamiento nunca se
-  presentan como assertion failure ordinario.
+  continúa tras `timeout`. Cada intento obtiene presupuestos nuevos bajo el
+  mismo resource profile; OOM, abort o pérdida de aislamiento nunca se presentan
+  como assertion failure ordinario.
 
 - [ ] **UTEST-CLI-001 — Añadir `tondo test`.** Implementar manifest/default
-  discovery, `--filter`, `--exact`, `--list`, `--jobs`, `--timeout`,
-  `--test-format`, `--show-output`, `--deny-skips`, `--allow-empty`,
-  `--codeowners`, `--shard`, `--order`, `--seed` y `--report`, incluidas
-  exclusiones, multiplicidad, compatibilidad de modos, parsing estricto,
-  colisiones de output y exit codes 0/1/2/3. Primero compila toda la suite y el
-  selector solo limita ejecución. `--filter` compara hojas; `--exact` acepta
-  una hoja o una suite y en este último caso selecciona su subárbol. No
-  implementar `--tag` ni `--fail-fast` bajo este contrato.
+  discovery, `--filter`, `--glob`, `--exact`, `--list`, `--jobs`, `--timeout`,
+  `--retry`, `--test-format`, `--show-output`, `--deny-skips`,
+  `--allow-flaky`, `--allow-empty`, `--codeowners`, `--shard`, `--order`,
+  `--seed` y `--report`, incluidas exclusiones, multiplicidad, compatibilidad
+  de modos, parsing estricto, colisiones de output y exit codes 0/1/2/3.
+  Primero compila toda la suite y el selector solo limita ejecución. `--filter`
+  compara hojas; glob/exact aceptan hoja o suite y esta última selecciona su
+  subárbol. Rechazar retry/allow-flaky con list antes de compilar. No
+  implementar `--tag`, selector regex ni `--fail-fast` bajo este contrato.
+
+- [ ] **UTEST-GLOB-001 — Implementar el selector glob portable.** Parsear
+  componentes `::`, `*`, `?` y `**` con la gramática cerrada de la spec,
+  rechazar patterns vacíos/no canónicos y no delegar matching al shell,
+  filesystem, locale ni normalización. Hacer full match case-sensitive sobre
+  IDs Unicode de suite/test mediante un algoritmo dinámico acotado
+  `O(pattern_scalars * id_scalars)`, seleccionar subárboles de suites,
+  deduplicar la unión y aplicar selección antes de shard/order. Cubrir vectores
+  Unicode, cero/muchos componentes para `**`, metacaracteres inválidos,
+  coincidencias solapadas y no-match con y sin `--allow-empty`.
 
 - [ ] **UTEST-SHARD-001 — Particionar hojas de forma estable.** Aplicar
-  `sha256-mod-v1` después de filter/exact y antes del orden, con índices
+  `sha256-mod-v1` después de filter/glob/exact y antes del orden, con índices
   one-based, validación estricta y asignación independiente de discovery order,
   plataforma y cantidad de jobs. Probar unión exacta, disjunción, compilación
   completa, el vector SHA-256 normativo, lifecycle independiente por proceso y
@@ -2516,33 +2537,54 @@ seleccionar la edición 0.2.
   reproduce el orden exacto; con jobs=N reproduce la prioridad, no completion
   timing. Jobs explícitos limitan conjuntamente setup/test/teardown; cada
   envelope conserva tags/logs/streams y los arrays finales permanecen canónicos
-  y nunca intercalan nodos.
+  y nunca intercalan nodos. El mismo límite global gobierna workers e intentos
+  de todas las rondas de retry.
+
+- [ ] **UTEST-RETRY-001 — Implementar retries explícitos y sin estado
+  heredado.** Parsear `--retry N` con default cero y máximo finito; ejecutar la
+  ronda inicial completa antes de planificar rondas adicionales solo para
+  `failed-error`, `failed-panic` y `timeout`. Construir unidades hoja con
+  lifecycle ancestral y unidades suite con el subárbol seleccionado original;
+  absorber causas descendientes bajo la suite elegible exterior, ordenarlas por
+  primera hoja del plan y conservar shard, target, inputs, seed, order,
+  capabilities, limits y artefacto. Cada unidad arranca un proceso worker nuevo
+  con VM/heap/roots/executor/tasks/handles/envelopes/buffers/budgets/temp nuevos,
+  revoca recursos rastreados y nunca cruza shard. No reintentar compile errors,
+  skips, resource-limit ni infrastructure; no añadir delays, historial o
+  annotations, ni reintroducir esos terminales indirectamente desde un agregado
+  previo. Preservar todos los intentos con referencia de ronda/unidad, derivar
+  intento decisivo y `flaky-pass`; este último falla por default y
+  `--allow-flaky` solo cambia policy de salida.
 
 - [ ] **UTEST-REPORT-001 — Implementar los formatos machine-readable.**
-  Serializar `tondo-test-report-0.2/4` y `tondo-test-list-0.2/4` con arrays
-  separados de suites/tests, parents, source, owners, tags runtime cuando
-  aplique, paths, phase, `blocked_by`, `failure`, `skip`, logs, streams, policy,
-  ownership, selection, shard, order, seed, algoritmos, `execution_plan`,
-  resource profile e invariantes exactas de summary y status/phase. No incluir
-  reloj, duración, PID, paths físicos ni direcciones. `--test-format json` y
-  `--report json=path` producen bytes idénticos para la misma ejecución. Fallos
-  de compilación continúan usando diagnostics estructurados y no ejecutan setup
-  ni bodies.
+  Serializar `tondo-test-report-0.2/5` y `tondo-test-list-0.2/5` con arrays
+  separados de suites/tests, parents, source, owners, paths, estado agregado,
+  intento decisivo e historial por intento de phase, `blocked_by` causal,
+  ronda/unidad, `failure`, `skip`, tags, logs y streams. Incluir policy,
+  ownership, selector incluido glob, shard, order, seed, algoritmos,
+  `execution_plan`, plan/rondas de retry, resource profile y las invariantes
+  exactas de summary/attempts. No incluir reloj, duración, PID, paths físicos ni
+  direcciones.
+  `--test-format json` y `--report json=path` producen bytes idénticos para la
+  misma ejecución. Fallos de compilación continúan usando diagnostics
+  estructurados, no consumen intentos y no ejecutan setup ni bodies.
 
 - [ ] **UTEST-JUNIT-001 — Exportar JUnit desde el resultado normativo.**
-  Proyectar la misma ejecución como `tondo-junit-report-0.2/1`, XML 1.0 UTF-8,
-  con mapeo exacto de estados, testcases sintéticos únicos para fallos de
-  lifecycle, metadata completa de ejecución/nodo en properties `tondo.*`,
-  streams y scalars no representables, carrier vacío, owners, tags, shard,
-  order, seed, conteos y duración operacional. Publicar cada path atómicamente,
-  rechazar colisiones y mantener JSON como representación canónica y sin
-  pérdida.
+  Proyectar la misma ejecución como `tondo-junit-report-0.2/2`, XML 1.0 UTF-8,
+  con un testcase agregado por hoja, testcases sintéticos únicos para fallos de
+  lifecycle y flaky suite, y
+  `tondo.retry/decisive_attempt/attempts`. Mapear `flaky-pass` a failure por
+  default y omitir solo ese outcome bajo `--allow-flaky`, sin cambiar identidad,
+  conteo ni historial; proyectar streams decisivos, scalars no representables,
+  carrier vacío, owners, shard, order, seed, conteos por identidad y duración
+  sumada por intentos. Publicar cada path atómicamente, rechazar colisiones y
+  mantener JSON como representación canónica y sin pérdida.
 
 ### 17.4 Evidencia, conformidad y dogfooding
 
 - [ ] **UTEST-CONF-001 — Crear una suite de conformidad Tondo 0.2 nueva.** No
   mutar manifests, cases, hashes ni observations de 0.1. La suite 0.2 cubre los
-  treinta y cinco grupos mínimos enumerados por la spec de testing y tiene
+  cuarenta grupos mínimos enumerados por la spec de testing y tiene
   adaptador público para VM y futuros backends.
 
 - [ ] **UTEST-PROJECTS-001 — Añadir proyectos de aceptación completos.**
@@ -2551,24 +2593,29 @@ seleccionar la edición 0.2.
   setup/teardown, `blocked-setup`, log directo/desde helper/task, `failNow`,
   tags directos/desde helper/task, conflicto `P2002`, skip de hoja/suite,
   `blocked-skip`, `P2001`, deny-skips, pánico/cleanup, host capabilities,
-  CODEOWNERS, filtros, selección vacía, shards, orden/seed y reporters
-  JSON/JUnit. Cada proyecto debe poder ejecutarse desde una copia en otro path
-  físico con observaciones canónicas iguales salvo duración JUnit.
+  CODEOWNERS, substring/glob/exact, selección vacía, shards, orden/seed,
+  retries de hoja/setup/teardown, aislamiento externo idempotente,
+  `flaky-pass`/allow-flaky y reporters JSON/JUnit. Cada proyecto debe poder
+  ejecutarse desde una copia en otro path físico con observaciones canónicas
+  iguales salvo duración JUnit.
 
 - [ ] **UTEST-PLATFORM-001 — Validar la matriz publicada.** Linux ejecuta el
   gate canónico completo; Linux ARM64, macOS Intel/ARM64 y Windows ejecutan
-  discovery, paths jerárquicos, filtros de suite/test, lifecycle, envelopes,
-  tags/logs/skips, CODEOWNERS, sharding, orden/seed, aislamiento, timeout,
-  captura y reportes JSON/JUnit aplicables además del smoke test de binario.
+  discovery, paths jerárquicos, substring/glob/exact de suite/test, lifecycle,
+  envelopes, tags/logs/skips, CODEOWNERS, sharding, orden/seed, workers nuevos
+  de retry, aislamiento, timeout, captura y reportes JSON/JUnit aplicables
+  además del smoke test de binario.
 
 - [ ] **UTEST-DOGFOOD-001 — Probar componentes Tondo mediante `tondo test`.**
   Antes de Gate T0, mantener una pequeña biblioteca de aceptación escrita en
   Tondo con unit/integration tests y al menos una suite que comparta un recurso
   real. Debe usar `testing.log` y `testing.tags` desde helpers, probar
   `failNow`/skip en casos de aceptación controlados y ejecutar el mismo corpus
-  repartido en shards con seed registrada y reportes JSON/JUnit. No sustituye
-  los tests Rust ni la conformidad; demuestra que la experiencia pública
-  funciona sin harness privado.
+  repartido en shards con seed registrada y un retry aislado determinista que
+  ejercite `flaky-pass` mediante una fixture externa controlada, sin depender de
+  timing y con cleanup final verificable. Debe producir reportes JSON/JUnit. No
+  sustituye los tests Rust ni la conformidad; demuestra que la experiencia
+  pública funciona sin harness privado.
 
 ### Gate T0 — Testing first-class conforme
 
@@ -2585,20 +2632,27 @@ seleccionar la edición 0.2.
 - [ ] Cada entrada recibe un envelope no observable ni falsificable que sigue
   frames/tasks y nunca se deriva de un thread-local del host; tags, logs y
   terminales se atribuyen al nodo exacto sin `TestContext` ni `currentTest()`.
-- [ ] Suites ejecutan setup una vez solo para subárboles seleccionados, permiten
-  únicamente snapshots `let: Copy + Send + Share`, hacen teardown tras todos los
-  descendientes y reportan setup, teardown, `blocked-setup`, skip y
-  `blocked-skip` sin duplicar causas.
+- [ ] Suites ejecutan setup una vez por participación solo para subárboles
+  seleccionados, permiten únicamente snapshots `let: Copy + Send + Share`,
+  hacen teardown tras todos los descendientes y reportan setup, teardown,
+  `blocked-setup`, skip y `blocked-skip` sin duplicar causas.
 - [ ] Retorno, error, `assert`, `failNow`, skip, pánico, async, cancelación,
   ownership y `defer` conservan cleanup y precedencia; `P2001`, resource limits
   y timeout no esconden cleanup de usuario no observado ni rompen aislamiento.
 - [ ] `tondo test` implementa discovery, compilación completa, selección,
-  selección exacta de suite/test, CODEOWNERS, sharding estable, orden/seed,
-  ejecución serial/paralela, captura, reporters, exit codes deny-skips y
-  selección vacía según contrato; no inventa filtrado por tags ni fail-fast.
-- [ ] El reporte JSON es canónico y reproducible; JUnit proyecta la misma
-  ejecución con duración operacional; la salida humana no intercala
-  suites/tests y muestra owners, tags, logs, razones y fallos accionables.
+  substring/glob/exact de suite/test, CODEOWNERS, sharding estable, orden/seed,
+  ejecución serial/paralela, retries aislados por rondas, captura, reporters,
+  exit codes deny-skips/allow-flaky y selección vacía según contrato; no inventa
+  regex, filtrado por tags, retries implícitos ni fail-fast.
+- [ ] Cada retry reutiliza solo el artefacto inmutable, arranca un worker nuevo,
+  conserva shard/configuración, respeta el máximo global de jobs y deja
+  procesos, recursos rastreados, heap, roots, tasks, handles, envelopes y
+  buffers sin supervivientes.
+- [ ] El reporte JSON `/5` es canónico y reproducible, conserva todos los
+  intentos y no agrega `flaky-pass` como `passed`; JUnit `/2` proyecta la misma
+  ejecución y policy con duración operacional. La salida humana no intercala
+  suites/tests o intentos y muestra owners, tags, logs, razones y fallos
+  accionables.
 - [ ] La suite Tondo 0.2 pasa en la VM y la matriz de plataformas aplicable está
   verde.
 - [ ] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
@@ -3033,14 +3087,17 @@ pública definitiva hasta ser fijados por la especificación estándar.
 | `R-019` | Convertir la stdlib 0.1 en un proyecto ilimitado | El backend queda bloqueado por APIs de aplicación no esenciales | STD-0.1 contiene solo Core + Hosted; Concurrency/Application quedan en STD-0.2 |
 | `R-020` | Añadir `suite`/`test` retroactivamente a la edición publicada | Rompe identificadores válidos, hashes y conformidad 0.1 | Keywords exclusivas de 0.2, spec y conformidad nuevas; 0.1 permanece inmutable |
 | `R-021` | Permitir que unit tests cambien la compilación de producción | Código solo correcto bajo test y artefactos distintos | Unidad production sellada antes del overlay y comparación exacta de productos |
-| `R-022` | Ocultar flakiness mediante paralelismo o retries | Suites verdes no reproducibles | jobs=1 y una ejecución por default; orden canónico, randomización con seed, reportes canónicos y paralelismo explícito |
+| `R-022` | Ocultar flakiness mediante paralelismo o retries | Suites verdes no reproducibles | Una ejecución por default; retries explícitos, historial completo y `flaky-pass` rojo salvo `--allow-flaky`; orden/seed/paralelismo reportados |
 | `R-023` | Convertir testing en attributes, reflection, context parameters y hooks especiales | Segundo sublenguaje con boilerplate y semántica oculta | Dos roles canónicos: `suite` contenedor y `test` hoja; envelope sellado sin valor visible; helpers, fixtures y doubles como Tondo/stdlib ordinarios |
 | `R-024` | Convertir suites en globals mutables u orden implícito | Data races, tests dependientes y resultados distintos bajo `--exact` | Capturas `let: Copy + Send + Share`, ownership del recurso en la suite, sin dependencias ni orden semántico entre hojas y lifecycle reportado |
 | `R-025` | Implementar logs/control con un global o thread-local | Eventos atribuidos al test incorrecto bajo async, migración o paralelismo | Envelope por raíz que sigue frames/tasks; operaciones selladas y revalidadas por HIR/MIR/bytecode |
 | `R-026` | Permitir que skips escondan regresiones o cleanup fallido | CI verde con cobertura real ausente o recursos sin cerrar | Razón obligatoria, sin ignored estático, cleanup antes de confirmar, fallo con precedencia y `--deny-skips` |
 | `R-027` | Usar tags runtime como autoridad de discovery o scheduling | Ejecutar el body cambia qué tests existen, el shard o su orden | Tags solo en el envelope posterior al dispatch; selección, ownership, sharding y orden usan metadata estática |
 | `R-028` | Particionar u ordenar mediante hashes o iteration order del host | Shards solapados, huecos y seeds que no reproducen entre plataformas | Algoritmos versionados sobre IDs UTF-8, vectores de conformidad y `execution_plan` reportado |
-| `R-029` | Tratar JUnit como representación normativa sin pérdida | Consumidores CI descartan jerarquía, metadata o estados Tondo | JSON `/4` es canónico; JUnit `/1` es una proyección versionada de la misma ejecución y CI puede emitir ambos |
+| `R-029` | Tratar JUnit como representación normativa sin pérdida | Consumidores CI descartan jerarquía, metadata o estados Tondo | JSON `/5` es canónico; JUnit `/2` es una proyección versionada de la misma ejecución y CI puede emitir ambos |
+| `R-030` | Reintentar dentro del mismo runtime o restaurar una fixture parcial | Un intento pasa por heap, tasks, handles o buffers heredados y no confirma flakiness real | Worker nuevo por unidad; solo artefacto inmutable reutilizable; recursos rastreados revocados antes de completar |
+| `R-031` | Tratar un éxito posterior como pass ordinario | CI verde oculta una regresión intermitente y pierde la evidencia inicial | Estado `flaky-pass`, todos los intentos en JSON/JUnit y exit `1` por default; `--allow-flaky` es policy explícita |
+| `R-032` | Añadir regex o delegar globs al host | Dialectos, expansión accidental, complejidad no acotada y selección distinta por plataforma | Un glob propio de match completo con `*`/`?`/`**`, gramática cerrada, DP acotada y vectores multiplataforma |
 
 ---
 
@@ -3099,6 +3156,28 @@ S1. No se inicia STD-0.2 antes de Gate N1.
 ---
 
 ## 24. Historial del tracker
+
+### 0.88 — 2026-07-28
+
+- La extensión de testing sube a `0.2-draft.5` y añade `--glob` como tercer
+  selector mutuamente excluyente: match completo sobre IDs con componentes
+  `::`, `*`, `?` y `**`, gramática portable cerrada, Unicode scalar,
+  deduplicación de subárboles y complejidad acotada sin regex ni expansión del
+  host.
+- `--retry N` habilita rondas adicionales explícitas solo para error, pánico y
+  timeout. Las unidades reejecutan lifecycle ancestral o subárbol de suite,
+  absorben causas descendientes, conservan shard/seed/inputs y arrancan workers
+  nuevos que solo reutilizan el artefacto compilado inmutable.
+- Cada nodo conserva intentos separados y un intento decisivo. Un éxito
+  posterior es `flaky-pass`, falla por default y solo `--allow-flaky` modifica
+  el exit/JUnit; no se borran failures, tags, logs ni streams previos.
+- Los formatos incompatibles suben a `tondo-test-report-0.2/5`,
+  `tondo-test-list-0.2/5` y `tondo-junit-report-0.2/2`. JSON incorpora
+  plan/rondas de retry, causalidad por intento y summaries; JUnit mantiene un
+  testcase agregado por hoja y proyecta flakiness sin multiplicar intentos.
+- M10.6 añade `UTEST-GLOB-001` y `UTEST-RETRY-001`, amplía runtime, lifecycle,
+  CLI, scheduling, reportes, aceptación, plataformas, dogfooding y Gate T0, y
+  registra R-030 a R-032. La conformidad mínima pasa de 35 a 40 grupos.
 
 ### 0.87 — 2026-07-28
 

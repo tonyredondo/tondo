@@ -1,12 +1,12 @@
 # Tondo: especificación del lenguaje y toolchain de testing
 
 - **Estado:** diseño normativo aprobado para Tondo 0.2; todavía no implementado.
-- **Revisión:** 0.2-draft.4 — 2026-07-28.
+- **Revisión:** 0.2-draft.5 — 2026-07-28.
 - **Edición objetivo:** Tondo 0.2.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
 - **SHA-256 de la base:** `ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084`.
-- **Formatos de tooling:** `tondo-test-report-0.2/4`,
-  `tondo-test-list-0.2/4` y `tondo-junit-report-0.2/1`.
+- **Formatos de tooling:** `tondo-test-report-0.2/5`,
+  `tondo-test-list-0.2/5` y `tondo-junit-report-0.2/2`.
 
 Esta especificación añade a Tondo las declaraciones `suite` y `test` y define
 cómo el toolchain descubre, compila, ejecuta y reporta árboles estáticos de
@@ -15,9 +15,11 @@ siempre una hoja ejecutable. Un núcleo sellado de `std.testing` permite registr
 logs y tags, fallar inmediatamente u omitir de forma explícita el nodo activo
 sin exponer un contexto de test como valor. El runner resuelve ownership desde
 CODEOWNERS, particiona y ordena ejecuciones de forma reproducible y exporta
-reportes JSON o JUnit XML sin alterar el programa probado. Complementa Tondo
-0.1; no modifica retroactivamente esa edición ni la suite publicada
-`tondo-conformance-0.1`.
+reportes JSON o JUnit XML sin alterar el programa probado. Un glob portable
+amplía la selección y retries explícitos pueden confirmar fallos intermitentes
+en workers nuevos sin presentar un éxito posterior como un `passed` ordinario.
+Complementa Tondo 0.1; no modifica retroactivamente esa edición ni la suite
+publicada `tondo-conformance-0.1`.
 
 La próxima especificación consolidada de Tondo debe incorporar normativamente
 estas reglas sin cambiar sus decisiones, resolver las referencias de sección
@@ -53,7 +55,7 @@ recomienda** expresa orientación no obligatoria.
 
 ## 1. Propósito y principios
 
-El sistema de testing de Tondo persigue nueve objetivos:
+El sistema de testing de Tondo persigue diez objetivos:
 
 1. Escribir un test ordinario requiere únicamente un nombre y un bloque.
 2. Agrupar tests y compartir un recurso costoso requiere únicamente una `suite`
@@ -68,10 +70,12 @@ El sistema de testing de Tondo persigue nueve objetivos:
    auditables y reproducibles.
 6. Un mismo resultado alimenta salida humana, JSON canónico y JUnit XML sin
    volver a ejecutar tests.
-7. Discovery, plan, orden y presentación canónica son deterministas y
+7. Reintentar un fallo es siempre explícito, conserva cada intento y utiliza una
+   frontera de aislamiento nueva.
+8. Discovery, plan, orden y presentación canónica son deterministas y
    observables; todo campo operacional no reproducible se identifica como tal.
-8. El código y las dependencias de test no cambian el artefacto de producción.
-9. El núcleo no introduce clases de test, annotations, macros, reflection ni
+9. El código y las dependencias de test no cambian el artefacto de producción.
+10. El núcleo no introduce clases de test, annotations, macros, reflection ni
    hooks de ciclo de vida.
 
 Forma mínima:
@@ -780,9 +784,10 @@ general al heap, stack, préstamos ni propietarios de la suite.
 Una implementación puede reutilizar threads, allocators o procesos internos
 solo si esa reutilización no expone otros valores, roots, tasks, handles,
 buffers, pánicos u output. No existen globals mutables Tondo que sobrevivan
-entre entradas. Los efectos externos —filesystem, procesos, red, reloj o
-servicios— no se revierten mágicamente y deben aislarse mediante nombres,
-recursos y cleanup explícitos.
+entre entradas. Esta libertad no aplica a una unidad de retry, cuya frontera de
+proceso nueva es obligatoria según 8.7. Los efectos externos —filesystem,
+procesos, red, reloj o servicios— no se revierten mágicamente y deben aislarse
+mediante nombres, recursos y cleanup explícitos.
 
 ### 7.2 Contexto estructurado del runner
 
@@ -832,10 +837,11 @@ del runner, no stdout ni stderr.
 
 ### 7.3 Lifecycle de suite
 
-Una suite se ejecuta de esta forma:
+En cada participación de una suite en la ronda inicial o en una unidad de retry,
+la suite se ejecuta de esta forma:
 
 1. Si no contiene ningún test seleccionado, no se entra en ella.
-2. El runner ejecuta su setup exactamente una vez.
+2. El runner ejecuta su setup exactamente una vez para esa participación.
 3. Tras éxito, materializa los snapshots permitidos y ejecuta sus miembros
    seleccionados. Una suite hija repite el mismo protocolo.
 4. El fallo de una hoja se registra y no impide ejecutar sus hermanos.
@@ -884,9 +890,9 @@ propio fallo y hace fallar la invocación. El estado `passed` de una suite
 significa únicamente que su setup y teardown terminaron correctamente, no que
 todos sus descendientes pasaron.
 
-Este lifecycle equivale a setup/teardown una vez por contenedor. No implica
-`beforeEach` ni `afterEach`: cada hoja construye sus fixtures propias mediante
-helpers y `defer`.
+Este lifecycle equivale a setup/teardown una vez por contenedor y participación,
+no una vez global por invocación. No implica `beforeEach` ni `afterEach`: cada
+hoja construye sus fixtures propias mediante helpers y `defer`.
 
 ### 7.4 Inicio y terminación de entradas
 
@@ -940,7 +946,7 @@ del modelo de pánico, corrupción del runtime o imposibilidad de restablecer
 aislamiento se clasifica como fallo de infraestructura. El runner puede detener
 el bosque restante porque ya no puede garantizar resultados fiables. En ese
 caso termina con exit `3` y no emite un reporte canónico incompleto; todo reporte
-`tondo-test-report-0.2/4` válido clasifica cada hoja seleccionada.
+`tondo-test-report-0.2/5` válido clasifica cada hoja seleccionada.
 
 ### 7.6 Errores recuperables
 
@@ -1017,23 +1023,55 @@ depender del número de CPUs de la máquina.
 
 ### 8.2 Selección
 
-El runner ofrece exactamente dos selectores básicos:
+El runner ofrece exactamente tres selectores:
 
 - `--filter text`: substring bytewise, case-sensitive, sobre la identidad
   visible completa de cada test hoja.
+- `--glob pattern`: glob portable con match completo sobre la identidad visible
+  de cada test o suite.
 - `--exact id`: igualdad bytewise con la identidad visible de un test o suite.
 
-Son mutuamente excluyentes y cada uno aparece como máximo una vez. No hay regex,
-glob ni interpretación locale-dependent.
+Son mutuamente excluyentes y cada uno aparece como máximo una vez. No existe un
+selector regex en esta edición.
 
-Un exact match de test selecciona esa hoja. Un exact match de suite selecciona
-todos sus tests descendientes. Puesto que el ID de suite es prefijo de sus
-descendientes, un filtro que contiene su path los selecciona naturalmente, pero
-`--filter` nunca devuelve una suite sin hojas.
+El glob trata `::` como separador de componentes y admite únicamente:
+
+- `*`: cero o más Unicode scalars dentro de un componente, nunca `:`.
+- `?`: exactamente un Unicode scalar dentro de un componente, nunca `:`.
+- `**`: cero o más componentes completos, solo cuando constituye por sí mismo
+  un componente.
+
+Los demás scalars son literales. El match es case-sensitive, independiente de
+locale, sin normalización Unicode automática y sobre el ID completo; nunca es
+un match de prefijo implícito. El runner no realiza expansión de shell,
+filesystem ni environment. No existen character classes, braces, escapes,
+alternativas ni operadores regex.
+
+Un pattern glob es inválido si está vacío, contiene un componente vacío, un `:`
+aislado, `**` dentro de otro componente, dos componentes `**` adyacentes o dos
+`*` consecutivos dentro de un componente. Esta última regla reserva `**` para
+su única forma estructural y mantiene una representación canónica. El matching
+debe ser determinista y acotado; una implementación conforme puede utilizar
+programación dinámica con complejidad
+`O(pattern_scalars * id_scalars)` y no puede introducir backtracking
+exponencial.
+
+Un exact o glob match de test selecciona esa hoja. Un exact o glob match de
+suite selecciona todos sus tests descendientes. Un mismo pattern puede hacer
+match con una suite y con hojas ya incluidas por ella; la unión se deduplica por
+ID antes del shard. Puesto que el ID de suite es prefijo de sus descendientes,
+un filtro que contiene su path los selecciona naturalmente, pero `--filter`
+nunca devuelve una suite sin hojas.
 
 Toda selección incorpora las suites ancestras necesarias. `--list` compila y
 valida el árbol, aplica el selector y emite los tests seleccionados junto con
 esas suites sin ejecutar ningún setup ni body.
+
+Un selector sintácticamente válido sin matches sigue la regla de selección
+vacía de 5.6. Un glob inválido termina con exit `2` antes de materializar inputs
+o compilar. Como un shell puede interpretar `*` y `?` antes de invocar al
+programa, la forma portable en una shell es citar el argumento, por ejemplo
+`--glob 'application::integration::**::creates*'`.
 
 `testing.tags` se ejecuta dentro de una entrada y, por tanto, no participa en
 discovery ni selección. No existe `--tag` en esta edición. Añadir filtrado por
@@ -1064,8 +1102,8 @@ Vector normativo: para
 `ee5252232b68a78e79fc22b6e8d761a22e2989369358efc402802d22989f2517`;
 con `count = 8` la hoja pertenece al shard `8/8`.
 
-La partición ocurre después de `--filter`/`--exact` y antes del orden de
-ejecución. Para una selección e igual `count`:
+La partición ocurre después de `--filter`/`--glob`/`--exact` y antes del orden
+de ejecución. Para una selección e igual `count`:
 
 - Cada hoja pertenece a un único shard.
 - Dos shards distintos son disjuntos.
@@ -1169,14 +1207,79 @@ dentro del árbol completo con los mismos inputs declarados. Sharding y
 randomización existen para descubrir dependencias accidentales, no para
 legitimarlas.
 
-### 8.7 Sin retries implícitos
+### 8.7 Retries explícitos, acotados y aislados
 
-El runner ejecuta cada test seleccionado exactamente una vez. No reintenta
-fallos, no decide que un test es flaky y no convierte éxito después de retry en
-verde.
+Sin `--retry`, cada nodo participa únicamente en la ronda inicial. La opción
+`--retry N`, con `N >= 0`, autoriza como máximo `N` rondas adicionales. El
+default es `0`; el runner nunca infiere retries desde historial, tags, nombre,
+owners o estado de CI.
 
-Campañas que repitan un test deben solicitarlo fuera del resultado canónico,
-registrar cada intento y no sustituir la regresión determinista.
+Solo son elegibles los estados `failed-error`, `failed-panic` y `timeout`.
+`resource-limit` e `infrastructure` no se reintentan porque indican que el mismo
+perfil no puede garantizar una nueva ejecución fiable. Tampoco se reintentan
+fallos de compilación, `skipped`, `blocked-skip` ni un bloqueo como causa
+independiente. Un nodo bloqueado por una suite fallida puede volver a ejecutarse
+como parte de la unidad que reintenta esa causa.
+
+El estado agregado conserva fallos previos según 9.1, pero la planificación no
+puede usarlo para reintentar indirectamente un terminal excluido. Si la
+participación más reciente de un candidato terminó en `skipped`,
+`blocked-skip`, `resource-limit` o `infrastructure`, no genera otra unidad. Si
+terminó `blocked-setup`, la suite causal genera la unidad cuando su fallo es
+elegible; si esa suite ya quedó agregada como `flaky-pass`, el nodo todavía
+fallido puede generar su propia unidad; y si la causa conserva un terminal
+excluido, no se reintenta el subárbol. Así un skip o fallo de infraestructura
+nunca se convierte accidentalmente en retry.
+
+La ronda `0` ejecuta el plan original completo. Una ronda posterior solo
+comienza después de que todas las entradas y cleanup de la ronda anterior hayan
+terminado. Al cerrarla, el runner calcula el estado agregado de cada nodo según
+9.1 y construye las unidades de la ronda siguiente:
+
+- Un test hoja con fallo elegible forma una unidad equivalente a
+  `--exact <test-id>`: vuelve a ejecutar la hoja y todo el lifecycle de sus
+  suites ancestras.
+- Una suite cuyo propio setup o teardown conserva un fallo elegible forma una
+  unidad de suite: vuelve a ejecutar sus suites ancestras y el subárbol de hojas
+  que pertenecía a la selección original de ese shard.
+- Una suite exterior elegible absorbe cualquier unidad elegible de suite o test
+  contenida en su subárbol. Fuera de ese caso, dos hojas fallidas son unidades
+  independientes aunque compartan ancestros; así cada confirmación conserva su
+  propia frontera limpia.
+
+Las unidades se ordenan por la primera hoja que contienen dentro del
+`execution_plan` original y el ID resuelve cualquier empate. Conservan target,
+artefacto compilado, inputs declarados, capabilities, shard, seed, orden,
+timeouts y resource profile de la invocación original. Un retry nunca mueve una
+hoja a otro shard. Cada ronda vuelve a calcular candidatos desde el estado
+agregado y la participación más reciente disponibles al terminarla, aplicando
+las exclusiones anteriores. Se detiene cuando no queda una unidad elegible o se
+han consumido las `N` rondas.
+
+Cada unidad de retry se ejecuta en un proceso worker nuevo. Solo puede
+reutilizarse el artefacto compilado inmutable. El worker comienza con VM, heap,
+GC roots, executor, tasks, handles, envelopes, tags, logs, stdout, stderr,
+presupuestos y recursos temporales nuevos; no restaura snapshots de suite ni
+reutiliza objetos de un intento anterior. Antes de completar el intento, el
+runner revoca y espera los procesos y recursos de host que Tondo le haya
+entregado de forma rastreable. Un worker que no puede cerrarse limpiamente
+produce `infrastructure`, no otra oportunidad silenciosa.
+
+El límite `--jobs N` es global a la invocación: cuenta conjuntamente las
+entradas activas de la ronda inicial y de todos los workers de retry. Lanzar
+workers nuevos no permite superar ese máximo. Esta edición no introduce
+delay, backoff ni jitter entre rondas.
+
+La frontera nueva evita fugas del runtime Tondo, pero no puede deshacer efectos
+externos no controlados en bases de datos, filesystem, red o servicios. Una
+fixture de integración que habilite retries sigue siendo responsable de usar
+nombres aislados, operaciones idempotentes y cleanup verificable.
+
+Todos los intentos permanecen en los reportes. Un éxito posterior se agrega
+como `flaky-pass`, nunca como `passed`. Por defecto `flaky-pass` conserva exit
+`1`; `--allow-flaky` permite exit `0` sin cambiar el estado ni borrar el
+historial. No existen annotations de retry por test, labels estáticos de flaky
+ni una base histórica oculta en este contrato.
 
 ### 8.8 Sin fail-fast global
 
@@ -1194,8 +1297,8 @@ si reporta honestamente esos nodos y conserva una frontera determinista.
 ### 9.1 Estados de test y suite
 
 Cuando la compilación termina correctamente y el runner puede producir un
-reporte fiable, cada test seleccionado termina exactamente en uno de estos
-estados:
+reporte fiable, cada oportunidad de ejecución de un test o suite produce
+exactamente uno de estos estados de intento:
 
 | Estado | Significado |
 |---|---|
@@ -1209,17 +1312,21 @@ estados:
 | `blocked-setup` | No se invocó porque falló una suite ancestral seleccionada. |
 | `blocked-skip` | No se invocó porque una suite ancestral solicitó skip. |
 
-`blocked-setup` y `blocked-skip` identifican mediante `blocked_by` la suite que
-conserva la causa o razón y no duplican su payload. Ninguno significa ignored ni
+Cada intento se indexa desde `1` dentro de su nodo y registra la ronda que lo
+produjo: `0` para la ejecución inicial y `1..N` para retries. En una ronda de
+retry también registra la unidad que lo produjo. Un nodo puede participar
+varias veces en una ronda porque unidades hoja independientes recorren los
+mismos ancestros. `blocked-setup` y `blocked-skip` identifican
+mediante `blocked_by` tanto el ID como el índice de intento de la suite que
+conserva la causa o razón; no duplican su payload. Ninguno significa ignored ni
 éxito; `blocked-skip` es neutral únicamente bajo la política default de skips.
 
-Cada suite necesaria conserva uno de los siete estados ejecutados anteriores,
-`blocked-setup` o `blocked-skip`. Para una suite ejecutada, `phase` vale `setup`
-o `teardown` en un fallo, `setup` en un skip propio y `null` al pasar o quedar
-bloqueada. El estado `passed` solo describe su lifecycle propio y no agrega
-resultados de descendientes.
+Para un intento de suite ejecutado, `phase` vale `setup` o `teardown` en un
+fallo, `setup` en un skip propio y `null` al pasar o quedar bloqueado. Su
+`passed` solo describe el lifecycle propio y no agrega resultados de
+descendientes.
 
-Las combinaciones válidas son cerradas:
+Las combinaciones de intento válidas son cerradas:
 
 - `passed`, `blocked-setup` y `blocked-skip` siempre usan `phase: null`.
 - `skipped` usa `phase: setup` en una suite y no tiene phase en un test.
@@ -1230,10 +1337,31 @@ Las combinaciones válidas son cerradas:
   el sistema de tipos, ni `skipped`, porque cleanup no puede omitir un resultado
   ya producido.
 
-Un nodo `skipped` conserva una razón explícita y una ubicación en `skip`; su
+Un intento `skipped` conserva una razón explícita y una ubicación en `skip`; su
 `failure` es `null`. `blocked-skip` conserva ambos campos en `null` y señala el
-nodo originario. No existe skip estático, `ignored`, `expected-failure`, `flaky`
-ni `passed-after-retry` en este contrato.
+intento originario.
+
+Después de cada ronda, el runner deriva un único estado agregado y un
+`decisive_attempt` por nodo:
+
+- Si el último intento es `passed` y todos los intentos son `passed`, el
+  agregado es `passed` y el decisivo es el último.
+- Si el último intento es `passed` y existe algún intento anterior distinto de
+  `passed`, el agregado es `flaky-pass` y el decisivo es el último.
+- Si el último intento no es `passed`, el decisivo es el intento ejecutado con
+  fallo más reciente, si existe; en otro caso es el último intento. El agregado
+  copia su estado.
+
+Los cinco estados de fallo ejecutado son `failed-error`, `failed-panic`,
+`resource-limit`, `timeout` e `infrastructure`. Elegir el fallo ejecutado más
+reciente impide que un bloqueo o skip posterior oculte un fallo previo todavía
+no resuelto. `flaky-pass` solo existe como agregado; nunca es el estado de un
+intento. Un nodo reejecutado únicamente porque pertenecía a una unidad de suite
+y cuyos intentos pasaron todos sigue agregado como `passed`.
+
+No existe skip estático, `ignored`, `expected-failure` ni
+`passed-after-retry`. La única representación de intermitencia confirmada es
+`flaky-pass` con todos sus intentos preservados.
 
 ### 9.2 `assert` y fallo inmediato
 
@@ -1258,10 +1386,12 @@ elemento nuevo; no añade prefijo, nivel, timestamp ni salto de línea implícit
 Los streams continúan siendo UTF-8. El modo humano:
 
 - Muestra siempre la identidad y el estado.
-- Muestra owners y tags no vacíos de nodos fallidos o skipped; para un nodo
-  bloqueado muestra la metadata del nodo causal, no la duplica.
+- Muestra owners y los tags por intento no vacíos de nodos fallidos, skipped o
+  `flaky-pass`; para un nodo bloqueado muestra la metadata del intento causal,
+  no la duplica.
 - Muestra siempre la razón y logs de nodos `skipped`.
-- Muestra logs y output de tests o suites fallidos.
+- Muestra todos los intentos, con logs y output separados, de un nodo
+  `flaky-pass` o cuyo agregado termina en fallo.
 - Oculta tags, logs y output de entradas que pasan salvo `--show-output`.
 - Nunca intercala bytes de dos entradas.
 
@@ -1281,6 +1411,10 @@ teardown posterior en ese orden, sin incluir output de descendientes. Si la
 suite queda `blocked-setup` o `blocked-skip`, ambos streams y sus logs están
 vacíos. Los logs de una suite ejecutada siguen el mismo orden setup-teardown y
 no incluyen logs de descendientes.
+
+Cada intento mantiene buffers, tags y payloads propios. La presentación nunca
+concatena dos intentos como si fueran una sola ejecución; incluso con
+`--show-output` conserva sus índices y rondas.
 
 ### 9.4 Tags de ejecución
 
@@ -1325,7 +1459,7 @@ interpretar una key como autoridad de seguridad.
 Una implementación puede mostrar duración como metadato informativo. La duración
 wall-clock no forma parte del resultado semántico, del orden ni del reporte
 JSON canónico reproducible. El exportador JUnit sí incluye duración observada
-porque ese formato es un artefacto operacional no canónico.
+por intento porque ese formato es un artefacto operacional no canónico.
 
 ### 9.6 Exit status
 
@@ -1333,8 +1467,8 @@ porque ese formato es un artefacto operacional no canónico.
 
 | Exit | Condición |
 |---|---|
-| `0` | Compilación correcta, ningún nodo falló ni quedó `blocked-setup`, y todo skip se permite por la política default; o selección vacía solicitada con `--allow-empty`. |
-| `1` | Error al materializar inputs del plan, error de compilación, selección vacía no permitida, algún nodo falló/quedó `blocked-setup`, o `--deny-skips` encontró `skipped`/`blocked-skip`. |
+| `0` | Compilación correcta, ningún agregado falló, quedó `blocked-setup` ni es `flaky-pass`, y todo skip se permite por la política default; o selección vacía solicitada con `--allow-empty`. `--allow-flaky` elimina únicamente la condición `flaky-pass`. |
+| `1` | Error al materializar inputs del plan, error de compilación, selección vacía no permitida, algún agregado falló/quedó `blocked-setup`, existe `flaky-pass` sin `--allow-flaky`, o `--deny-skips` encontró `skipped`/`blocked-skip`. |
 | `2` | Uso inválido de CLI. |
 | `3` | Fallo interno del toolchain, pérdida de fiabilidad o imposibilidad de serializar/publicar un output solicitado. |
 
@@ -1342,7 +1476,9 @@ Un test que llame a APIs de proceso no puede elegir el exit status del runner.
 Un estado `infrastructure` que todavía permite un reporte íntegro usa exit `1`;
 si el runner no puede garantizar ni serializar ese reporte, usa exit `3`.
 `--deny-skips` solo modifica el exit status: no falsifica un skip como failure ni
-altera los estados o contadores canónicos.
+altera los estados o contadores canónicos. De igual modo, `--allow-flaky` solo
+modifica el exit status y la proyección JUnit de policy; nunca cambia
+`flaky-pass`, `decisive_attempt` ni los intentos.
 
 ## 10. Contrato de `tondo test`
 
@@ -1350,7 +1486,7 @@ Interfaz mínima:
 
 ~~~text
 tondo test [--manifest <path>]
-           [--filter <text> | --exact <node-id>]
+           [--filter <text> | --glob <pattern> | --exact <node-id>]
            [--codeowners <auto|none|path>]
            [--shard <index/count>]
            [--order <canonical|random>]
@@ -1358,11 +1494,13 @@ tondo test [--manifest <path>]
            [--list]
            [--jobs <positive-int>]
            [--timeout <duration|none>]
+           [--retry <non-negative-int>]
            [--diagnostic-format <human|json>]
            [--test-format <human|json>]
            [--report <json|junit>=<path>]...
            [--show-output]
            [--deny-skips]
+           [--allow-flaky]
            [--allow-empty]
 ~~~
 
@@ -1370,25 +1508,34 @@ Reglas:
 
 - Sin `--manifest`, el toolchain descubre el proyecto mediante su contrato
   ordinario y materializa un plan cerrado antes de compilar.
-- `--filter` y `--exact` seleccionan ejecución, no compilación.
+- `--filter`, `--glob` y `--exact` seleccionan ejecución, no compilación, y
+  siguen 8.2.
 - `--codeowners auto` es el default y sigue 5.7.
 - `--shard` sigue 8.3 y `--order`/`--seed` siguen 8.4.
 - `--list` no ejecuta bodies y no admite `--show-output`, `--deny-skips` ni un
-  reporte `junit`; sí admite sharding, orden y reporte `json`.
+  reporte `junit`; tampoco admite `--retry` ni `--allow-flaky`. Sí admite los
+  tres selectores, sharding, orden y reporte `json`.
 - `--jobs` vale `1` por defecto.
 - `--timeout` aplica por test hoja y por fase activa de suite, no al tiempo total
   del subárbol.
+- `--retry` aparece como máximo una vez, acepta únicamente un entero decimal
+  canónico no negativo dentro del límite estructural publicado y sigue 8.7:
+  `0` o un dígito `1..9` seguido de dígitos, sin signo, padding, separadores ni
+  whitespace. El default efectivo es `0`; los retries reutilizan la compilación
+  y nunca recompilan entre intentos.
 - `--deny-skips` conserva resultados y reporte, pero usa exit `1` si cualquier
   suite/test queda `skipped` o `blocked-skip`.
+- `--allow-flaky` conserva el estado e historial y solo permite exit `0` y una
+  proyección JUnit no roja cuando los demás resultados lo permiten.
 - `--test-format human` es el default interactivo.
 - `--test-format json` emite exactamente un reporte
-  `tondo-test-report-0.2/4`, o una lista `tondo-test-list-0.2/4` con `--list`.
+  `tondo-test-report-0.2/5`, o una lista `tondo-test-list-0.2/5` con `--list`.
 - `--report` es repetible y escribe el resultado de la misma ejecución sin
   volver a compilar ni ejecutar. Se divide por el primer `=`; format y path
   vacíos son inválidos.
 - `--report json=<path>` escribe exactamente los mismos bytes que el JSON
   correspondiente de `--test-format json`.
-- `--report junit=<path>` escribe `tondo-junit-report-0.2/1` según 15.5.
+- `--report junit=<path>` escribe `tondo-junit-report-0.2/2` según 15.5.
 - Dos reportes no pueden resolver al mismo output ni sobrescribir un input,
   source, manifest, lockfile o producto declarado. Cada archivo se publica
   atómicamente después de completar su serialización.
@@ -1400,6 +1547,8 @@ Reglas:
 Un argumento `--codeowners` sintácticamente inválido es uso de CLI y termina con
 exit `2`; un archivo seleccionado que falta, no puede leerse o no cumple 5.7 es
 un input de proyecto inválido y termina con exit `1` antes de compilar.
+Un glob mal formado, un entero de retry inválido o una combinación prohibida
+con `--list` termina con exit `2` antes de compilar.
 
 Si un output solicitado no puede serializarse o publicarse después de ejecutar,
 el comando termina con exit `3` y no presenta el conjunto de reportes como
@@ -1759,9 +1908,12 @@ El contrato inicial no incluye:
 - Orden declarado en fuente o dependencias entre tests.
 - Estado mutable compartido de suite.
 - Tags declarativos o filtrado por tags runtime.
+- Selectores regex, character classes o dialectos glob dependientes del host.
 - Ignorados, disabled tests o expected failures estáticos dentro de fuente.
 - Skip sin razón explícita.
-- Retries automáticos.
+- Retries implícitos, históricos, dirigidos por tags o configurados mediante
+  annotations por test.
+- Labels estáticos de flaky y delay, backoff o jitter entre retries.
 - Fail-fast global que abandone hojas seleccionadas.
 - Un modo que elimine `assert`.
 - Una keyword separada para benchmarks.
@@ -1813,9 +1965,9 @@ El resto reutiliza diagnósticos existentes:
 - Async y concurrencia: familia `E16xx`.
 - Unsafe: familia `E17xx`.
 
-Selector vacío, CODEOWNERS inválido, opciones de shard/order/report, timeout e
-infraestructura son diagnósticos del toolchain, no nuevos errores de compilación
-`E`.
+Selector vacío, glob inválido, CODEOWNERS inválido, opciones de
+retry/shard/order/report, timeout e infraestructura son diagnósticos del
+toolchain, no nuevos errores de compilación `E`.
 
 ## 15. Formato machine-readable
 
@@ -1827,7 +1979,7 @@ un ejemplo; la forma y los tipos de los campos son normativos:
 
 ~~~json
 {
-  "format": "tondo-test-report-0.2/4",
+  "format": "tondo-test-report-0.2/5",
   "edition": "0.2",
   "target": {
     "name": "tondo-vm-hosted",
@@ -1853,8 +2005,14 @@ un ejemplo; la forma y los tipos de los campos son normativos:
   "execution_plan": [
     "application::unit::math::arithmetic::addReturnsSum"
   ],
+  "retry": {
+    "max_additional_rounds": 0,
+    "isolation": "fresh-worker-v1",
+    "rounds": []
+  },
   "policy": {
-    "deny_skips": false
+    "deny_skips": false,
+    "allow_flaky": false
   },
   "limits": {
     "jobs": 1,
@@ -1877,14 +2035,23 @@ un ejemplo; la forma y los tipos de los campos son normativos:
       },
       "owners": ["@tondo/math"],
       "status": "passed",
-      "phase": null,
-      "blocked_by": null,
-      "failure": null,
-      "skip": null,
-      "tags": {},
-      "logs": [],
-      "stdout": "",
-      "stderr": ""
+      "decisive_attempt": 1,
+      "attempts": [
+        {
+          "index": 1,
+          "round": 0,
+          "unit": null,
+          "status": "passed",
+          "phase": null,
+          "blocked_by": null,
+          "failure": null,
+          "skip": null,
+          "tags": {},
+          "logs": [],
+          "stdout": "",
+          "stderr": ""
+        }
+      ]
     }
   ],
   "tests": [
@@ -1903,22 +2070,32 @@ un ejemplo; la forma y los tipos de los campos son normativos:
       },
       "owners": ["@tondo/math"],
       "status": "passed",
-      "blocked_by": null,
-      "failure": null,
-      "skip": null,
-      "tags": {
-        "component": "math",
-        "kind": "unit"
-      },
-      "logs": [],
-      "stdout": "",
-      "stderr": ""
+      "decisive_attempt": 1,
+      "attempts": [
+        {
+          "index": 1,
+          "round": 0,
+          "unit": null,
+          "status": "passed",
+          "blocked_by": null,
+          "failure": null,
+          "skip": null,
+          "tags": {
+            "component": "math",
+            "kind": "unit"
+          },
+          "logs": [],
+          "stdout": "",
+          "stderr": ""
+        }
+      ]
     }
   ],
   "summary": {
     "selected": 1,
     "executed": 1,
     "passed": 1,
+    "flaky_passed": 0,
     "skipped": 0,
     "blocked_setup": 0,
     "blocked_skip": 0,
@@ -1927,23 +2104,29 @@ un ejemplo; la forma y los tipos de los campos son normativos:
     "resource_limit": 0,
     "timeout": 0,
     "infrastructure": 0,
+    "retried": 0,
+    "test_attempts": 1,
     "suite_selected": 1,
     "suite_passed": 1,
+    "suite_flaky_passed": 0,
     "suite_skipped": 0,
     "suite_blocked_setup": 0,
     "suite_blocked_skip": 0,
     "suite_failed": 0,
+    "suite_retried": 0,
+    "suite_attempts": 1,
     "failed": 0
   }
 }
 ~~~
 
-`selection.kind` es `all`, `filter` o `exact`; `value` es `null` para `all` y el
-texto exacto en los otros casos. `policy.deny_skips` contiene el valor efectivo
-de `--deny-skips`. `timeout_ms` es `null` solo para `--timeout none`. El resource
-profile contiene todos los presupuestos finitos del frontend, verifiers y
-runtime y se distribuye de forma recuperable por el toolchain; el hash del
-reporte identifica exactamente sus bytes canónicos.
+`selection.kind` es `all`, `filter`, `glob` o `exact`; `value` es `null` para
+`all` y conserva el argumento exacto en los otros casos.
+`policy.deny_skips` y `policy.allow_flaky` contienen los valores efectivos de
+sus flags. `timeout_ms` es `null` solo para `--timeout none`. El resource profile
+contiene todos los presupuestos finitos del frontend, verifiers y runtime y se
+distribuye de forma recuperable por el toolchain; el hash del reporte identifica
+exactamente sus bytes canónicos.
 
 `ownership.mode` es `auto`, `explicit` o `none`. `source` y `sha256` son strings
 cuando se utilizó un CODEOWNERS y `null` en otro caso. `source` siempre es
@@ -1965,33 +2148,74 @@ dieciséis dígitos hexadecimales lowercase y `algorithm` es
 `sha256-tree-v1`. `execution_plan` contiene una vez cada ID de test posterior al
 shard, en prioridad de dispatch; no contiene suites.
 
+`retry.max_additional_rounds` contiene el valor efectivo de `--retry` e
+`isolation` vale `fresh-worker-v1`. `rounds` describe únicamente las rondas de
+retry que llegaron a ejecutarse; la ronda inicial ya está representada por
+`execution_plan`. Una ronda no vacía tiene esta forma:
+
+~~~json
+{
+  "round": 1,
+  "units": [
+    {
+      "kind": "test",
+      "id": "application::unit::math::arithmetic::addReturnsSum",
+      "execution_plan": [
+        "application::unit::math::arithmetic::addReturnsSum"
+      ]
+    }
+  ]
+}
+~~~
+
+`round` comienza en `1` y es contiguo. `kind` es `test` o `suite`; `id`
+identifica la raíz causal definida por 8.7. El plan de una unidad contiene
+únicamente hojas de la selección y shard originales, en su orden relativo
+dentro del plan original. Las unidades siguen el orden normativo de 8.7 y no se
+solapan por descendencia después de absorber causas bajo una suite exterior.
+`rounds` queda vacío si no se autorizó retry o no apareció ningún candidato
+elegible.
+
 `suites` contiene el bosque mínimo necesario para los tests del shard,
 incluidos nodos `blocked-setup` y `blocked-skip`. `tests` contiene todas sus
-hojas, se hayan ejecutado o bloqueado. Todos los campos aparecen incluso cuando
-están vacíos o son `null`; `kind` es `unit` o `integration`.
+hojas, se hayan ejecutado o bloqueado. Cada descriptor aparece una sola vez,
+aunque tenga varios intentos. Todos los campos normativos aparecen incluso
+cuando están vacíos o son `null`; `kind` es `unit` o `integration`.
 
 `source` identifica la declaración mediante path lógico y rango bytewise.
-`owners` conserva el orden de la línea CODEOWNERS ganadora. `tags` es el mapa
-runtime del nodo; un descriptor nunca mezcla owners y tags.
+`owners` conserva el orden de la línea CODEOWNERS ganadora. Un descriptor nunca
+mezcla owners estáticos con los `tags` runtime de sus intentos.
 
 `parent` contiene el ID de la suite inmediata o `null` para un nodo top-level.
 `path` contiene únicamente los identificadores de suite y test posteriores al
 module path. En una suite termina en su propio nombre; en un test termina en el
 nombre del test.
 
-Para una suite:
+`status` es el agregado y `decisive_attempt` es un índice válido dentro de
+`attempts`, ambos derivados exactamente como en 9.1. `attempts` nunca está vacío
+y sus objetos se ordenan por `index`. Los índices empiezan en `1`, son contiguos
+y no se reinician entre rondas. `round` vale `0` o el número de una ronda
+presente en `retry.rounds`. `unit` es `null` en ronda `0`; en otra ronda es el
+índice one-based de la unidad dentro de `retry.rounds[].units`. Un nodo produce
+como máximo un intento por pareja `(round, unit)`, aunque varias unidades
+pueden producir intentos del mismo nodo en una misma ronda.
 
-- `phase` es `setup` o `teardown` cuando su propio lifecycle falla y `setup`
-  cuando solicita skip.
-- `phase` es `null` cuando pasa o queda bloqueada.
-- `blocked_by` es el ID de la primera suite fallida u omitida que impidió entrar
-  en ella, y es `null` en otro caso.
-- La pareja `status`/`phase` debe pertenecer al conjunto cerrado definido en
-  9.1.
+Cada intento de suite incluye `phase`; cada intento de test no lo incluye. La
+pareja `status`/`phase` de suite pertenece al conjunto cerrado de 9.1.
+`blocked_by` es `null` salvo en un intento `blocked-setup` o `blocked-skip`, en
+cuyo caso contiene exactamente:
 
-Para un test, `blocked_by` sigue la misma regla y solo es no nulo con estado
-`blocked-setup` o `blocked-skip`. `logs` contiene un array de strings en orden
-observable. No se admiten campos de extensión sin cambiar el identificador de
+~~~json
+{
+  "id": "application::unit::math::arithmetic",
+  "attempt": 2
+}
+~~~
+
+El ID señala una suite del mismo reporte y `attempt` un índice existente de esa
+suite que contiene la causa. `tags`, `logs`, `stdout`, `stderr`, `failure` y
+`skip` pertenecen exclusivamente a su intento; nunca se fusionan entre
+intentos. No se admiten campos de extensión sin cambiar el identificador de
 formato.
 
 ### 15.2 Orden y estabilidad
@@ -2000,33 +2224,51 @@ formato.
 - `suites` se ordena por `id`.
 - `tests` se ordena por `id`.
 - `execution_plan` sigue 8.4 y no altera el orden de los arrays anteriores.
+- `retry.rounds` se ordena por `round`; sus `units` siguen 8.7 y cada
+  `execution_plan` de unidad conserva el orden relativo del plan inicial.
+- `attempts` se ordena por `index`; no se reordena por status ni por tiempo de
+  finalización.
 - `owners` conserva el orden textual de su única línea ganadora.
-- Las keys de `tags` se ordenan por bytes UTF-8.
+- Las keys de cada mapa `tags` se ordenan por bytes UTF-8.
 - Keys conocidas se serializan en el orden mostrado por el schema del
   toolchain.
-- `logs` conserva el orden observado dentro de su único envelope.
-- `stdout` y `stderr` contienen texto UTF-8 exacto.
+- Cada `logs` conserva el orden observado dentro de su único envelope.
+- Cada `stdout` y `stderr` contiene texto UTF-8 exacto.
 - `summary.selected = execution_plan.length = tests.length`.
-- `summary.selected = summary.executed + summary.blocked_setup +
-  summary.blocked_skip`.
-- `summary.executed` es la suma exacta de `passed`, `skipped` y los cinco
-  contadores de fallo de test ejecutado.
+- `summary.selected` es la suma exacta de `passed`, `flaky_passed`, `skipped`,
+  `blocked_setup`, `blocked_skip` y los cinco contadores de fallo agregado de
+  test.
+- `summary.executed` cuenta identidades de test con al menos un intento distinto
+  de `blocked-setup` y `blocked-skip`; puede solaparse con un bloqueo agregado
+  posterior y no es una segunda partición de `selected`.
+- `summary.retried` cuenta tests con más de un intento y
+  `summary.test_attempts` es la suma de las longitudes de todos sus arrays
+  `attempts`, incluidos intentos bloqueados.
 - `summary.suite_selected` es la suma exacta de `suite_passed`,
-  `suite_skipped`, `suite_blocked_setup`, `suite_blocked_skip` y
-  `suite_failed`.
+  `suite_flaky_passed`, `suite_skipped`, `suite_blocked_setup`,
+  `suite_blocked_skip` y `suite_failed`.
+- `summary.suite_retried` cuenta suites con más de un intento y
+  `summary.suite_attempts` suma las longitudes de sus arrays `attempts`.
 - `summary.suite_failed` cuenta suites en cualquiera de los cinco estados de
   fallo ejecutado; las suites bloqueadas no vuelven a contar la causa.
 - `summary.failed` es la suma de los cinco contadores de fallo de test y
-  `suite_failed`. Skips y hojas bloqueadas no duplican ni incrementan ese
-  contador; `policy.deny_skips` puede producir exit `1` con `failed: 0`.
+  `suite_failed`. `flaky_passed`, skips y hojas bloqueadas no incrementan ese
+  contador; las policies pueden producir exit `1` con `failed: 0`.
+- `passed` y `suite_passed` cuentan solo agregados limpios; nunca incluyen
+  `flaky-pass`.
+- `retry.rounds.length <= retry.max_additional_rounds`; todo intento con
+  `round > 0` referencia una unidad reportada mediante `unit`; toda
+  participación descrita produce los intentos correspondientes y no existe
+  ejecución oculta.
 - Duración, timestamps, PID, número de CPU, paths físicos y direcciones no
   aparecen en la forma JSON canónica.
 - Paths de source dentro de descriptors y failures son lógicos.
 
 ### 15.3 Failure y skip
 
-Cuando `status` es `passed`, `skipped`, `blocked-setup` o `blocked-skip`,
-`failure` es `null`. En un estado de fallo ejecutado contiene exactamente:
+Cuando `attempt.status` es `passed`, `skipped`, `blocked-setup` o
+`blocked-skip`, su `failure` es `null`. En un estado de fallo ejecutado contiene
+exactamente:
 
 ~~~json
 {
@@ -2060,12 +2302,13 @@ Cuando `status` es `passed`, `skipped`, `blocked-setup` o `blocked-skip`,
 - `source` es una ubicación lógica o `null`.
 - `stack` es un array posiblemente vacío de frames Tondo, sin paths físicos.
 
-Un test o suite `blocked-setup` explica su causa únicamente mediante
-`blocked_by`; el nodo señalado contiene el único objeto `failure` normativo. Un
-fallo de teardown de suite no reemplaza failures de tests ya ejecutados.
+Un intento `blocked-setup` explica su causa únicamente mediante `blocked_by`;
+el intento de suite señalado contiene el único objeto `failure` normativo. Un
+fallo de teardown de suite no reemplaza failures de tests ya ejecutados ni
+payloads de intentos anteriores.
 
-`skip` solo es no nulo en el test o suite que ejecutó `testing.skip`. Contiene
-exactamente:
+`skip` solo es no nulo en el intento de test o suite que ejecutó
+`testing.skip`. Contiene exactamente:
 
 ~~~json
 {
@@ -2079,22 +2322,23 @@ exactamente:
 ~~~
 
 `reason` conserva el `String` exacto y `source` es la ubicación lógica de la
-llamada. Un nodo `blocked-skip` tiene `skip: null` y explica su razón únicamente
-mediante `blocked_by`; el nodo señalado contiene el único objeto `skip`
-normativo. `failure` y `skip` nunca son no nulos a la vez.
+llamada. Un intento `blocked-skip` tiene `skip: null` y explica su razón
+únicamente mediante `blocked_by`; el intento señalado contiene el único objeto
+`skip` normativo. Dentro de un intento, `failure` y `skip` nunca son no nulos a
+la vez.
 
 Campos privados y payloads opacos no se serializan por reflection.
 
 ### 15.4 Lista machine-readable
 
-`--list --test-format json` emite `tondo-test-list-0.2/4`. Comparte `edition`,
+`--list --test-format json` emite `tondo-test-list-0.2/5`. Comparte `edition`,
 `target`, `compiled`, `selection`, `ownership`, `shard`, `order` y
 `execution_plan`, pero contiene descriptores sin estado, phase, failure, skip,
 tags, bloqueo, logs ni output:
 
 ~~~json
 {
-  "format": "tondo-test-list-0.2/4",
+  "format": "tondo-test-list-0.2/5",
   "edition": "0.2",
   "target": {
     "name": "tondo-vm-hosted",
@@ -2161,13 +2405,15 @@ Ambos arrays se ordenan por `id`. `suites` contiene las ancestras necesarias y
 las suites descendientes del shard; `tests` contiene sus hojas.
 `execution_plan` usa los mismos IDs exactamente una vez. `--allow-empty` permite
 una selección previa vacía; un shard vacío válido produce ambos arrays y el plan
-vacíos sin necesitar esa opción.
+vacíos sin necesitar esa opción. `selection.kind` admite `glob` con el mismo
+contrato de 15.1; la lista no incluye retry ni policy de flaky porque `--retry`
+y `--allow-flaky` son inválidos con `--list`.
 
 ### 15.5 Perfil JUnit XML
 
-`--report junit=<path>` genera `tondo-junit-report-0.2/1` como XML 1.0 UTF-8. Es
+`--report junit=<path>` genera `tondo-junit-report-0.2/2` como XML 1.0 UTF-8. Es
 un artefacto operacional para CI, no la fuente normativa ni reproducible del
-resultado: incluye duración wall-clock. El reporte JSON `/4` continúa siendo la
+resultado: incluye duración wall-clock. El reporte JSON `/5` continúa siendo la
 forma canónica y sin pérdida.
 
 El archivo comienza con `<?xml version="1.0" encoding="UTF-8"?>`, no lleva BOM,
@@ -2188,17 +2434,29 @@ La proyección de resultados es:
 | Estado Tondo | JUnit |
 |---|---|
 | `passed` | `testcase` sin outcome hijo |
+| `flaky-pass` | hijo `failure` con type `tondo.flaky-pass`; sin outcome hijo bajo `--allow-flaky` |
 | `skipped`, `blocked-skip` | hijo `skipped` |
 | `failed-error`, `failed-panic` | hijo `failure` |
 | `resource-limit`, `timeout`, `infrastructure` | hijo `error` |
 | `blocked-setup` | hijo `skipped` con estado Tondo explícito |
 
-Un fallo de setup o teardown de suite produce además un único testcase sintético
-con name `@setup` o `@teardown`, classname igual al ID de suite y outcome
-`failure` o `error` según la tabla. Así el reporte JUnit queda rojo sin duplicar
-la causa en cada descendiente bloqueado. Usa
+Un fallo agregado de setup o teardown de suite produce además un único testcase
+sintético basado en su intento decisivo, con name `@setup` o `@teardown`,
+classname igual al ID de suite y outcome `failure` o `error` según la tabla. Así
+el reporte JUnit queda rojo sin duplicar la causa en cada descendiente
+bloqueado. Usa
 `tondo.synthetic: "suite-lifecycle"` para distinguirlo de una hoja y el ID
 `<suite-id>::@setup` o `<suite-id>::@teardown`.
+
+Una suite agregada como `flaky-pass` produce siempre un testcase sintético
+`@flaky`, ID `<suite-id>::@flaky` y
+`tondo.synthetic: "flaky-policy"`. Por defecto contiene un hijo `failure` de
+type `tondo.flaky-pass`; con `--allow-flaky` se emite sin outcome hijo. Así la
+policy no cambia su identidad ni los conteos `tests`, solo `failures`. El
+`testsuite` conserva además el estado y todos los intentos en sus properties. Un
+test hoja, independientemente de sus intentos, continúa produciendo un único
+testcase agregado. Los fallos de intentos previos se preservan en
+`tondo.attempts` y nunca crean testcases rojos adicionales.
 
 Las `properties` con prefijo `tondo.` son la extensión versionada de este
 perfil. El primer `testsuite` en orden de ID actúa como portador de metadata de
@@ -2216,6 +2474,7 @@ tondo.shard
 tondo.order
 tondo.seed
 tondo.execution_plan
+tondo.retry
 tondo.policy
 tondo.limits
 tondo.summary
@@ -2233,16 +2492,10 @@ tondo.module
 tondo.path
 tondo.name
 tondo.status
-tondo.phase
-tondo.blocked_by
+tondo.decisive_attempt
+tondo.attempts
 tondo.source
 tondo.owners
-tondo.tags
-tondo.logs
-tondo.stdout
-tondo.stderr
-tondo.failure
-tondo.skip
 tondo.synthetic
 ~~~
 
@@ -2251,37 +2504,42 @@ Arrays, objetos y `null` se codifican como JSON compacto canónico dentro de
 contenido después del escaping XML ordinario. Las properties aparecen en el
 orden listado, sin nombres duplicados; una property no aplicable se omite y una
 aplicable cuyo valor es nulo se conserva como `null`. Los valores de ejecución
-son los mismos del JSON `/4`;
-`tondo.format` vale `tondo-junit-report-0.2/1` y `tondo.json_format` conserva
-`tondo-test-report-0.2/4`. Las properties forman la representación completa de
+son los mismos del JSON `/5`;
+`tondo.format` vale `tondo-junit-report-0.2/2` y `tondo.json_format` conserva
+`tondo-test-report-0.2/5`. Las properties forman la representación completa de
 los campos normativos; los elementos JUnit convencionales proyectan además el
 subconjunto que los consumidores suelen mostrar.
 
-En un hijo `failure` o `error`, el atributo `type` usa `failure.code` si existe y
-`failure.kind` en otro caso; `message` usa `failure.message` y el body contiene
-el objeto `failure` como JSON compacto. Un hijo `skipped` usa la razón como
-`message` para un skip propio y `blocked by <id>` para un bloqueo. Las
-properties conservan en ambos casos los objetos y IDs exactos.
+En un hijo `failure` o `error` de un fallo agregado, el atributo `type` usa
+`failure.code` del intento decisivo si existe y `failure.kind` en otro caso;
+`message` usa su `failure.message` y el body contiene ese objeto como JSON
+compacto. En `flaky-pass`, `type` es siempre `tondo.flaky-pass`, `message` es
+`passed after retry` y el body contiene el array completo `attempts` como JSON
+compacto. Un hijo `skipped` usa la razón del intento decisivo como `message`
+para un skip propio y `blocked by <id>` para un bloqueo. Las properties
+conservan en todos los casos los intentos y referencias exactos.
 
 Todo scalar no representable por XML 1.0 que aparezca en un atributo o elemento
 JUnit convencional se muestra mediante el escape ASCII visible `\u{HEX}`; su
 property estructurada conserva el valor exacto como JSON. `system-out` y
-`system-err` proyectan los streams, mientras `tondo.stdout` y `tondo.stderr`
-contienen el `String` serializado como JSON. Los mismos bytes permanecen también
-disponibles en el reporte JSON canónico.
+`system-err` proyectan únicamente los streams del intento decisivo. Todos los
+streams, tags, logs, failures y skips, incluidos los de intentos anteriores,
+permanecen en `tondo.attempts` y en el reporte JSON canónico.
 
 Los atributos `tests`, `failures`, `errors`, `skipped` y `time` se calculan sobre
-los testcases realmente emitidos, incluidos lifecycle sintéticos. El orden de
-testsuites sigue el ID, no completion order. Dentro de cada testsuite se ordena
-`@setup`, después hojas por ID y por último `@teardown`. Shard, seed y algoritmo
-se incluyen aunque no haya hojas por `--allow-empty` o por un shard vacío. En
-ese caso se emite un único `testsuite` de cero casos llamado `@tondo-plan`, con
-`tondo.synthetic: "empty-plan"`, únicamente como portador de la metadata de
-ejecución.
+los testcases agregados realmente emitidos, incluidos sintéticos, nunca sobre el
+número de intentos. El orden de testsuites sigue el ID, no completion order.
+Dentro de cada testsuite se ordena `@setup`, después `@flaky`, después hojas por
+ID y por último `@teardown`; los elementos ausentes no ocupan posición. Shard,
+seed, algoritmo y retry se incluyen aunque no haya hojas por `--allow-empty` o
+por un shard vacío. En ese caso se emite un único `testsuite` de cero casos
+llamado `@tondo-plan`, con `tondo.synthetic: "empty-plan"`, únicamente como
+portador de la metadata de ejecución.
 
 `time` usa segundos no negativos en decimal ASCII, sin exponente y con hasta
 nueve dígitos fraccionarios obtenidos de un reloj monotónico. En `testcase`
-representa su entrada o fase sintética; en `testsuite` es la suma de sus
+representa la suma de tiempo activo de todos los intentos de esa hoja o nodo
+sintético; un intento bloqueado aporta cero. En `testsuite` es la suma de sus
 testcases y en `testsuites` la suma de sus suites hijas. Nunca representa el
 intervalo wall-clock del contenedor, para no contar paralelismo de forma
 dependiente del scheduler.
@@ -2303,6 +2561,7 @@ Si la compilación falla:
 - `compiled` vale `false`.
 - `suites`, `tests` y `execution_plan` están vacíos porque ningún setup ni body
   se ejecutó.
+- `retry.rounds` está vacío; un fallo de compilación no consume intentos.
 - En un reporte de ejecución, todos los contadores de `summary` valen `0`.
 - Los diagnostics se emiten por stderr mediante el formato solicitado con
   `--diagnostic-format`.
@@ -2364,10 +2623,10 @@ Una implementación de esta extensión debe publicar una suite distinta a
 29. Captura separada de logs/stdout/stderr para suites y tests.
 30. Parsing y combinaciones de CLI, formatos stdout, reportes repetibles,
     colisiones de paths, publicación atómica por archivo y exit `3`.
-31. Reportes `tondo-test-report-0.2/4` y `tondo-test-list-0.2/4`, ownership,
-    shard, order, tags, `execution_plan`, invariantes de summary, skips,
-    bloqueos y rechazo de schema inválido.
-32. Perfil `tondo-junit-report-0.2/1`, mapeo de estados, lifecycle sintético,
+31. Reportes `tondo-test-report-0.2/5` y `tondo-test-list-0.2/5`, ownership,
+    shard, order, tags, intentos, retry, `execution_plan`, invariantes de
+    summary, skips, bloqueos y rechazo de schema inválido.
+32. Perfil `tondo-junit-report-0.2/2`, mapeo de estados, lifecycle sintético,
     properties, streams, duración operacional, conteos y equivalencia con la
     misma ejecución JSON.
 33. Targets y capabilities distintos.
@@ -2375,6 +2634,22 @@ Una implementación de esta extensión debe publicar una suite distinta a
     dev-dependencies en productos de producción.
 35. Ejecución individual mediante `--exact` equivalente a la misma hoja dentro
     del árbol completo bajo inputs idénticos.
+36. Vectores de glob portable con `*`, `?` y `**`; match completo de
+    suite/test, unión deduplicada, Unicode scalar, patrones inválidos, selección
+    vacía y ausencia de regex o expansión del host.
+37. Elegibilidad, absorción y orden de unidades de retry, rondas acotadas,
+    lifecycle ancestral, subárbol de suite, conservación de shard/seed/plan y
+    máximo global de jobs.
+38. Worker nuevo por unidad de retry, reutilización exclusiva del artefacto
+    inmutable, heap/roots/executor/envelopes/buffers/presupuestos nuevos y
+    revocación de procesos y recursos rastreados antes de terminar.
+39. Historial de intentos, causalidad `blocked_by`, intento decisivo,
+    `flaky-pass`, summaries JSON y matriz de exit status con y sin
+    `--allow-flaky`; skips o resource/infrastructure failures no se reintentan.
+40. Proyección JUnit de retry: un testcase agregado por hoja, lifecycle y flaky
+    sintéticos únicos, `tondo.retry`, `tondo.decisive_attempt`,
+    `tondo.attempts`, streams decisivos, conteos por identidad y policy
+    `--allow-flaky`.
 
 La VM de referencia y cada backend nativo deben ejecutar las mismas fuentes y
 producir el mismo estado, código de pánico, output y reporte canónico. Duración
@@ -2457,8 +2732,11 @@ test handlesCases {
 tondo test
 tondo test --list
 tondo test --filter parser
+tondo test --glob 'application::integration::**::creates*'
 tondo test --exact application::unit::parser::rejectsInvalidToken
 tondo test --exact application::integration::users::userApi
+tondo test --retry 2
+tondo test --retry 2 --allow-flaky
 tondo test --jobs 4
 tondo test --shard 2/8
 tondo test --order random --seed 5eed
@@ -2475,5 +2753,6 @@ tondo test \
 > `suite` aporta jerarquía y lifecycle léxico; `test` identifica una hoja
 > aislada. `std.testing` controla y anota el nodo mediante un envelope
 > estructurado que nunca se expone como valor. Ownership, sharding, orden y
-> reportes son políticas reproducibles del runner; el resto del código continúa
-> siendo Tondo ordinario.
+> reportes son políticas reproducibles del runner; glob selecciona sin depender
+> del host y cada retry explícito obtiene una frontera nueva sin ocultar
+> flakiness. El resto del código continúa siendo Tondo ordinario.
