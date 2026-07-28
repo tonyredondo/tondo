@@ -1,12 +1,12 @@
 # Tondo: especificación del lenguaje y toolchain de testing
 
 - **Estado:** diseño normativo aprobado para Tondo 0.2; todavía no implementado.
-- **Revisión:** 0.2-draft.5 — 2026-07-28.
+- **Revisión:** 0.2-draft.6 — 2026-07-29.
 - **Edición objetivo:** Tondo 0.2.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
 - **SHA-256 de la base:** `ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084`.
-- **Formatos de tooling:** `tondo-test-report-0.2/5`,
-  `tondo-test-list-0.2/5` y `tondo-junit-report-0.2/2`.
+- **Formatos de tooling:** `tondo-test-report-0.2/6`,
+  `tondo-test-list-0.2/5` y `tondo-junit-report-0.2/3`.
 
 Esta especificación añade a Tondo las declaraciones `suite` y `test` y define
 cómo el toolchain descubre, compila, ejecuta y reporta árboles estáticos de
@@ -18,6 +18,9 @@ CODEOWNERS, particiona y ordena ejecuciones de forma reproducible y exporta
 reportes JSON o JUnit XML sin alterar el programa probado. Un glob portable
 amplía la selección y retries explícitos pueden confirmar fallos intermitentes
 en workers nuevos sin presentar un éxito posterior como un `passed` ordinario.
+Un dominio temporal opt-in ejecuta suspensión, timers y deadlines contra un
+reloj monotónico virtual, avanza únicamente bajo quiescencia demostrable y
+permite observar fronteras temporales exactas sin `sleep` wall-clock.
 Complementa Tondo 0.1; no modifica retroactivamente esa edición ni la suite
 publicada `tondo-conformance-0.1`.
 
@@ -55,7 +58,7 @@ recomienda** expresa orientación no obligatoria.
 
 ## 1. Propósito y principios
 
-El sistema de testing de Tondo persigue diez objetivos:
+El sistema de testing de Tondo persigue once objetivos:
 
 1. Escribir un test ordinario requiere únicamente un nombre y un bloque.
 2. Agrupar tests y compartir un recurso costoso requiere únicamente una `suite`
@@ -72,10 +75,12 @@ El sistema de testing de Tondo persigue diez objetivos:
    volver a ejecutar tests.
 7. Reintentar un fallo es siempre explícito, conserva cada intento y utiliza una
    frontera de aislamiento nueva.
-8. Discovery, plan, orden y presentación canónica son deterministas y
+8. El código temporal puede ejecutarse con el API de producción sobre un reloj
+   virtual determinista, sin convertir timeouts del runner en tiempo simulado.
+9. Discovery, plan, orden y presentación canónica son deterministas y
    observables; todo campo operacional no reproducible se identifica como tal.
-9. El código y las dependencias de test no cambian el artefacto de producción.
-10. El núcleo no introduce clases de test, annotations, macros, reflection ni
+10. El código y las dependencias de test no cambian el artefacto de producción.
+11. El núcleo no introduce clases de test, annotations, macros, reflection ni
    hooks de ciclo de vida.
 
 Forma mínima:
@@ -112,8 +117,8 @@ ordinario sin exponer el runner dentro del programa.
 
 La declaración no sustituye a una librería de assertions. El lenguaje define
 el test como unidad ejecutable; `assert` proporciona la comprobación mínima y
-`std.testing` fija cuatro operaciones selladas de control y metadata y añadirá
-comparaciones, diffs y recursos de test como API ordinaria.
+`std.testing` fija un núcleo sellado de control, metadata y tiempo virtual y
+añadirá comparaciones, diffs y recursos de test como API ordinaria.
 
 ## 2. Compatibilidad y límite de edición
 
@@ -142,9 +147,9 @@ tanto:
 Reservarlas globalmente evita keywords contextuales cuya interpretación dependa
 del source set o del lugar del parser.
 
-`log`, `tags`, `failNow` y `skip` no son keywords ni nombres predeclarados. Son
-declaraciones del módulo test-only `std.testing` y se resuelven mediante un
-`import` ordinario.
+`log`, `tags`, `failNow`, `skip`, `withVirtualTime`, `VirtualTime`, `settle` y
+`advance` no son keywords ni nombres predeclarados. Son declaraciones del
+módulo test-only `std.testing` y se resuelven mediante un `import` ordinario.
 
 ### 2.3 Una sola forma por concepto
 
@@ -168,6 +173,34 @@ Las dos formas canónicas son:
 test identifier block
 suite identifier suite-block
 ~~~
+
+### 2.4 Dependencia del contrato temporal de producción
+
+El tiempo virtual no define una segunda API temporal exclusiva de testing. Su
+implementación exige que la especificación estándar haya fijado antes un
+sustrato mínimo compartido:
+
+- `Duration` como valor portable con quantum canónico de nanosegundo, signo y
+  overflow explícitos.
+- `Instant` monotónico, sin relación implícita con calendario o zona horaria.
+- Suspensión, timers y deadlines async ligados al executor.
+- Identidad opaca de proveedor y rechazo de operaciones entre instantes de
+  dominios distintos.
+- Los puntos de cancelación, overflow, resolución y capabilities de esas
+  operaciones.
+
+`withVirtualTime` intercepta exactamente ese sustrato. El programa probado
+continúa llamando a las mismas APIs que usaría en producción y no recibe un
+`Clock` de test como parámetro. Calendario civil, timezone data y sincronización
+con reloj de pared no son requisito de esta extensión y pueden permanecer en una
+versión posterior de la librería.
+
+El gate de testing no puede anunciar tiempo virtual conforme hasta que exista
+esa especificación mínima y el adaptador de la VM la ejecute tanto con proveedor
+monotónico real como virtual. Sus módulos y bytes deben entrar versionados en el
+plan cerrado. El tracker puede secuenciar ese slice antes del resto de la
+librería estándar, pero no sustituirlo por nombres, duraciones o bridges
+privados del runner.
 
 ## 3. Declaraciones `suite` y `test`
 
@@ -534,9 +567,9 @@ Solo una fuente `unit-test` o `integration-test` puede contener `test_decl` o
 
 `std.testing` es un módulo test-only. Solo forma parte del grafo cerrado de un
 artefacto de test; importarlo desde una fuente o dependencia activa de
-producción produce `E2003`. Esta restricción cubre tanto sus cuatro operaciones
-selladas como los helpers portables que se añadan posteriormente: ningún
-producto publicable adquiere una dependencia sobre el runner.
+producción produce `E2003`. Esta restricción cubre todo su núcleo sellado y los
+helpers portables que se añadan posteriormente: ningún producto publicable
+adquiere una dependencia sobre el runner.
 
 ### 5.2 Descubrimiento convencional de `tondo test`
 
@@ -735,6 +768,8 @@ El artefacto contiene:
 - Entradas privadas de setup y de tests hoja.
 - Operaciones verificadas de control de testing y la asociación de cada entrada
   con su envelope privado de ejecución.
+- Operaciones verificadas de dominio temporal y su catálogo cerrado de puntos
+  de suspensión duraderos.
 - Layout comprobado de los snapshots `Copy + Send + Share` que cruzan cada
   arista del árbol.
 - Hashes necesarios para reproducir el build.
@@ -772,6 +807,8 @@ Cada test hoja obtiene:
 - Estado de runtime, roots, tasks y handles no observable desde otra hoja salvo
   los snapshots de suite permitidos por 4.3.
 - Un envelope privado de control, un buffer ordenado de logs y un mapa de tags.
+- Un registro inicialmente vacío de dominios temporales virtuales pertenecientes
+  a ese intento.
 - Captura separada de stdout y stderr del runtime Tondo.
 - Presupuesto de recursos independiente.
 - Un resultado independiente.
@@ -780,6 +817,9 @@ Cada suite ejecutada obtiene un entorno de lifecycle separado que conserva
 sus bindings de setup y su pila de cleanup hasta que terminan los descendientes.
 Los hijos solo observan sus snapshots `Copy + Send + Share`; no reciben acceso
 general al heap, stack, préstamos ni propietarios de la suite.
+Cada participación de suite comienza además con su propio registro vacío de
+dominios virtuales; un dominio abierto y cerrado durante setup o teardown nunca
+se hereda por los envelopes de sus descendientes.
 
 Una implementación puede reutilizar threads, allocators o procesos internos
 solo si esa reutilización no expone otros valores, roots, tasks, handles,
@@ -800,6 +840,7 @@ TestExecution {
     tag_sink
     stdout_sink
     stderr_sink
+    virtual_time_domains
     cancellation
     limits
 }
@@ -829,11 +870,19 @@ evento al nodo cuya entrada está conduciendo. Por ello funcionan desde helpers
 y tasks estructuradas sin un parámetro `TestContext`, pero no introducen un
 global mutable ni un thread-local observable.
 
+`withVirtualTime` añade temporalmente un dominio al mismo envelope. Las tasks
+creadas dentro de su closure heredan ese dominio por la raíz estructurada, no
+por el thread del host. El controlador `VirtualTime` es un préstamo explícito
+para dirigir el reloj; no da acceso a identidad, estado, sinks ni políticas del
+test.
+
 HIR, MIR y bytecode representan estas operaciones mediante un catálogo cerrado.
 Sus verifiers solo las admiten dentro de un artefacto de test y ningún backend
 puede implementarlas como una escritura a un contexto global compartido.
 `std.testing` no exige la capability `console`; sus logs y tags utilizan canales
-del runner, no stdout ni stderr.
+del runner, no stdout ni stderr. El dominio virtual tampoco concede una
+capability de host ausente: sustituye únicamente el proveedor monotónico de las
+APIs temporales que ya fueron admitidas para el target.
 
 ### 7.3 Lifecycle de suite
 
@@ -946,7 +995,7 @@ del modelo de pánico, corrupción del runtime o imposibilidad de restablecer
 aislamiento se clasifica como fallo de infraestructura. El runner puede detener
 el bosque restante porque ya no puede garantizar resultados fiables. En ese
 caso termina con exit `3` y no emite un reporte canónico incompleto; todo reporte
-`tondo-test-report-0.2/5` válido clasifica cada hoja seleccionada.
+`tondo-test-report-0.2/6` válido clasifica cada hoja seleccionada.
 
 ### 7.6 Errores recuperables
 
@@ -978,14 +1027,21 @@ declarados. La invocación oficial:
 Una implementación puede ofrecer un target de test con capacidades adicionales,
 pero ese target es distinto y debe quedar visible en el reporte.
 
+Dentro de 7.9, las APIs monotónicas admitidas conservan sus firmas y capability,
+pero resuelven el proveedor virtual del dominio. Ese proveedor y su cero no son
+inputs de host ni permiten acceder a una API temporal que el target rechazaba.
+
 ### 7.8 Límites y timeouts
 
 Cada test hoja y cada fase activa de setup o teardown se ejecuta con límites
 finitos de instrucciones o trabajo, memoria, profundidad y output. Los bytes de
 keys/values de `testing.tags`, logs, stdout y stderr consumen el presupuesto de
 output del mismo nodo; metadata y logs no ofrecen canales ilimitados
-alternativos. El toolchain publica sus defaults y registra los valores efectivos
-o el hash de su resource profile en el reporte.
+alternativos. Dominios virtuales, timers, cola ready y sus descriptores consumen
+los presupuestos de trabajo/memoria/metadata del mismo intento; un loop no puede
+crear reportes ilimitados abriendo dominios secuenciales. El toolchain publica
+sus defaults y registra los valores efectivos o el hash de su resource profile
+en el reporte.
 
 `--timeout` aplica de forma independiente a un body de test, a un setup de suite
 y a un teardown de suite. El reloj de una suite se pausa mientras solo espera
@@ -995,7 +1051,9 @@ duración de sus tests.
 Un timeout wall-clock es un límite del runner, no un error Tondo ni un pánico. El
 runner debe poder terminar la entrada aislada incluso si el código no llega a un
 punto cooperativo de cancelación. No puede dejar un proceso o thread de usuario
-ejecutándose después de reportar el terminal.
+ejecutándose después de reportar el terminal. Se mide con un reloj monotónico
+real exterior al envelope y nunca se sustituye ni avanza mediante
+`withVirtualTime`.
 
 Los presupuestos estructurales y de runtime siempre permanecen finitos. El
 timeout wall-clock puede desactivarse únicamente mediante `--timeout none`; esa
@@ -1007,6 +1065,116 @@ sus `defer`; no son terminales del lenguaje con garantía de unwind. El runner s
 debe limpiar su propia frontera de aislamiento y declarar el estado
 correspondiente. Una suite o test con efectos externos no puede confiar en
 teardown de usuario después de una terminación forzada.
+
+### 7.9 Dominio de tiempo virtual determinista
+
+`testing.withVirtualTime` ejecuta una closure async exactamente una vez dentro
+de un dominio temporal nuevo. El dominio pertenece al intento y a la fase que
+alcanzó la llamada; no sustituye el reloj de otras hojas, otras fases, suites
+descendientes ni código ejecutado antes o después de la closure.
+
+Forma canónica:
+
+~~~tondo
+import std.testing
+import std.time
+
+test requestTimesOut {
+    await testing.withVirtualTime(async (clock) {
+        scope {
+            let timeout: time.Duration = requestTimeout()
+            let result = spawn requestWithTimeout(timeout)
+
+            await clock.advance(timeout)
+
+            assert(await result == RequestOutcome.TimedOut)
+        }
+    })?
+}
+~~~
+
+`withVirtualTime` no sustituye a `scope`: todo `spawn` conserva su propietario
+léxico y ninguna task puede sobrevivir a la closure. El cierre recibe
+`ref VirtualTime`; el controlador no puede moverse, almacenarse ni escapar de
+esa región. La closure devuelve `Unit`, puede ser fallible y propaga su unión de
+error al body o fase exterior sin envolverla. Pánico, skip, cancelación y cleanup
+conservan sus reglas ordinarias y siempre desmontan el dominio antes de terminar
+el intento.
+
+Dentro del dominio:
+
+- El instante monotónico inicial es un cero virtual opaco. Solo sus diferencias
+  son observables mediante la API temporal de producción.
+- Cada `Instant` conserva internamente la identidad opaca de su proveedor y
+  dominio. Un `Duration` puede cruzar dominios; un `Instant`, timer o deadline no
+  puede mezclarse con otro dominio. La API estándar debe rechazar esa mezcla de
+  forma determinista en lugar de comparar contadores de relojes distintos.
+- Suspensión, timers y deadlines monotónicos admitidos por el target consultan
+  el proveedor virtual. No se reescribe el código ni se inyecta un `Clock`.
+- El calendario civil y las APIs que consulten explícitamente reloj de pared no
+  se virtualizan en esta edición.
+- La cola ready es determinista: tareas listas se ordenan por su secuencia de
+  creación y un nuevo wake se añade después de las ya listas. Timers con el
+  mismo deadline se despiertan por secuencia de creación.
+- Una task terminada deja de participar. Una task está **durablemente
+  bloqueada** solo cuando el runtime puede demostrar que despertará únicamente
+  por un timer virtual, por terminación o cancelación de otra task del dominio,
+  o por una operación de sincronización cuyo catálogo estándar la declare
+  durable y cuyo ownership demuestre que todos sus productores, endpoints y
+  posibilidades de wake permanecen confinados al dominio. Si el tipo o análisis
+  no puede demostrarlo, la espera no es durable.
+- Esperas sobre filesystem, red, procesos, reloj de pared, syscalls, callbacks
+  o recursos que puedan recibir eventos externos nunca son duraderas. No se
+  aceleran ni se simulan; doubles y transportes in-memory controlados son la
+  forma portable de probar esos casos.
+
+Cuando la task raíz de la closure está esperando en `settle` o suspendida de
+forma durable y todas las demás tasks vivas están terminadas o duraderamente
+bloqueadas, el scheduler aplica exactamente una de estas acciones:
+
+1. Si existe una llamada activa a `settle`, la completa sin mover el reloj.
+2. En otro caso, si existe al menos un timer pendiente, avanza al deadline
+   menor, despierta todos los timers de ese instante en su orden normativo y
+   continúa ejecutando.
+3. Si no existe un evento interno capaz de progresar, produce `P2003`
+   `test-virtual-time-deadlock`.
+
+Por ello un `await` ordinario puede atravesar horas de backoff virtual sin
+consumirlas en tiempo real. El reloj nunca avanza automáticamente mientras haya
+una task runnable o una espera externa no durable.
+
+`await clock.settle()` suspende al caller y conduce las demás tasks hasta que
+cada una termina o queda duraderamente bloqueada en el instante actual. Retorna
+antes de cualquier salto automático a un timer futuro. Esto permite comprobar
+un estado intermedio o la ausencia de un efecto sin elegir una espera
+wall-clock.
+
+`await clock.advance(duration)` exige una duración no negativa y fija un target
+exacto `now + duration`. Visita en orden cada deadline no posterior al target,
+ejecuta las tasks despertadas
+hasta quiescencia en ese instante y finalmente retorna con `now == target`;
+durante esa llamada no salta más allá del target. Una duración cero drena el
+trabajo debido en el instante actual. Una duración negativa o un overflow del
+rango virtual produce `P2005` `test-virtual-time-range` sin wraparound ni
+retroceso.
+
+Un envelope puede tener como máximo un dominio activo. Anidar
+`withVirtualTime` o abrirlo simultáneamente desde dos tasks hermanas del mismo
+intento produce `P2004` `overlapping-test-virtual-time` antes de ejecutar la
+segunda closure. Tests distintos pueden mantener dominios paralelos y un mismo
+intento puede crear varios dominios secuenciales; cada uno vuelve a su cero
+virtual y obtiene un índice creciente.
+
+La garantía de determinismo cubre únicamente eventos gobernados por el dominio.
+Si el código realiza I/O externo, su terminación y orden continúan siendo
+observaciones del host. Una espera externa puede completar normalmente, pero
+impide declarar quiescencia mientras siga pendiente y queda protegida solo por
+el timeout wall-clock y los límites reales del runner.
+
+El timeout de 7.8, la duración JUnit, límites de CPU/instrucciones, memoria y
+output siempre utilizan recursos reales. Un loop runnable, un timer periódico
+sin condición terminal o una espera externa atascada no puede esconderse detrás
+del reloj virtual.
 
 ## 8. Selección, orden y paralelismo
 
@@ -1265,6 +1433,12 @@ runner revoca y espera los procesos y recursos de host que Tondo le haya
 entregado de forma rastreable. Un worker que no puede cerrarse limpiamente
 produce `infrastructure`, no otra oportunidad silenciosa.
 
+El registro de dominios temporales también comienza vacío. Cada
+`withVirtualTime` del nuevo intento vuelve al mismo cero virtual y no hereda
+timers, secuencias de task, contadores ni tiempo avanzado. Por tanto un retry
+puede confirmar el mismo comportamiento determinista, pero no hacer pasar una
+prueba porque su reloj continuó desde el intento anterior.
+
 El límite `--jobs N` es global a la invocación: cuenta conjuntamente las
 entradas activas de la ronda inicial y de todos los workers de retry. Lanzar
 workers nuevos no permite superar ese máximo. Esta edición no introduce
@@ -1392,6 +1566,8 @@ Los streams continúan siendo UTF-8. El modo humano:
 - Muestra siempre la razón y logs de nodos `skipped`.
 - Muestra todos los intentos, con logs y output separados, de un nodo
   `flaky-pass` o cuyo agregado termina en fallo.
+- Muestra por intento el número de dominios y su tiempo virtual final cuando
+  `virtual_time` no está vacío; nunca lo rotula como duración real.
 - Oculta tags, logs y output de entradas que pasan salvo `--show-output`.
 - Nunca intercala bytes de dos entradas.
 
@@ -1461,6 +1637,11 @@ wall-clock no forma parte del resultado semántico, del orden ni del reporte
 JSON canónico reproducible. El exportador JUnit sí incluye duración observada
 por intento porque ese formato es un artefacto operacional no canónico.
 
+El tiempo virtual no es duración operacional: `virtual_time.elapsed_ns` describe
+el estado determinista de cada dominio y sí pertenece al intento canónico. Un
+test puede avanzar horas virtuales y consumir milisegundos reales; ninguna de
+las dos magnitudes sustituye a la otra.
+
 ### 9.6 Exit status
 
 `tondo test` utiliza:
@@ -1529,13 +1710,13 @@ Reglas:
   proyección JUnit no roja cuando los demás resultados lo permiten.
 - `--test-format human` es el default interactivo.
 - `--test-format json` emite exactamente un reporte
-  `tondo-test-report-0.2/5`, o una lista `tondo-test-list-0.2/5` con `--list`.
+  `tondo-test-report-0.2/6`, o una lista `tondo-test-list-0.2/5` con `--list`.
 - `--report` es repetible y escribe el resultado de la misma ejecución sin
   volver a compilar ni ejecutar. Se divide por el primer `=`; format y path
   vacíos son inválidos.
 - `--report json=<path>` escribe exactamente los mismos bytes que el JSON
   correspondiente de `--test-format json`.
-- `--report junit=<path>` escribe `tondo-junit-report-0.2/2` según 15.5.
+- `--report junit=<path>` escribe `tondo-junit-report-0.2/3` según 15.5.
 - Dos reportes no pueden resolver al mismo output ni sobrescribir un input,
   source, manifest, lockfile o producto declarado. Cada archivo se publica
   atómicamente después de completar su serialización.
@@ -1577,14 +1758,24 @@ optimizados.
 
 ### 11.2 Núcleo sellado y responsabilidad de `std.testing`
 
-El control y la metadata mínimos del runner forman parte de esta especificación
-y tienen cuatro firmas exactas:
+El control, la metadata y el dominio temporal mínimos del runner forman parte de
+esta especificación. Sus firmas exactas son:
 
 ~~~tondo
+import std.time
+
 pub fn log(message: String)
 pub fn tags(values: Map[String, String])
 pub fn failNow(message: String): Never
 pub fn skip(reason: String): Never
+
+pub async fn withVirtualTime[
+    E,
+    F: Send + CallOnce[async fn(ref VirtualTime): Unit ! E],
+](body: F): ! E
+
+pub async fn VirtualTime.settle(ref self)
+pub async fn VirtualTime.advance(ref self, duration: time.Duration)
 ~~~
 
 Se utilizan mediante resolución de módulo ordinaria:
@@ -1616,19 +1807,37 @@ test importsUsers {
 }
 ~~~
 
-Las cuatro firmas son monomórficas. `log`, `failNow` y `skip` reciben un solo
-`String`; interpolación y formatting ocurren antes de la llamada. `tags` recibe
-exactamente un `Map[String, String]`. No existen niveles de log, attachments,
-timestamps, un tipo dinámico de metadata ni sobrecargas variádicas en 0.2.
+Las cuatro operaciones de control y metadata son monomórficas. `log`, `failNow`
+y `skip` reciben un solo `String`; interpolación y formatting ocurren antes de
+la llamada. `tags` recibe exactamente un `Map[String, String]`. No existen
+niveles de log, attachments, timestamps, un tipo dinámico de metadata ni
+sobrecargas variádicas en 0.2.
 
-Estas cuatro funciones son operaciones intrínsecas y selladas del artefacto de
-test:
+`withVirtualTime` es genérica únicamente sobre la unión de error y el tipo
+concreto del cierre. Exige `CallOnce` porque ejecuta el body una vez y `Send`
+porque su frame async puede migrar. Un body infallible infiere `E = Never`; uno
+fallible conserva exactamente `E`. La llamada usa el `?` ordinario para
+propagar ese canal; con `E = Never` no existe rama `err` ejecutable. No existe
+type erasure, allocation de callback ni wrapper `Task`.
+
+`VirtualTime` es un tipo opaco test-only con `Send`, sin `Copy`, `Share`,
+`Equatable`, `Key` ni `Display`. El usuario nunca lo construye ni posee:
+`withVirtualTime` presta un único controlador al cierre y lo revoca al
+terminarlo. `settle` y `advance` son async porque conducir otras tasks es un
+punto de suspensión visible; no esconden bloqueo detrás de una llamada
+síncrona.
+
+Estas operaciones son intrínsecas y selladas dentro de un artefacto de test:
 
 - `log` devuelve `Unit` y añade un elemento al buffer del nodo activo.
 - `tags` devuelve `Unit` y fusiona metadata conforme a 9.4.
 - `failNow` produce `P0007` y tiene resultado `Never`.
 - `skip` exige una razón, produce el terminal cooperativo de skip y tiene
   resultado `Never`.
+- `withVirtualTime` crea y desmonta el dominio de 7.9 y propaga retorno, error,
+  pánico, skip y cancelación de la closure sin reinterpretarlos.
+- `VirtualTime.settle` observa quiescencia sin mover el reloj y
+  `VirtualTime.advance` conduce el dominio hasta un target exacto.
 - Llamadas desde helpers, closures o tasks estructuradas conservan el envelope
   de la entrada que las alcanzó.
 - Ninguna expone ID, nombre, path, estado, runner ni referencia a otro nodo.
@@ -1650,8 +1859,8 @@ debe considerar como mínimo:
 Sus funciones pueden terminar mediante `assert`/pánico o devolver un error
 documentado. No reciben acceso reflectivo a valores privados ni pueden registrar
 suites o tests en runtime. La especificación estándar puede añadir helpers, pero
-no cambiar las cuatro firmas, sus terminales, merge de tags ni el envelope
-fijado aquí.
+no cambiar estas firmas, sus terminales, merge de tags, dominio temporal ni el
+envelope fijados aquí.
 
 ### 11.3 Setup y teardown
 
@@ -1893,6 +2102,36 @@ ID ni recibe contexto; el envelope atribuye la llamada. CODEOWNERS se resuelve
 por separado desde el path del archivo y no puede ser reemplazado por un tag
 `owner`.
 
+### 12.8 Backoff sin espera real
+
+~~~tondo
+import std.testing
+
+test retriesAfterBackoff {
+    let delay = retryDelay()
+    let probe = RetryProbe.new()
+
+    await testing.withVirtualTime(async (clock) {
+        scope {
+            let result = spawn fetchWithRetry(probe, delay)
+
+            await clock.settle()
+            assert(probe.attemptCount() == 1)
+
+            await clock.advance(delay)
+            assert(await result == expectedResponse())
+            assert(probe.attemptCount() == 2)
+        }
+    })?
+}
+~~~
+
+`settle` demuestra que el primer intento terminó y el segundo permanece detrás
+del timer sin elegir una pausa real aproximada. `advance` cruza exactamente el
+deadline y el `await` final usa la misma implementación de backoff que
+producción. `RetryProbe` es un double ordinario y seguro para concurrencia; no
+forma parte del runner.
+
 ## 13. Características deliberadamente ausentes
 
 El contrato inicial no incluye:
@@ -1914,6 +2153,10 @@ El contrato inicial no incluye:
 - Retries implícitos, históricos, dirigidos por tags o configurados mediante
   annotations por test.
 - Labels estáticos de flaky y delay, backoff o jitter entre retries.
+- Tiempo virtual implícito para todos los tests, un flag global que cambie su
+  semántica o una keyword/modificador temporal de `test`.
+- Virtualización automática de calendario civil, filesystem, red, procesos o
+  callbacks externos.
 - Fail-fast global que abandone hojas seleccionadas.
 - Un modo que elimine `assert`.
 - Una keyword separada para benchmarks.
@@ -1942,12 +2185,15 @@ La edición 0.2 añade estos códigos al registro normativo:
 | `E2004` | `empty-test-suite` | Una suite no contiene ningún miembro directo y, por tanto, ningún test descendiente. |
 | `E2005` | `invalid-suite-capture` | Un descendiente intenta capturar `var`, préstamo, valor afín/terminal o un tipo que no cumple `Copy + Send + Share`. |
 
-El runtime de test añade dos pánicos:
+El runtime de test añade cinco pánicos:
 
 | Código | Nombre estable | Condición primaria |
 |---|---|---|
 | `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo mientras ejecuta `defer`, unwind o teardown. |
 | `P2002` | `test-tag-conflict` | `testing.tags` intenta asociar una key ya registrada a un valor distinto dentro del mismo envelope. |
+| `P2003` | `test-virtual-time-deadlock` | La raíz del dominio espera, todas sus tasks están terminadas o bloqueadas de forma durable y no existe timer ni evento interno capaz de progresar. |
+| `P2004` | `overlapping-test-virtual-time` | `withVirtualTime` intenta crear un segundo dominio mientras el mismo envelope ya mantiene otro activo, por nesting o concurrencia hermana. |
+| `P2005` | `test-virtual-time-range` | Un avance recibe una duración negativa o un avance explícito/automático excedería el rango representable del reloj virtual. |
 
 `testing.failNow` reutiliza `P0007`; no añade otro código.
 
@@ -1979,7 +2225,7 @@ un ejemplo; la forma y los tipos de los campos son normativos:
 
 ~~~json
 {
-  "format": "tondo-test-report-0.2/5",
+  "format": "tondo-test-report-0.2/6",
   "edition": "0.2",
   "target": {
     "name": "tondo-vm-hosted",
@@ -2047,6 +2293,7 @@ un ejemplo; la forma y los tipos de los campos son normativos:
           "failure": null,
           "skip": null,
           "tags": {},
+          "virtual_time": [],
           "logs": [],
           "stdout": "",
           "stderr": ""
@@ -2084,6 +2331,7 @@ un ejemplo; la forma y los tipos de los campos son normativos:
             "component": "math",
             "kind": "unit"
           },
+          "virtual_time": [],
           "logs": [],
           "stdout": "",
           "stderr": ""
@@ -2213,10 +2461,33 @@ cuyo caso contiene exactamente:
 ~~~
 
 El ID señala una suite del mismo reporte y `attempt` un índice existente de esa
-suite que contiene la causa. `tags`, `logs`, `stdout`, `stderr`, `failure` y
-`skip` pertenecen exclusivamente a su intento; nunca se fusionan entre
-intentos. No se admiten campos de extensión sin cambiar el identificador de
-formato.
+suite que contiene la causa. `tags`, `virtual_time`, `logs`, `stdout`, `stderr`,
+`failure` y `skip` pertenecen exclusivamente a su intento; nunca se fusionan
+entre intentos. No se admiten campos de extensión sin cambiar el identificador
+de formato.
+
+`virtual_time` contiene los dominios creados durante ese intento y está vacío si
+no alcanzó `withVirtualTime`. Cada dominio aparece incluso si su closure terminó
+por error, pánico, skip, timeout o límite, con esta forma exacta:
+
+~~~json
+{
+  "index": 1,
+  "elapsed_ns": "5000000000",
+  "automatic_advances": 0,
+  "explicit_advances": 1,
+  "settles": 0
+}
+~~~
+
+`index` empieza en `1` y es contiguo por orden de creación. `elapsed_ns` es el
+instante final relativo a cero expresado como entero decimal no negativo sin
+padding dentro de un string; así no pierde precisión en consumidores JSON.
+`automatic_advances` cuenta saltos al próximo deadline realizados por
+quiescencia, `explicit_advances` llamadas a `advance` completadas y `settles`
+llamadas a `settle` completadas. Visitar varios deadlines dentro de una llamada
+explícita no aumenta `automatic_advances`. Un dominio interior rechazado por
+`P2004` nunca fue creado y no añade descriptor.
 
 ### 15.2 Orden y estabilidad
 
@@ -2228,6 +2499,8 @@ formato.
   `execution_plan` de unidad conserva el orden relativo del plan inicial.
 - `attempts` se ordena por `index`; no se reordena por status ni por tiempo de
   finalización.
+- `virtual_time` se ordena por `index`; sus contadores y `elapsed_ns` son
+  deterministas para la misma ejecución interna.
 - `owners` conserva el orden textual de su única línea ganadora.
 - Las keys de cada mapa `tags` se ordenan por bytes UTF-8.
 - Keys conocidas se serializan en el orden mostrado por el schema del
@@ -2260,8 +2533,9 @@ formato.
   `round > 0` referencia una unidad reportada mediante `unit`; toda
   participación descrita produce los intentos correspondientes y no existe
   ejecución oculta.
-- Duración, timestamps, PID, número de CPU, paths físicos y direcciones no
-  aparecen en la forma JSON canónica.
+- Duración wall-clock, timestamps reales, PID, número de CPU, paths físicos y
+  direcciones no aparecen en la forma JSON canónica. `virtual_time.elapsed_ns`
+  sí aparece porque es una observación semántica determinista del dominio.
 - Paths de source dentro de descriptors y failures son lógicos.
 
 ### 15.3 Failure y skip
@@ -2411,9 +2685,9 @@ y `--allow-flaky` son inválidos con `--list`.
 
 ### 15.5 Perfil JUnit XML
 
-`--report junit=<path>` genera `tondo-junit-report-0.2/2` como XML 1.0 UTF-8. Es
+`--report junit=<path>` genera `tondo-junit-report-0.2/3` como XML 1.0 UTF-8. Es
 un artefacto operacional para CI, no la fuente normativa ni reproducible del
-resultado: incluye duración wall-clock. El reporte JSON `/5` continúa siendo la
+resultado: incluye duración wall-clock. El reporte JSON `/6` continúa siendo la
 forma canónica y sin pérdida.
 
 El archivo comienza con `<?xml version="1.0" encoding="UTF-8"?>`, no lleva BOM,
@@ -2494,6 +2768,7 @@ tondo.name
 tondo.status
 tondo.decisive_attempt
 tondo.attempts
+tondo.virtual_time
 tondo.source
 tondo.owners
 tondo.synthetic
@@ -2504,11 +2779,16 @@ Arrays, objetos y `null` se codifican como JSON compacto canónico dentro de
 contenido después del escaping XML ordinario. Las properties aparecen en el
 orden listado, sin nombres duplicados; una property no aplicable se omite y una
 aplicable cuyo valor es nulo se conserva como `null`. Los valores de ejecución
-son los mismos del JSON `/5`;
-`tondo.format` vale `tondo-junit-report-0.2/2` y `tondo.json_format` conserva
-`tondo-test-report-0.2/5`. Las properties forman la representación completa de
+son los mismos del JSON `/6`;
+`tondo.format` vale `tondo-junit-report-0.2/3` y `tondo.json_format` conserva
+`tondo-test-report-0.2/6`. Las properties forman la representación completa de
 los campos normativos; los elementos JUnit convencionales proyectan además el
 subconjunto que los consumidores suelen mostrar.
+
+`tondo.virtual_time` contiene el array `virtual_time` del intento decisivo y es
+`[]` cuando ese intento no creó dominios. Los dominios de intentos anteriores
+permanecen además dentro de `tondo.attempts`; nunca se suman como si compartieran
+un reloj. La property no cambia el atributo JUnit `time`.
 
 En un hijo `failure` o `error` de un fallo agregado, el atributo `type` usa
 `failure.code` del intento decisivo si existe y `failure.kind` en otro caso;
@@ -2582,9 +2862,9 @@ Una implementación de esta extensión debe publicar una suite distinta a
    archivos.
 6. Capturas válidas `let: Copy + Send + Share` y rechazo de `var`, préstamos,
    valores afines y obligaciones terminales.
-7. Las cuatro firmas exactas y test-only de `std.testing`, rechazo desde
-   producción y ausencia de `TestContext`, `currentTest()` o identidad
-   observable.
+7. Las firmas exactas y test-only del núcleo `std.testing`, incluido
+   `VirtualTime`, rechazo desde producción y ausencia de `TestContext`,
+   `currentTest()` o identidad observable.
 8. Envelope no falsificable, propagación por helpers/closures/tasks
    estructuradas, aislamiento paralelo y rechazo verifier de operaciones
    forjadas.
@@ -2623,10 +2903,10 @@ Una implementación de esta extensión debe publicar una suite distinta a
 29. Captura separada de logs/stdout/stderr para suites y tests.
 30. Parsing y combinaciones de CLI, formatos stdout, reportes repetibles,
     colisiones de paths, publicación atómica por archivo y exit `3`.
-31. Reportes `tondo-test-report-0.2/5` y `tondo-test-list-0.2/5`, ownership,
+31. Reportes `tondo-test-report-0.2/6` y `tondo-test-list-0.2/5`, ownership,
     shard, order, tags, intentos, retry, `execution_plan`, invariantes de
     summary, skips, bloqueos y rechazo de schema inválido.
-32. Perfil `tondo-junit-report-0.2/2`, mapeo de estados, lifecycle sintético,
+32. Perfil `tondo-junit-report-0.2/3`, mapeo de estados, lifecycle sintético,
     properties, streams, duración operacional, conteos y equivalencia con la
     misma ejecución JSON.
 33. Targets y capabilities distintos.
@@ -2650,6 +2930,22 @@ Una implementación de esta extensión debe publicar una suite distinta a
     sintéticos únicos, `tondo.retry`, `tondo.decisive_attempt`,
     `tondo.attempts`, streams decisivos, conteos por identidad y policy
     `--allow-flaky`.
+41. Contrato temporal mínimo de producción compartido, body
+    `CallOnce[async fn(ref VirtualTime)]`, propagación exacta de `E`, préstamo
+    no escapable, identidad/mismatch entre proveedores, ausencia de `Clock`
+    inyectado y rechazo desde producción.
+42. Herencia del dominio por tasks estructuradas, cola ready y empates de timers
+    deterministas, avance automático solo bajo quiescencia durable y catálogo
+    que excluye esperas externas.
+43. `settle` sin avance, `advance` exacto/cero/múltiples deadlines, salto
+    automático, varios dominios secuenciales, rechazo de solapamiento `P2004`,
+    deadlock `P2003` y rango/overflow `P2005`.
+44. Separación entre tiempo monotónico virtual y calendario/I/O real, timeout
+    wall-clock, resource limits, cancelación, pánico, skip, errores y cleanup
+    durante creación, ejecución y desmontaje del dominio.
+45. `virtual_time` por intento en JSON `/6`, orden y contadores canónicos,
+    reinicio exacto entre retries, `tondo.virtual_time` en JUnit `/3`, duración
+    JUnit real y equivalencia VM/backend para el mismo corpus temporal.
 
 La VM de referencia y cada backend nativo deben ejecutar las mismas fuentes y
 producir el mismo estado, código de pánico, output y reporte canónico. Duración
@@ -2726,6 +3022,24 @@ test handlesCases {
 }
 ~~~
 
+### Tiempo virtual
+
+~~~tondo
+import std.testing
+
+test expiresAtDeadline {
+    let timeout = operationTimeout()
+
+    await testing.withVirtualTime(async (clock) {
+        scope {
+            let result = spawn operation(timeout)
+            await clock.advance(timeout)
+            assert(await result == OperationOutcome.TimedOut)
+        }
+    })?
+}
+~~~
+
 ### Comandos
 
 ~~~text
@@ -2752,7 +3066,9 @@ tondo test \
 
 > `suite` aporta jerarquía y lifecycle léxico; `test` identifica una hoja
 > aislada. `std.testing` controla y anota el nodo mediante un envelope
-> estructurado que nunca se expone como valor. Ownership, sharding, orden y
-> reportes son políticas reproducibles del runner; glob selecciona sin depender
-> del host y cada retry explícito obtiene una frontera nueva sin ocultar
-> flakiness. El resto del código continúa siendo Tondo ordinario.
+> estructurado que nunca se expone como valor y puede abrir un dominio temporal
+> prestado, determinista y opt-in sobre las APIs de producción. Ownership,
+> sharding, orden y reportes son políticas reproducibles del runner; glob
+> selecciona sin depender del host y cada retry explícito obtiene una frontera
+> y un reloj nuevos sin ocultar flakiness. El resto del código continúa siendo
+> Tondo ordinario.

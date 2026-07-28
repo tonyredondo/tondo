@@ -2,9 +2,9 @@
 
 **Estado:** M10 y Gate G5 cerrados; M10.5 es el siguiente milestone
 
-**Versión del tracker:** 0.88
+**Versión del tracker:** 0.89
 
-**Última actualización:** 2026-07-28
+**Última actualización:** 2026-07-29
 
 **Especificaciones normativas:**
 
@@ -12,10 +12,11 @@
 - [Extensión de testing para Tondo 0.2](./TONDO_TESTING_SPEC.md)
 
 **Objetivo inmediato:** endurecer Tondo 0.1 mediante M10.5 antes de ampliar su
-superficie pública. Después se implementa M10.6 contra la extensión normativa
-de testing, se especifican e implementan Core + Hosted Standard Library 0.1 y
-solo entonces comienza M11 con NATIVE-001. La VM permanece como implementación
-de referencia y oracle diferencial del futuro backend nativo.
+superficie pública. Después se fija e implementa el sustrato temporal mínimo de
+producción de STD-0.1, se implementa M10.6 contra la extensión normativa de
+testing, se completa Core + Hosted Standard Library 0.1 y solo entonces comienza
+M11 con NATIVE-001. La VM permanece como implementación de referencia y oracle
+diferencial del futuro backend nativo.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -240,13 +241,15 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   por `defer`; `test` es siempre una hoja. Mantiene Tondo 0.1 y
   `tondo-conformance-0.1` inmutables, separa unit overlays de integration roots
   y fija árbol/identidad, capturas `Copy + Send + Share`, envelope estructurado,
-  `std.testing.log/tags/failNow/skip`, inferencia de error/async, aislamiento,
+  `std.testing.log/tags/failNow/skip/withVirtualTime`, inferencia de error/async,
+  aislamiento,
   selección substring/glob/exact, ownership por CODEOWNERS, sharding, orden
-  aleatorio reproducible, retries explícitos en workers nuevos, límites, output,
-  exit status, reportes `tondo-test-report-0.2/5`,
-  `tondo-test-list-0.2/5` y `tondo-junit-report-0.2/2`. No se introducen
-  `TestContext`, attributes, clases, reflection, registro runtime, hooks,
-  selección regex o por tags runtime ni retries implícitos.
+  aleatorio reproducible, retries explícitos en workers nuevos, tiempo virtual
+  opt-in sobre la API monotónica de producción, límites, output, exit status,
+  reportes `tondo-test-report-0.2/6`, `tondo-test-list-0.2/5` y
+  `tondo-junit-report-0.2/3`. No se introducen `TestContext`, attributes, clases,
+  reflection, registro runtime, hooks, selección regex o por tags runtime,
+  retries implícitos ni un reloj exclusivo de testing.
 
 ### 3.3 Estructura inicial recomendada
 
@@ -306,7 +309,7 @@ necesaria; la fragmentación del workspace no.
 | **M10 — Conformidad y release** | Gate G5: Tondo 0.1 | Completado |
 | **M10.5 — Reliability y testing** | Infraestructura de evidencia continua | Siguiente |
 | **M10.6 — Testing de usuario y edición 0.2** | Gate T0: `tondo test` conforme | Especificado; implementación pendiente |
-| **STD-0.1 — Core + Hosted Standard Library** | API estándar mínima utilizable | Pendiente |
+| **STD-0.1 — Core + Hosted Standard Library** | API estándar mínima; su sustrato temporal precede T0 | Pendiente |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.2 — Concurrency + Application Standard Library** | Ecosistema estándar ampliado | Futuro |
 
@@ -319,7 +322,7 @@ Estado observado del workspace:
   `tondo-reference-adapter` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
-- Última validación: 2026-07-28, con formatter check, `cargo check` de todos los
+- Última validación: 2026-07-29, con formatter check, `cargo check` de todos los
   targets, Clippy con warnings denegados, 685 tests, Rustdoc con warnings
   denegados y metadatos locked. La suite oficial pasa 205 casos y 424
   repeticiones byte-estables.
@@ -328,9 +331,9 @@ Estado observado del workspace:
 
 ~~~text
 M0 -> M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10
-  -> M10.5 -> M10.6 -> STD-0.1 -> M11 -> STD-0.2
-       \________________________________________/
-            testing y conformidad continuos
+  -> M10.5 -> STD-0.1/time-base -> M10.6 -> STD-0.1/resto -> M11 -> STD-0.2
+       \_____________________________________________________/
+                  testing y conformidad continuos
 ~~~
 
 M4, M5 y M6 pueden investigarse conjuntamente, pero deben integrarse en ese
@@ -339,12 +342,15 @@ incompatible con ownership.
 
 M10.5 es una fase acotada de infraestructura y clasificación, no una pausa
 indefinida para perseguir un número arbitrario de tests. Su gate debe existir
-antes de ampliar sintaxis. M10.6 implementa después la extensión de testing sin
-reescribir Tondo 0.1 y proporciona `tondo test` para probar la propia stdlib.
-Cada API de STD-0.1 amplía la matriz generativa y de conformidad y añade
-evidencia escrita en Tondo. M11 depende de Gate T0 y STD-0.1 porque el backend
-nativo debe implementar una frontera runtime ya especificada y compararse byte
-a byte con la VM sobre programas reales. STD-0.2 no bloquea M11.
+antes de ampliar sintaxis. Tras H0, STD-0.1 abre únicamente el slice de
+`Duration`, `Instant` monotónico, suspensión, timers y deadlines que M10.6
+necesita para virtualizar la API real; calendario civil y el resto de la stdlib
+no se adelantan. M10.6 implementa después la extensión de testing sin reescribir
+Tondo 0.1 y proporciona `tondo test` para completar y probar la propia stdlib.
+Cada API posterior de STD-0.1 amplía la matriz generativa y de conformidad y
+añade evidencia escrita en Tondo. M11 depende de Gate T0 y STD-0.1 porque el
+backend nativo debe implementar una frontera runtime ya especificada y
+compararse byte a byte con la VM sobre programas reales. STD-0.2 no bloquea M11.
 
 ### 4.2 Mapa de cobertura del spec
 
@@ -375,7 +381,7 @@ entre dos subsistemas:
 | 24. Ejemplos integrados | Tests de aceptación progresivos | G2, G3, G4 y M10 |
 | 25. Características ausentes | Compile-fail distribuido por milestone | M10 |
 | 26. Frontera con la stdlib | M6, M8, STD-0.1 y STD-0.2 | G3, G4, M10 y gates STD |
-| Extensión de testing Tondo 0.2 | M10.6; helpers en STD-0.1 | T0 y S1 |
+| Extensión de testing Tondo 0.2 | Time-base de STD-0.1 + M10.6; helpers en resto de STD-0.1 | T0 y S1 |
 
 ---
 
@@ -2335,14 +2341,17 @@ jerarquía y lifecycle compartido, unit tests con acceso privado controlado,
 integration tests contra API pública, control y metadata sellados de
 log/tags/fallo/skip sin contexto visible, ownership resuelto desde CODEOWNERS,
 selección glob portable, sharding estable, orden aleatorio reproducible, retries
-explícitos y aislados con historial honesto y reportes JSON/JUnit desde una sola
-invocación. El runner resultante puede utilizarse para construir y validar la
-stdlib.
+explícitos y aislados con historial honesto, tiempo virtual opt-in sobre las
+APIs monotónicas de producción y reportes JSON/JUnit desde una sola invocación.
+El runner resultante puede utilizarse para completar y validar la stdlib.
 
-**Dependencia:** la implementación comienza únicamente después de Gate H0. El
-diseño queda fijado antes para que inventario, matriz normativa y CI conozcan el
-próximo contrato, pero no se añade token, parser path, feature flag ni extensión
-privada mientras H0 permanezca abierto.
+**Dependencia:** la implementación comienza únicamente después de Gate H0 y de
+`STD-TIME-BASE-SPEC-001`, `STD-TIME-BASE-IMPL-001` y
+`STD-TIME-BASE-CONF-001`. El diseño queda fijado antes para que inventario,
+matriz normativa y CI conozcan el próximo contrato, pero no se añade token,
+parser path, feature flag ni extensión privada mientras H0 permanezca abierto.
+El slice temporal es API de producción de STD-0.1, no un shim privado del
+runner.
 
 **Compatibilidad:** `TONDO_LANGUAGE_SPEC.md`, su hash normativo y
 `tondo-conformance-0.1` permanecen inmutables. Ningún binario puede aceptar
@@ -2354,10 +2363,12 @@ seleccionar la edición 0.2.
 - [x] **UTEST-SPEC-001 — Fijar el contrato normativo de testing.**
   `TONDO_TESTING_SPEC.md` define keywords, grammar, árbol suite/test, formato,
   identidad, source classes, overlays, capturas, lifecycle, envelope,
-  `std.testing.log/tags/failNow/skip`, inferencia, aislamiento, resultados,
+  `std.testing.log/tags/failNow/skip/withVirtualTime`, inferencia, aislamiento,
+  resultados,
   ownership, selección substring/glob/exact, sharding, orden reproducible,
-  retries por rondas y workers nuevos, CLI, JSON/JUnit, stdlib boundary,
-  diagnósticos y conformidad sin depender de una implementación provisional.
+  retries por rondas y workers nuevos, `withVirtualTime`/`settle`/`advance`,
+  quiescencia durable, CLI, JSON/JUnit, stdlib boundary, diagnósticos y
+  conformidad sin depender de una implementación provisional.
 
 - [ ] **UTEST-EDITION-001 — Materializar Tondo 0.2 como edición separada.**
   Consolidar la especificación de lenguaje 0.2, añadir `suite` y `test` a su
@@ -2370,9 +2381,9 @@ seleccionar la edición 0.2.
   Representar exactamente `production`, `unit-test` e `integration-test`,
   dev-dependencies, roots, paths lógicos, raíz de repositorio, inputs
   CODEOWNERS, selector, shard, orden, seed, policy y plan de retry, reporters,
-  target, capabilities y límites. El plan fija bytes/hash de toda entrada y el
-  hash de un artefacto de producción no puede depender de metadata ni fuentes
-  test-only.
+  target, capabilities, catálogo temporal estándar y límites. El plan fija
+  bytes/hash de toda entrada y el hash de un artefacto de producción no puede
+  depender de metadata ni fuentes test-only.
 
 - [ ] **UTEST-DISC-001 — Implementar descubrimiento convencional y explícito.**
   Soportar `_test.to` dentro de production roots y `.to` bajo `tests/`, con la
@@ -2443,8 +2454,11 @@ seleccionar la edición 0.2.
   cerrada `E: Discard`, admitir `fail`, `?`, `await` y `scope` donde corresponda
   y reutilizar todos los checks ordinarios de tipos, ownership, préstamos,
   terminales, `defer`, `Send`, `Share` y `unsafe`. Resolver el módulo test-only
-  `std.testing` con las cuatro firmas exactas, incluido
-  `tags(Map[String, String])`, tipos `Unit`/`Never` y `E2003` al cruzar a
+  `std.testing` con las cuatro operaciones monomórficas exactas de
+  control/metadata, incluido `tags(Map[String, String])`, y el núcleo temporal con
+  `withVirtualTime[E, F: Send + CallOnce[async fn(ref VirtualTime): Unit ! E]]`,
+  `settle` y `advance(Duration)`. Comprobar propagación de `E`, `Unit`/`Never`,
+  opacidad/no escape/no `Share` de `VirtualTime` y `E2003` al cruzar a
   producción.
 
 ### 17.3 Lowering, runtime y CLI
@@ -2452,9 +2466,9 @@ seleccionar la edición 0.2.
 - [ ] **UTEST-LOWER-001 — Bajar entradas de test por el pipeline común.** HIR,
   MIR, bytecode y sus admission verifiers representan árbol/parent, entradas de
   setup, snapshots de entorno, identidad, source span, error, async, cleanup,
-  `TestLog`, `TestTags`, `TestFailNow` y `TestSkip` sin crear un segundo
-  frontend o una ruta de ejecución no verificada. `main` nunca se ejecuta en
-  un test target.
+  `TestLog`, `TestTags`, `TestFailNow`, `TestSkip`, entrada/salida de dominio,
+  `VirtualTimeSettle` y `VirtualTimeAdvance` sin crear un segundo frontend o una
+  ruta de ejecución no verificada. `main` nunca se ejecuta en un test target.
 
 - [ ] **UTEST-CONTROL-001 — Implementar el envelope sellado de ejecución.** Cada
   suite/test recibe node ID, tag/log/stdout/stderr sinks, cancelación y límites
@@ -2467,7 +2481,9 @@ seleccionar la edición 0.2.
   del nodo. Los tags no se heredan entre nodos ni intervienen en
   discovery/selección/sharding/orden. Un skip de hijo marca la entrada completa,
   cancela el resto del scope y se propaga a la task propietaria con la prioridad
-  determinista fijada por el lenguaje.
+  determinista fijada por el lenguaje. El mismo envelope mantiene un registro
+  por intento de dominios virtuales, pero no expone su node ID, sinks o policy al
+  controlador temporal prestado.
 
 - [ ] **UTEST-RUNTIME-001 — Ejecutar cada hoja en una raíz aislada.** Estado,
   roots, heap observable, tasks, handles, pánicos, tags, logs, stdout, stderr,
@@ -2478,7 +2494,9 @@ seleccionar la edición 0.2.
   aislamiento sin fingir que ejecutó `defer`. Exponer un bootstrap de worker que
   pueda crear una VM realmente nueva desde el artefacto inmutable y rastrear
   procesos/recursos de host hasta revocarlos, sin serializar heap, roots ni
-  handles como snapshot reutilizable.
+  handles como snapshot reutilizable. El executor recibe el proveedor monotónico
+  real o virtual mediante una frontera interna única; el bytecode de usuario y
+  las llamadas de `std.time` no cambian entre ambos.
 
 - [ ] **UTEST-SUITE-001 — Implementar lifecycle jerárquico de suite.** Ejecutar
   setup una vez por participación y solo si existe una hoja seleccionada,
@@ -2494,11 +2512,14 @@ seleccionar la edición 0.2.
 - [ ] **UTEST-LIMIT-001 — Hacer límites y timeout terminales reales.** Publicar
   defaults finitos, aplicar `--timeout` por hoja y por fase setup/teardown sin
   contar la espera de descendientes, cargar tags/logs/stdout/stderr al mismo
-  presupuesto de output, aplicar el delta de tags sin cambios parciales,
-  registrar valores efectivos y garantizar que una entrada no cooperativa no
-  continúa tras `timeout`. Cada intento obtiene presupuestos nuevos bajo el
-  mismo resource profile; OOM, abort o pérdida de aislamiento nunca se presentan
-  como assertion failure ordinario.
+  presupuesto de output, y dominios/timers/cola/descriptores virtuales a
+  presupuestos finitos de trabajo, memoria y metadata. Aplicar el delta de tags
+  sin cambios parciales, registrar valores efectivos y garantizar que una
+  entrada no cooperativa no continúa tras `timeout`. Cada intento obtiene
+  presupuestos nuevos bajo el mismo resource profile; timeout,
+  CPU/instrucciones, memoria y output siempre usan recursos reales aunque el
+  intento abra tiempo virtual. OOM, abort o pérdida de aislamiento nunca se
+  presentan como assertion failure ordinario.
 
 - [ ] **UTEST-CLI-001 — Añadir `tondo test`.** Implementar manifest/default
   discovery, `--filter`, `--glob`, `--exact`, `--list`, `--jobs`, `--timeout`,
@@ -2538,7 +2559,26 @@ seleccionar la edición 0.2.
   timing. Jobs explícitos limitan conjuntamente setup/test/teardown; cada
   envelope conserva tags/logs/streams y los arrays finales permanecen canónicos
   y nunca intercalan nodos. El mismo límite global gobierna workers e intentos
-  de todas las rondas de retry.
+  de todas las rondas de retry. Dentro de un dominio virtual, usar una cola
+  determinista por secuencia de creación/wake y ordenar timers empatados por
+  creación sin cambiar el scheduler de producción fuera de tests.
+
+- [ ] **UTEST-VTIME-001 — Implementar tiempo virtual determinista sobre la API
+  de producción.** Ejecutar `withVirtualTime` como `CallOnce` async bajo un
+  dominio por intento/fase; prestar `ref VirtualTime`, prohibir escape y todo
+  solapamiento dentro del mismo envelope y desmontar siempre tras retorno, error,
+  pánico, skip o cancelación.
+  `settle` conduce hasta quiescencia durable sin mover tiempo; `advance` exige
+  duración no negativa, visita deadlines hasta un target exacto y no lo
+  sobrepasa. El avance automático salta al próximo timer solo cuando raíz y
+  tasks están duraderamente bloqueadas; el catálogo incluye timers, joins y
+  sincronización enteramente local y excluye filesystem, red, procesos,
+  syscalls, reloj civil y callbacks externos. Implementar cola/timer ties
+  deterministas, cero, múltiples dominios secuenciales, `P2003` deadlock,
+  `P2004` solapamiento y `P2005` rango/overflow. Mantener timeout y límites reales,
+  y probar instantes/deadlines de otro dominio, backoff, debounce, deadline,
+  cancelación, reprogramación infinita/livelock, espera externa y cleanup sin
+  pausas wall-clock.
 
 - [ ] **UTEST-RETRY-001 — Implementar retries explícitos y sin estado
   heredado.** Parsear `--retry N` con default cero y máximo finito; ejecutar la
@@ -2554,37 +2594,41 @@ seleccionar la edición 0.2.
   annotations, ni reintroducir esos terminales indirectamente desde un agregado
   previo. Preservar todos los intentos con referencia de ronda/unidad, derivar
   intento decisivo y `flaky-pass`; este último falla por default y
-  `--allow-flaky` solo cambia policy de salida.
+  `--allow-flaky` solo cambia policy de salida. Cada worker empieza sin dominios
+  y cada dominio vuelve al mismo cero virtual, sin heredar timers, task order,
+  contadores ni tiempo avanzado.
 
 - [ ] **UTEST-REPORT-001 — Implementar los formatos machine-readable.**
-  Serializar `tondo-test-report-0.2/5` y `tondo-test-list-0.2/5` con arrays
+  Serializar `tondo-test-report-0.2/6` y `tondo-test-list-0.2/5` con arrays
   separados de suites/tests, parents, source, owners, paths, estado agregado,
   intento decisivo e historial por intento de phase, `blocked_by` causal,
-  ronda/unidad, `failure`, `skip`, tags, logs y streams. Incluir policy,
-  ownership, selector incluido glob, shard, order, seed, algoritmos,
-  `execution_plan`, plan/rondas de retry, resource profile y las invariantes
-  exactas de summary/attempts. No incluir reloj, duración, PID, paths físicos ni
-  direcciones.
+  ronda/unidad, `failure`, `skip`, tags, dominios `virtual_time`, logs y streams.
+  Incluir por dominio índice, `elapsed_ns` decimal sin pérdida y contadores de
+  avance automático/explícito/settle; incluir además policy, ownership, selector
+  incluido glob, shard, order, seed, algoritmos, `execution_plan`, plan/rondas de
+  retry, resource profile y las invariantes exactas de summary/attempts. No
+  incluir reloj o duración wall-clock, PID, paths físicos ni direcciones.
   `--test-format json` y `--report json=path` producen bytes idénticos para la
   misma ejecución. Fallos de compilación continúan usando diagnostics
   estructurados, no consumen intentos y no ejecutan setup ni bodies.
 
 - [ ] **UTEST-JUNIT-001 — Exportar JUnit desde el resultado normativo.**
-  Proyectar la misma ejecución como `tondo-junit-report-0.2/2`, XML 1.0 UTF-8,
+  Proyectar la misma ejecución como `tondo-junit-report-0.2/3`, XML 1.0 UTF-8,
   con un testcase agregado por hoja, testcases sintéticos únicos para fallos de
   lifecycle y flaky suite, y
   `tondo.retry/decisive_attempt/attempts`. Mapear `flaky-pass` a failure por
   default y omitir solo ese outcome bajo `--allow-flaky`, sin cambiar identidad,
   conteo ni historial; proyectar streams decisivos, scalars no representables,
-  carrier vacío, owners, shard, order, seed, conteos por identidad y duración
-  sumada por intentos. Publicar cada path atómicamente, rechazar colisiones y
-  mantener JSON como representación canónica y sin pérdida.
+  carrier vacío, owners, shard, order, seed, `tondo.virtual_time`, conteos por
+  identidad y duración real sumada por intentos. Publicar cada path
+  atómicamente, rechazar colisiones y mantener JSON como representación
+  canónica y sin pérdida.
 
 ### 17.4 Evidencia, conformidad y dogfooding
 
 - [ ] **UTEST-CONF-001 — Crear una suite de conformidad Tondo 0.2 nueva.** No
   mutar manifests, cases, hashes ni observations de 0.1. La suite 0.2 cubre los
-  cuarenta grupos mínimos enumerados por la spec de testing y tiene
+  cuarenta y cinco grupos mínimos enumerados por la spec de testing y tiene
   adaptador público para VM y futuros backends.
 
 - [ ] **UTEST-PROJECTS-001 — Añadir proyectos de aceptación completos.**
@@ -2595,16 +2639,17 @@ seleccionar la edición 0.2.
   `blocked-skip`, `P2001`, deny-skips, pánico/cleanup, host capabilities,
   CODEOWNERS, substring/glob/exact, selección vacía, shards, orden/seed,
   retries de hoja/setup/teardown, aislamiento externo idempotente,
-  `flaky-pass`/allow-flaky y reporters JSON/JUnit. Cada proyecto debe poder
-  ejecutarse desde una copia en otro path físico con observaciones canónicas
-  iguales salvo duración JUnit.
+  `flaky-pass`/allow-flaky, backoff/deadline/debounce con tiempo virtual,
+  quiescencia, deadlock/solapamiento/rango y reporters JSON/JUnit. Cada proyecto
+  debe poder ejecutarse desde una copia en otro path físico con observaciones
+  canónicas iguales salvo duración JUnit.
 
 - [ ] **UTEST-PLATFORM-001 — Validar la matriz publicada.** Linux ejecuta el
   gate canónico completo; Linux ARM64, macOS Intel/ARM64 y Windows ejecutan
   discovery, paths jerárquicos, substring/glob/exact de suite/test, lifecycle,
   envelopes, tags/logs/skips, CODEOWNERS, sharding, orden/seed, workers nuevos
-  de retry, aislamiento, timeout, captura y reportes JSON/JUnit aplicables
-  además del smoke test de binario.
+  de retry, reloj virtual y ties de timers deterministas, aislamiento, timeout,
+  captura y reportes JSON/JUnit aplicables además del smoke test de binario.
 
 - [ ] **UTEST-DOGFOOD-001 — Probar componentes Tondo mediante `tondo test`.**
   Antes de Gate T0, mantener una pequeña biblioteca de aceptación escrita en
@@ -2613,9 +2658,11 @@ seleccionar la edición 0.2.
   `failNow`/skip en casos de aceptación controlados y ejecutar el mismo corpus
   repartido en shards con seed registrada y un retry aislado determinista que
   ejercite `flaky-pass` mediante una fixture externa controlada, sin depender de
-  timing y con cleanup final verificable. Debe producir reportes JSON/JUnit. No
-  sustituye los tests Rust ni la conformidad; demuestra que la experiencia
-  pública funciona sin harness privado.
+  timing y con cleanup final verificable. Debe probar además una API de
+  producción con backoff o deadline mediante `withVirtualTime`, sin pausas
+  reales, y producir reportes JSON/JUnit con tiempo virtual separado de duración
+  operacional. No sustituye los tests Rust ni la conformidad; demuestra que la
+  experiencia pública funciona sin harness privado.
 
 ### Gate T0 — Testing first-class conforme
 
@@ -2639,6 +2686,12 @@ seleccionar la edición 0.2.
 - [ ] Retorno, error, `assert`, `failNow`, skip, pánico, async, cancelación,
   ownership y `defer` conservan cleanup y precedencia; `P2001`, resource limits
   y timeout no esconden cleanup de usuario no observado ni rompen aislamiento.
+- [ ] `Duration`, `Instant`, suspensión, timers y deadlines usan el sustrato
+  monotónico de producción; `withVirtualTime` lo sustituye solo dentro de su
+  closure, presta un controlador no escapable y conserva el timeout real.
+- [ ] Quiescencia durable, `settle`, avance explícito/automático, cola y ties de
+  timers son deterministas; esperas externas no se virtualizan y `P2003`,
+  `P2004` y `P2005` conservan sus condiciones exactas.
 - [ ] `tondo test` implementa discovery, compilación completa, selección,
   substring/glob/exact de suite/test, CODEOWNERS, sharding estable, orden/seed,
   ejecución serial/paralela, retries aislados por rondas, captura, reporters,
@@ -2647,12 +2700,12 @@ seleccionar la edición 0.2.
 - [ ] Cada retry reutiliza solo el artefacto inmutable, arranca un worker nuevo,
   conserva shard/configuración, respeta el máximo global de jobs y deja
   procesos, recursos rastreados, heap, roots, tasks, handles, envelopes y
-  buffers sin supervivientes.
-- [ ] El reporte JSON `/5` es canónico y reproducible, conserva todos los
-  intentos y no agrega `flaky-pass` como `passed`; JUnit `/2` proyecta la misma
-  ejecución y policy con duración operacional. La salida humana no intercala
-  suites/tests o intentos y muestra owners, tags, logs, razones y fallos
-  accionables.
+  buffers sin supervivientes; cada dominio virtual vuelve al mismo cero.
+- [ ] El reporte JSON `/6` es canónico y reproducible, conserva todos los
+  intentos y sus dominios y no agrega `flaky-pass` como `passed`; JUnit `/3`
+  proyecta la misma ejecución y policy con duración operacional real y tiempo
+  virtual separado. La salida humana no intercala suites/tests o intentos y
+  muestra owners, tags, tiempo virtual, logs, razones y fallos accionables.
 - [ ] La suite Tondo 0.2 pasa en la VM y la matriz de plataformas aplicable está
   verde.
 - [ ] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
@@ -2668,19 +2721,34 @@ sobre la VM antes de fijar decisiones del runtime nativo. La especificación de
 la stdlib es independiente de la especificación del lenguaje; una API
 ilustrativa no se vuelve pública por aparecer en un ejemplo.
 
-**Dependencia:** no comienza implementación pública hasta cerrar Gates H0 y T0.
-El diseño puede investigarse antes, pero ninguna firma se congela ni distribuye
-como estable sin sus modelos, tests y contrato de capability. La única excepción
-es el núcleo test-only `std.testing.log/tags/failNow/skip`, cuyas firmas y
-bridge quedan fijados y ejecutables en T0 porque forman parte del contrato del
-runner. STD-0.1 amplía ese mismo módulo; no crea un segundo harness.
+**Dependencia:** tras Gate H0 se ejecutan únicamente
+`STD-TIME-BASE-SPEC-001`, `STD-TIME-BASE-IMPL-001` y
+`STD-TIME-BASE-CONF-001`, porque Gate T0 necesita probar la API temporal real.
+El resto de la implementación pública comienza después de T0. Ninguna firma se
+congela ni distribuye como estable sin modelos, tests y contrato de capability.
+El otro slice temprano es el núcleo test-only
+`std.testing.log/tags/failNow/skip/withVirtualTime`, cuyas firmas y bridge quedan
+fijados y ejecutables en T0 porque forman parte del contrato del runner.
+STD-0.1 completa esos mismos módulos; no crea un reloj ni harness paralelos.
 
 ### 18.1 Contrato y distribución
 
-- [ ] **STD-SPEC-001 — Crear `TONDO_STANDARD_LIBRARY_SPEC.md`.** Fijar versión,
+- [ ] **STD-TIME-BASE-SPEC-001 — Abrir la especificación estándar con el
+  sustrato temporal mínimo.** Fijar `Duration` portable con quantum de
+  nanosegundo y overflow explícito, `Instant` monotónico, consulta del instante,
+  suspensión, timer one-shot y deadline; declarar ownership, resolución,
+  identidad opaca de proveedor, rechazo de mezcla entre dominios, cancelación,
+  puntos de suspensión, capability y disponibilidad por target. Versionar los
+  módulos/bytes mínimos y su hash dentro del plan cerrado para que M10.6 no
+  dependa de un bridge ambiental o no distribuible.
+  Separar estrictamente calendario/reloj civil y dejarlo para STD-0.2. Esta tarea
+  se ejecuta tras H0 y antes de M10.6 para que testing virtualice producción, no
+  una API provisional.
+
+- [ ] **STD-SPEC-001 — Completar `TONDO_STANDARD_LIBRARY_SPEC.md`.** Fijar versión,
   módulos, firmas, tipos de error, ownership, complejidad, orden, Unicode,
   bloqueo/suspensión, cancelación, capabilities, disponibilidad por target y
-  ejemplos verificables.
+  ejemplos verificables, preservando el sustrato temporal ya cerrado.
 
 - [ ] **STD-MOD-001 — Definir módulos y prelude mínimo.** Imports y nombres
   implícitos deben ser cerrados, deterministas y compatibles con los
@@ -2727,10 +2795,20 @@ runner. STD-0.1 amplía ese mismo módulo; no crea un segundo harness.
   de Option/Result, recursos temporales, snapshots y datos generados que entren
   realmente en 0.1. Cada API declara tipos, ownership, cleanup, formato, seed,
   actualización, capabilities y límites; reutiliza sin alterar
-  `log/tags/failNow/skip`, no registra tests, no interpreta tags runtime como
-  selectores ni captura pánicos como excepciones recuperables.
+  `log/tags/failNow/skip/withVirtualTime`, `VirtualTime.settle/advance` ni sus
+  diagnósticos, no registra tests, no interpreta tags runtime como selectores ni
+  captura pánicos como excepciones recuperables.
 
 ### 18.3 Hosted Standard Library
+
+- [ ] **STD-TIME-BASE-IMPL-001 — Implementar el proveedor monotónico
+  intercambiable.** `std.time` usa una única frontera interna para proveedor real
+  y virtual; la VM implementa consulta, suspensión, timer y deadline sin que el
+  bytecode de usuario conozca cuál se seleccionó. El proveedor real usa reloj
+  monotónico del target, respeta cancelación y nunca consulta calendario. El
+  virtual solo puede seleccionarlo el dominio sellado de testing y no concede
+  capabilities adicionales. Esta tarea se ejecuta tras
+  `STD-TIME-BASE-SPEC-001` y antes de `UTEST-VTIME-001`.
 
 - [ ] **STD-CONSOLE-001 — Consolidar consola y streams.** Fijar stdout, stderr,
   entrada, flushing, texto/binario, errores y comportamiento async sin asumir
@@ -2753,6 +2831,15 @@ runner. STD-0.1 amplía ese mismo módulo; no crea un segundo harness.
   explícito y cancelación a una API versionada que preserve argv exacto.
 
 ### 18.4 Implementación y evidencia
+
+- [ ] **STD-TIME-BASE-CONF-001 — Cerrar la evidencia del sustrato temporal.**
+  Añadir modelos de suma/comparación/overflow de `Duration` e `Instant`, tests de
+  identidad/mismatch de proveedor, suspensión, deadline, cancelación, empates de
+  timers y disponibilidad por capability. Ejecutar el mismo corpus contra
+  proveedor real con tolerancias operacionales explícitas y proveedor virtual
+  con observaciones exactas; no usar sleeps reales para verificar el segundo.
+  Antes de T0 usa el harness/adaptador público existente; después se vuelve a
+  ejecutar mediante `tondo test` como parte de S1. Debe pasar antes de Gate T0.
 
 - [ ] **STD-IMPL-001 — Implementar Core en Tondo cuando sea posible.** Solo las
   operaciones intrínsecas o dependientes del host permanecen privilegiadas;
@@ -2787,6 +2874,9 @@ runner. STD-0.1 amplía ese mismo módulo; no crea un segundo harness.
 
 - [ ] La spec estándar fija todas las firmas Core + Hosted incluidas en 0.1 y
   clasifica explícitamente lo diferido a STD-0.2.
+- [ ] El sustrato monotónico de `Duration`, `Instant`, suspensión, timers y
+  deadlines es único para producción/testing, está modelado y funciona con
+  proveedor real o virtual sin cambiar bytecode de usuario.
 - [ ] Core se ejecuta sobre la VM sin depender de una ABI nativa.
 - [ ] Cada API hosted exige la capability correcta y conserva los claims del
   target Tondo 0.1.0 ya publicado.
@@ -2920,9 +3010,11 @@ capabilities, documentación y conformidad.
   no crea un segundo modelo async ni permite que trabajo host bloquee el
   progreso de tasks Tondo.
 
-- [ ] **STD-TIME-001 — Especificar tiempo y timers.** Separar reloj monotónico y
-  civil, declarar resolución, overflow, timezone data, suspensión y
-  cancelación; compilación continúa sin consultar reloj.
+- [ ] **STD-CIVIL-TIME-001 — Ampliar tiempo con calendario civil.** Añadir
+  `Date`, `Time`, `DateTime`, zonas horarias, reglas/versionado de timezone data
+  y conversión explícita respecto al sustrato monotónico ya publicado. No
+  duplicar `Duration`, `Instant`, suspensión, timers ni deadlines y no hacer que
+  compilación consulte reloj.
 
 ### 20.2 Aplicación y datos
 
@@ -3050,12 +3142,14 @@ Orden recomendado:
 
 1. **Bootstrap host shim:** `std.console.print`, únicamente para ejecutar los
    primeros programas.
-2. **Core stdlib spec:** métodos exactos de `String`, `Array`, `Map`, `Set`,
+2. **Time-base spec:** `Duration`, `Instant` monotónico, suspensión, timers y
+   deadlines compartidos por producción y testing.
+3. **Core stdlib spec:** métodos exactos de `String`, `Array`, `Map`, `Set`,
    `Range`, iterators, formatting, `Bytes` y helpers portables de testing.
-3. **Hosted stdlib spec:** consola, environment, paths, filesystem y procesos.
-4. **Concurrency stdlib spec:** channels, mutexes, atomics, actors y pools.
-5. **Application stdlib:** time, networking, codecs, JSON, regex, UUID y
-   logging.
+4. **Hosted stdlib spec:** consola, environment, paths, filesystem y procesos.
+5. **Concurrency stdlib spec:** channels, mutexes, atomics, actors y pools.
+6. **Application stdlib:** calendario civil, networking, codecs, JSON, regex,
+   UUID y logging.
 
 Los nombres ilustrativos del spec del lenguaje no deben implementarse como API
 pública definitiva hasta ser fijados por la especificación estándar.
@@ -3087,17 +3181,19 @@ pública definitiva hasta ser fijados por la especificación estándar.
 | `R-019` | Convertir la stdlib 0.1 en un proyecto ilimitado | El backend queda bloqueado por APIs de aplicación no esenciales | STD-0.1 contiene solo Core + Hosted; Concurrency/Application quedan en STD-0.2 |
 | `R-020` | Añadir `suite`/`test` retroactivamente a la edición publicada | Rompe identificadores válidos, hashes y conformidad 0.1 | Keywords exclusivas de 0.2, spec y conformidad nuevas; 0.1 permanece inmutable |
 | `R-021` | Permitir que unit tests cambien la compilación de producción | Código solo correcto bajo test y artefactos distintos | Unidad production sellada antes del overlay y comparación exacta de productos |
-| `R-022` | Ocultar flakiness mediante paralelismo o retries | Suites verdes no reproducibles | Una ejecución por default; retries explícitos, historial completo y `flaky-pass` rojo salvo `--allow-flaky`; orden/seed/paralelismo reportados |
+| `R-022` | Ocultar flakiness mediante paralelismo o retries | Suites verdes no reproducibles | Tiempo virtual para causalidad temporal; una ejecución por default; retries explícitos, historial completo y `flaky-pass` rojo salvo `--allow-flaky`; orden/seed/paralelismo reportados |
 | `R-023` | Convertir testing en attributes, reflection, context parameters y hooks especiales | Segundo sublenguaje con boilerplate y semántica oculta | Dos roles canónicos: `suite` contenedor y `test` hoja; envelope sellado sin valor visible; helpers, fixtures y doubles como Tondo/stdlib ordinarios |
 | `R-024` | Convertir suites en globals mutables u orden implícito | Data races, tests dependientes y resultados distintos bajo `--exact` | Capturas `let: Copy + Send + Share`, ownership del recurso en la suite, sin dependencias ni orden semántico entre hojas y lifecycle reportado |
 | `R-025` | Implementar logs/control con un global o thread-local | Eventos atribuidos al test incorrecto bajo async, migración o paralelismo | Envelope por raíz que sigue frames/tasks; operaciones selladas y revalidadas por HIR/MIR/bytecode |
 | `R-026` | Permitir que skips escondan regresiones o cleanup fallido | CI verde con cobertura real ausente o recursos sin cerrar | Razón obligatoria, sin ignored estático, cleanup antes de confirmar, fallo con precedencia y `--deny-skips` |
 | `R-027` | Usar tags runtime como autoridad de discovery o scheduling | Ejecutar el body cambia qué tests existen, el shard o su orden | Tags solo en el envelope posterior al dispatch; selección, ownership, sharding y orden usan metadata estática |
 | `R-028` | Particionar u ordenar mediante hashes o iteration order del host | Shards solapados, huecos y seeds que no reproducen entre plataformas | Algoritmos versionados sobre IDs UTF-8, vectores de conformidad y `execution_plan` reportado |
-| `R-029` | Tratar JUnit como representación normativa sin pérdida | Consumidores CI descartan jerarquía, metadata o estados Tondo | JSON `/5` es canónico; JUnit `/2` es una proyección versionada de la misma ejecución y CI puede emitir ambos |
+| `R-029` | Tratar JUnit como representación normativa sin pérdida | Consumidores CI descartan jerarquía, metadata o estados Tondo | JSON `/6` es canónico; JUnit `/3` es una proyección versionada de la misma ejecución y CI puede emitir ambos |
 | `R-030` | Reintentar dentro del mismo runtime o restaurar una fixture parcial | Un intento pasa por heap, tasks, handles o buffers heredados y no confirma flakiness real | Worker nuevo por unidad; solo artefacto inmutable reutilizable; recursos rastreados revocados antes de completar |
 | `R-031` | Tratar un éxito posterior como pass ordinario | CI verde oculta una regresión intermitente y pierde la evidencia inicial | Estado `flaky-pass`, todos los intentos en JSON/JUnit y exit `1` por default; `--allow-flaky` es policy explícita |
 | `R-032` | Añadir regex o delegar globs al host | Dialectos, expansión accidental, complejidad no acotada y selección distinta por plataforma | Un glob propio de match completo con `*`/`?`/`**`, gramática cerrada, DP acotada y vectores multiplataforma |
+| `R-033` | Crear un reloj o `Duration` exclusivo de testing | Los tests validan otra API y la semántica diverge de producción | Time-base de STD-0.1 antes de T0; mismo bytecode y frontera monotónica con proveedor real o virtual |
+| `R-034` | Tratar I/O externo o timeout del runner como tiempo virtualizable | Saltos prematuros, hangs o tests instantáneos que fallan en producción | Catálogo cerrado de bloqueo durable; I/O/civil continúan reales y timeout/límites siempre usan recursos reales |
 
 ---
 
@@ -3127,12 +3223,14 @@ M4 sin adelantar trabajo de ownership o async.
     en evidencia continua.
 17. [ ] Añadir generadores, properties, fuzz targets y modelos de M10.5.
 18. [ ] Medir coverage y mutation score, cerrar huecos críticos y superar H0.
-19. [ ] Implementar M10.6 desde **UTEST-EDITION-001** hasta **UTEST-DOGFOOD-001**
-    y superar T0 sin mutar Tondo 0.1.
-20. [ ] Comenzar STD-0.1 por **STD-SPEC-001**, incluida la definición exacta
-    de `std.testing`, nunca por implementación ad hoc.
-21. [ ] Cerrar S1 y comenzar M11 por **NATIVE-001**.
-22. [ ] Cerrar N1 antes de iniciar los módulos de STD-0.2.
+19. [ ] Ejecutar **STD-TIME-BASE-SPEC-001**, **STD-TIME-BASE-IMPL-001** y
+    **STD-TIME-BASE-CONF-001** como único slice temprano de STD-0.1.
+20. [ ] Implementar M10.6 desde **UTEST-EDITION-001** hasta
+    **UTEST-DOGFOOD-001** y superar T0 sin mutar Tondo 0.1.
+21. [ ] Completar STD-0.1 por **STD-SPEC-001**, incluida la definición exacta
+    del resto de `std.testing`, nunca por implementación ad hoc.
+22. [ ] Cerrar S1 y comenzar M11 por **NATIVE-001**.
+23. [ ] Cerrar N1 antes de iniciar los módulos de STD-0.2.
 
 La ruta autorizada siguiente es:
 
@@ -3142,6 +3240,9 @@ TEST-001
   -> CI-TEST-001..004
   -> properties + fuzzing + modelos + métricas
   -> Gate H0
+  -> STD-TIME-BASE-SPEC-001
+  -> STD-TIME-BASE-IMPL-001
+  -> STD-TIME-BASE-CONF-001
   -> UTEST-EDITION-001..UTEST-DOGFOOD-001
   -> Gate T0
   -> STD-SPEC-001
@@ -3150,12 +3251,34 @@ TEST-001
 ~~~
 
 M4, M5, M6, M7, M8, M9, M10 y Gates G4/G5 quedan cerrados. NATIVE-001 deja de
-ser la acción inmediata: M10.6 permanece bloqueado por H0 y M11 por H0, T0 y
-S1. No se inicia STD-0.2 antes de Gate N1.
+ser la acción inmediata: el time-base permanece bloqueado por H0, M10.6 por H0
+y ese time-base, y M11 por H0, T0 y S1. No se inicia STD-0.2 antes de Gate N1.
 
 ---
 
 ## 24. Historial del tracker
+
+### 0.89 — 2026-07-29
+
+- La extensión de testing sube a `0.2-draft.6` y añade tiempo virtual opt-in
+  mediante `testing.withVirtualTime`, un controlador prestado `VirtualTime` y
+  las únicas operaciones `settle`/`advance`; no añade keyword, `TestContext`,
+  flag global ni reloj inyectado en el código probado.
+- El dominio usa la API monotónica de producción, una cola determinista,
+  quiescencia durable, avance automático al próximo timer y avance explícito
+  exacto. I/O, procesos y calendario siguen siendo reales, y timeout/límites del
+  runner nunca usan tiempo virtual.
+- Se fijan `P2003` para deadlock interno, `P2004` para solapamiento y `P2005`
+  para duración/rango inválido. Cada retry empieza en el mismo cero sin timers,
+  secuencias ni contadores heredados.
+- El JSON incompatible sube a `tondo-test-report-0.2/6` e incorpora
+  `virtual_time` por intento; la lista permanece `/5`. JUnit sube a
+  `tondo-junit-report-0.2/3`, conserva duración real y expone
+  `tondo.virtual_time` por separado.
+- STD-0.1 extrae un time-base mínimo de `Duration`, `Instant`, suspensión, timers
+  y deadlines antes de M10.6; calendario civil permanece en STD-0.2. El tracker
+  añade `UTEST-VTIME-001`, tres tareas `STD-TIME-BASE-*`, R-033/R-034 y eleva la
+  conformidad mínima de 40 a 45 grupos.
 
 ### 0.88 — 2026-07-28
 
