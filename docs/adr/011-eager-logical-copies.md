@@ -1,6 +1,6 @@
 # ADR-011: Implement eager logical copies before COW
 
-**Status:** accepted
+**Status:** accepted and fulfilled
 
 ## Context
 
@@ -37,3 +37,16 @@ elements, preserves the deliberate immutable `String` and `Ref[T]` identity
 sharing rules, and allocates a distinct outer `Array`. A `ref` or `mut` slice
 argument is not materialized by this path: it remains a temporary region loan
 over the source array.
+
+## Outcome
+
+OPT-COW-001 measured 33,280 top-level element traversals across 195 read-heavy
+Array, Map, and Set copies. The accepted COW strategy reduces those traversals
+to zero by sharing only representation-safe collection buffers. The eager
+walker remains executable as the differential reference.
+
+`SharedBuffer` uses thread-safe reference counts, `is_unique`, and detachment
+before writes. Compound wrappers and potentially mutable nested values are
+still copied recursively; eligible leaves may share independently. The full
+black-box corpus now runs eager and COW under normal and maximum GC pressure
+with identical language observations.

@@ -30,7 +30,8 @@ IEEE arithmetic at each declared precision, plus TEXT-001 immutable UTF-8
 strings and TEXT-004 distinct text and byte domains, and TEXT-002
 Unicode-scalar String length, indexing, and slicing, plus TEXT-003 static
 Display execution and ordered interpolation, plus VARIADIC-001 homogeneous
-final packs
+final packs and VARIADIC-002 explicit Array spread, plus OPT-COW-001..003
+measured and differentially validated collection copy-on-write
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -187,20 +188,38 @@ Compound payload fields are individually optional internally. Absence records
 a logical move and is never a Tondo `none`. Bytecode verification and runtime
 checks prevent an absent field from being observed as a value.
 
-Tondo value semantics do not expose physical sharing. The bootstrap therefore
-copies compound `Copy` values eagerly. Immutable strings and identity-bearing
-`Ref[T]` cells may share their managed object because that sharing preserves
-the language contract. One exhaustive walker recursively copies tuples, arrays,
-maps, sets, closure environments, newtypes, records, all enum payload shapes,
-options, results, unions, and ranges, retaining completed children as temporary
-roots until the new object is published with the source descriptor. Copying an
-admitted intrinsic cursor recursively copies its owned source (or duplicates
-its shared reference), preserves the current index, and allocates an
-independently advancing iterator object. COW and compact representations
-require differential tests against this baseline. The stable comparison corpus
-observes only values, post-write independence, identity, iteration, panic,
-output, exit status, and survival under GC pressure. Heap handles, allocation
-counts, collection timing, and storage strategy are excluded from that oracle.
+Tondo value semantics do not expose physical sharing. The VM retains an eager
+reference strategy and uses copy-on-write by default for eligible `Array`,
+`Map`, and `Set` buffers. Immutable strings and identity-bearing `Ref[T]` cells
+continue to share their managed object because that sharing is itself the
+language contract.
+
+The eager walker recursively copies tuples, arrays, maps, sets, closure
+environments, newtypes, records, all enum payload shapes, options, results,
+unions, and ranges, retaining completed children as temporary roots until the
+new object is published with the source descriptor. COW replaces only a
+top-level collection-buffer traversal whose shallow values are representation
+safe: every stored array element, map key/value, or set key must be scalar,
+immutable `String`, or `Ref`. A compound value keeps its own wrapper, and
+recursive copying may independently share eligible collection leaves.
+Consequently no copied logical path aliases a mutable record, closure
+environment, nested collection wrapper, or affine owner.
+
+Collection buffers are immutable `Arc<Vec<_>>` values until mutation.
+`is_unique` observes physical ownership; a write uses `Arc::make_mut`, and the
+heap records a detach only when the replaced object still had another physical
+owner. Heap byte limits conservatively charge each logical collection owner for
+its complete capacity. That preserves the pre-COW worst-case bound and ensures
+a later detach needs no unaccounted capacity, even though current physical
+memory may be lower.
+
+Copying an admitted intrinsic cursor recursively copies its owned source (or
+duplicates its shared reference), preserves the current index, and allocates an
+independently advancing iterator object. The eager and COW strategies run the
+same stable comparison corpus. Its oracle observes only values, post-write
+independence, identity, iteration, panic, output, exit status, and survival
+under GC pressure. Heap handles, allocation counts, collection timing, and
+storage strategy are excluded from that oracle.
 
 Constructing `Ref(value)` allocates one cell and transfers the already
 evaluated payload into it. Copying the resulting `Ref[T]` copies only its
@@ -475,6 +494,14 @@ the body-visible immutable `Array[T]`. Completed elements and the pending array
 are operation-local roots, including while nested values or closure
 environments trigger collection.
 
+A verified `VariadicSpread` is likewise the unique final argument, but its
+operand is the complete `Array[T]`: contextual access has already produced a
+logical Copy snapshot or moved the affine owner. Call preparation drains that
+temporary array into the pack without invoking the logical-copy walker again.
+The source remains available only in the Copy case; an affine source is
+unavailable after the call. Named spread has the same runtime path and differs
+only in its verifier-proved association with the exact variadic parameter.
+
 This call path admits only signatures with neither `async` nor `unsafe`. The
 bytecode verifier rejects an effectful ordinary call, and the public execution
 entry rejects selecting an async or unsafe callable body as the root frame.
@@ -557,11 +584,14 @@ under forced collection, reject forged move/write/exclusive bytecode paths, and
 exercise equality, map replacement/lookup, and set membership with a payload
 that is itself neither `Equatable` nor `Key`.
 
-Eager-copy regressions must cover every managed `Copy` shape and every enum
-payload layout, prove recursive allocation for a nested value, preserve the
-deliberate String/`Ref` sharing exceptions, separate subsequent writes through
-tuple/array, record, newtype, and map paths, and give a copied owning cursor an
-independent source and position.
+Value-copy regressions must cover every managed `Copy` shape and every enum
+payload layout, prove recursive wrapper separation for a nested value, preserve
+the deliberate String/`Ref` sharing exceptions, separate subsequent writes
+through tuple/array, record, newtype, and map paths, and give a copied owning
+cursor an independent source and position. The eager strategy retains its
+allocation checks as a reference. The same black-box corpus runs eager and COW,
+both normally and with collection requested at every allocation; only internal
+copy counters may differ.
 
 Iterator regressions must execute the unique static `Iterator[T]` contract and
 all intrinsic cursor modes. Loaned cases cover mixed map key/value patterns,

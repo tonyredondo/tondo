@@ -13,7 +13,21 @@ mod execute;
 mod heap;
 mod value;
 
-pub use execute::{RejectingHost, VmExecution, VmHost, VmOutcome, execute, execute_with_limits};
+pub use execute::{
+    RejectingHost, VmExecution, VmHost, VmOutcome, execute, execute_with_limits,
+    execute_with_limits_and_copy_strategy,
+};
+
+/// Physical strategy used to realize source-level logical value copies.
+///
+/// Both modes have identical Tondo semantics. `Eager` remains available as a
+/// reference implementation for differential validation.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ValueCopyStrategy {
+    Eager,
+    #[default]
+    CopyOnWrite,
+}
 
 /// Defensive limits for one VM execution request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +112,14 @@ pub struct VmStatistics {
     pub allocations: u64,
     pub collections: u64,
     pub reclaimed_objects: u64,
+    /// Logical `Array`, `Map`, or `Set` copies requested by verified bytecode.
+    pub logical_collection_copies: u64,
+    /// Top-level collection elements physically traversed while making copies.
+    pub collection_elements_copied: u64,
+    /// Collection buffers reused by copy-on-write instead of traversing elements.
+    pub collection_buffer_shares: u64,
+    /// Shared collection buffers separated before a write.
+    pub collection_buffer_detaches: u64,
     pub peak_stack_depth: u32,
     pub peak_live_objects: u32,
     pub peak_live_bytes: u64,
@@ -227,7 +249,7 @@ impl From<BytecodeVerificationError> for VmError {
 mod tests {
     use crate::bytecode::{BytecodeCallableId, BytecodeTraceDescriptor, BytecodeTypeId};
 
-    use super::heap::{Heap, HeapHandle, HeapObject};
+    use super::heap::{Heap, HeapHandle, HeapObject, SharedBuffer};
     use super::value::{Value, snapshot_value};
     use super::*;
 
@@ -238,6 +260,16 @@ mod tests {
             initial_gc_threshold: 1,
             ..VmLimits::default()
         }
+    }
+
+    #[test]
+    fn collection_buffer_uniqueness_tracks_physical_owners() {
+        let buffer = SharedBuffer::from(vec![1, 2, 3]);
+        assert!(buffer.is_unique());
+        let alias = buffer.clone();
+        assert!(!buffer.is_unique());
+        drop(alias);
+        assert!(buffer.is_unique());
     }
 
     fn heap() -> Heap {
@@ -335,7 +367,7 @@ mod tests {
             );
             let array = self.allocate(
                 BytecodeTypeId::new(2),
-                HeapObject::Array(vec![Some(Value::Heap(closure))]),
+                HeapObject::Array(vec![Some(Value::Heap(closure))].into()),
                 &[reference, closure],
             );
             self.replace(

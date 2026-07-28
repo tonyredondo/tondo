@@ -22,7 +22,7 @@ iterators plus all four intrinsic iteration forms, and the M3 VM admission
 path implemented, plus TEXT-001 immutable UTF-8 strings and TEXT-004 distinct
 text and byte domains, and TEXT-002 Unicode-scalar String length, indexing, and
 slicing, plus TEXT-003 intrinsic/static Display dispatch and interpolation,
-plus VARIADIC-001 homogeneous final packs
+plus VARIADIC-001/002 homogeneous final packs and whole-array spread
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -353,6 +353,11 @@ function values use this same encoding. Verification rederives the unique final
 variadic element from callable metadata and the structural function signature;
 a forged fixed target, receiver, mode, type, or non-variadic association is
 invalid bytecode.
+One explicit spread instead retains a unique final `VariadicSpread` target and
+an exact by-value `Array[T]` operand. Its Copy or Move access is rederived from
+the closed array capability. The VM receives the complete logical snapshot or
+affine owner and transfers its items into the body-visible pack without
+recopying each element.
 Value arguments use copy/move access. Each `ref`, `mut`, or `var` argument uses
 one `Loan(id)` operand whose table entry has the identical mode, type, and fixed
 place and `CallLocal` kind. `ReserveLoan(id)` begins its active interval after

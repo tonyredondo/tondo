@@ -135,26 +135,28 @@ fn text_interpolation_observables_are_stable_under_gc_pressure() {
 }
 
 #[test]
-fn variadic_pack_observables_are_stable_under_gc_pressure() {
-    let fixture = discover(FixtureKind::Runtime)
+fn variadic_pack_and_spread_observables_are_stable_under_gc_pressure() {
+    let fixtures = discover(FixtureKind::Runtime)
         .unwrap()
         .into_iter()
-        .find(|fixture| {
-            fixture
-                .source
-                .file_stem()
-                .is_some_and(|name| name == "m6-variadic-001")
+        .filter(|fixture| {
+            fixture.source.file_stem().is_some_and(|name| {
+                matches!(name.to_str(), Some("m6-variadic-001" | "m6-variadic-002"))
+            })
         })
-        .expect("VARIADIC-001 runtime fixture must be discoverable");
-    let baseline = fixture.run().unwrap();
-    fixture.assert_matches(&baseline).unwrap();
+        .collect::<Vec<_>>();
+    assert_eq!(fixtures.len(), 2);
+    for fixture in fixtures {
+        let baseline = fixture.run().unwrap();
+        fixture.assert_matches(&baseline).unwrap();
 
-    let under_pressure = fixture
-        .run_with_limits(ResourceLimits {
-            initial_vm_gc_threshold: 1,
-            ..ResourceLimits::default()
-        })
-        .unwrap();
-    fixture.assert_matches(&under_pressure).unwrap();
-    assert_eq!(under_pressure, baseline);
+        let under_pressure = fixture
+            .run_with_limits(ResourceLimits {
+                initial_vm_gc_threshold: 1,
+                ..ResourceLimits::default()
+            })
+            .unwrap();
+        fixture.assert_matches(&under_pressure).unwrap();
+        assert_eq!(under_pressure, baseline);
+    }
 }

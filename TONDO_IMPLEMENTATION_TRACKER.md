@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.76
+**Versión del tracker:** 0.77
 
 **Última actualización:** 2026-07-28
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** VARIADIC-001 cerrado; la siguiente unidad de trabajo,
-cuando se reanude, es el spread explícito de VARIADIC-002.
+**Objetivo inmediato:** M6 y Gate G3 cerrados. La siguiente unidad de trabajo,
+cuando se reanude, es ASYNC-001; esta entrega se detiene antes de iniciarla.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -254,9 +254,9 @@ necesaria; la fragmentación del workspace no.
 | **M1 — Fuente, parser y formatter** | Gate G0 | Completado |
 | **M2 — Semántica bootstrap** | Gate G1 | Completado |
 | **M3 — MIR, bytecode y VM** | Gate G2: primer compilador | Completado |
-| **M4 — Genéricos, traits y closures** | Sistema estático completo | En curso |
-| **M5 — Ownership, préstamos y memoria** | Modelo de valores completo | Pendiente |
-| **M6 — Colecciones, números y texto** | Gate G3: alpha utilizable | Pendiente |
+| **M4 — Genéricos, traits y closures** | Sistema estático completo | Completado |
+| **M5 — Ownership, préstamos y memoria** | Modelo de valores completo | Completado |
+| **M6 — Colecciones, números y texto** | Gate G3: alpha utilizable | Completado |
 | **M7 — Async y concurrencia estructurada** | Tasks conformes | Pendiente |
 | **M8 — Scripts y procesos** | Experiencia de scripting | Pendiente |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Pendiente |
@@ -1707,20 +1707,35 @@ lifetimes escritos por el usuario.
   se evalúan de izquierda a derecha, se copian o mueven individualmente y se
   materializan como un pack gestionado y enraizado.
 
-- [ ] **VARIADIC-002 — Implementar spread `...array` y materialización lógica de
-  `Array[T]`.** La optimización como vista temporal puede esperar.
+- [x] **VARIADIC-002 — Implementar spread `...array` y materialización lógica de
+  `Array[T]`.** HIR, MIR y bytecode conservan una asociación final única y el
+  acceso contextual al array completo. La VM drena el snapshot Copy o el owner
+  afín movido hacia el pack sin volver a copiar cada elemento. Formas
+  posicionales y nombradas comparten runtime; la optimización como vista
+  temporal continúa siendo opcional.
 
 ### 11.6 Optimización posterior al gate de corrección
 
-- [ ] **OPT-COW-001 — Medir el coste de copia eager con workloads reales.**
+- [x] **OPT-COW-001 — Medir el coste de copia eager con workloads reales.** Tres
+  workloads Tondo source-to-VM reproducibles ejecutan 195 copias lógicas
+  read-heavy de Array, Map y Set. Eager recorre 33.280 elementos superiores;
+  la evidencia y el comando exacto quedan en
+  `docs/measurements/m6-cow.md`.
 
-- [ ] **OPT-COW-002 — Introducir storage compartido y `is_unique` solo si el
-  perfil demuestra valor.**
+- [x] **OPT-COW-002 — Introducir storage compartido y `is_unique` solo si el
+  perfil demuestra valor.** `SharedBuffer` usa `Arc<Vec<_>>`; cada slot
+  almacenado de Array, Map o Set debe ser escalar, String o Ref para compartir.
+  Los wrappers compuestos continúan separados, cada write aplica
+  `Arc::make_mut`, `is_unique` observa owners físicos y el límite de heap carga
+  capacidad lógica completa para conservar el bound eager.
 
-- [ ] **OPT-COW-003 — Ejecutar los mismos tests observables contra copia eager y
-  COW.**
+- [x] **OPT-COW-003 — Ejecutar los mismos tests observables contra copia eager y
+  COW.** Las ocho pruebas `tests/runtime/value-copy/` se bajan una vez y se
+  ejecutan con ambas estrategias, con GC normal y desde la primera asignación.
+  Retorno o pánico, stdout, valores, identidad, iteración y write independence
+  deben coincidir; contadores de representación quedan fuera del oracle.
 
-### Gate G3
+### Gate G3 — superado
 
 - Los ejemplos síncronos seguros de los capítulos 24.1 a 24.13 y 24.15 se
   compilan o se clasifican explícitamente si dependen de una API de stdlib aún
@@ -1731,6 +1746,18 @@ lifetimes escritos por el usuario.
   evaluación.
 - El runtime recupera ciclos que atraviesen `Ref`, closures o collections.
 - La suite completa del núcleo síncrono seguro pasa.
+
+Clasificación explícita de los ejemplos integrados exigidos por este gate:
+
+| Ejemplos | Estado G3 | Evidencia o frontera pendiente |
+|---|---|---|
+| 24.3, 24.5, 24.7, 24.8, 24.13 y 24.15 | Ejecutados | `tests/runtime/m6-g3-integrated-examples.to` |
+| 24.12 | Núcleo ejecutado; API ilustrativa clasificada | Variádicos, spread y closures se ejecutan en `m6-variadic-001.to` y `m6-variadic-002.to`; solo `Array.append` pertenece a la futura core stdlib |
+| 24.4 | API ilustrativa clasificada | Slicing y aritmética se ejecutan en los fixtures ARRAY-003/006; `Array.isEmpty`, `Array.length` como método y Display compuesto pertenecen a core stdlib |
+| 24.6 | API ilustrativa clasificada | Map, orden e iteración se ejecutan en MAP-001..003; `Map.getOr` y consola pertenecen a stdlib |
+| 24.1 y 24.2 | API hosted clasificada | `std.fs`, Bytes, decoders y métodos de String son stubs fijados en el manifiesto C.6, no superficie del lenguaje |
+| 24.9 y 24.10 | API core/domain clasificada | `Array.append`, Deque y `run` son contratos provisionales de stdlib o del fixture |
+| 24.11 | API application clasificada | `std.process.args`, parseo, carga y ejecución son contratos hosted/application aún separados |
 
 ---
 
@@ -2015,7 +2042,9 @@ implementación conforme.
 - [ ] **ARC-003 — Implementar eliminación de retain/release mediante análisis
   de último uso.**
 
-- [ ] **COW-001 — Implementar COW para strings y collections.**
+- [ ] **COW-NATIVE-001 — Portar al runtime nativo la política COW ya validada.**
+  Reevaluar con perfiles nativos si conviene ampliar las formas compartibles;
+  no duplicar una semántica ni asumir que el layout de la VM será definitivo.
 
 - [ ] **ESCAPE-001 — Implementar escape analysis y stack allocation.**
 
@@ -2166,13 +2195,32 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-NUM-001 a NUM-005, TEXT-001 a TEXT-004 y VARIADIC-001 quedan cerrados. La
-siguiente acción, cuando el trabajo se reanude, es VARIADIC-002; esta entrega
-se detiene antes de iniciarla.
+M4, M5, M6 y Gate G3 quedan cerrados. La siguiente acción, cuando el trabajo se
+reanude, es ASYNC-001; esta entrega se detiene antes de iniciarla.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.77 — 2026-07-28
+
+- Se cierra VARIADIC-002. El spread conserva `Array[T]` hasta runtime, copia el
+  owner completo solo cuando `T: Copy`, mueve el array afín en caso contrario y
+  transfiere sus elementos al pack sin una segunda copia lógica. Fixtures
+  cubren forma nombrada, métodos, funciones indirectas, closures, genéricos,
+  orden, mutación independiente, owner afín, bytecode adversarial y GC.
+- OPT-COW-001 mide 195 copias lógicas sobre workloads source-to-VM de Array,
+  Map y Set: eager recorre 33.280 elementos superiores. OPT-COW-002 adopta
+  buffers compartidos conservadores y detachment verificado por `is_unique`,
+  reduciendo esos recorridos a cero sin cambiar el bound lógico de memoria.
+- OPT-COW-003 conserva eager como referencia ejecutable y compara contra COW
+  las ocho pruebas black-box de semántica de valor, tanto con GC normal como
+  con umbral uno. Se añaden contadores de trabajo internos sin convertirlos en
+  observables del lenguaje.
+- El fixture integrado ejecuta los ejemplos puros 24.3, 24.5, 24.7, 24.8,
+  24.13 y 24.15. Los restantes ejemplos síncronos de G3 quedan clasificados por
+  sus dependencias explícitas de core/hosted stdlib. M4, M5, M6 y Gate G3 pasan
+  a completados; ASYNC-001 es el siguiente límite de trabajo.
 
 ### 0.76 — 2026-07-28
 

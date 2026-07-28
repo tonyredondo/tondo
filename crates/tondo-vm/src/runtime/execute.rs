@@ -21,7 +21,10 @@ use crate::literal;
 
 use super::heap::{Heap, HeapHandle, HeapObject};
 use super::value::{AggregatePayload, RuntimeLoan, Value, snapshot_value};
-use super::{PanicCode, RuntimeValue, VmError, VmLimits, VmPanic, VmStackFrame, VmStatistics};
+use super::{
+    PanicCode, RuntimeValue, ValueCopyStrategy, VmError, VmLimits, VmPanic, VmStackFrame,
+    VmStatistics,
+};
 
 type HeapMapEntry = (Option<Value>, Option<Value>);
 
@@ -69,6 +72,26 @@ pub fn execute_with_limits(
     host: &mut dyn VmHost,
     limits: VmLimits,
 ) -> Result<VmExecution, VmError> {
+    execute_with_limits_and_copy_strategy(
+        program,
+        entry,
+        host,
+        limits,
+        ValueCopyStrategy::default(),
+    )
+}
+
+/// Executes verified bytecode with an explicit physical value-copy strategy.
+///
+/// This entry point exists so the eager reference implementation and the COW
+/// implementation can run the same black-box conformance corpus.
+pub fn execute_with_limits_and_copy_strategy(
+    program: &BytecodeProgram,
+    entry: BytecodeFunctionId,
+    host: &mut dyn VmHost,
+    limits: VmLimits,
+    copy_strategy: ValueCopyStrategy,
+) -> Result<VmExecution, VmError> {
     validate_limits(limits)?;
     let trace = verify_bytecode_with_trace_metadata(
         program,
@@ -77,7 +100,7 @@ pub fn execute_with_limits(
         },
     )?;
     validate_entry_contract(program, entry)?;
-    Engine::new(program, host, limits, trace).run(entry)
+    Engine::new(program, host, limits, copy_strategy, trace).run(entry)
 }
 
 fn validate_entry_contract(
@@ -318,6 +341,7 @@ struct Engine<'program, 'host> {
     program: &'program BytecodeProgram,
     host: &'host mut dyn VmHost,
     limits: VmLimits,
+    copy_strategy: ValueCopyStrategy,
     heap: Heap,
     frames: Vec<Frame>,
     frame_traces: Vec<crate::bytecode::BytecodeFrameTraceDescriptor>,
@@ -333,12 +357,14 @@ impl<'program, 'host> Engine<'program, 'host> {
         program: &'program BytecodeProgram,
         host: &'host mut dyn VmHost,
         limits: VmLimits,
+        copy_strategy: ValueCopyStrategy,
         trace: BytecodeTraceMetadata,
     ) -> Self {
         Self {
             program,
             host,
             limits,
+            copy_strategy,
             heap: Heap::new(limits, trace.types),
             frames: Vec::new(),
             frame_traces: trace.frames,
@@ -2223,7 +2249,7 @@ impl Engine<'_, '_> {
                     engine.retain_temporary(&value);
                     output.push((Some(key), Some(value)));
                 }
-                engine.allocate(constant.ty, HeapObject::Map(output), &[])
+                engine.allocate(constant.ty, HeapObject::Map(output.into()), &[])
             }),
             BytecodeConstantValueKind::Set(values) => {
                 let values = self.materialize_constants(values)?;
@@ -2398,16 +2424,56 @@ impl Engine<'_, '_> {
                 self.allocate_like(*handle, HeapObject::Tuple(values), &[])
             }
             HeapObject::Array(values) => {
-                let values = self.copy_optional_values(&values)?;
-                self.allocate_like(*handle, HeapObject::Array(values), &[])
+                self.statistics.logical_collection_copies =
+                    self.statistics.logical_collection_copies.saturating_add(1);
+                if self.copy_strategy == ValueCopyStrategy::CopyOnWrite
+                    && self.collection_buffer_is_shareable(*handle)?
+                {
+                    self.statistics.collection_buffer_shares =
+                        self.statistics.collection_buffer_shares.saturating_add(1);
+                    self.allocate_like(*handle, HeapObject::Array(values), &[])
+                } else {
+                    self.statistics.collection_elements_copied = self
+                        .statistics
+                        .collection_elements_copied
+                        .saturating_add(values.len() as u64);
+                    let values = self.copy_optional_values(&values)?;
+                    self.allocate_like(*handle, HeapObject::Array(values.into()), &[])
+                }
             }
             HeapObject::Map(entries) => {
-                let output = self.copy_map_entries(&entries)?;
-                self.allocate_like(*handle, HeapObject::Map(output), &[])
+                self.statistics.logical_collection_copies =
+                    self.statistics.logical_collection_copies.saturating_add(1);
+                if self.copy_strategy == ValueCopyStrategy::CopyOnWrite
+                    && self.collection_buffer_is_shareable(*handle)?
+                {
+                    self.statistics.collection_buffer_shares =
+                        self.statistics.collection_buffer_shares.saturating_add(1);
+                    self.allocate_like(*handle, HeapObject::Map(entries), &[])
+                } else {
+                    self.statistics.collection_elements_copied = self
+                        .statistics
+                        .collection_elements_copied
+                        .saturating_add(entries.len() as u64);
+                    let output = self.copy_map_entries(&entries)?;
+                    self.allocate_like(*handle, HeapObject::Map(output.into()), &[])
+                }
             }
             HeapObject::Set(values) => {
-                let values = self.copy_optional_values(&values)?;
-                self.allocate_like(*handle, HeapObject::Set(values), &[])
+                self.statistics.logical_collection_copies =
+                    self.statistics.logical_collection_copies.saturating_add(1);
+                if self.copy_strategy == ValueCopyStrategy::CopyOnWrite {
+                    self.statistics.collection_buffer_shares =
+                        self.statistics.collection_buffer_shares.saturating_add(1);
+                    self.allocate_like(*handle, HeapObject::Set(values), &[])
+                } else {
+                    self.statistics.collection_elements_copied = self
+                        .statistics
+                        .collection_elements_copied
+                        .saturating_add(values.len() as u64);
+                    let values = self.copy_optional_values(&values)?;
+                    self.allocate_like(*handle, HeapObject::Set(values.into()), &[])
+                }
             }
             HeapObject::Closure { callable, captures } => {
                 let captures = self.copy_optional_values(&captures)?;
@@ -2454,6 +2520,55 @@ impl Engine<'_, '_> {
                 self.retain_optional_temporary(&start);
                 let end = self.copy_optional_value(&end)?;
                 self.allocate_like(*handle, HeapObject::Range { kind, start, end }, &[])
+            }
+        }
+    }
+
+    fn collection_buffer_is_shareable(&self, handle: HeapHandle) -> Result<bool, VmError> {
+        let ty = self.heap.descriptor(handle)?;
+        let kind = &self
+            .program
+            .ty(ty)
+            .ok_or_else(|| VmError::invariant("collection has an unknown bytecode type"))?
+            .kind;
+        let BytecodeTypeKind::Intrinsic {
+            constructor,
+            arguments,
+        } = kind
+        else {
+            return Ok(false);
+        };
+        let expected_arity = match constructor {
+            BytecodeIntrinsicType::Array | BytecodeIntrinsicType::Set => 1,
+            BytecodeIntrinsicType::Map => 2,
+            _ => return Ok(false),
+        };
+        if arguments.len() != expected_arity {
+            return Err(VmError::invariant("collection type has the wrong arity"));
+        }
+        for stored in arguments {
+            if !self.shallow_value_is_shareable(*stored)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn shallow_value_is_shareable(&self, mut ty: BytecodeTypeId) -> Result<bool, VmError> {
+        loop {
+            let kind = &self
+                .program
+                .ty(ty)
+                .ok_or_else(|| VmError::invariant("collection element has an unknown type"))?
+                .kind;
+            match kind {
+                BytecodeTypeKind::Scalar(_) => return Ok(true),
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Ref,
+                    ..
+                } => return Ok(true),
+                BytecodeTypeKind::OpaqueResult { witness, .. } => ty = *witness,
+                _ => return Ok(false),
             }
         }
     }
@@ -2736,7 +2851,7 @@ impl Engine<'_, '_> {
                         unique.push(Some(value));
                     }
                 }
-                HeapObject::Set(unique)
+                HeapObject::Set(unique.into())
             }
             BytecodeAggregateKind::Closure { callable, captures } => {
                 if captures.len() != values.len() {
@@ -3483,7 +3598,7 @@ impl Engine<'_, '_> {
                     self.retain_optional_temporary(&value);
                     output.push(value);
                 }
-                self.allocate(projection.ty, HeapObject::Array(output), &[])
+                self.allocate(projection.ty, HeapObject::Array(output.into()), &[])
             }
             (
                 BytecodeProjectionKind::IteratorElement { index },
@@ -3643,7 +3758,7 @@ impl Engine<'_, '_> {
                 }
                 let mut roots = output.iter().flatten().cloned().collect::<Vec<_>>();
                 roots.push(Value::Heap(handle));
-                self.allocate(projection.ty, HeapObject::Array(output), &roots)?
+                self.allocate(projection.ty, HeapObject::Array(output.into()), &roots)?
             }
             (BytecodeProjectionKind::IteratorSource, HeapObject::Iterator { source, .. }) => {
                 take_option(source, "iterator source")?
@@ -4424,7 +4539,7 @@ impl Engine<'_, '_> {
                 }
                 Ok(OperationResult::Value(engine.allocate(
                     operation.ty,
-                    HeapObject::Map(output),
+                    HeapObject::Map(output.into()),
                     &[],
                 )?))
             }),
@@ -4842,7 +4957,7 @@ impl Engine<'_, '_> {
             if let Some(argument) = &argument_values {
                 self.copy_array_elements(argument, &mut output)?;
             }
-            self.allocate(result_ty, HeapObject::Array(output), &[])
+            self.allocate(result_ty, HeapObject::Array(output.into()), &[])
         })();
         self.temporary_roots.truncate(marker);
         result.map(Ok)
@@ -5159,7 +5274,7 @@ impl Engine<'_, '_> {
         }
         Ok(Ok(self.allocate(
             result_ty,
-            HeapObject::Array(output),
+            HeapObject::Array(output.into()),
             &[],
         )?))
     }
@@ -5196,7 +5311,7 @@ impl Engine<'_, '_> {
             return Err(VmError::invariant("Array value is not managed"));
         };
         match self.heap.get(*handle)? {
-            HeapObject::Array(values) => Ok(values.clone()),
+            HeapObject::Array(values) => Ok(values.to_vec()),
             _ => Err(VmError::invariant("Array value has the wrong heap shape")),
         }
     }
@@ -5395,7 +5510,7 @@ impl Engine<'_, '_> {
                 self.retain_temporary(&value);
                 output.push(Some(value));
             }
-            self.allocate(result_ty, HeapObject::Array(output), &[])
+            self.allocate(result_ty, HeapObject::Array(output.into()), &[])
         })();
         self.temporary_roots.truncate(marker);
         result
@@ -5559,7 +5674,9 @@ impl Engine<'_, '_> {
                             return Err(VmError::invariant("variadic spread is not Array"));
                         };
                         for item in items {
-                            let value = self.copy_value(present(&item, "variadic item")?)?;
+                            let value = item.ok_or_else(|| {
+                                VmError::invariant("variadic item was already moved")
+                            })?;
                             self.temporary_roots.push(value.clone());
                             variadic_values.push(value);
                         }
@@ -5695,7 +5812,7 @@ impl Engine<'_, '_> {
                         engine.retain_temporary(&value);
                         materialized.push(Some(value));
                     }
-                    engine.allocate(descriptor, HeapObject::Array(materialized), &[])
+                    engine.allocate(descriptor, HeapObject::Array(materialized.into()), &[])
                 })
             }
             (BytecodeTypeKind::Option(_), RuntimeValue::OptionNone) => {
@@ -6245,10 +6362,8 @@ fn queue_object_equality(
     };
     Ok(match (left, right) {
         (HeapObject::String(left), HeapObject::String(right)) => left == right,
-        (HeapObject::Tuple(left), HeapObject::Tuple(right))
-        | (HeapObject::Array(left), HeapObject::Array(right)) => {
-            queue_options(left, right, pending)?
-        }
+        (HeapObject::Tuple(left), HeapObject::Tuple(right)) => queue_options(left, right, pending)?,
+        (HeapObject::Array(left), HeapObject::Array(right)) => queue_options(left, right, pending)?,
         (
             HeapObject::Newtype {
                 nominal: left_nominal,
@@ -6556,8 +6671,8 @@ mod tests {
     };
 
     use super::{
-        Engine, PanicCode, RejectingHost, RuntimeType, RuntimeValue, Value, VmLimits,
-        snapshot_value,
+        Engine, PanicCode, RejectingHost, RuntimeType, RuntimeValue, Value, ValueCopyStrategy,
+        VmLimits, snapshot_value,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -6665,7 +6780,13 @@ mod tests {
         });
         let trace = derive_trace_metadata(&program).unwrap();
         let mut host = RejectingHost;
-        let mut engine = Engine::new(&program, &mut host, VmLimits::default(), trace);
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
 
         assert_eq!(
             float(binary(&mut engine, Add, float32, 16_777_216.0, 1.0)),
@@ -6768,7 +6889,13 @@ mod tests {
         let program = root_pressure_program();
         let trace = derive_trace_metadata(&program).unwrap();
         let mut host = RejectingHost;
-        let engine = Engine::new(&program, &mut host, VmLimits::default(), trace);
+        let engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
         for (scalar, signed, bits, minimum, maximum) in [
             (BytecodeScalarType::Byte, false, 8, 0, 255),
             (BytecodeScalarType::UInt8, false, 8, 0, u8::MAX as i128),
@@ -6859,7 +6986,13 @@ mod tests {
         let program = root_pressure_program();
         let trace = derive_trace_metadata(&program).unwrap();
         let mut host = RejectingHost;
-        let engine = Engine::new(&program, &mut host, VmLimits::default(), trace);
+        let engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
         for (scalar, minimum, maximum) in [
             (BytecodeScalarType::UInt8, 0, u8::MAX as i128),
             (BytecodeScalarType::UInt16, 0, u16::MAX as i128),
@@ -6945,7 +7078,13 @@ mod tests {
         let program = root_pressure_program();
         let trace = derive_trace_metadata(&program).unwrap();
         let mut host = RejectingHost;
-        let mut engine = Engine::new(&program, &mut host, pressure_limits(), trace);
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
         let constant = BytecodeConstantValue {
             ty: BytecodeTypeId::new(4),
             kind: BytecodeConstantValueKind::Tuple(vec![
@@ -7032,7 +7171,13 @@ mod tests {
         let program = root_pressure_program();
         let trace = derive_trace_metadata(&program).unwrap();
         let mut host = RejectingHost;
-        let mut engine = Engine::new(&program, &mut host, VmLimits::default(), trace);
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::Eager,
+            trace,
+        );
         let source = engine
             .materialize_constant(&BytecodeConstantValue {
                 ty: BytecodeTypeId::new(6),
@@ -7115,7 +7260,13 @@ mod tests {
         let program = root_pressure_program();
         let trace = derive_trace_metadata(&program).unwrap();
         let mut host = RejectingHost;
-        let mut engine = Engine::new(&program, &mut host, pressure_limits(), trace);
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
         let returned = RuntimeValue::Tuple(vec![
             RuntimeValue::Array(vec![
                 RuntimeValue::String("left".into()),
@@ -7146,7 +7297,13 @@ mod tests {
         let program = root_pressure_program();
         let trace = derive_trace_metadata(&program).unwrap();
         let mut host = RejectingHost;
-        let mut engine = Engine::new(&program, &mut host, pressure_limits(), trace);
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
         let managed = engine
             .allocate(
                 BytecodeTypeId::new(0),
@@ -7188,7 +7345,13 @@ mod tests {
         let program = root_pressure_program();
         let trace = derive_trace_metadata(&program).unwrap();
         let mut host = RejectingHost;
-        let mut engine = Engine::new(&program, &mut host, pressure_limits(), trace);
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
         let retained = engine
             .allocate(
                 BytecodeTypeId::new(0),

@@ -91,9 +91,8 @@ The ordinary fixture pass checks these observations against sidecars. The
 equivalence pass runs the identical sources again with an initial GC threshold
 of one, checks the same sidecars, and requires byte-for-byte equal observations.
 All capacity limits remain at their ordinary values so the oracle cannot depend
-on an object or byte count. A future COW candidate must execute this corpus
-unchanged; if eager and COW implementations coexist, their adapters compare
-this same observation type directly.
+on an object or byte count. The VM's eager and COW strategies additionally run
+the same lowered programs directly and compare this observation boundary.
 
 ## Array mutation permissions
 
@@ -135,7 +134,7 @@ The same runtime fixture is repeated with an initial GC threshold of one.
 Mutated bytecode separately rejects an interpolation arity mismatch and a
 forged intrinsic Display receiver association.
 
-## Homogeneous variadic packs
+## Homogeneous variadic packs and spread
 
 VARIADIC-001 has one end-to-end runtime fixture covering empty and populated
 packs, a fixed prefix, generic inference, body-visible `Array[T]`, methods,
@@ -147,12 +146,31 @@ observation.
 
 Compile-fail fixtures fix `E1102` for heterogeneous elements, `E1115` for an
 unnamed pack, `E1411` for mutation through its immutable body binding, and
-`E1401` for reuse after an affine element move. Unit tests retain the
+`E1401` for reuse after an affine element or complete spread move. VARIADIC-002
+adds Copy-source independence, empty and named spreads, methods, indirect
+functions, contextual closures, generic nested values, left-to-right effects,
+and complete affine `Array[T]` transfer. Both public fixtures run again with an
+initial GC threshold of one. Unit tests retain the
 unique-final value-parameter restrictions and exact function type, HIR, and MIR
 associations. Adversarial bytecode changes a valid `VariadicElement` into a
-fixed target and must be rejected before execution. Explicit `...array`
-transfer behavior is intentionally outside this gate and belongs to
-VARIADIC-002.
+fixed target, changes a spread into one element, and changes an affine spread
+from Move to Copy; every mutation must be rejected before execution.
+
+## Collection copy-on-write
+
+OPT-COW-001 uses three end-to-end, read-heavy source workloads rather than a
+host-only microbenchmark: a 256-element numeric array, a 128-entry lookup map,
+and a 128-key membership set. Deterministic VM counters measure requested
+logical copies, physically traversed top-level elements, shared buffers, and
+write detaches. The exact command and accepted measurements live in
+`docs/measurements/m6-cow.md`.
+
+OPT-COW-003 lowers each fixture under `tests/runtime/value-copy/` once and runs
+its bytecode through eager and COW strategies with both the normal collector
+threshold and a threshold of one. The comparison includes returned values or
+panic, stdout, write independence, identity, iteration, and GC survival.
+Internal allocation, collection, handle, and COW counters are deliberately
+absent from the observable oracle.
 
 ## Conformance separation
 

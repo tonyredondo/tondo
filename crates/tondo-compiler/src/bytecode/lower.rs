@@ -4048,8 +4048,9 @@ mod tests {
     use std::sync::Arc;
 
     use tondo_vm::runtime::{
-        PanicCode, RejectingHost, RuntimeValue, VmError, VmHost, VmLimits, VmOutcome, execute,
-        execute_with_limits,
+        PanicCode, RejectingHost, RuntimeValue, ValueCopyStrategy, VmError, VmHost, VmLimits,
+        VmOutcome, VmStatistics, execute, execute_with_limits,
+        execute_with_limits_and_copy_strategy,
     };
 
     use crate::hir::{ExpressionCheckLimits, TypeLoweringLimits, check_expressions, lower_types};
@@ -5512,8 +5513,14 @@ fn execute(): String {
             let source = format!("{DECLARATIONS}fn execute(): Bool {{\n{body}\n}}\n");
             let program = lowered(&source);
             let mut host = RejectingHost;
-            let execution = execute(&program, function_id(&program, "execute"), &mut host)
-                .unwrap_or_else(|error| panic!("{case}: {error}\n{}", bc::disassemble(&program)));
+            let execution = execute_with_limits_and_copy_strategy(
+                &program,
+                function_id(&program, "execute"),
+                &mut host,
+                VmLimits::default(),
+                ValueCopyStrategy::Eager,
+            )
+            .unwrap_or_else(|error| panic!("{case}: {error}\n{}", bc::disassemble(&program)));
             assert_eq!(
                 execution.outcome,
                 VmOutcome::Returned(RuntimeValue::Bool(true)),
@@ -5722,6 +5729,291 @@ fn execute(): String {
                 "separated",
             ),
             RuntimeValue::Bool(true)
+        );
+    }
+
+    #[test]
+    fn collection_copy_profile_justifies_cow_with_reproducible_workloads() {
+        fn run(source: &str, strategy: ValueCopyStrategy) -> VmStatistics {
+            let program = lowered(source);
+            let function = function_id(&program, "execute");
+            let mut host = RejectingHost;
+            let execution = execute_with_limits_and_copy_strategy(
+                &program,
+                function,
+                &mut host,
+                VmLimits::default(),
+                strategy,
+            )
+            .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(&program)));
+            assert_eq!(
+                execution.outcome,
+                VmOutcome::Returned(RuntimeValue::Integer(32))
+            );
+            execution.statistics
+        }
+
+        let array_values = (0..256)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let array_source = format!(
+            "fn inspect(values: Array[Int]): Bool {{\n\
+                 values[0] == 0 and values[-1] == 255\n\
+             }}\n\
+             fn execute(): Int {{\n\
+                 let values = [{array_values}]\n\
+                 var matches = 0\n\
+                 for _ in 0..32 {{\n\
+                     if inspect(values) {{\n\
+                         matches += 1\n\
+                     }}\n\
+                 }}\n\
+                 matches\n\
+             }}\n"
+        );
+
+        let map_values = (0..128)
+            .map(|value| format!("{value}: {value}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let map_source = format!(
+            "fn inspect(values: Map[Int, Int]): Bool {{\n\
+                 values[0] == some(0) and values[127] == some(127)\n\
+             }}\n\
+             fn execute(): Int {{\n\
+                 let values = [{map_values}]\n\
+                 var matches = 0\n\
+                 for _ in 0..32 {{\n\
+                     if inspect(values) {{\n\
+                         matches += 1\n\
+                     }}\n\
+                 }}\n\
+                 matches\n\
+             }}\n"
+        );
+
+        let set_values = (0..128)
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let set_source = format!(
+            "fn inspect(values: Set[Int]): Bool {{\n\
+                 0 in values and 127 in values\n\
+             }}\n\
+             fn execute(): Int {{\n\
+                 let values = Set[{set_values}]\n\
+                 var matches = 0\n\
+                 for _ in 0..32 {{\n\
+                     if inspect(values) {{\n\
+                         matches += 1\n\
+                     }}\n\
+                 }}\n\
+                 matches\n\
+             }}\n"
+        );
+
+        for (name, source, elements) in [
+            ("Array[Int]", array_source, 256_u64),
+            ("Map[Int, Int]", map_source, 128),
+            ("Set[Int]", set_source, 128),
+        ] {
+            let eager = run(&source, ValueCopyStrategy::Eager);
+            let cow = run(&source, ValueCopyStrategy::CopyOnWrite);
+            eprintln!(
+                "{name}: logical_copies={}, eager_elements={}, cow_elements={}, cow_shares={}",
+                eager.logical_collection_copies,
+                eager.collection_elements_copied,
+                cow.collection_elements_copied,
+                cow.collection_buffer_shares,
+            );
+            assert_eq!(eager.logical_collection_copies, 65, "{name}");
+            assert_eq!(
+                cow.logical_collection_copies, eager.logical_collection_copies,
+                "{name}"
+            );
+            assert_eq!(
+                eager.collection_elements_copied,
+                eager.logical_collection_copies * elements,
+                "{name}"
+            );
+            assert_eq!(eager.collection_buffer_shares, 0, "{name}");
+            assert_eq!(eager.collection_buffer_detaches, 0, "{name}");
+            assert_eq!(cow.collection_elements_copied, 0, "{name}");
+            assert_eq!(
+                cow.collection_buffer_shares, cow.logical_collection_copies,
+                "{name}"
+            );
+            assert_eq!(cow.collection_buffer_detaches, 0, "{name}");
+        }
+    }
+
+    #[test]
+    fn cow_detaches_shared_collection_buffers_before_writes() {
+        let source = "fn uniqueWrite(): Bool {\n\
+             var unique = [1, 2]\n\
+             unique[0] = 3\n\
+             unique == [3, 2]\n\
+         }\n\
+         fn arrayWrite(): Bool {\n\
+             var original = [10, 20]\n\
+             var copied = original\n\
+             copied[0] = 30\n\
+             original == [10, 20] and copied == [30, 20]\n\
+         }\n\
+         fn mapWrite(): Bool {\n\
+             var originalMap = [1: 10]\n\
+             var copiedMap = originalMap\n\
+             copiedMap[1] = 30\n\
+             originalMap == [1: 10] and copiedMap == [1: 30]\n\
+         }\n";
+        let program = lowered(source);
+        let run = |name, strategy| {
+            let mut host = RejectingHost;
+            execute_with_limits_and_copy_strategy(
+                &program,
+                function_id(&program, name),
+                &mut host,
+                VmLimits::default(),
+                strategy,
+            )
+            .unwrap()
+        };
+
+        // Checked writes retain a transactional pre-write snapshot, so even
+        // `uniqueWrite` has two physical buffer owners at detachment time.
+        for name in ["uniqueWrite", "arrayWrite", "mapWrite"] {
+            let eager = run(name, ValueCopyStrategy::Eager);
+            let cow = run(name, ValueCopyStrategy::CopyOnWrite);
+            assert_eq!(
+                eager.outcome,
+                VmOutcome::Returned(RuntimeValue::Bool(true)),
+                "{name}"
+            );
+            assert_eq!(cow.outcome, eager.outcome, "{name}");
+            assert_eq!(eager.statistics.collection_buffer_shares, 0, "{name}");
+            assert_eq!(eager.statistics.collection_buffer_detaches, 0, "{name}");
+            assert_eq!(cow.statistics.collection_buffer_detaches, 1, "{name}");
+        }
+    }
+
+    #[test]
+    fn eager_and_cow_match_the_same_value_copy_observable_corpus() {
+        #[derive(Default)]
+        struct RecordingHost {
+            output: String,
+        }
+
+        impl VmHost for RecordingHost {
+            fn invoke(
+                &mut self,
+                name: &str,
+                arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                assert_eq!(name, "std.console.print");
+                let [RuntimeValue::String(text)] = arguments else {
+                    panic!("console print must receive one String")
+                };
+                self.output.push_str(text);
+                Ok(RuntimeValue::Unit)
+            }
+        }
+
+        fn run(
+            program: &bc::BytecodeProgram,
+            function: bc::BytecodeFunctionId,
+            strategy: ValueCopyStrategy,
+            limits: VmLimits,
+        ) -> (VmOutcome, String, VmStatistics) {
+            let mut host = RecordingHost::default();
+            let execution = execute_with_limits_and_copy_strategy(
+                program, function, &mut host, limits, strategy,
+            )
+            .unwrap_or_else(|error| panic!("{error}\n{}", bc::disassemble(program)));
+            (execution.outcome, host.output, execution.statistics)
+        }
+
+        let mut cow_shares = 0_u64;
+        let mut cow_detaches = 0_u64;
+        for (name, source) in [
+            (
+                "gc-pressure",
+                include_str!("../../../../tests/runtime/value-copy/gc-pressure.to"),
+            ),
+            (
+                "identity",
+                include_str!("../../../../tests/runtime/value-copy/identity.to"),
+            ),
+            (
+                "iteration",
+                include_str!("../../../../tests/runtime/value-copy/iteration.to"),
+            ),
+            (
+                "map-remove",
+                include_str!("../../../../tests/runtime/value-copy/map-remove.to"),
+            ),
+            (
+                "panic",
+                include_str!("../../../../tests/runtime/value-copy/panic.to"),
+            ),
+            (
+                "slice-snapshot",
+                include_str!("../../../../tests/runtime/value-copy/slice-snapshot.to"),
+            ),
+            (
+                "value",
+                include_str!("../../../../tests/runtime/value-copy/value.to"),
+            ),
+            (
+                "write-independence",
+                include_str!("../../../../tests/runtime/value-copy/write-independence.to"),
+            ),
+        ] {
+            let program = lowered(source);
+            let function = function_id(&program, "main");
+            let eager = run(
+                &program,
+                function,
+                ValueCopyStrategy::Eager,
+                VmLimits::default(),
+            );
+            let cow = run(
+                &program,
+                function,
+                ValueCopyStrategy::CopyOnWrite,
+                VmLimits::default(),
+            );
+            assert_eq!((&cow.0, &cow.1), (&eager.0, &eager.1), "{name}");
+            assert_eq!(eager.2.collection_buffer_shares, 0, "{name}");
+            assert_eq!(eager.2.collection_buffer_detaches, 0, "{name}");
+            cow_shares = cow_shares.saturating_add(cow.2.collection_buffer_shares);
+            cow_detaches = cow_detaches.saturating_add(cow.2.collection_buffer_detaches);
+
+            let pressure = VmLimits {
+                initial_gc_threshold: 1,
+                ..VmLimits::default()
+            };
+            let eager_pressure = run(&program, function, ValueCopyStrategy::Eager, pressure);
+            let cow_pressure = run(&program, function, ValueCopyStrategy::CopyOnWrite, pressure);
+            assert_eq!(
+                (&eager_pressure.0, &eager_pressure.1),
+                (&eager.0, &eager.1),
+                "{name}: eager changed under GC pressure"
+            );
+            assert_eq!(
+                (&cow_pressure.0, &cow_pressure.1),
+                (&eager.0, &eager.1),
+                "{name}: COW changed an observable"
+            );
+            assert!(eager_pressure.2.collections > 0, "{name}");
+            assert!(cow_pressure.2.collections > 0, "{name}");
+            cow_shares = cow_shares.saturating_add(cow_pressure.2.collection_buffer_shares);
+            cow_detaches = cow_detaches.saturating_add(cow_pressure.2.collection_buffer_detaches);
+        }
+        assert!(cow_shares > 0, "the corpus did not exercise COW sharing");
+        assert!(
+            cow_detaches > 0,
+            "the corpus did not exercise COW detachment"
         );
     }
 
@@ -8341,7 +8633,7 @@ fn execute(): String {
     }
 
     #[test]
-    fn bytecode_verifier_rejects_forged_variadic_element_associations() {
+    fn bytecode_verifier_rejects_forged_variadic_associations_and_affine_copy() {
         let source = "fn collect(values: ...Int): Array[Int] { values }\n\
                       fn execute(): Array[Int] { collect(20, 22) }\n";
         let program = lowered(source);
@@ -8369,6 +8661,80 @@ fn execute(): String {
         argument.target = bc::BytecodeCallArgumentTarget::Fixed(0);
 
         assert!(bc::verify_bytecode(&forged).is_err());
+
+        let spread = lowered(
+            "fn collect(values: ...Int): Array[Int] { values }\n\
+             fn execute(): Array[Int] {\n\
+                 let values = [20, 22]\n\
+                 collect(...values)\n\
+             }\n",
+        );
+        let mut forged_spread = spread;
+        let argument = forged_spread
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Call { arguments, .. },
+                            ..
+                        },
+                    ..
+                } => arguments.iter_mut().find(|argument| {
+                    argument.target == bc::BytecodeCallArgumentTarget::VariadicSpread
+                }),
+                _ => None,
+            })
+            .expect("the call must retain its spread association");
+        assert!(matches!(
+            argument.value.kind,
+            bc::BytecodeOperandKind::Copy(_)
+        ));
+        argument.target = bc::BytecodeCallArgumentTarget::VariadicElement;
+        assert!(bc::verify_bytecode(&forged_spread).is_err());
+
+        let affine = lowered(
+            "fn make(value: Int): impl CallOnce[fn(): Int] + Discard {\n\
+                 () { value }\n\
+             }\n\
+             fn runAll[F: CallOnce[fn(): Int] + Discard](operations: ...F): Int {\n\
+                 var total = 0\n\
+                 for operation in operations {\n\
+                     total += operation()\n\
+                 }\n\
+                 total\n\
+             }\n\
+             fn execute(): Int {\n\
+                 let operations = [make(42)]\n\
+                 runAll(...operations)\n\
+             }\n",
+        );
+        let mut forged_affine = affine;
+        let argument = forged_affine
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Call { arguments, .. },
+                            ..
+                        },
+                    ..
+                } => arguments.iter_mut().find(|argument| {
+                    argument.target == bc::BytecodeCallArgumentTarget::VariadicSpread
+                }),
+                _ => None,
+            })
+            .expect("the affine call must retain its spread association");
+        let bc::BytecodeOperandKind::Move(place) = &argument.value.kind else {
+            panic!("an affine Array spread must move its complete owner")
+        };
+        argument.value.kind = bc::BytecodeOperandKind::Copy(place.clone());
+        assert!(bc::verify_bytecode(&forged_affine).is_err());
     }
 
     #[test]
@@ -8525,7 +8891,7 @@ fn execute(): String {
         assert_eq!(
             execution.statistics.allocations,
             baseline_allocations + 2,
-            "copying an owning cursor must eagerly copy its array source and allocate a new cursor"
+            "copying an owning cursor must allocate a logical source wrapper and a new cursor"
         );
 
         let mut wrong_borrow_access = copyable.clone();

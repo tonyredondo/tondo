@@ -21,8 +21,8 @@ ownership, ARRAY-005 fixed versus structural array mutation, ARRAY-006 closed
 lifted arithmetic, ARRAY-007 named concatenation/repetition, and ITER-001/002
 static user iterators plus all four intrinsic iteration forms, plus TEXT-002
 Unicode-scalar String length, indexing, and slicing, and TEXT-003 decoded
-interpolation with static `Display`, plus VARIADIC-001 homogeneous final packs
-implemented
+interpolation with static `Display`, plus VARIADIC-001/002 homogeneous final
+packs and whole-array spread implemented
 
 ## Boundary
 
@@ -202,7 +202,10 @@ that same `T`, retains its source order, and receives an explicit contextual
 Copy or Move access. This rule is identical for direct functions, methods,
 concrete closures, contextual closures, generic specializations, and indirect
 uniform function values. Heterogeneous inference is rejected before complete
-HIR is published.
+HIR is published. VARIADIC-002 associates one unique final `VariadicSpread`
+with the exact `Array[T]` parameter source. Contextual ownership copies the
+complete array when `T: Copy` and otherwise moves it; named spread must target
+the variadic parameter exactly and uses the same HIR shape.
 Generic calls use a request-local invariant solver, close every inference
 variable before publishing HIR, and materialize a `SpecializedFunction`; no
 inference variable crosses the expression boundary. Explicit type arguments

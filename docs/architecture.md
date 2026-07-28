@@ -437,14 +437,15 @@ Its disassembler is tooling text only and there is deliberately no loader.
 ### VM
 
 The VM starts with explicit Rust enums for values, a precise non-moving tracing
-heap, and a cooperative single-thread executor. Logical copies of every
-compound `Copy` shape are currently eager and recursive; immutable String
-storage and `Ref[T]` identity are the only deliberate sharing cases. COW, ARC,
-compact tagging, and native lowering are later optimizations that must preserve
-the same observables. The `tests/runtime/value-copy/` corpus records those
-observables at the driver boundary and runs unchanged both with ordinary
-limits and with an initial GC threshold of one, without exposing the current
-heap representation.
+heap, and a cooperative single-thread executor. One exhaustive eager strategy
+remains the reference for every compound `Copy` shape. The default strategy
+uses `Arc<Vec<_>>` copy-on-write for representation-safe Array, Map, and Set
+buffers; compound wrappers remain recursively separated and immutable String
+storage plus `Ref[T]` identity retain their deliberate sharing rules. ARC as
+the object-lifetime model, compact tagging, and native lowering are later
+optimizations. The `tests/runtime/value-copy/` corpus records only language
+observables at the driver boundary and runs against eager and COW with ordinary
+limits and an initial GC threshold of one.
 An Array heap object owns its ordered runtime slots; construction, copy,
 argument passing, and return preserve that vector length independently of the
 single canonical `Array[T]` type.
@@ -454,10 +455,10 @@ Every slice read, projected write, loan path, overlap proof, and constant slice
 uses the same direction-aware normalization rule; a zero step unwinds as
 `P0002`.
 Direct slices and by-value reads through a borrowed slice place then use one
-logical snapshot copier. The eager VM allocates independent ordinary content,
-retains `Ref[T]` identity, and leaves `ref`/`mut` regions attached to the
-original array; the black-box copy corpus makes a later COW representation obey
-the same observations.
+logical snapshot copier. It allocates a distinct outer snapshot, retains
+`Ref[T]` identity, and leaves `ref`/`mut` regions attached to the original
+array; eligible collection leaves copied recursively may use the same measured
+COW policy without changing these observations.
 Array mutation uses those same loan modes rather than another container type.
 `mut Array[T]` may update an owner or region only at its current logical
 length; the VM compares a root replacement with the lender before publication,
@@ -469,7 +470,7 @@ with a shared receiver, value argument, `T: Copy` proof, and explicit unwind
 edge. The VM preflights negative counts and mathematical length before copying,
 then builds one fresh compact logical value through the ordinary recursive
 copier. This preserves nested independence and `Ref` identity without exposing
-the eager bootstrap representation.
+the selected bootstrap representation.
 
 The implemented synchronous engine uses iterative frames, checked slot states,
 normal/unwind continuations, call-local reservation tables, normalized

@@ -19,8 +19,8 @@ logical slice snapshots, ARRAY-005 fixed versus structural array mutation,
 ARRAY-006 closed lifted arithmetic, ARRAY-007 named concatenation/repetition,
 and ITER-001/002 static user iterators plus all four intrinsic iteration forms
 implemented, plus TEXT-002 Unicode-scalar String length, indexing, and slicing,
-and TEXT-003 static Display calls plus ordered interpolation, plus VARIADIC-001
-homogeneous final packs
+and TEXT-003 static Display calls plus ordered interpolation, plus
+VARIADIC-001/002 homogeneous final packs and whole-array spread
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -422,6 +422,13 @@ such operands still retains the variadic function shape, allowing the runtime
 to construct the body-visible empty `Array[T]`. The MIR verifier rederives the
 unique final by-value element type from the exact call signature and rejects a
 forged fixed, receiver, mode, or element-type association.
+
+VARIADIC-002 retains one unique final `VariadicSpread` association whose
+operand is exactly `Array[T]` by value. Ordinary contextual lowering selects
+Copy when the closed array is `Copy` and Move otherwise; MIR does not expand
+the array into synthetic element operands. The verifier independently rejects
+repetition, non-final position, wrong array element, borrowed access, and a
+forged Copy of an affine array.
 
 An opaque success exit remains an explicit coercion rvalue whose kind is
 `Assignability::Opaque`. MIR preserves both operand and destination types, so a

@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 use std::mem;
+use std::ops::{Deref, DerefMut};
+use std::sync::Arc;
 
 use crate::bytecode::{
     BytecodeCallableId, BytecodeCursorMode, BytecodeNominalId, BytecodeRangeKind,
@@ -8,6 +10,80 @@ use crate::bytecode::{
 
 use super::value::{AggregatePayload, Value};
 use super::{VmError, VmLimits, VmStatistics};
+
+#[derive(Debug, Clone)]
+pub(super) struct SharedBuffer<T>(Arc<Vec<T>>);
+
+impl<T> SharedBuffer<T> {
+    pub(super) fn is_unique(&self) -> bool {
+        Arc::strong_count(&self.0) == 1
+    }
+
+    fn storage_id(&self) -> usize {
+        Arc::as_ptr(&self.0) as usize
+    }
+}
+
+impl<T> From<Vec<T>> for SharedBuffer<T> {
+    fn from(values: Vec<T>) -> Self {
+        Self(Arc::new(values))
+    }
+}
+
+impl<T> FromIterator<T> for SharedBuffer<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(values: I) -> Self {
+        Self::from(values.into_iter().collect::<Vec<_>>())
+    }
+}
+
+impl<T> Deref for SharedBuffer<T> {
+    type Target = Vec<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl<T: Clone> DerefMut for SharedBuffer<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        Arc::make_mut(&mut self.0)
+    }
+}
+
+impl<T: PartialEq> PartialEq for SharedBuffer<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<T: Clone> IntoIterator for SharedBuffer<T> {
+    type Item = T;
+    type IntoIter = std::vec::IntoIter<T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Arc::try_unwrap(self.0)
+            .unwrap_or_else(|shared| shared.as_ref().clone())
+            .into_iter()
+    }
+}
+
+impl<'buffer, T> IntoIterator for &'buffer SharedBuffer<T> {
+    type Item = &'buffer T;
+    type IntoIter = std::slice::Iter<'buffer, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl<'buffer, T: Clone> IntoIterator for &'buffer mut SharedBuffer<T> {
+    type Item = &'buffer mut T;
+    type IntoIter = std::slice::IterMut<'buffer, T>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Arc::make_mut(&mut self.0).iter_mut()
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(super) struct HeapHandle {
@@ -26,9 +102,9 @@ impl HeapHandle {
 pub(super) enum HeapObject {
     String(String),
     Tuple(Vec<Option<Value>>),
-    Array(Vec<Option<Value>>),
-    Map(Vec<(Option<Value>, Option<Value>)>),
-    Set(Vec<Option<Value>>),
+    Array(SharedBuffer<Option<Value>>),
+    Map(SharedBuffer<(Option<Value>, Option<Value>)>),
+    Set(SharedBuffer<Option<Value>>),
     Closure {
         callable: BytecodeCallableId,
         captures: Vec<Option<Value>>,
@@ -66,13 +142,42 @@ pub(super) enum HeapObject {
     Ref(Option<Value>),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollectionStorageKind {
+    Array,
+    Map,
+    Set,
+}
+
 impl HeapObject {
+    fn collection_storage(&self) -> Option<(CollectionStorageKind, usize, bool)> {
+        match self {
+            Self::Array(values) => Some((
+                CollectionStorageKind::Array,
+                values.storage_id(),
+                values.is_unique(),
+            )),
+            Self::Map(entries) => Some((
+                CollectionStorageKind::Map,
+                entries.storage_id(),
+                entries.is_unique(),
+            )),
+            Self::Set(values) => Some((
+                CollectionStorageKind::Set,
+                values.storage_id(),
+                values.is_unique(),
+            )),
+            _ => None,
+        }
+    }
+
     pub(super) fn estimated_bytes(&self) -> u64 {
         let base = mem::size_of::<Self>() as u64;
         let value = mem::size_of::<Option<Value>>() as u64;
         base.saturating_add(match self {
             Self::String(text) => text.capacity() as u64,
-            Self::Tuple(values) | Self::Array(values) | Self::Set(values) => {
+            Self::Tuple(values) => (values.capacity() as u64).saturating_mul(value),
+            Self::Array(values) | Self::Set(values) => {
                 (values.capacity() as u64).saturating_mul(value)
             }
             Self::Closure { captures, .. } => (captures.capacity() as u64).saturating_mul(value),
@@ -234,8 +339,10 @@ impl Heap {
     ) -> Result<(), VmError> {
         let descriptor = self.descriptor(handle)?;
         Self::visit_object(&self.descriptors, descriptor, &object, |_| {})?;
-        let old_bytes = self.get(handle)?.estimated_bytes();
+        let old_object = self.get(handle)?;
+        let old_bytes = old_object.estimated_bytes();
         let new_bytes = object.estimated_bytes();
+        let new_storage = object.collection_storage();
         let growth = new_bytes.saturating_sub(old_bytes);
         self.ensure_capacity(
             CapacityDemand {
@@ -248,6 +355,13 @@ impl Heap {
             roots,
             statistics,
         )?;
+        let old_storage = self.get(handle)?.collection_storage();
+        let detached_shared_buffer = matches!((old_storage, new_storage),
+            (
+                Some((old_kind, old_id, false)),
+                Some((new_kind, new_id, _)),
+            ) if old_kind == new_kind && old_id != new_id
+        );
         let slot = self
             .slots
             .get_mut(handle.index as usize)
@@ -262,6 +376,10 @@ impl Heap {
         slot.bytes = new_bytes;
         slot.object = Some(object);
         self.live_bytes = self.live_bytes.saturating_add(new_bytes);
+        if detached_shared_buffer {
+            statistics.collection_buffer_detaches =
+                statistics.collection_buffer_detaches.saturating_add(1);
+        }
         statistics.peak_live_bytes = statistics.peak_live_bytes.max(self.live_bytes);
         Ok(())
     }

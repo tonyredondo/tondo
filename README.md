@@ -64,8 +64,15 @@ more individual values, evaluate them left to right, preserve static
 homogeneity, and apply the ordinary Copy-or-Move rule to each element. The same
 contract works for named functions, methods, concrete closures, contextual
 closures, generics, and uniform indirect function values. The distinct
-whole-array transfer rules of explicit spread remain the VARIADIC-002
-milestone.
+whole-array spread is also executable: a Copy array remains available and an
+affine array moves as one owner, while positional and exact named forms reach
+the same final pack without recopying every element.
+
+The VM keeps eager logical copying as an executable reference strategy and uses
+measured copy-on-write buffers by default for representation-safe Array, Map,
+and Set leaves. The unchanged value-copy corpus runs eager and COW under normal
+and allocation-by-allocation GC pressure, so storage sharing cannot alter
+values, write independence, identity, iteration, panic, or output.
 
 `CompilationOutput` now retains an immutable semantic snapshot after name
 resolution. Embedding tools can query contextual expression types, resolved
