@@ -285,6 +285,9 @@ pub enum MirStatementKind {
         scope: HirScopeId,
         owner: MirPlace,
     },
+    EnterTaskScope {
+        scope: HirScopeId,
+    },
     RetargetCleanup {
         from: MirPlace,
         to: MirPlace,
@@ -711,6 +714,19 @@ pub enum MirTerminatorKind {
         target: Option<MirBlockId>,
         unwind: MirBlockId,
     },
+    Await {
+        awaitable: MirAwaitable,
+        destination: MirPlace,
+        target: MirBlockId,
+        unwind: MirBlockId,
+    },
+    Spawn {
+        operation: MirOperation,
+        scope: HirScopeId,
+        destination: MirPlace,
+        target: MirBlockId,
+        unwind: MirBlockId,
+    },
     IteratorNext {
         state: MirPlace,
         destination: MirPlace,
@@ -739,12 +755,24 @@ pub enum MirTerminatorKind {
         target: MirBlockId,
         unwind: MirBlockId,
     },
+    DrainScopes {
+        task_scopes: Vec<HirScopeId>,
+        defer_scopes: Vec<HirScopeId>,
+        target: MirBlockId,
+        unwind: MirBlockId,
+    },
     DrainUnwind {
         target: MirBlockId,
     },
     Return,
     ResumePanic,
     Unreachable,
+}
+
+#[derive(Debug, Clone)]
+pub enum MirAwaitable {
+    Call(MirOperation),
+    Join(MirOperand),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -44,6 +44,8 @@ pub(crate) enum AvailabilityFindingKind {
     TerminalNotConsumed,
     TerminalOverwrite,
     InvalidDefer,
+    NonSendAcrossSuspend,
+    ExclusiveLoanAcrossSuspend,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -413,6 +415,7 @@ struct Analyzer<'a, 'f> {
     liveness: &'a LivenessFacts,
     break_liveness: BTreeMap<HirLoopId, BTreeSet<LocalId>>,
     continue_liveness: BTreeMap<HirLoopId, BTreeSet<LocalId>>,
+    structured_scope_depth: u32,
     findings: &'f mut BTreeSet<AvailabilityFinding>,
 }
 
@@ -445,6 +448,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             liveness,
             break_liveness: BTreeMap::new(),
             continue_liveness: BTreeMap::new(),
+            structured_scope_depth: 0,
             findings,
         }
     }
@@ -748,6 +752,12 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 arguments,
                 protocol,
                 ..
+            }
+            | HirExpressionKind::AsyncCall {
+                callee,
+                arguments,
+                protocol,
+                ..
             } => {
                 let baseline = handoff_baseline(&state);
                 let callee_demand = if *protocol == HirCallProtocol::CallOnce {
@@ -814,6 +824,20 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 flow.retain_loans(&retained_loans);
                 settle_handoff(&mut flow, &baseline);
                 flow
+            }
+            HirExpressionKind::Await { operation } => {
+                self.record_suspension_requirements(&state, live_after, expression.span())?;
+                self.expression(*operation, state, Demand::Transfer, live_after)?
+            }
+            HirExpressionKind::Spawn { operation } => {
+                self.expression(*operation, state, Demand::Transfer, live_after)?
+            }
+            HirExpressionKind::Scope { body } => {
+                self.record_suspension_requirements(&state, live_after, expression.span())?;
+                self.structured_scope_depth = self.structured_scope_depth.saturating_add(1);
+                let result = self.expression(*body, state, Demand::Transfer, live_after);
+                self.structured_scope_depth -= 1;
+                result?
             }
             HirExpressionKind::PreludePanic { message } => {
                 let mut flow =
@@ -2466,6 +2490,49 @@ impl<'a, 'f> Analyzer<'a, 'f> {
         Ok(status == HirCapabilityStatus::Satisfied)
     }
 
+    fn record_suspension_requirements(
+        &mut self,
+        state: &AvailabilityState,
+        live_after: &BTreeSet<LocalId>,
+        span: Span,
+    ) -> Result<(), TypeError> {
+        for local in live_after {
+            let Some(ty) = self.program.local_type(*local) else {
+                continue;
+            };
+            if self.is_terminal(ty)? {
+                // Pending joins are rooted by their structured scope rather
+                // than transferred with the ordinary suspended frame.
+                continue;
+            }
+            if self
+                .capabilities
+                .status(self.program, ty, HirCapability::Send, &self.assumptions)?
+                != HirCapabilityStatus::Satisfied
+            {
+                self.findings.insert(AvailabilityFinding {
+                    kind: AvailabilityFindingKind::NonSendAcrossSuspend,
+                    local: Some(*local),
+                    use_span: span,
+                    move_span: None,
+                });
+            }
+        }
+        for reservation in state
+            .loans
+            .values()
+            .filter(|reservation| reservation.mode != ParameterMode::Ref)
+        {
+            self.findings.insert(AvailabilityFinding {
+                kind: AvailabilityFindingKind::ExclusiveLoanAcrossSuspend,
+                local: None,
+                use_span: span,
+                move_span: Some(reservation.span),
+            });
+        }
+        Ok(())
+    }
+
     fn is_terminal(&mut self, ty: TypeId) -> Result<bool, TypeError> {
         let Some(terminals) = self.terminals else {
             return Ok(false);
@@ -2709,7 +2776,16 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                 }
             }
         }
-        self.finish_terminal_local_scope(flow, locals);
+        if self.structured_scope_depth == 0 {
+            self.finish_terminal_local_scope(flow, locals);
+        } else {
+            let normal = AvailabilityFlow {
+                normal: flow.normal.clone(),
+                ..AvailabilityFlow::default()
+            };
+            self.report_terminal_locals(&normal, locals);
+            flow.strip_locals(locals);
+        }
     }
 
     fn finish_defer_scope(&mut self, flow: &mut AvailabilityFlow, scope: HirScopeId) {
@@ -3853,10 +3929,17 @@ fn expression_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
         }
         HirExpressionKind::Call {
             callee, arguments, ..
+        }
+        | HirExpressionKind::AsyncCall {
+            callee, arguments, ..
         } => {
             children.push(*callee);
             children.extend(arguments.iter().map(super::HirCallArgument::value));
         }
+        HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation } => {
+            children.push(*operation);
+        }
+        HirExpressionKind::Scope { body } => children.push(*body),
         HirExpressionKind::PreludePanic { message } => children.push(*message),
         HirExpressionKind::PreludeAssert {
             condition,

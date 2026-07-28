@@ -1,8 +1,9 @@
 use std::cmp::Ordering;
+use std::collections::VecDeque;
 
 use crate::bytecode::{
-    ArraySliceError, BytecodeAggregateKind, BytecodeArraySequenceKind, BytecodeBinaryOperator,
-    BytecodeBlockId, BytecodeBootstrapHostFunction, BytecodeCallArgument,
+    ArraySliceError, BytecodeAggregateKind, BytecodeArraySequenceKind, BytecodeAwaitable,
+    BytecodeBinaryOperator, BytecodeBlockId, BytecodeBootstrapHostFunction, BytecodeCallArgument,
     BytecodeCallArgumentTarget, BytecodeCoercion, BytecodeConstant, BytecodeConstantValue,
     BytecodeConstantValueKind, BytecodeConstantVariantValue, BytecodeContainmentKind,
     BytecodeCursorMode, BytecodeFunctionId, BytecodeIndexAccess, BytecodeInstruction,
@@ -12,15 +13,14 @@ use crate::bytecode::{
     BytecodeParameterMode, BytecodePlace, BytecodePrefixOperator, BytecodeProgram,
     BytecodeProjection, BytecodeProjectionKind, BytecodeRangeKind, BytecodeRvalue,
     BytecodeRvalueKind, BytecodeScalarType, BytecodeScopeId, BytecodeSlotId, BytecodeSpan,
-    BytecodeTag, BytecodeTerminalUnwindAction, BytecodeTerminator, BytecodeTerminatorKind,
-    BytecodeTraceMetadata, BytecodeTypeId, BytecodeTypeKind, BytecodeVariantPayload,
-    BytecodeVerificationLimits, normalize_array_index, normalize_array_slice_indices,
-    verify_bytecode_with_trace_metadata,
+    BytecodeTag, BytecodeTerminator, BytecodeTerminatorKind, BytecodeTraceMetadata, BytecodeTypeId,
+    BytecodeTypeKind, BytecodeVariantPayload, BytecodeVerificationLimits, normalize_array_index,
+    normalize_array_slice_indices, verify_bytecode_with_trace_metadata,
 };
 use crate::literal;
 
 use super::heap::{Heap, HeapHandle, HeapObject};
-use super::value::{AggregatePayload, RuntimeLoan, Value, snapshot_value};
+use super::value::{AggregatePayload, RuntimeJoin, RuntimeLoan, Value, snapshot_value};
 use super::{
     PanicCode, RuntimeValue, ValueCopyStrategy, VmError, VmLimits, VmPanic, VmStackFrame,
     VmStatistics,
@@ -121,9 +121,9 @@ fn validate_entry_contract(
             "the selected callable contract is not a function".into(),
         ));
     };
-    if signature.is_async || signature.is_unsafe {
+    if signature.is_unsafe {
         return Err(VmError::InvalidEntry(
-            "the selected callable requires an async or unsafe execution context".into(),
+            "the selected callable requires an unsafe execution context".into(),
         ));
     }
     Ok(())
@@ -312,6 +312,7 @@ struct Frame {
     slots: Vec<SlotState>,
     loans: Vec<Option<RuntimeReservation>>,
     cleanups: Vec<RuntimeCleanup>,
+    task_scopes: Vec<usize>,
     continuation: Option<CallContinuation>,
 }
 
@@ -337,6 +338,62 @@ impl Frame {
     }
 }
 
+#[derive(Debug)]
+enum TaskCompletion {
+    Returned(Value),
+    Panicked(VmPanic),
+    Cancelled,
+}
+
+#[derive(Debug)]
+enum RuntimeUnwind {
+    Panic(VmPanic),
+    Cancelled,
+}
+
+#[derive(Debug)]
+enum TaskWait {
+    Join {
+        child: usize,
+        owner: BytecodePlace,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    },
+    Scope,
+}
+
+#[derive(Debug)]
+enum TaskStatus {
+    Running,
+    Runnable,
+    Waiting(TaskWait),
+    Complete(Option<TaskCompletion>),
+    Consumed,
+}
+
+#[derive(Debug)]
+struct TaskRecord {
+    frames: Vec<Frame>,
+    pending_unwind: Option<RuntimeUnwind>,
+    status: TaskStatus,
+    resume: Option<TaskWait>,
+    queued: bool,
+    cancel_requested: bool,
+    waiters: Vec<usize>,
+    parent_scope: Option<usize>,
+    join_consumed: bool,
+    panic_observed: bool,
+}
+
+#[derive(Debug)]
+struct RuntimeTaskScope {
+    source: BytecodeScopeId,
+    owner: usize,
+    children: Vec<usize>,
+    closed: bool,
+}
+
 struct Engine<'program, 'host> {
     program: &'program BytecodeProgram,
     host: &'host mut dyn VmHost,
@@ -346,7 +403,11 @@ struct Engine<'program, 'host> {
     frames: Vec<Frame>,
     frame_traces: Vec<crate::bytecode::BytecodeFrameTraceDescriptor>,
     temporary_roots: Vec<Value>,
-    pending_panic: Option<VmPanic>,
+    pending_unwind: Option<RuntimeUnwind>,
+    tasks: Vec<TaskRecord>,
+    runnable: VecDeque<usize>,
+    current_task: usize,
+    task_scopes: Vec<Option<RuntimeTaskScope>>,
     statistics: VmStatistics,
     callable_names: Vec<String>,
     nominal_names: Vec<String>,
@@ -369,7 +430,11 @@ impl<'program, 'host> Engine<'program, 'host> {
             frames: Vec::new(),
             frame_traces: trace.frames,
             temporary_roots: Vec::new(),
-            pending_panic: None,
+            pending_unwind: None,
+            tasks: Vec::new(),
+            runnable: VecDeque::new(),
+            current_task: 0,
+            task_scopes: Vec::new(),
             statistics: VmStatistics::default(),
             callable_names: program
                 .callables
@@ -394,9 +459,27 @@ impl<'program, 'host> Engine<'program, 'host> {
                 "the selected function requires parameters".into(),
             ));
         }
+        self.tasks.push(TaskRecord {
+            frames: Vec::new(),
+            pending_unwind: None,
+            status: TaskStatus::Running,
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: None,
+            join_consumed: true,
+            panic_observed: false,
+        });
         self.push_frame(entry, Vec::new(), None)?;
 
         loop {
+            if !self.resume_current_task()? {
+                if let Some(execution) = self.schedule_next()? {
+                    return Ok(execution);
+                }
+                continue;
+            }
             self.step_budget()?;
             let frame_index = self
                 .frames
@@ -417,17 +500,514 @@ impl<'program, 'host> Engine<'program, 'host> {
             if let Some(instruction) = block.instructions.get(instruction_index).cloned() {
                 self.frames[frame_index].instruction += 1;
                 self.execute_instruction(frame_index, &instruction)?;
-                continue;
+            } else {
+                let terminator = block.terminator.clone();
+                if let Some(completion) = self.execute_terminator(frame_index, &terminator)? {
+                    self.complete_current_task(completion)?;
+                }
             }
-            let terminator = block.terminator.clone();
-            if let Some(outcome) = self.execute_terminator(frame_index, &terminator)? {
-                self.heap.collect(&[], &mut self.statistics)?;
-                return Ok(VmExecution {
-                    outcome,
-                    statistics: self.statistics,
-                });
+            if let Some(execution) = self.schedule_next()? {
+                return Ok(execution);
             }
         }
+    }
+
+    fn resume_current_task(&mut self) -> Result<bool, VmError> {
+        let wait = self
+            .tasks
+            .get_mut(self.current_task)
+            .ok_or_else(|| VmError::invariant("the active task is missing"))?
+            .resume
+            .take();
+        let Some(wait) = wait else {
+            return Ok(true);
+        };
+        match wait {
+            TaskWait::Scope => Ok(true),
+            TaskWait::Join {
+                child,
+                owner,
+                destination,
+                target,
+                unwind,
+            } => {
+                let frame = self
+                    .frames
+                    .len()
+                    .checked_sub(1)
+                    .ok_or_else(|| VmError::invariant("a resumed await has no frame"))?;
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.begin_cancel(frame, unwind)?;
+                    return Ok(true);
+                }
+                if !matches!(
+                    self.tasks.get(child).map(|task| &task.status),
+                    Some(TaskStatus::Complete(_))
+                ) {
+                    self.park_current(
+                        TaskWait::Join {
+                            child,
+                            owner,
+                            destination,
+                            target,
+                            unwind,
+                        },
+                        &[child],
+                    )?;
+                    return Ok(false);
+                }
+                let join = self.consume_join_owner(frame, &owner)?;
+                if join.task != child {
+                    return Err(VmError::invariant(
+                        "resumed Join owner changed its child identity",
+                    ));
+                }
+                let parent_scope = self.tasks[child].parent_scope;
+                let completion = self
+                    .take_task_completion(child)?
+                    .ok_or_else(|| VmError::invariant("woken Join has no completion"))?;
+                self.apply_join_completion(frame, completion, &destination, target, unwind)?;
+                if let Some(scope) = parent_scope {
+                    if self.task_scopes.get(scope).is_some_and(Option::is_some) {
+                        self.release_task_scope_if_consumed(scope)?;
+                    }
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    fn schedule_next(&mut self) -> Result<Option<VmExecution>, VmError> {
+        if matches!(
+            self.tasks.get(self.current_task).map(|task| &task.status),
+            Some(TaskStatus::Running)
+        ) {
+            self.tasks[self.current_task].status = TaskStatus::Runnable;
+            self.enqueue_task(self.current_task)?;
+        }
+        {
+            let task = self
+                .tasks
+                .get_mut(self.current_task)
+                .ok_or_else(|| VmError::invariant("the active task disappeared"))?;
+            task.frames = std::mem::take(&mut self.frames);
+            task.pending_unwind = self.pending_unwind.take();
+        }
+
+        while let Some(next) = self.runnable.pop_front() {
+            let task = self
+                .tasks
+                .get_mut(next)
+                .ok_or_else(|| VmError::invariant("the runnable queue contains an invalid task"))?;
+            task.queued = false;
+            if !matches!(task.status, TaskStatus::Runnable) {
+                continue;
+            }
+            task.status = TaskStatus::Running;
+            self.current_task = next;
+            self.frames = std::mem::take(&mut task.frames);
+            self.pending_unwind = task.pending_unwind.take();
+            return Ok(None);
+        }
+
+        if matches!(
+            self.tasks.first().map(|task| &task.status),
+            Some(TaskStatus::Complete(_))
+        ) {
+            return self.finish_root_task().map(Some);
+        }
+        Err(VmError::invariant(
+            "the cooperative executor has no runnable task before root completion",
+        ))
+    }
+
+    fn enqueue_task(&mut self, task: usize) -> Result<(), VmError> {
+        let record = self
+            .tasks
+            .get_mut(task)
+            .ok_or_else(|| VmError::invariant("cannot enqueue an invalid task"))?;
+        if record.queued {
+            return Ok(());
+        }
+        if !matches!(record.status, TaskStatus::Runnable) {
+            return Ok(());
+        }
+        record.queued = true;
+        self.runnable.push_back(task);
+        Ok(())
+    }
+
+    fn park_current(&mut self, wait: TaskWait, dependencies: &[usize]) -> Result<(), VmError> {
+        for dependency in dependencies {
+            let waiters = &mut self
+                .tasks
+                .get_mut(*dependency)
+                .ok_or_else(|| VmError::invariant("task waits on an invalid dependency"))?
+                .waiters;
+            if !waiters.contains(&self.current_task) {
+                waiters.push(self.current_task);
+            }
+        }
+        self.tasks[self.current_task].status = TaskStatus::Waiting(wait);
+        Ok(())
+    }
+
+    fn wake_task(&mut self, task: usize) -> Result<(), VmError> {
+        let record = self
+            .tasks
+            .get_mut(task)
+            .ok_or_else(|| VmError::invariant("cannot wake an invalid task"))?;
+        if !matches!(record.status, TaskStatus::Waiting(_)) {
+            return Ok(());
+        }
+        let TaskStatus::Waiting(wait) = std::mem::replace(&mut record.status, TaskStatus::Runnable)
+        else {
+            unreachable!("status was checked as waiting");
+        };
+        record.resume = Some(wait);
+        self.enqueue_task(task)
+    }
+
+    fn complete_current_task(&mut self, completion: TaskCompletion) -> Result<(), VmError> {
+        let panicked = matches!(completion, TaskCompletion::Panicked(_));
+        let parent_scope = self.tasks[self.current_task].parent_scope;
+        self.tasks[self.current_task].status = TaskStatus::Complete(Some(completion));
+        if let Some(scope) = parent_scope {
+            let (owner, siblings) = {
+                let scope = self
+                    .task_scopes
+                    .get(scope)
+                    .and_then(Option::as_ref)
+                    .ok_or_else(|| VmError::invariant("child task has no owning scope"))?;
+                (scope.owner, scope.children.clone())
+            };
+            if panicked {
+                for sibling in siblings {
+                    if sibling != self.current_task {
+                        self.request_cancel(sibling)?;
+                    }
+                }
+                self.wake_task(owner)?;
+            }
+        }
+        let waiters = std::mem::take(&mut self.tasks[self.current_task].waiters);
+        for waiter in waiters {
+            self.wake_task(waiter)?;
+        }
+        Ok(())
+    }
+
+    fn take_task_completion(&mut self, task: usize) -> Result<Option<TaskCompletion>, VmError> {
+        let record = self
+            .tasks
+            .get_mut(task)
+            .ok_or_else(|| VmError::invariant("Join references an invalid task"))?;
+        let TaskStatus::Complete(completion) = &mut record.status else {
+            return Ok(None);
+        };
+        let completion = completion
+            .take()
+            .ok_or_else(|| VmError::invariant("task completion was consumed twice"))?;
+        record.status = TaskStatus::Consumed;
+        Ok(Some(completion))
+    }
+
+    fn request_cancel(&mut self, task: usize) -> Result<(), VmError> {
+        let record = self
+            .tasks
+            .get_mut(task)
+            .ok_or_else(|| VmError::invariant("cannot cancel an invalid task"))?;
+        if matches!(
+            record.status,
+            TaskStatus::Complete(_) | TaskStatus::Consumed
+        ) {
+            return Ok(());
+        }
+        record.cancel_requested = true;
+        self.wake_task(task)
+    }
+
+    fn finish_root_task(&mut self) -> Result<VmExecution, VmError> {
+        if self
+            .tasks
+            .iter()
+            .skip(1)
+            .any(|task| !matches!(task.status, TaskStatus::Consumed))
+        {
+            return Err(VmError::invariant(
+                "the root task completed while structured children remained live",
+            ));
+        }
+        let completion = self
+            .take_task_completion(0)?
+            .ok_or_else(|| VmError::invariant("the root task has no completion"))?;
+        let outcome = match completion {
+            TaskCompletion::Returned(value) => VmOutcome::Returned(snapshot_value(
+                &value,
+                &self.heap,
+                &self.callable_names,
+                &self.nominal_names,
+            )?),
+            TaskCompletion::Panicked(panic) => VmOutcome::Panicked(panic),
+            TaskCompletion::Cancelled => {
+                return Err(VmError::invariant(
+                    "the root task was cancelled without a propagating child panic",
+                ));
+            }
+        };
+        self.heap.collect(&[], &mut self.statistics)?;
+        Ok(VmExecution {
+            outcome,
+            statistics: self.statistics,
+        })
+    }
+
+    fn spawn_task(
+        &mut self,
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        scope: usize,
+    ) -> Result<usize, VmError> {
+        let parent_frames = std::mem::take(&mut self.frames);
+        let pushed = self.push_frame(function, arguments, None);
+        let child_frames = std::mem::take(&mut self.frames);
+        self.frames = parent_frames;
+        pushed?;
+
+        let task = self.tasks.len();
+        self.tasks.push(TaskRecord {
+            frames: child_frames,
+            pending_unwind: None,
+            status: TaskStatus::Runnable,
+            resume: None,
+            queued: false,
+            cancel_requested: false,
+            waiters: Vec::new(),
+            parent_scope: Some(scope),
+            join_consumed: false,
+            panic_observed: false,
+        });
+        self.task_scopes
+            .get_mut(scope)
+            .and_then(Option::as_mut)
+            .ok_or_else(|| VmError::invariant("spawn targets a missing task scope"))?
+            .children
+            .push(task);
+        self.enqueue_task(task)?;
+        Ok(task)
+    }
+
+    fn active_task_scope(&self, frame: usize, source: BytecodeScopeId) -> Result<usize, VmError> {
+        let id = *self.frames[frame]
+            .task_scopes
+            .last()
+            .ok_or_else(|| VmError::invariant("spawn has no active task scope"))?;
+        let scope = self
+            .task_scopes
+            .get(id)
+            .and_then(Option::as_ref)
+            .ok_or_else(|| VmError::invariant("active task scope state is missing"))?;
+        if scope.source != source || scope.owner != self.current_task || scope.closed {
+            return Err(VmError::invariant(
+                "spawn does not target the active innermost task scope",
+            ));
+        }
+        Ok(id)
+    }
+
+    fn current_scope_has_unobserved_panic(&self, _frame: usize) -> Result<bool, VmError> {
+        for frame in self.frames.iter().rev() {
+            for id in frame.task_scopes.iter().rev() {
+                let scope = self
+                    .task_scopes
+                    .get(*id)
+                    .and_then(Option::as_ref)
+                    .ok_or_else(|| VmError::invariant("active task scope state is missing"))?;
+                for child in &scope.children {
+                    let task = self
+                        .tasks
+                        .get(*child)
+                        .ok_or_else(|| VmError::invariant("task scope owns an invalid child"))?;
+                    if !task.panic_observed
+                        && matches!(
+                            task.status,
+                            TaskStatus::Complete(Some(TaskCompletion::Panicked(_)))
+                        )
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    fn apply_join_completion(
+        &mut self,
+        frame: usize,
+        completion: TaskCompletion,
+        destination: &BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    ) -> Result<(), VmError> {
+        match completion {
+            TaskCompletion::Returned(value) => {
+                self.write_place(frame, destination, value)?;
+                self.jump(frame, target);
+            }
+            TaskCompletion::Panicked(panic) => {
+                self.begin_propagated_panic(frame, panic, unwind)?;
+            }
+            TaskCompletion::Cancelled => {
+                self.begin_cancel(frame, unwind)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn consume_join_owner(
+        &mut self,
+        frame: usize,
+        owner: &BytecodePlace,
+    ) -> Result<RuntimeJoin, VmError> {
+        let value = self.take_place(frame, owner)?;
+        self.disarm_cleanup(frame, owner)?;
+        let Value::Join(join) = value else {
+            return Err(VmError::invariant("await Join owner has no task handle"));
+        };
+        if !self.frames[frame].task_scopes.contains(&join.scope) {
+            return Err(VmError::invariant(
+                "Join escaped its owning active task scope",
+            ));
+        }
+        let task = self
+            .tasks
+            .get_mut(join.task)
+            .ok_or_else(|| VmError::invariant("Join references an invalid task"))?;
+        if task.parent_scope != Some(join.scope) || task.join_consumed {
+            return Err(VmError::invariant(
+                "Join was consumed twice or by the wrong task scope",
+            ));
+        }
+        task.join_consumed = true;
+        Ok(join)
+    }
+
+    fn drain_task_scopes(
+        &mut self,
+        frame: usize,
+        sources: &[BytecodeScopeId],
+    ) -> Result<bool, VmError> {
+        if sources.is_empty() {
+            return Ok(true);
+        }
+        if self.frames[frame].task_scopes.len() < sources.len() {
+            return Ok(true);
+        }
+        let start = self.frames[frame].task_scopes.len() - sources.len();
+        for (id, source) in self.frames[frame].task_scopes[start..].iter().zip(sources) {
+            let actual = self
+                .task_scopes
+                .get(*id)
+                .and_then(Option::as_ref)
+                .ok_or_else(|| VmError::invariant("active task scope state is missing"))?
+                .source;
+            if actual != *source {
+                return Err(VmError::invariant(
+                    "task-scope drain does not match the active scope suffix",
+                ));
+            }
+        }
+        for source in sources.iter().rev() {
+            let id = *self.frames[frame]
+                .task_scopes
+                .last()
+                .ok_or_else(|| VmError::invariant("task-scope drain underflow"))?;
+            let (actual, children) = {
+                let scope = self
+                    .task_scopes
+                    .get(id)
+                    .and_then(Option::as_ref)
+                    .ok_or_else(|| VmError::invariant("task-scope drain state is missing"))?;
+                (scope.source, scope.children.clone())
+            };
+            if actual != *source {
+                return Err(VmError::invariant(
+                    "task scopes are not drained in inner-to-outer order",
+                ));
+            }
+
+            let mut pending = Vec::new();
+            for child in &children {
+                let status = &self
+                    .tasks
+                    .get(*child)
+                    .ok_or_else(|| VmError::invariant("task scope owns an invalid child"))?
+                    .status;
+                if !matches!(status, TaskStatus::Complete(_) | TaskStatus::Consumed) {
+                    self.request_cancel(*child)?;
+                    pending.push(*child);
+                }
+            }
+            if !pending.is_empty() {
+                self.park_current(TaskWait::Scope, &pending)?;
+                return Ok(false);
+            }
+
+            let mut panics = Vec::new();
+            for child in &children {
+                let task = self
+                    .tasks
+                    .get_mut(*child)
+                    .ok_or_else(|| VmError::invariant("task scope owns an invalid child"))?;
+                if task.panic_observed {
+                    continue;
+                }
+                if let TaskStatus::Complete(Some(TaskCompletion::Panicked(panic))) = &task.status {
+                    panics.push(panic.clone());
+                    task.panic_observed = true;
+                }
+            }
+            if let Some(mut primary) = panics.first().cloned() {
+                primary.suppressed.extend(panics.into_iter().skip(1));
+                if let Some(RuntimeUnwind::Panic(owner)) = &mut self.pending_unwind {
+                    owner.suppressed.push(primary);
+                } else {
+                    self.pending_unwind = Some(RuntimeUnwind::Panic(primary));
+                }
+            }
+
+            self.frames[frame].task_scopes.pop();
+            self.task_scopes
+                .get_mut(id)
+                .and_then(Option::as_mut)
+                .ok_or_else(|| VmError::invariant("task-scope drain state disappeared"))?
+                .closed = true;
+            self.release_task_scope_if_consumed(id)?;
+        }
+        Ok(true)
+    }
+
+    fn release_task_scope_if_consumed(&mut self, scope: usize) -> Result<(), VmError> {
+        let release = {
+            let state = self
+                .task_scopes
+                .get(scope)
+                .and_then(Option::as_ref)
+                .ok_or_else(|| VmError::invariant("task scope state is missing"))?;
+            state.closed
+                && state.children.iter().all(|child| {
+                    self.tasks
+                        .get(*child)
+                        .is_some_and(|task| matches!(task.status, TaskStatus::Consumed))
+                })
+        };
+        if release {
+            self.task_scopes[scope] = None;
+        }
+        Ok(())
     }
 
     fn step_budget(&mut self) -> Result<(), VmError> {
@@ -472,6 +1052,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 BytecodeInstructionKind::ReserveLoan(_)
                 | BytecodeInstructionKind::ReleaseLoan(_)
                 | BytecodeInstructionKind::Store { .. }
+                | BytecodeInstructionKind::EnterTaskScope { .. }
                 | BytecodeInstructionKind::RegisterDefer { .. }
                 | BytecodeInstructionKind::RegisterFallback { .. }
                 | BytecodeInstructionKind::RetargetCleanup { .. }
@@ -515,6 +1096,7 @@ impl<'program, 'host> Engine<'program, 'host> {
             slots,
             loans: vec![None; function.loans.len()],
             cleanups: Vec::new(),
+            task_scopes: Vec::new(),
             continuation,
         });
         self.statistics.peak_stack_depth = self
@@ -557,6 +1139,27 @@ impl<'program, 'host> Engine<'program, 'host> {
             BytecodeInstructionKind::Store { destination, value } => {
                 let value = self.evaluate_rvalue(frame, value)?;
                 self.write_place(frame, destination, value)?;
+            }
+            BytecodeInstructionKind::EnterTaskScope { scope } => {
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    let unwind = self
+                        .program
+                        .function(self.frames[frame].function)
+                        .ok_or_else(|| VmError::invariant("task scope frame is invalid"))?
+                        .unwind;
+                    self.begin_cancel(frame, unwind)?;
+                } else {
+                    let id = self.task_scopes.len();
+                    self.task_scopes.push(Some(RuntimeTaskScope {
+                        source: *scope,
+                        owner: self.current_task,
+                        children: Vec::new(),
+                        closed: false,
+                    }));
+                    self.frames[frame].task_scopes.push(id);
+                }
             }
             BytecodeInstructionKind::RegisterDefer {
                 scope,
@@ -971,15 +1574,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     arguments,
                 } => match constructor {
                     BytecodeIntrinsicType::Join => {
-                        let action = constructor
-                            .terminal_contract()
-                            .ok_or_else(|| {
-                                VmError::invariant(
-                                    "terminal intrinsic has no sealed unwind contract",
-                                )
-                            })?
-                            .unwind;
-                        self.execute_direct_terminal_action(action, value)?;
+                        self.teardown_join(&mut pending, &ty, &arguments, value)?;
                     }
                     BytecodeIntrinsicType::Array | BytecodeIntrinsicType::Set => {
                         let [item] = arguments.as_slice() else {
@@ -1295,16 +1890,88 @@ impl<'program, 'host> Engine<'program, 'host> {
         pending.push((ty, value));
     }
 
-    fn execute_direct_terminal_action(
+    fn teardown_join(
         &mut self,
-        action: BytecodeTerminalUnwindAction,
-        _value: Value,
+        pending: &mut Vec<(RuntimeType, Value)>,
+        ty: &RuntimeType,
+        arguments: &[BytecodeTypeId],
+        value: Value,
     ) -> Result<(), VmError> {
-        match action {
-            BytecodeTerminalUnwindAction::JoinTeardown => Err(VmError::invariant(
-                "Join teardown reached the synchronous VM before M7 supplied task state",
-            )),
+        let [success, error] = arguments else {
+            return Err(VmError::invariant(
+                "terminal Join fallback has the wrong type arity",
+            ));
+        };
+        let Value::Join(join) = value else {
+            return Err(VmError::invariant(
+                "terminal Join fallback found no task handle",
+            ));
+        };
+        let task = self
+            .tasks
+            .get_mut(join.task)
+            .ok_or_else(|| VmError::invariant("terminal Join references an invalid task"))?;
+        if task.parent_scope != Some(join.scope) || task.join_consumed {
+            return Err(VmError::invariant(
+                "terminal Join was consumed twice or by the wrong scope",
+            ));
         }
+        task.join_consumed = true;
+        let panic_observed = task.panic_observed;
+        let completion = self
+            .take_task_completion(join.task)?
+            .ok_or_else(|| VmError::invariant("terminal Join child has not completed cleanup"))?;
+        match completion {
+            TaskCompletion::Returned(value) => {
+                if matches!(
+                    self.program.ty(*error).map(|ty| &ty.kind),
+                    Some(BytecodeTypeKind::Scalar(BytecodeScalarType::Never))
+                ) {
+                    self.queue_fallback_value(pending, ty.child(*success), value);
+                } else {
+                    let Value::Heap(handle) = value else {
+                        return Err(VmError::invariant(
+                            "fallible Join completed with a non-Result value",
+                        ));
+                    };
+                    let mut object = self.heap.get(handle)?.clone();
+                    match &mut object {
+                        HeapObject::ResultOk(value) => {
+                            if let Some(value) = value.take() {
+                                self.queue_fallback_value(pending, ty.child(*success), value);
+                            }
+                        }
+                        HeapObject::ResultErr(value) => {
+                            if let Some(value) = value.take() {
+                                self.queue_fallback_value(pending, ty.child(*error), value);
+                            }
+                        }
+                        _ => {
+                            return Err(VmError::invariant(
+                                "fallible Join completed with a different heap object",
+                            ));
+                        }
+                    }
+                    self.replace_fallback_object(handle, object)?;
+                }
+            }
+            TaskCompletion::Panicked(panic) if !panic_observed => {
+                if let Some(RuntimeUnwind::Panic(primary)) = &mut self.pending_unwind {
+                    primary.suppressed.push(panic);
+                } else {
+                    self.pending_unwind = Some(RuntimeUnwind::Panic(panic));
+                }
+            }
+            TaskCompletion::Panicked(_) | TaskCompletion::Cancelled => {}
+        }
+        if self
+            .task_scopes
+            .get(join.scope)
+            .is_some_and(Option::is_some)
+        {
+            self.release_task_scope_if_consumed(join.scope)?;
+        }
+        Ok(())
     }
 
     fn resolve_runtime_type(&self, mut ty: RuntimeType) -> Result<RuntimeType, VmError> {
@@ -1521,7 +2188,7 @@ impl<'program, 'host> Engine<'program, 'host> {
         &mut self,
         frame: usize,
         terminator: &BytecodeTerminator,
-    ) -> Result<Option<VmOutcome>, VmError> {
+    ) -> Result<Option<TaskCompletion>, VmError> {
         match &terminator.kind {
             BytecodeTerminatorKind::Goto { target } => self.jump(frame, *target),
             BytecodeTerminatorKind::BranchBool {
@@ -1579,6 +2246,140 @@ impl<'program, 'host> Engine<'program, 'host> {
                     }
                     OperationResult::Panic(code, message) => {
                         self.begin_panic(frame, code, message, span, *unwind)?;
+                    }
+                }
+            }
+            BytecodeTerminatorKind::Await {
+                awaitable,
+                destination,
+                target,
+                unwind,
+            } => {
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.begin_cancel(frame, *unwind)?;
+                    return Ok(None);
+                }
+                let span = self.resolve_span(frame, terminator.span)?;
+                match awaitable {
+                    BytecodeAwaitable::Call(operation) => {
+                        match self.evaluate_operation(frame, operation, span)? {
+                            OperationResult::Value(value) => {
+                                self.write_place(frame, destination, value)?;
+                                self.jump(frame, *target);
+                            }
+                            OperationResult::Call {
+                                function,
+                                arguments,
+                            } => {
+                                self.push_frame(
+                                    function,
+                                    arguments,
+                                    Some(CallContinuation {
+                                        destination: Some(destination.clone()),
+                                        target: Some(*target),
+                                        unwind: *unwind,
+                                        call_span: span,
+                                    }),
+                                )?;
+                            }
+                            OperationResult::Panic(code, message) => {
+                                self.begin_panic(frame, code, message, span, *unwind)?;
+                            }
+                        }
+                    }
+                    BytecodeAwaitable::Join(join) => {
+                        let BytecodeOperandKind::Move(owner) = &join.kind else {
+                            return Err(VmError::invariant(
+                                "await did not consume its affine Join",
+                            ));
+                        };
+                        let value = self.read_place(frame, owner)?;
+                        let Value::Join(join) = value else {
+                            return Err(VmError::invariant(
+                                "await Join operand has no task handle",
+                            ));
+                        };
+                        let task = self
+                            .tasks
+                            .get(join.task)
+                            .ok_or_else(|| VmError::invariant("Join references an invalid task"))?;
+                        if task.parent_scope != Some(join.scope) || task.join_consumed {
+                            return Err(VmError::invariant(
+                                "Join was consumed twice or by the wrong task scope",
+                            ));
+                        }
+                        let parent_scope = task.parent_scope;
+                        if matches!(task.status, TaskStatus::Complete(_)) {
+                            let consumed = self.consume_join_owner(frame, owner)?;
+                            debug_assert_eq!(consumed, join);
+                            let completion =
+                                self.take_task_completion(join.task)?.ok_or_else(|| {
+                                    VmError::invariant("completed Join has no result")
+                                })?;
+                            self.apply_join_completion(
+                                frame,
+                                completion,
+                                destination,
+                                *target,
+                                *unwind,
+                            )?;
+                            if let Some(scope) = parent_scope {
+                                if self.task_scopes.get(scope).is_some_and(Option::is_some) {
+                                    self.release_task_scope_if_consumed(scope)?;
+                                }
+                            }
+                        } else {
+                            self.park_current(
+                                TaskWait::Join {
+                                    child: join.task,
+                                    owner: owner.clone(),
+                                    destination: destination.clone(),
+                                    target: *target,
+                                    unwind: *unwind,
+                                },
+                                &[join.task],
+                            )?;
+                        }
+                    }
+                }
+            }
+            BytecodeTerminatorKind::Spawn {
+                operation,
+                scope,
+                destination,
+                target,
+                unwind,
+            } => {
+                if self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?
+                {
+                    self.begin_cancel(frame, *unwind)?;
+                    return Ok(None);
+                }
+                let span = self.resolve_span(frame, terminator.span)?;
+                match self.evaluate_operation(frame, operation, span)? {
+                    OperationResult::Call {
+                        function,
+                        arguments,
+                    } => {
+                        let scope = self.active_task_scope(frame, *scope)?;
+                        let child = self.spawn_task(function, arguments, scope)?;
+                        self.write_place(
+                            frame,
+                            destination,
+                            Value::Join(RuntimeJoin { task: child, scope }),
+                        )?;
+                        self.jump(frame, *target);
+                    }
+                    OperationResult::Panic(code, message) => {
+                        self.begin_panic(frame, code, message, span, *unwind)?;
+                    }
+                    OperationResult::Value(_) => {
+                        return Err(VmError::invariant(
+                            "spawn operation did not produce an async child call",
+                        ));
                     }
                 }
             }
@@ -1659,58 +2460,42 @@ impl<'program, 'host> Engine<'program, 'host> {
                     Err(PlaceFailure::Vm(error)) => return Err(error),
                 }
             }
+            BytecodeTerminatorKind::DrainScopes {
+                task_scopes,
+                defer_scopes,
+                target,
+                unwind,
+            } => {
+                if (self.tasks[self.current_task].cancel_requested
+                    || self.current_scope_has_unobserved_panic(frame)?)
+                    && self.pending_unwind.is_none()
+                {
+                    self.pending_unwind = Some(RuntimeUnwind::Cancelled);
+                }
+                if self.drain_task_scopes(frame, task_scopes)? {
+                    self.drain_explicit_scopes(frame, defer_scopes, *target, *unwind)?;
+                }
+            }
             BytecodeTerminatorKind::DrainDefers {
                 scopes,
                 target,
                 unwind,
-            } => {
-                let continuation = self.frames[frame].block;
-                let next = self.frames[frame].cleanups.iter().rposition(|cleanup| {
-                    matches!(cleanup, RuntimeCleanup::Explicit(_))
-                        && scopes.contains(&cleanup.scope())
-                });
-                if let Some(index) = next {
-                    let RuntimeCleanup::Explicit(deferred) =
-                        self.frames[frame].cleanups.remove(index)
-                    else {
-                        unreachable!("normal defer drains select explicit entries");
-                    };
-                    let span = deferred.span;
-                    match self.evaluate_deferred_operation(frame, deferred)? {
-                        OperationResult::Value(Value::Unit) => {
-                            self.jump(frame, continuation);
-                        }
-                        OperationResult::Value(_) => {
-                            return Err(VmError::invariant(
-                                "deferred invocation returned a non-Unit value",
-                            ));
-                        }
-                        OperationResult::Call {
-                            function,
-                            arguments,
-                        } => {
-                            self.push_frame(
-                                function,
-                                arguments,
-                                Some(CallContinuation {
-                                    destination: None,
-                                    target: Some(continuation),
-                                    unwind: continuation,
-                                    call_span: span,
-                                }),
-                            )?;
-                        }
-                        OperationResult::Panic(code, message) => {
-                            self.begin_panic(frame, code, message, span, continuation)?;
-                        }
-                    }
-                } else if self.pending_panic.is_some() {
-                    self.jump(frame, *unwind);
-                } else {
-                    self.jump(frame, *target);
-                }
-            }
+            } => self.drain_explicit_scopes(frame, scopes, *target, *unwind)?,
             BytecodeTerminatorKind::DrainUnwind { target } => {
+                let scopes = self.frames[frame]
+                    .task_scopes
+                    .iter()
+                    .map(|id| {
+                        self.task_scopes
+                            .get(*id)
+                            .and_then(Option::as_ref)
+                            .map(|scope| scope.source)
+                            .ok_or_else(|| VmError::invariant("active task scope state is missing"))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                if !self.drain_task_scopes(frame, &scopes)? {
+                    return Ok(None);
+                }
                 let continuation = self.frames[frame].block;
                 let Some(cleanup) = self.frames[frame].cleanups.pop() else {
                     self.jump(frame, *target);
@@ -1755,6 +2540,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
             }
             BytecodeTerminatorKind::Return => {
+                if !self.frames[frame].task_scopes.is_empty() {
+                    return Err(VmError::invariant(
+                        "a function returned with active structured task scopes",
+                    ));
+                }
                 if self.frames[frame]
                     .cleanups
                     .iter()
@@ -1791,13 +2581,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     })?;
                     self.jump(caller, target);
                 } else {
-                    let value = snapshot_value(
-                        &value,
-                        &self.heap,
-                        &self.callable_names,
-                        &self.nominal_names,
-                    )?;
-                    return Ok(Some(VmOutcome::Returned(value)));
+                    return Ok(Some(TaskCompletion::Returned(value)));
                 }
             }
             BytecodeTerminatorKind::ResumePanic => {
@@ -1806,9 +2590,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                         "panic unwinding abandoned registered cleanup entries",
                     ));
                 }
-                if self.pending_panic.is_none() {
+                if self.pending_unwind.is_none() {
                     return Err(VmError::invariant(
-                        "ResumePanic executed without an active panic",
+                        "ResumePanic executed without active panic or cancellation",
                     ));
                 }
                 let finished = self
@@ -1822,10 +2606,13 @@ impl<'program, 'host> Engine<'program, 'host> {
                     self.frames[caller].loans.fill(None);
                     self.jump(caller, continuation.unwind);
                 } else {
-                    let panic = self.pending_panic.take().ok_or_else(|| {
-                        VmError::invariant("root panic disappeared during unwind")
+                    let unwind = self.pending_unwind.take().ok_or_else(|| {
+                        VmError::invariant("root unwind disappeared during cleanup")
                     })?;
-                    return Ok(Some(VmOutcome::Panicked(panic)));
+                    return Ok(Some(match unwind {
+                        RuntimeUnwind::Panic(panic) => TaskCompletion::Panicked(panic),
+                        RuntimeUnwind::Cancelled => TaskCompletion::Cancelled,
+                    }));
                 }
             }
             BytecodeTerminatorKind::Unreachable => {
@@ -1833,6 +2620,59 @@ impl<'program, 'host> Engine<'program, 'host> {
             }
         }
         Ok(None)
+    }
+
+    fn drain_explicit_scopes(
+        &mut self,
+        frame: usize,
+        scopes: &[BytecodeScopeId],
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    ) -> Result<(), VmError> {
+        let continuation = self.frames[frame].block;
+        let next = self.frames[frame].cleanups.iter().rposition(|cleanup| {
+            matches!(cleanup, RuntimeCleanup::Explicit(_)) && scopes.contains(&cleanup.scope())
+        });
+        if let Some(index) = next {
+            let RuntimeCleanup::Explicit(deferred) = self.frames[frame].cleanups.remove(index)
+            else {
+                unreachable!("normal defer drains select explicit entries");
+            };
+            let span = deferred.span;
+            match self.evaluate_deferred_operation(frame, deferred)? {
+                OperationResult::Value(Value::Unit) => {
+                    self.jump(frame, continuation);
+                }
+                OperationResult::Value(_) => {
+                    return Err(VmError::invariant(
+                        "deferred invocation returned a non-Unit value",
+                    ));
+                }
+                OperationResult::Call {
+                    function,
+                    arguments,
+                } => {
+                    self.push_frame(
+                        function,
+                        arguments,
+                        Some(CallContinuation {
+                            destination: None,
+                            target: Some(continuation),
+                            unwind: continuation,
+                            call_span: span,
+                        }),
+                    )?;
+                }
+                OperationResult::Panic(code, message) => {
+                    self.begin_panic(frame, code, message, span, continuation)?;
+                }
+            }
+        } else if self.pending_unwind.is_some() {
+            self.jump(frame, unwind);
+        } else {
+            self.jump(frame, target);
+        }
+        Ok(())
     }
 
     fn begin_panic(
@@ -1878,10 +2718,35 @@ impl<'program, 'host> Engine<'program, 'host> {
             stack,
             suppressed: Vec::new(),
         };
-        if let Some(primary) = &mut self.pending_panic {
+        if let Some(RuntimeUnwind::Panic(primary)) = &mut self.pending_unwind {
             primary.suppressed.push(panic);
         } else {
-            self.pending_panic = Some(panic);
+            self.pending_unwind = Some(RuntimeUnwind::Panic(panic));
+        }
+        self.frames[frame].loans.fill(None);
+        self.jump(frame, unwind);
+        Ok(())
+    }
+
+    fn begin_propagated_panic(
+        &mut self,
+        frame: usize,
+        panic: VmPanic,
+        unwind: BytecodeBlockId,
+    ) -> Result<(), VmError> {
+        if let Some(RuntimeUnwind::Panic(primary)) = &mut self.pending_unwind {
+            primary.suppressed.push(panic);
+        } else {
+            self.pending_unwind = Some(RuntimeUnwind::Panic(panic));
+        }
+        self.frames[frame].loans.fill(None);
+        self.jump(frame, unwind);
+        Ok(())
+    }
+
+    fn begin_cancel(&mut self, frame: usize, unwind: BytecodeBlockId) -> Result<(), VmError> {
+        if self.pending_unwind.is_none() {
+            self.pending_unwind = Some(RuntimeUnwind::Cancelled);
         }
         self.frames[frame].loans.fill(None);
         self.jump(frame, unwind);
@@ -2038,15 +2903,28 @@ impl<'program, 'host> Engine<'program, 'host> {
     fn roots(&self, extra: &[Value]) -> Result<Vec<Value>, VmError> {
         let mut roots = extra.to_vec();
         roots.extend(self.temporary_roots.iter().cloned());
-        for frame in &self.frames {
+        self.append_frame_roots(&self.frames, &mut roots)?;
+        for (task_id, task) in self.tasks.iter().enumerate() {
+            if task_id != self.current_task {
+                self.append_frame_roots(&task.frames, &mut roots)?;
+            }
+            if let TaskStatus::Complete(Some(TaskCompletion::Returned(value))) = &task.status {
+                roots.push(value.clone());
+            }
+        }
+        Ok(roots)
+    }
+
+    fn append_frame_roots(&self, frames: &[Frame], roots: &mut Vec<Value>) -> Result<(), VmError> {
+        for frame in frames {
             let trace = self
                 .frame_traces
                 .get(frame.function.index() as usize)
                 .filter(|trace| trace.function == frame.function)
                 .ok_or_else(|| VmError::invariant("live frame has no verified trace descriptor"))?;
-            frame.roots(trace, &mut roots);
+            frame.roots(trace, roots);
         }
-        Ok(roots)
+        Ok(())
     }
 
     /// Protects operation-local values until an allocation-capable step has
@@ -3341,11 +4219,65 @@ impl Engine<'_, '_> {
 }
 
 impl Engine<'_, '_> {
+    fn with_task_context<T, E>(
+        &mut self,
+        task: usize,
+        operation: impl FnOnce(&mut Self) -> Result<T, E>,
+    ) -> Result<T, E>
+    where
+        E: From<VmError>,
+    {
+        if task == self.current_task {
+            return operation(self);
+        }
+        if task >= self.tasks.len() {
+            return Err(E::from(VmError::invariant(
+                "a structured loan references an invalid task",
+            )));
+        }
+        let active = self.current_task;
+        self.tasks[active].frames = std::mem::take(&mut self.frames);
+        self.tasks[active].pending_unwind = self.pending_unwind.take();
+        self.frames = std::mem::take(&mut self.tasks[task].frames);
+        self.pending_unwind = self.tasks[task].pending_unwind.take();
+        self.current_task = task;
+
+        let result = operation(self);
+
+        self.tasks[task].frames = std::mem::take(&mut self.frames);
+        self.tasks[task].pending_unwind = self.pending_unwind.take();
+        self.current_task = active;
+        self.frames = std::mem::take(&mut self.tasks[active].frames);
+        self.pending_unwind = self.tasks[active].pending_unwind.take();
+        result
+    }
+
+    fn read_task_place(
+        &mut self,
+        task: usize,
+        frame: usize,
+        place: &BytecodePlace,
+    ) -> Result<Value, VmError> {
+        self.with_task_context(task, |engine| engine.read_place(frame, place))
+    }
+
+    fn validate_task_place(
+        &mut self,
+        task: usize,
+        frame: usize,
+        place: &BytecodePlace,
+        for_write: bool,
+    ) -> Result<ResolvedPlacePath, PlaceFailure> {
+        self.with_task_context(task, |engine| {
+            engine.validate_place(frame, place, for_write)
+        })
+    }
+
     fn read_place(&mut self, frame: usize, place: &BytecodePlace) -> Result<Value, VmError> {
         self.validate_source_regions(frame, place, true)?;
         let mut value = self.read_slot(frame, place.slot)?.clone();
         if let Value::Loan(loan) = value {
-            value = self.read_place(loan.frame, &loan.place)?;
+            value = self.read_task_place(loan.task, loan.frame, &loan.place)?;
         }
         for projection in &place.projections {
             value = self.read_projection(frame, value, projection)?;
@@ -3393,9 +4325,24 @@ impl Engine<'_, '_> {
             if place.projections.is_empty() {
                 if loan.mode == BytecodeParameterMode::Mut && self.array_element(place.ty).is_some()
                 {
+                    if loan.task != self.current_task {
+                        return Err(VmError::invariant(
+                            "an exclusive loan crossed a structured task boundary",
+                        ));
+                    }
                     self.ensure_mut_array_extent(loan.frame, &loan.place, &value)?;
                 }
+                if loan.task != self.current_task {
+                    return Err(VmError::invariant(
+                        "an exclusive loan crossed a structured task boundary",
+                    ));
+                }
                 return self.write_place(loan.frame, &loan.place, value);
+            }
+            if loan.task != self.current_task {
+                return Err(VmError::invariant(
+                    "an exclusive loan crossed a structured task boundary",
+                ));
             }
             let mut parent = self.read_place(loan.frame, &loan.place)?;
             let (last, prefix) = place
@@ -4120,10 +5067,10 @@ impl Engine<'_, '_> {
                     "a write place is rooted in a shared loan",
                 )));
             }
-            self.validate_place(loan.frame, &loan.place, for_write)?
+            self.validate_task_place(loan.task, loan.frame, &loan.place, for_write)?
         } else {
             ResolvedPlacePath {
-                root: (frame, place.slot.index()),
+                root: (self.current_task, frame, place.slot.index()),
                 components: Vec::with_capacity(place.projections.len()),
             }
         };
@@ -4134,7 +5081,7 @@ impl Engine<'_, '_> {
             return Ok(path);
         }
         let mut value = if let Some(loan) = root_loan {
-            self.read_place(loan.frame, &loan.place)?
+            self.read_task_place(loan.task, loan.frame, &loan.place)?
         } else {
             self.read_slot(frame, place.slot)?.clone()
         };
@@ -5577,6 +6524,7 @@ impl Engine<'_, '_> {
                     }
                     consumed_loans.push(id);
                     Value::Loan(RuntimeLoan {
+                        task: self.current_task,
                         frame,
                         place: loan.place,
                         mode: loan.mode,
@@ -6156,7 +7104,7 @@ fn next_unicode_scalar(value: u32) -> Option<u32> {
 
 #[derive(Debug, Clone, PartialEq)]
 struct ResolvedPlacePath {
-    root: (usize, u32),
+    root: (usize, usize, u32),
     components: Vec<PlaceComponent>,
 }
 
@@ -6620,6 +7568,7 @@ fn convert_numeric(
         | Value::Char(_)
         | Value::Function { .. }
         | Value::Loan(_)
+        | Value::Join(_)
         | Value::Heap(_) => Err(Error::OutOfRange),
     }
 }

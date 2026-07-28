@@ -21,14 +21,22 @@ pub(super) enum Value {
         arguments: Vec<BytecodeTypeId>,
     },
     Loan(RuntimeLoan),
+    Join(RuntimeJoin),
     Heap(HeapHandle),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct RuntimeLoan {
+    pub(super) task: usize,
     pub(super) frame: usize,
     pub(super) place: BytecodePlace,
     pub(super) mode: BytecodeParameterMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RuntimeJoin {
+    pub(super) task: usize,
+    pub(super) scope: usize,
 }
 
 impl Value {
@@ -42,7 +50,8 @@ impl Value {
             | Self::Byte(_)
             | Self::Char(_)
             | Self::Function { .. }
-            | Self::Loan(_) => None,
+            | Self::Loan(_)
+            | Self::Join(_) => None,
         }
     }
 }
@@ -103,6 +112,11 @@ fn snapshot_value_inner(
         Value::Loan(_) => {
             return Err(VmError::invariant(
                 "a call-local loan escaped through the VM boundary",
+            ));
+        }
+        Value::Join(_) => {
+            return Err(VmError::invariant(
+                "an affine Join escaped the structured runtime",
             ));
         }
         Value::Heap(handle) => {

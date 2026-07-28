@@ -131,6 +131,9 @@ fn instruction_text(instruction: &BytecodeInstructionKind) -> String {
             value.kind,
             value.ty.index()
         ),
+        BytecodeInstructionKind::EnterTaskScope { scope } => {
+            format!("enter_task_scope scope{}", scope.index())
+        }
         BytecodeInstructionKind::RegisterDefer {
             scope,
             action,
@@ -188,6 +191,31 @@ fn terminator_text(terminator: &BytecodeTerminatorKind) -> String {
             target.map(BytecodeBlockId::index),
             unwind.index()
         ),
+        BytecodeTerminatorKind::Await {
+            awaitable,
+            target,
+            unwind,
+            ..
+        } => format!(
+            "await {:?} -> b{} unwind b{}",
+            awaitable,
+            target.index(),
+            unwind.index()
+        ),
+        BytecodeTerminatorKind::Spawn {
+            operation,
+            scope,
+            target,
+            unwind,
+            ..
+        } => format!(
+            "spawn scope{} {:?}:t{} -> b{} unwind b{}",
+            scope.index(),
+            operation.kind,
+            operation.ty.index(),
+            target.index(),
+            unwind.index()
+        ),
         BytecodeTerminatorKind::IteratorNext {
             state,
             destination,
@@ -239,6 +267,24 @@ fn terminator_text(terminator: &BytecodeTerminatorKind) -> String {
         } => format!(
             "drain_defers {:?} -> b{} unwind b{}",
             scopes.iter().map(|scope| scope.index()).collect::<Vec<_>>(),
+            target.index(),
+            unwind.index()
+        ),
+        BytecodeTerminatorKind::DrainScopes {
+            task_scopes,
+            defer_scopes,
+            target,
+            unwind,
+        } => format!(
+            "drain_scopes tasks={:?} defers={:?} -> b{} unwind b{}",
+            task_scopes
+                .iter()
+                .map(|scope| scope.index())
+                .collect::<Vec<_>>(),
+            defer_scopes
+                .iter()
+                .map(|scope| scope.index())
+                .collect::<Vec<_>>(),
             target.index(),
             unwind.index()
         ),

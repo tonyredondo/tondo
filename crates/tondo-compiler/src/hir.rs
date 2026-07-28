@@ -1835,6 +1835,21 @@ pub enum HirExpressionKind {
         signature: TypeId,
         protocol: HirCallProtocol,
     },
+    AsyncCall {
+        callee: HirExpressionId,
+        arguments: Vec<HirCallArgument>,
+        signature: TypeId,
+        protocol: HirCallProtocol,
+    },
+    Await {
+        operation: HirExpressionId,
+    },
+    Spawn {
+        operation: HirExpressionId,
+    },
+    Scope {
+        body: HirExpressionId,
+    },
     PreludePanic {
         message: HirExpressionId,
     },

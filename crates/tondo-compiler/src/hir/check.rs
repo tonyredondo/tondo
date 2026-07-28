@@ -286,8 +286,23 @@ struct BodyContext {
     noncapturable_locals: BTreeSet<LocalId>,
     loops: Vec<HirLoopId>,
     current_scope: Option<HirScopeId>,
+    is_async: bool,
+    structured_scope_depth: u32,
+    async_initiation: Option<AsyncInitiation>,
     in_defer_body: bool,
     defer_control_boundary: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AsyncInitiationKind {
+    Await,
+    Spawn,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct AsyncInitiation {
+    range: TextRange,
+    kind: AsyncInitiationKind,
 }
 
 #[derive(Clone, Copy)]
@@ -1112,6 +1127,10 @@ impl<'a> ExpressionChecker<'a> {
                 error,
                 signature: callable.span,
             });
+            context.is_async = matches!(
+                self.program.interner.kind(callable.function_type())?,
+                TypeKind::Function(function) if function.is_async()
+            );
             for parameter in &callable.parameters {
                 let permission = match parameter.mode() {
                     ParameterMode::Mut => PlacePermission::MutRoot,
@@ -1250,6 +1269,26 @@ impl<'a> ExpressionChecker<'a> {
                     finding
                         .move_span()
                         .map(|span| vec![("the active defer guard is registered here", span)])
+                        .unwrap_or_default(),
+                    None,
+                )?,
+                AvailabilityFindingKind::NonSendAcrossSuspend => self.emit(
+                    finding.use_span(),
+                    "E1613",
+                    format!(
+                        "binding `{}` remains live across suspension but does not satisfy `Send`",
+                        name.expect("non-Send suspension findings name a binding")
+                    ),
+                    Vec::new(),
+                    None,
+                )?,
+                AvailabilityFindingKind::ExclusiveLoanAcrossSuspend => self.emit(
+                    finding.use_span(),
+                    "E1614",
+                    "an exclusive `mut` or `var` loan cannot remain active across suspension",
+                    finding
+                        .move_span()
+                        .map(|span| vec![("exclusive loan starts here", span)])
                         .unwrap_or_default(),
                     None,
                 )?,
@@ -1981,11 +2020,18 @@ impl<'a> ExpressionChecker<'a> {
                 ),
                 HirExpressionKind::Call {
                     callee, arguments, ..
+                }
+                | HirExpressionKind::AsyncCall {
+                    callee, arguments, ..
                 } => self.queue_reachable_sequence(
                     std::iter::once(*callee).chain(arguments.iter().map(HirCallArgument::value)),
                     &mut pending,
                     warnings,
                 ),
+                HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation } => {
+                    pending.push(*operation)
+                }
+                HirExpressionKind::Scope { body } => pending.push(*body),
                 HirExpressionKind::PreludePanic { message } => pending.push(*message),
                 HirExpressionKind::PreludeAssert {
                     condition,
@@ -2326,10 +2372,10 @@ impl<'a> ExpressionChecker<'a> {
                 self.check_option_result(file, node, expected, context)
             }
             AstExpression::Closure(_) => self.check_closure(file, node, expected, context),
-            AstExpression::Await(_)
-            | AstExpression::Spawn(_)
-            | AstExpression::Scope(_)
-            | AstExpression::Unsafe(_) => {
+            AstExpression::Await(_) => self.check_await(file, node, expected, context),
+            AstExpression::Spawn(_) => self.check_spawn(file, node, context),
+            AstExpression::Scope(_) => self.check_async_scope(file, node, expected, context),
+            AstExpression::Unsafe(_) => {
                 self.complete = false;
                 self.recovery_expression(file, node.range())
             }
@@ -2608,6 +2654,7 @@ impl<'a> ExpressionChecker<'a> {
             error,
             signature: span,
         });
+        closure_context.is_async = is_async;
         for parameter in &parameters {
             let Some(local) = parameter.local() else {
                 continue;
@@ -2728,6 +2775,289 @@ impl<'a> ExpressionChecker<'a> {
             category: HirValueCategory::Value,
             kind: HirExpressionKind::Closure(id),
         })
+    }
+
+    fn check_await(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'_>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        let span = self.sources.span(file, node.range())?;
+        if !context.is_async {
+            self.emit(
+                span,
+                "E1610",
+                "`await` is only valid inside an async function or closure",
+                Vec::new(),
+                None,
+            )?;
+        }
+        let Some(operand_node) = node
+            .child_nodes()
+            .find(|child| AstExpression::cast(*child).is_some())
+        else {
+            return self.recovery_expression(file, node.range());
+        };
+        let previous = context.async_initiation.replace(AsyncInitiation {
+            range: operand_node.range(),
+            kind: AsyncInitiationKind::Await,
+        });
+        let checked = self.check_expression(file, operand_node, expected, context);
+        context.async_initiation = previous;
+        let operation = checked?;
+        let operation_type = self.expression_type(operation);
+        let result = match self.program.expression(operation).map(HirExpression::kind) {
+            Some(HirExpressionKind::AsyncCall { .. }) => operation_type,
+            _ => {
+                let TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Join,
+                    arguments,
+                } = self.program.interner.kind(operation_type)?.clone()
+                else {
+                    if operation_type != self.program.interner.error() {
+                        self.emit(
+                            span,
+                            "E1611",
+                            "`await` requires an async call or a `Join[T, E]`",
+                            Vec::new(),
+                            None,
+                        )?;
+                    }
+                    return self.recovery_expression(file, node.range());
+                };
+                let [success, error] = arguments.as_slice() else {
+                    return self.recovery_expression(file, node.range());
+                };
+                if matches!(
+                    self.program.interner.kind(*error)?,
+                    TypeKind::Scalar(ScalarType::Never)
+                ) {
+                    *success
+                } else {
+                    self.program.interner.result(*success, *error)?
+                }
+            }
+        };
+        self.validate_async_boundary(operation, AsyncInitiationKind::Await, context)?;
+        self.allocate_expression(HirExpression {
+            span,
+            ty: result,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Await { operation },
+        })
+    }
+
+    fn check_spawn(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'_>,
+        context: &mut BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        let span = self.sources.span(file, node.range())?;
+        if !context.is_async {
+            self.emit(
+                span,
+                "E1610",
+                "`spawn` is only valid inside an async function or closure",
+                Vec::new(),
+                None,
+            )?;
+        }
+        if context.structured_scope_depth == 0 {
+            self.emit(
+                span,
+                "E1602",
+                "`spawn` requires an enclosing `scope`",
+                Vec::new(),
+                None,
+            )?;
+        }
+        let Some(operand_node) = node
+            .child_nodes()
+            .find(|child| AstExpression::cast(*child).is_some())
+        else {
+            return self.recovery_expression(file, node.range());
+        };
+        let previous = context.async_initiation.replace(AsyncInitiation {
+            range: operand_node.range(),
+            kind: AsyncInitiationKind::Spawn,
+        });
+        let checked = self.check_expression(file, operand_node, None, context);
+        context.async_initiation = previous;
+        let operation = checked?;
+        let operation_type = self.expression_type(operation);
+        if !matches!(
+            self.program.expression(operation).map(HirExpression::kind),
+            Some(HirExpressionKind::AsyncCall { .. })
+        ) {
+            if operation_type != self.program.interner.error() {
+                self.emit(
+                    span,
+                    "E1611",
+                    "`spawn` requires one async call",
+                    Vec::new(),
+                    None,
+                )?;
+            }
+            return self.recovery_expression(file, node.range());
+        }
+        self.validate_async_boundary(operation, AsyncInitiationKind::Spawn, context)?;
+        let (success, error) = match self.program.interner.kind(operation_type)? {
+            TypeKind::Result { success, error } => (*success, *error),
+            _ => (
+                operation_type,
+                self.program.interner.scalar(ScalarType::Never),
+            ),
+        };
+        let join = self
+            .program
+            .interner
+            .intrinsic(IntrinsicType::Join, vec![success, error])?;
+        self.allocate_expression(HirExpression {
+            span,
+            ty: join,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Spawn { operation },
+        })
+    }
+
+    fn check_async_scope(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'_>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        let span = self.sources.span(file, node.range())?;
+        if !context.is_async {
+            self.emit(
+                span,
+                "E1610",
+                "`scope` is only valid inside an async function or closure",
+                Vec::new(),
+                None,
+            )?;
+        }
+        let Some(body_node) = node
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::Block)
+        else {
+            return self.recovery_expression(file, node.range());
+        };
+        context.structured_scope_depth =
+            context
+                .structured_scope_depth
+                .checked_add(1)
+                .ok_or(HirError::NodeLimit {
+                    file,
+                    offset: node.range().start(),
+                })?;
+        let checked = self.check_block(file, body_node, expected, context);
+        context.structured_scope_depth -= 1;
+        let body = checked?;
+        self.allocate_expression(HirExpression {
+            span,
+            ty: self.expression_type(body),
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Scope { body },
+        })
+    }
+
+    fn validate_async_boundary(
+        &mut self,
+        operation: HirExpressionId,
+        initiation: AsyncInitiationKind,
+        context: &BodyContext,
+    ) -> Result<(), HirError> {
+        let Some(HirExpressionKind::AsyncCall {
+            callee, arguments, ..
+        }) = self
+            .program
+            .expression(operation)
+            .map(HirExpression::kind)
+            .cloned()
+        else {
+            return Ok(());
+        };
+        let assumptions = context.capability_assumptions.clone();
+        let callee_span = self
+            .program
+            .expression(callee)
+            .expect("async callee remains indexed")
+            .span();
+        let callee_type = self.expression_type(callee);
+        let _ = self.require_capability_with_generics(
+            callee_span,
+            callee_type,
+            HirCapability::Send,
+            &assumptions,
+            "an async task callee",
+        )?;
+        for argument in arguments {
+            let value = self
+                .program
+                .expression(argument.value())
+                .expect("async call arguments remain indexed");
+            let (value_span, value_type, value_category) =
+                (value.span(), value.ty(), value.category());
+            let _ = self.require_capability_with_generics(
+                value_span,
+                value_type,
+                HirCapability::Send,
+                &assumptions,
+                "an argument crossing an async suspension",
+            )?;
+            if initiation == AsyncInitiationKind::Spawn && argument.mode() == ParameterMode::Ref {
+                let _ = self.require_capability_with_generics(
+                    value_span,
+                    value_type,
+                    HirCapability::Share,
+                    &assumptions,
+                    "a shared argument observed by a spawned task",
+                )?;
+                if value_category != HirValueCategory::Place {
+                    self.emit(
+                        value_span,
+                        "E1407",
+                        "a spawned `ref` argument requires a stable exterior lvalue",
+                        Vec::new(),
+                        None,
+                    )?;
+                }
+            }
+        }
+        if initiation == AsyncInitiationKind::Spawn {
+            let outcome = self.expression_type(operation);
+            let (success, error) = match self.program.interner.kind(outcome)? {
+                TypeKind::Result { success, error } => (*success, Some(*error)),
+                _ => (outcome, None),
+            };
+            let _ = self.require_capability_with_generics(
+                self.program
+                    .expression(operation)
+                    .expect("async operation remains indexed")
+                    .span(),
+                success,
+                HirCapability::Send,
+                &assumptions,
+                "a spawned task result",
+            )?;
+            if let Some(error) = error {
+                let _ = self.require_capability_with_generics(
+                    self.program
+                        .expression(operation)
+                        .expect("async operation remains indexed")
+                        .span(),
+                    error,
+                    HirCapability::Send,
+                    &assumptions,
+                    "a spawned task error",
+                )?;
+            }
+        }
+        Ok(())
     }
 
     fn derive_closure_protocols(
@@ -6312,6 +6642,7 @@ impl<'a> ExpressionChecker<'a> {
             error: None,
             signature: span,
         });
+        closure_context.is_async = false;
         closure_context.in_defer_body = true;
         closure_context.defer_control_boundary = true;
 
@@ -15261,11 +15592,18 @@ impl<'a> ExpressionChecker<'a> {
             }
             return self.recovery_expression(file, range);
         };
-        if contract.function.is_async() || contract.function.is_unsafe() {
-            // ASYNC-002 and UNSAFE-001 own the initiating expression and its
-            // context proof. CALL-004 retains the exact callable effects but
-            // must not execute them as an ordinary synchronous safe call.
-            if context.in_defer_body && contract.function.is_async() {
+        let async_initiation = context
+            .async_initiation
+            .filter(|initiation| initiation.range == range);
+        if contract.function.is_unsafe() {
+            // UNSAFE-001 owns the execution context proof in M9. Retaining the
+            // exact callable effect is valid, but M7 does not make unsafe calls
+            // executable.
+            self.complete = false;
+            return self.recovery_expression(file, range);
+        }
+        if contract.function.is_async() {
+            if context.in_defer_body {
                 self.emit(
                     call_span,
                     "E1608",
@@ -15274,13 +15612,42 @@ impl<'a> ExpressionChecker<'a> {
                     None,
                 )?;
             }
-            self.complete = false;
-            return self.recovery_expression(file, range);
+            if async_initiation.is_none() {
+                self.emit(
+                    call_span,
+                    "E1612",
+                    "an async call must be initiated by `await` or `spawn`",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range);
+            }
         }
-        let Some(protocol) =
-            self.select_call_protocol(call_span, callee, contract.protocols, context)?
-        else {
-            return self.recovery_expression(file, range);
+        let protocol = if matches!(
+            async_initiation,
+            Some(AsyncInitiation {
+                kind: AsyncInitiationKind::Spawn,
+                ..
+            })
+        ) {
+            if !contract.protocols.supports(HirCallProtocol::CallOnce) {
+                self.emit(
+                    call_span,
+                    "E1407",
+                    "a spawned callable must support `CallOnce`",
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range);
+            }
+            HirCallProtocol::CallOnce
+        } else {
+            let Some(protocol) =
+                self.select_call_protocol(call_span, callee, contract.protocols, context)?
+            else {
+                return self.recovery_expression(file, range);
+            };
+            protocol
         };
         let mut signature = contract.signature;
         let mut function = contract.function;
@@ -15813,16 +16180,26 @@ impl<'a> ExpressionChecker<'a> {
             }
             shape = self.call_shape(callee, &final_function, bound_receiver.is_some());
         }
-        self.allocate_expression(HirExpression {
-            span: self.sources.span(file, range)?,
-            ty: shape.outcome,
-            category: HirValueCategory::Value,
-            kind: HirExpressionKind::Call {
+        let kind = if function.is_async() {
+            HirExpressionKind::AsyncCall {
                 callee,
                 arguments,
                 signature,
                 protocol,
-            },
+            }
+        } else {
+            HirExpressionKind::Call {
+                callee,
+                arguments,
+                signature,
+                protocol,
+            }
+        };
+        self.allocate_expression(HirExpression {
+            span: self.sources.span(file, range)?,
+            ty: shape.outcome,
+            category: HirValueCategory::Value,
+            kind,
         })
     }
 
@@ -16502,6 +16879,9 @@ impl<'a> ExpressionChecker<'a> {
             ),
             HirExpressionKind::Call {
                 callee, arguments, ..
+            }
+            | HirExpressionKind::AsyncCall {
+                callee, arguments, ..
             } => {
                 let mut summary = self.expression_sequence(
                     std::iter::once(*callee).chain(arguments.iter().map(HirCallArgument::value)),
@@ -16513,6 +16893,10 @@ impl<'a> ExpressionChecker<'a> {
                 }
                 summary
             }
+            HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation } => {
+                self.expression_summary(*operation)
+            }
+            HirExpressionKind::Scope { body } => self.expression_summary(*body),
             HirExpressionKind::PreludePanic { message } => {
                 let mut summary = self.expression_summary(*message);
                 if summary.flow.may_complete() {
@@ -16940,7 +17324,8 @@ fn closure_protocol_expression_children(kind: &HirExpressionKind) -> Vec<HirExpr
         | HirExpressionKind::Break { .. }
         | HirExpressionKind::Continue { .. }
         | HirExpressionKind::Block { .. }
-        | HirExpressionKind::Call { .. } => {}
+        | HirExpressionKind::Call { .. }
+        | HirExpressionKind::AsyncCall { .. } => {}
         HirExpressionKind::InterpolatedString { values, .. }
         | HirExpressionKind::Tuple(values)
         | HirExpressionKind::Array(values)
@@ -17019,6 +17404,10 @@ fn closure_protocol_expression_children(kind: &HirExpressionKind) -> Vec<HirExpr
             children.extend(step);
         }
         HirExpressionKind::PreludePanic { message } => children.push(*message),
+        HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation } => {
+            children.push(*operation);
+        }
+        HirExpressionKind::Scope { body } => children.push(*body),
         HirExpressionKind::PreludeAssert {
             condition,
             message_parts,

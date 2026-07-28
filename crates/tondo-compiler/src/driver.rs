@@ -737,9 +737,9 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                     Vec::new(),
                 );
             }
-            MainSelection::DeferredScript | MainSelection::Async => {}
-            MainSelection::Sync(_) if !expression_check_complete => {}
-            MainSelection::Sync(entry) => {
+            MainSelection::DeferredScript => {}
+            MainSelection::Sync(_) | MainSelection::Async(_) if !expression_check_complete => {}
+            MainSelection::Sync(entry) | MainSelection::Async(entry) => {
                 let mir = match lower_to_mir(
                     &resolved_program,
                     &hir_program,
@@ -921,7 +921,7 @@ struct MainEntry {
 
 enum MainSelection {
     Sync(MainEntry),
-    Async,
+    Async(MainEntry),
     DeferredScript,
     Rejected(Diagnostic),
 }
@@ -1087,7 +1087,7 @@ fn select_hosted_main(
         error_type,
     };
     if function.is_async() {
-        Ok(MainSelection::Async)
+        Ok(MainSelection::Async(entry))
     } else {
         Ok(MainSelection::Sync(entry))
     }
@@ -2585,7 +2585,7 @@ mod tests {
     }
 
     #[test]
-    fn async_main_remains_an_honest_later_milestone() {
+    fn async_main_executes_in_the_runtime_root_scope() {
         let output = execute(operation_request(
             Operation::Run,
             b"async fn main() {}\n",
@@ -2593,8 +2593,9 @@ mod tests {
             ResourceLimits::default(),
         ))
         .unwrap();
-        assert_eq!(output.status(), CompilationStatus::Rejected);
-        assert_eq!(output.diagnostics().diagnostics()[0].code(), "T0001");
+        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
     }
 
     #[test]

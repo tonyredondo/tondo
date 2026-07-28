@@ -16,7 +16,7 @@ use crate::source::Span;
 use crate::types::{CursorMode, IntrinsicType, ParameterMode, ScalarType, TypeId, TypeKind};
 
 use super::{
-    MirAggregateKind, MirAssertMessagePart, MirBasicBlock, MirBlockId, MirBlockKind,
+    MirAggregateKind, MirAssertMessagePart, MirAwaitable, MirBasicBlock, MirBlockId, MirBlockKind,
     MirBootstrapHostFunction, MirCallArgument, MirConstant, MirError, MirFunction, MirFunctionId,
     MirLoan, MirLoanId, MirLoanKind, MirLocal, MirLocalId, MirLocalKind, MirOperand,
     MirOperandKind, MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection,
@@ -181,6 +181,7 @@ struct FunctionBuilder<'a> {
     loops: BTreeMap<HirLoopId, LoopTargets>,
     lexical_scopes: Vec<HirScopeId>,
     defer_scopes: Vec<HirScopeId>,
+    task_scopes: Vec<HirScopeId>,
     fallback_parameters: Vec<MirPlace>,
     fallback_parameters_registered: bool,
     unwind_cleanup: Option<MirBlockId>,
@@ -197,6 +198,7 @@ struct LoopTargets {
     continue_target: MirBlockId,
     loan_depth: usize,
     defer_depth: usize,
+    task_scope_depth: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -267,6 +269,7 @@ impl<'a> FunctionBuilder<'a> {
             loops: BTreeMap::new(),
             lexical_scopes: Vec::new(),
             defer_scopes: Vec::new(),
+            task_scopes: Vec::new(),
             fallback_parameters: Vec::new(),
             fallback_parameters_registered: false,
             unwind_cleanup: None,
@@ -347,6 +350,7 @@ impl<'a> FunctionBuilder<'a> {
             loops: BTreeMap::new(),
             lexical_scopes: Vec::new(),
             defer_scopes: Vec::new(),
+            task_scopes: Vec::new(),
             fallback_parameters: Vec::new(),
             fallback_parameters_registered: false,
             unwind_cleanup: None,
@@ -1151,44 +1155,138 @@ impl<'a> FunctionBuilder<'a> {
                 signature,
                 protocol,
             } => {
-                let Some((mut current, callee)) = self.lower_callee(*callee, *protocol, block)?
+                let Some((current, operation)) = self.lower_call_operation(
+                    *callee,
+                    arguments,
+                    *signature,
+                    *protocol,
+                    expression.ty(),
+                    block,
+                )?
                 else {
                     return Ok(None);
                 };
-                let loan_depth = self.active_loans.len();
-                let mut lowered = Vec::with_capacity(arguments.len());
-                for argument in arguments {
-                    let result = if argument.mode() == crate::types::ParameterMode::Value {
-                        self.lower_value(argument.value(), current)?
-                    } else {
-                        self.lower_loan_value(argument.value(), argument.mode(), current)?
-                    };
-                    let Some((next, value)) = result else {
-                        self.active_loans.truncate(loan_depth);
-                        return Ok(None);
-                    };
-                    current = next;
-                    lowered.push(MirCallArgument {
-                        mode: argument.mode(),
-                        target: argument.target(),
-                        value,
-                    });
+                self.invoke(current, span, Some(destination), operation)
+            }
+            HirExpressionKind::AsyncCall { .. } => Err(MirError::Construction {
+                span,
+                message: "an async call escaped its await or spawn owner".into(),
+            }),
+            HirExpressionKind::Await { operation } => {
+                let operation_expression = self.expression(*operation)?.clone();
+                let (current, awaitable) = match operation_expression.kind() {
+                    HirExpressionKind::AsyncCall {
+                        callee,
+                        arguments,
+                        signature,
+                        protocol,
+                    } => {
+                        let Some((current, operation)) = self.lower_call_operation(
+                            *callee,
+                            arguments,
+                            *signature,
+                            *protocol,
+                            operation_expression.ty(),
+                            block,
+                        )?
+                        else {
+                            return Ok(None);
+                        };
+                        (current, MirAwaitable::Call(operation))
+                    }
+                    _ => {
+                        let Some((current, join)) = self.lower_value(*operation, block)? else {
+                            return Ok(None);
+                        };
+                        (current, MirAwaitable::Join(join))
+                    }
+                };
+                let target = self.allocate_block(MirBlockKind::Normal)?;
+                let unwind = self.current_unwind(span)?;
+                if let MirAwaitable::Call(operation) = &awaitable {
+                    for place in operation_move_places(operation) {
+                        self.push_statement(current, span, MirStatementKind::DisarmCleanup(place))?;
+                    }
                 }
-                self.consume_call_loans(&lowered, loan_depth, span)?;
-                self.invoke(
+                self.terminate(
                     current,
                     span,
-                    Some(destination),
-                    MirOperation {
-                        ty: expression.ty(),
-                        kind: MirOperationKind::Call {
-                            callee,
-                            arguments: lowered,
-                            signature: *signature,
-                            protocol: *protocol,
-                        },
+                    MirTerminatorKind::Await {
+                        awaitable,
+                        destination: destination.clone(),
+                        target,
+                        unwind,
                     },
-                )
+                )?;
+                self.register_fallback(target, span, destination)?;
+                Ok(Some(target))
+            }
+            HirExpressionKind::Spawn { operation } => {
+                let operation_expression = self.expression(*operation)?.clone();
+                let HirExpressionKind::AsyncCall {
+                    callee,
+                    arguments,
+                    signature,
+                    protocol,
+                } = operation_expression.kind()
+                else {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "spawn does not own an async call".into(),
+                    });
+                };
+                let Some((current, operation)) = self.lower_call_operation(
+                    *callee,
+                    arguments,
+                    *signature,
+                    *protocol,
+                    operation_expression.ty(),
+                    block,
+                )?
+                else {
+                    return Ok(None);
+                };
+                for place in operation_move_places(&operation) {
+                    self.push_statement(current, span, MirStatementKind::DisarmCleanup(place))?;
+                }
+                let scope = *self
+                    .task_scopes
+                    .last()
+                    .ok_or_else(|| MirError::Construction {
+                        span,
+                        message: "spawn lowered without an active structured scope".into(),
+                    })?;
+                let target = self.allocate_block(MirBlockKind::Normal)?;
+                let unwind = self.current_unwind(span)?;
+                self.terminate(
+                    current,
+                    span,
+                    MirTerminatorKind::Spawn {
+                        operation,
+                        scope,
+                        destination: destination.clone(),
+                        target,
+                        unwind,
+                    },
+                )?;
+                self.register_fallback(target, span, destination)?;
+                Ok(Some(target))
+            }
+            HirExpressionKind::Scope { body } => {
+                let body_expression = self.expression(*body)?;
+                let HirExpressionKind::Block { scope, .. } = body_expression.kind() else {
+                    return Err(MirError::Construction {
+                        span,
+                        message: "scope does not wrap a lexical block".into(),
+                    });
+                };
+                let scope = *scope;
+                self.push_statement(block, span, MirStatementKind::EnterTaskScope { scope })?;
+                self.task_scopes.push(scope);
+                let result = self.lower_expression(*body, destination, block);
+                let popped = self.task_scopes.pop();
+                debug_assert_eq!(popped, Some(scope));
+                result
             }
             HirExpressionKind::PreludePanic { message } => {
                 let Some((block, message)) = self.lower_value(*message, block)? else {
@@ -1383,6 +1481,7 @@ impl<'a> FunctionBuilder<'a> {
                     span,
                     targets.break_target,
                     targets.defer_depth,
+                    targets.task_scope_depth,
                 )?;
                 Ok(None)
             }
@@ -1405,6 +1504,7 @@ impl<'a> FunctionBuilder<'a> {
                     span,
                     targets.continue_target,
                     targets.defer_depth,
+                    targets.task_scope_depth,
                 )?;
                 Ok(None)
             }
@@ -1435,6 +1535,7 @@ impl<'a> FunctionBuilder<'a> {
         let owns_defers = statements
             .iter()
             .any(|statement| matches!(statement, HirStatement::Defer { .. }));
+        let owns_task_scope = self.task_scopes.last().copied() == Some(scope);
         if owns_defers {
             self.defer_scopes.push(scope);
         }
@@ -1466,11 +1567,17 @@ impl<'a> FunctionBuilder<'a> {
         let Some(block) = result else {
             return Ok(None);
         };
-        if owns_defers {
+        if owns_defers || owns_task_scope {
             if !self.is_terminal(destination.ty, span)? {
                 self.push_statement(block, span, MirStatementKind::DisarmCleanup(destination))?;
             }
-            self.drain_to_normal(block, span, vec![scope]).map(Some)
+            self.drain_scopes_to_normal(
+                block,
+                span,
+                owns_task_scope.then_some(scope).into_iter().collect(),
+                owns_defers.then_some(scope).into_iter().collect(),
+            )
+            .map(Some)
         } else {
             Ok(Some(block))
         }
@@ -2103,6 +2210,7 @@ impl<'a> FunctionBuilder<'a> {
                 continue_target: body_start,
                 loan_depth: self.active_loans.len(),
                 defer_depth: self.defer_scopes.len(),
+                task_scope_depth: self.task_scopes.len(),
             },
         );
         let body_end = self.lower_value(body, body_start)?.map(|(block, _)| block);
@@ -2157,6 +2265,7 @@ impl<'a> FunctionBuilder<'a> {
                 continue_target: header,
                 loan_depth: self.active_loans.len(),
                 defer_depth: self.defer_scopes.len(),
+                task_scope_depth: self.task_scopes.len(),
             },
         );
         let body_end = self.lower_value(body, body_start)?.map(|(block, _)| block);
@@ -2440,6 +2549,7 @@ impl<'a> FunctionBuilder<'a> {
                 continue_target: header,
                 loan_depth: self.active_loans.len(),
                 defer_depth: self.defer_scopes.len(),
+                task_scope_depth: self.task_scopes.len(),
             },
         );
         let Some(body_start) = self.bind_irrefutable(pattern, item, body_start)? else {
@@ -2808,6 +2918,53 @@ impl<'a> FunctionBuilder<'a> {
             },
         )?;
         Ok(target)
+    }
+
+    fn lower_call_operation(
+        &mut self,
+        callee: HirExpressionId,
+        arguments: &[crate::hir::HirCallArgument],
+        signature: TypeId,
+        protocol: HirCallProtocol,
+        outcome: TypeId,
+        block: MirBlockId,
+    ) -> Result<Option<(MirBlockId, MirOperation)>, MirError> {
+        let span = self.expression(callee)?.span();
+        let Some((mut current, callee)) = self.lower_callee(callee, protocol, block)? else {
+            return Ok(None);
+        };
+        let loan_depth = self.active_loans.len();
+        let mut lowered = Vec::with_capacity(arguments.len());
+        for argument in arguments {
+            let result = if argument.mode() == crate::types::ParameterMode::Value {
+                self.lower_value(argument.value(), current)?
+            } else {
+                self.lower_loan_value(argument.value(), argument.mode(), current)?
+            };
+            let Some((next, value)) = result else {
+                self.active_loans.truncate(loan_depth);
+                return Ok(None);
+            };
+            current = next;
+            lowered.push(MirCallArgument {
+                mode: argument.mode(),
+                target: argument.target(),
+                value,
+            });
+        }
+        self.consume_call_loans(&lowered, loan_depth, span)?;
+        Ok(Some((
+            current,
+            MirOperation {
+                ty: outcome,
+                kind: MirOperationKind::Call {
+                    callee,
+                    arguments: lowered,
+                    signature,
+                    protocol,
+                },
+            },
+        )))
     }
 
     fn lower_callee(
@@ -4461,6 +4618,30 @@ impl<'a> FunctionBuilder<'a> {
                 target: next.map(|next| target(self, next)).transpose()?,
                 unwind,
             },
+            MirTerminatorKind::Await {
+                awaitable,
+                destination,
+                target: next,
+                unwind,
+            } => MirTerminatorKind::Await {
+                awaitable,
+                destination,
+                target: target(self, next)?,
+                unwind,
+            },
+            MirTerminatorKind::Spawn {
+                operation,
+                scope,
+                destination,
+                target: next,
+                unwind,
+            } => MirTerminatorKind::Spawn {
+                operation,
+                scope,
+                destination,
+                target: target(self, next)?,
+                unwind,
+            },
             MirTerminatorKind::IteratorNext {
                 state,
                 destination,
@@ -4499,6 +4680,17 @@ impl<'a> FunctionBuilder<'a> {
                 unwind,
             } => MirTerminatorKind::DrainDefers {
                 scopes,
+                target: target(self, next)?,
+                unwind,
+            },
+            MirTerminatorKind::DrainScopes {
+                task_scopes,
+                defer_scopes,
+                target: next,
+                unwind,
+            } => MirTerminatorKind::DrainScopes {
+                task_scopes,
+                defer_scopes,
                 target: target(self, next)?,
                 unwind,
             },
@@ -4771,13 +4963,14 @@ impl<'a> FunctionBuilder<'a> {
         Ok(block)
     }
 
-    fn drain_to_normal(
+    fn drain_scopes_to_normal(
         &mut self,
         block: MirBlockId,
         span: Span,
-        scopes: Vec<HirScopeId>,
+        task_scopes: Vec<HirScopeId>,
+        defer_scopes: Vec<HirScopeId>,
     ) -> Result<MirBlockId, MirError> {
-        if scopes.is_empty() {
+        if task_scopes.is_empty() && defer_scopes.is_empty() {
             return Ok(block);
         }
         let drain = self.allocate_block(MirBlockKind::Normal)?;
@@ -4787,8 +4980,9 @@ impl<'a> FunctionBuilder<'a> {
         self.terminate(
             drain,
             span,
-            MirTerminatorKind::DrainDefers {
-                scopes,
+            MirTerminatorKind::DrainScopes {
+                task_scopes,
+                defer_scopes,
                 target,
                 unwind,
             },
@@ -4803,10 +4997,11 @@ impl<'a> FunctionBuilder<'a> {
             MirStatementKind::DisarmCleanup(self.local_place(self.return_local)),
         )?;
         self.release_loans_from(block, span, 0)?;
-        if self.defer_scopes.is_empty() {
+        if self.defer_scopes.is_empty() && self.task_scopes.is_empty() {
             return self.terminate(block, span, MirTerminatorKind::Return);
         }
-        let scopes = self.defer_scopes.clone();
+        let defer_scopes = self.defer_scopes.clone();
+        let task_scopes = self.task_scopes.clone();
         let drain = self.allocate_block(MirBlockKind::Normal)?;
         let target = self.allocate_block(MirBlockKind::Normal)?;
         self.terminate(target, span, MirTerminatorKind::Return)?;
@@ -4815,8 +5010,9 @@ impl<'a> FunctionBuilder<'a> {
         self.terminate(
             drain,
             span,
-            MirTerminatorKind::DrainDefers {
-                scopes,
+            MirTerminatorKind::DrainScopes {
+                task_scopes,
+                defer_scopes,
                 target,
                 unwind,
             },
@@ -4829,8 +5025,9 @@ impl<'a> FunctionBuilder<'a> {
         span: Span,
         target: MirBlockId,
         defer_depth: usize,
+        task_scope_depth: usize,
     ) -> Result<(), MirError> {
-        let scopes = self
+        let defer_scopes = self
             .defer_scopes
             .get(defer_depth..)
             .ok_or_else(|| MirError::Construction {
@@ -4838,7 +5035,15 @@ impl<'a> FunctionBuilder<'a> {
                 message: "control transfer has an invalid defer-scope depth".into(),
             })?
             .to_vec();
-        if scopes.is_empty() {
+        let task_scopes = self
+            .task_scopes
+            .get(task_scope_depth..)
+            .ok_or_else(|| MirError::Construction {
+                span,
+                message: "control transfer has an invalid task-scope depth".into(),
+            })?
+            .to_vec();
+        if defer_scopes.is_empty() && task_scopes.is_empty() {
             return self.terminate(block, span, MirTerminatorKind::Goto { target });
         }
         let drain = self.allocate_block(MirBlockKind::Normal)?;
@@ -4847,8 +5052,9 @@ impl<'a> FunctionBuilder<'a> {
         self.terminate(
             drain,
             span,
-            MirTerminatorKind::DrainDefers {
-                scopes,
+            MirTerminatorKind::DrainScopes {
+                task_scopes,
+                defer_scopes,
                 target,
                 unwind,
             },
@@ -5072,6 +5278,7 @@ fn populate_runtime_loan_checks(
                 MirStatementKind::StorageLive(_)
                 | MirStatementKind::StorageDead(_)
                 | MirStatementKind::Assign { .. }
+                | MirStatementKind::EnterTaskScope { .. }
                 | MirStatementKind::RegisterDefer { .. }
                 | MirStatementKind::RegisterFallback { .. }
                 | MirStatementKind::RetargetCleanup { .. }
@@ -5164,6 +5371,28 @@ fn populate_runtime_loan_checks(
                 if let Some(target) = target {
                     propagate(*target, active)?;
                 }
+                propagate(*unwind, BTreeSet::new())?;
+            }
+            MirTerminatorKind::Await {
+                awaitable,
+                target,
+                unwind,
+                ..
+            } => {
+                if let MirAwaitable::Call(operation) = awaitable {
+                    consume_operation_loans(operation, &mut active, span)?;
+                }
+                propagate(*target, active)?;
+                propagate(*unwind, BTreeSet::new())?;
+            }
+            MirTerminatorKind::Spawn {
+                operation,
+                target,
+                unwind,
+                ..
+            } => {
+                consume_operation_loans(operation, &mut active, span)?;
+                propagate(*target, active)?;
                 propagate(*unwind, BTreeSet::new())?;
             }
             MirTerminatorKind::IteratorNext {
@@ -5269,6 +5498,10 @@ fn populate_runtime_loan_checks(
                 propagate(*unwind, BTreeSet::new())?;
             }
             MirTerminatorKind::DrainDefers { target, unwind, .. } => {
+                propagate(*target, active)?;
+                propagate(*unwind, BTreeSet::new())?;
+            }
+            MirTerminatorKind::DrainScopes { target, unwind, .. } => {
                 propagate(*target, active)?;
                 propagate(*unwind, BTreeSet::new())?;
             }
@@ -5467,6 +5700,9 @@ fn normal_successors(terminator: &MirTerminatorKind) -> Vec<MirBlockId> {
             .chain([*otherwise])
             .collect(),
         MirTerminatorKind::Invoke { target, .. } => target.iter().copied().collect(),
+        MirTerminatorKind::Await { target, .. } | MirTerminatorKind::Spawn { target, .. } => {
+            vec![*target]
+        }
         MirTerminatorKind::IteratorNext {
             has_value,
             exhausted,
@@ -5474,7 +5710,8 @@ fn normal_successors(terminator: &MirTerminatorKind) -> Vec<MirBlockId> {
         } => vec![*has_value, *exhausted],
         MirTerminatorKind::ValidatePlaces { target, .. }
         | MirTerminatorKind::ValidateLoan { target, .. }
-        | MirTerminatorKind::DrainDefers { target, .. } => vec![*target],
+        | MirTerminatorKind::DrainDefers { target, .. }
+        | MirTerminatorKind::DrainScopes { target, .. } => vec![*target],
         MirTerminatorKind::DrainUnwind { target } => vec![*target],
         MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
@@ -5502,7 +5739,9 @@ fn collect_statement_region_uses(
     output: &mut BTreeSet<MirLoanId>,
 ) {
     match statement {
-        MirStatementKind::StorageLive(_) | MirStatementKind::StorageDead(_) => {}
+        MirStatementKind::StorageLive(_)
+        | MirStatementKind::StorageDead(_)
+        | MirStatementKind::EnterTaskScope { .. } => {}
         MirStatementKind::ReserveLoan(id) => {
             if let Some(loan) = loans.get(id.index() as usize) {
                 collect_place_region_uses(&loan.place, loans, output);
@@ -5549,6 +5788,7 @@ fn collect_terminator_region_uses(
     match terminator {
         MirTerminatorKind::Goto { .. }
         | MirTerminatorKind::DrainDefers { .. }
+        | MirTerminatorKind::DrainScopes { .. }
         | MirTerminatorKind::DrainUnwind { .. }
         | MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
@@ -5568,6 +5808,27 @@ fn collect_terminator_region_uses(
             if let Some(destination) = destination {
                 collect_place_region_uses(destination, loans, output);
             }
+        }
+        MirTerminatorKind::Await {
+            awaitable,
+            destination,
+            ..
+        } => {
+            match awaitable {
+                MirAwaitable::Call(operation) => {
+                    collect_operation_region_uses(operation, loans, output);
+                }
+                MirAwaitable::Join(join) => collect_operand_region_uses(join, loans, output),
+            }
+            collect_place_region_uses(destination, loans, output);
+        }
+        MirTerminatorKind::Spawn {
+            operation,
+            destination,
+            ..
+        } => {
+            collect_operation_region_uses(operation, loans, output);
+            collect_place_region_uses(destination, loans, output);
         }
         MirTerminatorKind::IteratorNext {
             state,

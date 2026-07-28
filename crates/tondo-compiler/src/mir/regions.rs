@@ -240,6 +240,8 @@ pub(super) fn static_integer_locals(
                 destination: Some(destination),
                 ..
             }
+            | MirTerminatorKind::Await { destination, .. }
+            | MirTerminatorKind::Spawn { destination, .. }
             | MirTerminatorKind::IteratorNext { destination, .. } => record(destination, None),
             MirTerminatorKind::Goto { .. }
             | MirTerminatorKind::SwitchBool { .. }
@@ -250,6 +252,7 @@ pub(super) fn static_integer_locals(
             | MirTerminatorKind::ValidatePlaces { .. }
             | MirTerminatorKind::ValidateLoan { .. }
             | MirTerminatorKind::DrainDefers { .. }
+            | MirTerminatorKind::DrainScopes { .. }
             | MirTerminatorKind::DrainUnwind { .. }
             | MirTerminatorKind::Return
             | MirTerminatorKind::ResumePanic

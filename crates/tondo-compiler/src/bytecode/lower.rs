@@ -11,10 +11,11 @@ use crate::hir::{
     analyze_closure_captures, select_implementation,
 };
 use crate::mir::{
-    MirAggregateKind, MirBasicBlock, MirBlockKind, MirCallArgument, MirConstant, MirFunction,
-    MirLoanKind, MirLocalKind, MirOperand, MirOperandKind, MirOperation, MirOperationKind,
-    MirPlace, MirProgram, MirProjection, MirProjectionKind, MirRvalue, MirRvalueKind, MirStatement,
-    MirStatementKind, MirTag, MirTerminator, MirTerminatorKind, verify_mir,
+    MirAggregateKind, MirAwaitable, MirBasicBlock, MirBlockKind, MirCallArgument, MirConstant,
+    MirFunction, MirLoanKind, MirLocalKind, MirOperand, MirOperandKind, MirOperation,
+    MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind, MirRvalue,
+    MirRvalueKind, MirStatement, MirStatementKind, MirTag, MirTerminator, MirTerminatorKind,
+    verify_mir,
 };
 use crate::resolve::{MemberOwner, ResolvedProgram, SymbolId, SymbolKind};
 use crate::source::Span;
@@ -1799,6 +1800,7 @@ fn collect_function_types(function: &MirFunction, types: &mut BTreeSet<TypeId>) 
             match statement.kind() {
                 MirStatementKind::StorageLive(_)
                 | MirStatementKind::StorageDead(_)
+                | MirStatementKind::EnterTaskScope { .. }
                 | MirStatementKind::ReserveLoan(_)
                 | MirStatementKind::ReleaseLoan(_) => {}
                 MirStatementKind::Assign { destination, value } => {
@@ -1973,6 +1975,7 @@ fn collect_terminator_types(terminator: &MirTerminator, types: &mut BTreeSet<Typ
         MirTerminatorKind::Goto { .. }
         | MirTerminatorKind::ValidateLoan { .. }
         | MirTerminatorKind::DrainDefers { .. }
+        | MirTerminatorKind::DrainScopes { .. }
         | MirTerminatorKind::DrainUnwind { .. }
         | MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
@@ -1995,6 +1998,25 @@ fn collect_terminator_types(terminator: &MirTerminator, types: &mut BTreeSet<Typ
             if let Some(destination) = destination {
                 collect_place_types(destination, types);
             }
+        }
+        MirTerminatorKind::Await {
+            awaitable,
+            destination,
+            ..
+        } => {
+            match awaitable {
+                MirAwaitable::Call(operation) => collect_operation_types(operation, types),
+                MirAwaitable::Join(join) => collect_operand_types(join, types),
+            }
+            collect_place_types(destination, types);
+        }
+        MirTerminatorKind::Spawn {
+            operation,
+            destination,
+            ..
+        } => {
+            collect_operation_types(operation, types);
+            collect_place_types(destination, types);
         }
         MirTerminatorKind::IteratorNext {
             state,
@@ -2039,6 +2061,7 @@ fn collect_function_references(function: &MirFunction, references: &mut Vec<Func
                 }
                 MirStatementKind::StorageLive(_)
                 | MirStatementKind::StorageDead(_)
+                | MirStatementKind::EnterTaskScope { .. }
                 | MirStatementKind::ReserveLoan(_)
                 | MirStatementKind::ReleaseLoan(_)
                 | MirStatementKind::RegisterFallback { .. }
@@ -2206,6 +2229,7 @@ fn collect_terminator_function_references(
         | MirTerminatorKind::IteratorNext { .. }
         | MirTerminatorKind::ValidateLoan { .. }
         | MirTerminatorKind::DrainDefers { .. }
+        | MirTerminatorKind::DrainScopes { .. }
         | MirTerminatorKind::DrainUnwind { .. } => {}
         MirTerminatorKind::SwitchBool { condition, .. } => {
             collect_operand_function_references(condition, references);
@@ -2213,9 +2237,18 @@ fn collect_terminator_function_references(
         MirTerminatorKind::SwitchTag { value, .. } => {
             collect_operand_function_references(value, references);
         }
-        MirTerminatorKind::Invoke { operation, .. } => {
+        MirTerminatorKind::Invoke { operation, .. }
+        | MirTerminatorKind::Spawn { operation, .. } => {
             collect_operation_function_references(operation, references);
         }
+        MirTerminatorKind::Await { awaitable, .. } => match awaitable {
+            MirAwaitable::Call(operation) => {
+                collect_operation_function_references(operation, references);
+            }
+            MirAwaitable::Join(join) => {
+                collect_operand_function_references(join, references);
+            }
+        },
         MirTerminatorKind::ValidatePlaces { replacements, .. } => {
             for replacement in replacements.iter().flatten() {
                 collect_operand_function_references(replacement, references);
@@ -2750,6 +2783,7 @@ fn lower_function(
             match statement.kind() {
                 MirStatementKind::StorageLive(_)
                 | MirStatementKind::StorageDead(_)
+                | MirStatementKind::EnterTaskScope { .. }
                 | MirStatementKind::ReserveLoan(_)
                 | MirStatementKind::ReleaseLoan(_) => {}
                 MirStatementKind::Assign { destination, value } => {
@@ -2915,6 +2949,9 @@ fn lower_statement(
             destination: lower_place(destination, context, type_map)?,
             value: lower_rvalue(value, context, type_map)?,
         },
+        MirStatementKind::EnterTaskScope { scope } => bc::BytecodeInstructionKind::EnterTaskScope {
+            scope: bc::BytecodeScopeId::new(scope.index()),
+        },
         MirStatementKind::RegisterDefer {
             scope,
             action,
@@ -2999,6 +3036,37 @@ fn lower_terminator(
             target: target.map(block_id),
             unwind: block_id(*unwind),
         },
+        MirTerminatorKind::Await {
+            awaitable,
+            destination,
+            target,
+            unwind,
+        } => bc::BytecodeTerminatorKind::Await {
+            awaitable: match awaitable {
+                MirAwaitable::Call(operation) => bc::BytecodeAwaitable::Call(lower_operation(
+                    operation, false, context, type_map,
+                )?),
+                MirAwaitable::Join(join) => {
+                    bc::BytecodeAwaitable::Join(lower_operand(join, context, type_map)?)
+                }
+            },
+            destination: lower_place(destination, context, type_map)?,
+            target: block_id(*target),
+            unwind: block_id(*unwind),
+        },
+        MirTerminatorKind::Spawn {
+            operation,
+            scope,
+            destination,
+            target,
+            unwind,
+        } => bc::BytecodeTerminatorKind::Spawn {
+            operation: lower_operation(operation, true, context, type_map)?,
+            scope: bc::BytecodeScopeId::new(scope.index()),
+            destination: lower_place(destination, context, type_map)?,
+            target: block_id(*target),
+            unwind: block_id(*unwind),
+        },
         MirTerminatorKind::IteratorNext {
             state,
             destination,
@@ -3076,6 +3144,23 @@ fn lower_terminator(
             unwind,
         } => bc::BytecodeTerminatorKind::DrainDefers {
             scopes: scopes
+                .iter()
+                .map(|scope| bc::BytecodeScopeId::new(scope.index()))
+                .collect(),
+            target: block_id(*target),
+            unwind: block_id(*unwind),
+        },
+        MirTerminatorKind::DrainScopes {
+            task_scopes,
+            defer_scopes,
+            target,
+            unwind,
+        } => bc::BytecodeTerminatorKind::DrainScopes {
+            task_scopes: task_scopes
+                .iter()
+                .map(|scope| bc::BytecodeScopeId::new(scope.index()))
+                .collect(),
+            defer_scopes: defer_scopes
                 .iter()
                 .map(|scope| bc::BytecodeScopeId::new(scope.index()))
                 .collect(),
@@ -7009,20 +7094,22 @@ fn execute(): String {
     }
 
     #[test]
-    fn vm_entry_rejects_async_and_unsafe_callable_bodies() {
+    fn vm_entry_drives_async_bodies_but_rejects_unsafe_roots() {
         let program = lowered(
             "async fn later(): Int { 1 }\n\
              unsafe fn raw(): Int { 2 }\n",
         );
-        for name in ["later", "raw"] {
-            let mut host = RejectingHost;
-            let error = execute(&program, function_id(&program, name), &mut host).unwrap_err();
-            assert!(matches!(error, VmError::InvalidEntry(_)), "{name}: {error}");
-            assert!(
-                error.to_string().contains("async or unsafe"),
-                "{name}: {error}"
-            );
-        }
+        let mut host = RejectingHost;
+        let execution = execute(&program, function_id(&program, "later"), &mut host).unwrap();
+        assert_eq!(
+            execution.outcome,
+            tondo_vm::runtime::VmOutcome::Returned(tondo_vm::runtime::RuntimeValue::Integer(1))
+        );
+
+        let mut host = RejectingHost;
+        let error = execute(&program, function_id(&program, "raw"), &mut host).unwrap_err();
+        assert!(matches!(error, VmError::InvalidEntry(_)), "{error}");
+        assert!(error.to_string().contains("unsafe"), "{error}");
     }
 
     #[test]

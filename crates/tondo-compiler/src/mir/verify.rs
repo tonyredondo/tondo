@@ -18,10 +18,10 @@ use crate::types::{
 };
 
 use super::{
-    MirAggregateKind, MirBasicBlock, MirBlockId, MirBlockKind, MirFunction, MirFunctionId,
-    MirLoanId, MirLoanKind, MirLocalId, MirLocalKind, MirOperand, MirOperandKind, MirOperation,
-    MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind, MirRvalue,
-    MirRvalueKind, MirStatementKind, MirTag, MirTerminatorKind,
+    MirAggregateKind, MirAwaitable, MirBasicBlock, MirBlockId, MirBlockKind, MirFunction,
+    MirFunctionId, MirLoanId, MirLoanKind, MirLocalId, MirLocalKind, MirOperand, MirOperandKind,
+    MirOperation, MirOperationKind, MirPlace, MirProgram, MirProjection, MirProjectionKind,
+    MirRvalue, MirRvalueKind, MirStatementKind, MirTag, MirTerminatorKind,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +84,20 @@ struct MirCallVerification<'a> {
     signature: TypeId,
     protocol: HirCallProtocol,
     outcome: TypeId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MirOperationContext {
+    Immediate,
+    Deferred,
+    Await,
+    Spawn,
+}
+
+impl MirOperationContext {
+    fn expects_async(self) -> bool {
+        matches!(self, Self::Await | Self::Spawn)
+    }
 }
 
 impl Default for MirVerificationLimits {
@@ -1055,8 +1069,198 @@ impl Verifier<'_> {
         }
         self.verify_control_and_dataflow(function)?;
         self.verify_defer_flow(function, &context)?;
+        self.verify_task_scope_flow(function, &context)?;
+        self.verify_suspension_liveness(function, &context)?;
         if let MirFunctionId::Closure(closure) = function.id {
             self.verify_closure_protocols(function, closure, &context)?;
+        }
+        Ok(())
+    }
+
+    fn verify_task_scope_flow(
+        &self,
+        function: &MirFunction,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let mut incoming = vec![None::<Vec<crate::hir::HirScopeId>>; function.blocks.len()];
+        incoming[function.entry.index() as usize] = Some(Vec::new());
+        let mut queue = VecDeque::from([function.entry]);
+        let mut queued = vec![false; function.blocks.len()];
+        queued[function.entry.index() as usize] = true;
+        while let Some(block_id) = queue.pop_front() {
+            queued[block_id.index() as usize] = false;
+            self.consume_dataflow_step(context)?;
+            let Some(mut scopes) = incoming[block_id.index() as usize].clone() else {
+                continue;
+            };
+            let block = &function.blocks[block_id.index() as usize];
+            if block.kind != MirBlockKind::Normal {
+                continue;
+            }
+            let block_context = format!("{context} block#{}", block_id.index());
+            for statement in &block.statements {
+                if let MirStatementKind::EnterTaskScope { scope } = statement.kind() {
+                    if scopes.contains(scope) {
+                        return Err(MirInvariantError::new(
+                            &block_context,
+                            "task scope is re-entered before its previous extent is drained",
+                        ));
+                    }
+                    scopes.push(*scope);
+                }
+            }
+            if let MirTerminatorKind::Spawn { scope, .. } = block.terminator.kind()
+                && scopes.last() != Some(scope)
+            {
+                return Err(MirInvariantError::new(
+                    &block_context,
+                    "spawn is not owned by the innermost active task scope",
+                ));
+            }
+            if let MirTerminatorKind::DrainScopes { task_scopes, .. } = block.terminator.kind() {
+                let start = scopes.len().checked_sub(task_scopes.len()).ok_or_else(|| {
+                    MirInvariantError::new(
+                        &block_context,
+                        "structured drain removes more task scopes than are active",
+                    )
+                })?;
+                if scopes[start..] != *task_scopes {
+                    return Err(MirInvariantError::new(
+                        &block_context,
+                        "structured drain does not remove the exact active task-scope suffix",
+                    ));
+                }
+                scopes.truncate(start);
+            }
+            if matches!(block.terminator.kind(), MirTerminatorKind::Return) && !scopes.is_empty() {
+                return Err(MirInvariantError::new(
+                    &block_context,
+                    "normal return abandons active task scopes",
+                ));
+            }
+            for edge in successor_edges(block.terminator.kind()) {
+                if function.blocks[edge.target.index() as usize].kind != MirBlockKind::Normal {
+                    continue;
+                }
+                let target = edge.target.index() as usize;
+                match &incoming[target] {
+                    Some(previous) if previous != &scopes => {
+                        return Err(MirInvariantError::new(
+                            format!("{context} block#{}", edge.target.index()),
+                            "control-flow predecessors disagree about active task scopes",
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        incoming[target] = Some(scopes.clone());
+                        if !queued[target] {
+                            queued[target] = true;
+                            queue.push_back(edge.target);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_suspension_liveness(
+        &self,
+        function: &MirFunction,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let mut uses = vec![BTreeSet::<MirLocalId>::new(); function.blocks.len()];
+        let mut definitions = vec![BTreeSet::<MirLocalId>::new(); function.blocks.len()];
+        for (index, block) in function.blocks.iter().enumerate() {
+            for event in self.local_events(function, block) {
+                match event {
+                    LocalEvent::Read(access)
+                    | LocalEvent::Resolve(access)
+                    | LocalEvent::WriteAccess(access) => {
+                        if !definitions[index].contains(&access.local) {
+                            uses[index].insert(access.local);
+                        }
+                    }
+                    LocalEvent::Move(access) => {
+                        if !definitions[index].contains(&access.local) {
+                            uses[index].insert(access.local);
+                        }
+                        if access.path.is_empty() {
+                            definitions[index].insert(access.local);
+                        }
+                    }
+                    LocalEvent::Write(access) => {
+                        if !access.path.is_empty() && !definitions[index].contains(&access.local) {
+                            uses[index].insert(access.local);
+                        }
+                        if access.path.is_empty() {
+                            definitions[index].insert(access.local);
+                        }
+                    }
+                    LocalEvent::StorageLive(local) | LocalEvent::StorageDead(local) => {
+                        definitions[index].insert(local);
+                    }
+                }
+            }
+        }
+        let mut live_in = vec![BTreeSet::<MirLocalId>::new(); function.blocks.len()];
+        let mut live_out = live_in.clone();
+        loop {
+            self.consume_dataflow_step(context)?;
+            let mut changed = false;
+            for index in (0..function.blocks.len()).rev() {
+                let block = &function.blocks[index];
+                let mut outgoing = BTreeSet::new();
+                for edge in successor_edges(block.terminator.kind()) {
+                    let mut edge_live = live_in[edge.target.index() as usize].clone();
+                    if let Some(destination) = edge.writes
+                        && destination.projections.is_empty()
+                    {
+                        edge_live.remove(&destination.local);
+                    }
+                    outgoing.extend(edge_live);
+                }
+                let mut incoming = uses[index].clone();
+                incoming.extend(
+                    outgoing
+                        .iter()
+                        .filter(|local| !definitions[index].contains(local))
+                        .copied(),
+                );
+                if live_out[index] != outgoing {
+                    live_out[index] = outgoing;
+                    changed = true;
+                }
+                if live_in[index] != incoming {
+                    live_in[index] = incoming;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for (index, block) in function.blocks.iter().enumerate() {
+            if !matches!(
+                block.terminator.kind(),
+                MirTerminatorKind::Await { .. } | MirTerminatorKind::DrainScopes { .. }
+            ) {
+                continue;
+            }
+            let block_context = format!("{context} block#{index}");
+            for local in &live_out[index] {
+                let ty = function.locals[local.index() as usize].ty;
+                if matches!(
+                    self.kind(ty, &block_context)?,
+                    TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Join,
+                        ..
+                    }
+                ) {
+                    continue;
+                }
+                self.require_capability(function.id, ty, HirCapability::Send, &block_context)?;
+            }
         }
         Ok(())
     }
@@ -1261,6 +1465,16 @@ impl Verifier<'_> {
                     }
                     self.loan(function, *loan, &context)?;
                 }
+                MirStatementKind::EnterTaskScope { .. } => {
+                    if block.kind != MirBlockKind::Normal
+                        || !self.function_is_async(function, &context)?
+                    {
+                        return Err(MirInvariantError::new(
+                            &context,
+                            "task scope is entered outside ordinary async code",
+                        ));
+                    }
+                }
                 MirStatementKind::Assign { destination, value } => {
                     self.verify_place(function, destination, &context)?;
                     self.verify_rvalue(function, value, &context)?;
@@ -1298,7 +1512,12 @@ impl Verifier<'_> {
                             "a non-Copy deferred callee does not use CallOnce",
                         ));
                     }
-                    self.verify_operation(function, action, true, &context)?;
+                    self.verify_operation(
+                        function,
+                        action,
+                        MirOperationContext::Deferred,
+                        &context,
+                    )?;
                     if action.ty != self.hir.interner().scalar(ScalarType::Unit)
                         || !matches!(
                             action.kind,
@@ -1487,7 +1706,12 @@ impl Verifier<'_> {
                         "cleanup block invokes an ordinary fallible operation",
                     ));
                 }
-                self.verify_operation(function, operation, false, &context)?;
+                self.verify_operation(
+                    function,
+                    operation,
+                    MirOperationContext::Immediate,
+                    &context,
+                )?;
                 let never = self.hir.interner().scalar(ScalarType::Never);
                 match (destination, target) {
                     (Some(destination), Some(target)) => {
@@ -1519,6 +1743,96 @@ impl Verifier<'_> {
                     return Err(MirInvariantError::new(
                         &context,
                         "invoke unwind edge does not enter cleanup code",
+                    ));
+                }
+            }
+            MirTerminatorKind::Await {
+                awaitable,
+                destination,
+                target,
+                unwind,
+            } => {
+                if block.kind != MirBlockKind::Normal
+                    || !self.function_is_async(function, &context)?
+                {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "await appears outside ordinary async code",
+                    ));
+                }
+                self.verify_place(function, destination, &context)?;
+                if place_contains_ref_value(destination) {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "`Ref[T].value` is a read-only projection",
+                    ));
+                }
+                let expected = match awaitable {
+                    MirAwaitable::Call(operation) => {
+                        self.verify_operation(
+                            function,
+                            operation,
+                            MirOperationContext::Await,
+                            &context,
+                        )?;
+                        operation.ty
+                    }
+                    MirAwaitable::Join(join) => {
+                        self.verify_operand(function, join, &context)?;
+                        if !matches!(join.kind(), MirOperandKind::Move(_)) {
+                            return Err(MirInvariantError::new(
+                                &context,
+                                "await must consume its affine Join operand",
+                            ));
+                        }
+                        self.join_logical_outcome(join.ty(), &context)?
+                    }
+                };
+                if destination.ty != expected {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "await destination differs from its logical outcome",
+                    ));
+                }
+                self.normal_block(function, *target, &context)?;
+                if self.block(function, *unwind, &context)?.kind != MirBlockKind::Cleanup {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "await unwind edge does not enter cleanup code",
+                    ));
+                }
+            }
+            MirTerminatorKind::Spawn {
+                operation,
+                destination,
+                target,
+                unwind,
+                ..
+            } => {
+                if block.kind != MirBlockKind::Normal
+                    || !self.function_is_async(function, &context)?
+                {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "spawn appears outside ordinary async code",
+                    ));
+                }
+                self.verify_operation(function, operation, MirOperationContext::Spawn, &context)?;
+                self.verify_spawn_transfer(function, operation, &context)?;
+                self.verify_place(function, destination, &context)?;
+                if place_contains_ref_value(destination)
+                    || !self.is_join_for_outcome(destination.ty, operation.ty, &context)?
+                {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "spawn destination is not its exact writable Join result",
+                    ));
+                }
+                self.normal_block(function, *target, &context)?;
+                if self.block(function, *unwind, &context)?.kind != MirBlockKind::Cleanup {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "spawn unwind edge does not enter cleanup code",
                     ));
                 }
             }
@@ -1802,6 +2116,45 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            MirTerminatorKind::DrainScopes {
+                task_scopes,
+                defer_scopes,
+                target,
+                unwind,
+            } => {
+                if task_scopes.is_empty() && defer_scopes.is_empty() {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "structured drain has no task or defer scopes",
+                    ));
+                }
+                if task_scopes.iter().copied().collect::<BTreeSet<_>>().len() != task_scopes.len()
+                    || defer_scopes.iter().copied().collect::<BTreeSet<_>>().len()
+                        != defer_scopes.len()
+                {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "structured drain repeats a task or defer scope",
+                    ));
+                }
+                if !task_scopes.is_empty() && !self.function_is_async(function, &context)? {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "task scopes are drained by a synchronous function",
+                    ));
+                }
+                let target_block = self.block(function, *target, &context)?;
+                let unwind_block = self.block(function, *unwind, &context)?;
+                if target_block.kind != block.kind
+                    || unwind_block.kind != MirBlockKind::Cleanup
+                    || !block.statements.is_empty()
+                {
+                    return Err(MirInvariantError::new(
+                        &context,
+                        "structured drain crosses an invalid boundary or contains statements",
+                    ));
+                }
+            }
             MirTerminatorKind::DrainUnwind { target } => {
                 if block.kind != MirBlockKind::Cleanup
                     || *target != function.unwind
@@ -2080,7 +2433,7 @@ impl Verifier<'_> {
         &self,
         function: &MirFunction,
         operation: &MirOperation,
-        deferred: bool,
+        operation_context: MirOperationContext,
         context: &str,
     ) -> Result<(), MirInvariantError> {
         if mir_operation_contains_invalid_borrow(operation) {
@@ -2090,6 +2443,14 @@ impl Verifier<'_> {
             ));
         }
         self.verify_type(operation.ty, context)?;
+        if operation_context.expects_async()
+            && !matches!(operation.kind(), MirOperationKind::Call { .. })
+        {
+            return Err(MirInvariantError::new(
+                context,
+                "async initiation does not contain exactly one call operation",
+            ));
+        }
         match &operation.kind {
             MirOperationKind::CheckedPrefix { operator, operand } => {
                 self.verify_operand(function, operand, context)?;
@@ -2251,7 +2612,7 @@ impl Verifier<'_> {
                         protocol: *protocol,
                         outcome: operation.ty,
                     },
-                    deferred,
+                    operation_context,
                     context,
                 )?;
             }
@@ -4304,11 +4665,155 @@ impl Verifier<'_> {
                 .is_some_and(|capture| capture.local() == source)
     }
 
+    fn function_is_async(
+        &self,
+        function: &MirFunction,
+        context: &str,
+    ) -> Result<bool, MirInvariantError> {
+        let function_type = match function.id {
+            MirFunctionId::Callable(id) => self
+                .hir
+                .callable(id)
+                .ok_or_else(|| MirInvariantError::new(context, "missing HIR callable metadata"))?
+                .function_type(),
+            MirFunctionId::Closure(id) => self
+                .hir
+                .closure(id)
+                .ok_or_else(|| MirInvariantError::new(context, "missing HIR closure metadata"))?
+                .function_type(),
+        };
+        let TypeKind::Function(signature) = self.kind(function_type, context)? else {
+            return Err(MirInvariantError::new(
+                context,
+                "MIR function has a non-function HIR signature",
+            ));
+        };
+        Ok(signature.is_async())
+    }
+
+    fn join_logical_outcome(
+        &self,
+        join: TypeId,
+        context: &str,
+    ) -> Result<TypeId, MirInvariantError> {
+        let arguments = self.intrinsic_arguments(join, IntrinsicType::Join, context)?;
+        let [success, error] = arguments else {
+            return Err(MirInvariantError::new(
+                context,
+                "Join has the wrong intrinsic arity",
+            ));
+        };
+        if *error == self.hir.interner().scalar(ScalarType::Never) {
+            return Ok(*success);
+        }
+        let mut interner = self.hir.interner().clone();
+        interner
+            .result(*success, *error)
+            .map_err(|error| MirInvariantError::new(context, error.to_string()))
+    }
+
+    fn is_join_for_outcome(
+        &self,
+        join: TypeId,
+        outcome: TypeId,
+        context: &str,
+    ) -> Result<bool, MirInvariantError> {
+        let TypeKind::Intrinsic {
+            constructor: IntrinsicType::Join,
+            arguments,
+        } = self.kind(join, context)?
+        else {
+            return Ok(false);
+        };
+        let (success, error) = match self.kind(outcome, context)? {
+            TypeKind::Result { success, error } => (*success, *error),
+            _ => (outcome, self.hir.interner().scalar(ScalarType::Never)),
+        };
+        Ok(arguments.as_slice() == [success, error])
+    }
+
+    fn verify_spawn_transfer(
+        &self,
+        function: &MirFunction,
+        operation: &MirOperation,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        let MirOperationKind::Call {
+            callee, arguments, ..
+        } = operation.kind()
+        else {
+            return Err(MirInvariantError::new(
+                context,
+                "spawn does not contain a call operation",
+            ));
+        };
+        self.require_capability(function.id, callee.ty(), HirCapability::Send, context)?;
+        for argument in arguments {
+            match argument.mode() {
+                ParameterMode::Value => {
+                    self.require_capability(
+                        function.id,
+                        argument.value().ty(),
+                        HirCapability::Send,
+                        context,
+                    )?;
+                }
+                ParameterMode::Ref => {
+                    self.require_capability(
+                        function.id,
+                        argument.value().ty(),
+                        HirCapability::Send,
+                        context,
+                    )?;
+                    self.require_capability(
+                        function.id,
+                        argument.value().ty(),
+                        HirCapability::Share,
+                        context,
+                    )?;
+                }
+                ParameterMode::Mut | ParameterMode::Var => {
+                    return Err(MirInvariantError::new(
+                        context,
+                        "spawn carries an exclusive argument loan",
+                    ));
+                }
+            }
+        }
+        let (success, error) = match self.kind(operation.ty(), context)? {
+            TypeKind::Result { success, error } => (*success, *error),
+            _ => (
+                operation.ty(),
+                self.hir.interner().scalar(ScalarType::Never),
+            ),
+        };
+        self.require_capability(function.id, success, HirCapability::Send, context)?;
+        self.require_capability(function.id, error, HirCapability::Send, context)
+    }
+
+    fn require_capability(
+        &self,
+        function: MirFunctionId,
+        ty: TypeId,
+        capability: HirCapability,
+        context: &str,
+    ) -> Result<(), MirInvariantError> {
+        if self.capability_status(function, ty, capability, context)?
+            != HirCapabilityStatus::Satisfied
+        {
+            return Err(MirInvariantError::new(
+                context,
+                format!("{ty} does not satisfy {capability:?}"),
+            ));
+        }
+        Ok(())
+    }
+
     fn verify_call(
         &self,
         function: &MirFunction,
         verification: MirCallVerification<'_>,
-        deferred: bool,
+        operation_context: MirOperationContext,
         context: &str,
     ) -> Result<(), MirInvariantError> {
         let MirCallVerification {
@@ -4324,10 +4829,12 @@ impl Verifier<'_> {
                 "call operation signature is not a function",
             ));
         };
-        if call_signature.is_async() || call_signature.is_unsafe() {
+        if call_signature.is_async() != operation_context.expects_async()
+            || call_signature.is_unsafe()
+        {
             return Err(MirInvariantError::new(
                 context,
-                "effectful call reached the synchronous safe MIR call operation",
+                "call effects differ from their MIR initiation context",
             ));
         }
         if call_signature.outcome() != outcome {
@@ -4371,7 +4878,11 @@ impl Verifier<'_> {
             } => self.opaque_call_protocols(identity, arguments, signature, context)?,
             _ => HirClosureProtocols::new(false, false, false),
         };
-        let expected_protocol = if deferred
+        let expected_protocol = if operation_context == MirOperationContext::Spawn {
+            available
+                .supports(HirCallProtocol::CallOnce)
+                .then_some(HirCallProtocol::CallOnce)
+        } else if operation_context == MirOperationContext::Deferred
             && matches!(callee.kind, MirOperandKind::Move(_))
             && available.supports(HirCallProtocol::CallOnce)
         {
@@ -4855,8 +5366,10 @@ impl Verifier<'_> {
             })
             .collect::<BTreeSet<_>>();
         for (index, block) in function.blocks.iter().enumerate() {
-            let MirTerminatorKind::DrainDefers { scopes, .. } = &block.terminator.kind else {
-                continue;
+            let scopes = match &block.terminator.kind {
+                MirTerminatorKind::DrainDefers { scopes, .. } => scopes,
+                MirTerminatorKind::DrainScopes { defer_scopes, .. } => defer_scopes,
+                _ => continue,
             };
             if scopes
                 .iter()
@@ -5182,7 +5695,9 @@ impl Verifier<'_> {
                                 ));
                             }
                         }
-                        MirStatementKind::ReserveLoan(_) | MirStatementKind::ReleaseLoan(_) => {}
+                        MirStatementKind::ReserveLoan(_)
+                        | MirStatementKind::ReleaseLoan(_)
+                        | MirStatementKind::EnterTaskScope { .. } => {}
                     }
                 }
                 if !state.pending_moves.is_empty() {
@@ -5193,14 +5708,34 @@ impl Verifier<'_> {
                 }
 
                 let mut terminator_events = Vec::new();
+                let await_join_owner = match &block.terminator.kind {
+                    MirTerminatorKind::Await {
+                        awaitable:
+                            MirAwaitable::Join(MirOperand {
+                                kind: MirOperandKind::Move(place),
+                                ..
+                            }),
+                        ..
+                    } => Some(LocalAccess::from_place(place)),
+                    _ => None,
+                };
                 match &block.terminator.kind {
                     MirTerminatorKind::SwitchBool { condition, .. }
                     | MirTerminatorKind::SwitchTag {
                         value: condition, ..
                     } => push_operand_events(condition, &mut terminator_events),
-                    MirTerminatorKind::Invoke { operation, .. } => {
+                    MirTerminatorKind::Invoke { operation, .. }
+                    | MirTerminatorKind::Spawn { operation, .. } => {
                         push_operation_events(operation, &mut terminator_events);
                     }
+                    MirTerminatorKind::Await { awaitable, .. } => match awaitable {
+                        MirAwaitable::Call(operation) => {
+                            push_operation_events(operation, &mut terminator_events);
+                        }
+                        MirAwaitable::Join(join) => {
+                            push_operand_events(join, &mut terminator_events);
+                        }
+                    },
                     MirTerminatorKind::ValidatePlaces { replacements, .. } => {
                         for replacement in replacements.iter().flatten() {
                             push_operand_events(replacement, &mut terminator_events);
@@ -5210,6 +5745,7 @@ impl Verifier<'_> {
                     | MirTerminatorKind::IteratorNext { .. }
                     | MirTerminatorKind::ValidateLoan { .. }
                     | MirTerminatorKind::DrainDefers { .. }
+                    | MirTerminatorKind::DrainScopes { .. }
                     | MirTerminatorKind::DrainUnwind { .. }
                     | MirTerminatorKind::Return
                     | MirTerminatorKind::ResumePanic
@@ -5222,11 +5758,24 @@ impl Verifier<'_> {
                         _ => None,
                     })
                 {
-                    if state
+                    let overlaps = state
                         .guards
-                        .keys()
-                        .any(|guard| local_accesses_overlap(guard, &access))
+                        .iter()
+                        .filter(|(guard, _)| local_accesses_overlap(guard, &access))
+                        .map(|(guard, entry)| (guard.clone(), *entry))
+                        .collect::<Vec<_>>();
+                    if overlaps.len() == 1
+                        && await_join_owner.as_ref() == Some(&access)
+                        && overlaps[0].0 == access
+                        && overlaps[0].1.kind == CleanupEntryKind::Fallback
                     {
+                        let guard = state
+                            .guards
+                            .remove(&access)
+                            .expect("the exact await Join guard was just observed");
+                        state.registrations.remove(&guard.registration);
+                        state.remove_inactive_scope(guard.scope);
+                    } else if !overlaps.is_empty() {
                         return Err(MirInvariantError::new(
                             &block_context,
                             "terminator moves an active defer guard without disarming it",
@@ -5236,6 +5785,10 @@ impl Verifier<'_> {
 
                 if let MirTerminatorKind::DrainDefers { scopes, .. } = &block.terminator.kind {
                     state.drain(scopes, &block_context)?;
+                }
+                if let MirTerminatorKind::DrainScopes { defer_scopes, .. } = &block.terminator.kind
+                {
+                    state.drain(defer_scopes, &block_context)?;
                 }
                 if matches!(block.terminator.kind, MirTerminatorKind::DrainUnwind { .. }) {
                     state.drain_unwind();
@@ -5667,6 +6220,48 @@ impl Verifier<'_> {
                     }
                     propagate(*unwind, LoanFlowState::default())?;
                 }
+                MirTerminatorKind::Await {
+                    destination,
+                    target,
+                    unwind,
+                    ..
+                } => {
+                    for loan in &state.active {
+                        if self.loan(function, *loan, &block_context)?.mode != ParameterMode::Ref {
+                            return Err(MirInvariantError::new(
+                                &block_context,
+                                "exclusive loan crosses an await suspension",
+                            ));
+                        }
+                    }
+                    self.verify_loan_local_access(
+                        function,
+                        &static_integers,
+                        &state.active,
+                        &LocalEvent::Write(LocalAccess::from_place(destination)),
+                        None,
+                        &block_context,
+                    )?;
+                    propagate(*target, state)?;
+                    propagate(*unwind, LoanFlowState::default())?;
+                }
+                MirTerminatorKind::Spawn {
+                    destination,
+                    target,
+                    unwind,
+                    ..
+                } => {
+                    self.verify_loan_local_access(
+                        function,
+                        &static_integers,
+                        &state.active,
+                        &LocalEvent::Write(LocalAccess::from_place(destination)),
+                        None,
+                        &block_context,
+                    )?;
+                    propagate(*target, state)?;
+                    propagate(*unwind, LoanFlowState::default())?;
+                }
                 MirTerminatorKind::IteratorNext {
                     destination,
                     borrowed_source,
@@ -5785,6 +6380,18 @@ impl Verifier<'_> {
                     propagate(*unwind, LoanFlowState::default())?;
                 }
                 MirTerminatorKind::DrainDefers { target, unwind, .. } => {
+                    propagate(*target, state)?;
+                    propagate(*unwind, LoanFlowState::default())?;
+                }
+                MirTerminatorKind::DrainScopes { target, unwind, .. } => {
+                    for loan in &state.active {
+                        if self.loan(function, *loan, &block_context)?.mode != ParameterMode::Ref {
+                            return Err(MirInvariantError::new(
+                                &block_context,
+                                "exclusive loan crosses structured scope suspension",
+                            ));
+                        }
+                    }
                     propagate(*target, state)?;
                     propagate(*unwind, LoanFlowState::default())?;
                 }
@@ -6750,12 +7357,15 @@ impl Verifier<'_> {
                 MirStatementKind::RegisterFallback { owner, .. } => {
                     push_place_events(owner, true, &mut events);
                 }
-                MirStatementKind::RetargetCleanup { .. } | MirStatementKind::DisarmCleanup(_) => {}
+                MirStatementKind::EnterTaskScope { .. }
+                | MirStatementKind::RetargetCleanup { .. }
+                | MirStatementKind::DisarmCleanup(_) => {}
             }
         }
         match &block.terminator.kind {
             MirTerminatorKind::Goto { .. }
             | MirTerminatorKind::DrainDefers { .. }
+            | MirTerminatorKind::DrainScopes { .. }
             | MirTerminatorKind::DrainUnwind { .. }
             | MirTerminatorKind::ResumePanic
             | MirTerminatorKind::Unreachable => {}
@@ -6774,6 +7384,27 @@ impl Verifier<'_> {
                 if let Some(destination) = destination {
                     push_destination_reads(destination, true, &mut events);
                 }
+            }
+            MirTerminatorKind::Await {
+                awaitable,
+                destination,
+                ..
+            } => {
+                match awaitable {
+                    MirAwaitable::Call(operation) => {
+                        push_operation_events(operation, &mut events);
+                    }
+                    MirAwaitable::Join(join) => push_operand_events(join, &mut events),
+                }
+                push_destination_reads(destination, true, &mut events);
+            }
+            MirTerminatorKind::Spawn {
+                operation,
+                destination,
+                ..
+            } => {
+                push_operation_events(operation, &mut events);
+                push_destination_reads(destination, true, &mut events);
             }
             MirTerminatorKind::IteratorNext {
                 state,
@@ -7026,13 +7657,16 @@ fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEve
                 push_place_events(owner, true, &mut local);
                 events.extend(local.into_iter().map(LoanEvent::Local));
             }
-            MirStatementKind::RetargetCleanup { .. } | MirStatementKind::DisarmCleanup(_) => {}
+            MirStatementKind::EnterTaskScope { .. }
+            | MirStatementKind::RetargetCleanup { .. }
+            | MirStatementKind::DisarmCleanup(_) => {}
         }
     }
     let mut local = Vec::new();
     match &block.terminator.kind {
         MirTerminatorKind::Goto { .. }
         | MirTerminatorKind::DrainDefers { .. }
+        | MirTerminatorKind::DrainScopes { .. }
         | MirTerminatorKind::DrainUnwind { .. }
         | MirTerminatorKind::ResumePanic
         | MirTerminatorKind::Unreachable => {}
@@ -7050,6 +7684,13 @@ fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEve
             } else {
                 push_operation_events(operation, &mut local);
             }
+        }
+        MirTerminatorKind::Await { awaitable, .. } => match awaitable {
+            MirAwaitable::Call(operation) => push_operation_events(operation, &mut local),
+            MirAwaitable::Join(join) => push_operand_events(join, &mut local),
+        },
+        MirTerminatorKind::Spawn { operation, .. } => {
+            push_operation_events(operation, &mut local);
         }
         MirTerminatorKind::IteratorNext {
             state,
@@ -7085,14 +7726,19 @@ fn mir_loan_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<LoanEve
         })),
     }
     events.extend(local.into_iter().map(LoanEvent::Local));
-    if let MirTerminatorKind::Invoke {
-        operation:
-            MirOperation {
-                kind: MirOperationKind::Call { arguments, .. },
-                ..
-            },
+    let operation = match &block.terminator.kind {
+        MirTerminatorKind::Invoke { operation, .. }
+        | MirTerminatorKind::Spawn { operation, .. } => Some(operation),
+        MirTerminatorKind::Await {
+            awaitable: MirAwaitable::Call(operation),
+            ..
+        } => Some(operation),
+        _ => None,
+    };
+    if let Some(MirOperation {
+        kind: MirOperationKind::Call { arguments, .. },
         ..
-    } = &block.terminator.kind
+    }) = operation
     {
         events.push(LoanEvent::Consume(
             arguments
@@ -7132,6 +7778,7 @@ fn tag_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<TagEvent> {
         match &statement.kind {
             MirStatementKind::StorageLive(_)
             | MirStatementKind::StorageDead(_)
+            | MirStatementKind::EnterTaskScope { .. }
             | MirStatementKind::ReserveLoan(_)
             | MirStatementKind::ReleaseLoan(_)
             | MirStatementKind::RegisterFallback { .. }
@@ -7149,6 +7796,7 @@ fn tag_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<TagEvent> {
     match &block.terminator.kind {
         MirTerminatorKind::Goto { .. }
         | MirTerminatorKind::DrainDefers { .. }
+        | MirTerminatorKind::DrainScopes { .. }
         | MirTerminatorKind::DrainUnwind { .. }
         | MirTerminatorKind::Return
         | MirTerminatorKind::ResumePanic
@@ -7168,6 +7816,27 @@ fn tag_events(function: &MirFunction, block: &MirBasicBlock) -> Vec<TagEvent> {
             if let Some(destination) = destination {
                 push_tag_place(function, destination, false, &mut events);
             }
+        }
+        MirTerminatorKind::Await {
+            awaitable,
+            destination,
+            ..
+        } => {
+            match awaitable {
+                MirAwaitable::Call(operation) => {
+                    push_tag_operation(function, operation, &mut events);
+                }
+                MirAwaitable::Join(join) => push_tag_operand(function, join, &mut events),
+            }
+            push_tag_place(function, destination, false, &mut events);
+        }
+        MirTerminatorKind::Spawn {
+            operation,
+            destination,
+            ..
+        } => {
+            push_tag_operation(function, operation, &mut events);
+            push_tag_place(function, destination, false, &mut events);
         }
         MirTerminatorKind::IteratorNext {
             state, destination, ..
@@ -7463,6 +8132,25 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
             })
             .chain(std::iter::once(edge(*unwind)))
             .collect(),
+        MirTerminatorKind::Await {
+            destination,
+            target,
+            unwind,
+            ..
+        }
+        | MirTerminatorKind::Spawn {
+            destination,
+            target,
+            unwind,
+            ..
+        } => vec![
+            SuccessorEdge {
+                target: *target,
+                refinement: None,
+                writes: Some(destination.clone()),
+            },
+            edge(*unwind),
+        ],
         MirTerminatorKind::IteratorNext {
             destination,
             has_value,
@@ -7480,7 +8168,8 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
         ],
         MirTerminatorKind::ValidatePlaces { target, unwind, .. }
         | MirTerminatorKind::ValidateLoan { target, unwind, .. }
-        | MirTerminatorKind::DrainDefers { target, unwind, .. } => {
+        | MirTerminatorKind::DrainDefers { target, unwind, .. }
+        | MirTerminatorKind::DrainScopes { target, unwind, .. } => {
             vec![edge(*target), edge(*unwind)]
         }
         MirTerminatorKind::DrainUnwind { target } => vec![edge(*target)],

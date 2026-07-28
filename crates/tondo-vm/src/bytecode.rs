@@ -610,6 +610,9 @@ pub enum BytecodeInstructionKind {
         destination: BytecodePlace,
         value: BytecodeRvalue,
     },
+    EnterTaskScope {
+        scope: BytecodeScopeId,
+    },
     RegisterDefer {
         scope: BytecodeScopeId,
         action: BytecodeOperation,
@@ -1071,6 +1074,19 @@ pub enum BytecodeTerminatorKind {
         target: Option<BytecodeBlockId>,
         unwind: BytecodeBlockId,
     },
+    Await {
+        awaitable: BytecodeAwaitable,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    },
+    Spawn {
+        operation: BytecodeOperation,
+        scope: BytecodeScopeId,
+        destination: BytecodePlace,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    },
     IteratorNext {
         state: BytecodePlace,
         destination: BytecodePlace,
@@ -1099,12 +1115,24 @@ pub enum BytecodeTerminatorKind {
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
     },
+    DrainScopes {
+        task_scopes: Vec<BytecodeScopeId>,
+        defer_scopes: Vec<BytecodeScopeId>,
+        target: BytecodeBlockId,
+        unwind: BytecodeBlockId,
+    },
     DrainUnwind {
         target: BytecodeBlockId,
     },
     Return,
     ResumePanic,
     Unreachable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BytecodeAwaitable {
+    Call(BytecodeOperation),
+    Join(BytecodeOperand),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

@@ -531,6 +531,20 @@ struct CallVerification<'a> {
     outcome: BytecodeTypeId,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OperationContext {
+    Immediate,
+    Deferred,
+    Await,
+    Spawn,
+}
+
+impl OperationContext {
+    fn expects_async(self) -> bool {
+        matches!(self, Self::Await | Self::Spawn)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum ClosedCapability {
     Copy,
@@ -2822,6 +2836,202 @@ impl Verifier<'_> {
         }
         self.verify_control_and_dataflow(function, &context)?;
         self.verify_defer_flow(function, &context)?;
+        self.verify_task_scope_flow(function, &context)?;
+        self.verify_suspension_liveness(function, &context)?;
+        Ok(())
+    }
+
+    fn verify_task_scope_flow(
+        &self,
+        function: &BytecodeFunction,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let mut incoming = vec![None::<Vec<BytecodeScopeId>>; function.blocks.len()];
+        incoming[function.entry.index() as usize] = Some(Vec::new());
+        let mut queue = VecDeque::from([function.entry]);
+        let mut queued = vec![false; function.blocks.len()];
+        queued[function.entry.index() as usize] = true;
+        while let Some(block_id) = queue.pop_front() {
+            queued[block_id.index() as usize] = false;
+            self.consume_dataflow_step(context)?;
+            let Some(mut scopes) = incoming[block_id.index() as usize].clone() else {
+                continue;
+            };
+            let block = &function.blocks[block_id.index() as usize];
+            if block.kind != BytecodeBlockKind::Normal {
+                continue;
+            }
+            let block_context = format!("{context} block#{}", block_id.index());
+            for instruction in &block.instructions {
+                if let BytecodeInstructionKind::EnterTaskScope { scope } = instruction.kind {
+                    if scopes.contains(&scope) {
+                        return Err(BytecodeVerificationError::new(
+                            &block_context,
+                            "task scope is re-entered before its previous extent is drained",
+                        ));
+                    }
+                    scopes.push(scope);
+                }
+            }
+            if let BytecodeTerminatorKind::Spawn { scope, .. } = &block.terminator.kind
+                && scopes.last() != Some(scope)
+            {
+                return Err(BytecodeVerificationError::new(
+                    &block_context,
+                    "spawn is not owned by the innermost active task scope",
+                ));
+            }
+            if let BytecodeTerminatorKind::DrainScopes { task_scopes, .. } = &block.terminator.kind
+            {
+                let start = scopes.len().checked_sub(task_scopes.len()).ok_or_else(|| {
+                    BytecodeVerificationError::new(
+                        &block_context,
+                        "structured drain removes more task scopes than are active",
+                    )
+                })?;
+                if scopes[start..] != task_scopes[..] {
+                    return Err(BytecodeVerificationError::new(
+                        &block_context,
+                        "structured drain does not remove the exact active task-scope suffix",
+                    ));
+                }
+                scopes.truncate(start);
+            }
+            if matches!(block.terminator.kind, BytecodeTerminatorKind::Return) && !scopes.is_empty()
+            {
+                return Err(BytecodeVerificationError::new(
+                    &block_context,
+                    "normal return abandons active task scopes",
+                ));
+            }
+            for edge in successor_edges(&block.terminator.kind) {
+                if function.blocks[edge.target.index() as usize].kind != BytecodeBlockKind::Normal {
+                    continue;
+                }
+                let target = edge.target.index() as usize;
+                match &incoming[target] {
+                    Some(previous) if previous != &scopes => {
+                        return Err(BytecodeVerificationError::new(
+                            format!("{context} block#{}", edge.target.index()),
+                            "control-flow predecessors disagree about active task scopes",
+                        ));
+                    }
+                    Some(_) => {}
+                    None => {
+                        incoming[target] = Some(scopes.clone());
+                        if !queued[target] {
+                            queued[target] = true;
+                            queue.push_back(edge.target);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn verify_suspension_liveness(
+        &self,
+        function: &BytecodeFunction,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let mut uses = vec![BTreeSet::<BytecodeSlotId>::new(); function.blocks.len()];
+        let mut definitions = vec![BTreeSet::<BytecodeSlotId>::new(); function.blocks.len()];
+        for (index, block) in function.blocks.iter().enumerate() {
+            for event in local_events(function, block) {
+                match event {
+                    LocalEvent::Read(access)
+                    | LocalEvent::Resolve(access)
+                    | LocalEvent::WriteAccess(access) => {
+                        if !definitions[index].contains(&access.slot) {
+                            uses[index].insert(access.slot);
+                        }
+                    }
+                    LocalEvent::Move(access) => {
+                        if !definitions[index].contains(&access.slot) {
+                            uses[index].insert(access.slot);
+                        }
+                        if access.path.is_empty() {
+                            definitions[index].insert(access.slot);
+                        }
+                    }
+                    LocalEvent::Write(access) => {
+                        if !access.path.is_empty() && !definitions[index].contains(&access.slot) {
+                            uses[index].insert(access.slot);
+                        }
+                        if access.path.is_empty() {
+                            definitions[index].insert(access.slot);
+                        }
+                    }
+                    LocalEvent::StorageLive(slot) | LocalEvent::StorageDead(slot) => {
+                        definitions[index].insert(slot);
+                    }
+                }
+            }
+        }
+        let mut live_in = vec![BTreeSet::<BytecodeSlotId>::new(); function.blocks.len()];
+        let mut live_out = live_in.clone();
+        loop {
+            self.consume_dataflow_step(context)?;
+            let mut changed = false;
+            for index in (0..function.blocks.len()).rev() {
+                let mut outgoing = BTreeSet::new();
+                for edge in successor_edges(&function.blocks[index].terminator.kind) {
+                    let mut edge_live = live_in[edge.target.index() as usize].clone();
+                    if let Some(destination) = edge.writes
+                        && destination.projections.is_empty()
+                    {
+                        edge_live.remove(&destination.slot);
+                    }
+                    outgoing.extend(edge_live);
+                }
+                let mut incoming = uses[index].clone();
+                incoming.extend(
+                    outgoing
+                        .iter()
+                        .filter(|slot| !definitions[index].contains(slot))
+                        .copied(),
+                );
+                if live_out[index] != outgoing {
+                    live_out[index] = outgoing;
+                    changed = true;
+                }
+                if live_in[index] != incoming {
+                    live_in[index] = incoming;
+                    changed = true;
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for (index, block) in function.blocks.iter().enumerate() {
+            if !matches!(
+                block.terminator.kind,
+                BytecodeTerminatorKind::Await { .. } | BytecodeTerminatorKind::DrainScopes { .. }
+            ) {
+                continue;
+            }
+            let block_context = format!("{context} block#{index}");
+            for slot in &live_out[index] {
+                let ty = self.slot(function, *slot, &block_context)?.ty;
+                if matches!(
+                    self.ty(ty, &block_context)?.kind,
+                    BytecodeTypeKind::Intrinsic {
+                        constructor: BytecodeIntrinsicType::Join,
+                        ..
+                    }
+                ) {
+                    continue;
+                }
+                if !self.capability(ty, ClosedCapability::Send, &block_context)? {
+                    return Err(BytecodeVerificationError::new(
+                        &block_context,
+                        format!("live slot#{} is not Send across suspension", slot.index()),
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -2840,6 +3050,16 @@ impl Verifier<'_> {
             BytecodeInstructionKind::ReserveLoan(loan)
             | BytecodeInstructionKind::ReleaseLoan(loan) => {
                 self.loan(function, *loan, context)?;
+            }
+            BytecodeInstructionKind::EnterTaskScope { .. } => {
+                if block_kind != BytecodeBlockKind::Normal
+                    || !self.function_is_async(function, context)?
+                {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "task scope is entered outside ordinary async code",
+                    ));
+                }
             }
             BytecodeInstructionKind::Store { destination, value } => {
                 self.verify_place(function, destination, context)?;
@@ -2875,7 +3095,7 @@ impl Verifier<'_> {
                         "a non-Copy deferred callee does not use CallOnce",
                     ));
                 }
-                self.verify_operation(function, action, true, context)?;
+                self.verify_operation(function, action, OperationContext::Deferred, context)?;
                 if !self.is_scalar(action.ty, BytecodeScalarType::Unit)
                     || !matches!(
                         action.kind,
@@ -4533,11 +4753,145 @@ impl Verifier<'_> {
         )
     }
 
+    fn function_is_async(
+        &self,
+        function: &BytecodeFunction,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        let callable = self.callable(function.callable, context)?;
+        let BytecodeTypeKind::Function(signature) = &self.ty(callable.function_type, context)?.kind
+        else {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "function callable has a non-function signature",
+            ));
+        };
+        Ok(signature.is_async)
+    }
+
+    fn join_logical_outcome(
+        &self,
+        join: BytecodeTypeId,
+        context: &str,
+    ) -> Result<BytecodeTypeId, BytecodeVerificationError> {
+        let BytecodeTypeKind::Intrinsic {
+            constructor: BytecodeIntrinsicType::Join,
+            arguments,
+        } = &self.ty(join, context)?.kind
+        else {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "await operand is not Join",
+            ));
+        };
+        let [success, error] = arguments.as_slice() else {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "Join has the wrong intrinsic arity",
+            ));
+        };
+        if self.is_scalar(*error, BytecodeScalarType::Never) {
+            return Ok(*success);
+        }
+        self.find_type(
+            |kind| {
+                matches!(
+                    kind,
+                    BytecodeTypeKind::Result {
+                        success: candidate_success,
+                        error: candidate_error,
+                    } if candidate_success == success && candidate_error == error
+                )
+            },
+            context,
+        )
+    }
+
+    fn is_join_for_outcome(
+        &self,
+        join: BytecodeTypeId,
+        outcome: BytecodeTypeId,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        let BytecodeTypeKind::Intrinsic {
+            constructor: BytecodeIntrinsicType::Join,
+            arguments,
+        } = &self.ty(join, context)?.kind
+        else {
+            return Ok(false);
+        };
+        let (success, error) = match &self.ty(outcome, context)?.kind {
+            BytecodeTypeKind::Result { success, error } => (*success, *error),
+            _ => (
+                outcome,
+                self.find_type(
+                    |kind| matches!(kind, BytecodeTypeKind::Scalar(BytecodeScalarType::Never)),
+                    context,
+                )?,
+            ),
+        };
+        Ok(arguments.as_slice() == [success, error])
+    }
+
+    fn verify_spawn_transfer(
+        &self,
+        operation: &BytecodeOperation,
+        context: &str,
+    ) -> Result<(), BytecodeVerificationError> {
+        let BytecodeOperationKind::Call {
+            callee, arguments, ..
+        } = &operation.kind
+        else {
+            return Err(operation_error(context));
+        };
+        if !self.capability(callee.ty, ClosedCapability::Send, context)? {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "spawn callee is not Send",
+            ));
+        }
+        for argument in arguments {
+            let send = self.capability(argument.value.ty, ClosedCapability::Send, context)?;
+            let share = self.capability(argument.value.ty, ClosedCapability::Share, context)?;
+            if !send
+                || argument.mode == BytecodeParameterMode::Ref && !share
+                || matches!(
+                    argument.mode,
+                    BytecodeParameterMode::Mut | BytecodeParameterMode::Var
+                )
+            {
+                return Err(BytecodeVerificationError::new(
+                    context,
+                    "spawn argument violates Send/Share or exclusive-loan rules",
+                ));
+            }
+        }
+        let (success, error) = match &self.ty(operation.ty, context)?.kind {
+            BytecodeTypeKind::Result { success, error } => (*success, *error),
+            _ => (
+                operation.ty,
+                self.find_type(
+                    |kind| matches!(kind, BytecodeTypeKind::Scalar(BytecodeScalarType::Never)),
+                    context,
+                )?,
+            ),
+        };
+        if !self.capability(success, ClosedCapability::Send, context)?
+            || !self.capability(error, ClosedCapability::Send, context)?
+        {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "spawn result or error is not Send",
+            ));
+        }
+        Ok(())
+    }
+
     fn verify_operation(
         &self,
         function: &BytecodeFunction,
         operation: &BytecodeOperation,
-        deferred: bool,
+        operation_context: OperationContext,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
         if operation_contains_invalid_borrow(operation) {
@@ -4547,6 +4901,14 @@ impl Verifier<'_> {
             ));
         }
         self.function_type(function, operation.ty, context)?;
+        if operation_context.expects_async()
+            && !matches!(operation.kind, BytecodeOperationKind::Call { .. })
+        {
+            return Err(BytecodeVerificationError::new(
+                context,
+                "async initiation does not contain exactly one call operation",
+            ));
+        }
         match &operation.kind {
             BytecodeOperationKind::CheckedPrefix { operator, operand } => {
                 self.verify_operand(function, operand, context)?;
@@ -4675,7 +5037,7 @@ impl Verifier<'_> {
                         protocol: *protocol,
                         outcome: operation.ty,
                     },
-                    deferred,
+                    operation_context,
                     context,
                 )?;
             }
@@ -4685,7 +5047,7 @@ impl Verifier<'_> {
                     return Err(operation_error(context));
                 };
                 let loan = self.loan(function, loan, context)?;
-                if deferred
+                if operation_context != OperationContext::Immediate
                     || argument.mode != BytecodeParameterMode::Ref
                     || argument.target != BytecodeCallArgumentTarget::Receiver
                     || loan.mode != BytecodeParameterMode::Ref
@@ -4755,7 +5117,7 @@ impl Verifier<'_> {
         &self,
         bytecode_function: &BytecodeFunction,
         call: CallVerification<'_>,
-        deferred: bool,
+        operation_context: OperationContext,
         context: &str,
     ) -> Result<(), BytecodeVerificationError> {
         let CallVerification {
@@ -4768,10 +5130,10 @@ impl Verifier<'_> {
         let BytecodeTypeKind::Function(function_type) = &self.ty(signature, context)?.kind else {
             return Err(operation_error(context));
         };
-        if function_type.is_async || function_type.is_unsafe {
+        if function_type.is_async != operation_context.expects_async() || function_type.is_unsafe {
             return Err(BytecodeVerificationError::new(
                 context,
-                "effectful call reached the synchronous safe bytecode call operation",
+                "call effects differ from their bytecode initiation context",
             ));
         }
         if function_type.outcome != outcome {
@@ -4789,7 +5151,14 @@ impl Verifier<'_> {
                 let expected = match callable.and_then(|callable| callable.closure.as_ref()) {
                     None => Some(BytecodeCallProtocol::Call),
                     Some(closure)
-                        if deferred
+                        if operation_context == OperationContext::Spawn
+                            && closure.protocols.call_once
+                            && !matches!(callee.kind, BytecodeOperandKind::Borrow(_)) =>
+                    {
+                        Some(BytecodeCallProtocol::CallOnce)
+                    }
+                    Some(closure)
+                        if operation_context == OperationContext::Deferred
                             && !self.capability(callee.ty, ClosedCapability::Copy, context)?
                             && closure.protocols.call_once
                             && !matches!(callee.kind, BytecodeOperandKind::Borrow(_)) =>
@@ -5067,7 +5436,7 @@ impl Verifier<'_> {
                 if block.kind != BytecodeBlockKind::Normal {
                     return Err(terminator_error(context));
                 }
-                self.verify_operation(function, operation, false, context)?;
+                self.verify_operation(function, operation, OperationContext::Immediate, context)?;
                 match (destination, target) {
                     (Some(destination), Some(target)) => {
                         self.verify_place(function, destination, context)?;
@@ -5087,6 +5456,74 @@ impl Verifier<'_> {
                     (None, None) if self.is_scalar(operation.ty, BytecodeScalarType::Never) => {}
                     _ => return Err(terminator_error(context)),
                 }
+                self.cleanup_target(function, *unwind, context)?;
+            }
+            BytecodeTerminatorKind::Await {
+                awaitable,
+                destination,
+                target,
+                unwind,
+            } => {
+                if block.kind != BytecodeBlockKind::Normal
+                    || !self.function_is_async(function, context)?
+                {
+                    return Err(terminator_error(context));
+                }
+                self.verify_place(function, destination, context)?;
+                if place_contains_ref_value(destination) {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "`Ref[T].value` is a read-only projection",
+                    ));
+                }
+                let expected = match awaitable {
+                    BytecodeAwaitable::Call(operation) => {
+                        self.verify_operation(
+                            function,
+                            operation,
+                            OperationContext::Await,
+                            context,
+                        )?;
+                        operation.ty
+                    }
+                    BytecodeAwaitable::Join(join) => {
+                        self.verify_operand(function, join, context)?;
+                        if !matches!(join.kind, BytecodeOperandKind::Move(_)) {
+                            return Err(BytecodeVerificationError::new(
+                                context,
+                                "await must consume its affine Join operand",
+                            ));
+                        }
+                        self.join_logical_outcome(join.ty, context)?
+                    }
+                };
+                if destination.ty != expected {
+                    return Err(terminator_error(context));
+                }
+                self.normal_target(function, *target, context)?;
+                self.cleanup_target(function, *unwind, context)?;
+            }
+            BytecodeTerminatorKind::Spawn {
+                operation,
+                destination,
+                target,
+                unwind,
+                ..
+            } => {
+                if block.kind != BytecodeBlockKind::Normal
+                    || !self.function_is_async(function, context)?
+                {
+                    return Err(terminator_error(context));
+                }
+                self.verify_operation(function, operation, OperationContext::Spawn, context)?;
+                self.verify_spawn_transfer(operation, context)?;
+                self.verify_place(function, destination, context)?;
+                if place_contains_ref_value(destination)
+                    || !self.is_join_for_outcome(destination.ty, operation.ty, context)?
+                {
+                    return Err(terminator_error(context));
+                }
+                self.normal_target(function, *target, context)?;
                 self.cleanup_target(function, *unwind, context)?;
             }
             BytecodeTerminatorKind::IteratorNext {
@@ -5290,6 +5727,30 @@ impl Verifier<'_> {
                     return Err(BytecodeVerificationError::new(
                         context,
                         "defer drain block contains ordinary instructions",
+                    ));
+                }
+            }
+            BytecodeTerminatorKind::DrainScopes {
+                task_scopes,
+                defer_scopes,
+                target,
+                unwind,
+            } => {
+                if task_scopes.is_empty() && defer_scopes.is_empty()
+                    || task_scopes.iter().copied().collect::<BTreeSet<_>>().len()
+                        != task_scopes.len()
+                    || defer_scopes.iter().copied().collect::<BTreeSet<_>>().len()
+                        != defer_scopes.len()
+                    || !task_scopes.is_empty() && !self.function_is_async(function, context)?
+                {
+                    return Err(terminator_error(context));
+                }
+                self.edge_target(function, block.kind, *target, context)?;
+                self.cleanup_target(function, *unwind, context)?;
+                if !block.instructions.is_empty() {
+                    return Err(BytecodeVerificationError::new(
+                        context,
+                        "structured drain block contains ordinary instructions",
                     ));
                 }
             }
@@ -5554,8 +6015,10 @@ impl Verifier<'_> {
             })
             .collect::<BTreeSet<_>>();
         for (index, block) in function.blocks.iter().enumerate() {
-            let BytecodeTerminatorKind::DrainDefers { scopes, .. } = &block.terminator.kind else {
-                continue;
+            let scopes = match &block.terminator.kind {
+                BytecodeTerminatorKind::DrainDefers { scopes, .. } => scopes,
+                BytecodeTerminatorKind::DrainScopes { defer_scopes, .. } => defer_scopes,
+                _ => continue,
             };
             if scopes
                 .iter()
@@ -5880,7 +6343,8 @@ impl Verifier<'_> {
                             }
                         }
                         BytecodeInstructionKind::ReserveLoan(_)
-                        | BytecodeInstructionKind::ReleaseLoan(_) => {}
+                        | BytecodeInstructionKind::ReleaseLoan(_)
+                        | BytecodeInstructionKind::EnterTaskScope { .. } => {}
                     }
                 }
                 if !state.pending_moves.is_empty() {
@@ -5891,14 +6355,34 @@ impl Verifier<'_> {
                 }
 
                 let mut terminator_events = Vec::new();
+                let await_join_owner = match &block.terminator.kind {
+                    BytecodeTerminatorKind::Await {
+                        awaitable:
+                            BytecodeAwaitable::Join(BytecodeOperand {
+                                kind: BytecodeOperandKind::Move(place),
+                                ..
+                            }),
+                        ..
+                    } => Some(LocalAccess::from_place(place)),
+                    _ => None,
+                };
                 match &block.terminator.kind {
                     BytecodeTerminatorKind::BranchBool { condition, .. }
                     | BytecodeTerminatorKind::BranchTag {
                         value: condition, ..
                     } => push_operand_events(condition, &mut terminator_events),
-                    BytecodeTerminatorKind::Invoke { operation, .. } => {
+                    BytecodeTerminatorKind::Invoke { operation, .. }
+                    | BytecodeTerminatorKind::Spawn { operation, .. } => {
                         push_operation_events(operation, &mut terminator_events);
                     }
+                    BytecodeTerminatorKind::Await { awaitable, .. } => match awaitable {
+                        BytecodeAwaitable::Call(operation) => {
+                            push_operation_events(operation, &mut terminator_events);
+                        }
+                        BytecodeAwaitable::Join(join) => {
+                            push_operand_events(join, &mut terminator_events);
+                        }
+                    },
                     BytecodeTerminatorKind::ValidatePlaces { replacements, .. } => {
                         for replacement in replacements.iter().flatten() {
                             push_operand_events(replacement, &mut terminator_events);
@@ -5908,6 +6392,7 @@ impl Verifier<'_> {
                     | BytecodeTerminatorKind::IteratorNext { .. }
                     | BytecodeTerminatorKind::ValidateLoan { .. }
                     | BytecodeTerminatorKind::DrainDefers { .. }
+                    | BytecodeTerminatorKind::DrainScopes { .. }
                     | BytecodeTerminatorKind::DrainUnwind { .. }
                     | BytecodeTerminatorKind::Return
                     | BytecodeTerminatorKind::ResumePanic
@@ -5920,11 +6405,24 @@ impl Verifier<'_> {
                         _ => None,
                     })
                 {
-                    if state
+                    let overlaps = state
                         .guards
-                        .keys()
-                        .any(|guard| local_accesses_overlap(guard, &access))
+                        .iter()
+                        .filter(|(guard, _)| local_accesses_overlap(guard, &access))
+                        .map(|(guard, entry)| (guard.clone(), *entry))
+                        .collect::<Vec<_>>();
+                    if overlaps.len() == 1
+                        && await_join_owner.as_ref() == Some(&access)
+                        && overlaps[0].0 == access
+                        && overlaps[0].1.kind == CleanupEntryKind::Fallback
                     {
+                        let guard = state
+                            .guards
+                            .remove(&access)
+                            .expect("the exact await Join guard was just observed");
+                        state.registrations.remove(&guard.registration);
+                        state.remove_inactive_scope(guard.scope);
+                    } else if !overlaps.is_empty() {
                         return Err(BytecodeVerificationError::new(
                             &block_context,
                             "terminator moves an active defer guard without disarming it",
@@ -5934,6 +6432,11 @@ impl Verifier<'_> {
 
                 if let BytecodeTerminatorKind::DrainDefers { scopes, .. } = &block.terminator.kind {
                     state.drain(scopes, &block_context)?;
+                }
+                if let BytecodeTerminatorKind::DrainScopes { defer_scopes, .. } =
+                    &block.terminator.kind
+                {
+                    state.drain(defer_scopes, &block_context)?;
                 }
                 if matches!(
                     block.terminator.kind,
@@ -6345,6 +6848,50 @@ impl Verifier<'_> {
                     }
                     propagate(*unwind, LoanFlowState::default())?;
                 }
+                BytecodeTerminatorKind::Await {
+                    destination,
+                    target,
+                    unwind,
+                    ..
+                } => {
+                    for loan in &state.active {
+                        if self.loan(function, *loan, &block_context)?.mode
+                            != BytecodeParameterMode::Ref
+                        {
+                            return Err(BytecodeVerificationError::new(
+                                &block_context,
+                                "exclusive loan crosses an await suspension",
+                            ));
+                        }
+                    }
+                    self.verify_loan_local_access(
+                        function,
+                        &static_integers,
+                        &state.active,
+                        &LocalEvent::Write(LocalAccess::from_place(destination)),
+                        None,
+                        &block_context,
+                    )?;
+                    propagate(*target, state)?;
+                    propagate(*unwind, LoanFlowState::default())?;
+                }
+                BytecodeTerminatorKind::Spawn {
+                    destination,
+                    target,
+                    unwind,
+                    ..
+                } => {
+                    self.verify_loan_local_access(
+                        function,
+                        &static_integers,
+                        &state.active,
+                        &LocalEvent::Write(LocalAccess::from_place(destination)),
+                        None,
+                        &block_context,
+                    )?;
+                    propagate(*target, state)?;
+                    propagate(*unwind, LoanFlowState::default())?;
+                }
                 BytecodeTerminatorKind::IteratorNext {
                     destination,
                     borrowed_source,
@@ -6464,6 +7011,20 @@ impl Verifier<'_> {
                     propagate(*unwind, LoanFlowState::default())?;
                 }
                 BytecodeTerminatorKind::DrainDefers { target, unwind, .. } => {
+                    propagate(*target, state)?;
+                    propagate(*unwind, LoanFlowState::default())?;
+                }
+                BytecodeTerminatorKind::DrainScopes { target, unwind, .. } => {
+                    for loan in &state.active {
+                        if self.loan(function, *loan, &block_context)?.mode
+                            != BytecodeParameterMode::Ref
+                        {
+                            return Err(BytecodeVerificationError::new(
+                                &block_context,
+                                "exclusive loan crosses structured scope suspension",
+                            ));
+                        }
+                    }
                     propagate(*target, state)?;
                     propagate(*unwind, LoanFlowState::default())?;
                 }
@@ -8588,7 +9149,8 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
                 push_place_events(owner, true, &mut local);
                 events.extend(local.into_iter().map(LoanEvent::Local));
             }
-            BytecodeInstructionKind::RetargetCleanup { .. }
+            BytecodeInstructionKind::EnterTaskScope { .. }
+            | BytecodeInstructionKind::RetargetCleanup { .. }
             | BytecodeInstructionKind::DisarmCleanup(_) => {}
         }
     }
@@ -8596,6 +9158,7 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
     match &block.terminator.kind {
         BytecodeTerminatorKind::Goto { .. }
         | BytecodeTerminatorKind::DrainDefers { .. }
+        | BytecodeTerminatorKind::DrainScopes { .. }
         | BytecodeTerminatorKind::DrainUnwind { .. }
         | BytecodeTerminatorKind::ResumePanic
         | BytecodeTerminatorKind::Unreachable => {}
@@ -8613,6 +9176,13 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
             } else {
                 push_operation_events(operation, &mut local);
             }
+        }
+        BytecodeTerminatorKind::Await { awaitable, .. } => match awaitable {
+            BytecodeAwaitable::Call(operation) => push_operation_events(operation, &mut local),
+            BytecodeAwaitable::Join(join) => push_operand_events(join, &mut local),
+        },
+        BytecodeTerminatorKind::Spawn { operation, .. } => {
+            push_operation_events(operation, &mut local);
         }
         BytecodeTerminatorKind::IteratorNext {
             state,
@@ -8648,7 +9218,16 @@ fn bytecode_loan_events(function: &BytecodeFunction, block: &BytecodeBlock) -> V
         })),
     }
     events.extend(local.into_iter().map(LoanEvent::Local));
-    if let BytecodeTerminatorKind::Invoke { operation, .. } = &block.terminator.kind {
+    let operation = match &block.terminator.kind {
+        BytecodeTerminatorKind::Invoke { operation, .. }
+        | BytecodeTerminatorKind::Spawn { operation, .. } => Some(operation),
+        BytecodeTerminatorKind::Await {
+            awaitable: BytecodeAwaitable::Call(operation),
+            ..
+        } => Some(operation),
+        _ => None,
+    };
+    if let Some(operation) = operation {
         let consumed = match &operation.kind {
             BytecodeOperationKind::Call { arguments, .. } => arguments
                 .iter()
@@ -8732,6 +9311,25 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
             })
             .chain(std::iter::once(edge(*unwind)))
             .collect(),
+        BytecodeTerminatorKind::Await {
+            destination,
+            target,
+            unwind,
+            ..
+        }
+        | BytecodeTerminatorKind::Spawn {
+            destination,
+            target,
+            unwind,
+            ..
+        } => vec![
+            SuccessorEdge {
+                target: *target,
+                refinement: None,
+                writes: Some(destination.clone()),
+            },
+            edge(*unwind),
+        ],
         BytecodeTerminatorKind::IteratorNext {
             destination,
             has_value,
@@ -8749,7 +9347,8 @@ fn successor_edges(terminator: &BytecodeTerminatorKind) -> Vec<SuccessorEdge> {
         ],
         BytecodeTerminatorKind::ValidatePlaces { target, unwind, .. }
         | BytecodeTerminatorKind::ValidateLoan { target, unwind, .. }
-        | BytecodeTerminatorKind::DrainDefers { target, unwind, .. } => {
+        | BytecodeTerminatorKind::DrainDefers { target, unwind, .. }
+        | BytecodeTerminatorKind::DrainScopes { target, unwind, .. } => {
             vec![edge(*target), edge(*unwind)]
         }
         BytecodeTerminatorKind::DrainUnwind { target } => vec![edge(*target)],
@@ -9303,6 +9902,8 @@ fn static_integer_slots(
                 destination: Some(destination),
                 ..
             }
+            | BytecodeTerminatorKind::Await { destination, .. }
+            | BytecodeTerminatorKind::Spawn { destination, .. }
             | BytecodeTerminatorKind::IteratorNext { destination, .. } => record(destination, None),
             BytecodeTerminatorKind::Goto { .. }
             | BytecodeTerminatorKind::BranchBool { .. }
@@ -9313,6 +9914,7 @@ fn static_integer_slots(
             | BytecodeTerminatorKind::ValidatePlaces { .. }
             | BytecodeTerminatorKind::ValidateLoan { .. }
             | BytecodeTerminatorKind::DrainDefers { .. }
+            | BytecodeTerminatorKind::DrainScopes { .. }
             | BytecodeTerminatorKind::DrainUnwind { .. }
             | BytecodeTerminatorKind::Return
             | BytecodeTerminatorKind::ResumePanic
@@ -9481,13 +10083,15 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
             BytecodeInstructionKind::RegisterFallback { owner, .. } => {
                 push_place_events(owner, true, &mut events);
             }
-            BytecodeInstructionKind::RetargetCleanup { .. }
+            BytecodeInstructionKind::EnterTaskScope { .. }
+            | BytecodeInstructionKind::RetargetCleanup { .. }
             | BytecodeInstructionKind::DisarmCleanup(_) => {}
         }
     }
     match &block.terminator.kind {
         BytecodeTerminatorKind::Goto { .. }
         | BytecodeTerminatorKind::DrainDefers { .. }
+        | BytecodeTerminatorKind::DrainScopes { .. }
         | BytecodeTerminatorKind::DrainUnwind { .. }
         | BytecodeTerminatorKind::ResumePanic
         | BytecodeTerminatorKind::Unreachable => {}
@@ -9506,6 +10110,27 @@ fn local_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<Local
             if let Some(destination) = destination {
                 push_destination_reads(destination, true, &mut events);
             }
+        }
+        BytecodeTerminatorKind::Await {
+            awaitable,
+            destination,
+            ..
+        } => {
+            match awaitable {
+                BytecodeAwaitable::Call(operation) => {
+                    push_operation_events(operation, &mut events);
+                }
+                BytecodeAwaitable::Join(join) => push_operand_events(join, &mut events),
+            }
+            push_destination_reads(destination, true, &mut events);
+        }
+        BytecodeTerminatorKind::Spawn {
+            operation,
+            destination,
+            ..
+        } => {
+            push_operation_events(operation, &mut events);
+            push_destination_reads(destination, true, &mut events);
         }
         BytecodeTerminatorKind::IteratorNext {
             state,
@@ -9552,6 +10177,7 @@ fn tag_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<TagEven
         match &instruction.kind {
             BytecodeInstructionKind::StorageLive(_)
             | BytecodeInstructionKind::StorageDead(_)
+            | BytecodeInstructionKind::EnterTaskScope { .. }
             | BytecodeInstructionKind::ReserveLoan(_)
             | BytecodeInstructionKind::ReleaseLoan(_)
             | BytecodeInstructionKind::RegisterFallback { .. }
@@ -9569,6 +10195,7 @@ fn tag_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<TagEven
     match &block.terminator.kind {
         BytecodeTerminatorKind::Goto { .. }
         | BytecodeTerminatorKind::DrainDefers { .. }
+        | BytecodeTerminatorKind::DrainScopes { .. }
         | BytecodeTerminatorKind::DrainUnwind { .. }
         | BytecodeTerminatorKind::Return
         | BytecodeTerminatorKind::ResumePanic
@@ -9588,6 +10215,27 @@ fn tag_events(function: &BytecodeFunction, block: &BytecodeBlock) -> Vec<TagEven
             if let Some(destination) = destination {
                 push_tag_place(function, destination, false, &mut events);
             }
+        }
+        BytecodeTerminatorKind::Await {
+            awaitable,
+            destination,
+            ..
+        } => {
+            match awaitable {
+                BytecodeAwaitable::Call(operation) => {
+                    push_tag_operation(function, operation, &mut events);
+                }
+                BytecodeAwaitable::Join(join) => push_tag_operand(function, join, &mut events),
+            }
+            push_tag_place(function, destination, false, &mut events);
+        }
+        BytecodeTerminatorKind::Spawn {
+            operation,
+            destination,
+            ..
+        } => {
+            push_tag_operation(function, operation, &mut events);
+            push_tag_place(function, destination, false, &mut events);
         }
         BytecodeTerminatorKind::IteratorNext {
             state, destination, ..

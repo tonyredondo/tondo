@@ -290,6 +290,10 @@ fn constant_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
         | HirExpressionKind::Receiver
         | HirExpressionKind::Block { .. }
         | HirExpressionKind::Call { .. }
+        | HirExpressionKind::AsyncCall { .. }
+        | HirExpressionKind::Await { .. }
+        | HirExpressionKind::Spawn { .. }
+        | HirExpressionKind::Scope { .. }
         | HirExpressionKind::PropagateOption { .. }
         | HirExpressionKind::PropagateResult { .. }
         | HirExpressionKind::If { .. }
@@ -578,6 +582,10 @@ fn evaluate_composite(
         | HirExpressionKind::Receiver
         | HirExpressionKind::Block { .. }
         | HirExpressionKind::Call { .. }
+        | HirExpressionKind::AsyncCall { .. }
+        | HirExpressionKind::Await { .. }
+        | HirExpressionKind::Spawn { .. }
+        | HirExpressionKind::Scope { .. }
         | HirExpressionKind::PreludePanic { .. }
         | HirExpressionKind::PreludeAssert { .. }
         | HirExpressionKind::BootstrapHostCall { .. }

@@ -247,6 +247,14 @@ impl Verifier<'_> {
                     "{local} violates an active defer guard at {}",
                     finding.use_span().range()
                 ),
+                AvailabilityFindingKind::NonSendAcrossSuspend => format!(
+                    "{local} is live without Send across suspension at {}",
+                    finding.use_span().range()
+                ),
+                AvailabilityFindingKind::ExclusiveLoanAcrossSuspend => format!(
+                    "an exclusive loan remains live across suspension at {}",
+                    finding.use_span().range()
+                ),
             };
             return Err(HirInvariantError::new("ownership availability", message));
         }
@@ -3403,6 +3411,7 @@ impl Verifier<'_> {
         &self,
         loops: &BTreeSet<super::HirLoopId>,
     ) -> Result<(), HirInvariantError> {
+        let mut async_call_parents = vec![0_u32; self.program.expressions.len()];
         for (index, expression) in self.program.expressions.iter().enumerate() {
             let id = HirExpressionId(index as u32);
             let context = format!("expression#{}", id.index());
@@ -3415,10 +3424,37 @@ impl Verifier<'_> {
             }
             for child in expression_children(expression) {
                 self.expression_before(child, id, &context)?;
+                if matches!(
+                    self.program.expression(child).map(HirExpression::kind),
+                    Some(HirExpressionKind::AsyncCall { .. })
+                ) {
+                    if !matches!(
+                        expression.kind,
+                        HirExpressionKind::Await { operation }
+                            | HirExpressionKind::Spawn { operation }
+                            if operation == child
+                    ) {
+                        return Err(HirInvariantError::new(
+                            context,
+                            "an async call is referenced outside its initiating await or spawn",
+                        ));
+                    }
+                    async_call_parents[child.index() as usize] += 1;
+                }
             }
             self.verify_expression_category(id, expression, &context)?;
             self.verify_expression_names(expression, &context)?;
             self.verify_expression_loops(id, expression, loops, &context)?;
+        }
+        for (index, expression) in self.program.expressions.iter().enumerate() {
+            if matches!(expression.kind, HirExpressionKind::AsyncCall { .. })
+                && async_call_parents[index] != 1
+            {
+                return Err(HirInvariantError::new(
+                    format!("expression#{index}"),
+                    "an async call must have exactly one await or spawn owner",
+                ));
+            }
         }
         Ok(())
     }
@@ -3797,6 +3833,12 @@ impl Verifier<'_> {
                 arguments,
                 signature,
                 protocol,
+            }
+            | HirExpressionKind::AsyncCall {
+                callee,
+                arguments,
+                signature,
+                protocol,
             } => {
                 let callee = self.expression(*callee, context)?;
                 let TypeKind::Function(function) = self
@@ -3810,10 +3852,11 @@ impl Verifier<'_> {
                         "call metadata does not carry a function signature",
                     ));
                 };
-                if function.is_async() || function.is_unsafe() {
+                let async_call = matches!(expression.kind, HirExpressionKind::AsyncCall { .. });
+                if function.is_async() != async_call || function.is_unsafe() {
                     return Err(HirInvariantError::new(
                         context,
-                        "effectful call reached the synchronous safe HIR call operation",
+                        "call effect does not match its synchronous or async HIR operation",
                     ));
                 }
                 if expression.ty != function.outcome() {
@@ -3829,7 +3872,15 @@ impl Verifier<'_> {
                     .map_err(|error| HirInvariantError::new(context, error.to_string()))?
                 {
                     TypeKind::Function(_) => {
-                        callee.ty == *signature && *protocol == super::HirCallProtocol::Call
+                        callee.ty == *signature
+                            && if async_call {
+                                matches!(
+                                    protocol,
+                                    super::HirCallProtocol::Call | super::HirCallProtocol::CallOnce
+                                )
+                            } else {
+                                *protocol == super::HirCallProtocol::Call
+                            }
                     }
                     TypeKind::Generated {
                         identity,
@@ -3900,6 +3951,100 @@ impl Verifier<'_> {
                             "call argument mode or type differs from its signature slot",
                         ));
                     }
+                }
+            }
+            HirExpressionKind::Await { operation } => {
+                let operation = self.expression(*operation, context)?;
+                match &operation.kind {
+                    HirExpressionKind::AsyncCall { .. } => {
+                        if expression.ty != operation.ty {
+                            return Err(HirInvariantError::new(
+                                context,
+                                "awaited async call changed its logical result type",
+                            ));
+                        }
+                    }
+                    _ => {
+                        let TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Join,
+                            arguments,
+                        } =
+                            self.program.interner.kind(operation.ty).map_err(|error| {
+                                HirInvariantError::new(context, error.to_string())
+                            })?
+                        else {
+                            return Err(HirInvariantError::new(
+                                context,
+                                "await operand is neither an async call nor Join",
+                            ));
+                        };
+                        let [success, error] = arguments.as_slice() else {
+                            return Err(HirInvariantError::new(
+                                context,
+                                "Join has the wrong intrinsic arity",
+                            ));
+                        };
+                        let expected = if matches!(
+                            self.program.interner.kind(*error),
+                            Ok(TypeKind::Scalar(ScalarType::Never))
+                        ) {
+                            *success
+                        } else {
+                            let mut interner = self.program.interner.clone();
+                            interner.result(*success, *error).map_err(|error| {
+                                HirInvariantError::new(context, error.to_string())
+                            })?
+                        };
+                        if expression.ty != expected {
+                            return Err(HirInvariantError::new(
+                                context,
+                                "awaited Join has the wrong logical result type",
+                            ));
+                        }
+                    }
+                }
+            }
+            HirExpressionKind::Spawn { operation } => {
+                let operation = self.expression(*operation, context)?;
+                if !matches!(operation.kind, HirExpressionKind::AsyncCall { .. }) {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "spawn operand is not one async call",
+                    ));
+                }
+                let (success, error) = match self
+                    .program
+                    .interner
+                    .kind(operation.ty)
+                    .map_err(|error| HirInvariantError::new(context, error.to_string()))?
+                {
+                    TypeKind::Result { success, error } => (*success, *error),
+                    _ => (
+                        operation.ty,
+                        self.program.interner.scalar(ScalarType::Never),
+                    ),
+                };
+                if !matches!(
+                    self.program.interner.kind(expression.ty),
+                    Ok(TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Join,
+                        arguments,
+                    }) if arguments.as_slice() == [success, error]
+                ) {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "spawn result is not the exact Join for its async outcome",
+                    ));
+                }
+            }
+            HirExpressionKind::Scope { body } => {
+                let body = self.expression(*body, context)?;
+                if !matches!(body.kind, HirExpressionKind::Block { .. }) || body.ty != expression.ty
+                {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "scope must wrap one block with the same result type",
+                    ));
                 }
             }
             HirExpressionKind::PreludePanic { message } => {
@@ -5546,10 +5691,17 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
         }
         HirExpressionKind::Call {
             callee, arguments, ..
+        }
+        | HirExpressionKind::AsyncCall {
+            callee, arguments, ..
         } => {
             children.push(*callee);
             children.extend(arguments.iter().map(|argument| argument.value));
         }
+        HirExpressionKind::Await { operation } | HirExpressionKind::Spawn { operation } => {
+            children.push(*operation);
+        }
+        HirExpressionKind::Scope { body } => children.push(*body),
         HirExpressionKind::PreludePanic { message } => children.push(*message),
         HirExpressionKind::PreludeAssert {
             condition,
