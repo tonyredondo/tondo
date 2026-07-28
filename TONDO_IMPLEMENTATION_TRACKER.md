@@ -2,16 +2,20 @@
 
 **Estado:** M10 y Gate G5 cerrados; M10.5 es el siguiente milestone
 
-**Versión del tracker:** 0.83
+**Versión del tracker:** 0.84
 
 **Última actualización:** 2026-07-28
 
-**Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md)
+**Especificaciones normativas:**
+
+- [Tondo 0.1 publicada](./TONDO_LANGUAGE_SPEC.md)
+- [Extensión de testing para Tondo 0.2](./TONDO_TESTING_SPEC.md)
 
 **Objetivo inmediato:** endurecer Tondo 0.1 mediante M10.5 antes de ampliar su
-superficie pública. Después se especifican e implementan Core + Hosted Standard
-Library 0.1; solo entonces comienza M11 con NATIVE-001. La VM permanece como
-implementación de referencia y oracle diferencial del futuro backend nativo.
+superficie pública. Después se implementa M10.6 contra la extensión normativa
+de testing, se especifican e implementan Core + Hosted Standard Library 0.1 y
+solo entonces comienza M11 con NATIVE-001. La VM permanece como implementación
+de referencia y oracle diferencial del futuro backend nativo.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -89,6 +93,7 @@ No es necesario para este primer gate:
 | **G4 — Preview 0.1** | Superficie del lenguaje completa | Async, scripts, procesos, targets y `unsafe` |
 | **G5 — Tondo 0.1 conforme** | Release certificable | Suite de conformidad completa para el target anunciado |
 | **H0 — Fiabilidad continua** | Evidencia automatizada y reproducible | Trazabilidad, CI, properties, fuzzing, modelos y métricas |
+| **T0 — Testing first-class** | `tondo test` conforme | Edición 0.2, unit/integration tests, aislamiento y reporte estable |
 | **S1 — Standard Library 0.1** | Core + Hosted utilizable | Spec estándar, distribución, implementación VM y conformidad |
 | **N1 — Backend nativo conforme** | Segunda implementación de producción | Oracle diferencial, runtime nativo y targets verificados |
 | **S2 — Standard Library ampliada** | Concurrency + Application | APIs capability-gated con evidencia por módulo |
@@ -229,6 +234,15 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   ownership runtime, atomicidad, weak refs, detección de ciclos, interacción con
   COW, async, FFI privilegiada y estrategia de verificación.
 
+- [x] **DEC-015 — Testing first-class y límite de edición.** La especificación
+  [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) reserva una única
+  declaración `test name { ... }` para Tondo 0.2, mantiene Tondo 0.1 y
+  `tondo-conformance-0.1` inmutables, separa unit overlays de integration roots
+  y fija inferencia de error/async, aislamiento, selección, límites, output,
+  exit status, reporte `tondo-test-report-0.2/1` y listado
+  `tondo-test-list-0.2/1`. No se introducen attributes, clases, reflection,
+  registro runtime ni retries implícitos.
+
 ### 3.3 Estructura inicial recomendada
 
 Mantener pocos crates durante bootstrap:
@@ -286,6 +300,7 @@ necesaria; la fragmentación del workspace no.
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Conformidad y release** | Gate G5: Tondo 0.1 | Completado |
 | **M10.5 — Reliability y testing** | Infraestructura de evidencia continua | Siguiente |
+| **M10.6 — Testing de usuario y edición 0.2** | Gate T0: `tondo test` conforme | Especificado; implementación pendiente |
 | **STD-0.1 — Core + Hosted Standard Library** | API estándar mínima utilizable | Pendiente |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.2 — Concurrency + Application Standard Library** | Ecosistema estándar ampliado | Futuro |
@@ -308,9 +323,9 @@ Estado observado del workspace:
 
 ~~~text
 M0 -> M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10
-  -> M10.5 -> STD-0.1 -> M11 -> STD-0.2
-       \________________________________/
-         testing y conformidad continuos
+  -> M10.5 -> M10.6 -> STD-0.1 -> M11 -> STD-0.2
+       \________________________________________/
+            testing y conformidad continuos
 ~~~
 
 M4, M5 y M6 pueden investigarse conjuntamente, pero deben integrarse en ese
@@ -319,10 +334,12 @@ incompatible con ownership.
 
 M10.5 es una fase acotada de infraestructura y clasificación, no una pausa
 indefinida para perseguir un número arbitrario de tests. Su gate debe existir
-antes de STD-0.1. Cada API de STD-0.1 amplía después la matriz generativa y de
-conformidad. M11 depende de STD-0.1 porque el backend nativo debe implementar
-una frontera runtime ya especificada y compararse byte a byte con la VM sobre
-programas reales. STD-0.2 no bloquea M11.
+antes de ampliar sintaxis. M10.6 implementa después la extensión de testing sin
+reescribir Tondo 0.1 y proporciona `tondo test` para probar la propia stdlib.
+Cada API de STD-0.1 amplía la matriz generativa y de conformidad y añade
+evidencia escrita en Tondo. M11 depende de Gate T0 y STD-0.1 porque el backend
+nativo debe implementar una frontera runtime ya especificada y compararse byte
+a byte con la VM sobre programas reales. STD-0.2 no bloquea M11.
 
 ### 4.2 Mapa de cobertura del spec
 
@@ -353,6 +370,7 @@ entre dos subsistemas:
 | 24. Ejemplos integrados | Tests de aceptación progresivos | G2, G3, G4 y M10 |
 | 25. Características ausentes | Compile-fail distribuido por milestone | M10 |
 | 26. Frontera con la stdlib | M6, M8, STD-0.1 y STD-0.2 | G3, G4, M10 y gates STD |
+| Extensión de testing Tondo 0.2 | M10.6; helpers en STD-0.1 | T0 y S1 |
 
 ---
 
@@ -2156,14 +2174,15 @@ que cada milestone posterior multiplicará casos reproducibles.
 **Límite:** M10.5 no se cierra por alcanzar una cifra arbitraria de tests. Se
 cierra cuando inventario, trazabilidad, CI, generación, fuzzing, modelos y
 métricas tienen contratos ejecutables. La expansión del corpus continúa dentro
-de STD-0.1, M11 y STD-0.2.
+de M10.6, STD-0.1, M11 y STD-0.2.
 
 ### 16.1 Baseline y trazabilidad normativa
 
 - [x] **TEST-AUDIT-001 — Auditar el corpus 0.1 existente.** La baseline
   observada contiene 685 tests Rust ejecutables y ninguno ignorado, 129
   fixtures internos `.to`, 205 casos y 424 repeticiones de conformidad, 302
-  fences Tondo del spec y 203 fuentes `.to` únicas al descontar los 127
+  fences Tondo de la spec publicada 0.1 y 203 fuentes `.to` únicas al descontar
+  los 127
   duplicados exactos entre fixtures internos y conformidad. El inventario
   distingue cantidad física, caso lógico, repetición y fuente única.
 
@@ -2171,7 +2190,9 @@ de STD-0.1, M11 y STD-0.2.
   herramienta reproducible que enumere por crate, fase, fixture, grupo,
   requisito, oracle, repetición, hash de fuente y target. Debe detectar IDs
   duplicados, sidecars huérfanos, casos no descubiertos y deriva entre el
-  manifiesto y el repositorio.
+  manifiesto y el repositorio. También registra documento, edición y estado:
+  los ejemplos de `TONDO_TESTING_SPEC.md` se registran como contrato futuro,
+  pero no cuentan como tests ejecutables ni cobertura de Tondo 0.1.
 
 - [ ] **TEST-002 — Crear la matriz normativa de cobertura.** Cada requisito
   `debe`/`no puede` de Tondo 0.1 recibe una identidad estable. La matriz conserva
@@ -2283,7 +2304,8 @@ de STD-0.1, M11 y STD-0.2.
 
 - [ ] El gate completo de Tondo 0.1 se ejecuta automáticamente en PR y `main`.
 - [ ] El inventario y la matriz normativa se validan sin entradas sin
-  clasificar para el target publicado.
+  clasificar para el target publicado; la extensión 0.2 queda clasificada como
+  futura, no omitida ni contada como evidencia verde.
 - [ ] Existen generadores con seed reproducible y reducción de fallos.
 - [ ] Frontend, protocolos y admission verifiers tienen fuzz targets
   persistentes con corpus versionado.
@@ -2298,18 +2320,191 @@ de STD-0.1, M11 y STD-0.2.
 
 ---
 
-## 17. STD-0.1 — Core + Hosted Standard Library
+## 17. M10.6 — Testing de usuario y edición 0.2
+
+**Objetivo:** implementar la extensión
+[`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) como la primera ampliación
+de lenguaje posterior a Tondo 0.1. El resultado es una única declaración
+`test name { ... }`, unit tests con acceso privado controlado, integration
+tests contra API pública y un runner determinista que pueda utilizarse para
+construir y validar la stdlib.
+
+**Dependencia:** la implementación comienza únicamente después de Gate H0. El
+diseño queda fijado antes para que inventario, matriz normativa y CI conozcan el
+próximo contrato, pero no se añade token, parser path, feature flag ni extensión
+privada mientras H0 permanezca abierto.
+
+**Compatibilidad:** `TONDO_LANGUAGE_SPEC.md`, su hash normativo y
+`tondo-conformance-0.1` permanecen inmutables. Ningún binario puede aceptar
+`test` bajo `--edition 0.1`; la nueva superficie se anuncia solo al seleccionar
+la edición 0.2.
+
+### 17.1 Spec, edición y plan cerrado
+
+- [x] **UTEST-SPEC-001 — Fijar el contrato normativo de testing.**
+  `TONDO_TESTING_SPEC.md` define keyword, grammar, formato, identidad,
+  source classes, overlays, inferencia, aislamiento, resultados, CLI, reporte,
+  stdlib boundary, diagnósticos y conformidad sin depender de una
+  implementación provisional.
+
+- [ ] **UTEST-EDITION-001 — Materializar Tondo 0.2 como edición separada.**
+  Consolidar la especificación de lenguaje 0.2, añadir `test` a su registry de
+  keywords y diagnósticos y versionar los formatos afectados. La edición 0.1
+  debe seguir seleccionable y byte-compatible; un test de migración prueba que
+  un identificador `test` válido en 0.1 recibe `E1005` únicamente bajo 0.2.
+
+- [ ] **UTEST-PLAN-001 — Extender el project plan con source classes de test.**
+  Representar exactamente `production`, `unit-test` e `integration-test`,
+  dev-dependencies, roots, paths lógicos, target, capabilities y límites. El
+  hash de un artefacto de producción no puede depender de entradas test-only.
+
+- [ ] **UTEST-DISC-001 — Implementar descubrimiento convencional y explícito.**
+  Soportar `_test.to` dentro de production roots y `.to` bajo `tests/`, con la
+  precedencia, case-sensitivity, orden y overrides cerrados del spec. Detectar
+  colisiones, fuentes sin clasificar, symlink escapes y deriva entre discovery
+  y plan materializado antes de compilar.
+
+- [ ] **UTEST-DEPS-001 — Separar dev-dependencies del grafo de producción.**
+  Fijarlas por PackageId/hash en lockfile, impedir imports desde producción y
+  demostrar mediante interfaces y artefactos comparados que añadir o cambiar
+  una dev-dependency no altera el producto publicable.
+
+### 17.2 Frontend y semántica estática
+
+- [ ] **UTEST-LEX-001 — Añadir `test` a la tabla de keywords de edición 0.2.**
+  Lexer, token registry, Unicode/NFC, diagnostics y reconstrucción CST deben
+  continuar dependiendo de la edición declarada, nunca de un path físico o del
+  comando que invoca el parser.
+
+- [ ] **UTEST-CST-001 — Parsear `test identifier block` sin pérdida.**
+  Añadir la declaración a CST/AST y recuperación, rechazando modifiers,
+  parámetros, firmas, forms anidadas y todas las alternativas ausentes. Edición
+  0.1 conserva su parseo anterior.
+
+- [ ] **UTEST-FMT-001 — Formatear tests canónicamente.** Cubrir bodies vacíos y
+  multiline, comentarios, documentación, declaraciones adyacentes, recovery e
+  idempotencia en ambas ediciones. `fmt` no depende de discovery runtime.
+
+- [ ] **UTEST-ID-001 — Construir el registro estático de tests.** La identidad
+  interna usa PackageId + module path + identifier; la visible usa
+  `package::unit|integration::path::name`. Orden, duplicados `E2002`, naming
+  warnings y source ranges deben ser deterministas entre archivos permutados.
+
+- [ ] **UTEST-OVERLAY-001 — Implementar el overlay unitario sellado.** Resolver
+  y comprobar producción primero, después permitir lectura privada y helpers
+  privados sin reabrir bodies, añadir exports ni cambiar interfaces. Casos
+  negativos deben demostrar que un overlay no repara producción inválida,
+  altera coherence o entra en el grafo production.
+
+- [ ] **UTEST-INTEG-001 — Implementar integration roots aislados.** Cada root
+  recibe PackageId sintético de consumidor, imports explícitos y únicamente
+  visibilidad pública sobre el paquete probado. No existe flag friend ni
+  reutilización accidental del scope unitario.
+
+- [ ] **UTEST-CHECK-001 — Inferir el contrato exacto del body.** Comprobar cada
+  test como entrada privada `async? fn(): Unit ! E`, inferir una unión cerrada
+  `E: Discard`, admitir `return`, `fail`, `?`, `await` y `scope` y reutilizar
+  todos los checks ordinarios de tipos, ownership, préstamos, terminales,
+  `defer`, `Send`, `Share` y `unsafe`.
+
+### 17.3 Lowering, runtime y CLI
+
+- [ ] **UTEST-LOWER-001 — Bajar entradas de test por el pipeline común.** HIR,
+  MIR, bytecode y sus admission verifiers representan identidad, source span,
+  error, async, cleanup y terminales sin crear un segundo frontend o una ruta
+  de ejecución no verificada. `main` nunca se ejecuta en un test target.
+
+- [ ] **UTEST-RUNTIME-001 — Ejecutar cada test en una raíz aislada.** Estado,
+  roots, heap observable, tasks, handles, pánicos, stdout, stderr y presupuestos
+  no cruzan entradas. Retorno, error, pánico, resource limit, timeout e
+  infrastructure producen exactamente los estados normativos; los terminales
+  de lenguaje completan unwind y cleanup, mientras una terminación forzada
+  garantiza aislamiento sin fingir que ejecutó `defer`.
+
+- [ ] **UTEST-LIMIT-001 — Hacer límites y timeout terminales reales.** Publicar
+  defaults finitos, registrar valores efectivos y garantizar que una entrada
+  no cooperativa no continúa ejecutándose tras `timeout`. OOM, abort o pérdida
+  de aislamiento nunca se presentan como assertion failure ordinario.
+
+- [ ] **UTEST-CLI-001 — Añadir `tondo test`.** Implementar manifest/default
+  discovery, `--filter`, `--exact`, `--list`, `--jobs`, `--timeout`,
+  `--test-format`, `--show-output` y `--allow-empty`, incluidas exclusiones,
+  parsing estricto y exit codes 0/1/2/3. Primero compila toda la suite y el
+  selector solo limita ejecución.
+
+- [ ] **UTEST-SCHED-001 — Fijar orden y paralelismo observable.** El default
+  ejecuta con jobs=1 en orden de ID. Jobs explícitos pueden cambiar completion
+  order, pero captura, resultados y reporte final permanecen ordenados y nunca
+  intercalan streams.
+
+- [ ] **UTEST-REPORT-001 — Implementar los formatos machine-readable.**
+  Serializar `tondo-test-report-0.2/1` y `tondo-test-list-0.2/1` con target,
+  selection, resource profile, resultados/descriptores, failure y summary de
+  forma canónica, sin reloj, duración, PID, paths físicos ni direcciones. Fallos
+  de compilación continúan usando diagnostics estructurados y no ejecutan
+  bodies.
+
+### 17.4 Evidencia, conformidad y dogfooding
+
+- [ ] **UTEST-CONF-001 — Crear una suite de conformidad Tondo 0.2 nueva.** No
+  mutar manifests, cases, hashes ni observations de 0.1. La suite 0.2 cubre los
+  dieciocho grupos mínimos enumerados por la spec de testing y tiene adaptador
+  público para VM y futuros backends.
+
+- [ ] **UTEST-PROJECTS-001 — Añadir proyectos de aceptación completos.**
+  Incluir package unitario, integration roots, dev-dependency, async/error,
+  pánico/cleanup, host capabilities, filtros, suite vacía y reporter JSON. Cada
+  proyecto debe poder ejecutarse desde una copia en otro path físico con
+  observaciones canónicas iguales.
+
+- [ ] **UTEST-PLATFORM-001 — Validar la matriz publicada.** Linux ejecuta el
+  gate canónico completo; Linux ARM64, macOS Intel/ARM64 y Windows ejecutan
+  discovery, paths, filtros, aislamiento, timeout, captura y reporte aplicables
+  además del smoke test de binario.
+
+- [ ] **UTEST-DOGFOOD-001 — Probar componentes Tondo mediante `tondo test`.**
+  Antes de Gate T0, mantener una pequeña biblioteca de aceptación escrita en
+  Tondo con unit e integration tests reales. No sustituye los tests Rust ni la
+  conformidad; demuestra que la experiencia pública funciona sin harness
+  privado.
+
+### Gate T0 — Testing first-class conforme
+
+- [ ] Tondo 0.1, su spec, suite, diagnostics y comportamiento permanecen
+  inmutables y pasan Gate H0.
+- [ ] La edición 0.2 consolidada incorpora el contrato de testing y solo ella
+  reserva `test`.
+- [ ] Lexer, CST, parser, formatter, HIR, MIR, bytecode y VM recorren la ruta
+  común y sus verifiers aceptan o rechazan tests con diagnostics exactos.
+- [ ] Unit overlays ven privados sin alterar producción; integration roots solo
+  ven API pública; dev-dependencies nunca entran en productos publicables.
+- [ ] Retorno, error, `assert`, pánico, async, cancelación, ownership y `defer`
+  conservan cleanup; resource limits y timeout terminan la entrada sin romper
+  aislamiento ni afirmar cleanup de usuario no observado.
+- [ ] `tondo test` implementa discovery, compilación completa, selección,
+  ejecución serial/paralela, captura, exit codes y suite vacía según contrato.
+- [ ] El reporte JSON es canónico y reproducible; la salida humana no intercala
+  tests y muestra fallos accionables.
+- [ ] La suite Tondo 0.2 pasa en la VM y la matriz de plataformas aplicable está
+  verde.
+- [ ] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
+  registration APIs, annotations, reflection ni hooks ocultos.
+
+---
+
+## 18. STD-0.1 — Core + Hosted Standard Library
 
 **Objetivo:** especificar e implementar la primera API estándar utilizable
 sobre la VM antes de fijar decisiones del runtime nativo. La especificación de
 la stdlib es independiente de la especificación del lenguaje; una API
 ilustrativa no se vuelve pública por aparecer en un ejemplo.
 
-**Dependencia:** no comienza implementación pública hasta cerrar Gate H0. El
-diseño puede investigarse antes, pero ninguna firma se congela ni distribuye
-como estable sin sus modelos, tests y contrato de capability.
+**Dependencia:** no comienza implementación pública hasta cerrar Gates H0 y T0.
+El diseño puede investigarse antes, pero ninguna firma se congela ni distribuye
+como estable sin sus modelos, tests y contrato de capability. `std.testing`
+utiliza el runner público de M10.6; no crea un segundo harness.
 
-### 17.1 Contrato y distribución
+### 18.1 Contrato y distribución
 
 - [ ] **STD-SPEC-001 — Crear `TONDO_STANDARD_LIBRARY_SPEC.md`.** Fijar versión,
   módulos, firmas, tipos de error, ownership, complejidad, orden, Unicode,
@@ -2334,7 +2529,7 @@ como estable sin sus modelos, tests y contrato de capability.
   entran en el plan cerrado y no requieren red ni búsqueda ambiental durante
   compilación.
 
-### 17.2 Core Standard Library
+### 18.2 Core Standard Library
 
 - [ ] **STD-CORE-001 — Fijar protocolos y operaciones fundamentales.**
   `Option`, `Result`, `Display`, comparación, `Key` y utilidades de
@@ -2356,7 +2551,14 @@ como estable sin sus modelos, tests y contrato de capability.
   builders y formato estructurado deben reutilizar el protocolo estático sin
   introducir reflection, vtables ni lookup abierto.
 
-### 17.3 Hosted Standard Library
+- [ ] **STD-TESTING-SPEC-001 — Especificar `std.testing`.** Fijar assertions de
+  igualdad, diffs de texto, comparación float con tolerancia, consumo explícito
+  de Option/Result, recursos temporales, snapshots y datos generados que entren
+  realmente en 0.1. Cada API declara tipos, ownership, cleanup, formato, seed,
+  actualización, capabilities y límites; no registra tests ni captura pánicos
+  como excepciones recuperables.
+
+### 18.3 Hosted Standard Library
 
 - [ ] **STD-CONSOLE-001 — Consolidar consola y streams.** Fijar stdout, stderr,
   entrada, flushing, texto/binario, errores y comportamiento async sin asumir
@@ -2378,7 +2580,7 @@ como estable sin sus modelos, tests y contrato de capability.
   de `Command`, `Pipeline`, `ProcessHandle`, status, output, pipes, shell
   explícito y cancelación a una API versionada que preserve argv exacto.
 
-### 17.4 Implementación y evidencia
+### 18.4 Implementación y evidencia
 
 - [ ] **STD-IMPL-001 — Implementar Core en Tondo cuando sea posible.** Solo las
   operaciones intrínsecas o dependientes del host permanecen privilegiadas;
@@ -2387,6 +2589,12 @@ como estable sin sus modelos, tests y contrato de capability.
 - [ ] **STD-IMPL-002 — Implementar Hosted sobre adaptadores capability-gated.**
   El runtime VM no expone una syscall o handle que la API estándar no haya
   validado y tipado.
+
+- [ ] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** Escribir en
+  Tondo toda utilidad portable y confinar a unidades privilegiadas únicamente
+  temp resources, captura o aislamiento que requieran host. Los helpers
+  producen mensajes accionables sin reflection privada y se prueban mediante
+  `tondo test`, no mediante registro interno.
 
 - [ ] **STD-TEST-001 — Añadir modelos y properties por módulo.** Cada API prueba
   valores normales, vacíos, límites, errores, composición, ownership,
@@ -2414,17 +2622,21 @@ como estable sin sus modelos, tests y contrato de capability.
 - [ ] La distribución es reproducible, cerrada y versionada.
 - [ ] Los programas representativos pasan el gate estricto y proporcionan el
   corpus funcional inicial para NATIVE-001 y PERF-001.
+- [ ] `std.testing` está especificado, implementado y probado con su propio
+  runner público; un proyecto puede escribir tests útiles usando solo
+  `assert` y enriquecerlos mediante imports explícitos.
 - [ ] No se ha congelado una ABI FFI general ni un layout nativo público.
 
 ---
 
-## 18. M11 — Backend nativo y optimización
+## 19. M11 — Backend nativo y optimización
 
 **Objetivo:** añadir una implementación nativa de producción sin introducir una
-segunda semántica. Comienza únicamente después de Gate H0 y Gate S1; la VM, la
-conformidad del lenguaje y la conformidad de stdlib son sus oracles.
+segunda semántica. Comienza únicamente después de Gates H0, T0 y S1; la VM, la
+conformidad del lenguaje —incluidos test targets— y la conformidad de stdlib son
+sus oracles.
 
-### 18.1 Selección y contrato del backend
+### 19.1 Selección y contrato del backend
 
 - [ ] **NATIVE-001 — Elegir backend nativo con una evaluación separada.**
   Comparar Cranelift, LLVM y generación propia usando el MIR real, el corpus de
@@ -2444,11 +2656,12 @@ conformidad del lenguaje y la conformidad de stdlib son sus oracles.
   observan la misma API, capabilities, errores y cleanup que en la VM; ninguna
   optimización puede añadir una ruta pública específica del backend.
 
-### 18.2 Oracle diferencial y targets
+### 19.2 Oracle diferencial y targets
 
 - [ ] **NATIVE-CONF-001 — Crear el adaptador nativo de conformidad.** Ejecutar
-  lenguaje y stdlib contra VM y nativo, comparar observaciones completas y
-  exigir que ambos superen de forma independiente los manifiestos aplicables.
+  lenguaje, test targets y stdlib contra VM y nativo, comparar observaciones
+  completas y exigir que ambos superen de forma independiente los manifiestos
+  aplicables.
 
 - [ ] **NATIVE-DIFF-001 — Ejecutar differential testing generado.** Programs
   tipados, properties, modelos y regresiones usan ambos backends; cada
@@ -2464,7 +2677,7 @@ conformidad del lenguaje y la conformidad de stdlib son sus oracles.
   stdlib y metadatos declaran versiones y checksums; la release no depende de
   paths, reloj ni entorno no declarado.
 
-### 18.3 Runtime y optimización medida
+### 19.3 Runtime y optimización medida
 
 - [ ] **PERF-001 — Definir benchmarks y presupuestos antes de optimizar.**
   Incluir compilación, tamaño, programas STD-0.1, throughput, latencia, memoria,
@@ -2484,7 +2697,7 @@ conformidad del lenguaje y la conformidad de stdlib son sus oracles.
 
 - [ ] **ESCAPE-001 — Implementar escape analysis y stack allocation.**
 
-### 18.4 Tooling posterior al gate nativo
+### 19.4 Tooling posterior al gate nativo
 
 - [ ] **INCR-001 — Añadir compilación incremental conservando resultados
   deterministas.** Una compilación limpia y un cache hit deben producir
@@ -2500,7 +2713,7 @@ conformidad del lenguaje y la conformidad de stdlib son sus oracles.
 - [ ] Todos los programas admitidos atraviesan el MIR verificado común; no
   existe frontend, type checker ni semántica paralela.
 - [ ] El adaptador nativo supera lenguaje y STD-0.1 con observaciones
-  compatibles con la VM.
+  compatibles con la VM, incluidos los estados y reportes de `tondo test`.
 - [ ] Properties, fuzzing diferencial, GC/ARC/ciclos, async, pánicos y cleanup
   pasan bajo stress y sanitización aplicable.
 - [ ] Cada target publicado compila y ejecuta un corpus real sobre hardware del
@@ -2512,7 +2725,7 @@ conformidad del lenguaje y la conformidad de stdlib son sus oracles.
 
 ---
 
-## 19. STD-0.2 — Concurrency + Application Standard Library
+## 20. STD-0.2 — Concurrency + Application Standard Library
 
 **Objetivo:** ampliar la stdlib después del backend nativo conforme, sin
 convertir un conjunto de utilidades conveniente en nueva semántica del
@@ -2520,7 +2733,7 @@ lenguaje. Cada módulo puede publicarse de forma incremental solo tras superar
 su mini-gate de spec, implementación portable/host, models, properties,
 capabilities, documentación y conformidad.
 
-### 19.1 Concurrencia y tiempo
+### 20.1 Concurrencia y tiempo
 
 - [ ] **STD-CONC-001 — Especificar canales y selección cancelable.** Tipos,
   cierre, backpressure, fairness declarada, ownership de `T: Send`, cancelación
@@ -2538,7 +2751,7 @@ capabilities, documentación y conformidad.
   civil, declarar resolución, overflow, timezone data, suspensión y
   cancelación; compilación continúa sin consultar reloj.
 
-### 19.2 Aplicación y datos
+### 20.2 Aplicación y datos
 
 - [ ] **STD-NET-001 — Especificar networking capability-gated.** Direcciones,
   DNS, sockets, streams, datagrams, TLS boundary, timeouts y cancelación exponen
@@ -2575,9 +2788,9 @@ capabilities, documentación y conformidad.
 
 ---
 
-## 20. Trabajo transversal
+## 21. Trabajo transversal
 
-### 20.1 Diagnósticos
+### 21.1 Diagnósticos
 
 Todo milestone debe:
 
@@ -2589,7 +2802,7 @@ Todo milestone debe:
 - Ordenar diagnostics, related y fixes según el apartado 22.6.
 - Añadir códigos propios solo bajo un prefijo distinto al registro normativo.
 
-### 20.2 Determinismo
+### 21.2 Determinismo
 
 Desde M0:
 
@@ -2600,7 +2813,7 @@ Desde M0:
 - Sembrar aleatoriedad de tests de forma reproducible y registrar la seed al
   fallar.
 
-### 20.3 Testing
+### 21.3 Testing
 
 La pirámide prevista:
 
@@ -2614,10 +2827,11 @@ La pirámide prevista:
 
 Cada bug semántico debe terminar con un programa Tondo mínimo que habría fallado
 antes de la corrección. Gate H0 convierte los puntos 5 y 6 en infraestructura
-ejecutable; STD-0.1, M11 y STD-0.2 deben extenderla, no crear harnesses
-paralelos.
+ejecutable para el toolchain. M10.6 añade después el runner público para
+programas Tondo; STD-0.1, M11 y STD-0.2 deben extender ambas fronteras, no crear
+harnesses paralelos.
 
-### 20.4 Seguridad y robustez
+### 21.4 Seguridad y robustez
 
 - Tratar fuente, bytecode, interfaces y manifiestos como inputs no confiables.
 - Validar bytecode aunque lo haya producido el propio compilador.
@@ -2628,7 +2842,7 @@ paralelos.
 - Mantener shell explícito y separado de argumentos.
 - Probar parser, loader y JSON con fuzzing.
 
-### 20.5 Rendimiento
+### 21.5 Rendimiento
 
 Antes de G3, priorizar corrección y claridad. No introducir:
 
@@ -2652,7 +2866,7 @@ Después de G3, medir como mínimo:
 Una optimización solo se acepta si conserva los mismos tests observables y aporta
 una mejora medida.
 
-### 20.6 Disciplina de librería estándar
+### 21.6 Disciplina de librería estándar
 
 La stdlib continúa siendo una especificación separada. El compilador solo debe
 anticipar lo que el lenguaje ya declara intrínseco. STD-0.1 y STD-0.2 convierten
@@ -2664,7 +2878,7 @@ Orden recomendado:
 1. **Bootstrap host shim:** `std.console.print`, únicamente para ejecutar los
    primeros programas.
 2. **Core stdlib spec:** métodos exactos de `String`, `Array`, `Map`, `Set`,
-   `Range`, iterators, formatting y `Bytes`.
+   `Range`, iterators, formatting, `Bytes` y helpers portables de testing.
 3. **Hosted stdlib spec:** consola, environment, paths, filesystem y procesos.
 4. **Concurrency stdlib spec:** channels, mutexes, atomics, actors y pools.
 5. **Application stdlib:** time, networking, codecs, JSON, regex, UUID y
@@ -2675,7 +2889,7 @@ pública definitiva hasta ser fijados por la especificación estándar.
 
 ---
 
-## 21. Registro de riesgos
+## 22. Registro de riesgos
 
 | ID | Riesgo | Efecto | Mitigación |
 |---|---|---|---|
@@ -2698,10 +2912,14 @@ pública definitiva hasta ser fijados por la especificación estándar.
 | `R-017` | Empezar el backend nativo antes de Gate H0 | Dos runtimes divergen sin poder localizar la causa | CI, fuzzing, modelos y oracle VM antes de NATIVE-001 |
 | `R-018` | Diseñar runtime/ABI antes de STD-0.1 | Host calls y layouts condicionan una API todavía provisional | Spec estándar y corpus real antes de seleccionar backend |
 | `R-019` | Convertir la stdlib 0.1 en un proyecto ilimitado | El backend queda bloqueado por APIs de aplicación no esenciales | STD-0.1 contiene solo Core + Hosted; Concurrency/Application quedan en STD-0.2 |
+| `R-020` | Añadir `test` retroactivamente a la edición publicada | Rompe identificadores válidos, hashes y conformidad 0.1 | Keyword exclusiva de 0.2, spec y suite nuevas; 0.1 permanece inmutable |
+| `R-021` | Permitir que unit tests cambien la compilación de producción | Código solo correcto bajo test y artefactos distintos | Unidad production sellada antes del overlay y comparación exacta de productos |
+| `R-022` | Ocultar flakiness mediante paralelismo o retries | Suites verdes no reproducibles | jobs=1 y una ejecución por default; orden/reportes canónicos y paralelismo explícito |
+| `R-023` | Convertir testing en attributes, reflection y hooks especiales | Segundo sublenguaje con boilerplate y semántica oculta | Una declaración `test`; helpers, fixtures y doubles como Tondo/stdlib ordinarios |
 
 ---
 
-## 22. Cola inmediata
+## 23. Cola inmediata
 
 Estas son las siguientes acciones históricas en orden; G2 ya habilita avanzar a
 M4 sin adelantar trabajo de ownership o async.
@@ -2727,9 +2945,12 @@ M4 sin adelantar trabajo de ownership o async.
     en evidencia continua.
 17. [ ] Añadir generadores, properties, fuzz targets y modelos de M10.5.
 18. [ ] Medir coverage y mutation score, cerrar huecos críticos y superar H0.
-19. [ ] Comenzar STD-0.1 por **STD-SPEC-001**, nunca por implementación ad hoc.
-20. [ ] Cerrar S1 y comenzar M11 por **NATIVE-001**.
-21. [ ] Cerrar N1 antes de iniciar los módulos de STD-0.2.
+19. [ ] Implementar M10.6 desde **UTEST-EDITION-001** hasta **UTEST-DOGFOOD-001**
+    y superar T0 sin mutar Tondo 0.1.
+20. [ ] Comenzar STD-0.1 por **STD-SPEC-001**, incluida la definición exacta
+    de `std.testing`, nunca por implementación ad hoc.
+21. [ ] Cerrar S1 y comenzar M11 por **NATIVE-001**.
+22. [ ] Cerrar N1 antes de iniciar los módulos de STD-0.2.
 
 La ruta autorizada siguiente es:
 
@@ -2739,18 +2960,37 @@ TEST-001
   -> CI-TEST-001..004
   -> properties + fuzzing + modelos + métricas
   -> Gate H0
+  -> UTEST-EDITION-001..UTEST-DOGFOOD-001
+  -> Gate T0
   -> STD-SPEC-001
   -> Gate S1
   -> NATIVE-001
 ~~~
 
 M4, M5, M6, M7, M8, M9, M10 y Gates G4/G5 quedan cerrados. NATIVE-001 deja de
-ser la acción inmediata: M11 permanece bloqueado por H0 y S1. No se inicia
-STD-0.2 antes de Gate N1.
+ser la acción inmediata: M10.6 permanece bloqueado por H0 y M11 por H0, T0 y
+S1. No se inicia STD-0.2 antes de Gate N1.
 
 ---
 
-## 23. Historial del tracker
+## 24. Historial del tracker
+
+### 0.84 — 2026-07-28
+
+- Se crea `TONDO_TESTING_SPEC.md` como extensión normativa de la edición 0.2:
+  una única declaración `test name { ... }`, inferencia local de error y async,
+  unit overlays privados, integration roots públicos, aislamiento, límites,
+  selección, output, reporte `tondo-test-report-0.2/1` y listado
+  `tondo-test-list-0.2/1`.
+- Tondo 0.1 y `tondo-conformance-0.1` permanecen inmutables. `test` se reserva
+  únicamente en 0.2 y la implementación debe conservar ambas ediciones sin
+  aceptar extensiones silenciosas.
+- Se añade M10.6 y Gate T0 después de H0 y antes de STD-0.1. El milestone cubre
+  edición, project plan, lexer/CST/formatter, semántica, HIR/MIR/bytecode,
+  runtime, CLI, reporte, conformidad nueva, plataformas y dogfooding.
+- STD-0.1 incorpora la especificación e implementación de `std.testing` sobre
+  el runner público. M11 pasa a depender de H0, T0 y S1 y debe conservar los
+  resultados de test en su oracle diferencial.
 
 ### 0.83 — 2026-07-28
 
