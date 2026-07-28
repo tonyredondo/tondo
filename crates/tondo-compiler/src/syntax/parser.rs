@@ -12,6 +12,7 @@ const MAX_SAFE_NESTING_DEPTH: u32 = 256;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseMode {
     Module,
+    ImportedModule,
     Script,
     Fragment,
     SyntaxSequence,
@@ -169,7 +170,7 @@ impl Parser<'_> {
             return self.parse_standalone_block();
         }
         let root = match self.mode {
-            ParseMode::Module => SyntaxKind::Module,
+            ParseMode::Module | ParseMode::ImportedModule => SyntaxKind::Module,
             ParseMode::Script => SyntaxKind::Script,
             ParseMode::Fragment => SyntaxKind::Fragment,
             ParseMode::SyntaxSequence | ParseMode::StandaloneBlock => unreachable!(),
@@ -201,14 +202,21 @@ impl Parser<'_> {
             if had_syntax_error && self.logical_newlines_consumed == newlines_before {
                 self.recover_to_statement_boundary()?;
             }
-            if self.mode == ParseMode::Module && !had_syntax_error {
-                self.push_diagnostic_at(
-                    "E0006",
-                    "statements are only allowed at top level in scripts",
-                    None,
-                    range,
-                    actual,
-                )?;
+            if matches!(self.mode, ParseMode::Module | ParseMode::ImportedModule)
+                && !had_syntax_error
+            {
+                let (code, message) = if self.mode == ParseMode::ImportedModule {
+                    (
+                        "E1801",
+                        "a file with script statements cannot be imported as a module",
+                    )
+                } else {
+                    (
+                        "E1804",
+                        "top-level statements are only allowed in a script root",
+                    )
+                };
+                self.push_diagnostic_at(code, message, None, range, actual)?;
             }
         }
         self.expect(TokenKind::Eof)?;
@@ -2580,6 +2588,7 @@ mod tests {
             .unwrap();
         let lex_mode = match mode {
             ParseMode::Module => LexMode::Module,
+            ParseMode::ImportedModule => LexMode::ImportedModule,
             ParseMode::Script => LexMode::Script,
             ParseMode::Fragment | ParseMode::SyntaxSequence | ParseMode::StandaloneBlock => {
                 LexMode::Fragment
@@ -2930,7 +2939,7 @@ fn after(): Int {
         let (_, _, script) = parse_source(source, ParseMode::Script);
         let (_, _, module) = parse_source(source, ParseMode::Module);
         assert!(script.diagnostics().is_empty(), "{:?}", codes(&script));
-        assert_eq!(codes(&module), ["E0006", "E0006"]);
+        assert_eq!(codes(&module), ["E1804", "E1804"]);
     }
 
     #[test]

@@ -1276,6 +1276,7 @@ pub struct HirCallableSignature {
     function_type: TypeId,
     opaque_result: Option<HirOpaqueResult>,
     body_source: Option<Span>,
+    implicit_script: bool,
 }
 
 impl HirCallableSignature {
@@ -1313,6 +1314,10 @@ impl HirCallableSignature {
 
     pub fn body_source(&self) -> Option<Span> {
         self.body_source
+    }
+
+    pub fn is_implicit_script(&self) -> bool {
+        self.implicit_script
     }
 }
 

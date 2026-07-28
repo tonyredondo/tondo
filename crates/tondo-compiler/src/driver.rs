@@ -14,12 +14,14 @@ use crate::hir::{
 use crate::mir::{MirError, MirLoweringLimits, lower_to_mir};
 pub use crate::package::Edition;
 use crate::package::{PackageGraph, PackageGraphError};
-use crate::resolve::{ResolveError, ResolvedProgram, SymbolKind, Visibility, resolve};
+use crate::resolve::{
+    ResolveError, ResolvedProgram, SymbolKind, Visibility, is_script_statement, resolve,
+};
 use crate::semantic::SemanticModel;
 use crate::source::{FileId, SourceDatabase, SourceError, SourceId, Span, TextRange};
 use crate::syntax::{
     FormatError, LexError, LexLimits, LexMode, ParseError, ParseLimits, ParseMode, Parsed,
-    SyntaxKind, format_parsed, lex_with_limits, parse,
+    format_parsed, lex_with_limits, parse,
 };
 use crate::types::TypeError;
 use crate::types::{ScalarType, TypeKind};
@@ -483,7 +485,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                 SourceForm::Fragment => (LexMode::Fragment, ParseMode::Fragment),
             }
         } else {
-            (LexMode::Module, ParseMode::Module)
+            (LexMode::ImportedModule, ParseMode::ImportedModule)
         };
         let lexed = match lex_with_limits(
             &request.sources,
@@ -702,25 +704,48 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
         });
     }
 
-    if request.operation == Operation::Check
-        && request.source_form == SourceForm::Module
-        && expression_check_complete
-    {
-        let mut bag = DiagnosticBag::new();
-        bag.extend(expression_diagnostics);
-        let diagnostics = bag.resolve(request.edition.as_str(), &request.sources)?;
-        drop(parsed_sources);
-        return Ok(CompilationOutput {
-            status: CompilationStatus::Success,
-            exit_code: 0,
-            diagnostics,
-            stdout: Vec::new(),
-            semantic_model: Some(SemanticModel::with_hir(
-                request.sources,
+    if request.operation == Operation::Check && expression_check_complete {
+        if request.source_form == SourceForm::Script {
+            let diagnostic = match select_hosted_main(
+                &request,
+                &parsed_sources,
+                &resolved_program,
+                &hir_program,
+            )? {
+                MainSelection::Rejected(diagnostic) => Some(diagnostic),
+                MainSelection::Sync(_) | MainSelection::Async(_) => None,
+            };
+            let exit_code = u8::from(diagnostic.is_some());
+            drop(parsed_sources);
+            return semantic_output(
+                request,
                 resolved_program,
                 hir_program,
-            )),
-        });
+                expression_diagnostics,
+                diagnostic,
+                exit_code,
+                Vec::new(),
+            );
+        }
+        if request.source_form != SourceForm::Module {
+            // Fragment checks deliberately remain outside the hosted program pipeline.
+        } else {
+            let mut bag = DiagnosticBag::new();
+            bag.extend(expression_diagnostics);
+            let diagnostics = bag.resolve(request.edition.as_str(), &request.sources)?;
+            drop(parsed_sources);
+            return Ok(CompilationOutput {
+                status: CompilationStatus::Success,
+                exit_code: 0,
+                diagnostics,
+                stdout: Vec::new(),
+                semantic_model: Some(SemanticModel::with_hir(
+                    request.sources,
+                    resolved_program,
+                    hir_program,
+                )),
+            });
+        }
     }
 
     if request.operation == Operation::Run {
@@ -737,7 +762,6 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                     Vec::new(),
                 );
             }
-            MainSelection::DeferredScript => {}
             MainSelection::Sync(_) | MainSelection::Async(_) if !expression_check_complete => {}
             MainSelection::Sync(entry) | MainSelection::Async(entry) => {
                 let mir = match lower_to_mir(
@@ -922,7 +946,6 @@ struct MainEntry {
 enum MainSelection {
     Sync(MainEntry),
     Async(MainEntry),
-    DeferredScript,
     Rejected(Diagnostic),
 }
 
@@ -940,21 +963,11 @@ fn select_hosted_main(
             .iter()
             .find(|(file, _)| *file == request.root)
             .and_then(|(_, parsed)| {
-                parsed.cst().root_node().child_nodes().find(|node| {
-                    matches!(
-                        node.kind(),
-                        SyntaxKind::BindingDecl
-                            | SyntaxKind::Assignment
-                            | SyntaxKind::ReturnStmt
-                            | SyntaxKind::FailStmt
-                            | SyntaxKind::BreakStmt
-                            | SyntaxKind::ContinueStmt
-                            | SyntaxKind::DeferStmt
-                            | SyntaxKind::ForStmt
-                            | SyntaxKind::ExpressionStmt
-                            | SyntaxKind::TailExpression
-                    )
-                })
+                parsed
+                    .cst()
+                    .root_node()
+                    .child_nodes()
+                    .find(|node| is_script_statement(node.kind()))
             })
             .map(|node| request.sources.span(request.root, node.range()))
             .transpose()?
@@ -987,19 +1000,10 @@ fn select_hosted_main(
         return Ok(MainSelection::Rejected(diagnostic));
     }
 
-    let Some(symbol) = candidates.first().copied() else {
-        if script_statement.is_some() {
-            return Ok(MainSelection::DeferredScript);
-        }
-        return Ok(MainSelection::Rejected(Diagnostic::new(
-            Severity::Error,
-            DiagnosticCode::new("E1806")?,
-            "the hosted target has no explicit `main` and no script entry",
-            PrimaryLocation::Target(request.target.diagnostic_source_id().clone()),
-        )?));
-    };
-
-    if let Some(statement) = script_statement {
+    let explicit = candidates.first().copied();
+    if let Some(statement) = script_statement
+        && let Some(symbol) = explicit
+    {
         return Ok(MainSelection::Rejected(
             Diagnostic::new(
                 Severity::Error,
@@ -1010,6 +1014,30 @@ fn select_hosted_main(
             .with_related(Related::new("script entry also begins here", statement)?),
         ));
     }
+    let symbol = if let Some(symbol) = explicit {
+        symbol
+    } else if script_statement.is_some() {
+        resolved
+            .symbols()
+            .find(|symbol| {
+                symbol.is_synthetic()
+                    && symbol.kind() == SymbolKind::Function
+                    && symbol.identity().package() == root_module.package()
+                    && symbol.identity().module() == root_module.path()
+            })
+            .ok_or_else(|| {
+                DriverError::Invariant(
+                    "a script with top-level statements has no synthetic entry point".into(),
+                )
+            })?
+    } else {
+        return Ok(MainSelection::Rejected(Diagnostic::new(
+            Severity::Error,
+            DiagnosticCode::new("E1806")?,
+            "the hosted target has no explicit `main` and no script entry",
+            PrimaryLocation::Target(request.target.diagnostic_source_id().clone()),
+        )?));
+    };
 
     let id = HirCallableId::Symbol(symbol.id());
     let callable = hir.callable(id).ok_or_else(|| {
@@ -1725,7 +1753,7 @@ mod tests {
 
         let output = execute(request).unwrap();
         assert_eq!(output.diagnostics().diagnostics().len(), 1);
-        assert_eq!(output.diagnostics().diagnostics()[0].code(), "E0002");
+        assert_eq!(output.diagnostics().diagnostics()[0].code(), "E1801");
     }
 
     #[test]
@@ -1771,7 +1799,7 @@ mod tests {
                 &b"fn chained(value: Int): Bool {\n    0 < value < 10\n}\n"[..],
                 "E0005",
             ),
-            (&b"let value = 1\n"[..], "E0006"),
+            (&b"let value = 1\n"[..], "E1804"),
         ] {
             let output = execute(source_request(
                 source,
@@ -2075,8 +2103,87 @@ mod tests {
             ResourceLimits::default(),
         ))
         .unwrap();
-        assert_eq!(output.diagnostics().diagnostics().len(), 1);
-        assert_eq!(output.diagnostics().diagnostics()[0].code(), "T0001");
+        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
+    fn script_entry_executes_sync_and_async_top_level_work() {
+        let sync = execute(operation_request(
+            Operation::Run,
+            b"#!/usr/bin/env tondo\n\
+              import std.console\n\
+              let answer = 6 * 7\n\
+              console.print(\"{answer}\")\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(sync.status(), CompilationStatus::Success);
+        assert_eq!(sync.exit_code(), 0);
+        assert_eq!(sync.stdout(), b"42");
+
+        let asynchronous = execute(operation_request(
+            Operation::Run,
+            b"async fn tick(): Int { 42 }\n\
+              let answer = await tick()\n\
+              scope {\n\
+                  let job = spawn tick()\n\
+                  assert(await job == answer)\n\
+              }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(asynchronous.status(), CompilationStatus::Success);
+        assert_eq!(asynchronous.exit_code(), 0);
+        assert!(asynchronous.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
+    fn named_declarations_cannot_capture_script_locals() {
+        let output = execute(operation_request(
+            Operation::Check,
+            b"fn read(): Int { answer }\nlet answer = 42\n_ = read()\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert_eq!(output.diagnostics().diagnostics()[0].code(), "E1001");
+    }
+
+    #[test]
+    fn script_entry_infers_one_closed_error_union() {
+        let output = execute(operation_request(
+            Operation::Run,
+            b"enum ReadError { Missing }\n\
+              enum WriteError { Denied }\n\
+              fn read(): Int ! ReadError {\n\
+                  fail ReadError.Missing\n\
+              }\n\
+              fn write(): Int ! WriteError {\n\
+                  fail WriteError.Denied\n\
+              }\n\
+              let first = read()?\n\
+              let second = write()?\n\
+              _ = (first, second)\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert_eq!(output.exit_code(), 1);
+        let diagnostic = &output.diagnostics().diagnostics()[0];
+        assert_eq!(
+            diagnostic.code(),
+            "R0001",
+            "{:?}",
+            output.diagnostics().diagnostics()
+        );
+        assert!(diagnostic.message().contains("ReadError"));
+        assert!(diagnostic.message().contains("WriteError"));
     }
 
     #[test]
@@ -2804,7 +2911,7 @@ mod tests {
 
         let output = execute(request).unwrap();
         assert_eq!(output.diagnostics().diagnostics().len(), 1);
-        assert_eq!(output.diagnostics().diagnostics()[0].code(), "E0006");
+        assert_eq!(output.diagnostics().diagnostics()[0].code(), "E1801");
     }
 
     #[test]

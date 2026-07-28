@@ -82,6 +82,9 @@ impl NameResolver<'_> {
     fn resolve_file(&mut self, root: SyntaxNodeRef<'_>) -> Result<(), ResolveError> {
         self.scopes.push(Scope::default());
         for child in root.child_nodes() {
+            if root.kind() == SyntaxKind::Script && super::is_script_statement(child.kind()) {
+                continue;
+            }
             match child.kind() {
                 SyntaxKind::ImportDecl => {}
                 SyntaxKind::FunctionDecl => self.resolve_function(child)?,
@@ -95,6 +98,16 @@ impl NameResolver<'_> {
             }
         }
         self.scopes.pop();
+        if root.kind() == SyntaxKind::Script {
+            self.scopes.push(Scope::default());
+            for child in root
+                .child_nodes()
+                .filter(|child| super::is_script_statement(child.kind()))
+            {
+                self.walk(child, Some(SyntaxKind::Script))?;
+            }
+            self.scopes.pop();
+        }
         Ok(())
     }
 
@@ -799,6 +812,16 @@ impl NameResolver<'_> {
                     None,
                 )?;
             }
+            return Ok(());
+        }
+
+        if first.as_str() == "__tondo_script_main" {
+            self.emit(
+                first_token.range(),
+                "E1001",
+                "the implicit script entry is compiler-private",
+                None,
+            )?;
             return Ok(());
         }
 

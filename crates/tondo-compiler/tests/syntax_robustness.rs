@@ -18,6 +18,7 @@ fn exercise(bytes: &[u8], case: usize, mode: ParseMode) {
         .unwrap();
     let lex_mode = match mode {
         ParseMode::Module => LexMode::Module,
+        ParseMode::ImportedModule => LexMode::ImportedModule,
         ParseMode::Script => LexMode::Script,
         ParseMode::Fragment | ParseMode::SyntaxSequence | ParseMode::StandaloneBlock => {
             LexMode::Fragment

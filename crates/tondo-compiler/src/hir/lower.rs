@@ -1629,6 +1629,9 @@ impl<'a> TypeLowerer<'a> {
                     _ => self.lower_annotation_tree(file, node, &TypeEnvironment::default())?,
                 }
             }
+            if root.kind() == SyntaxKind::Script {
+                self.lower_script_entry(file, root)?;
+            }
         }
         let sites = self.implementation_sites.clone();
         for (index, site) in sites.into_iter().enumerate() {
@@ -1641,6 +1644,54 @@ impl<'a> TypeLowerer<'a> {
         if self.diagnostics.len() == diagnostics_before_coherence {
             self.validate_trait_termination()?;
         }
+        Ok(())
+    }
+
+    fn lower_script_entry(
+        &mut self,
+        file: FileId,
+        root: SyntaxNodeRef<'a>,
+    ) -> Result<(), HirError> {
+        let Some(symbol) = self
+            .resolved
+            .symbols()
+            .find(|symbol| symbol.is_synthetic() && symbol.span().file() == file)
+        else {
+            return Ok(());
+        };
+        let id = HirCallableId::Symbol(symbol.id());
+        let is_async = script_body_contains(root, |kind| {
+            matches!(kind, SyntaxKind::AwaitExpr | SyntaxKind::ScopeExpr)
+        });
+        let infers_errors = script_body_contains(root, |kind| {
+            matches!(kind, SyntaxKind::FailStmt | SyntaxKind::PropagateSuffix)
+        });
+        let unit = self.interner.scalar(ScalarType::Unit);
+        let outcome = if infers_errors {
+            let error = self.interner.error();
+            self.interner.result(unit, error)?
+        } else {
+            unit
+        };
+        let function_type = self.interner.function(FunctionType::new(
+            is_async,
+            false,
+            Vec::new(),
+            None,
+            outcome,
+        ))?;
+        self.callables.push(HirCallableSignature {
+            id,
+            span: symbol.span(),
+            parameters: Vec::new(),
+            generics: Vec::new(),
+            generic_arity: 0,
+            outcome,
+            function_type,
+            opaque_result: None,
+            body_source: Some(self.sources.span(file, root.range())?),
+            implicit_script: true,
+        });
         Ok(())
     }
 
@@ -2893,6 +2944,7 @@ impl<'a> TypeLowerer<'a> {
             body_source: body
                 .map(|body| self.sources.span(file, body.range()))
                 .transpose()?,
+            implicit_script: false,
         });
         if let Some(body) = body {
             self.lower_annotation_tree(file, body, &environment)?;
@@ -3425,6 +3477,22 @@ fn field_name_token(node: SyntaxNodeRef<'_>) -> Option<SyntaxTokenRef<'_>> {
 
 fn has_direct_token(node: SyntaxNodeRef<'_>, kind: TokenKind) -> bool {
     node.child_tokens().any(|token| token.kind() == kind)
+}
+
+fn script_body_contains(root: SyntaxNodeRef<'_>, predicate: impl Fn(SyntaxKind) -> bool) -> bool {
+    let mut pending = root
+        .child_nodes()
+        .filter(|node| crate::resolve::is_script_statement(node.kind()))
+        .collect::<Vec<_>>();
+    while let Some(node) = pending.pop() {
+        if predicate(node.kind()) {
+            return true;
+        }
+        if node.kind() != SyntaxKind::ClosureExpr {
+            pending.extend(node.child_nodes());
+        }
+    }
+    false
 }
 
 fn callable_has_receiver(node: SyntaxNodeRef<'_>) -> bool {

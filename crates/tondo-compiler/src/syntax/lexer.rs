@@ -13,6 +13,7 @@ use super::token::{Token, TokenKind};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LexMode {
     Module,
+    ImportedModule,
     Script,
     Fragment,
 }
@@ -65,6 +66,17 @@ impl fmt::Display for LexResource {
 impl LexMode {
     fn allows_shebang(self) -> bool {
         matches!(self, Self::Script)
+    }
+
+    fn invalid_shebang_diagnostic(self) -> (&'static str, &'static str) {
+        if self == Self::ImportedModule {
+            ("E1801", "a script root cannot be imported as a module")
+        } else {
+            (
+                "E1805",
+                "a shebang is only valid at byte zero of a script root",
+            )
+        }
     }
 }
 
@@ -217,12 +229,8 @@ impl Scanner<'_> {
                 let end = self.line_content_end(0);
                 self.diagnose_invalid_utf8_in_range(0, end)?;
                 self.emit(TokenKind::InvalidToken, 0, end)?;
-                self.diagnostic(
-                    "E0002",
-                    "a shebang is only valid at byte zero of a script root",
-                    0,
-                    end,
-                )?;
+                let (code, message) = self.mode.invalid_shebang_diagnostic();
+                self.diagnostic(code, message, 0, end)?;
                 self.position = end;
             }
         }
@@ -1967,7 +1975,7 @@ mod tests {
         assert_eq!(script.tokens()[0].kind(), TokenKind::Shebang);
         assert!(script.diagnostics().is_empty());
         assert_eq!(module.tokens()[0].kind(), TokenKind::InvalidToken);
-        assert_eq!(codes(&module), ["E0002"]);
+        assert_eq!(codes(&module), ["E1805"]);
     }
 
     #[test]

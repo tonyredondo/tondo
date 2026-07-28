@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use crate::diagnostics::{Diagnostic, DiagnosticCode, PrimaryLocation, Related, Severity};
@@ -291,6 +293,7 @@ struct BodyContext {
     async_initiation: Option<AsyncInitiation>,
     in_defer_body: bool,
     defer_control_boundary: bool,
+    script_errors: Option<Rc<RefCell<BTreeSet<TypeId>>>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1073,7 +1076,12 @@ impl<'a> ExpressionChecker<'a> {
                 self.complete = false;
                 continue;
             }
-            let Some(node) = self.find_node(body_source, Some(SyntaxKind::Block)) else {
+            let body_kind = if callable.is_implicit_script() {
+                SyntaxKind::Script
+            } else {
+                SyntaxKind::Block
+            };
+            let Some(node) = self.find_node(body_source, Some(body_kind)) else {
                 self.complete = false;
                 continue;
             };
@@ -1127,6 +1135,13 @@ impl<'a> ExpressionChecker<'a> {
                 error,
                 signature: callable.span,
             });
+            let script_errors =
+                if callable.is_implicit_script() && error == Some(self.program.interner.error()) {
+                    Some(Rc::new(RefCell::new(BTreeSet::new())))
+                } else {
+                    None
+                };
+            context.script_errors = script_errors.clone();
             context.is_async = matches!(
                 self.program.interner.kind(callable.function_type())?,
                 TypeKind::Function(function) if function.is_async()
@@ -1148,14 +1163,33 @@ impl<'a> ExpressionChecker<'a> {
                     }
                 }
             }
-            let root = self.check_expression(
-                body_source.file(),
-                node,
-                Some(context.callable.expect("just initialized").expectation()),
-                &mut context,
-            )?;
+            let expectation = context.callable.expect("just initialized").expectation();
+            let root = if callable.is_implicit_script() {
+                let value =
+                    self.check_block(body_source.file(), node, Some(expectation), &mut context)?;
+                self.apply_expression_expectation(
+                    body_source.file(),
+                    node,
+                    value,
+                    Some(expectation),
+                    &mut context,
+                )?
+            } else {
+                self.check_expression(body_source.file(), node, Some(expectation), &mut context)?
+            };
             let root = if callable.opaque_result.is_some() {
                 self.finish_opaque_body(&callable, root, &mut context)?
+            } else {
+                root
+            };
+            let root = if let Some(errors) = script_errors {
+                self.finish_script_error_inference(
+                    callable.id,
+                    root,
+                    expression_start,
+                    errors,
+                    &mut context,
+                )?
             } else {
                 root
             };
@@ -1174,6 +1208,119 @@ impl<'a> ExpressionChecker<'a> {
         self.validate_opaque_reachable_witnesses()?;
         self.validate_opaque_witness_cycles()?;
         Ok(())
+    }
+
+    fn finish_script_error_inference(
+        &mut self,
+        callable_id: HirCallableId,
+        root: HirExpressionId,
+        expression_start: usize,
+        errors: Rc<RefCell<BTreeSet<TypeId>>>,
+        context: &mut BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        let error_marker = self.program.interner.error();
+        let members = errors
+            .borrow()
+            .iter()
+            .copied()
+            .filter(|member| *member != error_marker)
+            .collect::<Vec<_>>();
+        let inferred_error = self.program.interner.union(members)?;
+        let unit = self.program.interner.scalar(ScalarType::Unit);
+        let provisional_outcome = self.program.interner.result(unit, error_marker)?;
+        let final_outcome = self.program.interner.result(unit, inferred_error)?;
+
+        let signature_index = self
+            .program
+            .callables
+            .iter()
+            .position(|callable| callable.id == callable_id)
+            .expect("the checked script callable remains indexed");
+        let function = match self
+            .program
+            .interner
+            .kind(self.program.callables[signature_index].function_type())?
+        {
+            TypeKind::Function(function) => function.clone(),
+            _ => unreachable!("a script entry has a function type"),
+        };
+        let final_function = self.program.interner.function(FunctionType::new(
+            function.is_async(),
+            function.is_unsafe(),
+            Vec::new(),
+            None,
+            final_outcome,
+        ))?;
+
+        let expression_end = self.program.expressions.len();
+        let mut propagated = Vec::new();
+        let mut failed = Vec::new();
+        for index in expression_start..expression_end {
+            let expression = &mut self.program.expressions[index];
+            if expression.ty == provisional_outcome {
+                expression.ty = final_outcome;
+            }
+            match &expression.kind {
+                HirExpressionKind::PropagateResult { value, .. } => {
+                    propagated.push((index, *value));
+                }
+                HirExpressionKind::Fail { error } => failed.push((index, *error)),
+                _ => {}
+            }
+        }
+
+        for (index, value) in propagated {
+            let value_type = self.expression_type(value);
+            let TypeKind::Result {
+                error: produced_error,
+                ..
+            } = self.program.interner.kind(value_type)?
+            else {
+                continue;
+            };
+            if *produced_error == error_marker {
+                continue;
+            }
+            let coercion = self
+                .error_assignability(*produced_error, inferred_error)?
+                .expect("an inferred script error union accepts every collected member");
+            let HirExpressionKind::PropagateResult { error_coercion, .. } =
+                &mut self.program.expressions[index].kind
+            else {
+                unreachable!("the recorded propagation remains a propagation expression")
+            };
+            *error_coercion = coercion;
+        }
+
+        for (index, error) in failed {
+            let actual = self.expression_type(error);
+            if actual == error_marker || actual == inferred_error {
+                continue;
+            }
+            let coercion = self
+                .error_assignability(actual, inferred_error)?
+                .expect("an inferred script error union accepts every collected member");
+            if coercion == Assignability::Exact {
+                continue;
+            }
+            let coerced = self.coerce_with(error, inferred_error, coercion)?;
+            let HirExpressionKind::Fail { error } = &mut self.program.expressions[index].kind
+            else {
+                unreachable!("the recorded fail remains a fail expression")
+            };
+            *error = coerced;
+        }
+
+        let signature = &mut self.program.callables[signature_index];
+        signature.outcome = final_outcome;
+        signature.function_type = final_function;
+        context.callable = Some(CallableContext {
+            full: final_outcome,
+            success: unit,
+            error: Some(inferred_error),
+            signature: signature.span,
+        });
+        Ok(root)
     }
 
     fn check_ownership_availability(&mut self) -> Result<(), HirError> {
@@ -2166,6 +2313,17 @@ impl<'a> ExpressionChecker<'a> {
         context: &mut BodyContext,
     ) -> Result<HirExpressionId, HirError> {
         let value = self.check_expression_raw(file, node, expected, context)?;
+        self.apply_expression_expectation(file, node, value, expected, context)
+    }
+
+    fn apply_expression_expectation(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'_>,
+        value: HirExpressionId,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
         let Some(expectation) = expected else {
             return Ok(value);
         };
@@ -2654,6 +2812,7 @@ impl<'a> ExpressionChecker<'a> {
         let mut closure_context = context.clone();
         closure_context.loops.clear();
         closure_context.defer_control_boundary = false;
+        closure_context.script_errors = None;
         closure_context.receiver = None;
         closure_context.receiver_permission = PlacePermission::Invalid;
         closure_context.callable = Some(CallableContext {
@@ -6548,6 +6707,7 @@ impl<'a> ExpressionChecker<'a> {
             defer_context.loops.clear();
             defer_context.in_defer_body = true;
             defer_context.defer_control_boundary = true;
+            defer_context.script_errors = None;
             self.check_expression(file, expression, None, &mut defer_context)?
         };
 
@@ -6656,6 +6816,7 @@ impl<'a> ExpressionChecker<'a> {
         let unit = self.program.interner.scalar(ScalarType::Unit);
         let mut closure_context = context.clone();
         closure_context.loops.clear();
+        closure_context.script_errors = None;
         closure_context.receiver = None;
         closure_context.receiver_permission = PlacePermission::Invalid;
         closure_context.callable = Some(CallableContext {
@@ -10824,7 +10985,14 @@ impl<'a> ExpressionChecker<'a> {
         else {
             return self.recovery_expression(file, node.range());
         };
-        let error = if let Some(callable) = context.callable
+        let error = if let Some(script_errors) = context.script_errors.clone() {
+            let error = self.check_expression(file, error_node, None, context)?;
+            let error_type = self.expression_type(error);
+            if error_type != self.program.interner.error() {
+                script_errors.borrow_mut().insert(error_type);
+            }
+            error
+        } else if let Some(callable) = context.callable
             && let Some(expected_error) = callable.error
         {
             self.check_error_with_expected_diagnostic(
@@ -13282,6 +13450,20 @@ impl<'a> ExpressionChecker<'a> {
                 success,
                 error: produced_error,
             } => {
+                if let Some(script_errors) = &context.script_errors {
+                    if produced_error != self.program.interner.error() {
+                        script_errors.borrow_mut().insert(produced_error);
+                    }
+                    return self.allocate_expression(HirExpression {
+                        span: self.sources.span(file, range)?,
+                        ty: success,
+                        category: HirValueCategory::Value,
+                        kind: HirExpressionKind::PropagateResult {
+                            value,
+                            error_coercion: Assignability::Exact,
+                        },
+                    });
+                }
                 let Some(callable) = context.callable else {
                     self.emit_incompatible_propagation(
                         self.sources.span(file, suffix.range())?,

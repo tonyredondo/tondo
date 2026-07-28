@@ -276,6 +276,7 @@ pub struct Symbol {
     visibility: Visibility,
     span: Span,
     generic_arity: u32,
+    synthetic: bool,
 }
 
 impl Symbol {
@@ -305,6 +306,10 @@ impl Symbol {
 
     pub fn generic_arity(&self) -> u32 {
         self.generic_arity
+    }
+
+    pub fn is_synthetic(&self) -> bool {
+        self.synthetic
     }
 }
 
@@ -515,6 +520,7 @@ struct DeclarationCandidate {
     file: FileId,
     range: TextRange,
     generic_arity: u32,
+    synthetic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -559,6 +565,7 @@ impl Resolver<'_> {
         for file in &ordered_files {
             self.collect_file(*file, &mut declarations, &mut files, &mut edges)?;
         }
+        self.collect_script_entries(&mut declarations)?;
         let (modules, symbols) = self.build_symbols(declarations, &ordered_files)?;
         self.diagnose_import_declaration_conflicts(&modules, &files, &symbols, &ordered_files)?;
         self.diagnose_import_cycles(&edges)?;
@@ -675,6 +682,37 @@ impl Resolver<'_> {
             }
         }
         files.insert(file, file_resolution);
+        Ok(())
+    }
+
+    fn collect_script_entries(
+        &self,
+        declarations: &mut Vec<DeclarationCandidate>,
+    ) -> Result<(), ResolveError> {
+        for (file, parsed) in &self.parsed {
+            let root = parsed.cst().root_node();
+            if root.kind() != SyntaxKind::Script {
+                continue;
+            }
+            let Some(statement) = root
+                .child_nodes()
+                .find(|node| is_script_statement(node.kind()))
+            else {
+                continue;
+            };
+            declarations.push(DeclarationCandidate {
+                module: self.packages.module_for_file(self.sources, *file)?,
+                namespace: Namespace::Value,
+                name: Name::new("__tondo_script_main")
+                    .expect("the compiler-private script entry name is valid"),
+                kind: SymbolKind::Function,
+                visibility: Visibility::Private,
+                file: *file,
+                range: statement.range(),
+                generic_arity: 0,
+                synthetic: true,
+            });
+        }
         Ok(())
     }
 
@@ -844,6 +882,7 @@ impl Resolver<'_> {
             file,
             range: token.range(),
             generic_arity: declaration_generic_arity(node),
+            synthetic: false,
         }))
     }
 
@@ -923,6 +962,7 @@ impl Resolver<'_> {
                 visibility: first.visibility,
                 span: first_span,
                 generic_arity: first.generic_arity,
+                synthetic: first.synthetic,
             };
             let module = modules
                 .get_mut(&first.module)
@@ -1133,6 +1173,22 @@ fn declaration_generic_arity(node: SyntaxNodeRef<'_>) -> u32 {
         .expect("generic parameter count is bounded by syntax nodes")
 }
 
+pub(crate) const fn is_script_statement(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        SyntaxKind::BindingDecl
+            | SyntaxKind::Assignment
+            | SyntaxKind::ReturnStmt
+            | SyntaxKind::FailStmt
+            | SyntaxKind::BreakStmt
+            | SyntaxKind::ContinueStmt
+            | SyntaxKind::DeferStmt
+            | SyntaxKind::ForStmt
+            | SyntaxKind::ExpressionStmt
+            | SyntaxKind::TailExpression
+    )
+}
+
 fn normalized_name(token: SyntaxTokenRef<'_>) -> Result<Name, NameError> {
     Name::new(
         token
@@ -1145,7 +1201,8 @@ fn normalized_name(token: SyntaxTokenRef<'_>) -> Result<Name, NameError> {
 fn is_reserved_unqualified(name: &Name) -> bool {
     matches!(
         name.as_str(),
-        "Bool"
+        "__tondo_script_main"
+            | "Bool"
             | "Int"
             | "Float"
             | "Byte"
