@@ -1,7 +1,9 @@
 # Tondo Toolchain 0.1
 
-**Estado:** contrato bootstrap implementado  
-**Versión:** `tondo-toolchain-0.1/1`  
+**Estado:** contrato bootstrap implementado
+
+**Versión:** `tondo-toolchain-0.1/1`
+
 **Especificación de lenguaje:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)
 
 Esta especificación define la frontera de proyecto del toolchain Tondo 0.1:

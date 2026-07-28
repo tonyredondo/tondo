@@ -2,15 +2,16 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.79
+**Versión del tracker:** 0.80
 
 **Última actualización:** 2026-07-28
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** M8 cerrado con scripts raíz, procesos externos y
-pipelines ejecutables. La siguiente unidad de trabajo, cuando se reanude, es
-UNSAFE-001; esta entrega se detiene antes de iniciar M9.
+**Objetivo inmediato:** M9 y Gate G4 cerrados con unsafe explícito, targets,
+proyectos cerrados, interfaces y artefactos deterministas. La siguiente unidad
+de trabajo, cuando se reanude, es CONF-001; esta entrega se detiene antes de
+iniciar M10.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -260,7 +261,7 @@ necesaria; la fragmentación del workspace no.
 | **M6 — Colecciones, números y texto** | Gate G3: alpha utilizable | Completado |
 | **M7 — Async y concurrencia estructurada** | Tasks conformes | Completado |
 | **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
-| **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Pendiente |
+| **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Conformidad y release** | Gate G5: Tondo 0.1 | Pendiente |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 
@@ -272,7 +273,7 @@ Estado observado del workspace:
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada aún no está fijada.
 - Última validación: 2026-07-28, con formatter check, `cargo check` de todos los
-  targets, Clippy con warnings denegados, 635 tests, Rustdoc con warnings
+  targets, Clippy con warnings denegados, 659 tests, Rustdoc con warnings
   denegados y metadatos locked.
 
 ### 4.1 Ruta crítica
@@ -1928,65 +1929,87 @@ el lenguaje excluye.
 
 ### 14.1 Unsafe y Pointer
 
-- [ ] **UNSAFE-001 — Implementar funciones, closures y bloques `unsafe`.**
+- [x] **UNSAFE-001 — Implementar funciones, closures y bloques `unsafe`.**
 
-- [ ] **UNSAFE-002 — Permitir operaciones de `Pointer[T]` únicamente dentro de
+- [x] **UNSAFE-002 — Permitir operaciones de `Pointer[T]` únicamente dentro de
   una frontera unsafe válida.**
 
-- [ ] **UNSAFE-003 — Comprobar estáticamente toda precondición comprobable.**
+- [x] **UNSAFE-003 — Comprobar estáticamente toda precondición comprobable.**
 
-- [ ] **UNSAFE-004 — Documentar la lista cerrada de comportamiento indefinido
+- [x] **UNSAFE-004 — Documentar la lista cerrada de comportamiento indefinido
   que puede introducir una operación raw.**
 
-- [ ] **UNSAFE-005 — Impedir que código seguro observe direcciones como
+- [x] **UNSAFE-005 — Impedir que código seguro observe direcciones como
   identidad ordinaria.**
 
-- [ ] **FFI-001 — Diseñar unidades privilegiadas y wrappers nativos sin añadir
+- [x] **FFI-001 — Diseñar unidades privilegiadas y wrappers nativos sin añadir
   atributos semánticos generales a `.to`.**
 
 ### 14.2 Targets y capacidades
 
-- [ ] **TARGET-001 — Implementar edición, target, perfil y capacidades como
+- [x] **TARGET-001 — Implementar edición, target, perfil y capacidades como
   inputs explícitos.**
 
-- [ ] **TARGET-002 — Resolver source sets antes de lexear.**
+- [x] **TARGET-002 — Resolver source sets antes de lexear.**
 
-- [ ] **TARGET-003 — Rechazar imports o APIs ausentes para el target.**
+- [x] **TARGET-003 — Rechazar imports o APIs ausentes para el target.**
 
-- [ ] **TARGET-004 — Registrar target, perfil, capacidades, features y source
+- [x] **TARGET-004 — Registrar target, perfil, capacidades, features y source
   sets en artefactos e interfaces.**
 
 ### 14.3 Paquetes e interfaces
 
-- [ ] **PKG-001 — Escribir la especificación separada del manifiesto y
+- [x] **PKG-001 — Escribir la especificación separada del manifiesto y
   lockfile.**
 
-- [ ] **PKG-002 — Implementar resolución cerrada y offline durante
+- [x] **PKG-002 — Implementar resolución cerrada y offline durante
   compilación.**
 
-- [ ] **PKG-003 — Fijar aliases locales y PackageIds transitivos exactos.**
+- [x] **PKG-003 — Fijar aliases locales y PackageIds transitivos exactos.**
 
-- [ ] **IFACE-001 — Definir el formato versionado de interfaces compiladas.**
+- [x] **IFACE-001 — Definir el formato versionado de interfaces compiladas.**
 
-- [ ] **IFACE-002 — Incluir hash de API, edición, target y dependencias.**
+- [x] **IFACE-002 — Incluir hash de API, edición, target y dependencias.**
 
-- [ ] **IFACE-003 — Rechazar interfaces incompatibles antes del type checking
+- [x] **IFACE-003 — Rechazar interfaces incompatibles antes del type checking
   consumidor.**
 
-- [ ] **BUILD-001 — Verificar builds deterministas bajo entradas idénticas.**
+- [x] **BUILD-001 — Verificar builds deterministas bajo entradas idénticas.**
 
-- [ ] **BUILD-002 — Verificar que la compilación no consulta red, reloj ni
+- [x] **BUILD-002 — Verificar que la compilación no consulta red, reloj ni
   entorno no declarados.**
 
 ### Gate G4
 
-- Toda sintaxis y semántica de fuente 0.1 tiene una ruta implementada.
-- El target VM `hosted` declara exactamente sus capacidades.
-- Las capacidades ausentes fallan en compilación.
-- Código seguro permanece libre de UB.
-- Las interfaces incompatibles no se enlazan por parecido nominal.
-- Los ejemplos integrados del spec se compilan con sus fixtures o stdlib
+- [x] Toda sintaxis y semántica de fuente 0.1 tiene una ruta implementada.
+- [x] El target VM `hosted` declara exactamente sus capacidades.
+- [x] Las capacidades ausentes fallan en compilación.
+- [x] Código seguro permanece libre de UB.
+- [x] Las interfaces incompatibles no se enlazan por parecido nominal.
+- [x] Los ejemplos integrados del spec se compilan con sus fixtures o stdlib
   correspondiente.
+
+Evidencia de cierre:
+
+- Los cuatro efectos de callable, las regiones léxicas `unsafe`, las seis
+  operaciones raw de `Pointer[T]` y los diagnósticos `E1701`/`E1702` atraviesan
+  HIR, MIR y bytecode con verificación independiente. `Pointer[T]` continúa sin
+  `Equatable`, `Key`, `Send` ni `Share`; observar o reconstruir una dirección
+  exige una operación nombrada dentro de `unsafe`.
+- [`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md) fija los formatos
+  estrictos de manifiesto, lockfile, interfaz, artefacto y unidad privilegiada.
+  El plan puro selecciona source sets antes del lexer, acepta únicamente bytes
+  declarados con su SHA-256 y no posee una superficie de I/O ambiental.
+- Interfaces y artefactos usan identidades canónicas sin colisiones ambiguas,
+  fijan compilador, edición, PackageIds, target, perfil, capacidades, features,
+  módulos, source sets y dependencias transitivas. El artefacto vuelve a derivar
+  su propio `build_hash` al decodificarse y rechaza cualquier manipulación.
+- La CLI carga exactamente el plan cerrado, no ejecuta generadores ni busca
+  dependencias, emite productos solo tras éxito y evita que estos sobrescriban
+  inputs o se solapen entre sí, incluidos aliases de path.
+- La frontera nativa 0.1 termina deliberadamente en unidades privilegiadas
+  fijadas por hash. No se inventan layout, calling convention ni ABI general;
+  un adaptador dinámico futuro deberá aportar y fijar ese contrato.
 
 ---
 
@@ -2242,12 +2265,38 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-M4, M5, M6, M7, M8 y Gate G3 quedan cerrados. La siguiente acción, cuando el
-trabajo se reanude, es UNSAFE-001; esta entrega se detiene antes de iniciar M9.
+M4, M5, M6, M7, M8, M9 y Gate G4 quedan cerrados. La siguiente acción, cuando
+el trabajo se reanude, es CONF-001; esta entrega se detiene antes de iniciar
+M10.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.80 — 2026-07-28
+
+- Se completa M9 con funciones, closures y bloques `unsafe` que conservan su
+  efecto hasta la VM. Las seis operaciones raw tienen formas dot y calificadas,
+  tipos y aridades cerrados, verificación independiente y una lista exhaustiva
+  de UB; las capturas seguras de `Pointer` y el uso raw fuera de región fallan
+  con `E1702` y `E1701`.
+- El target `tondo-vm-hosted` publica un registro versionado y únicamente las
+  capacidades `console` y `process`. Source sets condicionados se resuelven
+  antes del lexer y una API estándar ausente produce `E1008`.
+- Se implementa un plan de proyecto puro con manifiesto y lockfile estrictos,
+  PackageIds y aliases exactos, hashes SHA-256, resolución offline, inputs de
+  generador declarados y unidades privilegiadas canónicas.
+- Interfaces y artefactos versionados fijan identidad de compilador, edición,
+  target, perfil, capacidades, features, source sets, módulos, API pública y
+  dependencias transitivas. Sus bytes son canónicos, los builds son
+  deterministas y el `build_hash` se vuelve a derivar al admitir un artefacto.
+- La CLI admite proyectos cerrados y productos canónicos sin sobrescribir
+  manifiesto, lockfile, fuentes, interfaces de dependencia, inputs de generador,
+  unidades privilegiadas ni otro producto, incluso mediante aliases de path.
+- La puerta G4 pasa con 659 tests, `git diff --check`, formatter check,
+  `cargo check` para todos los targets, Clippy con warnings denegados y Rustdoc
+  con warnings denegados. M10 permanece sin iniciar; CONF-001 es el siguiente
+  límite de trabajo.
 
 ### 0.79 — 2026-07-28
 

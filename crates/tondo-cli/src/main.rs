@@ -268,10 +268,10 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
             }
         }
     }
-    if let (Some(interface), Some(artifact)) = (&emit_interface, &emit_artifact) {
-        if paths_refer_to_same_location(interface, artifact) {
-            return Err("interface and artifact outputs require distinct paths".into());
-        }
+    if let (Some(interface), Some(artifact)) = (&emit_interface, &emit_artifact)
+        && paths_refer_to_same_location(interface, artifact)
+    {
+        return Err("interface and artifact outputs require distinct paths".into());
     }
     if let Some(source_path) = &source {
         for output in [&emit_interface, &emit_artifact].into_iter().flatten() {
