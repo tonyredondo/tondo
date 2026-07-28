@@ -1,17 +1,19 @@
 # Tondo: especificación del lenguaje y toolchain de testing
 
 - **Estado:** diseño normativo aprobado para Tondo 0.2; todavía no implementado.
-- **Revisión:** 0.2-draft.2 — 2026-07-28.
+- **Revisión:** 0.2-draft.3 — 2026-07-28.
 - **Edición objetivo:** Tondo 0.2.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
 - **SHA-256 de la base:** `ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084`.
-- **Formatos de tooling:** `tondo-test-report-0.2/2` y
-  `tondo-test-list-0.2/2`.
+- **Formatos de tooling:** `tondo-test-report-0.2/3` y
+  `tondo-test-list-0.2/3`.
 
 Esta especificación añade a Tondo las declaraciones `suite` y `test` y define
 cómo el toolchain descubre, compila, ejecuta y reporta árboles estáticos de
 tests. `suite` es un contenedor léxico con lifecycle compartido; `test` es
-siempre una hoja ejecutable. Complementa Tondo 0.1; no modifica
+siempre una hoja ejecutable. Un núcleo sellado de `std.testing` permite registrar
+logs, fallar inmediatamente u omitir de forma explícita el nodo activo sin
+exponer un contexto de test como valor. Complementa Tondo 0.1; no modifica
 retroactivamente esa edición ni la suite publicada `tondo-conformance-0.1`.
 
 La próxima especificación consolidada de Tondo debe incorporar normativamente
@@ -48,7 +50,7 @@ recomienda** expresa orientación no obligatoria.
 
 ## 1. Propósito y principios
 
-El sistema de testing de Tondo persigue seis objetivos:
+El sistema de testing de Tondo persigue siete objetivos:
 
 1. Escribir un test ordinario requiere únicamente un nombre y un bloque.
 2. Agrupar tests y compartir un recurso costoso requiere únicamente una `suite`
@@ -56,9 +58,11 @@ El sistema de testing de Tondo persigue seis objetivos:
 3. El test utiliza exactamente el lenguaje normal: `assert`, `?`, `match`,
    `defer`, `for`, `scope`, `spawn`, `await`, ownership y préstamos conservan su
    significado.
-4. Descubrimiento, ejecución y reporte son deterministas y observables.
-5. El código y las dependencias de test no cambian el artefacto de producción.
-6. El núcleo no introduce clases de test, annotations, macros, reflection ni
+4. Logs, fallo inmediato y skip explícito funcionan también desde helpers y
+   concurrencia estructurada sin obligar a recibir ni propagar un `TestContext`.
+5. Descubrimiento, ejecución y reporte son deterministas y observables.
+6. El código y las dependencias de test no cambian el artefacto de producción.
+7. El núcleo no introduce clases de test, annotations, macros, reflection ni
    hooks de ciclo de vida.
 
 Forma mínima:
@@ -95,7 +99,8 @@ ordinario sin exponer el runner dentro del programa.
 
 La declaración no sustituye a una librería de assertions. El lenguaje define
 el test como unidad ejecutable; `assert` proporciona la comprobación mínima y
-`std.testing` añadirá comparaciones, diffs y recursos de test como API ordinaria.
+`std.testing` fija tres operaciones de control selladas y añadirá comparaciones,
+diffs y recursos de test como API ordinaria.
 
 ## 2. Compatibilidad y límite de edición
 
@@ -124,6 +129,10 @@ tanto:
 Reservarlas globalmente evita keywords contextuales cuya interpretación dependa
 del source set o del lugar del parser.
 
+`log`, `failNow` y `skip` no son keywords ni nombres predeclarados. Son
+declaraciones del módulo test-only `std.testing` y se resuelven mediante un
+`import` ordinario.
+
 ### 2.3 Una sola forma por concepto
 
 No existen formas equivalentes como:
@@ -132,6 +141,7 @@ No existen formas equivalentes como:
 @test
 #[test]
 test fn name()
+test name(context)
 fn testName(test: Test)
 testing.register(...)
 describe name { ... }
@@ -509,6 +519,12 @@ partir de un path físico; el frontend recibe el plan ya resuelto.
 Solo una fuente `unit-test` o `integration-test` puede contener `test_decl` o
 `suite_decl`. Encontrar cualquiera en `production` produce `E2001`.
 
+`std.testing` es un módulo test-only. Solo forma parte del grafo cerrado de un
+artefacto de test; importarlo desde una fuente o dependencia activa de
+producción produce `E2003`. Esta restricción cubre tanto sus tres operaciones
+selladas como los helpers portables que se añadan posteriormente: ningún
+producto publicable adquiere una dependencia sobre el runner.
+
 ### 5.2 Descubrimiento convencional de `tondo test`
 
 Cuando el manifiesto no declara source sets de test explícitos, el comando
@@ -634,6 +650,8 @@ El artefacto contiene:
 - Source sets y paths lógicos activos.
 - Árbol ordenado de suites/tests, parent IDs y source ranges.
 - Entradas privadas de setup y de tests hoja.
+- Operaciones verificadas de control de testing y la asociación de cada entrada
+  con su envelope privado de ejecución.
 - Layout comprobado de los snapshots `Copy + Send + Share` que cruzan cada
   arista del árbol.
 - Hashes necesarios para reproducir el build.
@@ -653,7 +671,9 @@ point del test.
 
 Una fuente de test no puede contener sentencias top-level ni un script raíz. Los
 helpers son declaraciones y los efectos comienzan dentro del setup de una suite
-seleccionada o del body de un test hoja.
+seleccionada o del body de un test hoja. Un helper puede invocar
+`std.testing`, pero la operación solo se observa al alcanzarlo desde una de esas
+entradas.
 
 ## 7. Modelo de ejecución
 
@@ -668,6 +688,7 @@ Cada test hoja obtiene:
 - Un scope raíz nuevo.
 - Estado de runtime, roots, tasks y handles no observable desde otra hoja salvo
   los snapshots de suite permitidos por 4.3.
+- Un envelope privado de control y un buffer ordenado de logs.
 - Captura separada de stdout y stderr del runtime Tondo.
 - Presupuesto de recursos independiente.
 - Un resultado independiente.
@@ -684,7 +705,51 @@ entre entradas. Los efectos externos —filesystem, procesos, red, reloj o
 servicios— no se revierten mágicamente y deben aislarse mediante nombres,
 recursos y cleanup explícitos.
 
-### 7.2 Lifecycle de suite
+### 7.2 Contexto estructurado del runner
+
+Cada entrada ejecutada queda asociada internamente a un envelope conceptual:
+
+~~~text
+TestExecution {
+    node_id
+    log_sink
+    stdout_sink
+    stderr_sink
+    cancellation
+    limits
+}
+~~~
+
+Esta forma explica el contrato; no declara un record Tondo. El envelope:
+
+- No es un valor, parámetro, binding, tipo ni capability visible desde fuente.
+- No puede obtenerse, almacenarse, moverse, compararse, imprimirse ni
+  falsificarse.
+- Pertenece a la raíz de ejecución que el runner ya conoce al invocar el ID de
+  suite o test.
+- Acompaña a frames y tasks, no al thread del host. Llamadas, closures y tasks
+  creadas mediante concurrencia estructurada heredan el mismo enlace aunque
+  migren entre workers.
+- Deja de existir únicamente después de completar hijos y cleanup. Ninguna task
+  puede registrar eventos una vez finalizado el nodo.
+
+Cada test hoja recibe un envelope distinto. El setup y teardown de una suite
+comparten el envelope de esa suite; sus descendientes reciben otros envelopes y
+no pueden escribir en el de la suite ancestral.
+
+Las operaciones selladas de `std.testing` emiten un evento o terminal hacia el
+envelope activo. No consultan una API `currentTest()`: el runner atribuye el
+evento al nodo cuya entrada está conduciendo. Por ello funcionan desde helpers
+y tasks estructuradas sin un parámetro `TestContext`, pero no introducen un
+global mutable ni un thread-local observable.
+
+HIR, MIR y bytecode representan estas operaciones mediante un catálogo cerrado.
+Sus verifiers solo las admiten dentro de un artefacto de test y ningún backend
+puede implementarlas como una escritura a un contexto global compartido.
+`std.testing` no exige la capability `console`; sus logs utilizan el canal del
+runner, no stdout ni stderr.
+
+### 7.3 Lifecycle de suite
 
 Una suite se ejecuta de esta forma:
 
@@ -712,6 +777,20 @@ Si el setup termina por error, pánico, resource limit, timeout o infraestructur
 - Suites y tests hermanos fuera de ese subárbol continúan cuando el aislamiento
   sigue siendo fiable.
 
+Si `testing.skip(reason)` alcanza el runner como terminal primario del setup:
+
+- El runner completa hijos estructurados y cleanup ya registrado.
+- Si ese cleanup termina correctamente, la suite queda `skipped` con fase
+  `setup` y conserva la razón una sola vez.
+- Ningún descendiente comienza; sus suites y hojas seleccionadas quedan
+  `blocked-skip` y señalan mediante `blocked_by` la suite que conserva la razón.
+- Suites y tests hermanos fuera del subárbol continúan.
+
+Un pánico, resource limit, timeout o fallo de infraestructura durante ese
+cleanup prevalece sobre el skip. La suite conserva el fallo con fase `setup` y
+sus descendientes pasan a `blocked-setup`; un skip nunca oculta cleanup
+incompleto.
+
 Si un `defer` produce pánico durante el unwind de un setup fallido, se aplica la
 prioridad de terminales de Tondo 0.1 y la fase continúa siendo `setup`: la suite
 nunca llegó a admitir descendientes. `teardown` designa exclusivamente el
@@ -728,7 +807,7 @@ Este lifecycle equivale a setup/teardown una vez por contenedor. No implica
 `beforeEach` ni `afterEach`: cada hoja construye sus fixtures propias mediante
 helpers y `defer`.
 
-### 7.3 Inicio y terminación de entradas
+### 7.4 Inicio y terminación de entradas
 
 El runner conduce cada body de test y setup de suite —síncronos o async según la
 inferencia ordinaria— y cada teardown síncrono hasta uno de estos terminales:
@@ -736,6 +815,7 @@ inferencia ordinaria— y cada teardown síncrono hasta uno de estos terminales:
 - Retorno normal.
 - Error recuperable no manejado.
 - Pánico.
+- Skip solicitado desde body de test o setup de suite.
 - Límite de recursos.
 - Timeout del runner.
 - Fallo de infraestructura.
@@ -746,20 +826,41 @@ marca como finalizada mientras quede cleanup estructurado pendiente. El tiempo
 durante el que una suite solo espera a sus descendientes no ejecuta código de
 usuario y no constituye una cuarta fase.
 
-### 7.4 Pánico y continuidad
+Un skip de test solo se confirma después de completar ese protocolo. Si un
+pánico o terminal forzado impide el cleanup, prevalece el fallo.
+
+Si `testing.skip` se ejecuta en una task hija, el envelope marca la entrada
+completa como pendiente de skip, solicita cancelación a sus hermanas y lo
+propaga a la propietaria en su siguiente punto de cancelación o al abandonar el
+`scope`, igual que un pánico de hijo según 11.14 de la especificación base. No se
+limita a terminar silenciosamente el hijo. Antes de confirmar el resultado se
+espera el cleanup estructurado de todos ellos.
+
+Si varias tasks hijas solicitan skip antes de completar ese teardown, la creada
+primero por orden de evaluación aporta la razón. Un skip ya producido por la
+propietaria conserva prioridad sobre skips derivados de sus hijos. Cualquier
+pánico del propietario o de un hijo prevalece sobre todos los skips.
+
+`testing.skip` no puede utilizarse para abandonar cleanup. Si se invoca durante
+un `defer`, unwind o teardown de suite, produce `P2001` y el nodo falla como
+`failed-panic`; un pánico primario anterior conserva la precedencia ordinaria.
+`testing.log` y `testing.failNow` sí conservan su significado durante cleanup:
+el primero registra contexto y el segundo produce el pánico `P0007`.
+
+### 7.5 Pánico y continuidad
 
 Un pánico termina el test actual después del unwind, no el proceso completo del
 runner. El runner conserva el código `P`, ubicación y stack trace disponibles y
 continúa con tests posteriores cuando el aislamiento sigue siendo válido.
 
-Un pánico en setup o teardown pertenece a la suite y sigue 7.2. Un abort fuera
+Un pánico en setup o teardown pertenece a la suite y sigue 7.3. Un abort fuera
 del modelo de pánico, corrupción del runtime o imposibilidad de restablecer
 aislamiento se clasifica como fallo de infraestructura. El runner puede detener
 el bosque restante porque ya no puede garantizar resultados fiables. En ese
 caso termina con exit `3` y no emite un reporte canónico incompleto; todo reporte
-`tondo-test-report-0.2/2` válido clasifica cada hoja seleccionada.
+`tondo-test-report-0.2/3` válido clasifica cada hoja seleccionada.
 
-### 7.5 Errores recuperables
+### 7.6 Errores recuperables
 
 Un valor que alcanza el canal `E` inferido hace fallar el test o fase de suite
 actual. El reporte conserva como mínimo la identidad nominal visible de su tipo
@@ -770,7 +871,7 @@ serialización estable del payload.
 Para verificar un error esperado, el test lo consume localmente con `match`; no
 deja que alcance al runner.
 
-### 7.6 Inputs de host
+### 7.7 Inputs de host
 
 El runner no proporciona parámetros mágicos a suites ni tests. Los argumentos
 de proceso del programa Tondo son vacíos.
@@ -789,12 +890,14 @@ declarados. La invocación oficial:
 Una implementación puede ofrecer un target de test con capacidades adicionales,
 pero ese target es distinto y debe quedar visible en el reporte.
 
-### 7.7 Límites y timeouts
+### 7.8 Límites y timeouts
 
 Cada test hoja y cada fase activa de setup o teardown se ejecuta con límites
-finitos de instrucciones o trabajo, memoria, profundidad y output. El toolchain
-publica sus defaults y registra los valores efectivos o el hash de su resource
-profile en el reporte.
+finitos de instrucciones o trabajo, memoria, profundidad y output. Los bytes de
+`testing.log`, stdout y stderr consumen el presupuesto de output del mismo nodo;
+un log no ofrece un canal ilimitado alternativo. El toolchain publica sus
+defaults y registra los valores efectivos o el hash de su resource profile en
+el reporte.
 
 `--timeout` aplica de forma independiente a un body de test, a un setup de suite
 y a un teardown de suite. El reloj de una suite se pausa mientras solo espera
@@ -857,8 +960,9 @@ usuario entre setup, test y teardown. Una suite termina su setup antes de
 programar hijos y no comienza teardown hasta que todos sus descendientes
 seleccionados han terminado.
 
-El resultado final y la salida capturada continúan presentándose en orden
-canónico, no en orden de finalización.
+El resultado final, los logs y la salida capturada continúan presentándose por
+nodo en orden canónico, no en orden de finalización. Eventos de dos envelopes
+distintos nunca se intercalan dentro del buffer del otro.
 
 El runner no garantiza un orden de efectos externos entre tests paralelos. Una
 suite que comparta un servicio bajo `--jobs N` es responsable de que ese servicio
@@ -886,6 +990,17 @@ verde.
 Campañas que repitan un test deben solicitarlo fuera del resultado canónico,
 registrar cada intento y no sustituir la regresión determinista.
 
+### 8.6 Sin fail-fast global
+
+`testing.failNow` termina únicamente el nodo activo; no es una política del
+runner. Tras registrar el resultado y completar cleanup, continúan hermanos y
+raíces posteriores cuando el aislamiento lo permite.
+
+La edición 0.2 no define `--fail-fast`. Detener el runner dejaría hojas
+seleccionadas sin ejecutar y exigiría otro estado y otra política de scheduling,
+especialmente bajo `--jobs N`. Una edición posterior puede añadirlo únicamente
+si reporta honestamente esos nodos y conserva una frontera determinista.
+
 ## 9. Resultados, diagnósticos y salida
 
 ### 9.1 Estados de test y suite
@@ -897,53 +1012,67 @@ estados:
 | Estado | Significado |
 |---|---|
 | `passed` | La entrada devolvió `Unit` normalmente. |
+| `skipped` | La entrada comenzó y solicitó skip explícito; cleanup terminó correctamente. |
 | `failed-error` | Un error recuperable alcanzó el runner. |
 | `failed-panic` | Ocurrió un pánico Tondo después de unwind. |
 | `resource-limit` | Se agotó un presupuesto configurado. |
 | `timeout` | Venció el límite wall-clock del runner. |
 | `infrastructure` | El harness, runtime o aislamiento dejó de ser fiable. |
 | `blocked-setup` | No se invocó porque falló una suite ancestral seleccionada. |
+| `blocked-skip` | No se invocó porque una suite ancestral solicitó skip. |
 
-`blocked-setup` no contiene un `failure` duplicado; identifica mediante
-`blocked_by` la suite que conserva la causa. No significa ignored, skipped ni
-éxito.
+`blocked-setup` y `blocked-skip` identifican mediante `blocked_by` la suite que
+conserva la causa o razón y no duplican su payload. Ninguno significa ignored ni
+éxito; `blocked-skip` es neutral únicamente bajo la política default de skips.
 
-Cada suite necesaria conserva uno de los seis estados ejecutados anteriores o
-`blocked-setup` cuando una suite ancestral impidió incluso su setup. Para una
-suite ejecutada, `phase` vale `setup` o `teardown` en un fallo y `null` al pasar.
-El estado `passed` solo describe su lifecycle propio y no agrega resultados de
-descendientes.
+Cada suite necesaria conserva uno de los siete estados ejecutados anteriores,
+`blocked-setup` o `blocked-skip`. Para una suite ejecutada, `phase` vale `setup`
+o `teardown` en un fallo, `setup` en un skip propio y `null` al pasar o quedar
+bloqueada. El estado `passed` solo describe su lifecycle propio y no agrega
+resultados de descendientes.
 
 Las combinaciones válidas son cerradas:
 
-- `passed` y `blocked-setup` siempre usan `phase: null`.
+- `passed`, `blocked-setup` y `blocked-skip` siempre usan `phase: null`.
+- `skipped` usa `phase: setup` en una suite y no tiene phase en un test.
 - Cualquiera de los cinco estados de fallo ejecutado puede usar
   `phase: setup`.
 - `phase: teardown` admite `failed-panic`, `resource-limit`, `timeout` o
   `infrastructure`. No admite `failed-error`, porque `defer` es infallible desde
-  el sistema de tipos y no puede propagar un error recuperable.
+  el sistema de tipos, ni `skipped`, porque cleanup no puede omitir un resultado
+  ya producido.
 
-No existe `ignored`, `expected-failure`, `flaky` ni `passed-after-retry` en este
-contrato.
+Un nodo `skipped` conserva una razón explícita y una ubicación en `skip`; su
+`failure` es `null`. `blocked-skip` conserva ambos campos en `null` y señala el
+nodo originario. No existe skip estático, `ignored`, `expected-failure`, `flaky`
+ni `passed-after-retry` en este contrato.
 
-### 9.2 `assert`
+### 9.2 `assert` y fallo inmediato
 
 `assert(false)` conserva el pánico `P0007`. Dentro de un test, el runner lo
 clasifica como `failed-panic`; dentro de setup o teardown hace fallar esa fase de
 suite. No introduce un segundo código ni una excepción recuperable.
 
+`testing.failNow(message)` es una assertion fallida incondicional con resultado
+estático `Never`. Produce el mismo `P0007`, ejecuta el mismo unwind y no detiene
+hermanos ni cambia la política del runner. Existe para expresar intención y
+control de flujo sin escribir `assert(false, message)`.
+
 La representación fuente de la condición, el mensaje, la ubicación y el stack
 trace se conservan según la especificación base. Una librería puede construir
 mensajes mejores, pero no alterar el terminal.
 
-### 9.3 Captura de output
+### 9.3 Logs y captura de output
 
-Stdout y stderr de cada entrada de suite o test se capturan por separado como
-UTF-8. El modo humano:
+Los logs, stdout y stderr de cada entrada de suite o test se capturan por
+separado. Cada llamada a `testing.log(message)` añade el `String` exacto como un
+elemento nuevo; no añade prefijo, nivel, timestamp ni salto de línea implícito.
+Los streams continúan siendo UTF-8. El modo humano:
 
 - Muestra siempre la identidad y el estado.
-- Muestra output de tests o suites fallidos.
-- Oculta output de entradas que pasan salvo `--show-output`.
+- Muestra siempre la razón y logs de nodos `skipped`.
+- Muestra logs y output de tests o suites fallidos.
+- Oculta logs y output de entradas que pasan salvo `--show-output`.
 - Nunca intercala bytes de dos entradas.
 
 El output de procesos hijos solo pertenece a la captura si el programa lo
@@ -956,7 +1085,9 @@ infraestructura pertenece a `failure`; no se añade artificialmente al
 
 En una suite, cada stream concatena los bytes producidos por su setup y por su
 teardown posterior en ese orden, sin incluir output de descendientes. Si la
-suite queda `blocked-setup`, ambos streams están vacíos.
+suite queda `blocked-setup` o `blocked-skip`, ambos streams y sus logs están
+vacíos. Los logs de una suite ejecutada siguen el mismo orden setup-teardown y
+no incluyen logs de descendientes.
 
 ### 9.4 Duración
 
@@ -970,14 +1101,16 @@ canónico reproducible.
 
 | Exit | Condición |
 |---|---|
-| `0` | Compilación correcta, todas las suites necesarias y tests seleccionados `passed`; o selección vacía solicitada con `--allow-empty`. |
-| `1` | Error de compilación, selección vacía no permitida o al menos una suite/test no pasó. |
+| `0` | Compilación correcta, ningún nodo falló ni quedó `blocked-setup`, y todo skip se permite por la política default; o selección vacía solicitada con `--allow-empty`. |
+| `1` | Error de compilación, selección vacía no permitida, algún nodo falló/quedó `blocked-setup`, o `--deny-skips` encontró `skipped`/`blocked-skip`. |
 | `2` | Uso inválido de CLI. |
 | `3` | Fallo interno del toolchain antes de producir un reporte fiable. |
 
 Un test que llame a APIs de proceso no puede elegir el exit status del runner.
 Un estado `infrastructure` que todavía permite un reporte íntegro usa exit `1`;
 si el runner no puede garantizar ni serializar ese reporte, usa exit `3`.
+`--deny-skips` solo modifica el exit status: no falsifica un skip como failure ni
+altera los estados o contadores canónicos.
 
 ## 10. Contrato de `tondo test`
 
@@ -992,6 +1125,7 @@ tondo test [--manifest <path>]
            [--diagnostic-format <human|json>]
            [--test-format <human|json>]
            [--show-output]
+           [--deny-skips]
            [--allow-empty]
 ~~~
 
@@ -1000,13 +1134,15 @@ Reglas:
 - Sin `--manifest`, el toolchain descubre el proyecto mediante su contrato
   ordinario y materializa un plan cerrado antes de compilar.
 - `--filter` y `--exact` seleccionan ejecución, no compilación.
-- `--list` no ejecuta bodies y no admite `--show-output`.
+- `--list` no ejecuta bodies y no admite `--show-output` ni `--deny-skips`.
 - `--jobs` vale `1` por defecto.
 - `--timeout` aplica por test hoja y por fase activa de suite, no al tiempo total
   del subárbol.
+- `--deny-skips` conserva resultados y reporte, pero usa exit `1` si cualquier
+  suite/test queda `skipped` o `blocked-skip`.
 - `--test-format human` es el default interactivo.
 - `--test-format json` emite exactamente un reporte
-  `tondo-test-report-0.2/2`, o una lista `tondo-test-list-0.2/2` con `--list`.
+  `tondo-test-report-0.2/3`, o una lista `tondo-test-list-0.2/3` con `--list`.
 - Los diagnostics de compilación conservan `--diagnostic-format` y su schema
   propio; no se insertan como strings ambiguos dentro de resultados de test.
 - Opciones desconocidas, repetidas cuando no son repetibles o combinaciones
@@ -1032,11 +1168,60 @@ test addsValues {
 `assert` sigue disponible fuera de tests y nunca se elimina de builds
 optimizados.
 
-### 11.2 Responsabilidad de `std.testing`
+### 11.2 Núcleo sellado y responsabilidad de `std.testing`
 
-La especificación de la librería estándar debe definir `std.testing` como un
-módulo ordinario, no como registro ni framework alternativo. Como mínimo debe
-considerar:
+El control mínimo del runner forma parte de esta especificación y tiene tres
+firmas exactas:
+
+~~~tondo
+pub fn log(message: String)
+pub fn failNow(message: String): Never
+pub fn skip(reason: String): Never
+~~~
+
+Se utilizan mediante resolución de módulo ordinaria:
+
+~~~tondo
+import std.testing
+
+fn connectService(): Client ! ConnectError {
+    testing.log("connecting to integration service")
+    Client.connect()
+}
+
+test importsUsers {
+    if not serviceAvailable() {
+        testing.skip("requires the integration service")
+    }
+
+    let client = connectService()?
+    let imported = client.importUsers()?
+
+    if imported != 42 {
+        testing.failNow("expected 42 users, found {imported}")
+    }
+}
+~~~
+
+Las firmas son monomórficas y reciben un solo `String`; interpolación y
+formatting ocurren antes de la llamada. No existen niveles de log, campos
+estructurados, attachments, timestamps ni una sobrecarga variádica en 0.2.
+
+Estas tres funciones son operaciones intrínsecas y selladas del artefacto de
+test:
+
+- `log` devuelve `Unit` y añade un elemento al buffer del nodo activo.
+- `failNow` produce `P0007` y tiene resultado `Never`.
+- `skip` exige una razón, produce el terminal cooperativo de skip y tiene
+  resultado `Never`.
+- Llamadas desde helpers, closures o tasks estructuradas conservan el envelope
+  de la entrada que las alcanzó.
+- Ninguna expone ID, nombre, path, estado, runner ni referencia a otro nodo.
+- No existe `TestContext`, `currentTest()`, registro runtime ni callback de
+  lifecycle.
+
+El resto de `std.testing` es librería ordinaria y su especificación estándar
+debe considerar como mínimo:
 
 - Igualdad con impresión de actual y esperado.
 - Comparación de texto con diff.
@@ -1049,7 +1234,8 @@ considerar:
 
 Sus funciones pueden terminar mediante `assert`/pánico o devolver un error
 documentado. No reciben acceso reflectivo a valores privados ni pueden registrar
-suites o tests en runtime.
+suites o tests en runtime. La especificación estándar puede añadir helpers, pero
+no cambiar las tres firmas, sus terminales ni el envelope fijado aquí.
 
 ### 11.3 Setup y teardown
 
@@ -1241,6 +1427,30 @@ Seleccionar `...::userApi::validation::rejectsEmptyEmail` ejecuta únicamente lo
 setups de `userApi` y `validation`, esa hoja y los teardowns correspondientes.
 No ejecuta `createsUser`.
 
+### 12.6 Skip de una suite con razón observable
+
+~~~tondo
+import std.testing
+
+suite externalSearch {
+    if not searchServiceAvailable() {
+        testing.log("search service probe did not succeed")
+        testing.skip("requires the external search service")
+    }
+
+    let endpoint: String = searchServiceEndpoint()
+
+    test findsExactTitle {
+        assert(search(endpoint, "Tondo")?.length() == 1)
+    }
+}
+~~~
+
+Si el servicio no está disponible, `externalSearch` conserva ambos mensajes,
+queda `skipped` y `findsExactTitle` queda `blocked-skip`. El modo normal no lo
+convierte en fallo; `tondo test --deny-skips` termina con exit `1` conservando
+los mismos estados.
+
 ## 13. Características deliberadamente ausentes
 
 El contrato inicial no incluye:
@@ -1255,8 +1465,10 @@ El contrato inicial no incluye:
 - Hooks `beforeAll`, `afterAll`, `beforeEach` o `afterEach`.
 - Orden o dependencias entre tests.
 - Estado mutable compartido de suite.
-- Ignorados o expected failures dentro de fuente.
+- Ignorados, disabled tests o expected failures estáticos dentro de fuente.
+- Skip sin razón explícita.
 - Retries automáticos.
+- Fail-fast global que abandone hojas seleccionadas.
 - Un modo que elimine `assert`.
 - Una keyword separada para benchmarks.
 - Una keyword separada para property tests.
@@ -1280,9 +1492,17 @@ La edición 0.2 añade estos códigos al registro normativo:
 |---|---|---|
 | `E2001` | `test-node-outside-test-source` | Una declaración `suite` o `test` aparece en una fuente `production`, script o forma no clasificada como test. |
 | `E2002` | `duplicate-test-node` | Dos miembros suite/test producen la misma identidad o nombre de hermano dentro del mismo árbol. |
-| `E2003` | `invalid-test-source-declaration` | Una fuente de test intenta exportar API, alterar la unidad de producción sellada o ser consumida desde producción. |
+| `E2003` | `invalid-test-source-declaration` | Una fuente de test intenta exportar API, alterar la unidad de producción sellada o ser consumida desde producción; o producción intenta importar `std.testing`. |
 | `E2004` | `empty-test-suite` | Una suite no contiene ningún miembro directo y, por tanto, ningún test descendiente. |
 | `E2005` | `invalid-suite-capture` | Un descendiente intenta capturar `var`, préstamo, valor afín/terminal o un tipo que no cumple `Copy + Send + Share`. |
+
+El runtime de test añade un único pánico:
+
+| Código | Nombre estable | Condición primaria |
+|---|---|---|
+| `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo mientras ejecuta `defer`, unwind o teardown. |
+
+`testing.failNow` reutiliza `P0007`; no añade otro código.
 
 El resto reutiliza diagnósticos existentes:
 
@@ -1311,7 +1531,7 @@ ejemplo; la forma y los tipos de los campos son normativos:
 
 ~~~json
 {
-  "format": "tondo-test-report-0.2/2",
+  "format": "tondo-test-report-0.2/3",
   "edition": "0.2",
   "target": {
     "name": "tondo-vm-hosted",
@@ -1322,6 +1542,9 @@ ejemplo; la forma y los tipos de los campos son normativos:
   "selection": {
     "kind": "all",
     "value": null
+  },
+  "policy": {
+    "deny_skips": false
   },
   "limits": {
     "jobs": 1,
@@ -1341,6 +1564,8 @@ ejemplo; la forma y los tipos de los campos son normativos:
       "phase": null,
       "blocked_by": null,
       "failure": null,
+      "skip": null,
+      "logs": [],
       "stdout": "",
       "stderr": ""
     }
@@ -1357,6 +1582,8 @@ ejemplo; la forma y los tipos de los campos son normativos:
       "status": "passed",
       "blocked_by": null,
       "failure": null,
+      "skip": null,
+      "logs": [],
       "stdout": "",
       "stderr": ""
     }
@@ -1365,7 +1592,9 @@ ejemplo; la forma y los tipos de los campos son normativos:
     "selected": 1,
     "executed": 1,
     "passed": 1,
+    "skipped": 0,
     "blocked_setup": 0,
+    "blocked_skip": 0,
     "failed_error": 0,
     "failed_panic": 0,
     "resource_limit": 0,
@@ -1373,7 +1602,9 @@ ejemplo; la forma y los tipos de los campos son normativos:
     "infrastructure": 0,
     "suite_selected": 1,
     "suite_passed": 1,
+    "suite_skipped": 0,
     "suite_blocked_setup": 0,
+    "suite_blocked_skip": 0,
     "suite_failed": 0,
     "failed": 0
   }
@@ -1381,15 +1612,16 @@ ejemplo; la forma y los tipos de los campos son normativos:
 ~~~
 
 `selection.kind` es `all`, `filter` o `exact`; `value` es `null` para `all` y el
-texto exacto en los otros casos. `timeout_ms` es `null` solo para
-`--timeout none`. El resource profile contiene todos los presupuestos finitos
-del frontend, verifiers y runtime y se distribuye de forma recuperable por el
-toolchain; el hash del reporte identifica exactamente sus bytes canónicos.
+texto exacto en los otros casos. `policy.deny_skips` contiene el valor efectivo
+de `--deny-skips`. `timeout_ms` es `null` solo para `--timeout none`. El resource
+profile contiene todos los presupuestos finitos del frontend, verifiers y
+runtime y se distribuye de forma recuperable por el toolchain; el hash del
+reporte identifica exactamente sus bytes canónicos.
 
 `suites` contiene el bosque mínimo necesario para los tests seleccionados,
-incluidos nodos `blocked-setup`. `tests` contiene todas las hojas seleccionadas,
-se hayan ejecutado o bloqueado. Todos los campos aparecen incluso cuando están
-vacíos o son `null`; `kind` es `unit` o `integration`.
+incluidos nodos `blocked-setup` y `blocked-skip`. `tests` contiene todas las
+hojas seleccionadas, se hayan ejecutado o bloqueado. Todos los campos aparecen
+incluso cuando están vacíos o son `null`; `kind` es `unit` o `integration`.
 
 `parent` contiene el ID de la suite inmediata o `null` para un nodo top-level.
 `path` contiene únicamente los identificadores de suite y test posteriores al
@@ -1398,16 +1630,18 @@ nombre del test.
 
 Para una suite:
 
-- `phase` es `setup` o `teardown` cuando su propio lifecycle falla.
+- `phase` es `setup` o `teardown` cuando su propio lifecycle falla y `setup`
+  cuando solicita skip.
 - `phase` es `null` cuando pasa o queda bloqueada.
-- `blocked_by` es el ID de la primera suite fallida que impidió entrar en ella,
-  y es `null` en otro caso.
+- `blocked_by` es el ID de la primera suite fallida u omitida que impidió entrar
+  en ella, y es `null` en otro caso.
 - La pareja `status`/`phase` debe pertenecer al conjunto cerrado definido en
   9.1.
 
 Para un test, `blocked_by` sigue la misma regla y solo es no nulo con estado
-`blocked-setup`. No se admiten campos de extensión sin cambiar el identificador
-de formato.
+`blocked-setup` o `blocked-skip`. `logs` contiene un array de strings en orden
+observable. No se admiten campos de extensión sin cambiar el identificador de
+formato.
 
 ### 15.2 Orden y estabilidad
 
@@ -1416,24 +1650,28 @@ de formato.
 - `tests` se ordena por `id`.
 - Keys conocidas se serializan en el orden mostrado por el schema del
   toolchain.
+- `logs` conserva el orden observado dentro de su único envelope.
 - `stdout` y `stderr` contienen texto UTF-8 exacto.
-- `summary.selected = summary.executed + summary.blocked_setup`.
-- `summary.executed` es la suma exacta de `passed` y los cinco contadores de
-  fallo de test ejecutado.
+- `summary.selected = summary.executed + summary.blocked_setup +
+  summary.blocked_skip`.
+- `summary.executed` es la suma exacta de `passed`, `skipped` y los cinco
+  contadores de fallo de test ejecutado.
 - `summary.suite_selected` es la suma exacta de `suite_passed`,
-  `suite_blocked_setup` y `suite_failed`.
+  `suite_skipped`, `suite_blocked_setup`, `suite_blocked_skip` y
+  `suite_failed`.
 - `summary.suite_failed` cuenta suites en cualquiera de los cinco estados de
   fallo ejecutado; las suites bloqueadas no vuelven a contar la causa.
 - `summary.failed` es la suma de los cinco contadores de fallo de test y
-  `suite_failed`. Las hojas bloqueadas tampoco duplican el fallo de setup.
+  `suite_failed`. Skips y hojas bloqueadas no duplican ni incrementan ese
+  contador; `policy.deny_skips` puede producir exit `1` con `failed: 0`.
 - Duración, timestamps, PID, número de CPU, paths físicos y direcciones no
   aparecen en la forma canónica.
 - Paths de source dentro de failures son lógicos.
 
-### 15.3 Failure
+### 15.3 Failure y skip
 
-Cuando `status` es `passed` o `blocked-setup`, `failure` es `null`. En un estado
-de fallo ejecutado contiene exactamente:
+Cuando `status` es `passed`, `skipped`, `blocked-setup` o `blocked-skip`,
+`failure` es `null`. En un estado de fallo ejecutado contiene exactamente:
 
 ~~~json
 {
@@ -1471,17 +1709,36 @@ Un test o suite `blocked-setup` explica su causa únicamente mediante
 `blocked_by`; el nodo señalado contiene el único objeto `failure` normativo. Un
 fallo de teardown de suite no reemplaza failures de tests ya ejecutados.
 
+`skip` solo es no nulo en el test o suite que ejecutó `testing.skip`. Contiene
+exactamente:
+
+~~~json
+{
+  "reason": "requires the external search service",
+  "source": {
+    "file": "tests/search.to",
+    "start": 118,
+    "end": 171
+  }
+}
+~~~
+
+`reason` conserva el `String` exacto y `source` es la ubicación lógica de la
+llamada. Un nodo `blocked-skip` tiene `skip: null` y explica su razón únicamente
+mediante `blocked_by`; el nodo señalado contiene el único objeto `skip`
+normativo. `failure` y `skip` nunca son no nulos a la vez.
+
 Campos privados y payloads opacos no se serializan por reflection.
 
 ### 15.4 Lista machine-readable
 
-`--list --test-format json` emite `tondo-test-list-0.2/2`. Comparte `edition`,
+`--list --test-format json` emite `tondo-test-list-0.2/3`. Comparte `edition`,
 `target`, `compiled` y `selection`, pero contiene descriptores separados sin
-estado, phase, failure, bloqueo ni output:
+estado, phase, failure, skip, bloqueo, logs ni output:
 
 ~~~json
 {
-  "format": "tondo-test-list-0.2/2",
+  "format": "tondo-test-list-0.2/3",
   "edition": "0.2",
   "target": {
     "name": "tondo-vm-hosted",
@@ -1548,26 +1805,37 @@ Una implementación de esta extensión debe publicar una suite distinta a
    archivos.
 6. Capturas válidas `let: Copy + Send + Share` y rechazo de `var`, préstamos,
    valores afines y obligaciones terminales.
-7. Setup síncrono, async, infallible y fallible inferido.
-8. Ejecución de setup exactamente una vez y solo para subárboles seleccionados.
-9. Nesting exterior-interior, teardown interior-exterior y LIFO de `defer`.
-10. Fallo de setup, `blocked-setup`, causa única y continuidad de hermanos.
-11. Fallo de teardown sin reescribir resultados de descendientes.
-12. Retorno normal, error, pánico, assert, resource limit y timeout de tests.
-13. `defer`, terminal obligations y unwind en terminales de suite/test.
-14. Async, `scope`, `spawn`, cancelación y pánico de hijos.
-15. Unit overlay con acceso privado que no repara producción inválida.
-16. Integration root sin acceso privado.
-17. Separación exacta entre grafo de producción y dev-dependencies.
-18. Filtros, exact match de suite/test, list, selección vacía y allow-empty.
-19. Orden serial, lifecycle jerárquico y presentación estable bajo `--jobs N`.
-20. Captura separada de stdout/stderr para suites y tests.
-21. Reportes `tondo-test-report-0.2/2` y `tondo-test-list-0.2/2`, invariantes de
-    summary, bloqueos y rechazo de schema inválido.
-22. Targets y capabilities distintos.
-23. Ausencia total de suites, tests y dev-dependencies en productos de
-    producción.
-24. Ejecución individual mediante `--exact` equivalente a la misma hoja dentro
+7. Firmas exactas y test-only de `std.testing`, rechazo desde producción y
+   ausencia de `TestContext`, `currentTest()` o identidad observable.
+8. Envelope no falsificable, propagación por helpers/closures/tasks
+   estructuradas, aislamiento paralelo y rechazo verifier de operaciones
+   forjadas.
+9. `testing.log` en body/setup/teardown y helpers, asociación exacta, orden,
+   límite de output y separación de stdout/stderr.
+10. `testing.failNow: Never`, `P0007`, unwind y continuidad de hermanos.
+11. Skip de hoja/setup, razón única, `blocked-skip`, cleanup y precedencia,
+    `P2001`, policy default y `--deny-skips`.
+12. Setup síncrono, async, infallible y fallible inferido.
+13. Ejecución de setup exactamente una vez y solo para subárboles seleccionados.
+14. Nesting exterior-interior, teardown interior-exterior y LIFO de `defer`.
+15. Fallo de setup, `blocked-setup`, causa única y continuidad de hermanos.
+16. Fallo de teardown sin reescribir resultados de descendientes.
+17. Retorno normal, error, pánico, assert, resource limit y timeout de tests.
+18. `defer`, terminal obligations y unwind en terminales de suite/test.
+19. Async, `scope`, `spawn`, cancelación y pánico de hijos.
+20. Unit overlay con acceso privado que no repara producción inválida.
+21. Integration root sin acceso privado.
+22. Separación exacta entre grafo de producción y dev-dependencies.
+23. Filtros, exact match de suite/test, list, selección vacía, allow-empty y
+    combinaciones CLI de deny-skips.
+24. Orden serial, lifecycle jerárquico y presentación estable bajo `--jobs N`.
+25. Captura separada de logs/stdout/stderr para suites y tests.
+26. Reportes `tondo-test-report-0.2/3` y `tondo-test-list-0.2/3`, invariantes de
+    summary, skips, bloqueos y rechazo de schema inválido.
+27. Targets y capabilities distintos.
+28. Ausencia total de suites, tests, `std.testing` y dev-dependencies en
+    productos de producción.
+29. Ejecución individual mediante `--exact` equivalente a la misma hoja dentro
     del árbol completo bajo inputs idénticos.
 
 La VM de referencia y cada backend nativo deben ejecutar las mismas fuentes y
@@ -1613,6 +1881,24 @@ test loadsValue {
 }
 ~~~
 
+### Log, fallo inmediato y skip
+
+~~~tondo
+import std.testing
+
+test externalBehavior {
+    testing.log("starting external behavior")
+
+    if not prerequisiteAvailable() {
+        testing.skip("requires the external prerequisite")
+    }
+
+    if not behaviorIsCorrect() {
+        testing.failNow("behavior was not correct")
+    }
+}
+~~~
+
 ### Tabla
 
 ~~~tondo
@@ -1632,11 +1918,13 @@ tondo test --filter parser
 tondo test --exact application::unit::parser::rejectsInvalidToken
 tondo test --exact application::integration::users::userApi
 tondo test --jobs 4
+tondo test --deny-skips
 tondo test --test-format json
 ~~~
 
 ### Regla de diseño
 
 > `suite` aporta jerarquía y lifecycle léxico; `test` identifica una hoja
-> aislada. El código de ambos sigue siendo Tondo ordinario y la ergonomía
-> adicional pertenece a `std.testing`.
+> aislada. `std.testing` controla el nodo mediante un envelope estructurado que
+> nunca se expone como valor; el resto del código continúa siendo Tondo
+> ordinario.

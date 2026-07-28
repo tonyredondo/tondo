@@ -2,7 +2,7 @@
 
 **Estado:** M10 y Gate G5 cerrados; M10.5 es el siguiente milestone
 
-**Versión del tracker:** 0.85
+**Versión del tracker:** 0.86
 
 **Última actualización:** 2026-07-28
 
@@ -239,10 +239,12 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   para Tondo 0.2: `suite` es un contenedor estático con setup léxico y teardown
   por `defer`; `test` es siempre una hoja. Mantiene Tondo 0.1 y
   `tondo-conformance-0.1` inmutables, separa unit overlays de integration roots
-  y fija árbol/identidad, capturas `Copy + Send + Share`, inferencia de
-  error/async, aislamiento, selección, límites, output, exit status, reporte
-  `tondo-test-report-0.2/2` y listado `tondo-test-list-0.2/2`. No se introducen
-  attributes, clases, reflection, registro runtime, hooks ni retries implícitos.
+  y fija árbol/identidad, capturas `Copy + Send + Share`, envelope estructurado,
+  `std.testing.log/failNow/skip`, inferencia de error/async, aislamiento,
+  selección, límites, output, exit status, reporte
+  `tondo-test-report-0.2/3` y listado `tondo-test-list-0.2/3`. No se introducen
+  `TestContext`, attributes, clases, reflection, registro runtime, hooks ni
+  retries implícitos.
 
 ### 3.3 Estructura inicial recomendada
 
@@ -2328,8 +2330,9 @@ de M10.6, STD-0.1, M11 y STD-0.2.
 de lenguaje posterior a Tondo 0.1. El resultado es una declaración
 `test name { ... }` para cada hoja y una declaración `suite name { ... }` para
 jerarquía y lifecycle compartido, unit tests con acceso privado controlado,
-integration tests contra API pública y un runner determinista que pueda
-utilizarse para construir y validar la stdlib.
+integration tests contra API pública, control sellado de log/fallo/skip sin
+contexto visible y un runner determinista que pueda utilizarse para construir y
+validar la stdlib.
 
 **Dependencia:** la implementación comienza únicamente después de Gate H0. El
 diseño queda fijado antes para que inventario, matriz normativa y CI conozcan el
@@ -2345,9 +2348,10 @@ seleccionar la edición 0.2.
 
 - [x] **UTEST-SPEC-001 — Fijar el contrato normativo de testing.**
   `TONDO_TESTING_SPEC.md` define keywords, grammar, árbol suite/test, formato,
-  identidad, source classes, overlays, capturas, lifecycle, inferencia,
-  aislamiento, resultados, CLI, reporte, stdlib boundary, diagnósticos y
-  conformidad sin depender de una implementación provisional.
+  identidad, source classes, overlays, capturas, lifecycle, envelope,
+  `std.testing.log/failNow/skip`, inferencia, aislamiento, resultados, CLI,
+  reporte, stdlib boundary, diagnósticos y conformidad sin depender de una
+  implementación provisional.
 
 - [ ] **UTEST-EDITION-001 — Materializar Tondo 0.2 como edición separada.**
   Consolidar la especificación de lenguaje 0.2, añadir `suite` y `test` a su
@@ -2370,7 +2374,9 @@ seleccionar la edición 0.2.
 - [ ] **UTEST-DEPS-001 — Separar dev-dependencies del grafo de producción.**
   Fijarlas por PackageId/hash en lockfile, impedir imports desde producción y
   demostrar mediante interfaces y artefactos comparados que añadir o cambiar
-  una dev-dependency no altera el producto publicable.
+  una dev-dependency no altera el producto publicable. `std.testing` y cualquier
+  operación de control deben quedar ausentes de interfaces y productos de
+  producción.
 
 ### 17.2 Frontend y semántica estática
 
@@ -2420,81 +2426,103 @@ seleccionar la edición 0.2.
   otra entrada privada `async? fn(): Unit ! E` sin `return`; inferir una unión
   cerrada `E: Discard`, admitir `fail`, `?`, `await` y `scope` donde corresponda
   y reutilizar todos los checks ordinarios de tipos, ownership, préstamos,
-  terminales, `defer`, `Send`, `Share` y `unsafe`.
+  terminales, `defer`, `Send`, `Share` y `unsafe`. Resolver el módulo test-only
+  `std.testing` con las tres firmas exactas, tipos `Unit`/`Never` y `E2003` al
+  cruzar a producción.
 
 ### 17.3 Lowering, runtime y CLI
 
 - [ ] **UTEST-LOWER-001 — Bajar entradas de test por el pipeline común.** HIR,
   MIR, bytecode y sus admission verifiers representan árbol/parent, entradas de
-  setup, snapshots de entorno, identidad, source span, error, async, cleanup y
-  terminales sin crear un segundo frontend o una ruta de ejecución no
-  verificada. `main` nunca se ejecuta en un test target.
+  setup, snapshots de entorno, identidad, source span, error, async, cleanup,
+  `TestLog`, `TestFailNow` y `TestSkip` sin crear un segundo frontend o una ruta
+  de ejecución no verificada. `main` nunca se ejecuta en un test target.
+
+- [ ] **UTEST-CONTROL-001 — Implementar el envelope sellado de ejecución.** Cada
+  suite/test recibe node ID, log/stdout/stderr sinks, cancelación y límites en
+  estado privado del runtime, nunca como valor o thread-local Tondo. Helpers,
+  closures y tasks estructuradas heredan el enlace; verifiers rechazan
+  operaciones forjadas o presentes en artefactos de producción. Implementar
+  `log`, `failNow` con `P0007`, `skip`, precedencia de cleanup y `P2001` sin
+  exponer `TestContext`, `currentTest()` ni identidad del nodo. Un skip de hijo
+  marca la entrada completa, cancela el resto del scope y se propaga a la task
+  propietaria con la prioridad determinista fijada por el lenguaje.
 
 - [ ] **UTEST-RUNTIME-001 — Ejecutar cada hoja en una raíz aislada.** Estado,
-  roots, heap observable, tasks, handles, pánicos, stdout, stderr y presupuestos
-  no cruzan hojas salvo snapshots de suite comprobados. Retorno, error, pánico,
-  resource limit, timeout e infrastructure producen exactamente los estados
-  normativos; los terminales de lenguaje completan unwind y cleanup, mientras
-  una terminación forzada garantiza aislamiento sin fingir que ejecutó `defer`.
+  roots, heap observable, tasks, handles, pánicos, logs, stdout, stderr,
+  envelopes y presupuestos no cruzan hojas salvo snapshots de suite comprobados.
+  Retorno, skip, error, pánico, resource limit, timeout e infrastructure
+  producen exactamente los estados normativos; los terminales cooperativos
+  completan unwind y cleanup, mientras una terminación forzada garantiza
+  aislamiento sin fingir que ejecutó `defer`.
 
 - [ ] **UTEST-SUITE-001 — Implementar lifecycle jerárquico de suite.** Ejecutar
   setup una vez y solo si existe una hoja seleccionada, conservar su entorno y
   guards, entrar de fuera hacia dentro y hacer teardown de dentro hacia fuera
   después de todos los descendientes. Un fallo de setup bloquea solo su
   subárbol, ejecuta cleanup realmente observable y permite continuar hermanos;
-  un fallo de teardown no reescribe resultados ya emitidos.
+  un fallo de teardown no reescribe resultados ya emitidos. Un skip de setup
+  produce `skipped`/`blocked-skip`; un fallo durante su cleanup prevalece y
+  convierte descendientes en `blocked-setup`.
 
 - [ ] **UTEST-LIMIT-001 — Hacer límites y timeout terminales reales.** Publicar
   defaults finitos, aplicar `--timeout` por hoja y por fase setup/teardown sin
-  contar la espera de descendientes, registrar valores efectivos y garantizar
-  que una entrada no cooperativa no continúa tras `timeout`. OOM, abort o
-  pérdida de aislamiento nunca se presentan como assertion failure ordinario.
+  contar la espera de descendientes, cargar logs/stdout/stderr al mismo
+  presupuesto de output, registrar valores efectivos y garantizar que una
+  entrada no cooperativa no continúa tras `timeout`. OOM, abort o pérdida de
+  aislamiento nunca se presentan como assertion failure ordinario.
 
 - [ ] **UTEST-CLI-001 — Añadir `tondo test`.** Implementar manifest/default
   discovery, `--filter`, `--exact`, `--list`, `--jobs`, `--timeout`,
-  `--test-format`, `--show-output` y `--allow-empty`, incluidas exclusiones,
-  parsing estricto y exit codes 0/1/2/3. Primero compila toda la suite y el
-  selector solo limita ejecución. `--filter` compara hojas; `--exact` acepta una
-  hoja o una suite y en este último caso selecciona su subárbol.
+  `--test-format`, `--show-output`, `--deny-skips` y `--allow-empty`, incluidas
+  exclusiones, parsing estricto y exit codes 0/1/2/3. Primero compila toda la
+  suite y el selector solo limita ejecución. `--filter` compara hojas;
+  `--exact` acepta una hoja o una suite y en este último caso selecciona su
+  subárbol. No implementar `--fail-fast` bajo este contrato.
 
 - [ ] **UTEST-SCHED-001 — Fijar orden y paralelismo observable.** El default
   ejecuta hojas con jobs=1 en orden de ID y respeta el bracketing de suites.
   Jobs explícitos limitan conjuntamente setup/test/teardown y pueden cambiar
-  completion order, pero setup precede hijos, teardown los espera, captura,
-  resultados y reporte final permanecen ordenados y nunca intercalan streams.
+  completion order, pero setup precede hijos, teardown los espera y cada
+  envelope conserva sus logs/streams. Resultados y reporte final permanecen
+  ordenados y nunca intercalan nodos.
 
 - [ ] **UTEST-REPORT-001 — Implementar los formatos machine-readable.**
-  Serializar `tondo-test-report-0.2/2` y `tondo-test-list-0.2/2` con arrays
-  separados de suites/tests, parents, paths, phase, `blocked_by`, selection,
-  resource profile, failure, streams separados y las invariantes exactas de
-  summary y status/phase. No incluir reloj, duración, PID, paths físicos ni
-  direcciones. Fallos de compilación continúan usando diagnostics estructurados
-  y no ejecutan setup ni bodies.
+  Serializar `tondo-test-report-0.2/3` y `tondo-test-list-0.2/3` con arrays
+  separados de suites/tests, parents, paths, phase, `blocked_by`, `failure`,
+  `skip`, logs, streams, policy deny-skips, selection, resource profile e
+  invariantes exactas de summary y status/phase. No incluir reloj, duración,
+  PID, paths físicos ni direcciones. Fallos de compilación continúan usando
+  diagnostics estructurados y no ejecutan setup ni bodies.
 
 ### 17.4 Evidencia, conformidad y dogfooding
 
 - [ ] **UTEST-CONF-001 — Crear una suite de conformidad Tondo 0.2 nueva.** No
   mutar manifests, cases, hashes ni observations de 0.1. La suite 0.2 cubre los
-  veinticuatro grupos mínimos enumerados por la spec de testing y tiene adaptador
+  veintinueve grupos mínimos enumerados por la spec de testing y tiene adaptador
   público para VM y futuros backends.
 
 - [ ] **UTEST-PROJECTS-001 — Añadir proyectos de aceptación completos.**
   Incluir package unitario, integration roots, dev-dependency, suites anidadas,
   servicio compartido, captura válida/inválida, async/error, fallos de
-  setup/teardown, `blocked-setup`, pánico/cleanup, host capabilities, filtros,
-  selección vacía y reporter JSON. Cada proyecto debe poder ejecutarse desde
-  una copia en otro path físico con observaciones canónicas iguales.
+  setup/teardown, `blocked-setup`, log directo/desde helper/task, `failNow`,
+  skip de hoja/suite, `blocked-skip`, `P2001`, deny-skips, pánico/cleanup, host
+  capabilities, filtros, selección vacía y reporter JSON. Cada proyecto debe
+  poder ejecutarse desde una copia en otro path físico con observaciones
+  canónicas iguales.
 
 - [ ] **UTEST-PLATFORM-001 — Validar la matriz publicada.** Linux ejecuta el
   gate canónico completo; Linux ARM64, macOS Intel/ARM64 y Windows ejecutan
-  discovery, paths jerárquicos, filtros de suite/test, lifecycle, aislamiento,
-  timeout, captura y reporte aplicables además del smoke test de binario.
+  discovery, paths jerárquicos, filtros de suite/test, lifecycle, envelopes,
+  logs/skips, aislamiento, timeout, captura y reporte aplicables además del
+  smoke test de binario.
 
 - [ ] **UTEST-DOGFOOD-001 — Probar componentes Tondo mediante `tondo test`.**
   Antes de Gate T0, mantener una pequeña biblioteca de aceptación escrita en
   Tondo con unit/integration tests y al menos una suite que comparta un recurso
-  real. No sustituye los tests Rust ni la conformidad; demuestra que la
-  experiencia pública funciona sin harness privado.
+  real. Debe usar `testing.log` desde un helper y probar `failNow`/skip en casos
+  de aceptación controlados. No sustituye los tests Rust ni la conformidad;
+  demuestra que la experiencia pública funciona sin harness privado.
 
 ### Gate T0 — Testing first-class conforme
 
@@ -2506,23 +2534,28 @@ seleccionar la edición 0.2.
   común y sus verifiers aceptan o rechazan árboles suite/test con diagnostics
   exactos.
 - [ ] Unit overlays ven privados sin alterar producción; integration roots solo
-  ven API pública; dev-dependencies nunca entran en productos publicables.
+  ven API pública; `std.testing`, dev-dependencies y operaciones test-only nunca
+  entran en productos publicables.
+- [ ] Cada entrada recibe un envelope no observable ni falsificable que sigue
+  frames/tasks y nunca se deriva de un thread-local del host; logs y terminales
+  se atribuyen al nodo exacto sin `TestContext` ni `currentTest()`.
 - [ ] Suites ejecutan setup una vez solo para subárboles seleccionados, permiten
   únicamente snapshots `let: Copy + Send + Share`, hacen teardown tras todos los
-  descendientes y reportan setup, teardown y bloqueo sin duplicar causas.
-- [ ] Retorno, error, `assert`, pánico, async, cancelación, ownership y `defer`
-  conservan cleanup; resource limits y timeout terminan la entrada sin romper
-  aislamiento ni afirmar cleanup de usuario no observado.
+  descendientes y reportan setup, teardown, `blocked-setup`, skip y
+  `blocked-skip` sin duplicar causas.
+- [ ] Retorno, error, `assert`, `failNow`, skip, pánico, async, cancelación,
+  ownership y `defer` conservan cleanup y precedencia; `P2001`, resource limits
+  y timeout no esconden cleanup de usuario no observado ni rompen aislamiento.
 - [ ] `tondo test` implementa discovery, compilación completa, selección,
   selección exacta de suite/test, ejecución serial/paralela, captura, exit codes
-  y selección vacía según contrato.
+  deny-skips y selección vacía según contrato; no inventa fail-fast.
 - [ ] El reporte JSON es canónico y reproducible; la salida humana no intercala
-  suites/tests y muestra fallos accionables.
+  suites/tests y muestra logs, razones y fallos accionables.
 - [ ] La suite Tondo 0.2 pasa en la VM y la matriz de plataformas aplicable está
   verde.
 - [ ] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
-  registration APIs, annotations, reflection, subtests dinámicos ni hooks
-  ocultos.
+  registration APIs, `TestContext`, annotations, reflection, subtests dinámicos
+  ni hooks ocultos.
 
 ---
 
@@ -2535,8 +2568,10 @@ ilustrativa no se vuelve pública por aparecer en un ejemplo.
 
 **Dependencia:** no comienza implementación pública hasta cerrar Gates H0 y T0.
 El diseño puede investigarse antes, pero ninguna firma se congela ni distribuye
-como estable sin sus modelos, tests y contrato de capability. `std.testing`
-utiliza el runner público de M10.6; no crea un segundo harness.
+como estable sin sus modelos, tests y contrato de capability. La única excepción
+es el núcleo test-only `std.testing.log/failNow/skip`, cuyas firmas y bridge
+quedan fijados y ejecutables en T0 porque forman parte del contrato del runner.
+STD-0.1 amplía ese mismo módulo; no crea un segundo harness.
 
 ### 18.1 Contrato y distribución
 
@@ -2589,8 +2624,9 @@ utiliza el runner público de M10.6; no crea un segundo harness.
   igualdad, diffs de texto, comparación float con tolerancia, consumo explícito
   de Option/Result, recursos temporales, snapshots y datos generados que entren
   realmente en 0.1. Cada API declara tipos, ownership, cleanup, formato, seed,
-  actualización, capabilities y límites; no registra tests ni captura pánicos
-  como excepciones recuperables.
+  actualización, capabilities y límites; reutiliza sin alterar
+  `log/failNow/skip`, no registra tests ni captura pánicos como excepciones
+  recuperables.
 
 ### 18.3 Hosted Standard Library
 
@@ -2625,10 +2661,11 @@ utiliza el runner público de M10.6; no crea un segundo harness.
   validado y tipado.
 
 - [ ] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** Escribir en
-  Tondo toda utilidad portable y confinar a unidades privilegiadas únicamente
-  temp resources, captura o aislamiento que requieran host. Los helpers
-  producen mensajes accionables sin reflection privada y se prueban mediante
-  `tondo test`, no mediante registro interno.
+  Tondo toda utilidad portable y reutilizar el bridge privilegiado de T0 sin
+  duplicarlo. Confinar a unidades privilegiadas únicamente temp resources,
+  captura o aislamiento que requieran host. Los helpers producen mensajes
+  accionables sin reflection privada y se prueban mediante `tondo test`, no
+  mediante registro interno.
 
 - [ ] **STD-TEST-001 — Añadir modelos y properties por módulo.** Cada API prueba
   valores normales, vacíos, límites, errores, composición, ownership,
@@ -2949,8 +2986,10 @@ pública definitiva hasta ser fijados por la especificación estándar.
 | `R-020` | Añadir `suite`/`test` retroactivamente a la edición publicada | Rompe identificadores válidos, hashes y conformidad 0.1 | Keywords exclusivas de 0.2, spec y conformidad nuevas; 0.1 permanece inmutable |
 | `R-021` | Permitir que unit tests cambien la compilación de producción | Código solo correcto bajo test y artefactos distintos | Unidad production sellada antes del overlay y comparación exacta de productos |
 | `R-022` | Ocultar flakiness mediante paralelismo o retries | Suites verdes no reproducibles | jobs=1 y una ejecución por default; orden/reportes canónicos y paralelismo explícito |
-| `R-023` | Convertir testing en attributes, reflection y hooks especiales | Segundo sublenguaje con boilerplate y semántica oculta | Dos roles canónicos: `suite` contenedor y `test` hoja; helpers, fixtures y doubles como Tondo/stdlib ordinarios |
+| `R-023` | Convertir testing en attributes, reflection, context parameters y hooks especiales | Segundo sublenguaje con boilerplate y semántica oculta | Dos roles canónicos: `suite` contenedor y `test` hoja; envelope sellado sin valor visible; helpers, fixtures y doubles como Tondo/stdlib ordinarios |
 | `R-024` | Convertir suites en globals mutables u orden implícito | Data races, tests dependientes y resultados distintos bajo `--exact` | Capturas `let: Copy + Send + Share`, ownership del recurso en la suite, sin dependencias ni orden entre hojas y lifecycle reportado |
+| `R-025` | Implementar logs/control con un global o thread-local | Eventos atribuidos al test incorrecto bajo async, migración o paralelismo | Envelope por raíz que sigue frames/tasks; operaciones selladas y revalidadas por HIR/MIR/bytecode |
+| `R-026` | Permitir que skips escondan regresiones o cleanup fallido | CI verde con cobertura real ausente o recursos sin cerrar | Razón obligatoria, sin ignored estático, cleanup antes de confirmar, fallo con precedencia y `--deny-skips` |
 
 ---
 
@@ -3009,6 +3048,26 @@ S1. No se inicia STD-0.2 antes de Gate N1.
 ---
 
 ## 24. Historial del tracker
+
+### 0.86 — 2026-07-28
+
+- La extensión de testing sube a `0.2-draft.3` y fija el núcleo test-only
+  `std.testing.log`, `failNow` y `skip` con firmas exactas. No añade keywords,
+  parámetros de test, `TestContext`, `currentTest()` ni fail-fast global.
+- Cada suite/test se ejecuta bajo un envelope privado con node ID,
+  logs/streams, cancelación y límites. El enlace sigue frames, helpers, closures
+  y tasks estructuradas, nunca se expone como valor ni se obtiene mediante un
+  thread-local.
+- Skip es cooperativo, exige razón y solo se confirma después de cleanup. Una
+  suite omitida produce `blocked-skip`; un fallo de cleanup prevalece y produce
+  `blocked-setup`. `P2001` impide omitir desde defer/unwind/teardown y
+  `--deny-skips` permite convertir skips en exit `1` sin falsificar estados.
+- Los schemas incompatibles suben a `tondo-test-report-0.2/3` y
+  `tondo-test-list-0.2/3`, con policy deny-skips, `skip`, logs y contadores de
+  skipped/blocked-skip. La conformidad mínima pasa de 24 a 29 grupos.
+- M10.6 añade UTEST-CONTROL-001 y amplía frontend, runtime, lifecycle, límites,
+  CLI, scheduling, reporte, aceptación, plataformas y Gate T0. STD-0.1 reutiliza
+  el control ya ejecutable de T0 y solo amplía `std.testing`.
 
 ### 0.85 — 2026-07-28
 
