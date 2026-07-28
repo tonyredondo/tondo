@@ -18,15 +18,15 @@ The VM derives immutable object and frame descriptors from the closed verified
 bytecode catalogs rather than trusting compiler-supplied tracing flags. Every
 heap slot retains its descriptor identity; allocation, mutation, and marking
 use the same checked shape. Active frames validate an exact typed slot schema,
-and a future suspended frame can retain that schema unchanged.
+and a suspended frame retains that schema unchanged.
 
-Current roots come only from active frame values and captured cleanup values,
-scoped operation-local temporaries, pending object publication, and traced
-managed edges. Every allocation-capable left-to-right evaluation retains its
-completed values until publication or failure. Structured terminal traversal
-uses the same scoped roots. The host boundary exchanges detached snapshots and
-therefore owns no VM handles; suspended-frame containers are absent until M7
-registers them explicitly.
+Current roots come from active and parked task-frame values, captured cleanup
+values, completed child returns awaiting consumption, scoped operation-local
+temporaries, pending object publication, and traced managed edges. Every
+allocation-capable left-to-right evaluation retains its completed values until
+publication or failure. Structured terminal traversal uses the same scoped
+roots. The host boundary exchanges detached snapshots and therefore owns no VM
+handles; every suspended-frame container is enumerated through its task record.
 
 A private test adapter uses the production heap, descriptor validation, roots,
 allocation threshold, and mark-and-sweep pass. Under sustained allocation it

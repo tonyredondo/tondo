@@ -7034,7 +7034,7 @@ fn execute(): String {
             .unwrap();
         *signature = async_signature;
         let error = bc::verify_bytecode(&forged_call).unwrap_err();
-        assert!(error.message().contains("effectful call"), "{error}");
+        assert!(error.message().contains("initiation context"), "{error}");
 
         let stateful = "fn build() {\n\
                             var count = 0\n\

@@ -31,7 +31,9 @@ strings and TEXT-004 distinct text and byte domains, and TEXT-002
 Unicode-scalar String length, indexing, and slicing, plus TEXT-003 static
 Display execution and ordered interpolation, plus VARIADIC-001 homogeneous
 final packs and VARIADIC-002 explicit Array spread, plus OPT-COW-001..003
-measured and differentially validated collection copy-on-write
+measured and differentially validated collection copy-on-write, plus
+ASYNC-001..004, EXEC-001/002, SCOPE-001, SPAWN-001, JOIN-001,
+CANCEL-001/002, PANIC-ASYNC-001, SEND-001, SHARE-001, and MAIN-ASYNC-001
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -42,9 +44,10 @@ future native ABI.
 ## Values and identity
 
 The interpreter uses an explicit `Value` enum. `Unit`, booleans, integers,
-floats, bytes, characters, and function identities are immediate values. A
-managed value is a generational handle into a non-moving heap slot; source code
-cannot observe the slot index, generation, address, or collection schedule.
+floats, bytes, characters, function identities, and structured `Join` handles
+are immediate values. A managed value is a generational handle into a
+non-moving heap slot; source code cannot observe the slot index, generation,
+address, or collection schedule.
 The enum also has one VM-internal `Loan` carrier containing a lender frame,
 fixed place, and mode. It exists only in a borrowed callee parameter and is
 rejected by copying, snapshots, heap storage, host conversion, and every public
@@ -263,7 +266,8 @@ through the Rust call stack. Each frame owns:
 - one state per typed slot: dead, live-uninitialized, or live with a value;
 - one optional normalized reservation per function-local loan identity; and
 - one ordered stack of captured deferred operations, each with a lexical scope
-  and optional affine guard place; and
+  and optional affine guard place;
+- one stack of active runtime task-scope identities; and
 - an optional normal/unwind continuation for its caller.
 
 Parameters and the return slot follow the function metadata. Explicit
@@ -342,12 +346,14 @@ cannot execute twice. The guarded frame place is consumed by that invocation;
 verified code cannot access it again unless a complete write reinitializes it.
 
 At every possible collection, roots are enumerated precisely from every live
-value in every active frame, captured values in its explicit cleanup entries,
-and one explicit stack of operation-local values that have not yet been
-published. A store, frame push, cleanup registration, or heap publication
-transfers reachability to that owning container. Move, `storage_dead`, cleanup
-removal, frame pop, and a temporary-scope marker withdraw it. Every
-allocation-capable path restores its marker on success and VM error.
+value in every frame of every task, including parked tasks, captured values in
+their explicit cleanup entries, completed child return values awaiting
+consumption, and one explicit stack of operation-local values that have not yet
+been published. A store, frame push, cleanup registration, task completion, or
+heap publication transfers reachability to that owning container. Move,
+`storage_dead`, cleanup removal, completion consumption, frame pop, and a
+temporary-scope marker withdraw it. Every allocation-capable path restores its
+marker on success and VM error.
 
 The operation-local stack covers completed constant and host-result children,
 left-to-right operands, dynamic map entries, record updates, assertion parts,
@@ -371,9 +377,9 @@ closure value in a frame, cleanup, temporary, or another object.
 The synchronous host ABI has no handle container. It receives detached,
 recursively owned `RuntimeValue` snapshots, so retaining a host argument does
 not retain its former VM object. Returned snapshots are materialized under a
-temporary scope until their full managed result is published. Suspended task
-frames do not exist before M7 and are therefore an explicit absent boundary,
-not a fictitious root source.
+temporary scope until their full managed result is published. A task suspended
+on a child or scope stores the same frame vector in its task record; it remains
+a root source but cannot cross the host boundary.
 
 Bytecode admission derives one immutable frame descriptor per function and
 checks that its slot vector exactly matches the verified function. Pushing a
@@ -381,11 +387,11 @@ frame repeats that identity, count, and type check before any slot can become a
 root. Live slots are still inspected through the tagged bootstrap `Value`
 carrier: a function-typed slot can contain either an immediate named function
 or a managed erased closure, so static type alone is not a safe root bitmap.
-The descriptor instead proves which schema is being interpreted. A future
-suspended frame retains the same function identity and slot representation, so
-it selects the same descriptor without copying its schema. M7 must register
-that new container as an explicit root source before suspension can become
-constructible, but it does not need another frame layout.
+The descriptor instead proves which schema is being interpreted. A suspended
+frame retains the same function identity and slot representation, selects the
+same descriptor without copying its schema, and is enumerated from its task
+record. Suspension therefore adds an owning container, not a second frame
+layout.
 
 ## Collector
 
@@ -412,10 +418,11 @@ authorized by that same descriptor. A rejected replacement leaves the previous
 object intact. Copying an object preserves its original descriptor, including
 through callable erasure and opaque representation boundaries.
 
-`Pointer[T]`, `Join[T,E]`, `Command`, and `Pipeline` currently have no
-constructible managed bootstrap representation and therefore admit no heap
-object descriptor. M7 must extend the sealed catalog before any new runtime
-object shape can be allocated; an ad-hoc object-side tracing method is not an
+`Join[T,E]` is an immediate VM-only pair of child-task and owning-scope
+identities, not a heap object and not a public address. `Pointer[T]`, `Command`,
+and `Pipeline` currently have no constructible managed bootstrap representation
+and therefore admit no heap object descriptor. Any later managed runtime shape
+must extend the sealed catalog; an ad-hoc object-side tracing method is not an
 extension point.
 
 Allocation may request a full collection when the object threshold, byte
@@ -454,6 +461,45 @@ construct directly.
 Object and byte accounting uses saturating checked budgets. Collection order,
 free-list order, slot addresses, and threshold timing are not observable Tondo
 semantics.
+
+## Cooperative tasks and structured scopes
+
+The executor is single-threaded and cooperative. One task record owns a frame
+vector, pending abnormal state, one of `Running`, `Runnable`, `Waiting`,
+`Complete`, or `Consumed`, and its parent-scope identity. The FIFO runnable
+queue gives each admitted task one bytecode step before requeueing it. A
+separate `queued` bit makes enqueue idempotent; a wake only changes
+`Waiting -> Runnable`, preserves the exact suspended continuation once, and
+ignores duplicate or stale notifications. If no task is runnable before the
+root completes, the VM reports an invariant failure instead of spinning.
+
+The selected safe entry may be synchronous or async and always becomes task
+zero. This runtime root is not a lexical `scope`, so it does not authorize
+detached `spawn`. A direct async `await` pushes the callee frame into the same
+task and resumes the caller with its logical value. `spawn` instead creates a
+new runnable task under the active innermost task scope and stores an immediate
+`Join` in the owner. Awaiting an incomplete handle consumes no state yet: the
+owner parks with its exact handle place, destination, normal edge, and unwind
+edge. Child completion wakes it; resumption then consumes both handle and
+completion exactly once.
+
+Each runtime task scope stores its source identity, owner task, children in
+creation order, and closed bit. Draining requests cancellation for every live
+child and parks the owner until all children are complete. Cancellation is one
+internal `RuntimeUnwind::Cancelled` state, distinct from returned Tondo values,
+recoverable error `E`, language panic, and VM failure. It is observed only at
+the implemented cooperative boundaries: `await`, `spawn`, task-scope entry, and
+task-scope drain. The child then follows its ordinary unwind ledger, including
+defers and nested task scopes, before completing as cancelled.
+
+A child panic requests cancellation of its live siblings and wakes the scope
+owner. The owner still waits for every child cleanup, then selects the first
+unobserved child panic in creation order and appends later panics as suppressed.
+If the owner was already unwinding from another panic, the child panic is
+suppressed under that existing primary. Task-scope teardown consumes any
+remaining `Join` fallback recursively before marking the scope closed. Root
+completion defensively requires every non-root task to be consumed, so no child
+can survive its owner even if malformed bytecode passed an earlier check.
 
 ## Control flow, calls, and panic
 
@@ -502,12 +548,13 @@ The source remains available only in the Copy case; an affine source is
 unavailable after the call. Named spread has the same runtime path and differs
 only in its verifier-proved association with the exact variadic parameter.
 
-This call path admits only signatures with neither `async` nor `unsafe`. The
-bytecode verifier rejects an effectful ordinary call, and the public execution
-entry rejects selecting an async or unsafe callable body as the root frame.
-Effectful closures can therefore be constructed, copied, traced, snapshotted,
-erased to the identical effect-preserving function type, and discarded without
-activating an unfinished async runtime or bypassing an unsafe context proof.
+The ordinary call path admits only signatures with neither `async` nor
+`unsafe`. `Await` and `Spawn` reuse the same associated operation preparation
+but require `async` and reject `unsafe`; the public execution entry accepts a
+safe sync or async body and rejects only an unsafe one. Effectful closures retain
+their exact type through construction, copying, tracing, snapshots, and erasure,
+so async initiation cannot erase its structured context and unsafe execution
+cannot bypass its future M9 proof.
 
 A panic stores its normative `P` code, stable name, message, primary source
 span, and a canonical innermost-first call stack. Cleanup blocks execute while
@@ -545,7 +592,9 @@ The runtime has three distinct failure channels:
   exhaustion, an unsupported host call, or an internal invariant failure.
 
 Only the first two are program outcomes. VM/toolchain errors are never
-relabelled as recoverable Tondo errors or language panics.
+relabelled as recoverable Tondo errors or language panics. Cooperative
+cancellation is internal control state used while draining a structured child;
+it is not a fourth public outcome and never becomes an implicit member of `E`.
 
 ## Required tests
 
@@ -559,8 +608,21 @@ and snapshot managed closure captures, and collect during construction, logical
 copy, affine multi-capture moves, and invocation. Mutated HIR, MIR, and bytecode
 fixtures must prove that their respective admission gates reject forged closure
 identity, schema, protocol, signature, access, erasure, and effectful ordinary
-calls before execution. Entry tests must also reject async and unsafe callable
-bodies while their runtime contexts remain unimplemented.
+calls before execution. Entry tests must accept a safe async root, reject an
+unsafe root, and preserve the same logical outcome contract as synchronous
+`main`.
+
+Async regressions execute direct awaits, concurrent children, concrete async
+closures, fallible cancellation without an injected error variant, structured
+shared references, child panic, sibling cancellation/cleanup, and multiple
+parked or completed managed values under a collection threshold of one.
+Compile-fail fixtures cover missing initiation or scope, invalid context and
+operand, non-`Send` suspension or transfer, missing `Share`, exclusive loans
+across suspension, writes before join, handle escape, and unconsumed handles.
+A scheduler unit test repeats dependencies, wakeups, and enqueue attempts while
+proving one resumption and continued progress. Panic regressions assert cleanup
+before propagation and creation-order primary selection rather than a concrete
+interleaving trace.
 
 Root-lifetime regressions force collection at every allocation while
 materializing nested constants and host returns, evaluating compound operands,

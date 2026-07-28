@@ -6745,7 +6745,7 @@ mod tests {
             .unwrap();
         *signature = async_signature;
         let error = verify_typed_hir(&resolved, &effectful_call).unwrap_err();
-        assert!(error.message().contains("effectful call"), "{error}");
+        assert!(error.message().contains("call effect"), "{error}");
     }
 
     #[test]

@@ -159,9 +159,9 @@ affine outer binding unavailable at construction, and derives repeatable call
 protocols from environment writes and moves. OWN-007 derives `CallOnce` only
 when every capture is `Discard` or leaves its environment slot on every normal,
 return, failure, and propagation exit. Ordinary invocation still accepts only
-synchronous-safe signatures; async initiation belongs to M7, and unsafe context
-validation belongs to M9. Open source/prelude trait obligations use coherent
-static selection. Trait declarations
+synchronous-safe signatures. Safe async initiation has distinct `Await` and
+`Spawn` HIR nodes, while unsafe context validation remains in M9. Open
+source/prelude trait obligations use coherent static selection. Trait declarations
 carry a sorted method table, contextual `Self`, default-body and async-receiver
 requirements. Default bodies are checked once with rigid trait binders; calls to
 another receiver method of the same trait resolve locally and both inferred and
@@ -288,8 +288,9 @@ natural exhaustion. TERM-004 materializes closed fallbacks at owning entry
 slots and every terminal result edge, specializes generic registrations to
 concrete presence, and drains them with explicit entries through one abnormal
 LIFO ledger. Structural fallback traversal handles all current aggregate
-layouts; M7 supplies the suspendable task state needed by direct
-`JoinTeardown`.
+layouts. M7 connects direct `JoinTeardown` to suspendible child-task state,
+cooperative cancellation, cleanup completion, and exact-once result
+consumption.
 
 Type IDs are request-local interned handles; only canonical recursive type
 strings are observable. Alias expansion, union normalization, nominal identity,
@@ -352,7 +353,8 @@ Before bytecode lowering, the MIR verifier proves:
 - Closure bodies rederive their protocol row from writes and moves of the exact
   hidden-environment paths.
 - The ordinary call operation carries only a synchronous-safe signature;
-  effectful initiation requires the later async or unsafe MIR operation.
+  `Await` and `Spawn` carry safe async initiation, while unsafe initiation
+  remains unavailable without M9's context proof.
 - Capability-sensitive equality, membership, and map lookup agree with the
   independently verified HIR capability table.
 - Defer registrations form one exact scope-nested LIFO ledger, every affine
@@ -425,9 +427,10 @@ writes and moves before accepting that protocol row, and accepts `CallOnce` only
 non-`Discard` capture is completely transferred on every reachable return.
 Monomorphization specializes the source-generic row against concrete `Discard`
 facts before that independent verification.
-All four closure effect signatures survive in the callable catalog, but the
-ordinary call operation and bytecode verifier reject `async` or `unsafe`
-signatures until their effect-aware instructions exist.
+All four closure effect signatures survive in the callable catalog. The
+ordinary call operation rejects `async` or `unsafe`; `Await` and `Spawn` admit
+only safe async signatures, and unsafe remains unavailable until its
+effect-aware M9 context exists.
 Generic nominal declarations remain compact layout templates checked with their
 concrete arguments by the verifier.
 
@@ -472,7 +475,7 @@ then builds one fresh compact logical value through the ordinary recursive
 copier. This preserves nested independence and `Ref` identity without exposing
 the selected bootstrap representation.
 
-The implemented synchronous engine uses iterative frames, checked slot states,
+The execution engine uses iterative frames, checked slot states,
 normal/unwind continuations, call-local reservation tables, normalized
 frame/slot/place identities, precise frame and temporary roots, generational
 heap handles, and a stop-the-world mark-and-sweep collector. Borrowed callee
@@ -480,10 +483,19 @@ parameters read and write through to the lender place, and early control or
 panic releases abandoned reservations. Closure
 environments trace, snapshot, copy eligible fields, and take moved fields
 through the same managed-value machinery regardless of their effect signature.
+Tasks move those same frame vectors between running, runnable, waiting,
+complete, and consumed states. A FIFO queue with one membership bit makes
+wakeup idempotent. Direct `await` remains in the current task; `spawn` creates
+one child owned by the active innermost task scope and returns an affine
+`Join`. Scope drain cancels live children, waits for every child cleanup,
+consumes pending completions, and then permits lexical defers to run.
+Cancellation remains tagged internal unwind state rather than an implicit
+recoverable error. Child panics cancel siblings and become observable only
+after structured cleanup, with a creation-order primary.
 The VM derives a sealed trace catalog independently from verified bytecode:
 each heap allocation retains its type descriptor, each mutation is shape
 checked before publication, and each function has an exact slot-schema
-descriptor reusable by a future suspended frame. Opaque results reuse their
+descriptor reused unchanged by active and suspended frames. Opaque results reuse their
 witness layout; closure environments retain their unique callable and capture
 schema. `Ref[T]` uses that traceable cell shape for source-visible
 `Ref(value)` construction. Copying it preserves one handle identity,
@@ -496,10 +508,11 @@ packing, calls, and the structured terminal-fallback walker. Publication into a
 frame, cleanup, or managed object and withdrawal by move/death/pop have explicit
 transitions.
 Closure environments remain ordinary traced objects. Host values are detached
-snapshots rather than handles; suspended-frame containers remain absent until
-M7 registers them as a new root source. The VM rejects effectful ordinary calls
-and effectful root entries, so retaining an async or unsafe callable cannot
-activate an unfinished runtime. A test-only memory adapter drives the same
+snapshots rather than handles. Each task owns its active or parked frame vector,
+and every such frame plus each completed child return remains a registered root
+source. The VM rejects effectful ordinary calls; async work reaches only
+`Await`, `Spawn`, or a safe async root, while unsafe root entries remain
+rejected. A test-only memory adapter drives the same
 allocator, descriptors, root enumeration, and pressure trigger to keep a mixed
 `Ref`/array/closure cycle alive, repeatedly reclaim unrooted peers, and reclaim
 the retained graph after root withdrawal. Source-level REF-001 construction
@@ -528,10 +541,10 @@ ABI.
   canonical formatter bytes, plus later produced artifacts. After resolution
   it may also own a `SemanticModel` containing the exact source database,
   resolved program, and available typed HIR. It never borrows the request.
-- Current VM roots are explicit in active frames and cleanups, the
-  operation-local root stack, pending publications, and managed-object edges.
-  Host values are detached and no suspended task state exists yet; any future
-  handle or suspended-frame container must register a new explicit root source.
+- Current VM roots are explicit in every active or parked task frame and its
+  cleanups, completed child return values, the operation-local root stack,
+  pending publications, and managed-object edges. Host values are detached;
+  any later owning runtime container must register another explicit root source.
 
 This model avoids self-referential Rust structures and lets a phase be tested
 from immutable snapshots.

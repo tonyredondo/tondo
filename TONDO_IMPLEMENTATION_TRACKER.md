@@ -2,14 +2,15 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.77
+**Versión del tracker:** 0.78
 
 **Última actualización:** 2026-07-28
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** M6 y Gate G3 cerrados. La siguiente unidad de trabajo,
-cuando se reanude, es ASYNC-001; esta entrega se detiene antes de iniciarla.
+**Objetivo inmediato:** M7 cerrado con async y concurrencia estructurada
+ejecutables. La siguiente unidad de trabajo, cuando se reanude, es SCRIPT-001;
+esta entrega se detiene antes de iniciar M8.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -257,7 +258,7 @@ necesaria; la fragmentación del workspace no.
 | **M4 — Genéricos, traits y closures** | Sistema estático completo | Completado |
 | **M5 — Ownership, préstamos y memoria** | Modelo de valores completo | Completado |
 | **M6 — Colecciones, números y texto** | Gate G3: alpha utilizable | Completado |
-| **M7 — Async y concurrencia estructurada** | Tasks conformes | Pendiente |
+| **M7 — Async y concurrencia estructurada** | Tasks conformes | Completado |
 | **M8 — Scripts y procesos** | Experiencia de scripting | Pendiente |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Pendiente |
 | **M10 — Conformidad y release** | Gate G5: Tondo 0.1 | Pendiente |
@@ -270,9 +271,9 @@ Estado observado del workspace:
 - Workspace: `tondo-cli`, `tondo-compiler` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada aún no está fijada.
-- Última validación: 2026-07-22, con formatter check, `cargo check` y build de
-  todos los targets, Clippy sin warnings, 468 tests, Rustdoc sin warnings,
-  metadatos locked y smoke tests de la CLI correctos.
+- Última validación: 2026-07-28, con formatter check, `cargo check` de todos los
+  targets, Clippy con warnings denegados, 620 tests, Rustdoc con warnings
+  denegados y metadatos locked.
 
 ### 4.1 Ruta crítica
 
@@ -1386,9 +1387,9 @@ lifetimes escritos por el usuario.
   salidas, retorno y unwind. `IteratorNext` admite regiones compartidas y la
   cadena fuente exacta del cursor; toda región exclusiva debe pertenecer a esa
   cadena. Los verificadores rechazan loans call-local o exclusivos ajenos,
-  claves mutables de map y proyecciones redirigidas. M7 añadirá el terminador
-  concreto de suspensión y reutilizará esta regla junto con frames y `Send`;
-  `await` continúa rechazado honestamente hasta entonces.
+  claves mutables de map y proyecciones redirigidas. M7 reutiliza esta frontera
+  en `Await`: excluye loans call-local y exclusivos, exige `Send` al estado vivo
+  y conserva por separado los préstamos estructurados ligados a `Join`.
 
 ### 10.3 Recursos terminales y cleanup
 
@@ -1441,9 +1442,9 @@ lifetimes escritos por el usuario.
   cursores en orden inverso de construcción y despacha raíces directas mediante
   el registro sellado. Los retornos normales omiten el fallback después de la
   prueba TERM-002 y nunca omiten un `defer` explícito. La identidad
-  `JoinTeardown` y su ruta anormal quedan cerradas; SPAWN/JOIN/CANCEL de M7
-  aportarán el estado de task y la suspensión necesarios para ejecutarla sobre
-  un `Join` activo, forma que todavía no puede construirse en la VM síncrona.
+  `JoinTeardown` y su ruta anormal quedan cerradas; M7 aporta el estado de task,
+  la suspensión y la cancelación necesarias para ejecutarla sobre un `Join`
+  activo hasta consumir su child exactamente una vez.
 
 - [x] **TERM-005 — Probar que cleanup explícito y unwind fallback nunca se
   ejecutan ambos.** MIR exige que un guard terminal `Present` o `Potential`
@@ -1462,15 +1463,15 @@ lifetimes escritos por el usuario.
   para strings, agregados, colecciones, nominales, sums, environments,
   cursores, `Ref` y witnesses opacos. Cada heap slot conserva su descriptor;
   allocation, copy, mutation y marking validan la misma forma. Cada función
-  obtiene además un descriptor exacto de slots reutilizable por un futuro frame
-  suspendido, sin implementar todavía identidad pública de `Ref` ni scheduling.
+  obtiene además un descriptor exacto de slots que reutilizan sin cambios los
+  frames activos y suspendidos.
 
 - [x] **GC-002 — Mantener roots en frames, environments, frontera host y
   estado estructurado.** Frames y cleanups publican valores vivos; scopes
   temporales protegen evaluaciones, copias, materialización y walkers hasta su
   publicación o error; environments siguen edges ordinarios del heap. El host
-  intercambia snapshots sin handles y M7 conserva como frontera explícita los
-  frames suspendidos todavía inexistentes.
+  intercambia snapshots sin handles; M7 añade como roots explícitos cada frame
+  aparcado y cada resultado de child completado todavía no consumido.
 
 - [x] **GC-003 — Trazar ciclos y recuperar objetos inalcanzables bajo presión.**
   Un adaptador privado de test usa el allocator, descriptors, roots y trigger de
@@ -1766,51 +1767,97 @@ Clasificación explícita de los ejemplos integrados exigidos por este gate:
 **Objetivo:** implementar suspensión y concurrencia sin futures implícitos,
 tasks detached ni wrappers visibles en las firmas.
 
-- [ ] **ASYNC-001 — Typecheckear funciones y closures async.**
+- [x] **ASYNC-001 — Typecheckear funciones y closures async.** HIR conserva el
+  efecto en la identidad y la firma exacta, comprueba cuerpos nombrados y
+  cierres concretos, deriva su protocolo de llamada y rechaza parámetros
+  exclusivos con `E1609`.
 
-- [ ] **ASYNC-002 — Exigir `await` o `spawn` al invocar trabajo async.**
+- [x] **ASYNC-002 — Exigir `await` o `spawn` al invocar trabajo async.** Una
+  llamada async se materializa como operación HIR no ejecutable por sí sola y
+  solo puede quedar inmediatamente bajo uno de esos dos iniciadores; el resto
+  produce `E1601`.
 
-- [ ] **ASYNC-003 — Prohibir préstamos y parámetros incompatibles a través de
-  suspensión.**
+- [x] **ASYNC-003 — Prohibir préstamos y parámetros incompatibles a través de
+  suspensión.** El análisis de liveness comprueba `Send` para cada owner vivo,
+  reutiliza la frontera de loans de BORROW-006 y emite `E1607` si un préstamo
+  exclusivo alcanza `await`; los préstamos estructurados de `spawn` permanecen
+  activos hasta consumir su `Join`.
 
-- [ ] **ASYNC-004 — Transformar MIR async en frames suspendibles.**
+- [x] **ASYNC-004 — Transformar MIR async en frames suspendibles.** MIR y
+  bytecode poseen terminadores separados `Await`, `Spawn` y `DrainScopes`,
+  además de `EnterTaskScope`; el executor aparca el vector de frames tipados de
+  cada task sin recurrir al stack de Rust y lo restaura al reanudarla.
 
-- [ ] **EXEC-001 — Implementar executor cooperativo single-thread.**
+- [x] **EXEC-001 — Implementar executor cooperativo single-thread.** La VM
+  mantiene una cola FIFO de tasks ejecutables y cede después de cada quantum de
+  bytecode, sin crear un thread del sistema operativo por task.
 
-- [ ] **EXEC-002 — Definir wakeups idempotentes y garantía de progreso.**
+- [x] **EXEC-002 — Definir wakeups idempotentes y garantía de progreso.** Cada
+  task conserva un bit de cola y una única transición `Waiting -> Runnable`;
+  dependencias repetidas, wakes duplicados y entradas obsoletas no duplican
+  ejecución. Quedarse sin runnable antes de terminar la raíz es una violación
+  defensiva del runtime.
 
-- [ ] **SCOPE-001 — Implementar `scope` como propietario estructurado.**
+- [x] **SCOPE-001 — Implementar `scope` como propietario estructurado.** Cada
+  entrada crea estado runtime con owner y lista ordenada de hijos. El lowering
+  drena exactamente el sufijo léxico abandonado antes de sus defers y la VM
+  verifica owner, anidamiento y cierre único.
 
-- [ ] **SPAWN-001 — Implementar `spawn` y `Join[T, E]`.**
+- [x] **SPAWN-001 — Implementar `spawn` y `Join[T, E]`.** Los argumentos se
+  preparan en la task propietaria, se transfieren a un frame hijo mediante
+  `CallOnce`, y el resultado inmediato es un handle afín ligado a la identidad
+  runtime del hijo y de su scope.
 
-- [ ] **JOIN-001 — Tratar `Join` como obligación terminal y consumirlo mediante
-  `await`.**
+- [x] **JOIN-001 — Tratar `Join` como obligación terminal y consumirlo mediante
+  `await`.** HIR rastrea su procedencia a través de bindings, asignaciones,
+  patterns y contenedores, impide que escape o llegue vivo al final con
+  `E1603`, y libera los préstamos de `spawn` solo cuando desaparece el último
+  owner del handle. La VM impide consumo doble o desde otro scope.
 
-- [ ] **CANCEL-001 — Implementar cancelación cooperativa en los puntos
-  normativos.**
+- [x] **CANCEL-001 — Implementar cancelación cooperativa en los puntos
+  normativos.** La petición se observa al entrar o abandonar `scope` y en
+  `await`/`spawn`; viaja por un canal interno `Cancelled`, ejecuta unwind y
+  nunca se inyecta en el tipo de error `E`.
 
-- [ ] **CANCEL-002 — Implementar cleanup de hijos al salir del scope.**
+- [x] **CANCEL-002 — Implementar cleanup de hijos al salir del scope.** Una
+  salida no local solicita cancelación a cada hijo vivo, aparca al owner hasta
+  que todos terminan, ejecuta sus defers/fallbacks y consume estructuralmente
+  cualquier resultado pendiente antes de cerrar el scope.
 
-- [ ] **PANIC-ASYNC-001 — Propagar pánicos de tareas según el contrato
-  estructurado.**
+- [x] **PANIC-ASYNC-001 — Propagar pánicos de tareas según el contrato
+  estructurado.** El primer hijo que paniquea cancela hermanos y despierta al
+  owner; este espera todo el cleanup y propaga un primario estable por orden de
+  creación, anexando los demás como suprimidos.
 
-- [ ] **SEND-001 — Comprobar `Send` en transferencia a tasks.**
+- [x] **SEND-001 — Comprobar `Send` en transferencia a tasks.** HIR exige la
+  capacidad en callee, argumentos propios, resultados, errores y valores vivos
+  a través de suspensión; MIR y bytecode vuelven a derivar el contrato cerrado.
 
-- [ ] **SHARE-001 — Comprobar `Share` para observación concurrente.**
+- [x] **SHARE-001 — Comprobar `Share` para observación concurrente.** Un
+  argumento `ref` lanzado exige `Send + Share`, conserva una identidad de loan
+  que puede cruzar tasks y bloquea escritura/movimiento del origen hasta
+  consumir el `Join`.
 
-- [ ] **MAIN-ASYNC-001 — Implementar `async fn main` y scope raíz.**
+- [x] **MAIN-ASYNC-001 — Implementar `async fn main` y scope raíz.** El driver
+  admite una entrada async segura con el mismo outcome lógico que `main`
+  síncrono; la task raíz pertenece al executor, pero no crea un scope léxico
+  implícito para autorizar `spawn` detached.
 
-- [ ] **CONC-TEST-001 — Crear litmus tests con resultados permitidos y
-  prohibidos, no con scheduling esperado.**
+- [x] **CONC-TEST-001 — Crear litmus tests con resultados permitidos y
+  prohibidos, no con scheduling esperado.** El corpus cubre ejecución
+  secuencial y concurrente por propiedades finales: progreso, wake idempotente,
+  no escape de `Join`, préstamos liberados tras `await`, cancelación con
+  cleanup, pánicos de hermanos y roots vivos bajo GC, sin fijar una traza
+  concreta del scheduler.
 
 ### Gate de salida de M7
 
-- Ningún hijo sobrevive a su scope.
-- Todo `Join` se consume o recibe cleanup estructurado.
-- Cancelación no aparece como variante implícita de `E`.
-- El executor de un hilo satisface progreso cooperativo.
-- El código no depende del orden concreto de scheduling.
-- Los roots de frames suspendidos permanecen vivos.
+- [x] Ningún hijo sobrevive a su scope.
+- [x] Todo `Join` se consume o recibe cleanup estructurado.
+- [x] Cancelación no aparece como variante implícita de `E`.
+- [x] El executor de un hilo satisface progreso cooperativo.
+- [x] El código no depende del orden concreto de scheduling.
+- [x] Los roots de frames suspendidos permanecen vivos.
 
 ---
 
@@ -2195,12 +2242,36 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-M4, M5, M6 y Gate G3 quedan cerrados. La siguiente acción, cuando el trabajo se
-reanude, es ASYNC-001; esta entrega se detiene antes de iniciarla.
+M4, M5, M6, M7 y Gate G3 quedan cerrados. La siguiente acción, cuando el trabajo
+se reanude, es SCRIPT-001; esta entrega se detiene antes de iniciar M8.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.78 — 2026-07-28
+
+- Se completa M7 con llamadas async explícitamente iniciadas, cierres async,
+  liveness `Send`, fronteras de loans y lowering verificado a `Await`, `Spawn`,
+  `EnterTaskScope` y `DrainScopes` en MIR y bytecode.
+- La VM incorpora un executor cooperativo monohilo con cola idempotente, frames
+  suspendibles, `async fn main`, scopes propietarios y `Join[T, E]` afín sin
+  exponer un wrapper `Task` en las firmas.
+- Cancelación continúa siendo un canal interno distinto de `E`. Salidas no
+  locales y pánicos cancelan hijos, esperan todos sus cleanups y propagan el
+  pánico primario por orden de creación después de recoger los suprimidos.
+- Los préstamos estructurados de `spawn` exigen `Send + Share`, permanecen
+  activos mientras exista su `Join` y se liberan exactamente al consumirlo o
+  durante teardown. Los roots incluyen frames aparcados y resultados de hijos
+  completados.
+- Fixtures positivos, negativos y runtime cubren `E1601`, `E1602`, `E1603` y
+  `E1605` a `E1611`, no escape y consumo de handles, progreso, wakeups
+  duplicados, cancelación, pánicos, closures async, GC bajo presión y
+  scheduling no observable. M8 queda expresamente fuera de esta entrega;
+  SCRIPT-001 es el siguiente límite de trabajo.
+- La puerta acumulada pasa con 620 tests, formatter check, `cargo check` para
+  todos los targets, Clippy con warnings denegados y Rustdoc con warnings
+  denegados.
 
 ### 0.77 — 2026-07-28
 

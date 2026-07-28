@@ -2046,7 +2046,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             .clone();
         let (mut flow, place) = self.place_components(id, state, &live_within)?;
         let transferred_owner = (demand == Demand::Transfer && place.complete_transfer)
-            .then(|| match place.root {
+            .then_some(match place.root {
                 PlaceRoot::Local(local) => Some(TerminalOwner::Local(local)),
                 PlaceRoot::Receiver => None,
                 PlaceRoot::Temporary(expression) => Some(TerminalOwner::Temporary(expression)),
@@ -3670,11 +3670,10 @@ impl<'a, 'f> Analyzer<'a, 'f> {
                     expression_source(field.value());
                 }
             }
-            HirExpressionKind::Block { tail, .. } => {
-                if let Some(tail) = tail {
-                    expression_source(*tail);
-                }
-            }
+            HirExpressionKind::Block {
+                tail: Some(tail), ..
+            } => expression_source(*tail),
+            HirExpressionKind::Block { tail: None, .. } => {}
             HirExpressionKind::Call {
                 callee, arguments, ..
             }

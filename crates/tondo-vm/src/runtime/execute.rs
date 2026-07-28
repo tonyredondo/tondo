@@ -569,10 +569,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                     .take_task_completion(child)?
                     .ok_or_else(|| VmError::invariant("woken Join has no completion"))?;
                 self.apply_join_completion(frame, completion, &destination, target, unwind)?;
-                if let Some(scope) = parent_scope {
-                    if self.task_scopes.get(scope).is_some_and(Option::is_some) {
-                        self.release_task_scope_if_consumed(scope)?;
-                    }
+                if let Some(scope) = parent_scope
+                    && self.task_scopes.get(scope).is_some_and(Option::is_some)
+                {
+                    self.release_task_scope_if_consumed(scope)?;
                 }
                 Ok(true)
             }
@@ -2429,10 +2429,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 *target,
                                 *unwind,
                             )?;
-                            if let Some(scope) = parent_scope {
-                                if self.task_scopes.get(scope).is_some_and(Option::is_some) {
-                                    self.release_task_scope_if_consumed(scope)?;
-                                }
+                            if let Some(scope) = parent_scope
+                                && self.task_scopes.get(scope).is_some_and(Option::is_some)
+                            {
+                                self.release_task_scope_if_consumed(scope)?;
                             }
                         } else {
                             self.park_current(

@@ -74,6 +74,19 @@ and Set leaves. The unchanged value-copy corpus runs eager and COW under normal
 and allocation-by-allocation GC pressure, so storage sharing cannot alter
 values, write independence, identity, iteration, panic, or output.
 
+Async execution is implemented without a visible future wrapper. Calls with an
+`async` signature must be initiated by `await` or, inside `scope`, by `spawn`.
+The latter returns one affine, scope-bound `Join[T, E]`; HIR follows that handle
+through bindings and containers, requires exactly one terminal consumption, and
+keeps every structured `ref` loan active until the handle is awaited or torn
+down. `Send` is checked for transferred and suspension-live values, while a
+concurrently observed `ref T` also requires `Share`. MIR and bytecode retain
+separate `Await`, `Spawn`, task-scope entry, and scope-drain operations. The VM
+executes them with a cooperative single-thread scheduler, idempotent wakeups,
+suspendible typed frame vectors, structured cancellation, sibling cleanup, and
+deterministic child-panic propagation. Parked frames and completed child results
+remain precise GC roots.
+
 `CompilationOutput` now retains an immutable semantic snapshot after name
 resolution. Embedding tools can query contextual expression types, resolved
 entities and references, callable signatures, enum/union members, and closed
@@ -104,12 +117,14 @@ Complete HIR lowers through a verified typed MIR and
 then to verified in-memory slot bytecode with source maps. Reached generic
 functions are monomorphized deterministically; equal concrete substitutions
 share one body, direct bytecode calls carry no runtime type pack, and expanding
-recursion is stopped by an explicit request limit. `tondo run` executes a synchronous
-explicit `main` in an iterative VM with checked operations,
+recursion is stopped by an explicit request limit. `tondo run` executes a safe
+synchronous or async explicit `main` in an iterative VM with checked operations,
 normative panics, precise generational mark-and-sweep collection, defensive
-limits, and a provisional capability-gated `std.console.print` host shim. Async
-entry points and implicit script bodies remain under construction. Ownership
-already distinguishes contextual copies, affine moves, immediate observations,
+limits, and a provisional capability-gated `std.console.print` host shim.
+Unsafe entry contexts and implicit script bodies remain under construction.
+
+Ownership already distinguishes contextual copies, affine moves, immediate
+observations,
 typed internal move paths, whole-binding availability across branches and
 loops, complete reinitialization of moved `var` bindings, and affine closure
 captures with all-exit `CallOnce` obligations. Terminal owners are also followed
@@ -126,10 +141,11 @@ the collection traversed by the cursor. User-defined `Iterator[T]` targets
 retain one statically coherent element type. Synchronous `defer` now captures
 its operands at registration,
 drains lexical scopes in LIFO order on normal and panic exits, and follows or
-disarms a unique affine guard through verified ownership transfers. Concrete
-`await` frame/`Send` safety and the closed intrinsic terminal fallback remain
-later milestones. The workspace therefore identifies itself as a bootstrap
-and does not claim full Tondo conformance.
+disarms a unique affine guard through verified ownership transfers. Async
+cleanup cannot itself suspend; structured task teardown runs before the defers
+of the abandoned task scope and cannot leak cancellation into a recoverable
+error type. The workspace therefore identifies itself as a bootstrap and does
+not claim full Tondo conformance.
 
 ## Project documentation
 

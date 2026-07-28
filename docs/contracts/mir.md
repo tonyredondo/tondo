@@ -20,7 +20,9 @@ ARRAY-006 closed lifted arithmetic, ARRAY-007 named concatenation/repetition,
 and ITER-001/002 static user iterators plus all four intrinsic iteration forms
 implemented, plus TEXT-002 Unicode-scalar String length, indexing, and slicing,
 and TEXT-003 static Display calls plus ordered interpolation, plus
-VARIADIC-001/002 homogeneous final packs and whole-array spread
+VARIADIC-001/002 homogeneous final packs and whole-array spread, plus
+ASYNC-001..004, SCOPE-001, SPAWN-001, JOIN-001, SEND-001, SHARE-001, and
+MAIN-ASYNC-001
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -82,10 +84,10 @@ They remain queryable but can never be lowered or executed.
 | Phase | Facts proved or represented |
 |---|---|
 | Resolution | Namespaces, declaration/member/local identity, visibility, and lexical binding |
-| Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, selected synchronous-safe call access, value/place category, pattern coverage, source evaluation order, and source-level control targets |
+| Typed HIR | Static types, contextual conversions, opaque contracts and witnesses, effect-exact concrete closure signatures, capture sets and call protocols, selected synchronous-safe or safe-async initiation, task-scope and `Join` provenance, value/place category, pattern coverage, source evaluation order, and source-level control targets |
 | MIR construction (M3/M4/M5) | Typed locals and temporaries, explicit CFG, places, synchronous-safe calls, effect-preserving closure bodies with a hidden environment, contextual Copy/Move closure-environment construction, branch targets, normal/abnormal edge shape, and spans |
 | Ownership MIR (M5) | Contextual `Copy` versus `Move`, immediate non-escaping observations, whole-owner source availability, typed internal move paths, uniform `match` copy/observe/consume lowering, call-local `ref`/`mut`/`var` loans, inferred last-use pattern regions, static and runtime-checked collection regions, canonical borrowed-iterator boundaries, explicit scope-nested defer registrations with affine guard transitions, and closed intrinsic fallback actions |
-| Async MIR (M7) | Suspension points, resume/cancel/unwind edges, live frame state, and `Send` checks across suspension |
+| Async MIR (M7) | `Await`, `Spawn`, task-scope entry/drain, normal and tagged abnormal edges, exact suspension-live frame state, and `Send`/loan checks across suspension |
 | Bytecode/backend | Layout and executable instructions only; no source semantic inference |
 
 No later phase performs fallback name lookup, repeats overload selection,
@@ -323,13 +325,15 @@ shared `Region` loans plus the cursor's complete canonical source chain. Any
 exclusive region must belong to that chain; call-local loans and unrelated
 exclusive regions are rejected. This admits a nested cursor over a borrowed
 element without allowing an independent mutation to cross the advance. The
-unwind edge starts with an empty set. This closes every boundary currently
-representable before M7; actual suspension still requires M7's explicit
-terminator and must reuse the same active-set rule rather than infer loans from
-frame layout. The ordinary MIR call operation rejects an
-`async` or `unsafe` function signature. M7 and M9 must introduce and verify
-their own effect-aware initiation/context forms rather than weakening that
-operation.
+unwind edge starts with an empty set. `Await` reuses this active-set proof:
+call-local loans and every live exclusive region are rejected, surviving
+ordinary owners must satisfy `Send`, and only a `Join` owned by the current
+task scope receives its sealed exception. `Spawn` admits its explicit
+structured shared loans and retains them until the corresponding handle is
+consumed or torn down. The ordinary MIR call operation still rejects an
+`async` or `unsafe` function signature. Async-safe work uses `Await` or `Spawn`;
+M9 must introduce its own unsafe context proof rather than weakening any of
+those operations.
 
 Checked operations use `Invoke`; indexed and sliced reads therefore cannot
 bypass their bounds/unwind edge. Assignment first resolves all destination
@@ -532,14 +536,24 @@ move, aggregate, call, or iterator edge can duplicate the obligation. Capture
 failure occurs before the replacement and therefore leaves the original
 fallback armed.
 
-M7 represents `await` and structured teardown with a suspension terminator.
-Its successors distinguish resume, cancellation, and panic/unwind. Values live
-across that terminator become explicit frame locals. An exclusive loan may not
-be live there; the BORROW-006 boundary check is reused for the exact active set,
-and all surviving values must satisfy the required `Send` contract before
-bytecode generation. The abnormal ledger and sealed `JoinTeardown` identity are
-already fixed; M7 supplies the concrete task state and suspension needed to
-execute that one may-suspend action on panic or cancellation.
+`Await` is a suspension terminator whose awaitable is either one complete async
+operation or one `Join` operand. It writes the logical result only on `target`;
+panic and cooperative cancellation use the explicit `unwind` edge while
+retaining their distinct tagged runtime state. Values live across the
+terminator remain ordinary typed locals in a frame that the executor may park.
+An exclusive loan may not be live there; the BORROW-006 boundary check is
+reused for the exact active set, and all surviving values must satisfy the
+required `Send` contract before bytecode generation.
+
+`EnterTaskScope` pushes one lexical identity. `Spawn` names the active
+innermost identity, transfers one async operation, and writes the exact
+`Join[T, E]` only on its normal edge. `DrainScopes` lists the exact
+inner-to-outer task-scope suffix and the lexical defer scopes that follow it.
+Every return, propagation, loop transfer, panic, and cancellation path therefore
+has an explicit order: request child cancellation, suspend until child cleanup
+finishes, consume remaining join fallbacks, and only then drain the affected
+defers. The verifier rejects scope-stack disagreement at CFG joins, spawning
+into an inactive scope, or returning with an active task scope.
 
 ## MIR verification layers
 
@@ -626,9 +640,12 @@ on their successful edge, and the return place must be initialized on every
 `Return`. Payload refinement is a separate forward analysis so initialization
 alone cannot authorize an invalid projection.
 
-M7 adds concrete suspension/frame/`Send` invariants and the active `Join` task
-state while reusing the existing BORROW-006 loan-boundary and TERM-004 abnormal
-drain proofs. Verification always precedes bytecode lowering.
+The async verifier additionally proves operation effect and call protocol,
+awaitable/result agreement, `Join` move access, active innermost spawn scope,
+scope-stack balance, exact normal/unwind destinations, suspension liveness,
+`Send`/`Share` requirements, and the exclusion of exclusive loans. It reuses
+the existing BORROW-006 loan-boundary and TERM-004 abnormal-drain proofs.
+Verification always precedes bytecode lowering.
 
 ## Determinism and resource limits
 

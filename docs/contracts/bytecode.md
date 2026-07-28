@@ -22,7 +22,9 @@ iterators plus all four intrinsic iteration forms, and the M3 VM admission
 path implemented, plus TEXT-001 immutable UTF-8 strings and TEXT-004 distinct
 text and byte domains, and TEXT-002 Unicode-scalar String length, indexing, and
 slicing, plus TEXT-003 intrinsic/static Display dispatch and interpolation,
-plus VARIADIC-001/002 homogeneous final packs and whole-array spread
+plus VARIADIC-001/002 homogeneous final packs and whole-array spread, plus
+ASYNC-001..004, EXEC-001/002, SCOPE-001, SPAWN-001, JOIN-001,
+CANCEL-001/002, PANIC-ASYNC-001, SEND-001, SHARE-001, and MAIN-ASYNC-001
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -411,9 +413,10 @@ advances either loaned cursor by position without calling the owning copy path,
 checks that its runtime source is the terminator's anchored collection, and
 resolves each element under the active region chain. Exclusive map projections
 are limited to the value field, and array replacement enforces `mut` versus
-`var` extent at the write boundary. Bytecode has no suspension instruction yet;
-M7 must reuse this boundary proof when it adds resume, cancellation, and frame
-state.
+`var` extent at the write boundary. `Await` reuses the same incoming-set proof,
+rejects call-local and exclusive loans, and preserves only the
+verifier-approved suspension-live set. `Spawn` instead admits its exact
+structured `ref` loans and binds them to the resulting `Join` lifetime.
 
 `Borrow` remains a separate non-storable form admitted only for equality,
 membership, length, discriminant branches, index/slice collection bases,
@@ -421,11 +424,13 @@ indirect shared/exclusive callees, intrinsic ref/mut-cursor construction, and
 the replacement witness attached to write validation. Stores, aggregates,
 returns, every call argument, and unrelated operations reject it.
 
-The bootstrap `Call` operation is deliberately synchronous and safe. Its
+The bootstrap `Call` operation remains deliberately synchronous and safe. Its
 signature must have both effect bits clear; the verifier rejects a forged async
-or unsafe call before execution. Future async and unsafe lowering must add the
-context and control-flow information required by those effects rather than
-reusing this operation.
+or unsafe call before execution. `Await` and `Spawn` are the only async-safe
+initiation terminators and rederive their operation's effect, protocol, outcome,
+arguments, capabilities, and control-flow contract. Unsafe lowering remains an
+M9 boundary and cannot reuse any of the three operations without its explicit
+context proof.
 
 `BytecodeCoercion::Opaque` and `BytecodeCoercion::CallableErasure` are verified
 runtime no-ops: execution forwards the already materialized value unchanged.
@@ -470,11 +475,12 @@ it still rejects any explicit entry.
 
 The walker dispatches a direct terminal root through the sealed bytecode
 registry. Its only current action is `JoinTeardown`, declared as may-suspend.
-No active `Join` representation, `spawn`, cancellation edge, or suspendable
-frame exists in the synchronous bootstrap VM, so M7 supplies that action's task
-state and resumption mechanics. All currently constructible structural-empty
-fallbacks and the complete non-suspending traversal execute now; the VM fails
-closed if malformed pre-M7 execution fabricates an active `Join`.
+An active `Join` carries one child task and owning scope identity. Teardown
+requests cancellation when needed, parks the owner until the child reaches a
+terminal state, consumes the completion exactly once, and recursively tears
+down terminal values it owned. The owner remains parked before later lexical
+defers execute. Malformed bytecode cannot fabricate, duplicate, detach, or
+consume a handle from another scope.
 
 `ValidateLoan`
 must resolve to a normal block
@@ -605,8 +611,9 @@ Before execution, the verifier proves:
   environment cannot advertise either borrowed protocol; `CallOnce` requires
   every non-`Discard` capture to be completely moved on every reachable normal
   return, with branch states intersected rather than unioned;
-- async callables have no `mut` or `var` parameter, and the synchronous-safe
-  call opcode rejects every async or unsafe function signature;
+- async callables have no `mut` or `var` parameter; the synchronous-safe call
+  opcode rejects every async or unsafe function signature, while `Await` and
+  `Spawn` require async-safe signatures and their exact logical outcomes;
 - every closed executable `Map[K, V]` and `Set[K]` has `K: Key`, every `Ref[T]`
   has `T: Discard`, equality has `T: Equatable`, array membership has an
   equatable element, map/set membership has a key, and map lookup has `V: Copy`;
@@ -620,10 +627,10 @@ Before execution, the verifier proves:
   token;
 - every opaque coercion seals exactly its catalogued witness into the matching
   opaque family;
-- calls have an exact structural signature, matching outcome, complete
-  fixed/receiver association, correct modes, valid variadic element or final
-  spread, supported protocol, protocol-compatible loan/copy/move access, and no
-  unimplemented effect;
+- calls and async operations have an exact structural signature, matching
+  outcome, complete fixed/receiver association, correct modes, valid variadic
+  element or final spread, supported protocol, protocol-compatible
+  loan/copy/move access, and no unimplemented unsafe effect;
 - a generic or opaque callable resolves to one concrete named function or
   closure with the same signature, while a callable erasure preserves the
   concrete closure value and exact uniform function signature;
@@ -636,6 +643,12 @@ Before execution, the verifier proves:
   an active shared source chain, active sets agree at joins, overlapping
   exclusive regions are rejected, and `Loan` cannot occur outside its matching
   non-value argument;
+- each `Spawn` names the active innermost task scope, every task-scope stack
+  agrees at CFG joins, and `DrainScopes` removes exactly an active
+  inner-to-outer suffix before its aligned defer scopes;
+- every `Await` has one valid async call or affine `Join` operand, writes its
+  logical result only on the normal edge, and admits only `Send` live values
+  plus the current scope's sealed join exception;
 - every `RegisterDefer` contains one synchronous infallible `Unit` operation,
   snapshots all closed `Copy` operands, retains at most one complete affine
   guard in a local or closure-capture owner slot, and belongs to a live lexical
@@ -698,8 +711,9 @@ executable state. TERM-004 adds `RegisterFallback` and `DrainUnwind`, closes the
 same specialization for fallback owners, and makes the VM execute structural
 fallbacks from the sealed registry. TERM-005 independently requires every
 terminal explicit guard to replace exactly one fallback and rejects rearming
-the fallback after replacement. `await`, active `Join` task state, and
-suspendable teardown remain the explicit M7 boundary.
+the fallback after replacement. M7 closes `JoinTeardown` with active task state,
+suspendible scope drains, cooperative cancellation, and exact-once completion
+consumption.
 
 ## Determinism, limits, and tooling
 

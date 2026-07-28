@@ -18835,7 +18835,7 @@ mod tests {
     }
 
     #[test]
-    fn async_closures_reject_exclusive_parameters_and_effectful_calls_stay_deferred() {
+    fn async_closures_reject_exclusive_parameters_and_require_explicit_initiation() {
         for source in [
             "fn invalid() {\n    let operation = async (value: mut Int) { () }\n    _ = operation\n}\n",
             "fn invalid() {\n    let operation = async (value: var Int) { () }\n    _ = operation\n}\n",
@@ -18844,15 +18844,19 @@ mod tests {
             assert_eq!(codes(&output), ["E1609"]);
         }
 
-        for source in [
-            "fn deferred() {\n    let operation = async (): Int { 1 }\n    _ = operation()\n}\n",
-            "fn deferred() {\n    let operation = unsafe (): Int { 1 }\n    _ = operation()\n}\n",
-        ] {
-            let (_, _, output) = check(source);
-            assert!(output.diagnostics().is_empty(), "{source}");
-            assert!(!output.is_complete(), "{source}");
-            assert_eq!(output.program().closures().count(), 1, "{source}");
-        }
+        let async_source =
+            "fn invalid() {\n    let operation = async (): Int { 1 }\n    _ = operation()\n}\n";
+        let (_, _, output) = check(async_source);
+        assert_eq!(codes(&output), ["E1601"]);
+        assert!(output.is_complete());
+        assert_eq!(output.program().closures().count(), 1);
+
+        let unsafe_source =
+            "fn deferred() {\n    let operation = unsafe (): Int { 1 }\n    _ = operation()\n}\n";
+        let (_, _, output) = check(unsafe_source);
+        assert!(output.diagnostics().is_empty(), "{unsafe_source}");
+        assert!(!output.is_complete(), "{unsafe_source}");
+        assert_eq!(output.program().closures().count(), 1, "{unsafe_source}");
     }
 
     #[test]

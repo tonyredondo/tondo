@@ -28,15 +28,16 @@ MIR is a typed control-flow graph and owns the following facts:
   successor and cleanup/unwind successor where applicable;
 - cleanup code lives in ordinary, marked MIR blocks and is not synthesized by
   bytecode generation;
-- suspension is a terminator with explicit resume, cancellation, and unwind
-  successors; and
+- suspension is a terminator with one explicit normal successor and one
+  explicit abnormal successor whose sealed state distinguishes cancellation
+  from panic; and
 - source spans remain attached to locals, statements, and terminators.
 
 M3 creates the CFG and cleanup-capable edge shape even while cleanup lists are
 empty. M5 classifies ownership, inserts loans and real cleanup actions. M7 adds
-suspension terminators and transforms live locals into frame state. Each of
-those transformations produces MIR that must pass the same structural
-verifier plus the invariants introduced by that phase.
+`Await`, `Spawn`, task-scope entry/drain, suspension liveness, and the explicit
+frame state retained by each task. Each transformation produces MIR that must
+pass the same structural verifier plus the invariants introduced by that phase.
 
 The first admitted M5 loan form is call-local: one table identity records its
 mode and resolved place, `ReserveLoan` starts it after argument evaluation, the
@@ -49,5 +50,5 @@ rather than reintroducing a shallow borrowed call operand.
 The backend never reinterprets AST/HIR control flow, guesses a move, invents a
 loan lifetime, or derives cleanup from types. MIR is somewhat more verbose,
 but bytecode verification, the VM, and a future native backend consume the same
-explicit semantics. Adding ownership or async later extends verified MIR
-invariants instead of replacing its CFG.
+explicit semantics. Ownership and async extend verified MIR invariants without
+replacing its CFG.

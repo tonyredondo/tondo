@@ -4963,6 +4963,28 @@ impl<'a> FunctionBuilder<'a> {
         Ok(block)
     }
 
+    fn scope_drain_terminator(
+        task_scopes: Vec<HirScopeId>,
+        defer_scopes: Vec<HirScopeId>,
+        target: MirBlockId,
+        unwind: MirBlockId,
+    ) -> MirTerminatorKind {
+        if task_scopes.is_empty() {
+            MirTerminatorKind::DrainDefers {
+                scopes: defer_scopes,
+                target,
+                unwind,
+            }
+        } else {
+            MirTerminatorKind::DrainScopes {
+                task_scopes,
+                defer_scopes,
+                target,
+                unwind,
+            }
+        }
+    }
+
     fn drain_scopes_to_normal(
         &mut self,
         block: MirBlockId,
@@ -4980,12 +5002,7 @@ impl<'a> FunctionBuilder<'a> {
         self.terminate(
             drain,
             span,
-            MirTerminatorKind::DrainScopes {
-                task_scopes,
-                defer_scopes,
-                target,
-                unwind,
-            },
+            Self::scope_drain_terminator(task_scopes, defer_scopes, target, unwind),
         )?;
         Ok(target)
     }
@@ -5010,12 +5027,7 @@ impl<'a> FunctionBuilder<'a> {
         self.terminate(
             drain,
             span,
-            MirTerminatorKind::DrainScopes {
-                task_scopes,
-                defer_scopes,
-                target,
-                unwind,
-            },
+            Self::scope_drain_terminator(task_scopes, defer_scopes, target, unwind),
         )
     }
 
@@ -5052,12 +5064,7 @@ impl<'a> FunctionBuilder<'a> {
         self.terminate(
             drain,
             span,
-            MirTerminatorKind::DrainScopes {
-                task_scopes,
-                defer_scopes,
-                target,
-                unwind,
-            },
+            Self::scope_drain_terminator(task_scopes, defer_scopes, target, unwind),
         )
     }
 
@@ -8632,7 +8639,7 @@ mod tests {
             .unwrap();
         *signature = async_signature;
         let error = verify_mir(&resolved, &hir, &forged_call).unwrap_err();
-        assert!(error.message().contains("effectful call"), "{error}");
+        assert!(error.message().contains("initiation context"), "{error}");
     }
 
     #[test]

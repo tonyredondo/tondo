@@ -22,7 +22,8 @@ lifted arithmetic, ARRAY-007 named concatenation/repetition, and ITER-001/002
 static user iterators plus all four intrinsic iteration forms, plus TEXT-002
 Unicode-scalar String length, indexing, and slicing, and TEXT-003 decoded
 interpolation with static `Display`, plus VARIADIC-001/002 homogeneous final
-packs and whole-array spread implemented
+packs and whole-array spread, plus ASYNC-001..003, SCOPE-001, SPAWN-001,
+JOIN-001, SEND-001, SHARE-001, and MAIN-ASYNC-001 implemented
 
 ## Boundary
 
@@ -80,13 +81,12 @@ specialization, static source/prelude trait selection, declaration-owned opaque
 results, trait default bodies, exact implementation bodies, trait-provided
 iteration, the closed structural capabilities `Copy`, `Discard`, `Equatable`,
   `Key`, `Send`, and `Share`, all four closure effect identities and exact
-  signatures, synchronous-safe closure invocation, and exact closure-to-`fn`
-  coercion. Concrete external implementations, effectful invocation, `await`,
-  `spawn`, unsafe-region proofs and raw
-  operations, async liveness/`Send` analysis, concrete suspension nodes,
-  confirmed borrowed replacement, closed
-  terminal fallback actions, and cancellation cleanup remain explicit later
-  boundaries rather than receiving provisional semantics. Persistent
+  signatures, synchronous-safe closure invocation, exact closure-to-`fn`
+  coercion, safe async initiation, structured task scopes, `Join` ownership,
+  and async liveness/capability rules. Concrete external implementations,
+  unsafe-region proofs and raw operations, implicit script bodies, and process
+  operations remain explicit later boundaries rather than receiving
+  provisional semantics. Persistent
   source-visible partial owner states are deliberately absent from Tondo 0.1;
   OWN-005 implements the typed internal paths needed by complete destructuring
   without adding such a state.
@@ -499,9 +499,9 @@ infers the yielded element.
 An admitted `impl Bound` annotation belongs to exactly one free, inherent, or
 associated function declaration. It is not a general type expression: using it
 in a parameter, field, alias, function-value type, closure, trait member, or
-trait implementation member is rejected as `E0004`. An async declaration may
-retain the same opaque contract even though executable async bodies belong to
-M7.
+trait implementation member is rejected as `E0004`. An async declaration
+retains the same opaque contract; its executable body crosses the ordinary
+verified HIR boundary before async-specific MIR lowering.
 
 The type interner represents the result as one nominal family keyed by the
 callable's stable `SymbolIdentity` plus its invariant generic arguments. The
@@ -1174,10 +1174,46 @@ accesses. Intrinsic loaned `for` uses a dynamic element projection tied to the
 cursor's canonical position and source reservation. `ref` children are shared;
 `mut` and `var` children retain their exact exclusive permission. `break`,
 `continue`, `return`, `fail`, propagation, and panic paths all end the
-appropriate child and collection regions. Actual `await` remains an M7 surface:
-HIR continues to reject it as incomplete until an explicit suspension node can
-apply the same BORROW-006 active-loan policy together with frame and `Send`
-checks.
+appropriate child and collection regions. `await` applies the same BORROW-006
+active-loan policy to its exact live set. It rejects an exclusive loan with
+`E1607`, rejects any other suspension-live owner that lacks `Send` with
+`E1605`, and allows only the current scope's affine `Join` state as the
+language-defined non-`Send` exception.
+
+## Async initiation and structured task regions
+
+The checker represents an async call as `AsyncCall`; that node describes a
+fully associated operation but cannot execute independently. Its only admitted
+parents are `Await` and `Spawn`. A safe direct await accepts either one such
+operation or a `Join[T, E]`, produces the logical callable outcome, and leaves
+error propagation to a distinct `?`. Every other async call, context, or
+operand is rejected with the stable `E1601`, `E1610`, or `E1611` diagnostic
+before availability analysis.
+
+`Scope` owns one stable lexical task-scope identity. A `Spawn` inside it records
+that exact innermost identity, evaluates one async operation, and produces
+`Join[T, E]`. Availability tracks the spawn provenance independently from the
+container type: whole-value moves, assignment, irrefutable patterns, option
+wrapping, and branch joins transfer or merge the same set of child identities.
+A child identity may cross a nested task scope that does not own it, but may
+never leave its own scope or reach its normal end. Returning it directly or
+inside a nominal, option, result, tuple, array, or other aggregate produces
+`E1603`.
+
+Awaiting a `Join` consumes the complete owner and removes its child provenance.
+Every `ref` argument of its spawn operation keeps one `Spawn` region loan tied
+to that child. Moving or wrapping the handle retargets the provenance without
+releasing the loan; consuming the last owner releases it. This prevents a
+write, move, or incompatible loan of the source while the child can observe it.
+A direct async `ref T` await requires `T: Send`; the concurrent spawn form
+requires `T: Send + Share`. Callee, owned arguments, success, and error values
+transferred through a child likewise require `Send`.
+
+Every non-local edge abandoning a task scope is legal only after the HIR has
+retained the scope for structured teardown. A normal fallthrough with a pending
+child is rejected instead of silently cancelling it. Async cleanup syntax is
+closed: `defer` cannot contain `await`, `spawn`, or `scope`, and reports `E1608`
+without reinterpreting the operation as synchronous work.
 
 ## Declaration ordering
 

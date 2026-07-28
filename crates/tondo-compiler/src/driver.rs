@@ -2231,11 +2231,25 @@ mod tests {
             run.diagnostics().diagnostics()
         );
 
-        for source in [
-            &b"fn main() {\n    let operation = async (): Int { 1 }\n    _ = operation()\n}\n"[..],
-            &b"fn main() {\n    let operation = unsafe (): Int { 1 }\n    _ = operation()\n}\n"[..],
-            &b"async fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
-            &b"unsafe fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
+        for (source, code) in [
+            (
+                &b"fn main() {\n    let operation = async (): Int { 1 }\n    _ = operation()\n}\n"
+                    [..],
+                "E1601",
+            ),
+            (
+                &b"fn main() {\n    let operation = unsafe (): Int { 1 }\n    _ = operation()\n}\n"
+                    [..],
+                "T0001",
+            ),
+            (
+                &b"async fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
+                "E1601",
+            ),
+            (
+                &b"unsafe fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
+                "T0001",
+            ),
         ] {
             let output = execute(operation_request(
                 Operation::Run,
@@ -2245,7 +2259,7 @@ mod tests {
             ))
             .unwrap();
             assert_eq!(output.status(), CompilationStatus::Rejected);
-            assert_eq!(output.diagnostics().diagnostics()[0].code(), "T0001");
+            assert_eq!(output.diagnostics().diagnostics()[0].code(), code);
         }
     }
 
