@@ -81,6 +81,7 @@ jobs:
           binary="target/$TARGET/release/$BINARY"
           "$binary" --version
           output="$("$binary" run tests/runtime/g2-002-hello-world.to)"
+          printf 'Tondo output: %s\n' "$output"
           test "$output" = "Hello, world"
 
       - name: Package Unix binary
