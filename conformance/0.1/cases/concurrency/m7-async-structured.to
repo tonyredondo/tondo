@@ -1,0 +1,28 @@
+import std.console
+
+async fn immediate(value: Int): Int {
+    value
+}
+
+async fn combine(left: Int, right: Int): Int {
+    let first = await immediate(left)
+    let second = await immediate(right)
+    first + second
+}
+
+async fn main() {
+    let sequential = await combine(20, 22)
+    assert(sequential == 42)
+
+    scope {
+        let first = spawn combine(10, 11)
+        let second = spawn combine(20, 22)
+
+        let right = await second
+        let left = await first
+        assert(left == 21)
+        assert(right == 42)
+    }
+
+    console.print("async-structured-ok\n")
+}

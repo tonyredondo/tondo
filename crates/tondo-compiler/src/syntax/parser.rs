@@ -1999,7 +1999,10 @@ impl Parser<'_> {
     }
 
     fn line_requires_pattern_production(&self) -> bool {
-        self.at(TokenKind::Ref) || self.line_has_pattern_rest()
+        (self.at_any(&[TokenKind::Ref, TokenKind::Mut, TokenKind::Var])
+            && self.nth(1) == TokenKind::Identifier
+            && matches!(self.nth(2), TokenKind::Nl | TokenKind::Eof))
+            || self.line_has_pattern_rest()
     }
 
     fn line_has_top_level_token(&self, target: TokenKind) -> bool {
@@ -2625,6 +2628,43 @@ mod tests {
         assert_eq!(
             parsed.cst().node(parsed.cst().root()).kind(),
             SyntaxKind::Module
+        );
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn syntax_sequence_accepts_a_bare_value_expression() {
+        let source = b"value\n";
+        let (sources, file, parsed) = parse_source(source, ParseMode::SyntaxSequence);
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
+        );
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn syntax_sequence_accepts_borrow_binding_patterns() {
+        let source = b"ref value\nmut value\nvar value\n";
+        let (sources, file, parsed) = parse_source(source, ParseMode::SyntaxSequence);
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
+        );
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn syntax_sequence_accepts_multiple_statements_and_comments() {
+        let source =
+            b"var original = [1, 2, 3]\nvar copy = original\n\ncopy[0] = 9\n\n// unchanged\n";
+        let (sources, file, parsed) = parse_source(source, ParseMode::SyntaxSequence);
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
         );
         assert_lossless(&sources, file, &parsed, source);
     }

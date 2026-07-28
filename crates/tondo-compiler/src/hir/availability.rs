@@ -512,6 +512,7 @@ impl<'a, 'f> Analyzer<'a, 'f> {
             | HirExpressionKind::NumericConversionError(_)
             | HirExpressionKind::Constant(_)
             | HirExpressionKind::Function(_)
+            | HirExpressionKind::SyntheticFunction
             | HirExpressionKind::SpecializedFunction { .. }
             | HirExpressionKind::PreludeTraitFunction { .. }
             | HirExpressionKind::Receiver => AvailabilityFlow::normal(state),
@@ -4178,6 +4179,7 @@ fn expression_children(kind: &HirExpressionKind) -> Vec<HirExpressionId> {
         | HirExpressionKind::Local(_)
         | HirExpressionKind::Constant(_)
         | HirExpressionKind::Function(_)
+        | HirExpressionKind::SyntheticFunction
         | HirExpressionKind::SpecializedFunction { .. }
         | HirExpressionKind::PreludeTraitFunction { .. }
         | HirExpressionKind::Closure(_)

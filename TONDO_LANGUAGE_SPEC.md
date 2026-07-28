@@ -6021,7 +6021,7 @@ Reglas:
 
 El catálogo exacto de operaciones raw es:
 
-~~~tondo
+~~~tondo pseudocode
 pointer.read(): T
 pointer.write(value: T)
 pointer.offset(count: Int): Pointer[T]

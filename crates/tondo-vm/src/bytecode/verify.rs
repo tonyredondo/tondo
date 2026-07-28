@@ -5448,21 +5448,23 @@ impl Verifier<'_> {
     }
 
     fn is_intrinsic_display_type(&self, ty: BytecodeTypeId) -> bool {
-        let mut ty = ty;
-        let mut remaining = self.program.types.len();
-        loop {
-            if remaining == 0 {
-                return false;
+        let mut pending = vec![ty];
+        let mut visited = BTreeSet::new();
+        while let Some(ty) = pending.pop() {
+            if !visited.insert(ty) {
+                continue;
             }
-            remaining -= 1;
             match self.program.ty(ty).map(|ty| &ty.kind) {
-                Some(BytecodeTypeKind::Scalar(scalar)) => {
-                    return *scalar != BytecodeScalarType::Never;
-                }
-                Some(BytecodeTypeKind::OpaqueResult { witness, .. }) => ty = *witness,
+                Some(BytecodeTypeKind::Scalar(scalar)) if *scalar != BytecodeScalarType::Never => {}
+                Some(BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Array,
+                    arguments,
+                }) if arguments.len() == 1 => pending.push(arguments[0]),
+                Some(BytecodeTypeKind::OpaqueResult { witness, .. }) => pending.push(*witness),
                 _ => return false,
             }
         }
+        true
     }
 
     fn closure_callable_for_type(

@@ -480,7 +480,9 @@ impl PackageGraph {
         standard.modules.retain(|module| match module.as_str() {
             "console" => has_capability("console"),
             "process" => has_capability("process"),
-            _ => false,
+            // A custom pinned standard package may contain capability-free
+            // modules in addition to the compiler-owned bootstrap pair.
+            _ => true,
         });
     }
 

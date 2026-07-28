@@ -1,0 +1,1 @@
+{"compilation":"not-applicable","exit_code":0,"diagnostic_codes":[],"exact_diagnostics":null,"stdout_hex":"","stderr_hex":"","formatted_hex":null,"data":{"cycles_reclaimed":true,"retry_before_oom":false,"retry_before_success":false,"roots_preserved":true,"scenario":"sustained-pressure"}}

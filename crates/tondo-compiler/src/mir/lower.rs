@@ -1510,10 +1510,12 @@ impl<'a> FunctionBuilder<'a> {
                 )?;
                 Ok(None)
             }
-            HirExpressionKind::Recovery => Err(MirError::Construction {
-                span,
-                message: "non-executable expression crossed the verified HIR boundary".into(),
-            }),
+            HirExpressionKind::Recovery | HirExpressionKind::SyntheticFunction => {
+                Err(MirError::Construction {
+                    span,
+                    message: "non-executable expression crossed the verified HIR boundary".into(),
+                })
+            }
         }
     }
 

@@ -3435,7 +3435,12 @@ impl Verifier<'_> {
             if matches!(expression.kind, HirExpressionKind::Recovery) {
                 return Err(HirInvariantError::new(
                     context,
-                    "recovery expression escaped a successful semantic check",
+                    format!(
+                        "recovery expression at file {} bytes {}..{} escaped a successful semantic check",
+                        expression.span.file(),
+                        expression.span.range().start(),
+                        expression.span.range().end()
+                    ),
                 ));
             }
             for child in expression_children(expression) {
@@ -3675,6 +3680,17 @@ impl Verifier<'_> {
                     return Err(HirInvariantError::new(
                         context,
                         "function value type differs from its callable signature",
+                    ));
+                }
+            }
+            HirExpressionKind::SyntheticFunction => {
+                if !matches!(
+                    self.program.interner.kind(expression.ty),
+                    Ok(TypeKind::Function(_))
+                ) {
+                    return Err(HirInvariantError::new(
+                        context,
+                        "synthetic function does not have a function type",
                     ));
                 }
             }
@@ -5789,6 +5805,7 @@ fn expression_children(expression: &HirExpression) -> Vec<HirExpressionId> {
         | HirExpressionKind::Local(_)
         | HirExpressionKind::Constant(_)
         | HirExpressionKind::Function(_)
+        | HirExpressionKind::SyntheticFunction
         | HirExpressionKind::SpecializedFunction { .. }
         | HirExpressionKind::PreludeTraitFunction { .. }
         | HirExpressionKind::Closure(_)

@@ -4229,23 +4229,6 @@ impl Engine<'_, '_> {
         }
     }
 
-    fn represented_scalar(&self, mut ty: BytecodeTypeId) -> Result<BytecodeScalarType, VmError> {
-        let mut remaining = self.program.types.len();
-        loop {
-            if remaining == 0 {
-                return Err(VmError::invariant(
-                    "verified scalar representation contains an opaque cycle",
-                ));
-            }
-            remaining -= 1;
-            match self.program.ty(ty).map(|ty| &ty.kind) {
-                Some(BytecodeTypeKind::Scalar(scalar)) => return Ok(*scalar),
-                Some(BytecodeTypeKind::OpaqueResult { witness, .. }) => ty = *witness,
-                _ => return Err(VmError::invariant("verified scalar type is not scalar")),
-            }
-        }
-    }
-
     fn pure_prefix(
         &mut self,
         operator: BytecodePrefixOperator,
@@ -6125,45 +6108,75 @@ impl Engine<'_, '_> {
         }
         let value = self.read_place(frame, &loan.place)?;
         self.frames[frame].loans[id.index() as usize] = None;
-        self.display_scalar(result_ty, argument.value.ty, value)
+        let text = self.display_text(argument.value.ty, value)?;
+        self.allocate(result_ty, HeapObject::String(text), &[])
     }
 
-    fn display_scalar(
-        &mut self,
-        result_ty: BytecodeTypeId,
-        input_ty: BytecodeTypeId,
-        value: Value,
-    ) -> Result<Value, VmError> {
-        let scalar = self.represented_scalar(input_ty)?;
-        if scalar == BytecodeScalarType::String {
-            self.string_value(&value)?;
-            return self.copy_value(&value);
-        }
-        let text = match (scalar, value) {
-            (BytecodeScalarType::Unit, Value::Unit) => "()".to_owned(),
-            (BytecodeScalarType::Bool, Value::Bool(value)) => value.to_string(),
-            (
-                BytecodeScalarType::Int
-                | BytecodeScalarType::Int8
-                | BytecodeScalarType::Int16
-                | BytecodeScalarType::Int32
-                | BytecodeScalarType::UInt8
-                | BytecodeScalarType::UInt16
-                | BytecodeScalarType::UInt32
-                | BytecodeScalarType::UInt64,
-                Value::Integer(value),
-            ) => value.to_string(),
-            (BytecodeScalarType::Float, Value::Float(value)) => value.to_string(),
-            (BytecodeScalarType::Float32, Value::Float(value)) => (value as f32).to_string(),
-            (BytecodeScalarType::Byte, Value::Byte(value)) => value.to_string(),
-            (BytecodeScalarType::Char, Value::Char(value)) => value.to_string(),
-            _ => {
+    fn display_text(&self, input_ty: BytecodeTypeId, value: Value) -> Result<String, VmError> {
+        let mut represented = input_ty;
+        let mut remaining = self.program.types.len();
+        while let Some(BytecodeTypeKind::OpaqueResult { witness, .. }) =
+            self.program.ty(represented).map(|ty| &ty.kind)
+        {
+            if remaining == 0 {
                 return Err(VmError::invariant(
-                    "intrinsic Display value does not match its scalar type",
+                    "verified Display type contains an opaque cycle",
                 ));
             }
-        };
-        self.allocate(result_ty, HeapObject::String(text), &[])
+            remaining -= 1;
+            represented = *witness;
+        }
+
+        match self.program.ty(represented).map(|ty| &ty.kind) {
+            Some(BytecodeTypeKind::Scalar(BytecodeScalarType::String)) => {
+                Ok(self.string_value(&value)?.to_owned())
+            }
+            Some(BytecodeTypeKind::Scalar(scalar)) => match (*scalar, value) {
+                (BytecodeScalarType::Unit, Value::Unit) => Ok("()".to_owned()),
+                (BytecodeScalarType::Bool, Value::Bool(value)) => Ok(value.to_string()),
+                (
+                    BytecodeScalarType::Int
+                    | BytecodeScalarType::Int8
+                    | BytecodeScalarType::Int16
+                    | BytecodeScalarType::Int32
+                    | BytecodeScalarType::UInt8
+                    | BytecodeScalarType::UInt16
+                    | BytecodeScalarType::UInt32
+                    | BytecodeScalarType::UInt64,
+                    Value::Integer(value),
+                ) => Ok(value.to_string()),
+                (BytecodeScalarType::Float, Value::Float(value)) => Ok(value.to_string()),
+                (BytecodeScalarType::Float32, Value::Float(value)) => {
+                    Ok((value as f32).to_string())
+                }
+                (BytecodeScalarType::Byte, Value::Byte(value)) => Ok(value.to_string()),
+                (BytecodeScalarType::Char, Value::Char(value)) => Ok(value.to_string()),
+                _ => Err(VmError::invariant(
+                    "intrinsic Display value does not match its scalar type",
+                )),
+            },
+            Some(BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Array,
+                arguments,
+            }) if arguments.len() == 1 => {
+                let values = self.array_values(&value)?;
+                let mut text = String::from("[");
+                for (index, value) in values.into_iter().enumerate() {
+                    if index != 0 {
+                        text.push_str(", ");
+                    }
+                    let value = value.ok_or_else(|| {
+                        VmError::invariant("intrinsic Display Array contains a moved element")
+                    })?;
+                    text.push_str(&self.display_text(arguments[0], value)?);
+                }
+                text.push(']');
+                Ok(text)
+            }
+            _ => Err(VmError::invariant(
+                "verified intrinsic Display type is unsupported",
+            )),
+        }
     }
 
     fn checked_prefix(

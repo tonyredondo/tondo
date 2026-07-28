@@ -85,6 +85,17 @@ pub fn check_expressions<'a>(
     program: HirProgram,
     limits: ExpressionCheckLimits,
 ) -> Result<HirCheckOutput, HirError> {
+    check_expressions_configured(sources, parsed, resolved, program, limits, false)
+}
+
+pub(crate) fn check_expressions_configured<'a>(
+    sources: &'a SourceDatabase,
+    parsed: impl IntoIterator<Item = (FileId, &'a Parsed)>,
+    resolved: &'a ResolvedProgram,
+    program: HirProgram,
+    limits: ExpressionCheckLimits,
+    documentation_fixture: bool,
+) -> Result<HirCheckOutput, HirError> {
     let mut checker = ExpressionChecker {
         sources,
         parsed: parsed.into_iter().collect(),
@@ -102,6 +113,7 @@ pub fn check_expressions<'a>(
         reported_capability_requirements: BTreeSet::new(),
         opaque_body: None,
         closure_body: None,
+        documentation_fixture,
     };
     checker.check_capability_contracts()?;
     checker.check_discard_parameters()?;
@@ -590,6 +602,7 @@ struct ExpressionChecker<'a> {
     reported_capability_requirements: BTreeSet<(Span, TypeId, HirCapability)>,
     opaque_body: Option<OpaqueBodyInference>,
     closure_body: Option<ClosureBodyInference>,
+    documentation_fixture: bool,
 }
 
 impl<'a> ExpressionChecker<'a> {
@@ -1304,23 +1317,30 @@ impl<'a> ExpressionChecker<'a> {
             *error_coercion = coercion;
         }
 
-        for (index, error) in failed {
-            let actual = self.expression_type(error);
-            if actual == error_marker || actual == inferred_error {
-                continue;
-            }
-            let coercion = self
-                .error_assignability(actual, inferred_error)?
-                .expect("an inferred script error union accepts every collected member");
-            if coercion == Assignability::Exact {
-                continue;
-            }
-            let coerced = self.coerce_with(error, inferred_error, coercion)?;
-            let HirExpressionKind::Fail { error } = &mut self.program.expressions[index].kind
+        for (_index, placeholder) in failed {
+            let HirExpressionKind::Coerce { value: error, .. } =
+                self.program.expressions[placeholder.0 as usize].kind
             else {
-                unreachable!("the recorded fail remains a fail expression")
+                return Err(HirError::TraitSelectionInvariant {
+                    message: "an inferred script fail has no coercion placeholder".into(),
+                });
             };
-            *error = coerced;
+            let actual = self.expression_type(error);
+            if actual == error_marker {
+                continue;
+            }
+            let coercion = if actual == inferred_error {
+                Assignability::Exact
+            } else {
+                self.error_assignability(actual, inferred_error)?
+                    .expect("an inferred script error union accepts every collected member")
+            };
+            let expression = &mut self.program.expressions[placeholder.0 as usize];
+            expression.ty = inferred_error;
+            let HirExpressionKind::Coerce { kind, .. } = &mut expression.kind else {
+                unreachable!("the inferred script error placeholder remains a coercion")
+            };
+            *kind = coercion;
         }
 
         let signature = &mut self.program.callables[signature_index];
@@ -2070,6 +2090,7 @@ impl<'a> ExpressionChecker<'a> {
                 | HirExpressionKind::Local(_)
                 | HirExpressionKind::Constant(_)
                 | HirExpressionKind::Function(_)
+                | HirExpressionKind::SyntheticFunction
                 | HirExpressionKind::SpecializedFunction { .. }
                 | HirExpressionKind::PreludeTraitFunction { .. }
                 | HirExpressionKind::Closure(_)
@@ -11205,6 +11226,7 @@ impl<'a> ExpressionChecker<'a> {
         else {
             return self.recovery_expression(file, node.range());
         };
+        let script_inference = context.script_errors.is_some();
         let error = if let Some(script_errors) = context.script_errors.clone() {
             let error = self.check_expression(file, error_node, None, context)?;
             let error_type = self.expression_type(error);
@@ -11240,6 +11262,20 @@ impl<'a> ExpressionChecker<'a> {
                     .unwrap_or_default(),
                 None,
             )?;
+            error
+        };
+        let error = if script_inference {
+            let span = self.program.expressions[error.0 as usize].span;
+            self.allocate_expression(HirExpression {
+                span,
+                ty: self.program.interner.error(),
+                category: HirValueCategory::Value,
+                kind: HirExpressionKind::Coerce {
+                    kind: Assignability::Exact,
+                    value: error,
+                },
+            })?
+        } else {
             error
         };
         self.allocate_expression(HirExpression {
@@ -15265,6 +15301,20 @@ impl<'a> ExpressionChecker<'a> {
         )? {
             return Ok(Some(call));
         }
+        if self.documentation_fixture
+            && let Some(call) = self.check_documentation_fixture_method_call(
+                file,
+                range,
+                receiver,
+                receiver_type,
+                member_token,
+                suffix,
+                explicit_bracket,
+                context,
+            )?
+        {
+            return Ok(Some(call));
+        }
         if let Some((owner, _, _)) = self.nominal_instance(receiver_type)?
             && let Some(member) =
                 self.callable_member(file, owner, member_token, &[MemberKind::InherentMethod])?
@@ -15479,6 +15529,173 @@ impl<'a> ExpressionChecker<'a> {
             None,
             context,
         )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_documentation_fixture_method_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        receiver: HirExpressionId,
+        receiver_type: TypeId,
+        member_token: SyntaxTokenRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?)
+            .to_owned();
+        let kind = self.program.interner.kind(receiver_type)?.clone();
+        let unit = self.program.interner.scalar(ScalarType::Unit);
+        let bool_type = self.program.interner.scalar(ScalarType::Bool);
+        let int = self.program.interner.scalar(ScalarType::Int);
+        let contract = match (&kind, member.as_str()) {
+            (TypeKind::Scalar(ScalarType::String), "isEmpty") => {
+                Some((ParameterMode::Ref, Vec::new(), bool_type, None))
+            }
+            (
+                TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Array,
+                    ..
+                },
+                "length",
+            ) => Some((ParameterMode::Ref, Vec::new(), int, None)),
+            (
+                TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Array,
+                    ..
+                },
+                "isEmpty",
+            ) => Some((ParameterMode::Ref, Vec::new(), bool_type, None)),
+            (
+                TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Array,
+                    arguments,
+                },
+                "getOr",
+            ) => Some((
+                ParameterMode::Ref,
+                vec![int, arguments[0]],
+                arguments[0],
+                Some((arguments[0], HirCapability::Copy, "Array.getOr")),
+            )),
+            (
+                TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Array,
+                    arguments,
+                },
+                "append",
+            ) => Some((ParameterMode::Var, vec![arguments[0]], unit, None)),
+            (
+                TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Map,
+                    arguments,
+                },
+                "getOr",
+            ) => Some((
+                ParameterMode::Ref,
+                vec![arguments[0], arguments[1]],
+                arguments[1],
+                Some((arguments[1], HirCapability::Copy, "Map.getOr")),
+            )),
+            (TypeKind::Option(item), "at") => Some((
+                ParameterMode::Ref,
+                Vec::new(),
+                *item,
+                Some((*item, HirCapability::Copy, "Option.at")),
+            )),
+            _ => None,
+        };
+        let Some((receiver_mode, expected, outcome, required)) = contract else {
+            return Ok(None);
+        };
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                format!("{member} does not declare generic parameters"),
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        if let Some((ty, capability, subject)) = required
+            && !self.require_capability_with_generics(
+                self.sources.span(file, member_token.range())?,
+                ty,
+                capability,
+                &context.capability_assumptions,
+                subject,
+            )?
+        {
+            return self.recovery_expression(file, range).map(Some);
+        }
+
+        let function = FunctionType::new(
+            false,
+            false,
+            std::iter::once(FunctionParameter::new(receiver_mode, receiver_type))
+                .chain(
+                    expected
+                        .iter()
+                        .copied()
+                        .map(|ty| FunctionParameter::new(ParameterMode::Value, ty)),
+                )
+                .collect(),
+            None,
+            outcome,
+        );
+        let signature = self.program.interner.function(function)?;
+        let callee = self.allocate_expression(HirExpression {
+            span: self.sources.span(file, member_token.range())?,
+            ty: signature,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::SyntheticFunction,
+        })?;
+        let (values, valid) =
+            self.check_constructor_arguments(file, suffix, &expected, &member, context)?;
+        self.check_method_receiver(receiver, receiver_mode, Some(receiver_type), context)?;
+        if !valid {
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let mut arguments = Vec::with_capacity(values.len().saturating_add(1));
+        arguments.push(HirCallArgument {
+            label: None,
+            mode: receiver_mode,
+            spread: false,
+            target: HirCallArgumentTarget::Receiver,
+            value: receiver,
+        });
+        arguments.extend(
+            values
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| HirCallArgument {
+                    label: None,
+                    mode: ParameterMode::Value,
+                    spread: false,
+                    target: HirCallArgumentTarget::Fixed(
+                        u32::try_from(index + 1).expect("fixture method arity fits in u32"),
+                    ),
+                    value,
+                }),
+        );
+        self.allocate_expression(HirExpression {
+            span: self.sources.span(file, range)?,
+            ty: outcome,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::Call {
+                callee,
+                arguments,
+                signature,
+                protocol: HirCallProtocol::Call,
+                unsafe_call: false,
+            },
+        })
         .map(Some)
     }
 
@@ -17948,6 +18165,7 @@ impl<'a> ExpressionChecker<'a> {
             | HirExpressionKind::Local(_)
             | HirExpressionKind::Constant(_)
             | HirExpressionKind::Function(_)
+            | HirExpressionKind::SyntheticFunction
             | HirExpressionKind::SpecializedFunction { .. }
             | HirExpressionKind::PreludeTraitFunction { .. }
             | HirExpressionKind::Closure(_)
@@ -18493,6 +18711,7 @@ fn closure_protocol_expression_children(kind: &HirExpressionKind) -> Vec<HirExpr
         | HirExpressionKind::Local(_)
         | HirExpressionKind::Constant(_)
         | HirExpressionKind::Function(_)
+        | HirExpressionKind::SyntheticFunction
         | HirExpressionKind::SpecializedFunction { .. }
         | HirExpressionKind::PreludeTraitFunction { .. }
         | HirExpressionKind::Closure(_)

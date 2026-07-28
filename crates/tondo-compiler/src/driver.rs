@@ -13,7 +13,7 @@ use crate::diagnostics::{
 };
 use crate::hir::{
     ExpressionCheckLimits, HirCallableId, HirDiscardStatus, HirError, HirProgram,
-    TypeLoweringLimits, check_expressions, lower_types,
+    TypeLoweringLimits, check_expressions_configured, lower_types,
 };
 use crate::mir::{MirError, MirLoweringLimits, lower_to_mir};
 pub use crate::package::Edition;
@@ -256,6 +256,7 @@ pub struct CompilationRequest {
     root: FileId,
     program_arguments: Vec<String>,
     build_inputs: DeclaredBuildInputs,
+    documentation_fixture: bool,
 }
 
 impl CompilationRequest {
@@ -309,7 +310,16 @@ impl CompilationRequest {
             root,
             program_arguments: Vec::new(),
             build_inputs: DeclaredBuildInputs::default(),
+            documentation_fixture: false,
         })
+    }
+
+    /// Enables the isolated Appendix C interfaces for the conformance doc
+    /// runner. This surface is absent from ordinary compiler builds.
+    #[cfg(feature = "conformance")]
+    pub fn with_documentation_fixture(mut self) -> Self {
+        self.documentation_fixture = true;
+        self
     }
 
     /// Supplies the values exposed by `std.process.args()` during `run`.
@@ -777,7 +787,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
         });
     }
 
-    let checked = match check_expressions(
+    let checked = match check_expressions_configured(
         &request.sources,
         parsed_sources.iter().map(|(file, parsed)| (*file, parsed)),
         &resolved_program,
@@ -788,6 +798,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
             max_trait_obligations: request.limits.max_trait_obligations,
             max_diagnostics: remaining_diagnostics,
         },
+        request.documentation_fixture,
     ) {
         Ok(checked) => checked,
         Err(HirError::DiagnosticLimit { file, offset }) => {

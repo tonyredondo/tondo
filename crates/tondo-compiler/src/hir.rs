@@ -33,6 +33,7 @@ pub(crate) use availability::{
     AvailabilityFindingKind, analyze_availability, analyze_closure_captures,
 };
 pub(crate) use capabilities::{CapabilityAnalysis, CapabilityAssumptions};
+pub(crate) use check::check_expressions_configured;
 pub use check::{ExpressionCheckLimits, HirCheckOutput, check_expressions};
 pub use lower::{TypeLoweringLimits, lower_types};
 pub(crate) use regions::{
@@ -1134,29 +1135,45 @@ impl HirPreludeTraitMethod {
         arguments: &[TypeId],
     ) -> Result<bool, TypeError> {
         Ok(match (self, arguments) {
-            (Self::Display, [target]) => matches!(
-                interner.kind(*target)?,
-                TypeKind::Scalar(
-                    ScalarType::Bool
-                        | ScalarType::Int
-                        | ScalarType::Float
-                        | ScalarType::Byte
-                        | ScalarType::Char
-                        | ScalarType::String
-                        | ScalarType::Unit
-                        | ScalarType::Int8
-                        | ScalarType::Int16
-                        | ScalarType::Int32
-                        | ScalarType::UInt8
-                        | ScalarType::UInt16
-                        | ScalarType::UInt32
-                        | ScalarType::UInt64
-                        | ScalarType::Float32
-                )
-            ),
+            (Self::Display, [target]) => intrinsic_display_type(interner, *target)?,
             (Self::Display, _) | (Self::IteratorNext, _) => false,
         })
     }
+}
+
+fn intrinsic_display_type(interner: &TypeInterner, root: TypeId) -> Result<bool, TypeError> {
+    let mut pending = vec![root];
+    let mut visited = BTreeSet::new();
+    while let Some(ty) = pending.pop() {
+        if !visited.insert(ty) {
+            continue;
+        }
+        match interner.kind(ty)? {
+            TypeKind::Scalar(
+                ScalarType::Bool
+                | ScalarType::Int
+                | ScalarType::Float
+                | ScalarType::Byte
+                | ScalarType::Char
+                | ScalarType::String
+                | ScalarType::Unit
+                | ScalarType::Int8
+                | ScalarType::Int16
+                | ScalarType::Int32
+                | ScalarType::UInt8
+                | ScalarType::UInt16
+                | ScalarType::UInt32
+                | ScalarType::UInt64
+                | ScalarType::Float32,
+            ) => {}
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Array,
+                arguments,
+            } if arguments.len() == 1 => pending.push(arguments[0]),
+            _ => return Ok(false),
+        }
+    }
+    Ok(true)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -1758,6 +1775,9 @@ pub enum HirExpressionKind {
     Local(LocalId),
     Constant(SymbolId),
     Function(HirCallableId),
+    /// Compiler-owned callable used by isolated, bodyless interface catalogs.
+    /// It may survive semantic `check`, but executable lowering must reject it.
+    SyntheticFunction,
     SpecializedFunction {
         callable: HirCallableId,
         arguments: Vec<TypeId>,

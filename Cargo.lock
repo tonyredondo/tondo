@@ -198,6 +198,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "tondo-conformance"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "tondo-reference-adapter"
+version = "0.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tondo-compiler",
+ "tondo-conformance",
+ "tondo-vm",
+]
+
+[[package]]
 name = "tondo-vm"
 version = "0.0.0"
 

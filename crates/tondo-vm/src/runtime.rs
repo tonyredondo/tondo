@@ -13,6 +13,9 @@ mod execute;
 mod heap;
 mod value;
 
+#[cfg(feature = "conformance")]
+pub mod conformance;
+
 pub use execute::{
     RejectingHost, VmExecution, VmHost, VmOutcome, execute, execute_with_limits,
     execute_with_limits_and_copy_strategy,

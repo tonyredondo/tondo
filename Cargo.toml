@@ -2,6 +2,8 @@
 members = [
     "crates/tondo-cli",
     "crates/tondo-compiler",
+    "crates/tondo-conformance",
+    "crates/tondo-reference-adapter",
     "crates/tondo-vm",
 ]
 resolver = "3"
