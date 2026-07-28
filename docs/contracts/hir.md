@@ -21,7 +21,8 @@ ownership, ARRAY-005 fixed versus structural array mutation, ARRAY-006 closed
 lifted arithmetic, ARRAY-007 named concatenation/repetition, and ITER-001/002
 static user iterators plus all four intrinsic iteration forms, plus TEXT-002
 Unicode-scalar String length, indexing, and slicing, and TEXT-003 decoded
-interpolation with static `Display` implemented
+interpolation with static `Display`, plus VARIADIC-001 homogeneous final packs
+implemented
 
 ## Boundary
 
@@ -194,6 +195,14 @@ Call arguments remain in source evaluation order while each HIR argument stores
 its resolved receiver, fixed-parameter, variadic-element, or variadic-spread
 target. Dot calls and qualified inherent calls therefore share one explicit
 receiver representation without rewriting or reevaluating source expressions.
+For VARIADIC-001, a callable may have one unique named final value parameter
+whose signature type is `...T` and whose body binding is exactly `Array[T]`.
+Zero individual elements are valid; every supplied element is associated with
+that same `T`, retains its source order, and receives an explicit contextual
+Copy or Move access. This rule is identical for direct functions, methods,
+concrete closures, contextual closures, generic specializations, and indirect
+uniform function values. Heterogeneous inference is rejected before complete
+HIR is published.
 Generic calls use a request-local invariant solver, close every inference
 variable before publishing HIR, and materialize a `SpecializedFunction`; no
 inference variable crosses the expression boundary. Explicit type arguments
@@ -1290,9 +1299,12 @@ places, enum variants, and record-pattern shorthand. Assignment tests cover
 every compound operator, partial tuple context, swaps, nested targets,
 normalized static overlap, fields, tuple slots, arrays, slices, maps,
 mutability modes, and target-before-RHS ordering. Call tests cover named
-association, both variadic spread forms, receiver lowering, method permissions,
-explicit and inferred generic specialization, inference conflicts, and unsolved
-variables. Trait tests cover empty and generic declarations, contextual `Self`,
+association, empty and populated homogeneous packs, body-visible `Array[T]`,
+Copy and affine Move elements, direct and indirect functions, methods, explicit
+and contextual closures, generic inference, both variadic spread forms,
+receiver lowering, method permissions, explicit and inferred generic
+specialization, inference conflicts, and unsolved variables. Trait tests cover
+empty and generic declarations, contextual `Self`,
 required and associated operations, defaults under bounds, inferred and
 explicit same-trait calls, async receiver requirements, invalid bodies, and
 unknown members. Implementation tests cover deterministic IDs, generic header

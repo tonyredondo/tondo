@@ -135,6 +135,25 @@ The same runtime fixture is repeated with an initial GC threshold of one.
 Mutated bytecode separately rejects an interpolation arity mismatch and a
 forged intrinsic Display receiver association.
 
+## Homogeneous variadic packs
+
+VARIADIC-001 has one end-to-end runtime fixture covering empty and populated
+packs, a fixed prefix, generic inference, body-visible `Array[T]`, methods,
+direct and indirect named functions, explicit and contextual closures,
+left-to-right effects, nested managed elements, and affine opaque closure
+elements consumed through `CallOnce`. The same fixture runs again with an
+initial GC threshold of one and must produce an identical complete
+observation.
+
+Compile-fail fixtures fix `E1102` for heterogeneous elements, `E1115` for an
+unnamed pack, `E1411` for mutation through its immutable body binding, and
+`E1401` for reuse after an affine element move. Unit tests retain the
+unique-final value-parameter restrictions and exact function type, HIR, and MIR
+associations. Adversarial bytecode changes a valid `VariadicElement` into a
+fixed target and must be rejected before execution. Explicit `...array`
+transfer behavior is intentionally outside this gate and belongs to
+VARIADIC-002.
+
 ## Conformance separation
 
 Implementation fixtures may test private invariants and `T` diagnostics. The

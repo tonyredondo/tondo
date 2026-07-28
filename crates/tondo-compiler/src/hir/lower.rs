@@ -1261,23 +1261,26 @@ impl<'a> TypeLowerer<'a> {
                     continue;
                 };
                 let ty = self.lower_type_expr(file, ty_node, environment)?;
+                let mode = parameter_mode(*item);
                 if item
                     .child_tokens()
                     .any(|token| token.kind() == TokenKind::Ellipsis)
                 {
-                    if variadic.is_some() || index + 1 != items.len() {
+                    if variadic.is_some()
+                        || index + 1 != items.len()
+                        || mode != ParameterMode::Value
+                    {
                         self.emit(
                             file,
                             item.range(),
                             "E1115",
-                            "a variadic function-type item must be unique and last",
+                            "a variadic function-type item must be unique, final, and by value",
                             None,
                             None,
                         )?;
                     }
                     variadic = Some(ty);
                 } else {
-                    let mode = parameter_mode(*item);
                     if is_async && matches!(mode, ParameterMode::Mut | ParameterMode::Var) {
                         self.emit(
                             file,
@@ -2793,12 +2796,16 @@ impl<'a> TypeLowerer<'a> {
                     name.is_some_and(|name| name.token().normalized_identifier() == Some("_"));
                 let local = name.and_then(|name| self.resolved.local_at(file, name.range()));
                 if is_variadic {
-                    if variadic.is_some() || index + 1 != parameter_nodes.len() {
+                    if variadic.is_some()
+                        || index + 1 != parameter_nodes.len()
+                        || mode != ParameterMode::Value
+                        || discard
+                    {
                         self.emit(
                             file,
                             parameter.range(),
                             "E1115",
-                            "a variadic parameter must be unique and last",
+                            "a variadic parameter must be unique, final, named, and by value",
                             None,
                             None,
                         )?;
@@ -3992,6 +3999,36 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn variadic_signatures_require_one_final_named_value_parameter() {
+        for source in [
+            "fn invalid(_: ...Int) {}\n",
+            "fn invalid(values: ...Int, other: Int) {}\n",
+            "fn invalid(operation: fn(...Int, Int)) {}\n",
+        ] {
+            let (_, _, output) = lower(source);
+            assert_eq!(
+                codes(&output),
+                ["E1115"],
+                "{source}\n{:#?}",
+                output.diagnostics()
+            );
+        }
+
+        for source in [
+            "fn invalid(first: ...Int, second: ...Int) {}\n",
+            "fn invalid(operation: fn(...Int, ...Int)) {}\n",
+        ] {
+            let (_, _, output) = lower(source);
+            assert_eq!(
+                codes(&output),
+                ["E1115", "E1115"],
+                "{source}\n{:#?}",
+                output.diagnostics()
+            );
+        }
     }
 
     #[test]

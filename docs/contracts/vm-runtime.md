@@ -29,7 +29,8 @@ recoverable errors, NUM-003 fixed-width integer operators, and NUM-004 strict
 IEEE arithmetic at each declared precision, plus TEXT-001 immutable UTF-8
 strings and TEXT-004 distinct text and byte domains, and TEXT-002
 Unicode-scalar String length, indexing, and slicing, plus TEXT-003 static
-Display execution and ordered interpolation
+Display execution and ordered interpolation, plus VARIADIC-001 homogeneous
+final packs
 
 **Language baseline:** Tondo 0.1-draft.8
 
@@ -462,6 +463,17 @@ verifier has already proved the exact signature, protocol, access, and move-path
 combination, so runtime dispatch performs no trait selection. Opaque callable
 views and closure-to-`fn` erasure are representation-preserving and still reach
 the same managed closure value.
+
+Call preparation collects every verified `VariadicElement` value in textual
+evaluation order and publishes one fresh `Array[T]` in the callable's unique
+final variadic parameter slot. No elements produce an empty array. Each
+operand has already taken the ordinary contextual path: Copy elements are
+logical copies and affine elements are moves, so the pack introduces neither
+aliasing nor a second copy. The bootstrap materializes eagerly; this allocation
+choice is unobservable and may later become a temporary view without changing
+the body-visible immutable `Array[T]`. Completed elements and the pending array
+are operation-local roots, including while nested values or closure
+environments trigger collection.
 
 This call path admits only signatures with neither `async` nor `unsafe`. The
 bytecode verifier rejects an effectful ordinary call, and the public execution

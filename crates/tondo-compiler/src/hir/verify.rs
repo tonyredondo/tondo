@@ -2064,6 +2064,52 @@ impl Verifier<'_> {
                     "async callable retains an exclusive parameter across suspension",
                 ));
             }
+            let mut fixed = Vec::new();
+            let mut variadic = None;
+            for (index, parameter) in callable.parameters.iter().enumerate() {
+                if let Some(element) = parameter.variadic_element {
+                    if variadic.is_some()
+                        || index + 1 != callable.parameters.len()
+                        || parameter.mode != ParameterMode::Value
+                        || parameter.receiver
+                        || parameter.discard
+                    {
+                        return Err(HirInvariantError::new(
+                            &context,
+                            "callable variadic parameter is not unique, final, named, and by value",
+                        ));
+                    }
+                    let expected_body = self
+                        .program
+                        .interner
+                        .kind(parameter.ty)
+                        .map_err(|error| HirInvariantError::new(&context, error.to_string()))?;
+                    if !matches!(
+                        expected_body,
+                        TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Array,
+                            arguments,
+                        } if arguments.as_slice() == [element]
+                    ) {
+                        return Err(HirInvariantError::new(
+                            &context,
+                            "callable variadic body binding is not Array[element]",
+                        ));
+                    }
+                    variadic = Some(element);
+                } else {
+                    fixed.push(FunctionParameter::new(parameter.mode, parameter.ty));
+                }
+            }
+            if function.parameters() != fixed.as_slice()
+                || function.variadic() != variadic
+                || function.outcome() != callable.outcome
+            {
+                return Err(HirInvariantError::new(
+                    &context,
+                    "callable parameters and outcome disagree with its function type",
+                ));
+            }
             self.verify_opaque_result(callable, &mut opaque_ids, &context)?;
             for (index, parameter) in callable.parameters.iter().enumerate() {
                 self.verify_type(parameter.ty, format!("{context} parameter {index}"))?;
@@ -5775,6 +5821,31 @@ mod tests {
     fn complete_checked_hir_satisfies_the_mir_entry_contract() {
         let (resolved, program) = checked_program();
         verify_typed_hir(&resolved, &program).unwrap();
+    }
+
+    #[test]
+    fn callable_variadic_shape_is_reproved_before_mir() {
+        let (resolved, mut program) = checked_program_from(
+            "fn collect(values: ...Int): Array[Int] { values }\n\
+             fn main() {\n\
+                 _ = collect(20, 22)\n\
+             }\n",
+        );
+        let parameter = program
+            .callables
+            .iter_mut()
+            .flat_map(|callable| &mut callable.parameters)
+            .find(|parameter| parameter.variadic_element.is_some())
+            .expect("the callable retains its variadic parameter");
+        parameter.mode = ParameterMode::Ref;
+
+        let error = verify_typed_hir(&resolved, &program).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("variadic parameter is not unique, final, named, and by value"),
+            "{error}"
+        );
     }
 
     #[test]

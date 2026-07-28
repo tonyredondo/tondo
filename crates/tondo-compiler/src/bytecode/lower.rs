@@ -8341,6 +8341,37 @@ fn execute(): String {
     }
 
     #[test]
+    fn bytecode_verifier_rejects_forged_variadic_element_associations() {
+        let source = "fn collect(values: ...Int): Array[Int] { values }\n\
+                      fn execute(): Array[Int] { collect(20, 22) }\n";
+        let program = lowered(source);
+        bc::verify_bytecode(&program).unwrap();
+
+        let mut forged = program;
+        let argument = forged
+            .functions
+            .iter_mut()
+            .flat_map(|function| &mut function.blocks)
+            .find_map(|block| match &mut block.terminator.kind {
+                bc::BytecodeTerminatorKind::Invoke {
+                    operation:
+                        bc::BytecodeOperation {
+                            kind: bc::BytecodeOperationKind::Call { arguments, .. },
+                            ..
+                        },
+                    ..
+                } => arguments.iter_mut().find(|argument| {
+                    argument.target == bc::BytecodeCallArgumentTarget::VariadicElement
+                }),
+                _ => None,
+            })
+            .expect("the call must retain one variadic-element association");
+        argument.target = bc::BytecodeCallArgumentTarget::Fixed(0);
+
+        assert!(bc::verify_bytecode(&forged).is_err());
+    }
+
+    #[test]
     fn intrinsic_cursor_state_is_explicit_verified_and_logically_copyable() {
         const SOURCE: &str = "fn sum(): Int {\n\
              var total = 0\n\

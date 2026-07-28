@@ -21,7 +21,8 @@ arithmetic, ARRAY-007 named concatenation/repetition, ITER-001/002 static user
 iterators plus all four intrinsic iteration forms, and the M3 VM admission
 path implemented, plus TEXT-001 immutable UTF-8 strings and TEXT-004 distinct
 text and byte domains, and TEXT-002 Unicode-scalar String length, indexing, and
-slicing, plus TEXT-003 intrinsic/static Display dispatch and interpolation
+slicing, plus TEXT-003 intrinsic/static Display dispatch and interpolation,
+plus VARIADIC-001 homogeneous final packs
 
 This document fixes the in-memory boundary between `tondo-compiler` and
 `tondo-vm`. It is an implementation contract, not observable Tondo syntax or a
@@ -344,6 +345,14 @@ modes, arity, variadic shape, outcome, function signature, protocol support, and
 access form. A source protocol exposed by a generic or opaque contract is
 normalized to the strongest safe concrete specialization without changing
 whether the source operand borrows, copies, or moves.
+Each individual variadic operand retains a `VariadicElement` target, value mode,
+exact element type, and Copy or Move access. Zero operands are represented by
+the variadic function shape itself rather than a synthetic source argument.
+Direct callables, methods, closures, generic instances, and indirect uniform
+function values use this same encoding. Verification rederives the unique final
+variadic element from callable metadata and the structural function signature;
+a forged fixed target, receiver, mode, type, or non-variadic association is
+invalid bytecode.
 Value arguments use copy/move access. Each `ref`, `mut`, or `var` argument uses
 one `Loan(id)` operand whose table entry has the identical mode, type, and fixed
 place and `CallLocal` kind. `ReserveLoan(id)` begins its active interval after

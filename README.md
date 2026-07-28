@@ -58,6 +58,15 @@ map lookup, and async receiver implementations enforce their corresponding
 closed capabilities. Terminal `Join` values fail every closed capability even
 through generic nominal containers.
 
+Final homogeneous variadics are executable end to end. One unique final
+`...T` is visible to its body as an immutable `Array[T]`; calls accept zero or
+more individual values, evaluate them left to right, preserve static
+homogeneity, and apply the ordinary Copy-or-Move rule to each element. The same
+contract works for named functions, methods, concrete closures, contextual
+closures, generics, and uniform indirect function values. The distinct
+whole-array transfer rules of explicit spread remain the VARIADIC-002
+milestone.
+
 `CompilationOutput` now retains an immutable semantic snapshot after name
 resolution. Embedding tools can query contextual expression types, resolved
 entities and references, callable signatures, enum/union members, and closed

@@ -19,7 +19,8 @@ logical slice snapshots, ARRAY-005 fixed versus structural array mutation,
 ARRAY-006 closed lifted arithmetic, ARRAY-007 named concatenation/repetition,
 and ITER-001/002 static user iterators plus all four intrinsic iteration forms
 implemented, plus TEXT-002 Unicode-scalar String length, indexing, and slicing,
-and TEXT-003 static Display calls plus ordered interpolation
+and TEXT-003 static Display calls plus ordered interpolation, plus VARIADIC-001
+homogeneous final packs
 
 This document fixes the internal contract required by M3, M5, and M7. It does
 not define observable source-language behavior; `TONDO_LANGUAGE_SPEC.md`
@@ -413,6 +414,14 @@ positionally and preserve modes and variadic association; no parameter label
 survives in the function type. The MIR verifier checks the same exact call
 contract whether the callee is a static function operand or a value read from a
 place.
+
+For an individual VARIADIC-001 element, lowering retains one
+`VariadicElement` association and the element's ordinary Copy or Move operand.
+It does not synthesize a tuple, erase `T`, or reorder evaluation. A call with no
+such operands still retains the variadic function shape, allowing the runtime
+to construct the body-visible empty `Array[T]`. The MIR verifier rederives the
+unique final by-value element type from the exact call signature and rejects a
+forged fixed, receiver, mode, or element-type association.
 
 An opaque success exit remains an explicit coercion rvalue whose kind is
 `Assignability::Opaque`. MIR preserves both operand and destination types, so a

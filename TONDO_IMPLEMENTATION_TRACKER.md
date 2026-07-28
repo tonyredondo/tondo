@@ -2,14 +2,14 @@
 
 **Estado:** activo  
 
-**Versión del tracker:** 0.75
+**Versión del tracker:** 0.76
 
-**Última actualización:** 2026-07-26
+**Última actualización:** 2026-07-28
 
 **Especificación base:** [Tondo 0.1-draft.8](./TONDO_LANGUAGE_SPEC.md)  
 
-**Objetivo inmediato:** familia TEXT cerrada; la siguiente unidad de trabajo,
-cuando se reanude, es el variádico homogéneo final de VARIADIC-001.
+**Objetivo inmediato:** VARIADIC-001 cerrado; la siguiente unidad de trabajo,
+cuando se reanude, es el spread explícito de VARIADIC-002.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -1700,7 +1700,12 @@ lifetimes escritos por el usuario.
 
 ### 11.5 Variádicos y spread
 
-- [ ] **VARIADIC-001 — Implementar variádico homogéneo final `...T`.**
+- [x] **VARIADIC-001 — Implementar variádico homogéneo final `...T`.** Un único
+  parámetro final por valor conserva `T` en la firma y expone `Array[T]`
+  inmutable en el body. Funciones, métodos, closures explícitas o contextuales,
+  genéricos y valores de función comparten la misma ruta; cero o más elementos
+  se evalúan de izquierda a derecha, se copian o mueven individualmente y se
+  materializan como un pack gestionado y enraizado.
 
 - [ ] **VARIADIC-002 — Implementar spread `...array` y materialización lógica de
   `Array[T]`.** La optimización como vista temporal puede esperar.
@@ -2161,13 +2166,34 @@ M4 sin adelantar trabajo de ownership o async.
 11. [x] Implementar bytecode verificado por slots.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 
-NUM-001 a NUM-005 y TEXT-001 a TEXT-004 quedan cerrados. La siguiente acción,
-cuando el trabajo se reanude, es VARIADIC-001; esta entrega se detiene antes de
-iniciarla.
+NUM-001 a NUM-005, TEXT-001 a TEXT-004 y VARIADIC-001 quedan cerrados. La
+siguiente acción, cuando el trabajo se reanude, es VARIADIC-002; esta entrega
+se detiene antes de iniciarla.
 
 ---
 
 ## 20. Historial del tracker
+
+### 0.76 — 2026-07-28
+
+- Se cierra VARIADIC-001 con un único parámetro final homogéneo `...T`. La firma
+  retiene el elemento y el body recibe exactamente un `Array[T]` inmutable,
+  incluido un array vacío cuando la llamada no proporciona elementos.
+- HIR conserva asociación y orden textual; MIR y bytecode retienen para cada
+  elemento su tipo, modo por valor y acceso Copy o Move. La VM materializa un
+  array nuevo, mantiene elementos y publicación pendientes como raíces y usa
+  la misma ruta para llamadas directas, métodos, closures, genéricos e
+  indirectas.
+- Los fixtures ejecutan packs vacíos y poblados, prefijo fijo, inferencia,
+  métodos, closures explícitas y contextuales, función nombrada uniforme,
+  efectos ordenados, valores gestionados y elementos afines `CallOnce`.
+  También fijan heterogeneidad como `E1102`, pack sin nombre como `E1115`,
+  mutación del binding como `E1411`, reutilización tras move como `E1401`,
+  bytecode adversarial y observables idénticos con GC desde la primera
+  asignación.
+- El spread explícito permanece abierto como VARIADIC-002 porque todavía debe
+  cerrar la transferencia completa de un `Array[T]` afín sin copiar sus
+  elementos.
 
 ### 0.75 — 2026-07-26
 
