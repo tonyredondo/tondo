@@ -8128,7 +8128,9 @@ fn push_tag_place(
                     place.projections[index - 1].ty
                 },
                 projections: place.projections[..index].to_vec(),
-                source_loan: place.source_loan,
+                // Region loans authorize access to the same underlying
+                // discriminant; they do not create a distinct tagged place.
+                source_loan: None,
             };
             events.push(TagEvent::Require(TagFact { place: base, tag }));
         }
@@ -8202,7 +8204,14 @@ fn successor_edges(terminator: &MirTerminatorKind) -> Vec<SuccessorEdge> {
             let place = match &value.kind {
                 MirOperandKind::Copy(place)
                 | MirOperandKind::Move(place)
-                | MirOperandKind::Borrow(place) => Some(place.clone()),
+                | MirOperandKind::Borrow(place) => {
+                    let mut place = place.clone();
+                    // Match refinement follows the semantic place path across
+                    // aliases borrowed from that path. The loan handle is
+                    // request-local access metadata, not tag identity.
+                    place.source_loan = None;
+                    Some(place)
+                }
                 MirOperandKind::Constant(_)
                 | MirOperandKind::Function { .. }
                 | MirOperandKind::PreludeTraitFunction { .. }

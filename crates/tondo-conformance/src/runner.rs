@@ -9,15 +9,15 @@ use serde_json::Value;
 
 use crate::document::extract_fences;
 use crate::manifest::{
-    CaseAction, ConformanceCase, DeterminismAction, Expectation, LoadedSuite, SourceAction,
-    SourceForm, SourceOperation,
+    CaseAction, ConformanceCase, DeterminismAction, Expectation, LoadedSuite, SemanticQuery,
+    SourceAction, SourceForm, SourceOperation,
 };
 use crate::protocol::{
     AdapterAction, AdapterRequest, AdapterResponse, AdapterResult, CompilationState, DocCategory,
     Observation, TargetSelection, WireBuildInput, WireDeterminismAction, WireDocumentFenceAction,
     WireOperation, WireSemanticAction, WireSource, WireSourceAction, WireSourceForm,
 };
-use crate::{ADAPTER_PROTOCOL, RESULT_FORMAT, encode_hex, sha256};
+use crate::{ADAPTER_PROTOCOL, RESULT_FORMAT, decode_hex, encode_hex, sha256};
 
 pub trait Adapter {
     fn exchange(&mut self, request: &AdapterRequest) -> Result<AdapterResponse, String>;
@@ -238,6 +238,7 @@ fn execute_case(
         let response = exchange(adapter, &request)?;
         let observation = response_observation(case, response)?;
         assert_expected(case, &observation, &expected)?;
+        validate_safe_fixes(adapter, case, &action, &observation, repetition, sequence)?;
         validate_coverage_claims(case, &observation)?;
         validate_format_idempotence(adapter, case, &action, &observation, repetition, sequence)?;
         observations.push(observation);
@@ -296,6 +297,138 @@ fn validate_format_idempotence(
             case,
             "formatting the canonical output did not reproduce identical bytes",
         );
+    }
+    Ok(())
+}
+
+fn validate_safe_fixes(
+    adapter: &mut dyn Adapter,
+    case: &ConformanceCase,
+    action: &AdapterAction,
+    observation: &Observation,
+    repetition: u32,
+    sequence: &mut u64,
+) -> Result<(), RunError> {
+    let source = match action {
+        AdapterAction::Source(source)
+        | AdapterAction::Semantic(WireSemanticAction { source, .. })
+            if source.operation == WireOperation::Check =>
+        {
+            source
+        }
+        _ => return Ok(()),
+    };
+    for diagnostic in &observation.diagnostics {
+        let diagnostic = diagnostic
+            .as_object()
+            .expect("diagnostic protocol validation ran before safe fix replay");
+        let code = diagnostic["code"]
+            .as_str()
+            .expect("diagnostic code was validated");
+        for (fix_index, fix) in diagnostic["fixes"]
+            .as_array()
+            .expect("diagnostic fixes were validated")
+            .iter()
+            .enumerate()
+        {
+            if fix["applicability"] != "safe" {
+                continue;
+            }
+            let mut patched = source.clone();
+            apply_fix(&mut patched, fix).map_err(|message| RunError::Case {
+                id: case.id.clone(),
+                message: format!("safe fix for `{code}` cannot be replayed: {message}"),
+            })?;
+            let request = AdapterRequest::new(
+                *sequence,
+                format!("{}#{repetition}/safe-fix-{fix_index}", case.id),
+                case_target(case),
+                AdapterAction::Source(patched),
+            );
+            *sequence = sequence.saturating_add(1);
+            let fixed = response_observation(case, exchange(adapter, &request)?)?;
+            validate_diagnostic_protocol(&fixed).map_err(|message| RunError::Case {
+                id: case.id.clone(),
+                message,
+            })?;
+            let remaining_errors = fixed
+                .diagnostic_codes()
+                .map_err(|message| RunError::Case {
+                    id: case.id.clone(),
+                    message,
+                })?
+                .into_iter()
+                .filter(|code| !code.starts_with('W'))
+                .collect::<Vec<_>>();
+            if fixed.compilation != CompilationState::Success
+                || fixed.exit_code != 0
+                || !remaining_errors.is_empty()
+            {
+                return case_failure(
+                    case,
+                    format!(
+                        "safe fix for `{code}` did not produce an error-free check; remaining {remaining_errors:?}"
+                    ),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn apply_fix(source: &mut WireSourceAction, fix: &Value) -> Result<(), String> {
+    let edits = fix["edits"]
+        .as_array()
+        .ok_or_else(|| "fix edits must be an array".to_owned())?;
+    let mut by_source = std::collections::BTreeMap::<usize, Vec<(usize, usize, Vec<u8>)>>::new();
+    for edit in edits {
+        let edit = edit
+            .as_object()
+            .ok_or_else(|| "fix edit must be an object".to_owned())?;
+        let source_id = string_field(edit, "source_id")?;
+        let module = string_field(edit, "module")?;
+        let file = string_field(edit, "file")?;
+        let source_index = source
+            .sources
+            .iter()
+            .position(|source| {
+                source.source_id == source_id
+                    && source.module == module
+                    && source.logical_path == file
+            })
+            .ok_or_else(|| {
+                format!(
+                    "edit target `{source_id}` module `{module}` file `{file}` is not in the request"
+                )
+            })?;
+        let (start, end) = validate_range(&edit["range"], "fix replay range")?;
+        let start = usize::try_from(start.byte)
+            .map_err(|_| "fix start does not fit this host".to_owned())?;
+        let end =
+            usize::try_from(end.byte).map_err(|_| "fix end does not fit this host".to_owned())?;
+        by_source.entry(source_index).or_default().push((
+            start,
+            end,
+            string_field(edit, "replacement")?.as_bytes().to_vec(),
+        ));
+    }
+    for (source_index, mut edits) in by_source {
+        let selected = source
+            .sources
+            .get_mut(source_index)
+            .ok_or_else(|| "fix source index disappeared".to_owned())?;
+        let mut bytes = decode_hex(&selected.contents_hex)?;
+        edits.sort_by_key(|(start, _, _)| std::cmp::Reverse(*start));
+        for (start, end, replacement) in edits {
+            if start > end || end > bytes.len() {
+                return Err(format!(
+                    "edit range {start}..{end} exceeds {} source bytes",
+                    bytes.len()
+                ));
+            }
+            bytes.splice(start..end, replacement);
+        }
+        selected.contents_hex = encode_hex(&bytes);
     }
     Ok(())
 }
@@ -518,6 +651,14 @@ fn assert_expected(
         id: case.id.clone(),
         message,
     })?;
+    if let CaseAction::Semantic(action) = &case.action {
+        validate_semantic_protocol(&action.queries, observation).map_err(|message| {
+            RunError::Case {
+                id: case.id.clone(),
+                message,
+            }
+        })?;
+    }
     let expected = expected
         .iter()
         .map(|value| {
@@ -696,6 +837,315 @@ fn validate_diagnostic_protocol(observation: &Observation) -> Result<(), String>
         previous = Some(key);
     }
     Ok(())
+}
+
+fn validate_semantic_protocol(
+    requested: &[SemanticQuery],
+    observation: &Observation,
+) -> Result<(), String> {
+    let object = observation
+        .data
+        .as_object()
+        .ok_or_else(|| "semantic observation data must be an object".to_owned())?;
+    require_exact_keys(
+        object,
+        &["expression_check_complete", "queries", "schema"],
+        "semantic observation",
+    )?;
+    if string_field(object, "schema")? != "tondo-semantic-observation-0.1/1" {
+        return Err("semantic observation uses an unknown schema".into());
+    }
+    if !object["expression_check_complete"].is_boolean() {
+        return Err("semantic `expression_check_complete` must be boolean".into());
+    }
+    let results = object["queries"]
+        .as_array()
+        .ok_or_else(|| "semantic `queries` must be an array".to_owned())?;
+    if results.len() != requested.len() {
+        return Err(format!(
+            "semantic observation returned {} results for {} queries",
+            results.len(),
+            requested.len()
+        ));
+    }
+    for (index, (query, result)) in requested.iter().zip(results).enumerate() {
+        validate_semantic_query_result(query, result)
+            .map_err(|message| format!("semantic query {index}: {message}"))?;
+    }
+    validate_semantic_tree(&observation.data, "semantic observation")
+}
+
+fn validate_semantic_query_result(query: &SemanticQuery, value: &Value) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "result must be an object".to_owned())?;
+    let (name, keys): (&str, &[&str]) = match query {
+        SemanticQuery::ExpressionType { .. } => ("expression-type", &["query", "type"]),
+        SemanticQuery::Entities { .. } => ("entities", &["entities", "query"]),
+        SemanticQuery::References { .. } => ("references", &["entity_id", "query", "references"]),
+        SemanticQuery::Signature { .. } => ("signature", &["entity_id", "query", "signature"]),
+        SemanticQuery::TypeMembers { .. } => ("type-members", &["members", "query", "type"]),
+        SemanticQuery::ClosedCallErrors { .. } => ("closed-call-errors", &["errors", "query"]),
+        SemanticQuery::TypeFacts { .. } => ("type-facts", &["facts", "query"]),
+        SemanticQuery::ExpressionFacts { .. } => ("expression-facts", &["facts", "query"]),
+        SemanticQuery::SemanticSnapshot { .. } => (
+            "semantic-snapshot",
+            &[
+                "borrow_bindings",
+                "closures",
+                "declarations",
+                "expressions",
+                "file",
+                "iterators",
+                "opaque_results",
+                "ownership",
+                "public_types",
+                "query",
+                "references",
+                "schema",
+                "unsafe",
+            ],
+        ),
+        SemanticQuery::FormattedAst => (
+            "formatted-ast",
+            &["encoding", "formatted_hex", "query", "sha256"],
+        ),
+    };
+    require_exact_keys(object, keys, "semantic query result")?;
+    if string_field(object, "query")? != name {
+        return Err(format!(
+            "result tag `{}` does not match requested `{name}`",
+            string_field(object, "query")?
+        ));
+    }
+    match query {
+        SemanticQuery::SemanticSnapshot { file } => {
+            if string_field(object, "schema")? != "tondo-semantic-snapshot-0.1/1" {
+                return Err("semantic snapshot uses an unknown schema".into());
+            }
+            if string_field(object, "file")? != file {
+                return Err("semantic snapshot returned a different file".into());
+            }
+            let ownership = object["ownership"]
+                .as_object()
+                .ok_or_else(|| "semantic ownership facts must be an object".to_owned())?;
+            require_exact_keys(ownership, &["functions", "schema"], "semantic ownership")?;
+            if string_field(ownership, "schema")? != "tondo-semantic-ownership-0.1/1" {
+                return Err("semantic ownership facts use an unknown schema".into());
+            }
+        }
+        SemanticQuery::FormattedAst => {
+            if string_field(object, "encoding")? != "utf-8" {
+                return Err("formatted AST encoding must be UTF-8".into());
+            }
+            decode_hex(string_field(object, "formatted_hex")?)?;
+            validate_sha256(string_field(object, "sha256")?)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_semantic_tree(value: &Value, context: &str) -> Result<(), String> {
+    match value {
+        Value::Array(values) => {
+            for (index, value) in values.iter().enumerate() {
+                validate_semantic_tree(value, &format!("{context}[{index}]"))?;
+            }
+        }
+        Value::Object(object) => {
+            if is_semantic_span(object) {
+                validate_semantic_span(object, context)?;
+                return Ok(());
+            }
+            for (field, value) in object {
+                if is_semantic_id_field(field) && !value.is_null() {
+                    let id = value
+                        .as_str()
+                        .ok_or_else(|| format!("{context}.{field} must be a semantic ID"))?;
+                    validate_semantic_id(id)
+                        .map_err(|message| format!("{context}.{field}: {message}"))?;
+                }
+                validate_semantic_tree(value, &format!("{context}.{field}"))?;
+                if let Some(values) = value.as_array()
+                    && let Some(keys) = semantic_array_sort_keys(field)
+                {
+                    validate_semantic_order(values, keys, &format!("{context}.{field}"))?;
+                }
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+    Ok(())
+}
+
+fn is_semantic_span(object: &serde_json::Map<String, Value>) -> bool {
+    object.keys().map(String::as_str).collect::<Vec<_>>()
+        == ["end", "file", "module", "source_id", "start"]
+}
+
+fn validate_semantic_span(
+    object: &serde_json::Map<String, Value>,
+    context: &str,
+) -> Result<(), String> {
+    for field in ["source_id", "module", "file"] {
+        let value = string_field(object, field)?;
+        if value.is_empty() || value.contains(['\n', '\r']) {
+            return Err(format!(
+                "{context}.{field} must be non-empty and single-line"
+            ));
+        }
+    }
+    let start = object["start"]
+        .as_u64()
+        .ok_or_else(|| format!("{context}.start must be unsigned"))?;
+    let end = object["end"]
+        .as_u64()
+        .ok_or_else(|| format!("{context}.end must be unsigned"))?;
+    if start > end {
+        return Err(format!("{context} is a reversed semantic span"));
+    }
+    Ok(())
+}
+
+fn is_semantic_id_field(field: &str) -> bool {
+    field != "source_id" && (field == "id" || field.ends_with("_id"))
+}
+
+fn validate_semantic_id(id: &str) -> Result<(), String> {
+    if matches!(id, "sem:receiver:self" | "sem:type:Self") {
+        return Ok(());
+    }
+    let mut parts = id.split(':');
+    let valid = parts.next() == Some("sem")
+        && parts.next().is_some_and(|kind| {
+            !kind.is_empty()
+                && kind
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+        })
+        && parts.next().is_some_and(|digest| {
+            digest.len() == 24
+                && digest
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        })
+        && parts.next().is_none();
+    if valid {
+        Ok(())
+    } else {
+        Err(format!("invalid stable semantic ID `{id}`"))
+    }
+}
+
+fn semantic_array_sort_keys(field: &str) -> Option<&'static [&'static str]> {
+    Some(match field {
+        "declarations" => &["declaration", "id"],
+        "references" => &["span", "entity_id"],
+        "expressions" | "closures" | "opaque_results" | "iterators" | "joins" | "regions"
+        | "operations" | "functions" | "dynamic_checks" => &["span", "id"],
+        "public_types" => &["identity", "id"],
+        "borrow_bindings" | "affine_values" => &["declaration", "id"],
+        "loans" | "against" => &["id"],
+        "reserve_sites" | "release_sites" => &["span", "block_id", "sequence"],
+        "events" => &["span", "block_id", "sequence", "id"],
+        "transfers" => &["span", "from_local_id", "to_local_id"],
+        _ => return None,
+    })
+}
+
+fn validate_semantic_order(values: &[Value], keys: &[&str], context: &str) -> Result<(), String> {
+    for pair in values.windows(2) {
+        if compare_semantic_items(&pair[0], &pair[1], keys) != std::cmp::Ordering::Less {
+            return Err(format!("{context} is not sorted and unique"));
+        }
+    }
+    Ok(())
+}
+
+fn compare_semantic_items(left: &Value, right: &Value, keys: &[&str]) -> std::cmp::Ordering {
+    for key in keys {
+        let left = semantic_item_field(left, key);
+        let right = semantic_item_field(right, key);
+        let ordering = compare_json_values(left, right);
+        if !ordering.is_eq() {
+            return ordering;
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+fn semantic_item_field<'a>(value: &'a Value, field: &str) -> &'a Value {
+    if (field == "id" && value.is_string())
+        || (field == "span" && value.as_object().is_some_and(is_semantic_span))
+    {
+        value
+    } else {
+        value.get(field).unwrap_or(&Value::Null)
+    }
+}
+
+fn compare_json_values(left: &Value, right: &Value) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+
+    let rank = |value: &Value| match value {
+        Value::Null => 0,
+        Value::Bool(_) => 1,
+        Value::Number(_) => 2,
+        Value::String(_) => 3,
+        Value::Array(_) => 4,
+        Value::Object(_) => 5,
+    };
+    match rank(left).cmp(&rank(right)) {
+        Ordering::Equal => {}
+        ordering => return ordering,
+    }
+    match (left, right) {
+        (Value::Null, Value::Null) => Ordering::Equal,
+        (Value::Bool(left), Value::Bool(right)) => left.cmp(right),
+        (Value::Number(left), Value::Number(right)) => match (left.as_i64(), right.as_i64()) {
+            (Some(left), Some(right)) => left.cmp(&right),
+            _ => match (left.as_u64(), right.as_u64()) {
+                (Some(left), Some(right)) => left.cmp(&right),
+                _ => left.to_string().cmp(&right.to_string()),
+            },
+        },
+        (Value::String(left), Value::String(right)) => left.cmp(right),
+        (Value::Array(left), Value::Array(right)) => left
+            .iter()
+            .zip(right)
+            .find_map(|(left, right)| {
+                let ordering = compare_json_values(left, right);
+                (!ordering.is_eq()).then_some(ordering)
+            })
+            .unwrap_or_else(|| left.len().cmp(&right.len())),
+        (Value::Object(left), Value::Object(right)) => left
+            .iter()
+            .zip(right)
+            .find_map(|((left_key, left), (right_key, right))| {
+                let ordering = left_key.cmp(right_key);
+                if ordering.is_eq() {
+                    let ordering = compare_json_values(left, right);
+                    (!ordering.is_eq()).then_some(ordering)
+                } else {
+                    Some(ordering)
+                }
+            })
+            .unwrap_or_else(|| left.len().cmp(&right.len())),
+        _ => unreachable!("equal JSON ranks have matching variants"),
+    }
+}
+
+fn validate_sha256(value: &str) -> Result<(), String> {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        Ok(())
+    } else {
+        Err(format!("invalid lowercase SHA-256 `{value}`"))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -1011,5 +1461,91 @@ mod tests {
             }
         }
         assert!(exchange(&mut WrongAdapter, &request).is_err());
+    }
+
+    #[test]
+    fn semantic_protocol_rejects_internal_or_unstable_ids() {
+        let observation = Observation {
+            data: serde_json::json!({
+                "schema": "tondo-semantic-observation-0.1/1",
+                "expression_check_complete": true,
+                "queries": [{
+                    "query": "entities",
+                    "entities": [{
+                        "id": "symbol#7",
+                        "kind": "symbol",
+                        "name": "value",
+                        "declaration": null
+                    }]
+                }]
+            }),
+            ..Observation::empty()
+        };
+        let queries = [SemanticQuery::Entities {
+            file: "case.to".into(),
+            start: 0,
+            end: 1,
+        }];
+        let error = validate_semantic_protocol(&queries, &observation).unwrap_err();
+        assert!(error.contains("invalid stable semantic ID"), "{error}");
+    }
+
+    #[test]
+    fn semantic_protocol_rejects_unsorted_source_spans() {
+        let data = serde_json::json!({
+            "references": [
+                {
+                    "source_id": "source",
+                    "module": "main",
+                    "file": "case.to",
+                    "start": 10,
+                    "end": 11
+                },
+                {
+                    "source_id": "source",
+                    "module": "main",
+                    "file": "case.to",
+                    "start": 2,
+                    "end": 3
+                }
+            ]
+        });
+        let error = validate_semantic_tree(&data, "test").unwrap_err();
+        assert!(error.contains("not sorted"), "{error}");
+    }
+
+    #[test]
+    fn safe_fix_replay_applies_byte_ranges_to_the_exact_source() {
+        let mut source = WireSourceAction {
+            operation: WireOperation::Check,
+            form: WireSourceForm::Module,
+            root: "case.to".into(),
+            sources: vec![WireSource {
+                source_id: "source".into(),
+                module: "main".into(),
+                logical_path: "case.to".into(),
+                contents_hex: encode_hex(b"type T = {\n    priv value: Int\n}\n"),
+            }],
+            warning_profiles: Vec::new(),
+            arguments: Vec::new(),
+            gc_threshold: None,
+        };
+        let fix = serde_json::json!({
+            "edits": [{
+                "source_id": "source",
+                "module": "main",
+                "file": "case.to",
+                "range": {
+                    "start": {"byte": 15},
+                    "end": {"byte": 19}
+                },
+                "replacement": ""
+            }]
+        });
+        apply_fix(&mut source, &fix).unwrap();
+        assert_eq!(
+            decode_hex(&source.sources[0].contents_hex).unwrap(),
+            b"type T = {\n     value: Int\n}\n"
+        );
     }
 }

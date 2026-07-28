@@ -2592,6 +2592,9 @@ impl<'a> ExpressionChecker<'a> {
             self.complete = false;
             return self.recovery_expression(file, node.range());
         };
+        self.program
+            .unsafe_regions
+            .push(self.sources.span(file, node.range())?);
         let previous = context.in_unsafe_region;
         context.in_unsafe_region = true;
         let checked = self.check_block(file, body, expected, context);

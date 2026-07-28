@@ -1,6 +1,6 @@
 # Semantic query contract
 
-**Status:** minimal CHECK-009 snapshot implemented
+**Status:** complete Tondo 0.1 query surface implemented and conformance-pinned
 
 ## Snapshot boundary
 
@@ -61,7 +61,7 @@ visible to its consumer rather than the pre-coercion implementation detail.
 
 ## Implemented queries
 
-The minimal snapshot provides structural queries for:
+The request-owned snapshot provides direct structural queries for:
 
 - source type annotations;
 - expression IDs, expressions, and their contextual static types;
@@ -79,6 +79,33 @@ The minimal snapshot provides structural queries for:
 - the `Absent`/`Potential`/`Present` terminal status of an interned type; and
 - the sealed consuming-operation/unwind contract when that type is itself a
   direct language-owned terminal root.
+
+The portable `semantic-snapshot` view additionally publishes every §22.5 fact
+for one logical file:
+
+- the six closed capability results and structural terminal origin for every
+  relevant type;
+- closure signatures, `Call`/`CallMut`/`CallOnce`, captures, and environment
+  capabilities without captured values;
+- opaque-result identities and bounds without their private witnesses;
+- public record constructibility and the opaque effect of private state on
+  equality and hashing;
+- iterator protocol, concrete cursor, and unique element type;
+- ownership mode and forcing patterns for `match`;
+- `ref`, `mut`, and `var` parameter/pattern origin, lexical region, and
+  structured end;
+- MIR loans with origin place, mode, reservation sites, and call or lexical
+  release boundary;
+- retained and elided overlap/duplicate checks, with the static proof attached
+  to every elided check;
+- source-visible affine values and their CFG-local available, reserved, moved,
+  and consumed events;
+- each `Join`, its owning task scope, transfers, and observed consumption
+  state;
+- explicit, callable, and closure `unsafe` regions plus the operation requiring
+  each region;
+- option/result spelling and dot-call expansion facts; and
+- canonical formatter bytes and their SHA-256.
 
 References exclude the declaration itself. They are sorted by stable logical
 `source_id`, module, path, start byte, and end byte, independently of source
@@ -100,18 +127,25 @@ A closed call error query returns:
 - one type for a single error; or
 - the canonical member order for a union error.
 
-## Deliberate later boundaries
+## Portable serialization
 
-CHECK-009 does not fabricate facts outside its deliberately minimal public
-query surface. TERM-001 exposes type-level terminal presence and direct registry
-metadata. TERM-002 now checks the internal owner/token path, but does not yet
-publish that path as a semantic query. Borrow regions, ownership state,
-terminal token flow, dynamic overlap checks, iterator cursor proofs, unsafe
-regions, and complete sugar expansion remain later §22.5 query surfaces. HIR
-already derives closure protocols and the six closed capability statuses and
-retains opaque-result bounds, but CHECK-009 does not expose those other facts as
-public structured queries. The same snapshot type can grow those views without
-changing source identity or asking an LSP to reinterpret syntax.
+The conformance adapter serializes this surface as
+`tondo-semantic-observation-0.1/1`. A file-wide result uses
+`tondo-semantic-snapshot-0.1/1`; its MIR-owned subsection uses
+`tondo-semantic-ownership-0.1/1`.
+
+Every serialized semantic identity begins with `sem:` and is derived from
+logical source identity, canonical declaration identity, canonical type, and
+the smallest necessary structural discriminator. Request-local arena, block,
+local, loan, and scope indices are never emitted. Source spans contain exactly
+`source_id`, module, logical file, start byte, and end byte. Repeated
+collections have a normative, validated order.
+
+The structured view exposes only semantic types and capabilities. Private field
+names appear only when the query originates inside their owning source
+snapshot; public type summaries expose constructibility and opaque
+equality/hash participation without revealing private values or physical
+layout.
 
 AST formatting remains the formatter's lossless-CST operation. A format request
 does not run semantic analysis merely to populate this model.
@@ -125,4 +159,9 @@ occurrences, shorthand field/local overlap, generic enum payload templates,
 normalized union members, infallible/single/union/`Never` call error sets,
 terminal status and direct `Join` contract, partial snapshot availability,
 half-open boundaries, and logical reference ordering across files inserted in a
-different order.
+different order. The Tondo 0.1 conformance group additionally pins the complete
+JSON schema, stable IDs, spans, ordering, closure/opaque/public-type facts,
+borrow and affine lifecycles, required and elided dynamic checks, structured
+`Join`, `unsafe`, sugar, and formatter output. Its safe-fix case replays the
+published byte edits against the exact source snapshot and requires a second
+error-free check.

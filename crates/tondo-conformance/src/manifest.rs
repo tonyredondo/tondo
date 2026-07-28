@@ -100,6 +100,7 @@ pub enum SemanticQuery {
     ClosedCallErrors { file: String, start: u32, end: u32 },
     TypeFacts { file: String, start: u32, end: u32 },
     ExpressionFacts { file: String, start: u32, end: u32 },
+    SemanticSnapshot { file: String },
     FormattedAst,
 }
 

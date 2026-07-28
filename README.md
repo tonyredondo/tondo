@@ -91,6 +91,11 @@ remain precise GC roots.
 resolution. Embedding tools can query contextual expression types, resolved
 entities and references, callable signatures, enum/union members, and closed
 call error sets; partial snapshots state exactly which semantic phase completed.
+The portable Tondo 0.1 view also exposes stable source-derived IDs, all six
+capabilities, terminal origins, closure protocols, opaque results, iterator
+proofs, borrow regions, MIR loan/check lifecycles, affine state events,
+structured `Join` ownership, `unsafe` regions, sugar expansion, and canonical
+formatter bytes without serializing request-local compiler handles.
 Record construction/update, inherent method dispatch, closed generic-call inference,
 range/membership checking, and compile-time constant evaluation are implemented
 for the bootstrap subset. `tondo check` now succeeds when that entire subset is
@@ -202,7 +207,7 @@ not claim full Tondo conformance.
 - `docs/contracts/targets.md` records the exact bootstrap target registry and
   capability set.
 - `docs/contracts/semantic-queries.md` records the request-owned tooling
-  snapshot and CHECK-009 query boundary.
+  snapshot and the complete Tondo 0.1 semantic serialization.
 - `docs/contracts/types.md` records the canonical semantic type representation.
 
 ## Local validation

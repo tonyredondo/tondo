@@ -85,6 +85,7 @@ pub fn lower_types<'a>(
             expression_flows: Vec::new(),
             expression_breaks: Vec::new(),
             member_references: Vec::new(),
+            unsafe_regions: Vec::new(),
             patterns: Vec::new(),
             bodies: BTreeMap::new(),
             closures: Vec::new(),

@@ -2020,18 +2020,18 @@ versionada y reproducible.
 
 ### 15.1 Construcción de `tondo-conformance-0.1`
 
-- [ ] **CONF-001 — Crear un manifiesto versionado y machine-readable de casos.**
+- [x] **CONF-001 — Crear un manifiesto versionado y machine-readable de casos.**
 
-- [ ] **CONF-002 — Extraer y clasificar fences normativos del spec.**
+- [x] **CONF-002 — Extraer y clasificar fences normativos del spec.**
 
-- [ ] **CONF-003 — Implementar fixtures del apéndice C sin exponerlos a
+- [x] **CONF-003 — Implementar fixtures del apéndice C sin exponerlos a
   programas normales.**
 
-- [ ] **CONF-004 — Crear grupo de lexing, parsing y formato.**
+- [x] **CONF-004 — Crear grupo de lexing, parsing y formato.**
 
-- [ ] **CONF-005 — Crear grupos compile-pass y compile-fail.**
+- [x] **CONF-005 — Crear grupos compile-pass y compile-fail.**
 
-- [ ] **CONF-006 — Crear grupo de consultas semánticas y fixes JSON.**
+- [x] **CONF-006 — Crear grupo de consultas semánticas y fixes JSON.**
 
 - [ ] **CONF-007 — Crear grupo runtime.**
 
@@ -2044,18 +2044,18 @@ versionada y reproducible.
 
 ### 15.2 Cobertura
 
-- [ ] **DIAG-001 — Tener al menos un caso primario para cada código `E`.**
+- [x] **DIAG-001 — Tener al menos un caso primario para cada código `E`.**
 
-- [ ] **DIAG-002 — Tener casos positivos que demuestren que cada check no
+- [x] **DIAG-002 — Tener casos positivos que demuestren que cada check no
   rechaza programas vecinos válidos.**
 
-- [ ] **WARN-001 — Cubrir el perfil de warnings `core`.**
+- [x] **WARN-001 — Cubrir el perfil de warnings `core`.**
 
-- [ ] **PANIC-001 — Cubrir cada clase normativa `P`.**
+- [x] **PANIC-001 — Cubrir cada clase normativa `P`.**
 
-- [ ] **FMT-CONF-001 — Validar resultados byte a byte e idempotencia.**
+- [x] **FMT-CONF-001 — Validar resultados byte a byte e idempotencia.**
 
-- [ ] **QUERY-CONF-001 — Validar schema, IDs, orden, spans, related y fixes.**
+- [x] **QUERY-CONF-001 — Validar schema, IDs, orden, spans, related y fixes.**
 
 - [ ] **DETERMINISM-001 — Repetir builds con orden físico de archivos
   perturbado.**
@@ -2272,6 +2272,27 @@ M10.
 ---
 
 ## 20. Historial del tracker
+
+### 0.81 — 2026-07-28
+
+- M10 queda en curso con un corpus portátil de 202 casos y un manifiesto
+  canónico que fija fuentes, expectativas, spec, fixtures y registry por
+  SHA-256. Quedan cerrados CONF-001 a CONF-006, la cobertura primaria/vecina de
+  los 78 errores, el perfil `core`, las once clases de pánico y la idempotencia
+  byte a byte del formatter.
+- `semantic-queries` publica schemas 0.1 cerrados para tipos, símbolos,
+  referencias, firmas, cierres, opacos, iteradores, capacidades, terminales,
+  borrows, loans, checks dinámicos, estados afines, `Join`, `unsafe`, azúcar y
+  AST formateada. Los IDs request-local nunca aparecen en el wire format.
+- El runner valida cardinalidad, tags, keys, IDs, spans y orden, y reaplica
+  cualquier fix `safe` sobre el snapshot exacto antes de exigir un segundo
+  check sin errores.
+- La consulta MIR descubrió y corrigió una regresión de refinamiento de tags:
+  un loan regional es metadata de acceso y no una identidad distinta para el
+  discriminante de `Enum.Variant(ref payload)`.
+- Los cuatro casos semánticos, sus regresiones focalizadas y Clippy de los
+  crates afectados pasan. CONF-007 y la auditoría de los grupos ejecutables son
+  el siguiente límite; G5 continúa abierto.
 
 ### 0.80 — 2026-07-28
 

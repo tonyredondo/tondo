@@ -1,0 +1,64 @@
+{
+  "exact_diagnostics": true,
+  "queries": [
+    {
+      "query": "entities",
+      "file": "case.to",
+      "start": 117,
+      "end": 121
+    },
+    {
+      "query": "references",
+      "file": "case.to",
+      "start": 117,
+      "end": 121
+    },
+    {
+      "query": "signature",
+      "file": "case.to",
+      "start": 117,
+      "end": 121
+    },
+    {
+      "query": "type-members",
+      "file": "case.to",
+      "start": 734,
+      "end": 743
+    },
+    {
+      "query": "closed-call-errors",
+      "file": "case.to",
+      "start": 358,
+      "end": 369
+    },
+    {
+      "query": "type-facts",
+      "file": "case.to",
+      "start": 538,
+      "end": 545
+    },
+    {
+      "query": "expression-facts",
+      "file": "case.to",
+      "start": 561,
+      "end": 578
+    },
+    {
+      "query": "expression-type",
+      "file": "case.to",
+      "start": 446,
+      "end": 462
+    },
+    {
+      "query": "semantic-snapshot",
+      "file": "case.to"
+    },
+    {
+      "query": "formatted-ast"
+    }
+  ],
+  "requirements": [
+    "CONF-006",
+    "QUERY-CONF-001"
+  ]
+}

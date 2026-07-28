@@ -9294,6 +9294,29 @@ mod tests {
     }
 
     #[test]
+    fn borrowed_variant_payload_retains_its_dominating_tag_refinement() {
+        let source = "enum Choice {\n\
+                          Empty\n\
+                          Value(Int)\n\
+                      }\n\
+                      fn inspect(choice: Choice): Int {\n\
+                          match choice {\n\
+                              Choice.Empty => 0\n\
+                              Choice.Value(ref value) => value\n\
+                          }\n\
+                      }\n";
+        let (resolved, hir) = checked(source);
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        let inspect = mir.function(function_id(&resolved, "inspect")).unwrap();
+        assert!(inspect.loans().any(|loan| {
+            loan.kind() == MirLoanKind::Region
+                && loan.place().projections().iter().any(|projection| {
+                    matches!(projection.kind(), MirProjectionKind::VariantTuple { .. })
+                })
+        }));
+    }
+
+    #[test]
     fn borrow_pattern_regions_are_explicit_and_end_before_later_writes() {
         let source = "type Pair = { left: Int, right: Int }\n\
                       fn inspect(value: ref Int) {}\n\

@@ -128,10 +128,8 @@ pub(crate) fn prepare_sources(action: &WireSourceAction) -> Result<PreparedSourc
                 Arc::<[u8]>::from(bytes),
             ))
             .map_err(|error| error.to_string())?;
-        if source.logical_path == action.root {
-            if root.replace(file).is_some() {
-                return Err("source action contains the root path more than once".into());
-            }
+        if source.logical_path == action.root && root.replace(file).is_some() {
+            return Err("source action contains the root path more than once".into());
         }
     }
     let root = root.ok_or_else(|| "source action root was not supplied".to_owned())?;

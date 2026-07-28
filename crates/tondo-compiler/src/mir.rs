@@ -130,12 +130,34 @@ impl MirFunction {
         self.locals.iter()
     }
 
+    /// Locals paired with their request-scoped MIR handles.
+    ///
+    /// Serialized tooling must derive a stable identity from the source and
+    /// semantic owner instead of exposing these handles directly.
+    pub fn locals_with_ids(&self) -> impl ExactSizeIterator<Item = (MirLocalId, &MirLocal)> {
+        self.locals
+            .iter()
+            .enumerate()
+            .map(|(index, local)| (MirLocalId(index as u32), local))
+    }
+
     pub fn local(&self, id: MirLocalId) -> Option<&MirLocal> {
         self.locals.get(id.0 as usize)
     }
 
     pub fn loans(&self) -> impl ExactSizeIterator<Item = &MirLoan> {
         self.loans.iter()
+    }
+
+    /// Loans paired with their request-scoped MIR handles.
+    ///
+    /// This is the lossless inspection surface used by semantic tooling; the
+    /// numeric handles are not stable serialized identities.
+    pub fn loans_with_ids(&self) -> impl ExactSizeIterator<Item = (MirLoanId, &MirLoan)> {
+        self.loans
+            .iter()
+            .enumerate()
+            .map(|(index, loan)| (MirLoanId(index as u32), loan))
     }
 
     pub fn loan(&self, id: MirLoanId) -> Option<&MirLoan> {
@@ -160,6 +182,14 @@ impl MirFunction {
 
     pub fn blocks(&self) -> impl ExactSizeIterator<Item = &MirBasicBlock> {
         self.blocks.iter()
+    }
+
+    /// Basic blocks paired with their request-scoped MIR handles.
+    pub fn blocks_with_ids(&self) -> impl ExactSizeIterator<Item = (MirBlockId, &MirBasicBlock)> {
+        self.blocks
+            .iter()
+            .enumerate()
+            .map(|(index, block)| (MirBlockId(index as u32), block))
     }
 
     pub fn block(&self, id: MirBlockId) -> Option<&MirBasicBlock> {

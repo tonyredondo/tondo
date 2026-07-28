@@ -1,0 +1,16 @@
+{
+  "exact_diagnostics": true,
+  "queries": [
+    {
+      "query": "semantic-snapshot",
+      "file": "case.to"
+    },
+    {
+      "query": "formatted-ast"
+    }
+  ],
+  "requirements": [
+    "CONF-006",
+    "QUERY-CONF-001"
+  ]
+}

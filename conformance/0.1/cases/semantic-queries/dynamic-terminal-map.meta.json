@@ -1,0 +1,13 @@
+{
+  "exact_diagnostics": true,
+  "queries": [
+    {
+      "query": "semantic-snapshot",
+      "file": "case.to"
+    }
+  ],
+  "requirements": [
+    "CONF-006",
+    "QUERY-CONF-001"
+  ]
+}

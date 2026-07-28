@@ -193,6 +193,7 @@ pub struct HirProgram {
     expression_flows: Vec<HirFlow>,
     expression_breaks: Vec<Vec<HirLoopId>>,
     member_references: Vec<HirMemberReference>,
+    unsafe_regions: Vec<Span>,
     patterns: Vec<HirPattern>,
     bodies: BTreeMap<HirCallableId, HirBody>,
     closures: Vec<HirClosure>,
@@ -523,6 +524,15 @@ impl HirProgram {
 
     pub fn member_references(&self) -> impl ExactSizeIterator<Item = &HirMemberReference> {
         self.member_references.iter()
+    }
+
+    /// Source regions whose bodies were checked with raw operations enabled.
+    ///
+    /// These spans retain the complete `unsafe { ... }` expression rather
+    /// than only its lowered block so semantic tooling can make the boundary
+    /// visible without reconstructing it from tokens.
+    pub fn unsafe_regions(&self) -> impl ExactSizeIterator<Item = Span> + '_ {
+        self.unsafe_regions.iter().copied()
     }
 
     pub fn expression_flow(&self, id: HirExpressionId) -> Option<HirFlow> {

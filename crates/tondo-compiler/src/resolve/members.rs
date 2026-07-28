@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use crate::diagnostics::{Diagnostic, DiagnosticCode, PrimaryLocation, Related, Severity};
+use crate::diagnostics::{
+    Applicability, Diagnostic, DiagnosticCode, Fix, PrimaryLocation, Related, Severity, TextEdit,
+};
 use crate::package::{ModuleId, Name, Namespace, PackageGraph};
 use crate::source::{FileId, SourceDatabase, Span};
 use crate::syntax::{Parsed, SyntaxKind, SyntaxNodeRef, SyntaxTokenRef, TokenKind};
@@ -417,12 +419,8 @@ impl<'a> MemberCollector<'a> {
                     unreachable!("enum variant fields cannot use `priv`")
                 }
             };
-            self.emit(
-                self.sources.span(file, private_token.range())?,
-                "E1115",
-                "`priv` is redundant on a field of a private type",
-                Some(("private type declared here", owner_span)),
-            )?;
+            let private_span = self.sources.span(file, private_token.range())?;
+            self.emit_redundant_private_field(private_span, owner_span)?;
         }
         let visibility = if owner_visibility == Visibility::Public && private_token.is_none() {
             Visibility::Public
@@ -643,6 +641,33 @@ impl<'a> MemberCollector<'a> {
         if let Some((message, related_span)) = related {
             diagnostic = diagnostic.with_related(Related::new(message, related_span)?);
         }
+        self.diagnostics.push(diagnostic);
+        Ok(())
+    }
+
+    fn emit_redundant_private_field(
+        &mut self,
+        span: Span,
+        owner: Span,
+    ) -> Result<(), ResolveError> {
+        if self.diagnostics.len() >= self.max_diagnostics {
+            return Err(ResolveError::DiagnosticLimit {
+                file: span.file(),
+                offset: span.range().start(),
+            });
+        }
+        let diagnostic = Diagnostic::new(
+            Severity::Error,
+            DiagnosticCode::new("E1115")?,
+            "`priv` is redundant on a field of a private type",
+            PrimaryLocation::Source(span),
+        )?
+        .with_related(Related::new("private type declared here", owner)?)
+        .with_fix(Fix::new(
+            "Remove redundant `priv`",
+            Applicability::Safe,
+            vec![TextEdit::new(span, "")],
+        )?);
         self.diagnostics.push(diagnostic);
         Ok(())
     }

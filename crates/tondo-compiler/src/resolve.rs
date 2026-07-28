@@ -1775,6 +1775,30 @@ mod tests {
     }
 
     #[test]
+    fn redundant_private_field_reports_an_exact_safe_removal() {
+        let (sources, output) = resolve_sources(
+            &[(
+                "main",
+                "main.to",
+                "type Secret = {\n    priv value: Int\n}\n",
+            )],
+            &["main"],
+        );
+        let (_, diagnostics) = output.into_parts();
+        let mut bag = DiagnosticBag::new();
+        bag.extend(diagnostics);
+        let report = bag.resolve("0.1", &sources).unwrap();
+        let value: serde_json::Value =
+            serde_json::from_str(report.json_lines().unwrap().trim()).unwrap();
+        assert_eq!(value["code"], "E1115");
+        assert_eq!(value["fixes"][0]["applicability"], "safe");
+        assert_eq!(value["fixes"][0]["title"], "Remove redundant `priv`");
+        assert_eq!(value["fixes"][0]["edits"][0]["range"]["start"]["byte"], 20);
+        assert_eq!(value["fixes"][0]["edits"][0]["range"]["end"]["byte"], 24);
+        assert_eq!(value["fixes"][0]["edits"][0]["replacement"], "");
+    }
+
+    #[test]
     fn inherent_method_owner_must_be_local_nominal_and_public_when_exported() {
         let (sources, output) = resolve_sources(
             &[(

@@ -1,0 +1,15 @@
+{
+  "exact_diagnostics": true,
+  "queries": [
+    {
+      "query": "entities",
+      "file": "case.to",
+      "start": 5,
+      "end": 11
+    }
+  ],
+  "requirements": [
+    "CONF-006",
+    "QUERY-CONF-001"
+  ]
+}

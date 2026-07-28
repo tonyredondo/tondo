@@ -37,6 +37,15 @@ order. An adapter cannot skip an applicable case: `unsupported` is a suite
 failure unless the manifest omitted the case because the target declaration
 lacks its capability.
 
+Semantic observations use the closed
+`tondo-semantic-observation-0.1/1` schema. The runner validates query/result
+cardinality, result tags, exact top-level keys, stable `sem:` identities,
+logical spans, repeated-field ordering, formatter bytes, and the nested
+ownership schema before comparing the pinned observation. A diagnostic fix
+marked `safe` is not accepted on shape alone: for check actions the runner
+applies its edits by byte range to the exact request snapshot, invokes the
+adapter again, and requires an error-free successful check.
+
 ## Separation
 
 The generic runner receives source bytes over the adapter protocol and never
