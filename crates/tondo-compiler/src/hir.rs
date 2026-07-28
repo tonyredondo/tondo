@@ -1860,12 +1860,14 @@ pub enum HirExpressionKind {
         arguments: Vec<HirCallArgument>,
         signature: TypeId,
         protocol: HirCallProtocol,
+        unsafe_call: bool,
     },
     AsyncCall {
         callee: HirExpressionId,
         arguments: Vec<HirCallArgument>,
         signature: TypeId,
         protocol: HirCallProtocol,
+        unsafe_call: bool,
     },
     Await {
         operation: HirExpressionId,
@@ -1960,6 +1962,12 @@ pub enum HirBootstrapHostFunction {
     ExitStatusCode,
     ExitStatusSuccess,
     ProcessPipe,
+    PointerRead,
+    PointerWrite,
+    PointerOffset,
+    PointerCast,
+    PointerAddress,
+    PointerFromAddress,
 }
 
 impl HirBootstrapHostFunction {
@@ -1991,6 +1999,12 @@ impl HirBootstrapHostFunction {
             Self::ExitStatusCode => "std.process.ExitStatus.code",
             Self::ExitStatusSuccess => "std.process.ExitStatus.success",
             Self::ProcessPipe => "std.process.pipe",
+            Self::PointerRead => "intrinsic.Pointer.read",
+            Self::PointerWrite => "intrinsic.Pointer.write",
+            Self::PointerOffset => "intrinsic.Pointer.offset",
+            Self::PointerCast => "intrinsic.Pointer.cast",
+            Self::PointerAddress => "intrinsic.Pointer.address",
+            Self::PointerFromAddress => "intrinsic.UInt64.toPointer",
         }
     }
 

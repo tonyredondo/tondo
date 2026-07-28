@@ -535,6 +535,7 @@ struct CallVerification<'a> {
     arguments: &'a [BytecodeCallArgument],
     signature: BytecodeTypeId,
     protocol: BytecodeCallProtocol,
+    unsafe_call: bool,
     outcome: BytecodeTypeId,
 }
 
@@ -5058,6 +5059,7 @@ impl Verifier<'_> {
                 arguments,
                 signature,
                 protocol,
+                unsafe_call,
             } => {
                 self.verify_operand(function, callee, context)?;
                 for argument in arguments {
@@ -5070,6 +5072,7 @@ impl Verifier<'_> {
                         arguments,
                         signature: *signature,
                         protocol: *protocol,
+                        unsafe_call: *unsafe_call,
                         outcome: operation.ty,
                     },
                     operation_context,
@@ -5155,6 +5158,16 @@ impl Verifier<'_> {
                             && intrinsic(arguments[0], BytecodeIntrinsicType::ExitStatus)?
                     ))
                 };
+                let pointer_element =
+                    |ty| -> Result<Option<BytecodeTypeId>, BytecodeVerificationError> {
+                        Ok(match &self.ty(ty, context)?.kind {
+                            BytecodeTypeKind::Intrinsic {
+                                constructor: BytecodeIntrinsicType::Pointer,
+                                arguments,
+                            } if arguments.len() == 1 => Some(arguments[0]),
+                            _ => None,
+                        })
+                    };
                 let valid = match host_function {
                     BytecodeBootstrapHostFunction::ConsolePrint => {
                         arguments.len() == 1
@@ -5194,6 +5207,36 @@ impl Verifier<'_> {
                             && intrinsic(arguments[0].ty, BytecodeIntrinsicType::ExitStatus)?
                             && self.is_scalar(operation.ty, BytecodeScalarType::Bool)
                     }
+                    BytecodeBootstrapHostFunction::PointerRead => {
+                        arguments.len() == 1
+                            && pointer_element(arguments[0].ty)? == Some(operation.ty)
+                    }
+                    BytecodeBootstrapHostFunction::PointerWrite => {
+                        arguments.len() == 2
+                            && pointer_element(arguments[0].ty)? == Some(arguments[1].ty)
+                            && self.is_scalar(operation.ty, BytecodeScalarType::Unit)
+                    }
+                    BytecodeBootstrapHostFunction::PointerOffset => {
+                        arguments.len() == 2
+                            && pointer_element(arguments[0].ty)?.is_some()
+                            && self.is_scalar(arguments[1].ty, BytecodeScalarType::Int)
+                            && operation.ty == arguments[0].ty
+                    }
+                    BytecodeBootstrapHostFunction::PointerCast => {
+                        arguments.len() == 1
+                            && pointer_element(arguments[0].ty)?.is_some()
+                            && pointer_element(operation.ty)?.is_some()
+                    }
+                    BytecodeBootstrapHostFunction::PointerAddress => {
+                        arguments.len() == 1
+                            && pointer_element(arguments[0].ty)?.is_some()
+                            && self.is_scalar(operation.ty, BytecodeScalarType::UInt64)
+                    }
+                    BytecodeBootstrapHostFunction::PointerFromAddress => {
+                        arguments.len() == 1
+                            && self.is_scalar(arguments[0].ty, BytecodeScalarType::UInt64)
+                            && pointer_element(operation.ty)?.is_some()
+                    }
                 };
                 if !valid {
                     return Err(operation_error(context));
@@ -5215,12 +5258,15 @@ impl Verifier<'_> {
             arguments,
             signature,
             protocol,
+            unsafe_call,
             outcome,
         } = call;
         let BytecodeTypeKind::Function(function_type) = &self.ty(signature, context)?.kind else {
             return Err(operation_error(context));
         };
-        if function_type.is_async != operation_context.expects_async() || function_type.is_unsafe {
+        if function_type.is_async != operation_context.expects_async()
+            || function_type.is_unsafe != unsafe_call
+        {
             return Err(BytecodeVerificationError::new(
                 context,
                 "call effects differ from their bytecode initiation context",

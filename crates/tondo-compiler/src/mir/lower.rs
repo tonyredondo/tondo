@@ -1154,12 +1154,14 @@ impl<'a> FunctionBuilder<'a> {
                 arguments,
                 signature,
                 protocol,
+                unsafe_call,
             } => {
                 let Some((current, operation)) = self.lower_call_operation(
                     *callee,
                     arguments,
                     *signature,
                     *protocol,
+                    *unsafe_call,
                     expression.ty(),
                     block,
                 )?
@@ -1180,12 +1182,14 @@ impl<'a> FunctionBuilder<'a> {
                         arguments,
                         signature,
                         protocol,
+                        unsafe_call,
                     } => {
                         let Some((current, operation)) = self.lower_call_operation(
                             *callee,
                             arguments,
                             *signature,
                             *protocol,
+                            *unsafe_call,
                             operation_expression.ty(),
                             block,
                         )?
@@ -1228,6 +1232,7 @@ impl<'a> FunctionBuilder<'a> {
                     arguments,
                     signature,
                     protocol,
+                    unsafe_call,
                 } = operation_expression.kind()
                 else {
                     return Err(MirError::Construction {
@@ -1240,6 +1245,7 @@ impl<'a> FunctionBuilder<'a> {
                     arguments,
                     *signature,
                     *protocol,
+                    *unsafe_call,
                     operation_expression.ty(),
                     block,
                 )?
@@ -1630,6 +1636,7 @@ impl<'a> FunctionBuilder<'a> {
                 arguments,
                 signature,
                 protocol,
+                unsafe_call,
             } => {
                 let Some((next, callee, callee_guard)) =
                     self.lower_defer_operand(*callee, guarded, current)?
@@ -1663,6 +1670,7 @@ impl<'a> FunctionBuilder<'a> {
                             arguments: lowered,
                             signature: *signature,
                             protocol: *protocol,
+                            unsafe_call: *unsafe_call,
                         },
                     },
                     guard,
@@ -2495,6 +2503,7 @@ impl<'a> FunctionBuilder<'a> {
                         arguments,
                         signature: function_type,
                         protocol: HirCallProtocol::Call,
+                        unsafe_call: false,
                     },
                 },
                 destination: Some(self.local_place(next)),
@@ -2912,12 +2921,14 @@ impl<'a> FunctionBuilder<'a> {
         Ok(target)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn lower_call_operation(
         &mut self,
         callee: HirExpressionId,
         arguments: &[crate::hir::HirCallArgument],
         signature: TypeId,
         protocol: HirCallProtocol,
+        unsafe_call: bool,
         outcome: TypeId,
         block: MirBlockId,
     ) -> Result<Option<(MirBlockId, MirOperation)>, MirError> {
@@ -2954,6 +2965,7 @@ impl<'a> FunctionBuilder<'a> {
                     arguments: lowered,
                     signature,
                     protocol,
+                    unsafe_call,
                 },
             },
         )))
@@ -5241,6 +5253,14 @@ fn bootstrap_host_function(
         }
         HirBootstrapHostFunction::ExitStatusCode => MirBootstrapHostFunction::ExitStatusCode,
         HirBootstrapHostFunction::ExitStatusSuccess => MirBootstrapHostFunction::ExitStatusSuccess,
+        HirBootstrapHostFunction::PointerRead => MirBootstrapHostFunction::PointerRead,
+        HirBootstrapHostFunction::PointerWrite => MirBootstrapHostFunction::PointerWrite,
+        HirBootstrapHostFunction::PointerOffset => MirBootstrapHostFunction::PointerOffset,
+        HirBootstrapHostFunction::PointerCast => MirBootstrapHostFunction::PointerCast,
+        HirBootstrapHostFunction::PointerAddress => MirBootstrapHostFunction::PointerAddress,
+        HirBootstrapHostFunction::PointerFromAddress => {
+            MirBootstrapHostFunction::PointerFromAddress
+        }
         function => {
             return Err(MirError::Construction {
                 span,

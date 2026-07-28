@@ -599,6 +599,7 @@ pub enum MirOperationKind {
         arguments: Vec<MirCallArgument>,
         signature: TypeId,
         protocol: crate::hir::HirCallProtocol,
+        unsafe_call: bool,
     },
     ExplicitPanic {
         message: MirOperand,
@@ -644,6 +645,12 @@ pub enum MirBootstrapHostFunction {
     ProcessOutputStatuses,
     ExitStatusCode,
     ExitStatusSuccess,
+    PointerRead,
+    PointerWrite,
+    PointerOffset,
+    PointerCast,
+    PointerAddress,
+    PointerFromAddress,
 }
 
 #[derive(Debug, Clone)]

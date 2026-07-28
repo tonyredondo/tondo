@@ -3609,6 +3609,7 @@ fn lower_operation(
             arguments,
             signature,
             protocol,
+            unsafe_call,
         } => {
             let callee = operand(callee)?;
             let protocol = normalized_call_protocol(*protocol, &callee, deferred, context)?;
@@ -3620,6 +3621,7 @@ fn lower_operation(
                     .collect::<Result<_, BytecodeError>>()?,
                 signature: mapped_catalog_id(*signature, type_map, context.catalog)?,
                 protocol,
+                unsafe_call: *unsafe_call,
             }
         }
         MirOperationKind::ExplicitPanic { message } => bc::BytecodeOperationKind::ExplicitPanic {
@@ -3667,6 +3669,24 @@ fn lower_operation(
                 }
                 crate::mir::MirBootstrapHostFunction::ExitStatusSuccess => {
                     bc::BytecodeBootstrapHostFunction::ExitStatusSuccess
+                }
+                crate::mir::MirBootstrapHostFunction::PointerRead => {
+                    bc::BytecodeBootstrapHostFunction::PointerRead
+                }
+                crate::mir::MirBootstrapHostFunction::PointerWrite => {
+                    bc::BytecodeBootstrapHostFunction::PointerWrite
+                }
+                crate::mir::MirBootstrapHostFunction::PointerOffset => {
+                    bc::BytecodeBootstrapHostFunction::PointerOffset
+                }
+                crate::mir::MirBootstrapHostFunction::PointerCast => {
+                    bc::BytecodeBootstrapHostFunction::PointerCast
+                }
+                crate::mir::MirBootstrapHostFunction::PointerAddress => {
+                    bc::BytecodeBootstrapHostFunction::PointerAddress
+                }
+                crate::mir::MirBootstrapHostFunction::PointerFromAddress => {
+                    bc::BytecodeBootstrapHostFunction::PointerFromAddress
                 }
             },
             arguments: arguments

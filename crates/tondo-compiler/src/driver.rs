@@ -2,6 +2,10 @@ use std::collections::BTreeSet;
 use std::error::Error;
 use std::fmt;
 
+use crate::artifact::{
+    ArtifactError, BuildArtifact, BuildProducts, CompiledInterface, DeclaredBuildInputs,
+    build_products, validate_dependency_interfaces,
+};
 use crate::bytecode::{BytecodeError, BytecodeLoweringLimits, lower_to_bytecode};
 use crate::diagnostics::{
     Diagnostic, DiagnosticBag, DiagnosticCode, DiagnosticError, DiagnosticReport, PrimaryLocation,
@@ -46,7 +50,7 @@ impl Operation {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HostProfile {
     Hosted,
 }
@@ -100,18 +104,29 @@ impl CapabilityName {
     }
 }
 
+impl fmt::Display for CapabilityName {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BuildTarget {
     name: String,
     diagnostic_source_id: SourceId,
+    profiles: BTreeSet<HostProfile>,
+    supported_capabilities: BTreeSet<CapabilityName>,
 }
 
 impl BuildTarget {
     pub fn vm_hosted() -> Self {
+        let supported_capabilities = Self::vm_hosted_capabilities();
         Self {
             name: "tondo-vm-hosted".into(),
             diagnostic_source_id: SourceId::new("target:tondo-vm-hosted")
                 .expect("the built-in target source ID is valid"),
+            profiles: BTreeSet::from([HostProfile::Hosted]),
+            supported_capabilities,
         }
     }
 
@@ -121,6 +136,14 @@ impl BuildTarget {
 
     pub fn diagnostic_source_id(&self) -> &SourceId {
         &self.diagnostic_source_id
+    }
+
+    pub fn supports_profile(&self, profile: HostProfile) -> bool {
+        self.profiles.contains(&profile)
+    }
+
+    pub fn supported_capabilities(&self) -> &BTreeSet<CapabilityName> {
+        &self.supported_capabilities
     }
 
     pub fn vm_hosted_capabilities() -> BTreeSet<CapabilityName> {
@@ -222,6 +245,7 @@ pub struct CompilationRequest {
     sources: SourceDatabase,
     root: FileId,
     program_arguments: Vec<String>,
+    build_inputs: DeclaredBuildInputs,
 }
 
 impl CompilationRequest {
@@ -240,6 +264,21 @@ impl CompilationRequest {
         root: FileId,
     ) -> Result<Self, DriverError> {
         sources.get(root)?;
+        if !target.supports_profile(profile) {
+            return Err(DriverError::UnsupportedTargetProfile {
+                target: target.name().to_owned(),
+                profile: profile.as_str(),
+            });
+        }
+        if let Some(capability) = capabilities
+            .iter()
+            .find(|capability| !target.supported_capabilities().contains(*capability))
+        {
+            return Err(DriverError::UnsupportedTargetCapability {
+                target: target.name().to_owned(),
+                capability: capability.as_str().to_owned(),
+            });
+        }
         packages.select_bootstrap_standard_modules(|required| {
             capabilities
                 .iter()
@@ -259,12 +298,18 @@ impl CompilationRequest {
             sources,
             root,
             program_arguments: Vec::new(),
+            build_inputs: DeclaredBuildInputs::default(),
         })
     }
 
     /// Supplies the values exposed by `std.process.args()` during `run`.
     pub fn with_program_arguments(mut self, arguments: Vec<String>) -> Self {
         self.program_arguments = arguments;
+        self
+    }
+
+    pub fn with_declared_build_inputs(mut self, inputs: DeclaredBuildInputs) -> Self {
+        self.build_inputs = inputs;
         self
     }
 
@@ -315,6 +360,10 @@ impl CompilationRequest {
     pub fn program_arguments(&self) -> &[String] {
         &self.program_arguments
     }
+
+    pub fn build_inputs(&self) -> &DeclaredBuildInputs {
+        &self.build_inputs
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -330,6 +379,7 @@ pub struct CompilationOutput {
     diagnostics: DiagnosticReport,
     stdout: Vec<u8>,
     semantic_model: Option<SemanticModel>,
+    products: Option<BuildProducts>,
 }
 
 impl CompilationOutput {
@@ -360,11 +410,32 @@ impl CompilationOutput {
     pub fn into_stdout(self) -> Vec<u8> {
         self.stdout
     }
+
+    pub fn interface(&self) -> Option<&CompiledInterface> {
+        self.products.as_ref().map(BuildProducts::interface)
+    }
+
+    pub fn artifact(&self) -> Option<&BuildArtifact> {
+        self.products.as_ref().map(BuildProducts::artifact)
+    }
+
+    pub fn into_products(self) -> Option<BuildProducts> {
+        self.products
+    }
 }
 
 #[derive(Debug)]
 pub enum DriverError {
     InvalidCapability(String),
+    UnsupportedTargetProfile {
+        target: String,
+        profile: &'static str,
+    },
+    UnsupportedTargetCapability {
+        target: String,
+        capability: String,
+    },
+    Artifact(ArtifactError),
     PackageGraph(PackageGraphError),
     Source(SourceError),
     Diagnostic(DiagnosticError),
@@ -385,6 +456,17 @@ impl fmt::Display for DriverError {
             Self::InvalidCapability(capability) => {
                 write!(formatter, "invalid capability name `{capability}`")
             }
+            Self::UnsupportedTargetProfile { target, profile } => {
+                write!(
+                    formatter,
+                    "target `{target}` does not support profile `{profile}`"
+                )
+            }
+            Self::UnsupportedTargetCapability { target, capability } => write!(
+                formatter,
+                "target `{target}` does not provide capability `{capability}`"
+            ),
+            Self::Artifact(error) => error.fmt(formatter),
             Self::PackageGraph(error) => error.fmt(formatter),
             Self::Source(error) => error.fmt(formatter),
             Self::Diagnostic(error) => error.fmt(formatter),
@@ -406,6 +488,12 @@ impl Error for DriverError {}
 impl From<PackageGraphError> for DriverError {
     fn from(error: PackageGraphError) -> Self {
         Self::PackageGraph(error)
+    }
+}
+
+impl From<ArtifactError> for DriverError {
+    fn from(error: ArtifactError) -> Self {
+        Self::Artifact(error)
     }
 }
 
@@ -475,6 +563,17 @@ impl From<FormatError> for DriverError {
 /// rejected by an implemented phase therefore reports its normative diagnostic
 /// instead of also receiving `T0001`.
 pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverError> {
+    validate_dependency_interfaces(
+        request.edition.as_str(),
+        request.target.name(),
+        request.profile.as_str(),
+        request
+            .capabilities
+            .iter()
+            .map(|capability| capability.as_str().to_owned()),
+        &request.build_inputs,
+        &request.packages,
+    )?;
     if let Some(diagnostic) = resource_limit_diagnostic(&request)? {
         let mut bag = DiagnosticBag::new();
         bag.push(diagnostic);
@@ -484,6 +583,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
             diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
             semantic_model: None,
+            products: None,
         });
     }
 
@@ -533,6 +633,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
             diagnostics: lexical_diagnostics.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
             semantic_model: None,
+            products: None,
         });
     }
 
@@ -571,6 +672,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
             diagnostics: syntax_diagnostics.resolve(request.edition.as_str(), &request.sources)?,
             stdout: Vec::new(),
             semantic_model: None,
+            products: None,
         });
     }
 
@@ -587,6 +689,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                 .resolve(request.edition.as_str(), &request.sources)?,
             stdout,
             semantic_model: None,
+            products: None,
         });
     }
 
@@ -617,6 +720,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                 request.sources,
                 resolved_program,
             )),
+            products: None,
         });
     }
 
@@ -659,6 +763,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                 resolved_program,
                 hir_program,
             )),
+            products: None,
         });
     }
 
@@ -716,6 +821,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                 resolved_program,
                 hir_program,
             )),
+            products: None,
         });
     }
 
@@ -745,21 +851,16 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
         if request.source_form != SourceForm::Module {
             // Fragment checks deliberately remain outside the hosted program pipeline.
         } else {
-            let mut bag = DiagnosticBag::new();
-            bag.extend(expression_diagnostics);
-            let diagnostics = bag.resolve(request.edition.as_str(), &request.sources)?;
             drop(parsed_sources);
-            return Ok(CompilationOutput {
-                status: CompilationStatus::Success,
-                exit_code: 0,
-                diagnostics,
-                stdout: Vec::new(),
-                semantic_model: Some(SemanticModel::with_hir(
-                    request.sources,
-                    resolved_program,
-                    hir_program,
-                )),
-            });
+            return semantic_output(
+                request,
+                resolved_program,
+                hir_program,
+                expression_diagnostics,
+                None,
+                0,
+                Vec::new(),
+            );
         }
     }
 
@@ -948,6 +1049,7 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
             resolved_program,
             hir_program,
         )),
+        products: None,
     })
 }
 
@@ -1161,6 +1263,21 @@ fn semantic_output(
     if let Some(diagnostic) = runtime_diagnostic {
         bag.push(diagnostic);
     }
+    let products = build_products(
+        request.edition.as_str(),
+        request.target.name(),
+        request.profile.as_str(),
+        request
+            .capabilities
+            .iter()
+            .map(|capability| capability.as_str().to_owned()),
+        &request.build_inputs,
+        &request.packages,
+        &request.sources,
+        &resolved,
+        &hir,
+    )?;
+    let diagnostics = bag.resolve(request.edition.as_str(), &request.sources)?;
     Ok(CompilationOutput {
         status: if exit_code == 0 {
             CompilationStatus::Success
@@ -1168,9 +1285,10 @@ fn semantic_output(
             CompilationStatus::Rejected
         },
         exit_code,
-        diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
+        diagnostics,
         stdout,
         semantic_model: Some(SemanticModel::with_hir(request.sources, resolved, hir)),
+        products: Some(products),
     })
 }
 
@@ -1262,6 +1380,7 @@ fn syntax_resource_output(
         diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
         stdout: Vec::new(),
         semantic_model: None,
+        products: None,
     })
 }
 
@@ -1519,6 +1638,26 @@ mod tests {
         assert!(matches!(
             CapabilityName::new("made-up-capability"),
             Err(DriverError::InvalidCapability(_))
+        ));
+
+        let baseline = request(DiagnosticFormat::Json);
+        let root = baseline.root;
+        assert!(matches!(
+            CompilationRequest::new(
+                Operation::Check,
+                Edition::V0_1,
+                BuildTarget::vm_hosted(),
+                HostProfile::Hosted,
+                BTreeSet::from([CapabilityName::new("network").unwrap()]),
+                DiagnosticFormat::Json,
+                SourceForm::Module,
+                ResourceLimits::default(),
+                baseline.packages,
+                baseline.sources,
+                root,
+            ),
+            Err(DriverError::UnsupportedTargetCapability { target, capability })
+                if target == "tondo-vm-hosted" && capability == "network"
         ));
     }
 
@@ -2400,7 +2539,7 @@ fn main() {
             (
                 &b"fn main() {\n    let operation = unsafe (): Int { 1 }\n    _ = operation()\n}\n"
                     [..],
-                "T0001",
+                "E1701",
             ),
             (
                 &b"async fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
@@ -2408,7 +2547,7 @@ fn main() {
             ),
             (
                 &b"unsafe fn operation(): Int { 1 }\nfn main() {\n    _ = operation()\n}\n"[..],
-                "T0001",
+                "E1701",
             ),
         ] {
             let output = execute(operation_request(
@@ -2421,6 +2560,97 @@ fn main() {
             assert_eq!(output.status(), CompilationStatus::Rejected);
             assert_eq!(output.diagnostics().diagnostics()[0].code(), code);
         }
+    }
+
+    #[test]
+    fn unsafe_calls_execute_only_through_explicit_regions() {
+        let source = b"unsafe fn raw(value: Int): Int { value + 1 }\n\
+            fn main() {\n\
+                let direct = unsafe { raw(40) }\n\
+                let operation = unsafe (value: Int): Int { raw(value) }\n\
+                let indirect = unsafe { operation(1) }\n\
+                assert(direct + indirect == 43)\n\
+            }\n";
+        let output = execute(operation_request(
+            Operation::Run,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics().diagnostics()
+        );
+        assert_eq!(output.exit_code(), 0);
+    }
+
+    #[test]
+    fn async_unsafe_calls_keep_both_effects_visible() {
+        let source = b"async unsafe fn raw(value: Int): Int { value + 1 }\n\
+            async fn main() {\n\
+                let result = unsafe { await raw(41) }\n\
+                assert(result == 42)\n\
+            }\n";
+        let output = execute(operation_request(
+            Operation::Run,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics().diagnostics()
+        );
+
+        let invalid = b"async unsafe fn raw(): Int { 1 }\n\
+            async fn main() {\n\
+                _ = await raw()\n\
+            }\n";
+        let output = execute(operation_request(
+            Operation::Run,
+            invalid,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert_eq!(output.diagnostics().diagnostics()[0].code(), "E1701");
+    }
+
+    #[test]
+    fn raw_pointer_operations_lower_through_verified_bytecode() {
+        let source = b"fn main() {\n\
+            if false {\n\
+                let pointer = unsafe { 1u64.toPointer[Int]() }\n\
+                unsafe {\n\
+                    let value = pointer.read()\n\
+                    pointer.write(value)\n\
+                    let advanced = pointer.offset(1)\n\
+                    let bytes = advanced.cast[Byte]()\n\
+                    _ = bytes.address()\n\
+                }\n\
+            }\n\
+        }\n";
+        let output = execute(operation_request(
+            Operation::Run,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics().diagnostics()
+        );
+        assert_eq!(output.exit_code(), 0);
     }
 
     #[test]

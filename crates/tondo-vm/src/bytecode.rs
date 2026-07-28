@@ -1010,6 +1010,7 @@ pub enum BytecodeOperationKind {
         arguments: Vec<BytecodeCallArgument>,
         signature: BytecodeTypeId,
         protocol: BytecodeCallProtocol,
+        unsafe_call: bool,
     },
     Display {
         argument: BytecodeCallArgument,
@@ -1051,6 +1052,12 @@ pub enum BytecodeBootstrapHostFunction {
     ProcessOutputStatuses,
     ExitStatusCode,
     ExitStatusSuccess,
+    PointerRead,
+    PointerWrite,
+    PointerOffset,
+    PointerCast,
+    PointerAddress,
+    PointerFromAddress,
 }
 
 impl BytecodeBootstrapHostFunction {
@@ -1063,6 +1070,12 @@ impl BytecodeBootstrapHostFunction {
             Self::ProcessOutputStatuses => "std.process.ProcessOutput.statuses",
             Self::ExitStatusCode => "std.process.ExitStatus.code",
             Self::ExitStatusSuccess => "std.process.ExitStatus.success",
+            Self::PointerRead => "intrinsic.Pointer.read",
+            Self::PointerWrite => "intrinsic.Pointer.write",
+            Self::PointerOffset => "intrinsic.Pointer.offset",
+            Self::PointerCast => "intrinsic.Pointer.cast",
+            Self::PointerAddress => "intrinsic.Pointer.address",
+            Self::PointerFromAddress => "intrinsic.UInt64.toPointer",
         }
     }
 }

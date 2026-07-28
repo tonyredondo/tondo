@@ -83,6 +83,7 @@ struct MirCallVerification<'a> {
     arguments: &'a [super::MirCallArgument],
     signature: TypeId,
     protocol: HirCallProtocol,
+    unsafe_call: bool,
     outcome: TypeId,
 }
 
@@ -2597,6 +2598,7 @@ impl Verifier<'_> {
                 arguments,
                 signature,
                 protocol,
+                unsafe_call,
             } => {
                 self.verify_operand(function, callee, context)?;
                 for argument in arguments {
@@ -2615,6 +2617,7 @@ impl Verifier<'_> {
                         arguments,
                         signature: *signature,
                         protocol: *protocol,
+                        unsafe_call: *unsafe_call,
                         outcome: operation.ty,
                     },
                     operation_context,
@@ -2705,6 +2708,15 @@ impl Verifier<'_> {
                             && intrinsic(arguments[0], IntrinsicType::ExitStatus)?
                     ))
                 };
+                let pointer_element = |ty| -> Result<Option<TypeId>, MirInvariantError> {
+                    Ok(match self.kind(ty, context)? {
+                        TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Pointer,
+                            arguments,
+                        } if arguments.len() == 1 => Some(arguments[0]),
+                        _ => None,
+                    })
+                };
                 let valid = match host_function {
                     super::MirBootstrapHostFunction::ConsolePrint => {
                         arguments.len() == 1
@@ -2744,6 +2756,36 @@ impl Verifier<'_> {
                         arguments.len() == 1
                             && intrinsic(arguments[0].ty, IntrinsicType::ExitStatus)?
                             && operation.ty == self.hir.interner().scalar(ScalarType::Bool)
+                    }
+                    super::MirBootstrapHostFunction::PointerRead => {
+                        arguments.len() == 1
+                            && pointer_element(arguments[0].ty)? == Some(operation.ty)
+                    }
+                    super::MirBootstrapHostFunction::PointerWrite => {
+                        arguments.len() == 2
+                            && pointer_element(arguments[0].ty)? == Some(arguments[1].ty)
+                            && operation.ty == self.hir.interner().scalar(ScalarType::Unit)
+                    }
+                    super::MirBootstrapHostFunction::PointerOffset => {
+                        arguments.len() == 2
+                            && pointer_element(arguments[0].ty)?.is_some()
+                            && arguments[1].ty == self.hir.interner().scalar(ScalarType::Int)
+                            && operation.ty == arguments[0].ty
+                    }
+                    super::MirBootstrapHostFunction::PointerCast => {
+                        arguments.len() == 1
+                            && pointer_element(arguments[0].ty)?.is_some()
+                            && pointer_element(operation.ty)?.is_some()
+                    }
+                    super::MirBootstrapHostFunction::PointerAddress => {
+                        arguments.len() == 1
+                            && pointer_element(arguments[0].ty)?.is_some()
+                            && operation.ty == self.hir.interner().scalar(ScalarType::UInt64)
+                    }
+                    super::MirBootstrapHostFunction::PointerFromAddress => {
+                        arguments.len() == 1
+                            && arguments[0].ty == self.hir.interner().scalar(ScalarType::UInt64)
+                            && pointer_element(operation.ty)?.is_some()
                     }
                 };
                 if !valid {
@@ -4882,6 +4924,7 @@ impl Verifier<'_> {
             arguments,
             signature,
             protocol,
+            unsafe_call,
             outcome,
         } = verification;
         let TypeKind::Function(call_signature) = self.kind(signature, context)? else {
@@ -4891,7 +4934,7 @@ impl Verifier<'_> {
             ));
         };
         if call_signature.is_async() != operation_context.expects_async()
-            || call_signature.is_unsafe()
+            || call_signature.is_unsafe() != unsafe_call
         {
             return Err(MirInvariantError::new(
                 context,

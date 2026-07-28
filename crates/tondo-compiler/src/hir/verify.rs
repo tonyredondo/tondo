@@ -3924,12 +3924,14 @@ impl Verifier<'_> {
                 arguments,
                 signature,
                 protocol,
+                unsafe_call,
             }
             | HirExpressionKind::AsyncCall {
                 callee,
                 arguments,
                 signature,
                 protocol,
+                unsafe_call,
             } => {
                 let callee = self.expression(*callee, context)?;
                 let TypeKind::Function(function) = self
@@ -3944,10 +3946,10 @@ impl Verifier<'_> {
                     ));
                 };
                 let async_call = matches!(expression.kind, HirExpressionKind::AsyncCall { .. });
-                if function.is_async() != async_call || function.is_unsafe() {
+                if function.is_async() != async_call || function.is_unsafe() != *unsafe_call {
                     return Err(HirInvariantError::new(
                         context,
-                        "call effect does not match its synchronous or async HIR operation",
+                        "call effects do not match their HIR operation",
                     ));
                 }
                 if expression.ty != function.outcome() {
@@ -4216,6 +4218,13 @@ impl Verifier<'_> {
                             && intrinsic(arguments[0], IntrinsicType::ExitStatus)
                     )
                 };
+                let pointer_element = |ty| match self.program.interner.kind(ty) {
+                    Ok(TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Pointer,
+                        arguments,
+                    }) if arguments.len() == 1 => Some(arguments[0]),
+                    _ => None,
+                };
                 let valid = match function {
                     super::HirBootstrapHostFunction::ConsolePrint => {
                         argument_types.as_slice()
@@ -4255,6 +4264,36 @@ impl Verifier<'_> {
                         argument_types.len() == 1
                             && intrinsic(argument_types[0], IntrinsicType::ExitStatus)
                             && expression.ty == self.program.interner.scalar(ScalarType::Bool)
+                    }
+                    super::HirBootstrapHostFunction::PointerRead => {
+                        argument_types.len() == 1
+                            && pointer_element(argument_types[0]) == Some(expression.ty)
+                    }
+                    super::HirBootstrapHostFunction::PointerWrite => {
+                        argument_types.len() == 2
+                            && pointer_element(argument_types[0]) == Some(argument_types[1])
+                            && expression.ty == self.program.interner.scalar(ScalarType::Unit)
+                    }
+                    super::HirBootstrapHostFunction::PointerOffset => {
+                        argument_types.len() == 2
+                            && pointer_element(argument_types[0]).is_some()
+                            && argument_types[1] == self.program.interner.scalar(ScalarType::Int)
+                            && expression.ty == argument_types[0]
+                    }
+                    super::HirBootstrapHostFunction::PointerCast => {
+                        argument_types.len() == 1
+                            && pointer_element(argument_types[0]).is_some()
+                            && pointer_element(expression.ty).is_some()
+                    }
+                    super::HirBootstrapHostFunction::PointerAddress => {
+                        argument_types.len() == 1
+                            && pointer_element(argument_types[0]).is_some()
+                            && expression.ty == self.program.interner.scalar(ScalarType::UInt64)
+                    }
+                    super::HirBootstrapHostFunction::PointerFromAddress => {
+                        argument_types.len() == 1
+                            && argument_types[0] == self.program.interner.scalar(ScalarType::UInt64)
+                            && pointer_element(expression.ty).is_some()
                     }
                     _ => false,
                 };

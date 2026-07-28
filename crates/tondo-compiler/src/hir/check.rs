@@ -289,6 +289,7 @@ struct BodyContext {
     loops: Vec<HirLoopId>,
     current_scope: Option<HirScopeId>,
     is_async: bool,
+    in_unsafe_region: bool,
     structured_scope_depth: u32,
     async_initiation: Option<AsyncInitiation>,
     in_defer_body: bool,
@@ -1152,6 +1153,10 @@ impl<'a> ExpressionChecker<'a> {
             context.is_async = matches!(
                 self.program.interner.kind(callable.function_type())?,
                 TypeKind::Function(function) if function.is_async()
+            );
+            context.in_unsafe_region = matches!(
+                self.program.interner.kind(callable.function_type())?,
+                TypeKind::Function(function) if function.is_unsafe()
             );
             for parameter in &callable.parameters {
                 let permission = match parameter.mode() {
@@ -2548,11 +2553,29 @@ impl<'a> ExpressionChecker<'a> {
             AstExpression::Await(_) => self.check_await(file, node, expected, context),
             AstExpression::Spawn(_) => self.check_spawn(file, node, context),
             AstExpression::Scope(_) => self.check_async_scope(file, node, expected, context),
-            AstExpression::Unsafe(_) => {
-                self.complete = false;
-                self.recovery_expression(file, node.range())
-            }
+            AstExpression::Unsafe(_) => self.check_unsafe_block(file, node, expected, context),
         }
+    }
+
+    fn check_unsafe_block(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'_>,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        let Some(body) = node
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::Block)
+        else {
+            self.complete = false;
+            return self.recovery_expression(file, node.range());
+        };
+        let previous = context.in_unsafe_region;
+        context.in_unsafe_region = true;
+        let checked = self.check_block(file, body, expected, context);
+        context.in_unsafe_region = previous;
+        checked
     }
 
     fn check_closure(
@@ -2579,6 +2602,8 @@ impl<'a> ExpressionChecker<'a> {
         };
         let (captures, captures_valid) =
             self.collect_closure_captures(file, node.range(), body_node, context)?;
+        let captures_valid =
+            captures_valid && self.validate_safe_closure_captures(span, &captures, is_unsafe)?;
         if !captures_valid {
             return self.recovery_expression(file, node.range());
         }
@@ -2829,6 +2854,7 @@ impl<'a> ExpressionChecker<'a> {
             signature: span,
         });
         closure_context.is_async = is_async;
+        closure_context.in_unsafe_region = is_unsafe;
         for parameter in &parameters {
             let Some(local) = parameter.local() else {
                 continue;
@@ -3506,6 +3532,108 @@ impl<'a> ExpressionChecker<'a> {
         Ok((captures, valid))
     }
 
+    fn validate_safe_closure_captures(
+        &mut self,
+        span: Span,
+        captures: &[HirClosureCapture],
+        is_unsafe: bool,
+    ) -> Result<bool, HirError> {
+        if is_unsafe {
+            return Ok(true);
+        }
+        let mut valid = true;
+        for capture in captures {
+            if !self.type_contains_raw_pointer(capture.ty())? {
+                continue;
+            }
+            let related = self
+                .resolved
+                .local(capture.local())
+                .map(|binding| vec![("the captured binding is declared here", binding.span())])
+                .unwrap_or_default();
+            self.emit(
+                span,
+                "E1702",
+                "a value containing `Pointer` may only be captured by an `unsafe` closure",
+                related,
+                None,
+            )?;
+            valid = false;
+        }
+        Ok(valid)
+    }
+
+    fn type_contains_raw_pointer(&self, root: TypeId) -> Result<bool, HirError> {
+        let mut interner = self.program.interner.clone();
+        let mut pending = vec![root];
+        let mut visited = BTreeSet::new();
+        while let Some(ty) = pending.pop() {
+            if !visited.insert(ty) {
+                continue;
+            }
+            match interner.kind(ty)?.clone() {
+                TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Pointer,
+                    ..
+                } => return Ok(true),
+                TypeKind::Nominal {
+                    identity,
+                    arguments,
+                } => {
+                    pending.extend(arguments.iter().copied());
+                    let Some(symbol) = self
+                        .resolved
+                        .symbols()
+                        .find(|symbol| symbol.identity() == &identity)
+                    else {
+                        continue;
+                    };
+                    let Some(declaration) = self.program.declaration(symbol.id()) else {
+                        continue;
+                    };
+                    let HirTypeDeclarationKind::Nominal(definition) = declaration.kind() else {
+                        continue;
+                    };
+                    let substitution = TypeSubstitution::new(arguments);
+                    for child in nominal_type_roots(definition.shape()) {
+                        pending.push(substitution.apply(&mut interner, child)?);
+                    }
+                }
+                TypeKind::Generated {
+                    identity,
+                    arguments,
+                } => {
+                    pending.extend(arguments.iter().copied());
+                    let Some(closure) = self.program.closure_by_identity(&identity) else {
+                        continue;
+                    };
+                    let substitution = TypeSubstitution::new(arguments);
+                    for capture in &closure.captures {
+                        pending.push(substitution.apply(&mut interner, capture.ty())?);
+                    }
+                }
+                TypeKind::Tuple(items)
+                | TypeKind::Union(items)
+                | TypeKind::Intrinsic {
+                    arguments: items, ..
+                } => pending.extend(items),
+                TypeKind::Option(item) => pending.push(item),
+                TypeKind::Result { success, error } => {
+                    pending.push(success);
+                    pending.push(error);
+                }
+                TypeKind::Cursor { collection, .. } => pending.push(collection),
+                TypeKind::OpaqueResult { arguments, .. } => pending.extend(arguments),
+                TypeKind::Error
+                | TypeKind::Scalar(_)
+                | TypeKind::Function(_)
+                | TypeKind::GenericParameter(_)
+                | TypeKind::Inference(_) => {}
+            }
+        }
+        Ok(false)
+    }
+
     fn finish_closure_body(
         &mut self,
         root: HirExpressionId,
@@ -4135,6 +4263,7 @@ impl<'a> ExpressionChecker<'a> {
                 }],
                 signature,
                 protocol: HirCallProtocol::Call,
+                unsafe_call: false,
             },
         })
     }
@@ -6759,6 +6888,16 @@ impl<'a> ExpressionChecker<'a> {
             self.check_expression(file, expression, None, &mut defer_context)?
         };
 
+        if self.expression_type(invocation) == self.program.interner.error() {
+            return Ok(HirStatement::Defer {
+                span,
+                scope,
+                action: HirDeferAction {
+                    expression: invocation,
+                    guarded: None,
+                },
+            });
+        }
         self.normalize_deferred_call_protocol(invocation, span, context)?;
         let guarded = self.validate_defer_invocation(invocation, span, context)?;
         Ok(HirStatement::Defer {
@@ -6834,7 +6973,11 @@ impl<'a> ExpressionChecker<'a> {
         let span = self.sources.span(file, defer.range())?;
         let (captures, captures_valid) =
             self.collect_closure_captures(file, defer.range(), body, context)?;
-        let mut valid = captures_valid;
+        let captures_safe = self.validate_safe_closure_captures(span, &captures, false)?;
+        if !captures_valid || !captures_safe {
+            return self.recovery_expression(file, defer.range());
+        }
+        let mut valid = true;
         for capture in &captures {
             if self.capability_status_with_generics(
                 capture.ty(),
@@ -6951,6 +7094,7 @@ impl<'a> ExpressionChecker<'a> {
                 arguments: Vec::new(),
                 signature: function_type,
                 protocol,
+                unsafe_call: false,
             },
         })
     }
@@ -14791,6 +14935,18 @@ impl<'a> ExpressionChecker<'a> {
         if receiver_type == self.program.interner.error() {
             return self.recovery_expression(file, range).map(Some);
         }
+        if let Some(call) = self.check_raw_pointer_method_call(
+            file,
+            range,
+            receiver,
+            receiver_type,
+            member_token,
+            suffix,
+            explicit_bracket,
+            context,
+        )? {
+            return Ok(Some(call));
+        }
         if let Some(call) = self.check_process_method_call(
             file,
             range,
@@ -15043,6 +15199,180 @@ impl<'a> ExpressionChecker<'a> {
             context,
         )
         .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_raw_pointer_method_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        receiver: HirExpressionId,
+        receiver_type: TypeId,
+        member_token: SyntaxTokenRef<'_>,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?)
+            .to_owned();
+        let kind = self.program.interner.kind(receiver_type)?.clone();
+        let pointer_element = match &kind {
+            TypeKind::Intrinsic {
+                constructor: IntrinsicType::Pointer,
+                arguments,
+            } => Some(arguments[0]),
+            _ => None,
+        };
+        let operation = match (pointer_element, &kind, member.as_str()) {
+            (Some(_), _, "read") => HirBootstrapHostFunction::PointerRead,
+            (Some(_), _, "write") => HirBootstrapHostFunction::PointerWrite,
+            (Some(_), _, "offset") => HirBootstrapHostFunction::PointerOffset,
+            (Some(_), _, "cast") => HirBootstrapHostFunction::PointerCast,
+            (Some(_), _, "address") => HirBootstrapHostFunction::PointerAddress,
+            (None, TypeKind::Scalar(ScalarType::UInt64), "toPointer") => {
+                HirBootstrapHostFunction::PointerFromAddress
+            }
+            _ => return Ok(None),
+        };
+        if !context.in_unsafe_region {
+            self.emit(
+                self.sources.span(file, member_token.range())?,
+                "E1701",
+                format!(
+                    "raw operation `{}` may only be invoked inside an `unsafe` region",
+                    operation.name()
+                ),
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+
+        let explicit_bracket = explicit_bracket.or_else(|| {
+            self.raw_operation_type_arguments(file, member_token.range(), suffix.range())
+        });
+        let type_argument = if matches!(
+            operation,
+            HirBootstrapHostFunction::PointerCast | HirBootstrapHostFunction::PointerFromAddress
+        ) {
+            let Some(bracket) = explicit_bracket else {
+                self.emit(
+                    self.sources.span(file, member_token.range())?,
+                    "E1104",
+                    format!("`{member}` requires exactly one explicit target type"),
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range).map(Some);
+            };
+            let Some(arguments) =
+                self.expression_generic_arguments(file, bracket, Some(context))?
+            else {
+                return self.recovery_expression(file, range).map(Some);
+            };
+            let [argument] = arguments.as_slice() else {
+                self.emit(
+                    self.sources.span(file, bracket.range())?,
+                    "E1104",
+                    format!(
+                        "`{member}` expects one type argument, found {}",
+                        arguments.len()
+                    ),
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range).map(Some);
+            };
+            Some(*argument)
+        } else {
+            if let Some(bracket) = explicit_bracket {
+                self.emit(
+                    self.sources.span(file, bracket.range())?,
+                    "E1104",
+                    format!("`{member}` does not declare type parameters"),
+                    Vec::new(),
+                    None,
+                )?;
+                return self.recovery_expression(file, range).map(Some);
+            }
+            None
+        };
+
+        let int = self.program.interner.scalar(ScalarType::Int);
+        let expected = match operation {
+            HirBootstrapHostFunction::PointerWrite => {
+                vec![pointer_element.expect("Pointer.write has a pointer receiver")]
+            }
+            HirBootstrapHostFunction::PointerOffset => vec![int],
+            HirBootstrapHostFunction::PointerRead
+            | HirBootstrapHostFunction::PointerCast
+            | HirBootstrapHostFunction::PointerAddress
+            | HirBootstrapHostFunction::PointerFromAddress => Vec::new(),
+            _ => unreachable!("raw pointer operation selection is closed"),
+        };
+        let (values, valid) =
+            self.check_constructor_arguments(file, suffix, &expected, operation.name(), context)?;
+        if !valid || values.len() != expected.len() {
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let outcome = match operation {
+            HirBootstrapHostFunction::PointerRead => {
+                pointer_element.expect("Pointer.read has a pointer receiver")
+            }
+            HirBootstrapHostFunction::PointerWrite => {
+                self.program.interner.scalar(ScalarType::Unit)
+            }
+            HirBootstrapHostFunction::PointerOffset => receiver_type,
+            HirBootstrapHostFunction::PointerCast
+            | HirBootstrapHostFunction::PointerFromAddress => self.program.interner.intrinsic(
+                IntrinsicType::Pointer,
+                vec![type_argument.expect("cast operations have a target type")],
+            )?,
+            HirBootstrapHostFunction::PointerAddress => {
+                self.program.interner.scalar(ScalarType::UInt64)
+            }
+            _ => unreachable!("raw pointer operation selection is closed"),
+        };
+        let mut arguments = Vec::with_capacity(values.len().saturating_add(1));
+        arguments.push(receiver);
+        arguments.extend(values);
+        self.allocate_expression(HirExpression {
+            span: self.sources.span(file, range)?,
+            ty: outcome,
+            category: HirValueCategory::Value,
+            kind: HirExpressionKind::BootstrapHostCall {
+                function: operation,
+                arguments,
+            },
+        })
+        .map(Some)
+    }
+
+    fn raw_operation_type_arguments(
+        &self,
+        file: FileId,
+        member: TextRange,
+        call: TextRange,
+    ) -> Option<SyntaxNodeRef<'a>> {
+        let parsed = self.parsed.get(&file)?;
+        let mut pending = vec![parsed.cst().root_node()];
+        let mut selected = None;
+        while let Some(node) = pending.pop() {
+            if node.kind() == SyntaxKind::BracketPostfix
+                && node.range().start() >= member.end()
+                && node.range().end() <= call.start()
+                && selected.is_none_or(|current: SyntaxNodeRef<'_>| {
+                    node.range().start() < current.range().start()
+                })
+            {
+                selected = Some(node);
+            }
+            pending.extend(node.child_nodes());
+        }
+        selected
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -16153,11 +16483,15 @@ impl<'a> ExpressionChecker<'a> {
         let async_initiation = context
             .async_initiation
             .filter(|initiation| initiation.range == range);
-        if contract.function.is_unsafe() {
-            // UNSAFE-001 owns the execution context proof in M9. Retaining the
-            // exact callable effect is valid, but M7 does not make unsafe calls
-            // executable.
-            self.complete = false;
+        let unsafe_call = contract.function.is_unsafe();
+        if unsafe_call && !context.in_unsafe_region {
+            self.emit(
+                call_span,
+                "E1701",
+                "an unsafe callable may only be invoked inside an `unsafe` region",
+                Vec::new(),
+                None,
+            )?;
             return self.recovery_expression(file, range);
         }
         if contract.function.is_async() {
@@ -16745,6 +17079,7 @@ impl<'a> ExpressionChecker<'a> {
                 arguments,
                 signature,
                 protocol,
+                unsafe_call,
             }
         } else {
             HirExpressionKind::Call {
@@ -16752,6 +17087,7 @@ impl<'a> ExpressionChecker<'a> {
                 arguments,
                 signature,
                 protocol,
+                unsafe_call,
             }
         };
         self.allocate_expression(HirExpression {
@@ -19322,9 +19658,125 @@ mod tests {
         let unsafe_source =
             "fn deferred() {\n    let operation = unsafe (): Int { 1 }\n    _ = operation()\n}\n";
         let (_, _, output) = check(unsafe_source);
-        assert!(output.diagnostics().is_empty(), "{unsafe_source}");
-        assert!(!output.is_complete(), "{unsafe_source}");
+        assert_eq!(codes(&output), ["E1701"], "{unsafe_source}");
+        assert!(output.is_complete(), "{unsafe_source}");
         assert_eq!(output.program().closures().count(), 1, "{unsafe_source}");
+    }
+
+    #[test]
+    fn unsafe_calls_require_a_visible_region_and_preserve_their_effect() {
+        let source = "unsafe fn raw(value: Int): Int { value + 1 }\n\
+                      fn valid(): Int {\n\
+                          let operation = unsafe (value: Int): Int { raw(value) }\n\
+                          unsafe { operation(41) }\n\
+                      }\n";
+        let (_, _, output) = check(source);
+        assert!(
+            output.diagnostics().is_empty(),
+            "{source}\n{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let unsafe_calls = output
+            .program()
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::Call { unsafe_call, .. } => Some(*unsafe_call),
+                _ => None,
+            })
+            .filter(|unsafe_call| *unsafe_call)
+            .count();
+        assert_eq!(unsafe_calls, 2);
+
+        let invalid = "unsafe fn raw(): Int { 1 }\nfn invalid(): Int { raw() }\n";
+        let (_, _, output) = check(invalid);
+        assert_eq!(codes(&output), ["E1701"], "{invalid}");
+    }
+
+    #[test]
+    fn raw_pointer_operations_have_closed_typed_unsafe_contracts() {
+        let source = "unsafe fn raw(pointer: Pointer[Int], address: UInt64): UInt64 {\n\
+             let value = pointer.read()\n\
+             pointer.write(value)\n\
+             let advanced = pointer.offset(1)\n\
+             let bytes = advanced.cast[Byte]()\n\
+             let reconstructed = address.toPointer[Int]()\n\
+             _ = reconstructed\n\
+             bytes.address()\n\
+         }\n";
+        let (_, _, output) = check(source);
+        assert!(
+            output.diagnostics().is_empty(),
+            "{source}\n{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let operations = output
+            .program()
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::BootstrapHostCall { function, .. }
+                    if matches!(
+                        function,
+                        HirBootstrapHostFunction::PointerRead
+                            | HirBootstrapHostFunction::PointerWrite
+                            | HirBootstrapHostFunction::PointerOffset
+                            | HirBootstrapHostFunction::PointerCast
+                            | HirBootstrapHostFunction::PointerAddress
+                            | HirBootstrapHostFunction::PointerFromAddress
+                    ) =>
+                {
+                    Some(*function)
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(operations.len(), 6);
+
+        for invalid in [
+            "fn invalid(pointer: Pointer[Int]) {\n    _ = pointer.read()\n}\n",
+            "fn invalid(address: UInt64) {\n    _ = address.toPointer[Int]()\n}\n",
+        ] {
+            let (_, _, output) = check(invalid);
+            assert_eq!(codes(&output), ["E1701"], "{invalid}");
+        }
+    }
+
+    #[test]
+    fn safe_closures_cannot_capture_raw_pointers() {
+        for source in [
+            "fn invalid(pointer: Pointer[Int]) {\n\
+                 let operation = (): Pointer[Int] { pointer }\n\
+                 _ = operation\n\
+             }\n",
+            "fn invalid(pointer: Pointer[Int]) {\n\
+                 let values = [pointer]\n\
+                 let operation = () {\n\
+                     _ = values\n\
+                 }\n\
+                 _ = operation\n\
+             }\n",
+            "fn invalid(pointer: Pointer[Int]) {\n\
+                 defer {\n\
+                     _ = pointer\n\
+                 }\n\
+             }\n",
+        ] {
+            let (_, _, output) = check(source);
+            assert_eq!(codes(&output), ["E1702"], "{source}");
+        }
+
+        let valid = "fn valid(pointer: Pointer[Int]) {\n\
+             let operation = unsafe (): Pointer[Int] { pointer }\n\
+             _ = operation\n\
+         }\n";
+        let (_, _, output) = check(valid);
+        assert!(
+            output.diagnostics().is_empty(),
+            "{valid}\n{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
     }
 
     #[test]
