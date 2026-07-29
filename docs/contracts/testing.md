@@ -66,6 +66,20 @@ test at the lowest public boundary that would have caught it. A test must not
 depend on physical absolute paths, wall time, locale, network, hash iteration,
 or scheduling order.
 
+Confirmed regressions are also recorded in `testing/regressions.json`. The
+reliability gate requires each ledger entry to reference an executable
+machine-inventory test in the declared source file. Discovery by fuzzing,
+mutation, or a private invariant never replaces that public-boundary case.
+
+## Continuous reliability
+
+The complete inventory, normative traceability matrix, deterministic CI tiers,
+generators, properties, models, fuzz campaigns, coverage thresholds, mutation
+selection, failure evidence, and update procedure are defined in
+[`reliability.md`](./reliability.md). `tondo-reliability check` is part of the
+strict gate, so machine-readable evidence cannot drift independently from the
+tests or specifications.
+
 ## Value-copy representation equivalence
 
 `tests/runtime/value-copy/` is the stable black-box corpus for logical copy

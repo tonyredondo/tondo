@@ -7117,7 +7117,7 @@ impl Verifier<'_> {
                 .callable(callable)
                 .and_then(|callable| callable.parameters().get(index as usize))
                 .map(|parameter| parameter.mode()),
-            MirFunctionId::Closure(closure) if index == 0 => Some(ParameterMode::Value),
+            MirFunctionId::Closure(_closure) if index == 0 => Some(ParameterMode::Value),
             MirFunctionId::Closure(closure) => self
                 .hir
                 .closure(closure)

@@ -1,0 +1,29 @@
+{
+  "format": "tondo-regressions/1",
+  "entries": [
+    {
+      "id": "REG-MUT-001",
+      "confirmed_by": "cargo-mutants 27.1.0",
+      "boundary": "PrivilegedUnit::encode",
+      "reproducer": "A privileged unit with an unsupported format identifier.",
+      "test_id": "rust:tondo-compiler:src::project:privileged_units_are_canonical_pinned_target_inputs",
+      "source": "crates/tondo-compiler/src/project.rs",
+      "fixed_in": "M10.5-H0",
+      "evidence": [
+        "mutation:replace PrivilegedUnit::validate with Ok"
+      ]
+    },
+    {
+      "id": "REG-MUT-002",
+      "confirmed_by": "cargo-mutants 27.1.0",
+      "boundary": "extract_fences",
+      "reproducer": "A documentation container with one isolated carriage return and no Tondo fence.",
+      "test_id": "rust:tondo-conformance:src::document:malformed_headers_and_documents_are_rejected",
+      "source": "crates/tondo-conformance/src/document.rs",
+      "fixed_in": "M10.5-H0",
+      "evidence": [
+        "mutation:replace validate_line_endings with Ok"
+      ]
+    }
+  ]
+}

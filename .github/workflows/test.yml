@@ -1,0 +1,100 @@
+name: Test
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  strict:
+    name: Strict gate (Linux x86_64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Show toolchain
+        run: |
+          rustc --version
+          cargo --version
+
+      - name: Run strict gate
+        env:
+          TONDO_TEST_TARGET: linux-x86_64
+        run: bash scripts/test-gate.sh
+
+      - name: Upload reproducible failure evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: strict-gate-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/reliability/evidence/
+          if-no-files-found: warn
+          retention-days: 14
+
+  portable:
+    name: Portable (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: Linux ARM64
+            runner: ubuntu-24.04-arm
+          - platform: macOS Intel
+            runner: macos-15-intel
+          - platform: macOS Apple Silicon
+            runner: macos-15
+          - platform: Windows x86_64
+            runner: windows-2025
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Run portable tests and CLI smoke test
+        shell: bash
+        run: bash scripts/platform-test.sh
+
+  fuzz-smoke:
+    name: Deterministic fuzz smoke
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Check out source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Install bounded fuzz toolchain
+        run: |
+          rustup toolchain install nightly-2026-07-28 --profile minimal
+          cargo install cargo-fuzz --version 0.13.2 --locked
+
+      - name: Run deterministic fuzz smoke
+        run: bash scripts/fuzz-smoke.sh
+
+      - name: Upload minimized fuzz failures
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fuzz-smoke-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            fuzz/artifacts/
+            target/reliability/fuzz-corpus/smoke/
+          if-no-files-found: warn
+          retention-days: 14

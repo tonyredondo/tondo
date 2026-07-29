@@ -1,8 +1,9 @@
 # Tondo: tracker de implementación
 
-**Estado:** M10 y Gate G5 cerrados; M10.5 es el siguiente milestone
+**Estado:** M10.5 y Gate H0 cerrados; el sustrato temporal de STD-0.1 es el
+siguiente slice
 
-**Versión del tracker:** 0.90
+**Versión del tracker:** 0.91
 
 **Última actualización:** 2026-07-29
 
@@ -11,11 +12,11 @@
 - [Tondo 0.1 publicada](./TONDO_LANGUAGE_SPEC.md)
 - [Extensión de testing para Tondo 0.2](./TONDO_TESTING_SPEC.md)
 
-**Objetivo inmediato:** endurecer Tondo 0.1 mediante M10.5 antes de ampliar su
-superficie pública. Después se fija e implementa el sustrato temporal mínimo de
-producción de STD-0.1, se implementa M10.6 contra la extensión normativa de
-testing, se completa Core + Hosted Standard Library 0.1 y solo entonces comienza
-M11 con NATIVE-001. La VM permanece como implementación de referencia y oracle
+**Objetivo inmediato:** fijar e implementar el sustrato temporal mínimo de
+producción de STD-0.1, ahora que Gate H0 protege Tondo 0.1 con evidencia
+continua. Después se implementa M10.6 contra la extensión normativa de testing,
+se completa Core + Hosted Standard Library 0.1 y solo entonces comienza M11 con
+NATIVE-001. La VM permanece como implementación de referencia y oracle
 diferencial del futuro backend nativo.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
@@ -217,7 +218,7 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   defensivos para profundidad sintáctica, tipos recursivos, expansión de
   genéricos, resolución de traits y tamaño de diagnostics JSON.
 
-- [ ] **DEC-011 — Contrato de evidencia continua.** Antes de cerrar H0,
+- [x] **DEC-011 — Contrato de evidencia continua.** Antes de cerrar H0,
   documentar tiers de CI, seeds y reducción, corpus persistente, artefactos de
   fallo, medición de coverage/mutation score, umbrales y excepciones
   justificadas.
@@ -309,7 +310,7 @@ necesaria; la fragmentación del workspace no.
 | **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Conformidad y release** | Gate G5: Tondo 0.1 | Completado |
-| **M10.5 — Reliability y testing** | Infraestructura de evidencia continua | Siguiente |
+| **M10.5 — Reliability y testing** | Infraestructura de evidencia continua | Completado |
 | **M10.6 — Testing de usuario y edición 0.2** | Gate T0: `tondo test` conforme | Especificado; implementación pendiente |
 | **STD-0.1 — Core + Hosted Standard Library** | API estándar mínima; su sustrato temporal precede T0 | Pendiente |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
@@ -321,13 +322,14 @@ Estado observado del workspace:
   upstream en
   `github.com/tonyredondo/tondo`.
 - Workspace: `tondo-cli`, `tondo-compiler`, `tondo-conformance`,
-  `tondo-reference-adapter` y `tondo-vm`.
+  `tondo-reference-adapter`, `tondo-reliability` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
 - Última validación: 2026-07-29, con formatter check, `cargo check` de todos los
-  targets, Clippy con warnings denegados, 685 tests, Rustdoc con warnings
-  denegados y metadatos locked. La suite oficial pasa 205 casos y 424
-  repeticiones byte-estables.
+  targets, Clippy con warnings denegados, 723 tests Rust inventariados, Rustdoc
+  con warnings denegados y metadatos locked. La suite oficial pasa 205 casos y
+  424 repeticiones byte-estables; el inventario completo registra 1.400 casos
+  lógicos y 1.619 repeticiones.
 
 ### 4.1 Ruta crítica
 
@@ -2202,7 +2204,7 @@ de M10.6, STD-0.1, M11 y STD-0.2.
   duplicados exactos entre fixtures internos y conformidad. El inventario
   distingue cantidad física, caso lógico, repetición y fuente única.
 
-- [ ] **TEST-001 — Materializar un inventario machine-readable.** Añadir una
+- [x] **TEST-001 — Materializar un inventario machine-readable.** Añadir una
   herramienta reproducible que enumere por crate, fase, fixture, grupo,
   requisito, oracle, repetición, hash de fuente y target. Debe detectar IDs
   duplicados, sidecars huérfanos, casos no descubiertos y deriva entre el
@@ -2210,128 +2212,131 @@ de M10.6, STD-0.1, M11 y STD-0.2.
   los ejemplos de `TONDO_TESTING_SPEC.md` se registran como contrato futuro,
   pero no cuentan como tests ejecutables ni cobertura de Tondo 0.1.
 
-- [ ] **TEST-002 — Crear la matriz normativa de cobertura.** Cada requisito
+- [x] **TEST-002 — Crear la matriz normativa de cobertura.** Cada requisito
   `debe`/`no puede` de Tondo 0.1 recibe una identidad estable. La matriz conserva
   revisión, heading anchor y hash del texto fuente, y lo clasifica como
   `covered`, `target-not-applicable`, `stdlib-pending` o `toolchain-limit`,
   siempre con evidencia enlazada. Una sección o fence no cuenta por sí mismo
   como cobertura semántica.
 
-- [ ] **TEST-003 — Exigir dimensiones de prueba explícitas.** Para cada regla
+- [x] **TEST-003 — Exigir dimensiones de prueba explícitas.** Para cada regla
   aplicable, la matriz registra caso positivo, rechazo o fallo cuando exista,
   límites materiales, composición con otras reglas, fase que actúa como oracle
   y frontera pública observada. Las excepciones requieren una justificación
   versionada, no una celda vacía.
 
-- [ ] **TEST-004 — Cerrar primero los huecos críticos descubiertos.** Priorizar
+- [x] **TEST-004 — Cerrar primero los huecos críticos descubiertos.** Priorizar
   lexer/parser/formatter, resolución, tipos, ownership, HIR/MIR/bytecode
   verifiers, GC, scheduler, procesos y protocolos no confiables. Cada hueco se
   reduce a la fuente o estructura mínima que habría permitido el defecto.
 
 ### 16.2 Gate continuo de CI
 
-- [ ] **CI-TEST-001 — Ejecutar el gate estricto en cada cambio.** Un workflow
+- [x] **CI-TEST-001 — Ejecutar el gate estricto en cada cambio.** Un workflow
   de PR y `main` debe ejecutar formatter check, `cargo check` de todos los
   targets, Clippy con warnings denegados, los tests completos, Rustdoc, build
   locked de runner/adaptador, validación del manifiesto y una ejecución de
   conformidad cuyo resultado se compare con la evidencia versionada.
 
-- [ ] **CI-TEST-002 — Separar gate determinista y campañas sin rebajar el
+- [x] **CI-TEST-002 — Separar gate determinista y campañas sin rebajar el
   oracle.** PR y `main` ejecutan el mismo gate obligatorio; el tier nocturno
   añade stress, fuzzing y matrices costosas. Clasificar un caso como campaña no
   puede retirar su regresión determinista del gate ni convertir un fallo en
   warning.
 
-- [ ] **CI-TEST-003 — Definir la matriz multiplataforma de validación.** Linux
+- [x] **CI-TEST-003 — Definir la matriz multiplataforma de validación.** Linux
   ejecuta el gate canónico; Linux ARM64, macOS Intel/ARM64 y Windows ejecutan
   tests de plataforma y la parte portable aplicable, además del smoke test de
   los binarios. Toda exclusión se justifica por target o capability.
 
-- [ ] **CI-TEST-004 — Conservar evidencia de fallos reproducibles.** Seeds,
+- [x] **CI-TEST-004 — Conservar evidencia de fallos reproducibles.** Seeds,
   corpus minimizado, observaciones, logs relevantes y metadatos de target se
   publican como artefactos sin paths físicos, secretos ni estado ambiental
   accidental.
 
 ### 16.3 Properties, metamorfismo y fuzzing
 
-- [ ] **PROP-001 — Crear generadores reproducibles y reducibles.** Sustituir
+- [x] **PROP-001 — Crear generadores reproducibles y reducibles.** Sustituir
   corpora generados con una única seed fija por generadores que registren la
   seed, puedan reducir el caso fallido y produzcan sintaxis válida, sintaxis
   recuperable y estructuras inválidas controladas bajo presupuestos.
 
-- [ ] **PROP-002 — Generar programas tipados por construcción.** Cubrir
+- [x] **PROP-002 — Generar programas tipados por construcción.** Cubrir
   combinaciones de tipos, operadores, genéricos, traits, patterns, ownership,
   préstamos, control, async y errores sin depender de que el frontend acepte
   ruido aleatorio como programa válido.
 
-- [ ] **META-001 — Añadir properties metamórficas.** Como mínimo: reconstrucción
+- [x] **META-001 — Añadir properties metamórficas.** Como mínimo: reconstrucción
   CST, idempotencia de formato, alpha-renaming, permutación física de fuentes,
   paréntesis semánticamente neutros, eager frente a COW, presión de GC y
   estabilidad de diagnostics y productos canónicos.
 
-- [ ] **FUZZ-001 — Mantener fuzz targets del frontend.** Lexer, parser y
+- [x] **FUZZ-001 — Mantener fuzz targets del frontend.** Lexer, parser y
   formatter deben aceptar bytes no confiables sin panic, no terminación ni
   pérdida de partición; los casos válidos conservan parseo e idempotencia.
 
-- [ ] **FUZZ-002 — Mantener fuzz targets de protocolos.** Manifiesto, lockfile,
+- [x] **FUZZ-002 — Mantener fuzz targets de protocolos.** Manifiesto, lockfile,
   interfaz, artefacto, diagnostics JSON y protocolo del adaptador se decodifican
   bajo límites y nunca consultan entradas ambientales. Todo round-trip canónico
   debe ser estable.
 
-- [ ] **FUZZ-003 — Fuzzear los admission verifiers.** Mutadores estructurados de
-  HIR, MIR y bytecode deben explorar tags, índices, CFG, tipos, ownership,
-  cleanup y límites. No se introduce por ello un formato bytecode estable en
-  disco.
+- [x] **FUZZ-003 — Fuzzear los admission verifiers.** Programas tipados y
+  plantillas estructuradas atraviesan HIR y MIR mediante el driver público; el
+  mutador estructural de bytecode explora tags, índices, tipos y límites contra
+  el verifier directo. Los tests internos conservan la cobertura exhaustiva de
+  CFG, ownership y cleanup sin exponer constructores inválidos como API ni
+  introducir un formato bytecode estable en disco.
 
-- [ ] **FUZZ-004 — Integrar corpus y campañas.** Cada PR ejecuta smoke fuzzing
+- [x] **FUZZ-004 — Integrar corpus y campañas.** Cada PR ejecuta smoke fuzzing
   determinista; el tier nocturno amplía tiempo y seeds; todo crash se minimiza,
   se convierte en regresión y entra en el corpus antes de cerrar el defecto.
 
 ### 16.4 Modelos, cobertura y resistencia de los tests
 
-- [ ] **MODEL-001 — Modelar valores y colecciones.** Secuencias de operaciones
+- [x] **MODEL-001 — Modelar valores y colecciones.** Secuencias de operaciones
   sobre `Array`, `Map`, `Set`, `Range`, `String`, slices y copias se comparan
   con modelos puros, incluidos orden, aliasing explícito, errores y límites.
 
-- [ ] **MODEL-002 — Modelar ownership y concurrencia estructurada.** Un modelo
+- [x] **MODEL-002 — Modelar ownership y concurrencia estructurada.** Un modelo
   de estados cubre moves, préstamos, terminales, `defer`, `Join`, cancelación,
   pánico y cleanup. El generador explora transiciones válidas e inválidas y
   verifica la fase exacta que debe rechazarlas.
 
-- [ ] **MODEL-003 — Modelar runtime y host.** GC, ciclos, roots, OOM retry,
+- [x] **MODEL-003 — Modelar runtime y host.** GC, ciclos, roots, OOM retry,
   scheduling, pipes y procesos se prueban con umbrales y órdenes perturbados,
   sin convertir contadores privados en semántica observable.
 
-- [ ] **COV-001 — Publicar una baseline de cobertura por riesgo.** Registrar
-  líneas, funciones y ramas por crate y, por separado, para parser, checkers,
-  verifiers, heap y ejecución. Los umbrales se fijan después de medir la
-  baseline; no se excluye código difícil solo para mejorar el porcentaje.
+- [x] **COV-001 — Publicar una baseline de cobertura por riesgo.** Registrar
+  líneas, funciones y regiones instrumentadas por crate y, por separado, para
+  parser, checkers, verifiers, heap y ejecución. Los umbrales se fijan después
+  de medir la baseline; no se excluye código difícil solo para mejorar el
+  porcentaje.
 
-- [ ] **MUT-001 — Medir mutation score en fronteras críticas.** Ejecutar
+- [x] **MUT-001 — Medir mutation score en fronteras críticas.** Ejecutar
   mutación automática acotada sobre algoritmos y verifiers; cada mutante
   superviviente se clasifica como test ausente, código equivalente o exclusión
   justificada. El gate posterior impide regresiones del score acordado.
 
-- [ ] **REG-001 — Automatizar la regla de regresión.** Todo bug confirmado
+- [x] **REG-001 — Automatizar la regla de regresión.** Todo bug confirmado
   incorpora el caso mínimo en la frontera pública más baja que habría fallado,
   además de cualquier test interno necesario para localizar la causa.
 
 ### Gate H0 — Infraestructura de fiabilidad
 
-- [ ] El gate completo de Tondo 0.1 se ejecuta automáticamente en PR y `main`.
-- [ ] El inventario y la matriz normativa se validan sin entradas sin
+- [x] El gate completo de Tondo 0.1 se ejecuta automáticamente en PR y `main`.
+- [x] El inventario y la matriz normativa se validan sin entradas sin
   clasificar para el target publicado; la extensión 0.2 queda clasificada como
   futura, no omitida ni contada como evidencia verde.
-- [ ] Existen generadores con seed reproducible y reducción de fallos.
-- [ ] Frontend, protocolos y admission verifiers tienen fuzz targets
+- [x] Existen generadores con seed reproducible y reducción de fallos.
+- [x] Frontend, protocolos y admission verifiers tienen fuzz targets
   persistentes con corpus versionado.
-- [ ] Las familias críticas tienen al menos un modelo o property que compare
+- [x] Las familias críticas tienen al menos un modelo o property que compare
   secuencias, no solo ejemplos aislados.
-- [ ] Coverage y mutation score publican una baseline revisada y un gate de no
+- [x] Coverage y mutation score publican una baseline revisada y un gate de no
   regresión proporcionado al riesgo.
-- [ ] Un fallo de cualquier tier conserva evidencia suficiente para reproducir
+- [x] Un fallo de cualquier tier conserva evidencia suficiente para reproducir
   localmente el mismo input y target.
-- [ ] El gate estricto y la conformidad continúan verdes después de integrar la
+- [x] El gate estricto y la conformidad continúan verdes después de integrar la
   infraestructura.
 
 ---
@@ -3366,13 +3371,13 @@ M4 sin adelantar trabajo de ownership o async.
 12. [x] Implementar la VM y ejecutar los programas de aceptación de G2.
 13. [x] Auditar cantidad física, casos lógicos, repeticiones, fuentes únicas y
     técnicas de testing de Tondo 0.1.
-14. [ ] Ejecutar **TEST-001** y crear el inventario machine-readable.
-15. [ ] Ejecutar **TEST-002** y **TEST-003** para materializar trazabilidad y
+14. [x] Ejecutar **TEST-001** y crear el inventario machine-readable.
+15. [x] Ejecutar **TEST-002** y **TEST-003** para materializar trazabilidad y
     dimensiones normativas.
-16. [ ] Ejecutar **CI-TEST-001** a **CI-TEST-004** y convertir el gate existente
+16. [x] Ejecutar **CI-TEST-001** a **CI-TEST-004** y convertir el gate existente
     en evidencia continua.
-17. [ ] Añadir generadores, properties, fuzz targets y modelos de M10.5.
-18. [ ] Medir coverage y mutation score, cerrar huecos críticos y superar H0.
+17. [x] Añadir generadores, properties, fuzz targets y modelos de M10.5.
+18. [x] Medir coverage y mutation score, cerrar huecos críticos y superar H0.
 19. [ ] Ejecutar **STD-TIME-BASE-SPEC-001**, **STD-TIME-BASE-IMPL-001** y
     **STD-TIME-BASE-CONF-001** como único slice temprano de STD-0.1.
 20. [ ] Implementar M10.6 empezando por **ASYNC-DEFER-SPEC-001**,
@@ -3386,12 +3391,7 @@ M4 sin adelantar trabajo de ownership o async.
 La ruta autorizada siguiente es:
 
 ~~~text
-TEST-001
-  -> TEST-002/003
-  -> CI-TEST-001..004
-  -> properties + fuzzing + modelos + métricas
-  -> Gate H0
-  -> STD-TIME-BASE-SPEC-001
+STD-TIME-BASE-SPEC-001
   -> STD-TIME-BASE-IMPL-001
   -> STD-TIME-BASE-CONF-001
   -> ASYNC-DEFER-SPEC-001 + UTEST-EDITION-001 + ASYNC-DEFER-IMPL-001
@@ -3402,13 +3402,33 @@ TEST-001
   -> NATIVE-001
 ~~~
 
-M4, M5, M6, M7, M8, M9, M10 y Gates G4/G5 quedan cerrados. NATIVE-001 deja de
-ser la acción inmediata: el time-base permanece bloqueado por H0, M10.6 por H0
-y ese time-base, y M11 por H0, T0 y S1. No se inicia STD-0.2 antes de Gate N1.
+M4, M5, M6, M7, M8, M9, M10, M10.5 y Gates G4/G5/H0 quedan cerrados.
+`STD-TIME-BASE-SPEC-001` pasa a ser la acción inmediata; M10.6 continúa
+bloqueado por ese time-base y M11 por T0 y S1. No se inicia STD-0.2 antes de
+Gate N1.
 
 ---
 
 ## 24. Historial del tracker
+
+### 0.91 — 2026-07-29
+
+- Se completa M10.5 y Gate H0 con un inventario machine-readable de 1.400 casos
+  lógicos y 1.619 repeticiones, y una matriz de 300 requisitos normativos con
+  identidades, clasificación, seis dimensiones y evidencia o waiver explícito.
+- El gate estricto queda automatizado en PR y `main`; Linux ARM64, macOS
+  Intel/ARM64 y Windows prueban la superficie portable, mientras las campañas
+  deterministas de fuzzing y el tier nocturno conservan artefactos
+  reproducibles.
+- Se añaden generadores reducibles, properties metamórficas, modelos de
+  colecciones, ownership, concurrencia y memoria, y tres fuzz targets con seis
+  semillas revisadas.
+- La baseline inicial cubre el 81,11 % de líneas, 78,60 % de funciones y
+  79,25 % de regiones. La campaña acotada de mutación detecta los 27 mutantes
+  ejecutables de 28; el restante es inviable y no existe ningún superviviente.
+- Dos mutantes supervivientes iniciales se convierten en regresiones públicas
+  para admisión de unidades privilegiadas y line endings aislados. La cola
+  avanza, sin iniciar aún el trabajo, a `STD-TIME-BASE-SPEC-001`.
 
 ### 0.90 — 2026-07-29
 

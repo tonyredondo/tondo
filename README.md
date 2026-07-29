@@ -222,6 +222,9 @@ or capability set.
   format for Tondo 0.1.
 - `docs/contracts/conformance.md` defines the portable suite, adapter boundary,
   and Gate G5 release checks.
+- `docs/contracts/reliability.md` defines the M10.5 inventory, traceability,
+  CI tiers, generators, models, fuzzing, coverage, mutation, and regression
+  gates.
 - `docs/contracts/types.md` records the canonical semantic type representation.
 - `docs/releases/0.1.0.md` records the exact release matrix, limitations, and
   reproducible conformance evidence.
@@ -266,4 +269,11 @@ cargo run -p tondo-conformance --locked -- run \
   --manifest conformance/0.1/manifest.json \
   --adapter target/debug/tondo-reference-adapter \
   --output /tmp/tondo-reference-0.1.0.json
+cargo run -p tondo-reliability --locked -- check --root .
 ~~~
+
+The equivalent canonical gate is `bash scripts/test-gate.sh`. Deterministic
+fuzz smoke tests use `TONDO_FUZZ_RUNS=128 bash scripts/fuzz-smoke.sh`.
+Coverage and the reviewed mutation selection require the pinned external tools
+documented in `docs/contracts/reliability.md` and run through
+`bash scripts/quality-gate.sh`.

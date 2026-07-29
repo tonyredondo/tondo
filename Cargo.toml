@@ -3,6 +3,7 @@ members = [
     "crates/tondo-cli",
     "crates/tondo-compiler",
     "crates/tondo-conformance",
+    "crates/tondo-reliability",
     "crates/tondo-reference-adapter",
     "crates/tondo-vm",
 ]

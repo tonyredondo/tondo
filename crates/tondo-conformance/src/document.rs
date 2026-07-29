@@ -276,6 +276,10 @@ mod tests {
 
     #[test]
     fn malformed_headers_and_documents_are_rejected() {
+        let isolated_cr = extract_fences(b"plain\rtext\n", &errors()).unwrap_err();
+        assert_eq!(isolated_cr.byte(), 5);
+        assert!(isolated_cr.to_string().contains("isolated CR line ending"));
+
         for document in [
             &b"~~~tondo \n~~~\n"[..],
             &b"~~~tondo  fragment\n~~~\n"[..],

@@ -1,0 +1,40 @@
+[package]
+name = "tondo-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1.0.151"
+tondo-compiler = { path = "../crates/tondo-compiler" }
+tondo-conformance = { path = "../crates/tondo-conformance" }
+tondo-reliability = { path = "../crates/tondo-reliability" }
+tondo-vm = { path = "../crates/tondo-vm" }
+
+[[bin]]
+name = "frontend"
+path = "fuzz_targets/frontend.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "protocols"
+path = "fuzz_targets/protocols.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "admission"
+path = "fuzz_targets/admission.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]

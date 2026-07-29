@@ -2165,6 +2165,14 @@ mod tests {
         let bytes = unit.encode().unwrap();
         assert_eq!(PrivilegedUnit::decode(&bytes).unwrap(), unit);
 
+        let mut invalid_unit = unit.clone();
+        invalid_unit.format = "tondo-privileged-unit/unsupported".into();
+        assert!(matches!(
+            invalid_unit.encode(),
+            Err(ProjectError::InvalidPrivilegedUnit(message))
+                if message.contains("unsupported format")
+        ));
+
         let (manifest, lockfile, mut supplied) = root_project_with_unit(b"fn main() {}\n", &bytes);
         supplied.insert("units/vendor-native.tpu".into(), Arc::<[u8]>::from(bytes));
         let resolved = ProjectPlan::parse(&manifest, &lockfile)
