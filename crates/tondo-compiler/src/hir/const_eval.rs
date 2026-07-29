@@ -1662,3 +1662,291 @@ fn decode_escaped_text(body: &str, decode_braces: bool) -> Option<String> {
     }
     Some(output)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use crate::hir::{ExpressionCheckLimits, TypeLoweringLimits, check_expressions, lower_types};
+    use crate::package::PackageGraph;
+    use crate::resolve::{ResolvedProgram, resolve};
+    use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
+    use crate::syntax::{LexMode, ParseLimits, ParseMode, lex, parse};
+
+    use super::*;
+
+    fn checked_program(source: &str) -> (ResolvedProgram, HirProgram) {
+        let mut sources = SourceDatabase::new();
+        let file = sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("root:const-eval").unwrap(),
+                ModulePath::new("main").unwrap(),
+                LogicalPath::new("main.to").unwrap(),
+                Arc::<[u8]>::from(source.as_bytes().to_vec()),
+            ))
+            .unwrap();
+        let lexed = lex(&sources, file, LexMode::Module).unwrap();
+        assert!(lexed.diagnostics().is_empty());
+        let parsed = parse(
+            &sources,
+            file,
+            lexed,
+            ParseMode::Module,
+            ParseLimits::default(),
+        )
+        .unwrap();
+        assert!(parsed.diagnostics().is_empty());
+        let packages = PackageGraph::loose(&sources, file).unwrap();
+        let (resolved, diagnostics) = resolve(&packages, &sources, [(file, &parsed)], 100)
+            .unwrap()
+            .into_parts();
+        assert!(diagnostics.is_empty());
+        let (program, diagnostics) = lower_types(
+            &packages,
+            &sources,
+            [(file, &parsed)],
+            &resolved,
+            TypeLoweringLimits {
+                max_type_nodes: 10_000,
+                max_trait_obligations: 10_000,
+                max_diagnostics: 100,
+            },
+        )
+        .unwrap()
+        .into_parts();
+        assert!(diagnostics.is_empty());
+        let (program, diagnostics, complete) = check_expressions(
+            &sources,
+            [(file, &parsed)],
+            &resolved,
+            program,
+            ExpressionCheckLimits {
+                max_nodes: 10_000,
+                max_pattern_steps: 10_000,
+                max_trait_obligations: 10_000,
+                max_diagnostics: 100,
+            },
+        )
+        .unwrap()
+        .into_parts();
+        assert!(complete);
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+        (resolved, program)
+    }
+
+    fn evaluated<'a>(
+        resolved: &ResolvedProgram,
+        program: &'a HirProgram,
+        name: &str,
+    ) -> &'a HirConstantValue {
+        resolved
+            .symbols()
+            .find(|symbol| symbol.name().as_str() == name)
+            .and_then(|symbol| program.constant(symbol.id()))
+            .and_then(super::super::HirConstant::evaluated)
+            .unwrap_or_else(|| panic!("{name} must have a normalized constant value"))
+    }
+
+    #[test]
+    fn structural_constant_equality_covers_every_closed_value_shape() {
+        const SOURCE: &str = "const UnitValue: Unit = ()\n\
+             const Flag: Bool = true\n\
+             const Answer: Int = 42\n\
+             const Ratio: Float = 2.5\n\
+             const Letter: Char = 'x'\n\
+             const Text: String = \"value\"\n\
+             const Pair: (Int, String) = (Answer, Text)\n\
+             const OtherPair: (Int, String) = (41, Text)\n\
+             const Numbers: Array[Int] = [1, 2]\n\
+             const OtherNumbers: Array[Int] = [2, 1]\n\
+             const Entries: Map[String, Int] = [\"one\": 1]\n\
+             const OtherEntries: Map[String, Int] = [\"two\": 1]\n\
+             const Permissions: Set[String] = Set[\"read\"]\n\
+             const OtherPermissions: Set[String] = Set[\"write\"]\n\
+             const Missing: Int? = none\n\
+             const Present: Int? = some(Answer)\n\
+             const OtherPresent: Int? = some(41)\n\
+             const Success: Int ! String = ok(Answer)\n\
+             const OtherSuccess: Int ! String = ok(41)\n\
+             const Failure: Int ! String = err(Text)\n\
+             const OtherFailure: Int ! String = err(\"other\")\n\
+             const Span: Range[Int] = 1..=3\n\
+             const OtherSpan: Range[Int] = 2..=3\n\
+             const Converted: Int8 ! NumericConversionError = Int8(127)\n\
+             const ConversionFailure: Int8 ! NumericConversionError = Int8(128)\n\
+             type UserId = Int\n\
+             type Person = { id: UserId, name: String }\n\
+             enum Choice {\n\
+                 Empty\n\
+                 Pair(Int)\n\
+                 Named { value: Int }\n\
+             }\n\
+             const Id: UserId = UserId(9)\n\
+             const OtherId: UserId = UserId(10)\n\
+             const User: Person = Person { id: Id, name: \"Ada\" }\n\
+             const OtherUser: Person = Person { id: Id, name: \"Grace\" }\n\
+             const UnitChoice: Choice = Choice.Empty\n\
+             const TupleChoice: Choice = Choice.Pair(1)\n\
+             const OtherTupleChoice: Choice = Choice.Pair(2)\n\
+             const RecordChoice: Choice = Choice.Named { value: 2 }\n\
+             const OtherRecordChoice: Choice = Choice.Named { value: 3 }\n\
+             fn identity(value: Int): Int { value }\n\
+             const Handler: fn(Int): Int = identity\n";
+        let (resolved, program) = checked_program(SOURCE);
+
+        let values = program
+            .constants()
+            .filter_map(|(_, constant)| constant.evaluated())
+            .collect::<Vec<_>>();
+        assert!(values.len() >= 30);
+        for value in values {
+            assert!(values_equal(&program, value, value).unwrap(), "{value:?}");
+        }
+
+        for (left, right) in [
+            ("Pair", "OtherPair"),
+            ("Numbers", "OtherNumbers"),
+            ("Entries", "OtherEntries"),
+            ("Permissions", "OtherPermissions"),
+            ("Present", "OtherPresent"),
+            ("Success", "OtherSuccess"),
+            ("Failure", "OtherFailure"),
+            ("Span", "OtherSpan"),
+            ("Id", "OtherId"),
+            ("User", "OtherUser"),
+            ("TupleChoice", "OtherTupleChoice"),
+            ("RecordChoice", "OtherRecordChoice"),
+        ] {
+            assert!(
+                !values_equal(
+                    &program,
+                    evaluated(&resolved, &program, left),
+                    evaluated(&resolved, &program, right),
+                )
+                .unwrap(),
+                "{left} must differ from {right}"
+            );
+        }
+        assert!(
+            !values_equal(
+                &program,
+                evaluated(&resolved, &program, "Answer"),
+                evaluated(&resolved, &program, "Text"),
+            )
+            .unwrap()
+        );
+        assert!(is_nan(&constant_value(
+            program.interner.scalar(ScalarType::Float),
+            HirConstantValueKind::Float(f64::NAN.to_bits()),
+        )));
+    }
+
+    #[test]
+    fn literal_numeric_and_text_helpers_close_their_edge_tables() {
+        for (scalar, expected) in [
+            (ScalarType::Byte, Some((false, 8))),
+            (ScalarType::UInt8, Some((false, 8))),
+            (ScalarType::UInt16, Some((false, 16))),
+            (ScalarType::UInt32, Some((false, 32))),
+            (ScalarType::UInt64, Some((false, 64))),
+            (ScalarType::Int8, Some((true, 8))),
+            (ScalarType::Int16, Some((true, 16))),
+            (ScalarType::Int32, Some((true, 32))),
+            (ScalarType::Int, Some((true, 64))),
+            (ScalarType::Float, None),
+        ] {
+            assert_eq!(integer_shape(scalar), expected, "{scalar}");
+        }
+        assert_eq!(integer_minimum(ScalarType::Int8), Some(-128));
+        assert_eq!(integer_minimum(ScalarType::UInt8), None);
+        assert!(integer_fits(-128, ScalarType::Int8));
+        assert!(integer_fits(255, ScalarType::UInt8));
+        assert!(!integer_fits(128, ScalarType::Int8));
+        assert!(!integer_fits(-1, ScalarType::UInt8));
+        assert!(!integer_fits(0, ScalarType::Bool));
+        assert!(float_fits_integer(-128.0, ScalarType::Int8));
+        assert!(!float_fits_integer(128.0, ScalarType::Int8));
+        assert!(float_fits_integer(255.0, ScalarType::UInt8));
+        assert!(!float_fits_integer(-1.0, ScalarType::UInt8));
+        assert!(!float_fits_integer(0.0, ScalarType::Float));
+
+        assert_eq!(integer_to_bits(-1, 8), 255);
+        assert_eq!(integer_from_bits(255, ScalarType::Int8).unwrap(), -1);
+        assert_eq!(integer_from_bits(255, ScalarType::UInt8).unwrap(), 255);
+        assert!(integer_from_bits(0, ScalarType::Bool).is_err());
+        assert_eq!(
+            round_float(1.0 / 3.0, ScalarType::Float32),
+            (1_f32 / 3.0) as f64
+        );
+        assert_eq!(round_float(1.0 / 3.0, ScalarType::Float), 1.0 / 3.0);
+        assert_eq!(parse_float_literal("1.5", ScalarType::Float32), Some(1.5));
+        assert_eq!(parse_float_literal("1.5", ScalarType::Float), Some(1.5));
+        assert_eq!(parse_float_literal("1.5", ScalarType::Int), None);
+
+        for operator in [
+            HirBinaryOperator::Multiply,
+            HirBinaryOperator::Divide,
+            HirBinaryOperator::Add,
+            HirBinaryOperator::Subtract,
+        ] {
+            assert!(float_binary(operator, 6.0, 2.0, ScalarType::Float).is_ok());
+            assert!(float_binary(operator, 6.0, 2.0, ScalarType::Float32).is_ok());
+        }
+        assert!(float_binary(HirBinaryOperator::Equal, 1.0, 1.0, ScalarType::Float).is_err());
+        assert!(float_binary(HirBinaryOperator::Equal, 1.0, 1.0, ScalarType::Float32).is_err());
+        assert_eq!(
+            integer_to_float(16_777_217, ScalarType::Float32),
+            16_777_216.0
+        );
+        assert_eq!(integer_to_float(42, ScalarType::Float), 42.0);
+        assert_eq!(numeric_body("1_2.5f32"), "12.5");
+
+        for (spelling, expected) in [
+            ("0b1010u8", Some(10)),
+            ("0o17i16", Some(15)),
+            ("0xffu32", Some(255)),
+            ("1_000i64", Some(1_000)),
+            ("42", Some(42)),
+            ("nope", None),
+        ] {
+            assert_eq!(integer_magnitude(spelling), expected, "{spelling}");
+        }
+        assert_eq!(decode_char_literal("'x'"), Some('x'));
+        assert_eq!(decode_char_literal("'\\n'"), Some('\n'));
+        assert_eq!(decode_char_literal("'xy'"), None);
+        assert_eq!(decode_char_literal("x"), None);
+        assert_eq!(
+            decode_string_literal("\"a\\n{{b}}\""),
+            Some("a\n{b}".into())
+        );
+        assert_eq!(decode_string_literal("r\"a\\n\""), Some("a\\n".into()));
+        assert_eq!(
+            decode_string_literal("\"\"\"\n    one\n      two\n    \"\"\""),
+            Some("one\n  two".into())
+        );
+        assert_eq!(
+            decode_string_literal("r\"\"\"\n  a\\n\n  \"\"\""),
+            Some("a\\n".into())
+        );
+        assert_eq!(decode_string_literal("not-a-string"), None);
+        assert_eq!(
+            decode_escaped_text("\\r\\t\\\\\\'\\\"\\0", false),
+            Some("\r\t\\'\"\0".into())
+        );
+        assert_eq!(decode_escaped_text("\\u{1f642}", false), Some("🙂".into()));
+        for malformed in [
+            "\\",
+            "\\x",
+            "\\u0",
+            "\\u{}",
+            "\\u{1234567}",
+            "\\u{110000}",
+            "{",
+        ] {
+            assert_eq!(decode_escaped_text(malformed, true), None, "{malformed:?}");
+        }
+        assert_eq!(normalize_multiline_string("plain"), "plain");
+        assert_eq!(normalize_multiline_string("\r\n\tline\r\n\t"), "line");
+        assert_eq!(normalize_multiline_string("\nleft\n  tail"), "left\n  tail");
+    }
+}

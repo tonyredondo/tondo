@@ -3,15 +3,15 @@
   "document": "TONDO_LANGUAGE_SPEC.md",
   "edition": "0.1",
   "document_sha256": "ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084",
-  "inventory_sha256": "37b3b7dfc2c17b7e3cc0a2b94ca12ddd2535c9c44249c5e43a9728708a2e2aa7",
+  "inventory_sha256": "2d799d1268a998fc869d1f9ec1d3b203ac4d733bff907e333202185565eb30f4",
   "target": "tondo-vm-hosted",
   "summary": {
     "total": 300,
     "by_status": {
-      "covered": 13,
+      "covered": 17,
       "stdlib-pending": 4,
       "target-not-applicable": 8,
-      "toolchain-limit": 275
+      "toolchain-limit": 271
     },
     "by_risk": {
       "critical": 152,
@@ -19,7 +19,7 @@
       "low": 39,
       "medium": 15
     },
-    "with_executable_evidence": 13
+    "with_executable_evidence": 17
   },
   "requirements": [
     {
@@ -2840,35 +2840,77 @@
       "text_sha256": "46dab0dce8c19ada0637ac5af0f1da1682a1358c69becbce2d930e27db8920d7",
       "phase": "types-hir",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
+      "status": "covered",
+      "classification_reason": "The versioned normative evidence map links this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:4215#12-8-resultados-opacos-estáticos"
+        "conformance:compile-fail/invalid-opaque-result",
+        "document:language-0.1:fence:0169",
+        "document:language-0.1:fence:0170",
+        "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+        "rust:tondo-compiler:src::hir::check:opaque_results_expose_only_published_bounds_to_callers",
+        "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+        "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+        "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness",
+        "rust:tondo-compiler:src::hir::verify:opaque_call_protocol_implications_are_reproved_before_mir",
+        "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+        "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "document:language-0.1:fence:0169",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+            "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0170",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+            "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0169",
+            "document:language-0.1:fence:0170",
+            "rust:tondo-compiler:src::hir::verify:opaque_call_protocol_implications_are_reproved_before_mir",
+            "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+            "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "document:language-0.1:fence:0169",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_expose_only_published_bounds_to_callers"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+            "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+            "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+            "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0169",
+            "document:language-0.1:fence:0170"
+          ],
+          "waiver": null
         }
       }
     },
@@ -2883,35 +2925,77 @@
       "text_sha256": "c43a4d91a0191019100ded1af1731826b1cb3672f68610e1926e382822d02a72",
       "phase": "types-hir",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
+      "status": "covered",
+      "classification_reason": "The versioned normative evidence map links this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:4221#12-8-resultados-opacos-estáticos"
+        "conformance:compile-fail/invalid-opaque-result",
+        "document:language-0.1:fence:0169",
+        "document:language-0.1:fence:0170",
+        "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+        "rust:tondo-compiler:src::hir::check:opaque_results_expose_only_published_bounds_to_callers",
+        "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+        "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+        "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness",
+        "rust:tondo-compiler:src::hir::verify:opaque_call_protocol_implications_are_reproved_before_mir",
+        "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+        "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "document:language-0.1:fence:0169",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+            "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0170",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+            "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0169",
+            "document:language-0.1:fence:0170",
+            "rust:tondo-compiler:src::hir::verify:opaque_call_protocol_implications_are_reproved_before_mir",
+            "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+            "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "document:language-0.1:fence:0169",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_expose_only_published_bounds_to_callers"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+            "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+            "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+            "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0169",
+            "document:language-0.1:fence:0170"
+          ],
+          "waiver": null
         }
       }
     },
@@ -2926,35 +3010,77 @@
       "text_sha256": "16a7dfe248d47ea1355416115d46eec2e09f5df9586e85152f9ad5661ba04b49",
       "phase": "types-hir",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
+      "status": "covered",
+      "classification_reason": "The versioned normative evidence map links this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:4228#12-8-resultados-opacos-estáticos"
+        "conformance:compile-fail/invalid-opaque-result",
+        "document:language-0.1:fence:0169",
+        "document:language-0.1:fence:0170",
+        "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+        "rust:tondo-compiler:src::hir::check:opaque_results_expose_only_published_bounds_to_callers",
+        "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+        "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+        "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness",
+        "rust:tondo-compiler:src::hir::verify:opaque_call_protocol_implications_are_reproved_before_mir",
+        "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+        "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "document:language-0.1:fence:0169",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+            "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0170",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+            "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0169",
+            "document:language-0.1:fence:0170",
+            "rust:tondo-compiler:src::hir::verify:opaque_call_protocol_implications_are_reproved_before_mir",
+            "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+            "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "document:language-0.1:fence:0169",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_expose_only_published_bounds_to_callers"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+            "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+            "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+            "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0169",
+            "document:language-0.1:fence:0170"
+          ],
+          "waiver": null
         }
       }
     },
@@ -2969,35 +3095,77 @@
       "text_sha256": "949b0210fdd5adb789c9b553400918862b3022278446023b2843fa58bbc05f89",
       "phase": "types-hir",
       "risk": "critical",
-      "status": "toolchain-limit",
-      "classification_reason": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage.",
+      "status": "covered",
+      "classification_reason": "The versioned normative evidence map links this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:4256#12-8-resultados-opacos-estáticos"
+        "conformance:compile-fail/invalid-opaque-result",
+        "document:language-0.1:fence:0169",
+        "document:language-0.1:fence:0170",
+        "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+        "rust:tondo-compiler:src::hir::check:opaque_results_expose_only_published_bounds_to_callers",
+        "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+        "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+        "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness",
+        "rust:tondo-compiler:src::hir::verify:opaque_call_protocol_implications_are_reproved_before_mir",
+        "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+        "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "document:language-0.1:fence:0169",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+            "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0170",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+            "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0169",
+            "document:language-0.1:fence:0170",
+            "rust:tondo-compiler:src::hir::verify:opaque_call_protocol_implications_are_reproved_before_mir",
+            "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+            "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "document:language-0.1:fence:0169",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_expose_only_published_bounds_to_callers"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+            "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+            "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+            "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "No case currently carries this prose requirement as an explicit stable identity; section-level examples are not counted as semantic coverage."
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0169",
+            "document:language-0.1:fence:0170"
+          ],
+          "waiver": null
         }
       }
     },

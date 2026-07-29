@@ -6625,6 +6625,192 @@ fn execute(): String {
     }
 
     #[test]
+    fn bytecode_function_metadata_corruption_matrix_is_closed() {
+        let program = lowered(
+            "fn inspect(value: ref Int) {}\n\
+             fn combine(left: Int, right: Int, label: String): Int {\n\
+                 inspect(ref left)\n\
+                 let total = left + right\n\
+                 _ = label\n\
+                 total\n\
+             }\n\
+             fn main() {}\n",
+        );
+        bc::verify_bytecode(&program).unwrap();
+        let combine = function_id(&program, "combine");
+
+        let mut malformed = program.clone();
+        malformed.functions[combine.index() as usize].callable =
+            bc::BytecodeCallableId::new(u32::MAX);
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(error.message().contains("unknown callable"), "{error}");
+
+        let mut malformed = program.clone();
+        let function = &mut malformed.functions[combine.index() as usize];
+        function.source.start = function.source.end.saturating_add(1);
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(
+            error.message().contains("source span is reversed"),
+            "{error}"
+        );
+
+        let mut malformed = program.clone();
+        malformed.functions[combine.index() as usize].types.clear();
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(error.message().contains("type table is empty"), "{error}");
+
+        let mut malformed = program.clone();
+        let types = &mut malformed.functions[combine.index() as usize].types;
+        assert!(types.len() >= 2);
+        types[1] = types[0];
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("type table is empty, duplicated, or unordered"),
+            "{error}"
+        );
+
+        let mut malformed = program.clone();
+        malformed.functions[combine.index() as usize].spans.clear();
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(error.message().contains("span table is empty"), "{error}");
+
+        let mut malformed = program.clone();
+        malformed.functions[combine.index() as usize].spans[0].file = malformed.functions
+            [combine.index() as usize]
+            .source
+            .file
+            .saturating_add(1);
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(error.message().contains("cross-file"), "{error}");
+
+        let mut malformed = program.clone();
+        malformed.functions[combine.index() as usize].slots.clear();
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(error.message().contains("no slots or blocks"), "{error}");
+
+        let mut malformed = program.clone();
+        malformed.functions[combine.index() as usize].blocks.clear();
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(error.message().contains("no slots or blocks"), "{error}");
+
+        let mut malformed = program.clone();
+        malformed.functions[combine.index() as usize].return_slot =
+            bc::BytecodeSlotId::new(u32::MAX);
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(error.message().contains("unknown slot"), "{error}");
+
+        let mut malformed = program.clone();
+        let function = &mut malformed.functions[combine.index() as usize];
+        function.slots[function.return_slot.index() as usize].kind =
+            bc::BytecodeSlotKind::Temporary;
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(
+            error.message().contains("return slot kind or type"),
+            "{error}"
+        );
+
+        let mut malformed = program.clone();
+        let function = &mut malformed.functions[combine.index() as usize];
+        let temporary = function
+            .slots
+            .iter()
+            .position(|slot| slot.kind == bc::BytecodeSlotKind::Temporary)
+            .expect("combine has one temporary slot");
+        function.slots[temporary].kind = bc::BytecodeSlotKind::Return;
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(
+            error.message().contains("return or parameter slot count"),
+            "{error}"
+        );
+
+        let mut malformed = program.clone();
+        let function = &mut malformed.functions[combine.index() as usize];
+        let parameter = function.parameters[0];
+        function.slots[parameter.index() as usize].kind =
+            bc::BytecodeSlotKind::Parameter { index: 4 };
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("parameter slot indices are not contiguous"),
+            "{error}"
+        );
+
+        let mut malformed = program.clone();
+        malformed.functions[combine.index() as usize]
+            .parameters
+            .swap(0, 1);
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(
+            error.message().contains("parameter slot table differs"),
+            "{error}"
+        );
+
+        let mut malformed = program.clone();
+        let function = &mut malformed.functions[combine.index() as usize];
+        let parameter = *function
+            .parameters
+            .last()
+            .expect("combine has three parameter slots");
+        function.slots[parameter.index() as usize].kind = bc::BytecodeSlotKind::Temporary;
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(
+            error.message().contains("return or parameter slot count"),
+            "{error}"
+        );
+
+        let mut malformed = program.clone();
+        let function = &mut malformed.functions[combine.index() as usize];
+        let user = function
+            .slots
+            .iter()
+            .find_map(|slot| match slot.kind {
+                bc::BytecodeSlotKind::User { local } => Some(local),
+                _ => None,
+            })
+            .expect("combine has one user slot");
+        let temporary = function
+            .slots
+            .iter()
+            .position(|slot| slot.kind == bc::BytecodeSlotKind::Temporary)
+            .expect("combine has one temporary slot");
+        function.slots[temporary].kind = bc::BytecodeSlotKind::User { local: user };
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("user local identity is duplicated"),
+            "{error}"
+        );
+
+        let mut malformed = program.clone();
+        let function = &mut malformed.functions[combine.index() as usize];
+        function.entry = function.unwind;
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(
+            error.message().contains("required distinct shapes"),
+            "{error}"
+        );
+
+        let mut malformed = program;
+        let function = &mut malformed.functions[combine.index() as usize];
+        let loan = function
+            .loans
+            .first_mut()
+            .expect("the ref argument creates a call-local loan");
+        loan.mode = bc::BytecodeParameterMode::Value;
+        let error = bc::verify_bytecode(&malformed).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("loan metadata uses the owning value mode"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn bytecode_verifier_rejects_forged_closure_capture_schemas() {
         let source = "fn build() {\n\
                           let seed = 41\n\

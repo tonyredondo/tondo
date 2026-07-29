@@ -9010,8 +9010,116 @@ fn is_relational(scalar: ScalarType) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::hir::{
+        ExpressionCheckLimits, HirCallArgumentTarget, HirRangeKind, TypeLoweringLimits,
+        check_expressions, lower_types,
+    };
+    use crate::mir::{
+        MirAssertMessagePart, MirBootstrapHostFunction, MirCallArgument, MirConstant,
+        MirLoweringLimits, MirSliceBounds, MirStatement, MirTerminator, lower_to_mir,
+    };
+    use crate::package::PackageGraph;
+    use crate::resolve::{ResolvedProgram, SymbolKind, resolve};
+    use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
+    use crate::syntax::{LexMode, ParseLimits, ParseMode, lex, parse};
     use crate::types::TypeInterner;
+
+    fn checked_mir(source: &str) -> (ResolvedProgram, HirProgram, MirProgram) {
+        let mut sources = SourceDatabase::new();
+        let file = sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("root:mir-verifier").unwrap(),
+                ModulePath::new("main").unwrap(),
+                LogicalPath::new("main.to").unwrap(),
+                Arc::<[u8]>::from(source.as_bytes().to_vec()),
+            ))
+            .unwrap();
+        let lexed = lex(&sources, file, LexMode::Module).unwrap();
+        assert!(lexed.diagnostics().is_empty());
+        let parsed = parse(
+            &sources,
+            file,
+            lexed,
+            ParseMode::Module,
+            ParseLimits::default(),
+        )
+        .unwrap();
+        assert!(
+            parsed.diagnostics().is_empty(),
+            "{:#?}",
+            parsed.diagnostics()
+        );
+        let packages = PackageGraph::loose(&sources, file).unwrap();
+        let (resolved, diagnostics) = resolve(&packages, &sources, [(file, &parsed)], 100)
+            .unwrap()
+            .into_parts();
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+        let (hir, diagnostics) = lower_types(
+            &packages,
+            &sources,
+            [(file, &parsed)],
+            &resolved,
+            TypeLoweringLimits {
+                max_type_nodes: 100_000,
+                max_trait_obligations: 100_000,
+                max_diagnostics: 100,
+            },
+        )
+        .unwrap()
+        .into_parts();
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+        let (hir, diagnostics, complete) = check_expressions(
+            &sources,
+            [(file, &parsed)],
+            &resolved,
+            hir,
+            ExpressionCheckLimits {
+                max_nodes: 100_000,
+                max_pattern_steps: 100_000,
+                max_trait_obligations: 100_000,
+                max_diagnostics: 100,
+            },
+        )
+        .unwrap()
+        .into_parts();
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+        assert!(complete);
+        let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
+        (resolved, hir, mir)
+    }
+
+    fn callable_named(resolved: &ResolvedProgram, name: &str) -> HirCallableId {
+        HirCallableId::Symbol(
+            resolved
+                .symbols()
+                .find(|symbol| {
+                    symbol.kind() == SymbolKind::Function && symbol.name().as_str() == name
+                })
+                .unwrap_or_else(|| panic!("fixture has no function named {name}"))
+                .id(),
+        )
+    }
+
+    fn member_named(resolved: &ResolvedProgram, name: &str) -> crate::resolve::MemberId {
+        resolved
+            .members()
+            .find(|member| member.name().as_str() == name)
+            .unwrap_or_else(|| panic!("fixture has no member named {name}"))
+            .id()
+    }
+
+    fn corrupted_mir(
+        source: &str,
+        mutate: impl FnOnce(&ResolvedProgram, &HirProgram, &mut MirProgram),
+    ) -> MirInvariantError {
+        let (resolved, hir, mut mir) = checked_mir(source);
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        mutate(&resolved, &hir, &mut mir);
+        verify_mir(&resolved, &hir, &mir).unwrap_err()
+    }
 
     fn projected_place(kind: MirProjectionKind) -> MirPlace {
         let ty = TypeInterner::default().scalar(ScalarType::Int);
@@ -9021,6 +9129,66 @@ mod tests {
             projections: vec![MirProjection { ty, kind }],
             source_loan: None,
         }
+    }
+
+    fn aggregate_rvalue_mut(
+        function: &mut MirFunction,
+        predicate: impl Fn(&MirAggregateKind) -> bool,
+    ) -> &mut MirRvalue {
+        function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.statements)
+            .find_map(|statement| match &mut statement.kind {
+                MirStatementKind::Assign { value, .. }
+                    if matches!(
+                        &value.kind,
+                        MirRvalueKind::Aggregate { shape, .. } if predicate(shape)
+                    ) =>
+                {
+                    Some(value)
+                }
+                _ => None,
+            })
+            .expect("fixture contains the requested aggregate")
+    }
+
+    fn rvalue_mut(
+        function: &mut MirFunction,
+        predicate: impl Fn(&MirRvalueKind) -> bool,
+    ) -> &mut MirRvalue {
+        function
+            .blocks
+            .iter_mut()
+            .flat_map(|block| &mut block.statements)
+            .find_map(|statement| match &mut statement.kind {
+                MirStatementKind::Assign { value, .. } if predicate(&value.kind) => Some(value),
+                _ => None,
+            })
+            .expect("fixture contains the requested rvalue")
+    }
+
+    fn operation_mut(
+        function: &mut MirFunction,
+        predicate: impl Fn(&MirOperationKind) -> bool,
+    ) -> &mut MirOperation {
+        function
+            .blocks
+            .iter_mut()
+            .find_map(|block| match &mut block.terminator.kind {
+                MirTerminatorKind::Invoke { operation, .. }
+                | MirTerminatorKind::Spawn { operation, .. }
+                    if predicate(&operation.kind) =>
+                {
+                    Some(operation)
+                }
+                MirTerminatorKind::Await {
+                    awaitable: MirAwaitable::Call(operation),
+                    ..
+                } if predicate(&operation.kind) => Some(operation),
+                _ => None,
+            })
+            .expect("fixture contains the requested MIR operation")
     }
 
     #[test]
@@ -9053,6 +9221,35 @@ mod tests {
                 access: crate::hir::HirIndexAccess::MapEntry,
             }
         )));
+    }
+
+    #[test]
+    fn invariant_errors_and_verification_limits_remain_observable() {
+        let ordinary = MirInvariantError::new("function", "broken contract");
+        assert_eq!(ordinary.context(), "function");
+        assert_eq!(ordinary.message(), "broken contract");
+        assert!(!ordinary.is_resource_limit());
+        assert_eq!(
+            ordinary.to_string(),
+            "MIR invariant failed for function: broken contract"
+        );
+
+        let limited = MirInvariantError::resource_limit("dataflow", "budget exhausted");
+        assert_eq!(limited.context(), "dataflow");
+        assert_eq!(limited.message(), "budget exhausted");
+        assert!(limited.is_resource_limit());
+
+        let (resolved, hir, mir) = checked_mir("fn identity(value: Int): Int { value }\n");
+        let error = verify_mir_with_limits(
+            &resolved,
+            &hir,
+            &mir,
+            MirVerificationLimits {
+                max_dataflow_steps: 0,
+            },
+        )
+        .unwrap_err();
+        assert!(error.is_resource_limit());
     }
 
     #[test]
@@ -9099,5 +9296,3298 @@ mod tests {
             &[MovePathComponent::ArrayPatternIndex(0)],
             &static_integers,
         ));
+    }
+
+    #[test]
+    fn move_path_relations_cover_fixed_dynamic_and_runtime_regions() {
+        let static_index = MirLocalId(1);
+        let dynamic_index = MirLocalId(2);
+        let slice_start = MirLocalId(3);
+        let slice_end = MirLocalId(4);
+        let slice_step = MirLocalId(5);
+        let static_integers = BTreeMap::from([
+            (static_index, 2),
+            (slice_start, 1),
+            (slice_end, 7),
+            (slice_step, 2),
+        ]);
+
+        let fixed_cases = [
+            (
+                MovePathComponent::TupleField(0),
+                MovePathComponent::TupleField(1),
+            ),
+            (
+                MovePathComponent::OptionValue,
+                MovePathComponent::ResultOkValue,
+            ),
+            (
+                MovePathComponent::ResultOkValue,
+                MovePathComponent::ResultErrValue,
+            ),
+            (
+                MovePathComponent::ArrayPatternIndex(0),
+                MovePathComponent::ArrayPatternIndex(1),
+            ),
+        ];
+        for (left, right) in fixed_cases {
+            assert_eq!(
+                loan_paths_relation(&[left], &[right], &static_integers),
+                StaticRegionRelation::Disjoint
+            );
+        }
+
+        assert_eq!(
+            loan_paths_relation(
+                &[MovePathComponent::Index {
+                    index: static_index,
+                    access: HirIndexAccess::Array,
+                }],
+                &[MovePathComponent::ArrayPatternIndex(2)],
+                &static_integers,
+            ),
+            StaticRegionRelation::Overlap
+        );
+        assert_eq!(
+            loan_paths_relation(
+                &[MovePathComponent::Index {
+                    index: static_index,
+                    access: HirIndexAccess::Array,
+                }],
+                &[MovePathComponent::ArrayPatternIndex(3)],
+                &static_integers,
+            ),
+            StaticRegionRelation::Disjoint
+        );
+        assert_eq!(
+            loan_paths_relation(
+                &[MovePathComponent::Slice {
+                    start: Some(slice_start),
+                    end: Some(slice_end),
+                    step: Some(slice_step),
+                }],
+                &[MovePathComponent::ArrayPatternIndex(3)],
+                &static_integers,
+            ),
+            StaticRegionRelation::Overlap
+        );
+        assert_eq!(
+            loan_paths_relation(
+                &[MovePathComponent::Index {
+                    index: dynamic_index,
+                    access: HirIndexAccess::Array,
+                }],
+                &[MovePathComponent::TupleField(0)],
+                &static_integers,
+            ),
+            StaticRegionRelation::Runtime
+        );
+        assert_eq!(
+            loan_paths_relation(
+                &[MovePathComponent::Index {
+                    index: static_index,
+                    access: HirIndexAccess::String,
+                }],
+                &[MovePathComponent::Index {
+                    index: static_index,
+                    access: HirIndexAccess::MapLookup,
+                }],
+                &static_integers,
+            ),
+            StaticRegionRelation::Runtime
+        );
+
+        let iterator_index = MirLocalId(6);
+        assert_eq!(
+            loan_paths_relation(
+                &[MovePathComponent::IteratorElement {
+                    index: iterator_index,
+                }],
+                &[MovePathComponent::IteratorElement {
+                    index: iterator_index,
+                }],
+                &static_integers,
+            ),
+            StaticRegionRelation::Overlap
+        );
+        assert_eq!(
+            move_path_runtime_inputs(&[
+                MovePathComponent::Index {
+                    index: dynamic_index,
+                    access: HirIndexAccess::Array,
+                },
+                MovePathComponent::IteratorElement {
+                    index: iterator_index,
+                },
+                MovePathComponent::Slice {
+                    start: Some(slice_start),
+                    end: Some(slice_end),
+                    step: Some(slice_step),
+                },
+                MovePathComponent::TupleField(0),
+            ])
+            .collect::<Vec<_>>(),
+            [
+                dynamic_index,
+                iterator_index,
+                slice_start,
+                slice_end,
+                slice_step,
+            ]
+        );
+    }
+
+    #[test]
+    fn local_flow_helpers_preserve_partial_move_and_defer_invariants() {
+        let local = MirLocalId(7);
+        let field_zero = vec![MovePathComponent::TupleField(0)];
+        let field_one = vec![MovePathComponent::TupleField(1)];
+        let nested = vec![
+            MovePathComponent::TupleField(0),
+            MovePathComponent::TupleField(1),
+        ];
+
+        let mut unavailable = BTreeSet::new();
+        move_path_unchecked(&mut unavailable, nested.clone());
+        move_path_unchecked(&mut unavailable, field_zero.clone());
+        assert_eq!(unavailable, BTreeSet::from([field_zero.clone()]));
+        assert!(!path_is_available(&unavailable, &nested));
+        assert!(path_is_available(&unavailable, &field_one));
+        assert!(!path_parent_is_available(&unavailable, &nested));
+        assert!(path_parent_is_available(&unavailable, &field_zero));
+        write_path_unchecked(&mut unavailable, &field_zero);
+        assert!(unavailable.is_empty());
+
+        move_path_unchecked(&mut unavailable, Vec::new());
+        assert_eq!(unavailable, BTreeSet::from([Vec::new()]));
+        let live = transfer_local(
+            LocalState {
+                live: false,
+                unavailable: BTreeSet::new(),
+            },
+            &[LocalEvent::StorageLive(local)],
+            local,
+        );
+        assert!(live.live);
+        assert_eq!(live.unavailable, BTreeSet::from([Vec::new()]));
+        let initialized = transfer_local(
+            live,
+            &[LocalEvent::Write(LocalAccess {
+                local,
+                path: Vec::new(),
+                source_loan: None,
+            })],
+            local,
+        );
+        assert!(initialized.unavailable.is_empty());
+        let moved = transfer_local(
+            initialized,
+            &[LocalEvent::Move(LocalAccess {
+                local,
+                path: field_zero.clone(),
+                source_loan: None,
+            })],
+            local,
+        );
+        assert_eq!(moved.unavailable, BTreeSet::from([field_zero.clone()]));
+        let dead = transfer_local(moved, &[LocalEvent::StorageDead(local)], local);
+        assert!(!dead.live);
+
+        let whole = LocalAccess {
+            local,
+            path: Vec::new(),
+            source_loan: None,
+        };
+        let partial = LocalAccess {
+            local,
+            path: field_zero.clone(),
+            source_loan: None,
+        };
+        let sibling = LocalAccess {
+            local,
+            path: field_one,
+            source_loan: None,
+        };
+        assert!(local_accesses_overlap(&whole, &partial));
+        assert!(!local_accesses_overlap(&partial, &sibling));
+        assert!(local_access_contains(&whole, &partial));
+        assert!(!local_access_contains(&partial, &whole));
+
+        for event in [
+            LocalEvent::Read(partial.clone()),
+            LocalEvent::Resolve(partial.clone()),
+            LocalEvent::Move(partial.clone()),
+        ] {
+            let mut state = DeferFlowState {
+                consumed: BTreeSet::from([whole.clone()]),
+                ..DeferFlowState::default()
+            };
+            let error = apply_consumed_defer_events(&mut state, &[event], "test").unwrap_err();
+            assert!(
+                error
+                    .message()
+                    .contains("owner already consumed by a deferred action")
+            );
+        }
+
+        let mut state = DeferFlowState {
+            consumed: BTreeSet::from([whole.clone()]),
+            ..DeferFlowState::default()
+        };
+        let error = apply_consumed_defer_events(
+            &mut state,
+            &[LocalEvent::WriteAccess(partial.clone())],
+            "test",
+        )
+        .unwrap_err();
+        assert!(error.message().contains("partial write"));
+
+        let mut state = DeferFlowState {
+            consumed: BTreeSet::from([whole.clone()]),
+            ..DeferFlowState::default()
+        };
+        let error = apply_consumed_defer_events(&mut state, &[LocalEvent::Write(partial)], "test")
+            .unwrap_err();
+        assert!(error.message().contains("partially reinitializes"));
+
+        let mut state = DeferFlowState {
+            consumed: BTreeSet::from([whole]),
+            ..DeferFlowState::default()
+        };
+        apply_consumed_defer_events(
+            &mut state,
+            &[LocalEvent::Write(LocalAccess {
+                local,
+                path: Vec::new(),
+                source_loan: None,
+            })],
+            "test",
+        )
+        .unwrap();
+        assert!(state.consumed.is_empty());
+    }
+
+    #[test]
+    fn scalar_and_unavailable_messages_cover_the_closed_type_catalog() {
+        for scalar in [
+            ScalarType::Int,
+            ScalarType::Int8,
+            ScalarType::Int16,
+            ScalarType::Int32,
+            ScalarType::UInt8,
+            ScalarType::UInt16,
+            ScalarType::UInt32,
+            ScalarType::UInt64,
+        ] {
+            assert!(is_integer(scalar), "{scalar:?}");
+            assert!(is_arithmetic(scalar), "{scalar:?}");
+            assert!(is_relational(scalar), "{scalar:?}");
+        }
+        for scalar in [
+            ScalarType::Int,
+            ScalarType::Int8,
+            ScalarType::Int16,
+            ScalarType::Int32,
+        ] {
+            assert!(is_signed_integer(scalar), "{scalar:?}");
+        }
+        for scalar in [ScalarType::Float, ScalarType::Float32] {
+            assert!(is_float(scalar), "{scalar:?}");
+            assert!(is_arithmetic(scalar), "{scalar:?}");
+            assert!(is_relational(scalar), "{scalar:?}");
+        }
+        for scalar in [ScalarType::Byte, ScalarType::Char, ScalarType::String] {
+            assert!(is_relational(scalar), "{scalar:?}");
+            assert!(!is_arithmetic(scalar), "{scalar:?}");
+        }
+        for scalar in [ScalarType::Bool, ScalarType::Unit, ScalarType::Never] {
+            assert!(!is_integer(scalar), "{scalar:?}");
+            assert!(!is_float(scalar), "{scalar:?}");
+            assert!(!is_relational(scalar), "{scalar:?}");
+        }
+
+        let local = MirLocalId(9);
+        assert_eq!(
+            unavailable_read_message(local, &[]),
+            "reads local#9 before a dominating live definition"
+        );
+        assert_eq!(
+            unavailable_read_message(local, &[MovePathComponent::TupleField(0)]),
+            "reads an unavailable move path of local#9"
+        );
+        assert_eq!(
+            unavailable_move_message(local, &[]),
+            "moves local#9 after its value became unavailable"
+        );
+        assert_eq!(
+            unavailable_move_message(local, &[MovePathComponent::TupleField(0)]),
+            "moves an unavailable move path of local#9"
+        );
+    }
+
+    #[test]
+    fn event_extractors_cover_every_closed_rvalue_operation_and_projection_shape() {
+        let (resolved, hir, mir) = checked_mir(
+            "type Record = { field: Int }\n\
+             enum Choice { Item(Int) }\n\
+             fn fixture(value: Int): Int {\n\
+                 let closure = () { value }\n\
+                 _ = closure\n\
+                 value\n\
+             }\n",
+        );
+        let fixture_id = MirFunctionId::Callable(callable_named(&resolved, "fixture"));
+        let function = mir.functions.get(&fixture_id).unwrap();
+        let integer = hir.interner().scalar(ScalarType::Int);
+        let boolean = hir.interner().scalar(ScalarType::Bool);
+        let parameter = function.parameters[0];
+        let field = member_named(&resolved, "field");
+        let variant = member_named(&resolved, "Item");
+        let closure = mir
+            .functions
+            .keys()
+            .find_map(|id| match id {
+                MirFunctionId::Closure(id) => Some(*id),
+                MirFunctionId::Callable(_) => None,
+            })
+            .expect("fixture lowers one closure");
+
+        let place = MirPlace {
+            local: parameter,
+            ty: integer,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let copy = MirOperand {
+            ty: integer,
+            kind: MirOperandKind::Copy(place.clone()),
+        };
+        let moved = MirOperand {
+            ty: integer,
+            kind: MirOperandKind::Move(place.clone()),
+        };
+        let borrowed = MirOperand {
+            ty: integer,
+            kind: MirOperandKind::Borrow(place.clone()),
+        };
+        let loaned = MirOperand {
+            ty: integer,
+            kind: MirOperandKind::Loan(MirLoanId(0)),
+        };
+        let constant = MirOperand {
+            ty: integer,
+            kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+        };
+        let callable = MirOperand {
+            ty: integer,
+            kind: MirOperandKind::Function {
+                callable: callable_named(&resolved, "fixture"),
+                arguments: Vec::new(),
+            },
+        };
+        let prelude = MirOperand {
+            ty: integer,
+            kind: MirOperandKind::PreludeTraitFunction {
+                method: crate::hir::HirPreludeTraitMethod::Display,
+                arguments: vec![integer],
+            },
+        };
+
+        for (operand, expected_events) in [
+            (&moved, 1),
+            (&copy, 1),
+            (&borrowed, 1),
+            (&constant, 0),
+            (&loaned, 0),
+            (&callable, 0),
+            (&prelude, 0),
+        ] {
+            let mut events = Vec::new();
+            push_operand_events(operand, &mut events);
+            assert_eq!(events.len(), expected_events);
+        }
+
+        let rvalues = vec![
+            MirRvalue {
+                ty: integer,
+                kind: MirRvalueKind::Use(borrowed.clone()),
+            },
+            MirRvalue {
+                ty: integer,
+                kind: MirRvalueKind::Prefix {
+                    operator: HirPrefixOperator::Negate,
+                    operand: borrowed.clone(),
+                },
+            },
+            MirRvalue {
+                ty: integer,
+                kind: MirRvalueKind::Binary {
+                    operator: HirBinaryOperator::Equal,
+                    left: loaned.clone(),
+                    right: copy.clone(),
+                },
+            },
+            MirRvalue {
+                ty: integer,
+                kind: MirRvalueKind::Aggregate {
+                    shape: MirAggregateKind::Tuple,
+                    values: vec![borrowed.clone()],
+                },
+            },
+            MirRvalue {
+                ty: integer,
+                kind: MirRvalueKind::RecordUpdate {
+                    base: borrowed.clone(),
+                    fields: vec![(field, copy.clone())],
+                },
+            },
+            MirRvalue {
+                ty: integer,
+                kind: MirRvalueKind::Coerce {
+                    kind: Assignability::Exact,
+                    value: borrowed.clone(),
+                },
+            },
+            MirRvalue {
+                ty: integer,
+                kind: MirRvalueKind::NumericConversion {
+                    target: ScalarType::Int,
+                    conversion: NumericConversion::Identity,
+                    value: borrowed.clone(),
+                },
+            },
+            MirRvalue {
+                ty: integer,
+                kind: MirRvalueKind::Range {
+                    kind: HirRangeKind::Exclusive,
+                    start: borrowed.clone(),
+                    end: copy.clone(),
+                },
+            },
+            MirRvalue {
+                ty: boolean,
+                kind: MirRvalueKind::Contains {
+                    kind: HirContainmentKind::Array,
+                    item: loaned.clone(),
+                    container: copy.clone(),
+                },
+            },
+            MirRvalue {
+                ty: integer,
+                kind: MirRvalueKind::MapRemove {
+                    map: place.clone(),
+                    key: borrowed.clone(),
+                },
+            },
+            MirRvalue {
+                ty: integer,
+                kind: MirRvalueKind::Interpolate {
+                    segments: vec!["".into(), "".into()],
+                    values: vec![borrowed.clone()],
+                },
+            },
+            MirRvalue {
+                ty: integer,
+                kind: MirRvalueKind::Length(loaned.clone()),
+            },
+            MirRvalue {
+                ty: integer,
+                kind: MirRvalueKind::IteratorState {
+                    source: loaned.clone(),
+                },
+            },
+        ];
+        let mut rvalue_events = 0;
+        for value in &rvalues {
+            assert!(mir_rvalue_contains_invalid_borrow(value));
+            let mut local = Vec::new();
+            push_rvalue_events(value, &mut local);
+            rvalue_events += local.len();
+            let mut tags = Vec::new();
+            push_tag_rvalue(function, value, &mut tags);
+        }
+        assert_eq!(rvalue_events, 14);
+
+        let bounds = || MirSliceBounds {
+            start: Some(copy.clone()),
+            end: Some(copy.clone()),
+            step: Some(copy.clone()),
+        };
+        let operations = vec![
+            (
+                MirOperation {
+                    ty: integer,
+                    kind: MirOperationKind::CheckedPrefix {
+                        operator: HirPrefixOperator::Negate,
+                        operand: borrowed.clone(),
+                    },
+                },
+                1,
+            ),
+            (
+                MirOperation {
+                    ty: integer,
+                    kind: MirOperationKind::CheckedBinary {
+                        operator: HirBinaryOperator::Add,
+                        left: borrowed.clone(),
+                        right: copy.clone(),
+                    },
+                },
+                2,
+            ),
+            (
+                MirOperation {
+                    ty: integer,
+                    kind: MirOperationKind::ArraySequence {
+                        kind: crate::hir::HirArraySequenceKind::Concat,
+                        array: loaned.clone(),
+                        argument: borrowed.clone(),
+                    },
+                },
+                2,
+            ),
+            (
+                MirOperation {
+                    ty: integer,
+                    kind: MirOperationKind::BuildMap {
+                        entries: vec![(borrowed.clone(), copy.clone())],
+                        reject_dynamic_duplicates: true,
+                    },
+                },
+                2,
+            ),
+            (
+                MirOperation {
+                    ty: integer,
+                    kind: MirOperationKind::Index {
+                        base: loaned.clone(),
+                        index: borrowed.clone(),
+                        access: HirIndexAccess::Array,
+                        against: Vec::new(),
+                    },
+                },
+                2,
+            ),
+            (
+                MirOperation {
+                    ty: integer,
+                    kind: MirOperationKind::Slice {
+                        base: loaned.clone(),
+                        bounds: Box::new(bounds()),
+                        against: Vec::new(),
+                    },
+                },
+                4,
+            ),
+            (
+                MirOperation {
+                    ty: integer,
+                    kind: MirOperationKind::Call {
+                        callee: loaned.clone(),
+                        arguments: vec![
+                            MirCallArgument {
+                                mode: ParameterMode::Value,
+                                target: HirCallArgumentTarget::Fixed(0),
+                                value: borrowed.clone(),
+                            },
+                            MirCallArgument {
+                                mode: ParameterMode::Ref,
+                                target: HirCallArgumentTarget::Fixed(1),
+                                value: copy.clone(),
+                            },
+                        ],
+                        signature: integer,
+                        protocol: crate::hir::HirCallProtocol::Call,
+                        unsafe_call: false,
+                    },
+                },
+                3,
+            ),
+            (
+                MirOperation {
+                    ty: integer,
+                    kind: MirOperationKind::ExplicitPanic {
+                        message: borrowed.clone(),
+                    },
+                },
+                1,
+            ),
+            (
+                MirOperation {
+                    ty: integer,
+                    kind: MirOperationKind::Assert {
+                        condition: borrowed.clone(),
+                        condition_repr: "condition".into(),
+                        message_parts: vec![MirAssertMessagePart {
+                            value: copy.clone(),
+                            spread: false,
+                        }],
+                    },
+                },
+                2,
+            ),
+            (
+                MirOperation {
+                    ty: integer,
+                    kind: MirOperationKind::BootstrapHostCall {
+                        function: MirBootstrapHostFunction::ConsolePrint,
+                        arguments: vec![borrowed.clone()],
+                    },
+                },
+                1,
+            ),
+        ];
+        for (operation, expected_operands) in &operations {
+            assert!(mir_operation_contains_invalid_borrow(operation));
+            assert_eq!(operation_operands(operation).len(), *expected_operands);
+            let mut local = Vec::new();
+            push_operation_events(operation, &mut local);
+            assert!(!local.is_empty());
+            let mut tags = Vec::new();
+            push_tag_operation(function, operation, &mut tags);
+        }
+
+        let indexed = MirPlace {
+            local: parameter,
+            ty: integer,
+            projections: vec![
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::ClosureCapture { closure, index: 0 },
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::IteratorSource,
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::Field(field),
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::TupleField(0),
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::NewtypeValue,
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::RefValue,
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::VariantTuple { variant, index: 0 },
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::VariantField { variant, field },
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::OptionValue,
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::ResultOkValue,
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::ResultErrValue,
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::UnionValue(integer),
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::ArrayPatternIndex(0),
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::ArrayPatternRest {
+                        start: 1,
+                        suffix: 0,
+                    },
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::IteratorElement { index: parameter },
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::Index {
+                        index: parameter,
+                        access: HirIndexAccess::Array,
+                    },
+                },
+                MirProjection {
+                    ty: integer,
+                    kind: MirProjectionKind::Slice {
+                        start: Some(parameter),
+                        end: Some(parameter),
+                        step: Some(parameter),
+                    },
+                },
+            ],
+            source_loan: None,
+        };
+        let mut projection_events = Vec::new();
+        push_projection_index_events(&indexed, &mut projection_events);
+        assert_eq!(projection_events.len(), 5);
+        assert!(place_requires_loan_validation(&indexed));
+        assert!(place_contains_ref_value(&indexed));
+        let mut tag_events = Vec::new();
+        push_tag_place(function, &indexed, true, &mut tag_events);
+        assert_eq!(
+            tag_events
+                .iter()
+                .filter(|event| matches!(event, TagEvent::Require(_)))
+                .count(),
+            6
+        );
+        assert!(matches!(tag_events.last(), Some(TagEvent::Write(_))));
+
+        let sibling_local = function.return_local;
+        let sibling = MirPlace {
+            local: sibling_local,
+            ty: integer,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        assert!(!places_may_overlap(&place, &sibling));
+        assert!(places_may_overlap(&place, &indexed));
+        assert!(same_place_path(&place, &place));
+        assert!(!same_place_path(&place, &indexed));
+
+        let block = |kind| MirTerminator {
+            span: function.span,
+            kind,
+        };
+        let destination = place.clone();
+        let operation = operations[0].0.clone();
+        let terminators = vec![
+            (
+                block(MirTerminatorKind::Goto {
+                    target: MirBlockId(1),
+                }),
+                1,
+            ),
+            (
+                block(MirTerminatorKind::SwitchBool {
+                    condition: copy.clone(),
+                    if_true: MirBlockId(1),
+                    if_false: MirBlockId(2),
+                }),
+                2,
+            ),
+            (
+                block(MirTerminatorKind::SwitchTag {
+                    value: copy.clone(),
+                    cases: vec![(MirTag::OptionSome, MirBlockId(1))],
+                    otherwise: MirBlockId(2),
+                }),
+                2,
+            ),
+            (
+                block(MirTerminatorKind::Invoke {
+                    operation: operation.clone(),
+                    destination: Some(destination.clone()),
+                    target: Some(MirBlockId(1)),
+                    unwind: MirBlockId(2),
+                }),
+                2,
+            ),
+            (
+                block(MirTerminatorKind::Await {
+                    awaitable: MirAwaitable::Call(operation.clone()),
+                    destination: destination.clone(),
+                    target: MirBlockId(1),
+                    unwind: MirBlockId(2),
+                }),
+                2,
+            ),
+            (
+                block(MirTerminatorKind::IteratorNext {
+                    state: destination.clone(),
+                    destination: destination.clone(),
+                    borrowed_source: Some(destination.clone()),
+                    exhaustion_guard: Some(destination.clone()),
+                    has_value: MirBlockId(1),
+                    exhausted: MirBlockId(2),
+                    unwind: MirBlockId(3),
+                }),
+                3,
+            ),
+            (
+                block(MirTerminatorKind::ValidatePlaces {
+                    places: vec![destination.clone()],
+                    replacements: vec![Some(copy.clone())],
+                    against: vec![Vec::new()],
+                    for_write: true,
+                    target: MirBlockId(1),
+                    unwind: MirBlockId(2),
+                }),
+                2,
+            ),
+            (
+                block(MirTerminatorKind::ValidateLoan {
+                    loan: MirLoanId(0),
+                    against: Vec::new(),
+                    target: MirBlockId(1),
+                    unwind: MirBlockId(2),
+                }),
+                2,
+            ),
+            (
+                block(MirTerminatorKind::DrainDefers {
+                    scopes: Vec::new(),
+                    target: MirBlockId(1),
+                    unwind: MirBlockId(2),
+                }),
+                2,
+            ),
+            (
+                block(MirTerminatorKind::DrainScopes {
+                    task_scopes: Vec::new(),
+                    defer_scopes: Vec::new(),
+                    target: MirBlockId(1),
+                    unwind: MirBlockId(2),
+                }),
+                2,
+            ),
+            (
+                block(MirTerminatorKind::DrainUnwind {
+                    target: MirBlockId(1),
+                }),
+                1,
+            ),
+            (block(MirTerminatorKind::Return), 0),
+            (block(MirTerminatorKind::ResumePanic), 0),
+            (block(MirTerminatorKind::Unreachable), 0),
+        ];
+        for (terminator, expected_edges) in terminators {
+            assert_eq!(successor_edges(&terminator.kind).len(), expected_edges);
+        }
+    }
+
+    #[test]
+    fn projection_corruption_matrix_rejects_every_closed_place_shape() {
+        const SOURCE: &str = "type UserId = Int\n\
+             type Record = { value: Int, text: String }\n\
+             enum Choice {\n\
+                 Empty\n\
+                 Pair(Int)\n\
+                 Named { value: Int }\n\
+             }\n\
+             fn inspect(\n\
+                 scalar: Int,\n\
+                 text: String,\n\
+                 tuple: (Int, String),\n\
+                 identifier: UserId,\n\
+                 reference: Ref[Int],\n\
+                 record: Record,\n\
+                 choice: Choice,\n\
+                 optional: Int?,\n\
+                 result: Int ! String,\n\
+                 either: Int | String,\n\
+                 array: Array[Int],\n\
+             ) {\n\
+                 let offset = 1\n\
+                 let closure = (): Int { offset }\n\
+                 for ref item in array {\n\
+                     _ = item\n\
+                 }\n\
+                 _ = scalar\n\
+                 _ = text\n\
+                 _ = tuple\n\
+                 _ = identifier\n\
+                 _ = reference\n\
+                 _ = record\n\
+                 _ = choice\n\
+                 _ = optional\n\
+                 _ = result\n\
+                 _ = either\n\
+                 _ = closure\n\
+             }\n";
+
+        let (resolved, hir, mir) = checked_mir(SOURCE);
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let capabilities = CapabilityAnalysis::new(&hir, &resolved).unwrap();
+        let terminal_analysis = TerminalAnalysis::new(&hir, &resolved).unwrap();
+        let verifier = Verifier {
+            resolved: &resolved,
+            hir: &hir,
+            capability_analysis: &capabilities,
+            terminal_analysis,
+            capability_statuses: RefCell::new(BTreeMap::new()),
+            terminal_statuses: RefCell::new(BTreeMap::new()),
+            limits: MirVerificationLimits::default(),
+            dataflow_steps: Cell::new(0),
+        };
+        let inspect_id = MirFunctionId::Callable(callable_named(&resolved, "inspect"));
+        let inspect = mir.functions.get(&inspect_id).unwrap();
+        let int = hir.interner().scalar(ScalarType::Int);
+        let string = hir.interner().scalar(ScalarType::String);
+        let boolean = hir.interner().scalar(ScalarType::Bool);
+
+        let nominal_named = |name: &str| {
+            let identity = resolved
+                .symbols()
+                .find(|symbol| symbol.name().as_str() == name)
+                .unwrap()
+                .identity();
+            hir.interner()
+                .ids()
+                .find(|ty| {
+                    matches!(
+                        hir.interner().kind(*ty),
+                        Ok(TypeKind::Nominal {
+                            identity: actual,
+                            ..
+                        }) if actual == identity
+                    )
+                })
+                .unwrap_or_else(|| panic!("fixture has no nominal type named {name}"))
+        };
+        let type_matching = |predicate: &dyn Fn(&TypeKind) -> bool| {
+            hir.interner()
+                .ids()
+                .find(|ty| hir.interner().kind(*ty).is_ok_and(predicate))
+                .expect("fixture omitted a required projection type")
+        };
+        let tuple = type_matching(
+            &|kind| matches!(kind, TypeKind::Tuple(items) if items.as_slice() == [int, string]),
+        );
+        let user_id = nominal_named("UserId");
+        let record = nominal_named("Record");
+        let choice = nominal_named("Choice");
+        let reference = type_matching(&|kind| {
+            matches!(
+                kind,
+                TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Ref,
+                    arguments,
+                } if arguments.as_slice() == [int]
+            )
+        });
+        let option = type_matching(&|kind| matches!(kind, TypeKind::Option(item) if *item == int));
+        let result = type_matching(&|kind| {
+            matches!(
+                kind,
+                TypeKind::Result { success, error } if *success == int && *error == string
+            )
+        });
+        let union = type_matching(
+            &|kind| matches!(kind, TypeKind::Union(members) if members.contains(&int) && members.contains(&string)),
+        );
+        let array = type_matching(&|kind| {
+            matches!(
+                kind,
+                TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Array,
+                    arguments,
+                } if arguments.as_slice() == [int]
+            )
+        });
+        let cursor = type_matching(
+            &|kind| matches!(kind, TypeKind::Cursor { collection, .. } if *collection == array),
+        );
+        let local_of_type = |ty| {
+            inspect
+                .locals
+                .iter()
+                .position(|local| local.ty == ty)
+                .map(|index| MirLocalId(index as u32))
+                .expect("fixture omitted a local of the requested type")
+        };
+        let int_local = local_of_type(int);
+        let string_local = local_of_type(string);
+        let record_field = resolved
+            .members()
+            .find(|member| {
+                member.name().as_str() == "text"
+                    && member.kind() == MemberKind::RecordField
+                    && matches!(member.owner(), MemberOwner::Type(_))
+            })
+            .unwrap()
+            .id();
+        let pair = resolved
+            .members()
+            .find(|member| {
+                member.name().as_str() == "Pair" && member.kind() == MemberKind::EnumVariant
+            })
+            .unwrap()
+            .id();
+        let named = resolved
+            .members()
+            .find(|member| {
+                member.name().as_str() == "Named" && member.kind() == MemberKind::EnumVariant
+            })
+            .unwrap()
+            .id();
+        let named_field = resolved
+            .members()
+            .find(|member| member.owner() == MemberOwner::Variant(named))
+            .unwrap()
+            .id();
+
+        macro_rules! rejects {
+            ($function:expr, $current:expr, $declared:expr, $kind:expr, $message:literal) => {{
+                let error = verifier
+                    .projection_result(
+                        $function,
+                        $current,
+                        &MirProjection {
+                            ty: $declared,
+                            kind: $kind,
+                        },
+                        "projection corruption matrix",
+                    )
+                    .unwrap_err();
+                assert!(error.message().contains($message), "{error}");
+            }};
+        }
+
+        rejects!(
+            inspect,
+            int,
+            int,
+            MirProjectionKind::TupleField(0),
+            "non-tuple base"
+        );
+        rejects!(
+            inspect,
+            tuple,
+            int,
+            MirProjectionKind::TupleField(9),
+            "index is out of range"
+        );
+        rejects!(
+            inspect,
+            record,
+            string,
+            MirProjectionKind::NewtypeValue,
+            "non-newtype base"
+        );
+        rejects!(
+            inspect,
+            user_id,
+            string,
+            MirProjectionKind::NewtypeValue,
+            "wrong instantiated payload type"
+        );
+        rejects!(
+            inspect,
+            reference,
+            string,
+            MirProjectionKind::RefValue,
+            "wrong target type"
+        );
+        rejects!(
+            inspect,
+            record,
+            int,
+            MirProjectionKind::Field(record_field),
+            "wrong type"
+        );
+        rejects!(
+            inspect,
+            record,
+            int,
+            MirProjectionKind::VariantTuple {
+                variant: pair,
+                index: 0,
+            },
+            "non-enum base"
+        );
+        rejects!(
+            inspect,
+            choice,
+            int,
+            MirProjectionKind::VariantTuple {
+                variant: named,
+                index: 0,
+            },
+            "non-tuple variant"
+        );
+        rejects!(
+            inspect,
+            choice,
+            int,
+            MirProjectionKind::VariantTuple {
+                variant: pair,
+                index: 9,
+            },
+            "index is out of range"
+        );
+        rejects!(
+            inspect,
+            choice,
+            string,
+            MirProjectionKind::VariantTuple {
+                variant: pair,
+                index: 0,
+            },
+            "payload type is inconsistent"
+        );
+        rejects!(
+            inspect,
+            record,
+            int,
+            MirProjectionKind::VariantField {
+                variant: named,
+                field: named_field,
+            },
+            "non-enum base"
+        );
+        rejects!(
+            inspect,
+            choice,
+            int,
+            MirProjectionKind::VariantField {
+                variant: pair,
+                field: named_field,
+            },
+            "non-record variant"
+        );
+        rejects!(
+            inspect,
+            choice,
+            int,
+            MirProjectionKind::VariantField {
+                variant: named,
+                field: record_field,
+            },
+            "wrong owner or member kind"
+        );
+        rejects!(
+            inspect,
+            int,
+            int,
+            MirProjectionKind::OptionValue,
+            "non-option base"
+        );
+        rejects!(
+            inspect,
+            int,
+            int,
+            MirProjectionKind::ResultOkValue,
+            "non-result base"
+        );
+        rejects!(
+            inspect,
+            int,
+            string,
+            MirProjectionKind::ResultErrValue,
+            "non-result base"
+        );
+        rejects!(
+            inspect,
+            int,
+            int,
+            MirProjectionKind::UnionValue(int),
+            "non-union base"
+        );
+        rejects!(
+            inspect,
+            union,
+            boolean,
+            MirProjectionKind::UnionValue(boolean),
+            "member is absent"
+        );
+        rejects!(
+            inspect,
+            array,
+            array,
+            MirProjectionKind::ArrayPatternRest {
+                start: u32::MAX,
+                suffix: 1,
+            },
+            "offsets overflow"
+        );
+        rejects!(
+            inspect,
+            array,
+            int,
+            MirProjectionKind::IteratorElement {
+                index: string_local,
+            },
+            "position is not Int"
+        );
+        rejects!(
+            inspect,
+            int,
+            int,
+            MirProjectionKind::IteratorElement { index: int_local },
+            "non-borrowable collection base"
+        );
+        rejects!(
+            inspect,
+            array,
+            string,
+            MirProjectionKind::IteratorElement { index: int_local },
+            "wrong item type"
+        );
+        rejects!(
+            inspect,
+            int,
+            array,
+            MirProjectionKind::IteratorSource,
+            "non-cursor base"
+        );
+        rejects!(
+            inspect,
+            cursor,
+            string,
+            MirProjectionKind::IteratorSource,
+            "wrong collection type"
+        );
+        rejects!(
+            inspect,
+            string,
+            string,
+            MirProjectionKind::Index {
+                index: int_local,
+                access: HirIndexAccess::String,
+            },
+            "String indexing cannot form a place"
+        );
+        rejects!(
+            inspect,
+            array,
+            array,
+            MirProjectionKind::Slice {
+                start: Some(string_local),
+                end: None,
+                step: None,
+            },
+            "bound local is not Int"
+        );
+
+        let closure = hir.closures().next().unwrap();
+        let closure_function = mir
+            .functions
+            .get(&MirFunctionId::Closure(closure.id()))
+            .unwrap();
+        let capture_ty = closure.captures()[0].ty();
+        rejects!(
+            inspect,
+            closure.ty(),
+            capture_ty,
+            MirProjectionKind::ClosureCapture {
+                closure: closure.id(),
+                index: 0,
+            },
+            "wrong function or environment type"
+        );
+        rejects!(
+            closure_function,
+            closure.ty(),
+            capture_ty,
+            MirProjectionKind::ClosureCapture {
+                closure: closure.id(),
+                index: 9,
+            },
+            "index is out of range"
+        );
+        rejects!(
+            closure_function,
+            closure.ty(),
+            string,
+            MirProjectionKind::ClosureCapture {
+                closure: closure.id(),
+                index: 0,
+            },
+            "wrong capture type"
+        );
+
+        assert_eq!(
+            verifier
+                .projection_result(
+                    inspect,
+                    option,
+                    &MirProjection {
+                        ty: int,
+                        kind: MirProjectionKind::OptionValue,
+                    },
+                    "projection success matrix",
+                )
+                .unwrap(),
+            int
+        );
+        assert_eq!(
+            verifier
+                .projection_result(
+                    inspect,
+                    result,
+                    &MirProjection {
+                        ty: int,
+                        kind: MirProjectionKind::ResultOkValue,
+                    },
+                    "projection success matrix",
+                )
+                .unwrap(),
+            int
+        );
+    }
+
+    #[test]
+    fn block_guard_matrix_rejects_wrong_effect_storage_and_cleanup_contexts() {
+        const SOURCE: &str = "fn inspect(value: Int, text: String): Int { value }\n\
+             fn sum(left: Int, right: Int, text: String): Int { left + right }\n\
+             async fn load(value: Int): Int { value }\n\
+             async fn effects(text: String): Int {\n\
+                 let direct = await load(1)\n\
+                 scope {\n\
+                     let task = spawn load(direct)\n\
+                     await task\n\
+                 }\n\
+             }\n\
+             fn borrowed(items: Array[Int]) {\n\
+                 for ref item in items {\n\
+                     _ = item\n\
+                 }\n\
+             }\n\
+             fn owning(items: Array[Int]) {\n\
+                 for item in items {\n\
+                     _ = item\n\
+                 }\n\
+             }\n";
+
+        let (resolved, hir, mir) = checked_mir(SOURCE);
+        verify_mir(&resolved, &hir, &mir).unwrap();
+        let capabilities = CapabilityAnalysis::new(&hir, &resolved).unwrap();
+        let terminal_analysis = TerminalAnalysis::new(&hir, &resolved).unwrap();
+        let verifier = Verifier {
+            resolved: &resolved,
+            hir: &hir,
+            capability_analysis: &capabilities,
+            terminal_analysis,
+            capability_statuses: RefCell::new(BTreeMap::new()),
+            terminal_statuses: RefCell::new(BTreeMap::new()),
+            limits: MirVerificationLimits::default(),
+            dataflow_steps: Cell::new(0),
+        };
+        let function = |name| {
+            mir.functions
+                .get(&MirFunctionId::Callable(callable_named(&resolved, name)))
+                .unwrap()
+        };
+        let inspect = function("inspect");
+        let sum = function("sum");
+        let effects = function("effects");
+        let borrowed = function("borrowed");
+        let owning = function("owning");
+        let int = hir.interner().scalar(ScalarType::Int);
+        let string = hir.interner().scalar(ScalarType::String);
+        let bool_ty = hir.interner().scalar(ScalarType::Bool);
+        let place_of_type = |function: &MirFunction, ty| {
+            let local = function
+                .parameters
+                .iter()
+                .copied()
+                .find(|local| function.locals[local.index() as usize].ty == ty)
+                .expect("fixture omitted a parameter of the requested type");
+            MirPlace {
+                local,
+                ty,
+                projections: Vec::new(),
+                source_loan: None,
+            }
+        };
+        let int_place = place_of_type(inspect, int);
+        let string_place = place_of_type(inspect, string);
+        let task_scope = effects
+            .blocks
+            .iter()
+            .flat_map(|block| &block.statements)
+            .find_map(|statement| match statement.kind {
+                MirStatementKind::EnterTaskScope { scope } => Some(scope),
+                _ => None,
+            })
+            .expect("async fixture has a structured task scope");
+        let spawn = effects
+            .blocks
+            .iter()
+            .find_map(|block| {
+                matches!(block.terminator.kind, MirTerminatorKind::Spawn { .. })
+                    .then(|| block.terminator.kind.clone())
+            })
+            .expect("async fixture has a Spawn terminator");
+        let await_join = effects
+            .blocks
+            .iter()
+            .find_map(|block| match &block.terminator.kind {
+                MirTerminatorKind::Await {
+                    awaitable: MirAwaitable::Join(_),
+                    ..
+                } => Some(block.terminator.kind.clone()),
+                _ => None,
+            })
+            .expect("async fixture has an Await Join terminator");
+        let invoke = sum
+            .blocks
+            .iter()
+            .find_map(|block| {
+                matches!(block.terminator.kind, MirTerminatorKind::Invoke { .. })
+                    .then(|| block.terminator.kind.clone())
+            })
+            .expect("checked addition has an Invoke terminator");
+        let borrowed_next = borrowed
+            .blocks
+            .iter()
+            .find_map(|block| {
+                matches!(
+                    block.terminator.kind,
+                    MirTerminatorKind::IteratorNext {
+                        borrowed_source: Some(_),
+                        ..
+                    }
+                )
+                .then(|| block.terminator.kind.clone())
+            })
+            .expect("borrowed loop has an IteratorNext terminator");
+        let owning_next = owning
+            .blocks
+            .iter()
+            .find_map(|block| {
+                matches!(
+                    block.terminator.kind,
+                    MirTerminatorKind::IteratorNext {
+                        borrowed_source: None,
+                        ..
+                    }
+                )
+                .then(|| block.terminator.kind.clone())
+            })
+            .expect("owning loop has an IteratorNext terminator");
+        let unreachable = |function: &MirFunction| MirTerminator {
+            span: function.span,
+            kind: MirTerminatorKind::Unreachable,
+        };
+        let block = |function: &MirFunction,
+                     kind: MirBlockKind,
+                     statements: Vec<MirStatement>,
+                     terminator: MirTerminatorKind| MirBasicBlock {
+            kind,
+            statements,
+            terminator: MirTerminator {
+                span: function.span,
+                kind: terminator,
+            },
+        };
+        macro_rules! rejects {
+            ($function:expr, $block:expr, $message:literal) => {{
+                let error = verifier
+                    .verify_block($function, MirBlockId(0), &$block)
+                    .unwrap_err();
+                assert!(error.message().contains($message), "{error}");
+            }};
+        }
+
+        rejects!(
+            inspect,
+            MirBasicBlock {
+                kind: MirBlockKind::Normal,
+                statements: vec![MirStatement {
+                    span: inspect.span,
+                    kind: MirStatementKind::EnterTaskScope { scope: task_scope },
+                }],
+                terminator: unreachable(inspect),
+            },
+            "task scope is entered outside ordinary async code"
+        );
+        rejects!(
+            inspect,
+            MirBasicBlock {
+                kind: MirBlockKind::Cleanup,
+                statements: vec![MirStatement {
+                    span: inspect.span,
+                    kind: MirStatementKind::ReserveLoan(MirLoanId(u32::MAX)),
+                }],
+                terminator: unreachable(inspect),
+            },
+            "cleanup block manipulates a loan reservation"
+        );
+        let spawn_operation = match &spawn {
+            MirTerminatorKind::Spawn { operation, .. } => operation.clone(),
+            _ => unreachable!(),
+        };
+        rejects!(
+            inspect,
+            MirBasicBlock {
+                kind: MirBlockKind::Cleanup,
+                statements: vec![MirStatement {
+                    span: inspect.span,
+                    kind: MirStatementKind::RegisterDefer {
+                        scope: task_scope,
+                        action: spawn_operation,
+                        guard: None,
+                    },
+                }],
+                terminator: unreachable(inspect),
+            },
+            "cleanup block registers another defer"
+        );
+        rejects!(
+            inspect,
+            MirBasicBlock {
+                kind: MirBlockKind::Cleanup,
+                statements: vec![MirStatement {
+                    span: inspect.span,
+                    kind: MirStatementKind::RegisterFallback {
+                        scope: task_scope,
+                        owner: int_place.clone(),
+                    },
+                }],
+                terminator: unreachable(inspect),
+            },
+            "cleanup block registers a terminal fallback"
+        );
+        rejects!(
+            inspect,
+            MirBasicBlock {
+                kind: MirBlockKind::Normal,
+                statements: vec![MirStatement {
+                    span: inspect.span,
+                    kind: MirStatementKind::RegisterFallback {
+                        scope: task_scope,
+                        owner: int_place.clone(),
+                    },
+                }],
+                terminator: unreachable(inspect),
+            },
+            "has no terminal token"
+        );
+        rejects!(
+            inspect,
+            MirBasicBlock {
+                kind: MirBlockKind::Cleanup,
+                statements: vec![MirStatement {
+                    span: inspect.span,
+                    kind: MirStatementKind::RetargetCleanup {
+                        from: int_place.clone(),
+                        to: int_place.clone(),
+                    },
+                }],
+                terminator: unreachable(inspect),
+            },
+            "cleanup block retargets a defer guard"
+        );
+        rejects!(
+            inspect,
+            MirBasicBlock {
+                kind: MirBlockKind::Normal,
+                statements: vec![MirStatement {
+                    span: inspect.span,
+                    kind: MirStatementKind::RetargetCleanup {
+                        from: int_place.clone(),
+                        to: string_place.clone(),
+                    },
+                }],
+                terminator: unreachable(inspect),
+            },
+            "does not preserve one complete owner place"
+        );
+        rejects!(
+            inspect,
+            MirBasicBlock {
+                kind: MirBlockKind::Cleanup,
+                statements: vec![MirStatement {
+                    span: inspect.span,
+                    kind: MirStatementKind::DisarmCleanup(int_place.clone()),
+                }],
+                terminator: unreachable(inspect),
+            },
+            "cleanup block explicitly disarms"
+        );
+
+        let bool_condition = MirOperand {
+            ty: bool_ty,
+            kind: MirOperandKind::Constant(MirConstant::Bool(true)),
+        };
+        rejects!(
+            inspect,
+            block(
+                inspect,
+                MirBlockKind::Cleanup,
+                Vec::new(),
+                MirTerminatorKind::SwitchBool {
+                    condition: bool_condition,
+                    if_true: inspect.entry,
+                    if_false: inspect.entry,
+                },
+            ),
+            "cleanup block performs an ordinary boolean branch"
+        );
+        rejects!(
+            inspect,
+            block(
+                inspect,
+                MirBlockKind::Cleanup,
+                Vec::new(),
+                MirTerminatorKind::SwitchTag {
+                    value: MirOperand {
+                        ty: int,
+                        kind: MirOperandKind::Copy(int_place.clone()),
+                    },
+                    cases: vec![(MirTag::OptionSome, inspect.entry)],
+                    otherwise: inspect.entry,
+                },
+            ),
+            "cleanup block performs an ordinary tag branch"
+        );
+        rejects!(
+            sum,
+            block(sum, MirBlockKind::Cleanup, Vec::new(), invoke.clone()),
+            "cleanup block invokes an ordinary fallible operation"
+        );
+        rejects!(
+            inspect,
+            block(
+                inspect,
+                MirBlockKind::Normal,
+                Vec::new(),
+                await_join.clone()
+            ),
+            "await appears outside ordinary async code"
+        );
+        rejects!(
+            inspect,
+            block(inspect, MirBlockKind::Normal, Vec::new(), spawn.clone()),
+            "spawn appears outside ordinary async code"
+        );
+        rejects!(
+            borrowed,
+            block(
+                borrowed,
+                MirBlockKind::Cleanup,
+                Vec::new(),
+                borrowed_next.clone(),
+            ),
+            "cleanup block advances an iterator"
+        );
+        rejects!(
+            inspect,
+            block(
+                inspect,
+                MirBlockKind::Cleanup,
+                Vec::new(),
+                MirTerminatorKind::ValidatePlaces {
+                    places: vec![int_place.clone()],
+                    replacements: vec![None],
+                    against: vec![Vec::new()],
+                    for_write: false,
+                    target: inspect.entry,
+                    unwind: inspect.unwind,
+                },
+            ),
+            "non-empty aligned ordinary operation"
+        );
+        rejects!(
+            inspect,
+            block(
+                inspect,
+                MirBlockKind::Cleanup,
+                Vec::new(),
+                MirTerminatorKind::ValidateLoan {
+                    loan: MirLoanId(u32::MAX),
+                    against: Vec::new(),
+                    target: inspect.entry,
+                    unwind: inspect.unwind,
+                },
+            ),
+            "cleanup block validates a loan reservation"
+        );
+
+        let mut invalid_join = await_join.clone();
+        let MirTerminatorKind::Await {
+            awaitable: MirAwaitable::Join(join),
+            ..
+        } = &mut invalid_join
+        else {
+            unreachable!()
+        };
+        let MirOperandKind::Move(place) = join.kind.clone() else {
+            unreachable!()
+        };
+        join.kind = MirOperandKind::Borrow(place);
+        rejects!(
+            effects,
+            block(effects, MirBlockKind::Normal, Vec::new(), invalid_join),
+            "await must consume its affine Join operand"
+        );
+
+        let effects_string = place_of_type(effects, string);
+        let mut wrong_await_destination = await_join.clone();
+        let MirTerminatorKind::Await { destination, .. } = &mut wrong_await_destination else {
+            unreachable!()
+        };
+        *destination = effects_string.clone();
+        rejects!(
+            effects,
+            block(
+                effects,
+                MirBlockKind::Normal,
+                Vec::new(),
+                wrong_await_destination,
+            ),
+            "await destination differs from its logical outcome"
+        );
+        let mut wrong_await_unwind = await_join;
+        let MirTerminatorKind::Await { unwind, target, .. } = &mut wrong_await_unwind else {
+            unreachable!()
+        };
+        *unwind = *target;
+        rejects!(
+            effects,
+            block(
+                effects,
+                MirBlockKind::Normal,
+                Vec::new(),
+                wrong_await_unwind
+            ),
+            "await unwind edge does not enter cleanup code"
+        );
+
+        let mut wrong_spawn_destination = spawn.clone();
+        let MirTerminatorKind::Spawn { destination, .. } = &mut wrong_spawn_destination else {
+            unreachable!()
+        };
+        *destination = effects_string;
+        rejects!(
+            effects,
+            block(
+                effects,
+                MirBlockKind::Normal,
+                Vec::new(),
+                wrong_spawn_destination,
+            ),
+            "spawn destination is not its exact writable Join result"
+        );
+        let mut wrong_spawn_unwind = spawn;
+        let MirTerminatorKind::Spawn { unwind, target, .. } = &mut wrong_spawn_unwind else {
+            unreachable!()
+        };
+        *unwind = *target;
+        rejects!(
+            effects,
+            block(
+                effects,
+                MirBlockKind::Normal,
+                Vec::new(),
+                wrong_spawn_unwind
+            ),
+            "spawn unwind edge does not enter cleanup code"
+        );
+
+        let mut borrowed_guard = borrowed_next.clone();
+        let MirTerminatorKind::IteratorNext {
+            borrowed_source,
+            exhaustion_guard,
+            ..
+        } = &mut borrowed_guard
+        else {
+            unreachable!()
+        };
+        *exhaustion_guard = borrowed_source.clone();
+        rejects!(
+            borrowed,
+            block(borrowed, MirBlockKind::Normal, Vec::new(), borrowed_guard),
+            "borrowed iterator carries an owning exhaustion guard"
+        );
+        let mut missing_borrowed_source = borrowed_next;
+        let MirTerminatorKind::IteratorNext {
+            borrowed_source, ..
+        } = &mut missing_borrowed_source
+        else {
+            unreachable!()
+        };
+        *borrowed_source = None;
+        rejects!(
+            borrowed,
+            block(
+                borrowed,
+                MirBlockKind::Normal,
+                Vec::new(),
+                missing_borrowed_source,
+            ),
+            "borrowed iterator has no source place"
+        );
+        let mut owning_with_source = owning_next;
+        let MirTerminatorKind::IteratorNext {
+            state,
+            borrowed_source,
+            ..
+        } = &mut owning_with_source
+        else {
+            unreachable!()
+        };
+        *borrowed_source = Some(state.clone());
+        rejects!(
+            owning,
+            block(owning, MirBlockKind::Normal, Vec::new(), owning_with_source),
+            "owning iterator carries a borrowed source"
+        );
+
+        rejects!(
+            inspect,
+            block(
+                inspect,
+                MirBlockKind::Normal,
+                Vec::new(),
+                MirTerminatorKind::DrainDefers {
+                    scopes: vec![task_scope],
+                    target: inspect.unwind,
+                    unwind: inspect.unwind,
+                },
+            ),
+            "defer drain crosses an invalid normal or unwind boundary"
+        );
+        rejects!(
+            inspect,
+            MirBasicBlock {
+                kind: MirBlockKind::Normal,
+                statements: vec![MirStatement {
+                    span: inspect.span,
+                    kind: MirStatementKind::Assign {
+                        destination: int_place.clone(),
+                        value: MirRvalue {
+                            ty: int,
+                            kind: MirRvalueKind::Use(MirOperand {
+                                ty: int,
+                                kind: MirOperandKind::Copy(int_place.clone()),
+                            }),
+                        },
+                    },
+                }],
+                terminator: MirTerminator {
+                    span: inspect.span,
+                    kind: MirTerminatorKind::DrainDefers {
+                        scopes: vec![task_scope],
+                        target: inspect.entry,
+                        unwind: inspect.unwind,
+                    },
+                },
+            },
+            "defer drain block contains ordinary statements"
+        );
+        rejects!(
+            inspect,
+            block(
+                inspect,
+                MirBlockKind::Normal,
+                Vec::new(),
+                MirTerminatorKind::DrainScopes {
+                    task_scopes: vec![task_scope, task_scope],
+                    defer_scopes: Vec::new(),
+                    target: inspect.entry,
+                    unwind: inspect.unwind,
+                },
+            ),
+            "structured drain repeats a task or defer scope"
+        );
+        rejects!(
+            inspect,
+            block(
+                inspect,
+                MirBlockKind::Normal,
+                Vec::new(),
+                MirTerminatorKind::DrainScopes {
+                    task_scopes: vec![task_scope],
+                    defer_scopes: Vec::new(),
+                    target: inspect.entry,
+                    unwind: inspect.unwind,
+                },
+            ),
+            "task scopes are drained by a synchronous function"
+        );
+    }
+
+    #[test]
+    fn block_shape_corruption_matrix_rejects_every_closed_control_boundary() {
+        const SIMPLE: &str = "fn inspect(value: Int): Int { value }\n";
+        const SUM: &str = "fn sum(left: Int, right: Int): Int { left + right }\n";
+
+        let error = corrupted_mir(SIMPLE, |resolved, _hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry.index() as usize;
+            function.blocks[entry].statements.insert(
+                0,
+                MirStatement {
+                    span: function.span,
+                    kind: MirStatementKind::StorageLive(function.parameters[0]),
+                },
+            );
+        });
+        assert!(
+            error
+                .message()
+                .contains("locals have function-wide storage"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry.index() as usize;
+            let parameter = function.parameters[0];
+            let destination = MirPlace {
+                local: parameter,
+                ty: function.locals[parameter.index() as usize].ty,
+                projections: Vec::new(),
+                source_loan: None,
+            };
+            function.blocks[entry].statements.insert(
+                0,
+                MirStatement {
+                    span: function.span,
+                    kind: MirStatementKind::Assign {
+                        destination,
+                        value: MirRvalue {
+                            ty: hir.interner().scalar(ScalarType::Bool),
+                            kind: MirRvalueKind::Use(MirOperand {
+                                ty: hir.interner().scalar(ScalarType::Bool),
+                                kind: MirOperandKind::Constant(MirConstant::Bool(true)),
+                            }),
+                        },
+                    },
+                },
+            );
+        });
+        assert!(
+            error.message().contains("assignment writes type#"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry;
+            let span = function.blocks[entry.index() as usize].terminator.span;
+            let integer = hir.interner().scalar(ScalarType::Int);
+            function.blocks[entry.index() as usize].terminator = MirTerminator {
+                span,
+                kind: MirTerminatorKind::SwitchBool {
+                    condition: MirOperand {
+                        ty: integer,
+                        kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+                    },
+                    if_true: entry,
+                    if_false: entry,
+                },
+            };
+        });
+        assert!(
+            error
+                .message()
+                .contains("condition is not a materialized Bool"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry;
+            let span = function.blocks[entry.index() as usize].terminator.span;
+            let integer = hir.interner().scalar(ScalarType::Int);
+            function.blocks[entry.index() as usize].terminator = MirTerminator {
+                span,
+                kind: MirTerminatorKind::SwitchTag {
+                    value: MirOperand {
+                        ty: integer,
+                        kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+                    },
+                    cases: Vec::new(),
+                    otherwise: entry,
+                },
+            };
+        });
+        assert!(
+            error
+                .message()
+                .contains("value is not materialized in a place"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, _hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry;
+            let span = function.blocks[entry.index() as usize].terminator.span;
+            let parameter = function.parameters[0];
+            let ty = function.locals[parameter.index() as usize].ty;
+            function.blocks[entry.index() as usize].terminator = MirTerminator {
+                span,
+                kind: MirTerminatorKind::SwitchTag {
+                    value: MirOperand {
+                        ty,
+                        kind: MirOperandKind::Copy(MirPlace {
+                            local: parameter,
+                            ty,
+                            projections: Vec::new(),
+                            source_loan: None,
+                        }),
+                    },
+                    cases: Vec::new(),
+                    otherwise: entry,
+                },
+            };
+        });
+        assert!(error.message().contains("has no explicit cases"), "{error}");
+
+        let error = corrupted_mir(
+            "fn inspect(value: Int?): Int { 0 }\n",
+            |resolved, _hir, mir| {
+                let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+                let function = mir.functions.get_mut(&inspect).unwrap();
+                let entry = function.entry;
+                let span = function.blocks[entry.index() as usize].terminator.span;
+                let parameter = function.parameters[0];
+                let ty = function.locals[parameter.index() as usize].ty;
+                function.blocks[entry.index() as usize].terminator = MirTerminator {
+                    span,
+                    kind: MirTerminatorKind::SwitchTag {
+                        value: MirOperand {
+                            ty,
+                            kind: MirOperandKind::Copy(MirPlace {
+                                local: parameter,
+                                ty,
+                                projections: Vec::new(),
+                                source_loan: None,
+                            }),
+                        },
+                        cases: vec![(MirTag::OptionSome, entry), (MirTag::OptionSome, entry)],
+                        otherwise: entry,
+                    },
+                };
+            },
+        );
+        assert!(error.message().contains("is duplicated"), "{error}");
+
+        let error = corrupted_mir(SUM, |resolved, _hir, mir| {
+            let sum = MirFunctionId::Callable(callable_named(resolved, "sum"));
+            let function = mir.functions.get_mut(&sum).unwrap();
+            let terminator = function
+                .blocks
+                .iter_mut()
+                .find_map(|block| match &mut block.terminator.kind {
+                    MirTerminatorKind::Invoke {
+                        destination,
+                        target,
+                        ..
+                    } if destination.is_some() && target.is_some() => Some((destination, target)),
+                    _ => None,
+                })
+                .expect("checked addition lowers through Invoke");
+            *terminator.0 = None;
+        });
+        assert!(
+            error.message().contains("must have both destination"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SUM, |resolved, _hir, mir| {
+            let sum = MirFunctionId::Callable(callable_named(resolved, "sum"));
+            let function = mir.functions.get_mut(&sum).unwrap();
+            let entry = function.entry;
+            let unwind = function
+                .blocks
+                .iter_mut()
+                .find_map(|block| match &mut block.terminator.kind {
+                    MirTerminatorKind::Invoke { unwind, .. } => Some(unwind),
+                    _ => None,
+                })
+                .expect("checked addition lowers through Invoke");
+            *unwind = entry;
+        });
+        assert!(
+            error
+                .message()
+                .contains("unwind edge does not enter cleanup"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, _hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry;
+            let unwind = function.unwind;
+            let span = function.blocks[entry.index() as usize].terminator.span;
+            let parameter = function.parameters[0];
+            let ty = function.locals[parameter.index() as usize].ty;
+            let place = MirPlace {
+                local: parameter,
+                ty,
+                projections: Vec::new(),
+                source_loan: None,
+            };
+            function.blocks[entry.index() as usize].terminator = MirTerminator {
+                span,
+                kind: MirTerminatorKind::IteratorNext {
+                    state: place.clone(),
+                    destination: place,
+                    borrowed_source: None,
+                    exhaustion_guard: None,
+                    has_value: entry,
+                    exhausted: entry,
+                    unwind,
+                },
+            };
+        });
+        assert!(
+            error
+                .message()
+                .contains("state is not a concrete intrinsic cursor"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, _hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry;
+            let span = function.blocks[entry.index() as usize].terminator.span;
+            function.blocks[entry.index() as usize].terminator = MirTerminator {
+                span,
+                kind: MirTerminatorKind::ValidatePlaces {
+                    places: Vec::new(),
+                    replacements: Vec::new(),
+                    against: Vec::new(),
+                    for_write: false,
+                    target: entry,
+                    unwind: function.unwind,
+                },
+            };
+        });
+        assert!(
+            error
+                .message()
+                .contains("non-empty aligned ordinary operation"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, _hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry;
+            let span = function.blocks[entry.index() as usize].terminator.span;
+            let parameter = function.parameters[0];
+            let ty = function.locals[parameter.index() as usize].ty;
+            let place = MirPlace {
+                local: parameter,
+                ty,
+                projections: Vec::new(),
+                source_loan: None,
+            };
+            function.blocks[entry.index() as usize].terminator = MirTerminator {
+                span,
+                kind: MirTerminatorKind::ValidatePlaces {
+                    places: vec![place.clone(), place],
+                    replacements: vec![None, None],
+                    against: vec![Vec::new(), Vec::new()],
+                    for_write: false,
+                    target: entry,
+                    unwind: function.unwind,
+                },
+            };
+        });
+        assert!(
+            error.message().contains("repeats the same destination"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, _hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry;
+            let span = function.blocks[entry.index() as usize].terminator.span;
+            let parameter = function.parameters[0];
+            let ty = function.locals[parameter.index() as usize].ty;
+            let place = MirPlace {
+                local: parameter,
+                ty,
+                projections: Vec::new(),
+                source_loan: None,
+            };
+            function.blocks[entry.index() as usize].terminator = MirTerminator {
+                span,
+                kind: MirTerminatorKind::ValidatePlaces {
+                    places: vec![place],
+                    replacements: vec![Some(MirOperand {
+                        ty,
+                        kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+                    })],
+                    against: vec![Vec::new()],
+                    for_write: true,
+                    target: entry,
+                    unwind: function.unwind,
+                },
+            };
+        });
+        assert!(
+            error.message().contains("requires a borrowed replacement"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, _hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry;
+            let span = function.blocks[entry.index() as usize].terminator.span;
+            function.blocks[entry.index() as usize].terminator = MirTerminator {
+                span,
+                kind: MirTerminatorKind::DrainDefers {
+                    scopes: Vec::new(),
+                    target: entry,
+                    unwind: function.unwind,
+                },
+            };
+        });
+        assert!(
+            error.message().contains("empty or duplicate scope set"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, _hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry;
+            let span = function.blocks[entry.index() as usize].terminator.span;
+            function.blocks[entry.index() as usize].terminator = MirTerminator {
+                span,
+                kind: MirTerminatorKind::DrainScopes {
+                    task_scopes: Vec::new(),
+                    defer_scopes: Vec::new(),
+                    target: entry,
+                    unwind: function.unwind,
+                },
+            };
+        });
+        assert!(
+            error.message().contains("has no task or defer scopes"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, _hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry;
+            let span = function.blocks[entry.index() as usize].terminator.span;
+            function.blocks[entry.index() as usize].terminator = MirTerminator {
+                span,
+                kind: MirTerminatorKind::DrainUnwind {
+                    target: function.unwind,
+                },
+            };
+        });
+        assert!(
+            error.message().contains("not an empty cleanup block"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, _hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            let entry = function.entry.index() as usize;
+            function.blocks[entry].terminator.kind = MirTerminatorKind::ResumePanic;
+        });
+        assert!(
+            error.message().contains("ordinary block resumes panic"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, _hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            function.blocks.push(MirBasicBlock {
+                kind: MirBlockKind::Cleanup,
+                statements: Vec::new(),
+                terminator: MirTerminator {
+                    span: function.span,
+                    kind: MirTerminatorKind::Return,
+                },
+            });
+        });
+        assert!(
+            error.message().contains("cleanup block returns normally"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SIMPLE, |resolved, _hir, mir| {
+            let inspect = MirFunctionId::Callable(callable_named(resolved, "inspect"));
+            let function = mir.functions.get_mut(&inspect).unwrap();
+            function.blocks.push(MirBasicBlock {
+                kind: MirBlockKind::Cleanup,
+                statements: Vec::new(),
+                terminator: MirTerminator {
+                    span: function.span,
+                    kind: MirTerminatorKind::Goto {
+                        target: function.entry,
+                    },
+                },
+            });
+        });
+        assert!(error.message().contains("Goto crosses"), "{error}");
+
+        let error = corrupted_mir(
+            "fn stop(): Never { panic(\"stop\") }\n",
+            |resolved, _hir, mir| {
+                let stop = MirFunctionId::Callable(callable_named(resolved, "stop"));
+                let function = mir.functions.get_mut(&stop).unwrap();
+                let entry = function.entry.index() as usize;
+                function.blocks[entry].terminator.kind = MirTerminatorKind::Return;
+            },
+        );
+        assert!(
+            error
+                .message()
+                .contains("Never function has a normal return"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rvalue_corruption_matrix_rejects_every_closed_value_contract() {
+        const SOURCE: &str = "const Answer: Int = 42\n\
+             type Record = { value: Int, text: String }\n\
+             fn values(\n\
+                 value: Int,\n\
+                 flag: Bool,\n\
+                 text: String,\n\
+                 record: Record,\n\
+                 items: Array[Int],\n\
+                 entries: var Map[String, Int],\n\
+             ): Int? {\n\
+                 let used = value\n\
+                 let named = Answer\n\
+                 let prefixed = not flag\n\
+                 let compared = value == Answer\n\
+                 let updated = record with { value: value }\n\
+                 let optional: Int? = value\n\
+                 let converted = Int32(value)\n\
+                 let range = 0..10\n\
+                 let contained = value in items\n\
+                 let removed = entries.remove(text)\n\
+                 let interpolated = \"value {value}\"\n\
+                 for item in items {\n\
+                     _ = item\n\
+                 }\n\
+                 let first = match items {\n\
+                     [item, ..] => item\n\
+                     [] => 0\n\
+                 }\n\
+                 _ = used\n\
+                 _ = named\n\
+                 _ = prefixed\n\
+                 _ = compared\n\
+                 _ = updated\n\
+                 _ = optional\n\
+                 _ = converted\n\
+                 _ = range\n\
+                 _ = contained\n\
+                 _ = interpolated\n\
+                 _ = first\n\
+                 removed\n\
+             }\n";
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(
+                    kind,
+                    MirRvalueKind::Use(MirOperand {
+                        kind: MirOperandKind::Copy(_),
+                        ..
+                    })
+                )
+            });
+            let MirRvalueKind::Use(operand) = &mut value.kind else {
+                unreachable!()
+            };
+            let MirOperandKind::Copy(place) = &operand.kind else {
+                unreachable!()
+            };
+            operand.kind = MirOperandKind::Borrow(place.clone());
+        });
+        assert!(
+            error
+                .message()
+                .contains("borrow escapes its permitted immediate observation"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::Use(_))
+            });
+            value.ty = hir.interner().scalar(ScalarType::String);
+        });
+        assert!(error.message().contains("Use rvalue changes"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::Prefix { .. })
+            });
+            let integer = hir.interner().scalar(ScalarType::Int);
+            value.ty = integer;
+            value.kind = MirRvalueKind::Prefix {
+                operator: HirPrefixOperator::Negate,
+                operand: MirOperand {
+                    ty: integer,
+                    kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+                },
+            };
+        });
+        assert!(
+            error
+                .message()
+                .contains("potentially panicking prefix operation is not an Invoke"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::Binary { .. })
+            });
+            let integer = hir.interner().scalar(ScalarType::Int);
+            let operand = MirOperand {
+                ty: integer,
+                kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+            };
+            value.ty = integer;
+            value.kind = MirRvalueKind::Binary {
+                operator: HirBinaryOperator::Divide,
+                left: operand.clone(),
+                right: operand,
+            };
+        });
+        assert!(
+            error
+                .message()
+                .contains("potentially panicking binary operation is not an Invoke"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::RecordUpdate { .. })
+            });
+            value.ty = hir.interner().scalar(ScalarType::Int);
+        });
+        assert!(
+            error
+                .message()
+                .contains("record update changes the nominal base type"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::RecordUpdate { .. })
+            });
+            let MirRvalueKind::RecordUpdate { fields, .. } = &mut value.kind else {
+                unreachable!()
+            };
+            fields.push(fields[0].clone());
+        });
+        assert!(
+            error.message().contains("unknown or duplicate field"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::RecordUpdate { .. })
+            });
+            let MirRvalueKind::RecordUpdate { fields, .. } = &mut value.kind else {
+                unreachable!()
+            };
+            fields[0].1 = MirOperand {
+                ty: hir.interner().scalar(ScalarType::String),
+                kind: MirOperandKind::Constant(MirConstant::String("wrong".into())),
+            };
+        });
+        assert!(
+            error
+                .message()
+                .contains("does not match its instantiated field type"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::Coerce { .. })
+            });
+            let MirRvalueKind::Coerce { kind, .. } = &mut value.kind else {
+                unreachable!()
+            };
+            *kind = Assignability::Exact;
+        });
+        assert!(
+            error.message().contains("coercion kind does not match"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::NumericConversion { .. })
+            });
+            let MirRvalueKind::NumericConversion { conversion, .. } = &mut value.kind else {
+                unreachable!()
+            };
+            *conversion = NumericConversion::Identity;
+        });
+        assert!(error.message().contains("numeric conversion"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::Range { .. })
+            });
+            let MirRvalueKind::Range { start, .. } = &mut value.kind else {
+                unreachable!()
+            };
+            *start = MirOperand {
+                ty: hir.interner().scalar(ScalarType::String),
+                kind: MirOperandKind::Constant(MirConstant::String("wrong".into())),
+            };
+        });
+        assert!(
+            error
+                .message()
+                .contains("range bounds or result element type"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::Contains { .. })
+            });
+            let MirRvalueKind::Contains { kind, .. } = &mut value.kind else {
+                unreachable!()
+            };
+            *kind = HirContainmentKind::StringChar;
+        });
+        assert!(error.message().contains("containment"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::MapRemove { .. })
+            });
+            value.ty = hir.interner().scalar(ScalarType::Int);
+        });
+        assert!(
+            error.message().contains("result is not Option[V]"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::Interpolate { .. })
+            });
+            let MirRvalueKind::Interpolate { values, .. } = &mut value.kind else {
+                unreachable!()
+            };
+            values[0] = MirOperand {
+                ty: hir.interner().scalar(ScalarType::Int),
+                kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+            };
+        });
+        assert!(
+            error
+                .message()
+                .contains("interpolation received a non-String Display result"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::Length(_))
+            });
+            value.ty = hir.interner().scalar(ScalarType::String);
+        });
+        assert!(error.message().contains("length requires"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let values = MirFunctionId::Callable(callable_named(resolved, "values"));
+            let value = rvalue_mut(mir.functions.get_mut(&values).unwrap(), |kind| {
+                matches!(kind, MirRvalueKind::IteratorState { .. })
+            });
+            value.ty = hir.interner().scalar(ScalarType::Int);
+        });
+        assert!(
+            error.message().contains("iterator state result is not"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn operation_corruption_matrix_rejects_every_closed_operation_contract() {
+        const SOURCE: &str = "import std.console\n\
+             fn identity(value: Int): Int { value }\n\
+             fn operations(\n\
+                 value: Int,\n\
+                 text: String,\n\
+                 values: Array[Int],\n\
+             ) {\n\
+                 let negated = -value\n\
+                 let sum = value + 1\n\
+                 let concatenated = values.concat(values)\n\
+                 let repeated = values.repeat(2)\n\
+                 let entries = [\"value\": value]\n\
+                 let indexed = values[value]\n\
+                 let sliced = values[value:]\n\
+                 let called = identity(value)\n\
+                 assert(value == called, text)\n\
+                 console.print(text)\n\
+                 _ = negated\n\
+                 _ = sum\n\
+                 _ = concatenated\n\
+                 _ = repeated\n\
+                 _ = entries\n\
+                 _ = indexed\n\
+                 _ = sliced\n\
+             }\n\
+             fn stop(): Never { panic(\"stop\") }\n";
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::CheckedPrefix { .. })
+            });
+            let boolean = hir.interner().scalar(ScalarType::Bool);
+            operation.ty = boolean;
+            operation.kind = MirOperationKind::CheckedPrefix {
+                operator: HirPrefixOperator::LogicalNot,
+                operand: MirOperand {
+                    ty: boolean,
+                    kind: MirOperandKind::Constant(MirConstant::Bool(true)),
+                },
+            };
+        });
+        assert!(
+            error.message().contains("non-panicking prefix operation"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::CheckedBinary { .. })
+            });
+            let integer = hir.interner().scalar(ScalarType::Int);
+            let boolean = hir.interner().scalar(ScalarType::Bool);
+            let constant = MirOperand {
+                ty: integer,
+                kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+            };
+            operation.ty = boolean;
+            operation.kind = MirOperationKind::CheckedBinary {
+                operator: HirBinaryOperator::Equal,
+                left: constant.clone(),
+                right: constant,
+            };
+        });
+        assert!(
+            error.message().contains("non-panicking binary operation"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::ArraySequence { .. })
+            });
+            let MirOperationKind::ArraySequence { array, .. } = &mut operation.kind else {
+                unreachable!()
+            };
+            let MirOperandKind::Borrow(place) = &array.kind else {
+                unreachable!()
+            };
+            array.kind = MirOperandKind::Copy(place.clone());
+        });
+        assert!(
+            error
+                .message()
+                .contains("requires a borrowed Array[T: Copy] receiver"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::BuildMap { .. })
+            });
+            let MirOperationKind::BuildMap { entries, .. } = &mut operation.kind else {
+                unreachable!()
+            };
+            entries[0].0 = MirOperand {
+                ty: hir.interner().scalar(ScalarType::Int),
+                kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+            };
+        });
+        assert!(
+            error
+                .message()
+                .contains("map entry does not match the map key/value types"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::Index { .. })
+            });
+            let string = hir.interner().scalar(ScalarType::String);
+            let character = hir.interner().scalar(ScalarType::Char);
+            let integer = hir.interner().scalar(ScalarType::Int);
+            operation.ty = character;
+            operation.kind = MirOperationKind::Index {
+                base: MirOperand {
+                    ty: string,
+                    kind: MirOperandKind::Constant(MirConstant::String("text".into())),
+                },
+                index: MirOperand {
+                    ty: integer,
+                    kind: MirOperandKind::Constant(MirConstant::Integer("0".into())),
+                },
+                access: HirIndexAccess::String,
+                against: vec![MirLoanId(0)],
+            };
+        });
+        assert!(
+            error
+                .message()
+                .contains("String indexing cannot carry runtime place conflicts"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::Slice { .. })
+            });
+            let string = hir.interner().scalar(ScalarType::String);
+            operation.ty = string;
+            operation.kind = MirOperationKind::Slice {
+                base: MirOperand {
+                    ty: string,
+                    kind: MirOperandKind::Constant(MirConstant::String("text".into())),
+                },
+                bounds: Box::new(MirSliceBounds {
+                    start: None,
+                    end: None,
+                    step: None,
+                }),
+                against: vec![MirLoanId(0)],
+            };
+        });
+        assert!(
+            error
+                .message()
+                .contains("String slicing cannot carry runtime place conflicts"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::Call { .. })
+            });
+            let MirOperationKind::Call { arguments, .. } = &mut operation.kind else {
+                unreachable!()
+            };
+            arguments[0].target = HirCallArgumentTarget::Invalid;
+        });
+        assert!(
+            error
+                .message()
+                .contains("retains an invalid argument association"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let stop = MirFunctionId::Callable(callable_named(resolved, "stop"));
+            let operation = operation_mut(mir.functions.get_mut(&stop).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::ExplicitPanic { .. })
+            });
+            let MirOperationKind::ExplicitPanic { message } = &mut operation.kind else {
+                unreachable!()
+            };
+            *message = MirOperand {
+                ty: hir.interner().scalar(ScalarType::Int),
+                kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+            };
+        });
+        assert!(
+            error.message().contains("panic requires a String message"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::Assert { .. })
+            });
+            let MirOperationKind::Assert { condition, .. } = &mut operation.kind else {
+                unreachable!()
+            };
+            *condition = MirOperand {
+                ty: hir.interner().scalar(ScalarType::Int),
+                kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+            };
+        });
+        assert!(error.message().contains("condition is not Bool"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::Assert { .. })
+            });
+            let MirOperationKind::Assert { message_parts, .. } = &mut operation.kind else {
+                unreachable!()
+            };
+            message_parts[0].value = MirOperand {
+                ty: hir.interner().scalar(ScalarType::Int),
+                kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+            };
+        });
+        assert!(
+            error.message().contains("message part is not String"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let operations = MirFunctionId::Callable(callable_named(resolved, "operations"));
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::BootstrapHostCall { .. })
+            });
+            let MirOperationKind::BootstrapHostCall { function, .. } = &mut operation.kind else {
+                unreachable!()
+            };
+            *function = MirBootstrapHostFunction::ExitStatusSuccess;
+        });
+        assert!(
+            error
+                .message()
+                .contains("bootstrap host operation does not match its closed contract"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn aggregate_corruption_matrix_rejects_every_closed_shape_contract() {
+        const SOURCE: &str = "type UserId = Int\n\
+             type Record = { value: Int, text: String }\n\
+             enum Choice {\n\
+                 Empty\n\
+                 Item(Int)\n\
+                 Named { value: Int }\n\
+             }\n\
+             fn catalog(): Int8 ! NumericConversionError {\n\
+                 let tuple = (1, \"text\")\n\
+                 let array = [1, 2]\n\
+                 let set = Set[1, 2]\n\
+                 let identifier = UserId(1)\n\
+                 let reference = Ref(1)\n\
+                 let record = Record { value: 1, text: \"text\" }\n\
+                 let empty = Choice.Empty\n\
+                 let item = Choice.Item(1)\n\
+                 let named = Choice.Named { value: 1 }\n\
+                 let missing: Int? = none\n\
+                 let present: Int? = some(1)\n\
+                 let success: Int ! String = ok(1)\n\
+                 let failure: Int ! String = err(\"error\")\n\
+                 let conversionError = NumericConversionError.OutOfRange\n\
+                 let closure = (value: Int): Int { value }\n\
+                 _ = tuple\n\
+                 _ = array\n\
+                 _ = set\n\
+                 _ = identifier\n\
+                 _ = reference\n\
+                 _ = record\n\
+                 _ = empty\n\
+                 _ = item\n\
+                 _ = named\n\
+                 _ = missing\n\
+                 _ = present\n\
+                 _ = success\n\
+                 _ = failure\n\
+                 _ = conversionError\n\
+                 _ = closure\n\
+                 Int8(128)\n\
+             }\n";
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let catalog = MirFunctionId::Callable(callable_named(resolved, "catalog"));
+            aggregate_rvalue_mut(mir.functions.get_mut(&catalog).unwrap(), |shape| {
+                matches!(shape, MirAggregateKind::Tuple)
+            })
+            .ty = hir.interner().scalar(ScalarType::Int);
+        });
+        assert!(error.message().contains("non-tuple type"), "{error}");
+
+        for is_set in [false, true] {
+            let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+                let catalog = MirFunctionId::Callable(callable_named(resolved, "catalog"));
+                let value =
+                    aggregate_rvalue_mut(mir.functions.get_mut(&catalog).unwrap(), |shape| {
+                        matches!(shape, MirAggregateKind::Set) == is_set
+                            && matches!(shape, MirAggregateKind::Array) != is_set
+                    });
+                let MirRvalueKind::Aggregate { values, .. } = &mut value.kind else {
+                    unreachable!()
+                };
+                values[0] = MirOperand {
+                    ty: hir.interner().scalar(ScalarType::String),
+                    kind: MirOperandKind::Constant(MirConstant::String("\"wrong\"".into())),
+                };
+            });
+            assert!(error.message().contains("wrong element type"), "{error}");
+        }
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let catalog = MirFunctionId::Callable(callable_named(resolved, "catalog"));
+            let value = aggregate_rvalue_mut(mir.functions.get_mut(&catalog).unwrap(), |shape| {
+                matches!(shape, MirAggregateKind::Newtype { .. })
+            });
+            let MirRvalueKind::Aggregate { values, .. } = &mut value.kind else {
+                unreachable!()
+            };
+            values.clear();
+        });
+        assert!(
+            error.message().contains("newtype aggregate owner"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let catalog = MirFunctionId::Callable(callable_named(resolved, "catalog"));
+            let value = aggregate_rvalue_mut(mir.functions.get_mut(&catalog).unwrap(), |shape| {
+                matches!(shape, MirAggregateKind::Ref)
+            });
+            let MirRvalueKind::Aggregate { values, .. } = &mut value.kind else {
+                unreachable!()
+            };
+            values.clear();
+        });
+        assert!(error.message().contains("operand arity"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let catalog = MirFunctionId::Callable(callable_named(resolved, "catalog"));
+            let value = aggregate_rvalue_mut(mir.functions.get_mut(&catalog).unwrap(), |shape| {
+                matches!(shape, MirAggregateKind::Record { .. })
+            });
+            let MirRvalueKind::Aggregate { shape, .. } = &mut value.kind else {
+                unreachable!()
+            };
+            let MirAggregateKind::Record { fields, .. } = shape else {
+                unreachable!()
+            };
+            fields.pop();
+        });
+        assert!(
+            error.message().contains("record aggregate owner"),
+            "{error}"
+        );
+
+        for (unit, record) in [(true, false), (false, false), (false, true)] {
+            let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+                let catalog = MirFunctionId::Callable(callable_named(resolved, "catalog"));
+                let value =
+                    aggregate_rvalue_mut(mir.functions.get_mut(&catalog).unwrap(), |shape| {
+                        matches!(
+                            shape,
+                            MirAggregateKind::Variant { fields, .. }
+                                if fields.is_empty() == unit
+                                    && fields.first().is_some_and(Option::is_some) == record
+                        )
+                    });
+                let MirRvalueKind::Aggregate { values, .. } = &mut value.kind else {
+                    unreachable!()
+                };
+                if unit {
+                    values.push(MirOperand {
+                        ty: hir.interner().scalar(ScalarType::Int),
+                        kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+                    });
+                } else {
+                    values.clear();
+                }
+            });
+            assert!(error.message().contains("variant"), "{error}");
+        }
+
+        for shape_name in ["none", "some", "ok", "err"] {
+            let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+                let catalog = MirFunctionId::Callable(callable_named(resolved, "catalog"));
+                let value =
+                    aggregate_rvalue_mut(mir.functions.get_mut(&catalog).unwrap(), |shape| {
+                        match shape_name {
+                            "none" => matches!(shape, MirAggregateKind::OptionNone),
+                            "some" => matches!(shape, MirAggregateKind::OptionSome),
+                            "ok" => matches!(shape, MirAggregateKind::ResultOk),
+                            "err" => matches!(shape, MirAggregateKind::ResultErr),
+                            _ => unreachable!(),
+                        }
+                    });
+                let MirRvalueKind::Aggregate { values, .. } = &mut value.kind else {
+                    unreachable!()
+                };
+                if values.is_empty() {
+                    values.push(MirOperand {
+                        ty: hir.interner().scalar(ScalarType::Int),
+                        kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+                    });
+                } else {
+                    values.clear();
+                }
+            });
+            assert!(
+                error.message().contains("aggregate") || error.message().contains("operand arity"),
+                "{shape_name}: {error}"
+            );
+        }
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let catalog = MirFunctionId::Callable(callable_named(resolved, "catalog"));
+            let value = aggregate_rvalue_mut(mir.functions.get_mut(&catalog).unwrap(), |shape| {
+                matches!(shape, MirAggregateKind::NumericConversionError(_))
+            });
+            let MirRvalueKind::Aggregate { values, .. } = &mut value.kind else {
+                unreachable!()
+            };
+            values.push(MirOperand {
+                ty: hir.interner().scalar(ScalarType::Int),
+                kind: MirOperandKind::Constant(MirConstant::Integer("1".into())),
+            });
+        });
+        assert!(
+            error
+                .message()
+                .contains("numeric conversion error aggregate"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let catalog = MirFunctionId::Callable(callable_named(resolved, "catalog"));
+            let value = aggregate_rvalue_mut(mir.functions.get_mut(&catalog).unwrap(), |shape| {
+                matches!(shape, MirAggregateKind::Closure { .. })
+            });
+            let MirRvalueKind::Aggregate { shape, .. } = &mut value.kind else {
+                unreachable!()
+            };
+            let MirAggregateKind::Closure { arguments, .. } = shape else {
+                unreachable!()
+            };
+            arguments.push(hir.interner().scalar(ScalarType::Int));
+        });
+        assert!(error.message().contains("wrong generic arity"), "{error}");
+    }
+
+    #[test]
+    fn function_metadata_corruption_matrix_is_rejected_before_bytecode() {
+        const SOURCE: &str = "fn combine(left: Int, right: Int): Int {\n\
+                 let total = left + right\n\
+                 total\n\
+             }\n\
+             fn main() {}\n";
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            mir.functions
+                .remove(&MirFunctionId::Callable(callable_named(
+                    resolved, "combine",
+                )));
+        });
+        assert!(error.message().contains("function set"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            let main = MirFunctionId::Callable(callable_named(resolved, "main"));
+            mir.functions.get_mut(&combine).unwrap().id = main;
+        });
+        assert!(error.message().contains("map key differs"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            mir.functions.get_mut(&combine).unwrap().outcome =
+                hir.interner().scalar(ScalarType::String);
+        });
+        assert!(error.message().contains("typed HIR requires"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            mir.functions.get_mut(&combine).unwrap().locals.clear();
+        });
+        assert!(error.message().contains("local table is empty"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            let function = mir.functions.get_mut(&combine).unwrap();
+            function.return_local = MirLocalId(u32::MAX);
+        });
+        assert!(error.message().contains("unknown MIR local"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            let function = mir.functions.get_mut(&combine).unwrap();
+            function.locals[function.return_local.index() as usize].kind = MirLocalKind::Temporary;
+        });
+        assert!(
+            error.message().contains("return local kind or type"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            mir.functions.get_mut(&combine).unwrap().parameters.pop();
+        });
+        assert!(error.message().contains("MIR parameters"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            let function = mir.functions.get_mut(&combine).unwrap();
+            function.parameters[1] = function.parameters[0];
+        });
+        assert!(error.message().contains("is repeated"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            let function = mir.functions.get_mut(&combine).unwrap();
+            let parameter = function.parameters[0];
+            function.locals[parameter.index() as usize].kind = MirLocalKind::Temporary;
+        });
+        assert!(
+            error.message().contains("parameter 0 local metadata"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            let function = mir.functions.get_mut(&combine).unwrap();
+            let source = function
+                .locals
+                .iter()
+                .find_map(|local| match local.kind {
+                    MirLocalKind::User(source) => Some(source),
+                    _ => None,
+                })
+                .expect("combine has one user binding");
+            let temporary = function
+                .locals
+                .iter()
+                .position(|local| local.kind == MirLocalKind::Temporary)
+                .expect("combine has one temporary");
+            function.locals[temporary].kind = MirLocalKind::User(source);
+        });
+        assert!(
+            error
+                .message()
+                .contains("inconsistent or duplicate source identity"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            let function = mir.functions.get_mut(&combine).unwrap();
+            let temporary = function
+                .locals
+                .iter()
+                .position(|local| local.kind == MirLocalKind::Temporary)
+                .expect("combine has one temporary");
+            function.locals[temporary].kind = MirLocalKind::Return;
+        });
+        assert!(
+            error.message().contains("return locals instead of one"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            mir.functions.get_mut(&combine).unwrap().blocks.clear();
+        });
+        assert!(
+            error.message().contains("basic-block table is empty"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            let function = mir.functions.get_mut(&combine).unwrap();
+            function.entry = function.unwind;
+        });
+        assert!(error.message().contains("entry and unwind"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            let function = mir.functions.get_mut(&combine).unwrap();
+            function.blocks[function.entry.index() as usize].kind = MirBlockKind::Cleanup;
+        });
+        assert!(
+            error.message().contains("entry block is cleanup"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            let function = mir.functions.get_mut(&combine).unwrap();
+            function.blocks[function.unwind.index() as usize].kind = MirBlockKind::Normal;
+        });
+        assert!(error.message().contains("unwind entry"), "{error}");
+
+        let error = corrupted_mir(SOURCE, |resolved, _hir, mir| {
+            let combine = MirFunctionId::Callable(callable_named(resolved, "combine"));
+            let function = mir.functions.get_mut(&combine).unwrap();
+            let temporary = function
+                .locals
+                .iter()
+                .position(|local| local.kind == MirLocalKind::Temporary)
+                .expect("combine has one temporary");
+            function.locals[temporary].kind = MirLocalKind::Parameter {
+                index: 99,
+                source: None,
+            };
+        });
+        assert!(
+            error.message().contains("is an unlisted parameter"),
+            "{error}"
+        );
+
+        const LOAN_SOURCE: &str = "fn observe(value: ref Int): Int { value }\n\
+             fn use(value: Int): Int { observe(ref value) }\n";
+        let error = corrupted_mir(LOAN_SOURCE, |resolved, _hir, mir| {
+            let use_function = MirFunctionId::Callable(callable_named(resolved, "use"));
+            mir.functions.get_mut(&use_function).unwrap().loans[0].mode = ParameterMode::Value;
+        });
+        assert!(
+            error.message().contains("uses the owning value mode"),
+            "{error}"
+        );
+
+        let error = corrupted_mir(LOAN_SOURCE, |resolved, _hir, mir| {
+            let use_function = MirFunctionId::Callable(callable_named(resolved, "use"));
+            let function = mir.functions.get_mut(&use_function).unwrap();
+            function.loans[0].place.source_loan = Some(MirLoanId(0));
+        });
+        assert!(
+            error
+                .message()
+                .contains("not an earlier acyclic reservation"),
+            "{error}"
+        );
     }
 }

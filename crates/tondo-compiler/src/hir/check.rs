@@ -19630,7 +19630,7 @@ mod tests {
         .unwrap();
         assert!(
             parsed.diagnostics().is_empty(),
-            "{:#?}",
+            "{source}\n{:#?}",
             parsed.diagnostics()
         );
         let packages = PackageGraph::loose(&sources, file).unwrap();
@@ -19778,6 +19778,39 @@ mod tests {
             .body(callable.id())
             .expect("the callable body is checked")
             .root()
+    }
+
+    #[test]
+    fn float_pattern_normalization_is_bit_exact_for_both_scalar_widths() {
+        assert_eq!(
+            normalize_float_pattern("1.5", false, ScalarType::Float32).as_deref(),
+            Some("3fc00000")
+        );
+        assert_eq!(
+            normalize_float_pattern("1.5", true, ScalarType::Float32).as_deref(),
+            Some("bfc00000")
+        );
+        assert_eq!(
+            normalize_float_pattern("1.5", false, ScalarType::Float).as_deref(),
+            Some("3ff8000000000000")
+        );
+        assert_eq!(
+            normalize_float_pattern("1.5", true, ScalarType::Float).as_deref(),
+            Some("bff8000000000000")
+        );
+        assert_eq!(
+            normalize_float_pattern("1_0.0f32", false, ScalarType::Float32).as_deref(),
+            Some("41200000")
+        );
+        assert_eq!(
+            normalize_float_pattern("0.0", true, ScalarType::Float).as_deref(),
+            Some("0000000000000000")
+        );
+        assert_eq!(
+            normalize_float_pattern("invalid", false, ScalarType::Float),
+            None
+        );
+        assert_eq!(normalize_float_pattern("1.0", false, ScalarType::Int), None);
     }
 
     #[test]
@@ -20283,12 +20316,19 @@ mod tests {
             "unsafe fn invalid(address: UInt64) {\n    _ = address.toPointer()\n}\n",
             "unsafe fn invalid(pointer: Pointer[Int]) {\n    _ = Pointer.read(pointer, 1)\n}\n",
             "unsafe fn invalid(address: UInt64) {\n    _ = UInt64.toPointer(address)\n}\n",
+            "unsafe fn invalid(pointer: Pointer[Int]) {\n    _ = Pointer.cast(pointer)\n}\n",
+            "unsafe fn invalid(pointer: Pointer[Int]) {\n    _ = Pointer.cast[Int, Byte](pointer)\n}\n",
+            "unsafe fn invalid(pointer: Pointer[Int]) {\n    _ = Pointer.read[Int](pointer)\n}\n",
+            "unsafe fn invalid(pointer: Pointer[Int]) {\n    _ = Pointer.read(ref pointer)\n}\n",
+            "unsafe fn invalid() {\n    _ = Pointer.read(1)\n}\n",
+            "unsafe fn invalid() {\n    _ = UInt64.toPointer[Int](\"address\")\n}\n",
+            "unsafe fn invalid(pointer: Pointer[Int]) {\n    Pointer.write(pointer, \"value\")\n}\n",
         ] {
             let (_, _, output) = check(invalid);
             assert!(
                 codes(&output)
                     .iter()
-                    .all(|code| matches!(*code, "E1102" | "E1104")),
+                    .all(|code| matches!(*code, "E1102" | "E1104" | "E1407")),
                 "{invalid}\n{:#?}",
                 output.diagnostics()
             );
@@ -20476,6 +20516,46 @@ mod tests {
              }\n",
         );
         assert_eq!(codes(&unnamed_variadic), ["E1115"]);
+
+        let (_, _, parameter_count) = check(
+            "fn invalid() {\n\
+                 let closure: fn(Int): Int = (): Int { 1 }\n\
+                 _ = closure\n\
+             }\n",
+        );
+        assert_eq!(codes(&parameter_count), ["E1102"]);
+
+        let (_, _, explicit_parameter) = check(
+            "fn invalid() {\n\
+                 let closure: fn(Int): Int = (value: String): Int { 1 }\n\
+                 _ = closure\n\
+             }\n",
+        );
+        assert_eq!(codes(&explicit_parameter), ["E1102"]);
+
+        let (_, _, implicit_borrowed_parameter) = check(
+            "fn invalid() {\n\
+                 let closure: fn(ref Int): Int = (value): Int { value }\n\
+                 _ = closure\n\
+             }\n",
+        );
+        assert_eq!(codes(&implicit_borrowed_parameter), ["E1115"]);
+
+        let (_, _, misplaced_variadic) = check(
+            "fn invalid() {\n\
+                 let closure = (values: ...String, tail: String) { () }\n\
+                 _ = closure\n\
+             }\n",
+        );
+        assert_eq!(codes(&misplaced_variadic), ["E1115"]);
+
+        let (_, _, explicit_result) = check(
+            "fn invalid() {\n\
+                 let closure: fn(Int): Int = (value: Int): String { \"text\" }\n\
+                 _ = closure\n\
+             }\n",
+        );
+        assert_eq!(codes(&explicit_result), ["E1102"]);
     }
 
     #[test]
@@ -21986,6 +22066,15 @@ mod tests {
              fn invalid(value: Label): String { Display[Int].display(value) }\n",
         );
         assert_eq!(codes(&extra_display_argument), ["E1104"]);
+
+        let (_, _, unknown_member) = check(
+            "type Label = { text: String }\n\
+             impl Display for Label {\n\
+                 fn display(self): String { self.text }\n\
+             }\n\
+             fn invalid(value: Label): String { Display.render(value) }\n",
+        );
+        assert_eq!(codes(&unknown_member), ["E1102"]);
     }
 
     #[test]
@@ -23637,6 +23726,22 @@ mod tests {
         assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
         assert!(valid.is_complete());
 
+        let (_, _, record_pattern) = check(
+            "type Pair = { left: Int, right: Int }\n\
+             fn valid(pairs: Map[Int, Pair]) {\n\
+                 for (ref key, Pair { ref left, right: _ }) in pairs {\n\
+                     _ = key\n\
+                     _ = left\n\
+                 }\n\
+             }\n",
+        );
+        assert!(
+            record_pattern.diagnostics().is_empty(),
+            "{:#?}",
+            record_pattern.diagnostics()
+        );
+        assert!(record_pattern.is_complete());
+
         let (_, _, immutable) = check(
             "fn invalid(values: Array[Int]) {\n\
                  for mut value in values {}\n\
@@ -24155,6 +24260,9 @@ mod tests {
              }\n",
         );
         assert_eq!(codes(&explicit_operation_argument), ["E1104"]);
+
+        let (_, _, non_array_receiver) = check("fn invalid(): Array[Int] { Array.repeat(1, 2) }\n");
+        assert_eq!(codes(&non_array_receiver), ["E1102"]);
     }
 
     #[test]
@@ -24708,6 +24816,10 @@ mod tests {
                 "fn requireKey[T: Key](_: T) {}\nfn invalid(): fn(Float): Unit {\n    requireKey\n}\n",
                 "E1105",
             ),
+            (
+                "fn identity[T](value: T): T { value }\nfn invalid(): Int { identity }\n",
+                "E1102",
+            ),
         ] {
             let (_, _, output) = check(source);
             assert_eq!(
@@ -24737,6 +24849,9 @@ mod tests {
              fn Box[T].wrap(value: T): Box[T] { Box { value } }\n\
              fn Box[T].convert[U](value: U): U { value }\n\
              fn Box[T: Copy].read(self): T { self.value }\n\
+             type UserId = Int\n\
+             fn UserId.zero(): UserId { UserId(0) }\n\
+             fn newtypeFactory(): fn(): UserId { UserId.zero }\n\
              fn use(): Int {\n\
                  let inferred_owner: fn(Int): Box[Int] = Box.wrap\n\
                  let fixed_owner = Box[Int].wrap\n\
@@ -24759,6 +24874,23 @@ mod tests {
             let (_, _, invalid) = check(source);
             assert_eq!(codes(&invalid), ["E1102"], "{source}");
         }
+    }
+
+    #[test]
+    fn function_value_brackets_distinguish_type_arguments_from_value_indices() {
+        for source in [
+            "fn invalid(operation: fn(Int): Int): Int { operation[Int] }\n",
+            "type Item = Int\nfn invalid(operation: fn(Int): Int): Int { operation[Item] }\n",
+            "fn invalid[T](operation: fn(Int): Int): Int { operation[T] }\n",
+            "fn invalid[T](operation: fn(Int): Int): Int { operation[Int, T] }\n",
+        ] {
+            let (_, _, output) = check(source);
+            assert!(!output.is_complete(), "{source}");
+        }
+
+        let source = "fn invalid(operation: fn(Int): Int, index: Int): Int { operation[index] }\n";
+        let (_, _, output) = check(source);
+        assert_eq!(codes(&output), ["E1102"], "{source}");
     }
 
     #[test]
@@ -25854,6 +25986,9 @@ mod tests {
              }\n\
              fn direct(): Int {\n\
                  return 3\n\
+             }\n\
+             fn fallibleUnit(): Unit ! String {\n\
+                 return\n\
              }\n",
         );
         assert!(
@@ -25994,6 +26129,15 @@ mod tests {
                     Ok(TypeKind::Function(_))
                 )
         }));
+
+        let (_, _, conflicting_constraints) = check(
+            "fn invalid[I: Discard + Iterator[Int] + Iterator[String]](cursor: I) {\n\
+                 for value in cursor {\n\
+                     _ = value\n\
+                 }\n\
+             }\n",
+        );
+        assert_eq!(codes(&conflicting_constraints), ["E1113"]);
 
         let (_, _, transfer) = check("fn invalid() {\n    break\n}\n");
         assert_eq!(codes(&transfer), ["E1205"]);
@@ -26842,6 +26986,338 @@ mod tests {
     }
 
     #[test]
+    fn pattern_rejection_matrix_reaches_each_closed_semantic_boundary() {
+        let cases = [
+            (
+                "fn invalid(value: Int) {\n    let ref item = value\n}\n",
+                "`ref`, `mut`, and `var` pattern bindings are not allowed",
+            ),
+            (
+                "fn invalid(value: String): Int {\n    match value {\n        \"value {1}\" => 1\n        _ => 0\n    }\n}\n",
+                "interpolated strings are not patterns",
+            ),
+            (
+                "fn invalid(value: Bool): Int {\n    match value {\n        1 => 1\n        _ => 0\n    }\n}\n",
+                "integer literal pattern",
+            ),
+            (
+                "fn invalid(value: Int8): Int {\n    match value {\n        128i8 => 1\n        _ => 0\n    }\n}\n",
+                "integer pattern is outside",
+            ),
+            (
+                "fn invalid(value: Int): Int {\n    match value {\n        1.0 => 1\n        _ => 0\n    }\n}\n",
+                "floating literal pattern",
+            ),
+            (
+                "fn invalid(value: Float32): Int {\n    match value {\n        3.4028236e38f32 => 1\n        _ => 0\n    }\n}\n",
+                "floating pattern is outside",
+            ),
+            (
+                "fn invalid(value: Array[Int]): Int {\n    match value {\n        [_, ..mut rest] => 1\n        _ => 0\n    }\n}\n",
+                "`mut` and `var` pattern bindings are allowed only in `for` headers",
+            ),
+            (
+                "enum Choice {\n    Empty\n    Item(Int)\n    Named { value: Int }\n}\nfn invalid(value: Choice): Int {\n    match value {\n        Choice.Empty(_) => 1\n        _ => 0\n    }\n}\n",
+                "does not have a tuple payload",
+            ),
+            (
+                "enum Choice {\n    Empty\n    Item(Int)\n}\nfn invalid(value: Choice): Int {\n    match value {\n        Choice.Item(_, _) => 1\n        _ => 0\n    }\n}\n",
+                "wrong payload arity",
+            ),
+            (
+                "type UserId = Int\nfn invalid(value: UserId): Int {\n    match value {\n        UserId(_, _) => 1\n    }\n}\n",
+                "exactly one payload",
+            ),
+            (
+                "fn invalid(value: Int | String): Int {\n    match value {\n        Int(_, _) => 1\n        String(_) => 0\n    }\n}\n",
+                "requires exactly one inner pattern",
+            ),
+            (
+                "fn invalid(value: Int | String): Int {\n    match value {\n        Int {} => 1\n        String(_) => 0\n    }\n}\n",
+                "record pattern requires a nominal type",
+            ),
+            (
+                "enum Choice {\n    Empty\n    Item(Int)\n}\nfn invalid(subject: Choice): Int {\n    match subject {\n        Choice.Item { value } => 1\n        _ => 0\n    }\n}\n",
+                "does not have a record payload",
+            ),
+            (
+                "type UserId = Int\nfn invalid(subject: UserId): Int {\n    match subject {\n        UserId { value } => 1\n    }\n}\n",
+                "record pattern shape does not match",
+            ),
+            (
+                "type Pair = { first: Int, second: Int }\nfn invalid(value: Pair): Int {\n    match value {\n        Pair { missing, .. } => 1\n        _ => 0\n    }\n}\n",
+                "unknown record field",
+            ),
+            (
+                "type Pair = { first: Int, second: Int }\nfn invalid(value: Pair): Int {\n    match value {\n        Pair { first, first: _, .. } => 1\n        _ => 0\n    }\n}\n",
+                "record field appears more than once",
+            ),
+            (
+                "type Pair = { first: Int, second: Int }\nfn invalid(value: Pair) {\n    let Pair { ref first, .. } = value\n}\n",
+                "loan bindings are not allowed",
+            ),
+            (
+                "type Pair = { first: Int, second: Int }\nfn invalid(value: Pair): Int {\n    match value {\n        Pair { mut first, .. } => first\n        _ => 0\n    }\n}\n",
+                "`mut` and `var` pattern bindings are allowed only in `for` headers",
+            ),
+            (
+                "fn invalid(value: Int): Int {\n    match value {\n        NumericConversionError.OutOfRange => 1\n        _ => 0\n    }\n}\n",
+                "`NumericConversionError` variant pattern",
+            ),
+            (
+                "fn invalid(value: NumericConversionError): Int {\n    match value {\n        NumericConversionError.OutOfRange.Extra => 1\n        _ => 0\n    }\n}\n",
+                "name exactly one variant",
+            ),
+            (
+                "fn invalid(value: NumericConversionError): Int {\n    match value {\n        NumericConversionError.Unknown => 1\n        _ => 0\n    }\n}\n",
+                "unknown `NumericConversionError` variant",
+            ),
+            (
+                "type UserId = Int\nfn invalid(value: UserId): Int {\n    match value {\n        UserId.Value => 1\n        _ => 0\n    }\n}\n",
+                "qualified pattern is not an enum variant",
+            ),
+            (
+                "enum Choice {\n    Empty\n    Item(Int)\n}\nfn invalid(value: Choice): Int {\n    match value {\n        Choice.Item => 1\n        _ => 0\n    }\n}\n",
+                "payload must be matched explicitly",
+            ),
+            (
+                "enum Choice[T] {\n    Empty\n    Item(T)\n}\nfn invalid(value: Choice[Int]): Int {\n    match value {\n        Choice.Item[Int][String](item) => item\n        _ => 0\n    }\n}\n",
+                "at most one generic argument list",
+            ),
+            (
+                "enum Choice[T] {\n    Empty\n    Item(T)\n}\nfn invalid(value: Choice[Int]): Int {\n    match value {\n        Choice.Item[Int, String](item) => 1\n        _ => 0\n    }\n}\n",
+                "cannot be instantiated with these arguments",
+            ),
+            (
+                "enum Choice[T] {\n    Empty\n    Item(T)\n}\nfn invalid(value: Choice[Int]): Int {\n    match value {\n        Choice.Item[1](item) => 1\n        _ => 0\n    }\n}\n",
+                "generic pattern arguments must be types",
+            ),
+        ];
+
+        for (source, expected) in cases {
+            let (_, _, output) = check(source);
+            assert!(
+                output
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.message().contains(expected)),
+                "{expected:?} was not diagnosed for:\n{source}\n{:#?}",
+                output.diagnostics()
+            );
+        }
+    }
+
+    #[test]
+    fn expression_rejection_matrix_reaches_each_closed_semantic_boundary() {
+        let cases = [
+            (
+                "fn invalid() {\n    _ = 340282366920938463463374607431768211456\n}\n",
+                "integer literal exceeds the intrinsic numeric domain",
+            ),
+            (
+                "fn invalid() {\n    _ = 256u8\n}\n",
+                "integer literal is not representable",
+            ),
+            (
+                "fn invalid() {\n    _ = 3.4028236e38f32\n}\n",
+                "floating literal is not representable",
+            ),
+            (
+                "fn invalid(value: Int) {\n    _ = value.0\n}\n",
+                "numeric member access requires a tuple value",
+            ),
+            (
+                "fn invalid() {\n    _ = (1, 2).2\n}\n",
+                "tuple slot is outside this tuple type",
+            ),
+            (
+                "fn invalid() {\n    let value = Ref(1)\n    _ = value.missing\n}\n",
+                "`Ref[T]` exposes only the intrinsic `value` projection",
+            ),
+            (
+                "fn invalid(values: Array[Int]) {\n    _ = values[0, 1]\n}\n",
+                "array access requires exactly one index",
+            ),
+            (
+                "fn invalid(values: Map[Int, Int]) {\n    _ = values[:]\n}\n",
+                "maps do not support slicing",
+            ),
+            (
+                "fn invalid(values: Map[Int, Int]) {\n    _ = values[0, 1]\n}\n",
+                "map lookup requires exactly one key",
+            ),
+            (
+                "fn invalid(value: String) {\n    _ = value[0, 1]\n}\n",
+                "String access requires exactly one index",
+            ),
+            (
+                "fn invalid(value: Int) {\n    _ = value[0]\n}\n",
+                "cannot be indexed or sliced",
+            ),
+            (
+                "enum Choice {\n    Empty\n    Item(Int)\n}\nfn invalid() {\n    _ = Choice.Empty.More\n}\n",
+                "exactly one segment after its enum type",
+            ),
+            (
+                "enum Choice {\n    Empty\n    Item(Int)\n}\nfn invalid() {\n    _ = Choice.Missing\n}\n",
+                "unknown enum variant",
+            ),
+            (
+                "enum Choice {\n    Empty\n    Item(Int)\n}\nfn invalid() {\n    _ = Choice.Item\n}\n",
+                "requires its declared payload",
+            ),
+            (
+                "enum Choice {\n    Empty\n    Item(Int)\n}\nfn invalid() {\n    _ = Choice.Item { value: 1 }\n}\n",
+                "does not have a record payload",
+            ),
+            (
+                "type Pair = { first: Int }\nfn invalid() {\n    _ = Pair.Value { first: 1 }\n}\n",
+                "record constructor cannot have a member suffix",
+            ),
+            (
+                "type UserId = Int\nfn invalid() {\n    _ = UserId { value: 1 }\n}\n",
+                "newtypes use the `Name(value)` constructor form",
+            ),
+            (
+                "type Pair = { first: Int }\nfn invalid() {\n    _ = Pair { missing: 1 }\n}\n",
+                "unknown record field",
+            ),
+            (
+                "type Pair = { first: Int }\nfn invalid() {\n    _ = Pair { first: 1, first: 2 }\n}\n",
+                "initialized more than once",
+            ),
+            (
+                "type Pair = { first: Int, second: Int }\nfn invalid() {\n    _ = Pair { first: 1 }\n}\n",
+                "record construction is missing fields",
+            ),
+            (
+                "type Pair = { first: Int }\nfn invalid(first: String) {\n    _ = Pair { first }\n}\n",
+                "record shorthand `first` expected",
+            ),
+            (
+                "fn invalid() {\n    defer 1\n}\n",
+                "`defer` requires a call expression or a block",
+            ),
+            (
+                "fn observe(value: ref Int) {}\nfn invalid(value: Int) {\n    defer observe(ref value)\n}\n",
+                "cannot retain `ref`, `mut`, or `var` arguments",
+            ),
+            (
+                "fn fallible(): Unit ! String { () }\nfn invalid() {\n    defer fallible()\n}\n",
+                "must be infallible and return `Unit`",
+            ),
+            (
+                "fn produce(): Int { 1 }\nfn invalid() {\n    defer produce()\n}\n",
+                "must be infallible and return `Unit`",
+            ),
+            (
+                "fn invalid(): Int {\n    return\n}\n",
+                "this return must produce `Int`",
+            ),
+            (
+                "fn invalid() {\n    for {\n        defer {\n            continue\n        }\n        break\n    }\n}\n",
+                "deferred cleanup cannot continue an outer loop",
+            ),
+            (
+                "fn invalid() {\n    fail \"error\"\n}\n",
+                "`fail` requires an enclosing callable with a direct error channel",
+            ),
+            (
+                "fn invalid(value: Int) {\n    for item in value {\n        _ = item\n    }\n}\n",
+                "is not iterable",
+            ),
+            (
+                "fn invalid(flag: Bool) {\n    _ = if flag { 1 } else { \"text\" }\n}\n",
+                "if branches infer incompatible types",
+            ),
+            (
+                "fn invalid(value: Bool) {\n    _ = match value {\n        true => 1\n        false => \"text\"\n    }\n}\n",
+                "match arms infer incompatible types",
+            ),
+            (
+                "fn invalid(value: Int) {\n    _ = value with { missing: 1 }\n}\n",
+                "record update requires a record value",
+            ),
+            (
+                "type UserId = Int\nfn invalid(value: UserId) {\n    _ = value with { value: 1 }\n}\n",
+                "`with` is available only on nominal records",
+            ),
+            (
+                "fn invalid(value: Int ! String): Int? {\n    _ = value?\n    none\n}\n",
+                "result propagation requires a direct enclosing error channel",
+            ),
+            (
+                "fn invalid(value: Int): Int {\n    value?\n}\n",
+                "`?` requires a direct `Option` or `Result` operand",
+            ),
+            (
+                "fn identity[T](value: T): T { value }\nfn invalid(): Int {\n    identity[Int][String](1)\n}\n",
+                "exactly one type-argument list",
+            ),
+            (
+                "fn fixed(value: Int): Int { value }\nfn invalid(): Int {\n    fixed[Int](1)\n}\n",
+                "does not declare generic parameters",
+            ),
+            (
+                "fn identity[T](value: T): T { value }\nfn invalid(): Int {\n    identity[Int, String](1)\n}\n",
+                "generic call expects 1 type arguments",
+            ),
+            (
+                "fn invalid(): Int {\n    1()\n}\n",
+                "value of type `Int` is not callable",
+            ),
+            (
+                "async fn operation(): Int { 1 }\nasync fn invalid() {\n    _ = operation()\n}\n",
+                "async call must be initiated by `await` or `spawn`",
+            ),
+            (
+                "fn add(left: Int, right: Int): Int { left + right }\nfn invalid(): Int {\n    add(left: 1, left: 2, right: 3)\n}\n",
+                "parameter `left` is provided more than once",
+            ),
+            (
+                "fn add(left: Int, right: Int): Int { left + right }\nfn invalid(): Int {\n    add(left: 1, 2)\n}\n",
+                "positional arguments must precede named arguments",
+            ),
+            (
+                "fn borrow(value: ref Int) {}\nfn invalid(value: Int) {\n    borrow(value)\n}\n",
+                "call argument mode does not match its parameter",
+            ),
+            (
+                "fn consume(value: Int) {}\nfn invalid() {\n    consume(\"text\")\n}\n",
+                "expected `Int`, found `String`",
+            ),
+            (
+                "fn invalid(): Int {\n    Int(value: 1)\n}\n",
+                "numeric conversions accept one positional value passed by value",
+            ),
+            (
+                "fn invalid(value: Bool): Int {\n    Int(value)\n}\n",
+                "numeric conversion from `Bool` to `Int` is not defined",
+            ),
+            (
+                "fn invalid(value: Array[Int]): Int {\n    Int(value)\n}\n",
+                "cannot convert `Array[Int]` to `Int` with a numeric constructor",
+            ),
+            (
+                "fn invalid(value: Int): Int {\n    Int(value)\n}\n",
+                "conversion from `Int` to the same type is redundant",
+            ),
+        ];
+
+        for (source, expected) in cases {
+            let (_, _, output) = check(source);
+            assert!(
+                output
+                    .diagnostics()
+                    .iter()
+                    .any(|diagnostic| diagnostic.message().contains(expected)),
+                "{expected:?} was not diagnosed for:\n{source}\n{:#?}",
+                output.diagnostics()
+            );
+        }
+    }
+
+    #[test]
     fn array_patterns_type_prefix_and_rest_and_prove_shape_coverage() {
         let (_, resolved, output) = check(
             "fn classify(values: Array[Int]): Int {\n\
@@ -27086,10 +27562,17 @@ mod tests {
         for source in [
             "fn invalid() { panic() }\n",
             "fn invalid() { panic(1) }\n",
+            "fn invalid() { panic(\"first\", \"second\") }\n",
+            "fn invalid() { panic(other: \"message\") }\n",
+            "fn invalid(parts: Array[String]) { panic(...parts) }\n",
             "fn invalid() { assert() }\n",
             "fn invalid() { assert(1) }\n",
             "fn invalid() { assert(true, 1) }\n",
             "fn invalid(parts: Array[String]) { assert(true, ...parts, \"tail\") }\n",
+            "fn invalid() { assert(condition: true, false) }\n",
+            "fn invalid() { assert(condition: true, condition: false) }\n",
+            "fn invalid() { assert(true, messageParts: \"message\") }\n",
+            "fn invalid() { assert(true, unknown: \"message\") }\n",
         ] {
             let (_, _, output) = check(source);
             assert!(
@@ -27098,6 +27581,13 @@ mod tests {
                 output.diagnostics()
             );
         }
+
+        let (_, _, argument_mode) = check("fn invalid() { panic(ref \"message\") }\n");
+        assert!(
+            codes(&argument_mode).contains(&"E1407"),
+            "{:#?}",
+            argument_mode.diagnostics()
+        );
     }
 
     #[test]
@@ -27254,6 +27744,13 @@ mod tests {
         );
         assert_eq!(codes(&cyclic), ["E1117"]);
 
+        let (_, _, unresolved_container) = check(
+            "fn invalid(): impl Discard {\n\
+                 []\n\
+             }\n",
+        );
+        assert_eq!(codes(&unresolved_container), ["E1117"]);
+
         let (_, _, unreachable_only) = check(
             "fn invalid(): impl Discard {\n\
                  panic(\"never\")\n\
@@ -27262,6 +27759,41 @@ mod tests {
         );
         assert!(codes(&unreachable_only).contains(&"E1117"));
         assert!(codes(&unreachable_only).contains(&"W1006"));
+    }
+
+    #[test]
+    fn opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness() {
+        for source in [
+            "fn empty(): impl Discard {}\n",
+            "fn fallible(): impl Discard ! String {}\n",
+            "fn explicit(): impl Discard {\n    return\n}\n",
+            "fn explicitFallible(): impl Discard ! String {\n    return\n}\n",
+        ] {
+            let (_, _, output) = check(source);
+            assert!(
+                output.diagnostics().is_empty(),
+                "{source}\n{:#?}",
+                output.diagnostics()
+            );
+            assert!(output.is_complete(), "{source}");
+            let callable = output
+                .program()
+                .callables()
+                .find(|callable| callable.opaque_result().is_some())
+                .unwrap();
+            assert_eq!(
+                callable.opaque_result().unwrap().witness(),
+                Some(output.program().interner().scalar(ScalarType::Unit))
+            );
+        }
+
+        let source = "fn invalid(flag: Bool): impl Discard {\n\
+             if flag {\n\
+                 return 1\n\
+             }\n\
+         }\n";
+        let (_, _, output) = check(source);
+        assert_eq!(codes(&output), ["E1117"], "{source}");
     }
 
     #[test]
@@ -27303,6 +27835,84 @@ mod tests {
              fn invalid(): impl Summary + Discard { 1 }\n",
         );
         assert_eq!(codes(&missing_bound), ["E1117"]);
+    }
+
+    #[test]
+    fn opaque_and_generic_call_protocol_implications_are_closed() {
+        const VALID: &str = "fn opaqueCall(): impl Discard + Call[fn(Int): Int] {\n\
+             (value: Int): Int { value + 1 }\n\
+         }\n\
+         fn opaqueCallMut(): impl Discard + CallMut[fn(Int): Int] {\n\
+             opaqueCall()\n\
+         }\n\
+         fn opaqueCallOnce(): impl Discard + CallOnce[fn(Int): Int] {\n\
+             opaqueCall()\n\
+         }\n\
+         fn opaqueCallAgain(): impl Discard + Call[fn(Int): Int] {\n\
+             opaqueCall()\n\
+         }\n\
+         fn genericCallMut[F: Discard + Call[fn(Int): Int]](\n\
+             operation: F,\n\
+         ): impl Discard + CallMut[fn(Int): Int] {\n\
+             operation\n\
+         }\n\
+         fn genericCallOnce[F: Discard + Call[fn(Int): Int]](\n\
+             operation: F,\n\
+         ): impl Discard + CallOnce[fn(Int): Int] {\n\
+             operation\n\
+         }\n";
+        let (_, _, valid) = check(VALID);
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+
+        let (_, _, unsupported_protocol) = check(
+            "fn once(): impl Discard + CallOnce[fn(Int): Int] {\n\
+                 (value: Int): Int { value + 1 }\n\
+             }\n\
+             fn invalid(): impl Discard + CallMut[fn(Int): Int] { once() }\n",
+        );
+        assert_eq!(codes(&unsupported_protocol), ["E1117"]);
+
+        let (_, _, unsupported_generic_protocol) = check(
+            "fn invalid[F: Discard + CallMut[fn(Int): Int]](\n\
+                 operation: F,\n\
+             ): impl Discard + Call[fn(Int): Int] {\n\
+                 operation\n\
+             }\n",
+        );
+        assert_eq!(codes(&unsupported_generic_protocol), ["E1117"]);
+
+        let (_, _, unpublished_trait) = check(
+            "trait Visible {}\n\
+             trait Hidden {}\n\
+             type Item = { marker: Unit }\n\
+             impl Visible for Item {}\n\
+             fn visible(): impl Discard + Visible { Item { marker: () } }\n\
+             fn invalid(): impl Discard + Hidden { visible() }\n",
+        );
+        assert_eq!(codes(&unpublished_trait), ["E1117"]);
+
+        let (_, _, unpublished_prelude) = check(
+            "trait Visible {}\n\
+             type Item = { marker: Unit }\n\
+             impl Visible for Item {}\n\
+             fn visible(): impl Discard + Visible { Item { marker: () } }\n\
+             fn invalid(): impl Discard + Display { visible() }\n",
+        );
+        assert_eq!(codes(&unpublished_prelude), ["E1117"]);
+
+        let (_, _, conflicting_signatures) = check(
+            "fn invalid[F: Discard + Call[fn(Int): Int] + Call[fn(String): String]](\n\
+                 operation: F,\n\
+             ): Int {\n\
+                 operation(1)\n\
+             }\n",
+        );
+        assert!(
+            codes(&conflicting_signatures).contains(&"E1115"),
+            "{:#?}",
+            conflicting_signatures.diagnostics()
+        );
     }
 
     #[test]
@@ -27364,6 +27974,116 @@ mod tests {
                 .filter(|callable| callable.opaque_result().is_some())
                 .count(),
             2
+        );
+    }
+
+    #[test]
+    fn closure_protocol_child_topology_covers_the_reachable_expression_vocabulary() {
+        const SOURCES: &[&str] = &[
+            "type UserId = Int\n\
+             type User = { id: UserId, name: String, email: String? }\n\
+             enum Shape {\n\
+                 Point\n\
+                 Circle(Float)\n\
+                 Rectangle { width: Float, height: Float }\n\
+             }\n\
+             fn make(id: UserId, name: String): (User, Shape, Shape, Shape) {\n\
+                 (\n\
+                     User { id, name, email: none },\n\
+                     Shape.Point,\n\
+                     Shape.Circle(2.5),\n\
+                     Shape.Rectangle { width: 3.0, height: 4.0 },\n\
+                 )\n\
+             }\n\
+             fn rename(user: User): User {\n\
+                 user with { name: \"Grace\", email: none }\n\
+             }\n\
+             fn makeId(): UserId { UserId(42) }\n",
+            "fn source(): Int ! String { 1 }\n\
+             fn multi(): Int ! (Bool | String) { 1 }\n\
+             fn optional(): Int? { some(1) }\n\
+             fn widened(flag: Bool): Int ! (Bool | String) {\n\
+                 if flag {\n\
+                     return source()?\n\
+                 }\n\
+                 fail true\n\
+             }\n\
+             fn explicitOk(): Int ! String { ok(1) }\n\
+             fn explicitErr(): Int ! String { err(\"bad\") }\n\
+             fn wider(): Int ! (Bool | Char | String) { multi()? }\n\
+             fn unwrapOptional(): Int? { optional()? }\n",
+            "fn inspect(\n\
+                 values: Array[Int],\n\
+                 entries: var Map[String, Int],\n\
+                 text: String,\n\
+             ): Bool {\n\
+                 let tuple = (1, text)\n\
+                 let set = Set[1, 2]\n\
+                 let reference = Ref(1)\n\
+                 let range = 0..10\n\
+                 let interpolated = \"value {values[0]}\"\n\
+                 _ = values.concat(values)\n\
+                 _ = entries.remove(\"missing\")\n\
+                 _ = tuple.0\n\
+                 _ = reference.value\n\
+                 _ = values[1::2]\n\
+                 _ = set\n\
+                 _ = interpolated\n\
+                 1 in range\n\
+             }\n",
+            "import std.console\n\
+             fn stop(): Never { panic(\"stop\") }\n\
+             fn control(value: Bool, parts: Array[String]): Int {\n\
+                 let operation = (number: Int): Int { number + 1 }\n\
+                 assert(value, \"prefix\", ...parts)\n\
+                 console.print(\"checked\")\n\
+                 if value {\n\
+                     operation(1)\n\
+                 } else {\n\
+                     match value {\n\
+                         true => 2\n\
+                         false => 3\n\
+                     }\n\
+                 }\n\
+             }\n",
+            "async fn load(value: Int): Int { value }\n\
+             async fn concurrent(): Int {\n\
+                 scope {\n\
+                     let task = spawn load(1)\n\
+                     await task\n\
+                 }\n\
+             }\n",
+        ];
+
+        let mut expressions = 0_usize;
+        let mut edges = 0_usize;
+        for source in SOURCES {
+            let (_, _, output) = check(source);
+            assert!(
+                output.diagnostics().is_empty(),
+                "{source}\n{:#?}",
+                output.diagnostics()
+            );
+            assert!(output.is_complete());
+            for (id, expression) in output.program().expressions_with_ids() {
+                expressions += 1;
+                for child in closure_protocol_expression_children(expression.kind()) {
+                    edges += 1;
+                    assert_ne!(child, id, "an expression cannot be its own child");
+                    assert!(
+                        output.program().expression(child).is_some(),
+                        "child expression id must remain in the same HIR arena"
+                    );
+                }
+            }
+        }
+        assert!(
+            expressions >= 100,
+            "fixture must exercise a broad HIR graph"
+        );
+        assert!(
+            edges >= 50,
+            "fixture must exercise non-leaf expression edges"
         );
     }
 

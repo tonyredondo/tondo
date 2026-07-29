@@ -8,11 +8,12 @@ not change Tondo 0.1 semantics and does not implement the future Tondo 0.2
 
 ## Versioned evidence
 
-The repository owns four machine-readable records:
+The repository owns five machine-readable records:
 
 | Record | Contract |
 | --- | --- |
 | `testing/inventory.json` | Every discovered logical test, repetition, source, oracle, target, edition, status, and source hash. |
+| `testing/normative-evidence.json` | Reviewed requirement claims with separate positive, rejection, boundary, composition, oracle, and public-boundary evidence. |
 | `testing/coverage-matrix.json` | Every extracted normative Tondo 0.1 requirement, its stable identity, classification, dimensions, and evidence or waiver. |
 | `testing/quality-baseline.json` | Reviewed line/function/region coverage and the bounded mutation selection with non-regression thresholds. |
 | `testing/regressions.json` | Confirmed defects tied to the lowest executable public boundary that would have detected them. |
@@ -35,8 +36,8 @@ One logical test is not necessarily one source file or one execution:
 - Tondo 0.2 testing-spec fences are `future-contract`; they are never counted
   as executable Tondo 0.1 coverage.
 
-The M10.5b inventory contains 1,445 logical tests and 1,664 repetitions. Of
-those, 1,403 are executable, 38 are future contracts, three are fuzz campaigns,
+The M10.5b inventory contains 1,507 logical tests and 1,726 repetitions. Of
+those, 1,465 are executable, 38 are future contracts, three are fuzz campaigns,
 and one is a non-executable pseudocode fence. Counts are derived from entries
 and cannot be edited independently.
 
@@ -70,15 +71,19 @@ Every requirement has exactly one status:
 
 `toolchain-limit` is an exposed traceability gap, not a claim that the behavior
 is unimplemented. A section or nearby example never counts as semantic
-coverage by proximity. The initial matrix intentionally reports 13 covered,
-eight target-inapplicable, four standard-library-pending, and 275 explicit
+coverage by proximity. The current matrix reports 17 covered, eight
+target-inapplicable, four standard-library-pending, and 271 explicit
 toolchain-limit requirements. Later milestones must replace those limits with
-direct identities as their corpora grow; they cannot silently turn them green.
+reviewed claims in `testing/normative-evidence.json`; they cannot silently turn
+them green.
 
 Each requirement records six dimensions: positive behavior,
 rejection/failure, material boundaries, composition, oracle, and public
 boundary. Every dimension contains sorted evidence or one non-empty versioned
-waiver, never both.
+waiver, never both. A reviewed claim must reference executable inventory IDs,
+must provide an executable oracle, and must reach the published
+`tondo-vm-hosted` boundary through a conformance case, fixture, or normative
+specification fence.
 
 ## Deterministic gate and campaigns
 
@@ -189,22 +194,30 @@ adds closed negative and boundary contracts for the CLI, canonical artifacts,
 manifest and adapter protocols, semantic snapshots, bytecode verification and
 disassembly, managed runtime values, and the reliability tooling itself.
 
-The reviewed M10.5b observation is 86.11% of lines (104,699/121,590), 83.62%
-of functions (7,171/8,576), and 84.45% of regions (150,780/178,550). The
+The reviewed M10.5b observation is 90.08% of lines (119,622/132,793), 86.42%
+of functions (7,866/9,102), and 88.15% of regions (169,052/191,782). The
 machine gate deliberately truncates those observations to exact non-regression
-floors of 8,610, 8,361, and 8,444 basis points. Its line floors by risk are:
+floors of 9,008, 8,642, and 8,814 basis points. Its line floors by risk are:
 
 - parser: 9,451 basis points;
-- checkers: 8,730;
-- HIR/MIR/bytecode verifiers: 7,926;
-- heap and managed values: 9,713;
-- lowering and execution: 8,478; and
+- checkers: 9,064;
+- HIR/MIR/bytecode verifiers: 8,868;
+- heap and managed values: 9,770;
+- lowering and execution: 8,912; and
 - untrusted artifacts, projects, conformance, adapters, and reliability
-  protocols: 8,818.
+  protocols: 9,106.
 
 Function and region floors for every risk scope remain machine-readable in
 `testing/quality-baseline.json`. Every floor is the reviewed observed value; a
 decrease fails.
+
+The Rust 1.93.0 / LLVM 21.1.8 report exposes `branches` and `mcdc` fields but
+contains zero instrumented units for both. They are therefore recorded as
+unsupported by this measurement, not as 0% coverage and not as green metrics.
+Until the pinned Rust coverage pipeline produces a stable non-zero
+instrumentation domain, branch-heavy behavior is defended by region coverage,
+closed decision matrices, model/property tests, and mutation testing. Enabling
+either numeric gate requires a reviewed toolchain report with actual units.
 
 `cargo-mutants 27.1.0` runs a bounded, explicit 28-mutant selection over:
 
@@ -255,7 +268,7 @@ cargo run -p tondo-reliability --locked -- quality capture \
   --root . \
   --coverage target/reliability/quality/coverage.json \
   --mutants target/reliability/quality/mutation/mutants.out/outcomes.json \
-  --revision M10.5b-H0
+  --revision M10.5b-H0-COV90
 ~~~
 
 The strict gate must remain green after any regenerated record.

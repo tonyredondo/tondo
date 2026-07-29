@@ -2769,6 +2769,88 @@ mod tests {
     }
 
     #[test]
+    fn type_and_inference_error_vocabulary_is_closed_and_exact() {
+        for (error, expected) in [
+            (
+                TypeError::ResourceLimit { limit: 17 },
+                "interned type node limit exceeded (17)".to_owned(),
+            ),
+            (
+                TypeError::UnknownType(TypeId(99)),
+                "unknown type#99".to_owned(),
+            ),
+            (
+                TypeError::InvalidNominalNamespace(Namespace::Module),
+                "a nominal type identity cannot use the `module` namespace".to_owned(),
+            ),
+            (
+                TypeError::InvalidTupleArity(1),
+                "a tuple type requires at least two items, got 1".to_owned(),
+            ),
+            (
+                TypeError::InvalidIntrinsicArity {
+                    constructor: IntrinsicType::Array,
+                    expected: 1,
+                    actual: 2,
+                },
+                "intrinsic `Array` requires 1 type arguments, got 2".to_owned(),
+            ),
+            (
+                TypeError::MissingGenericArgument {
+                    position: 3,
+                    arity: 2,
+                },
+                "generic parameter $3 has no argument in a substitution of arity 2".to_owned(),
+            ),
+            (
+                TypeError::UnresolvedInference(InferenceId(4)),
+                "inference variable $4 has no canonical public type".to_owned(),
+            ),
+            (
+                TypeError::CyclicOpaqueRepresentation,
+                "opaque result representations form a cycle".to_owned(),
+            ),
+            (
+                TypeError::RecoveryTypeHasNoCanonicalName,
+                "the internal recovery type has no canonical public name".to_owned(),
+            ),
+        ] {
+            assert_eq!(error.to_string(), expected);
+        }
+
+        for (error, expected) in [
+            (
+                InferenceError::Type(TypeError::ResourceLimit { limit: 5 }),
+                "interned type node limit exceeded (5)".to_owned(),
+            ),
+            (
+                InferenceError::Mismatch {
+                    left: TypeId(1),
+                    right: TypeId(2),
+                },
+                "cannot equate type#1 with type#2".to_owned(),
+            ),
+            (
+                InferenceError::RecursiveSolution {
+                    inference: InferenceId(6),
+                    within: TypeId(7),
+                },
+                "inference variable $6 occurs recursively in type#7".to_owned(),
+            ),
+            (
+                InferenceError::Unsolved(InferenceId(8)),
+                "inference variable $8 is unsolved".to_owned(),
+            ),
+        ] {
+            assert_eq!(error.to_string(), expected);
+        }
+        assert!(matches!(
+            InferenceError::from(TypeError::CyclicOpaqueRepresentation),
+            InferenceError::Type(TypeError::CyclicOpaqueRepresentation)
+        ));
+    }
+
+    #[test]
     fn scalar_alias_spellings_share_one_canonical_type() {
         let interner = TypeInterner::default();
         assert_eq!(interner.named_scalar("Int"), interner.named_scalar("Int64"));
@@ -3224,6 +3306,170 @@ mod tests {
     }
 
     #[test]
+    fn unification_shape_matrix_traverses_every_closed_constructor() {
+        let mut interner = TypeInterner::default();
+        let parameter = interner.generic_parameter(0).unwrap();
+        let int = interner.scalar(ScalarType::Int);
+        let string = interner.scalar(ScalarType::String);
+        let nominal_identity = symbol(Namespace::Type, "Box");
+        let opaque_identity = symbol(Namespace::Value, "hide");
+        let generated_identity = GeneratedTypeIdentity::new(
+            GeneratedTypeKind::Closure,
+            SourceId::new("source:app").unwrap(),
+            ModulePath::new("main").unwrap(),
+            LogicalPath::new("src/main.to").unwrap(),
+            42,
+        );
+
+        let nominal_pattern = interner
+            .nominal(nominal_identity.clone(), vec![parameter])
+            .unwrap();
+        let nominal_actual = interner.nominal(nominal_identity, vec![int]).unwrap();
+        let tuple_pattern = interner.tuple(vec![parameter, string]).unwrap();
+        let tuple_actual = interner.tuple(vec![int, string]).unwrap();
+        let union_pattern = interner.union([parameter, string]).unwrap();
+        let union_actual = interner.union([int, string]).unwrap();
+        let option_pattern = interner.option(parameter).unwrap();
+        let option_actual = interner.option(int).unwrap();
+        let result_pattern = interner.result(parameter, string).unwrap();
+        let result_actual = interner.result(int, string).unwrap();
+        let intrinsic_pattern = interner
+            .intrinsic(IntrinsicType::Array, vec![parameter])
+            .unwrap();
+        let intrinsic_actual = interner.intrinsic(IntrinsicType::Array, vec![int]).unwrap();
+        let opaque_pattern = interner
+            .opaque_result(opaque_identity.clone(), vec![parameter])
+            .unwrap();
+        let opaque_actual = interner.opaque_result(opaque_identity, vec![int]).unwrap();
+        let generated_pattern = interner
+            .generated(generated_identity.clone(), vec![parameter])
+            .unwrap();
+        let generated_actual = interner.generated(generated_identity, vec![int]).unwrap();
+        let function_pattern_outcome = interner.result(option_pattern, string).unwrap();
+        let function_actual_outcome = interner.result(option_actual, string).unwrap();
+        let function_pattern = interner
+            .function(FunctionType::new(
+                true,
+                true,
+                vec![
+                    FunctionParameter::new(ParameterMode::Value, parameter),
+                    FunctionParameter::new(ParameterMode::Ref, parameter),
+                    FunctionParameter::new(ParameterMode::Mut, parameter),
+                    FunctionParameter::new(ParameterMode::Var, parameter),
+                ],
+                Some(parameter),
+                function_pattern_outcome,
+            ))
+            .unwrap();
+        let function_actual = interner
+            .function(FunctionType::new(
+                true,
+                true,
+                vec![
+                    FunctionParameter::new(ParameterMode::Value, int),
+                    FunctionParameter::new(ParameterMode::Ref, int),
+                    FunctionParameter::new(ParameterMode::Mut, int),
+                    FunctionParameter::new(ParameterMode::Var, int),
+                ],
+                Some(int),
+                function_actual_outcome,
+            ))
+            .unwrap();
+
+        let mut pairs = vec![
+            ("nominal", nominal_pattern, nominal_actual),
+            ("tuple", tuple_pattern, tuple_actual),
+            ("union", union_pattern, union_actual),
+            ("function", function_pattern, function_actual),
+            ("option", option_pattern, option_actual),
+            ("result", result_pattern, result_actual),
+            ("intrinsic", intrinsic_pattern, intrinsic_actual),
+            ("opaque", opaque_pattern, opaque_actual),
+            ("generated", generated_pattern, generated_actual),
+        ];
+        for mode in [CursorMode::Own, CursorMode::Ref, CursorMode::Mut] {
+            pairs.push((
+                "cursor",
+                interner.cursor(mode, generated_pattern).unwrap(),
+                interner.cursor(mode, generated_actual).unwrap(),
+            ));
+        }
+
+        let pattern_union = interner
+            .union(pairs.iter().map(|(_, pattern, _)| *pattern))
+            .unwrap();
+        let actual_union = interner
+            .union(pairs.iter().map(|(_, _, actual)| *actual))
+            .unwrap();
+        assert!(
+            interner
+                .first_order_independent_unifiable(&[pattern_union], &[actual_union])
+                .unwrap(),
+            "union member prefilter traverses every structural constructor"
+        );
+
+        let bool_type = interner.scalar(ScalarType::Bool);
+        let ref_function = interner
+            .function(FunctionType::new(
+                false,
+                false,
+                vec![FunctionParameter::new(ParameterMode::Ref, int)],
+                None,
+                int,
+            ))
+            .unwrap();
+        let mut_function = interner
+            .function(FunctionType::new(
+                false,
+                false,
+                vec![FunctionParameter::new(ParameterMode::Mut, int)],
+                None,
+                int,
+            ))
+            .unwrap();
+        let ref_union = interner.union([bool_type, ref_function]).unwrap();
+        let mut_union = interner.union([bool_type, mut_function]).unwrap();
+        assert!(
+            !interner
+                .first_order_independent_unifiable(&[ref_union], &[mut_union])
+                .unwrap(),
+            "function parameter modes remain invariant during union prefiltering"
+        );
+
+        for (name, pattern, actual) in pairs {
+            assert!(
+                interner.first_order_unifiable(pattern, actual).unwrap(),
+                "{name}: shared-scope unification"
+            );
+            assert!(
+                interner
+                    .first_order_independent_unifiable(&[pattern], &[actual])
+                    .unwrap(),
+                "{name}: independent unification"
+            );
+            assert_eq!(
+                interner
+                    .first_order_independent_equivalent_after_unifying(
+                        &[pattern],
+                        &[actual],
+                        pattern,
+                        actual,
+                    )
+                    .unwrap(),
+                Some(true),
+                "{name}: equivalence after unification"
+            );
+            assert_eq!(
+                interner
+                    .first_order_pattern_substitution(&[pattern], &[actual], 1)
+                    .unwrap(),
+                Some(vec![int]),
+                "{name}: one-way substitution"
+            );
+        }
+    }
+
+    #[test]
     fn numeric_conversion_table_distinguishes_total_and_checked_pairs() {
         assert_eq!(
             numeric_conversion(ScalarType::UInt8, ScalarType::Byte),
@@ -3320,6 +3566,132 @@ mod tests {
             inference.resolve(&mut interner, inferred_array).unwrap(),
             expected_array
         );
+    }
+
+    #[test]
+    fn local_inference_equates_and_rebuilds_the_complete_type_graph() {
+        let mut interner = TypeInterner::default();
+        let mut inference = InferenceContext::new();
+        let unknown = inference.fresh(&mut interner).unwrap();
+        let int = interner.scalar(ScalarType::Int);
+        let string = interner.scalar(ScalarType::String);
+        let nominal_identity = symbol(Namespace::Type, "Box");
+        let opaque_identity = symbol(Namespace::Value, "hide");
+        let generated_identity = GeneratedTypeIdentity::new(
+            GeneratedTypeKind::AsyncUnsafeClosure,
+            SourceId::new("source:app").unwrap(),
+            ModulePath::new("main").unwrap(),
+            LogicalPath::new("src/main.to").unwrap(),
+            73,
+        );
+
+        let inferred_nominal = interner
+            .nominal(nominal_identity.clone(), vec![unknown])
+            .unwrap();
+        let expected_nominal = interner.nominal(nominal_identity, vec![int]).unwrap();
+        let inferred_tuple = interner.tuple(vec![unknown, string]).unwrap();
+        let expected_tuple = interner.tuple(vec![int, string]).unwrap();
+        let inferred_option = interner.option(unknown).unwrap();
+        let expected_option = interner.option(int).unwrap();
+        let inferred_result = interner.result(unknown, string).unwrap();
+        let expected_result = interner.result(int, string).unwrap();
+        let inferred_intrinsic = interner
+            .intrinsic(IntrinsicType::Map, vec![string, unknown])
+            .unwrap();
+        let expected_intrinsic = interner
+            .intrinsic(IntrinsicType::Map, vec![string, int])
+            .unwrap();
+        let inferred_opaque = interner
+            .opaque_result(opaque_identity.clone(), vec![unknown])
+            .unwrap();
+        let expected_opaque = interner.opaque_result(opaque_identity, vec![int]).unwrap();
+        let inferred_generated = interner
+            .generated(generated_identity.clone(), vec![unknown])
+            .unwrap();
+        let expected_generated = interner.generated(generated_identity, vec![int]).unwrap();
+        let inferred_cursor = interner
+            .cursor(CursorMode::Mut, inferred_generated)
+            .unwrap();
+        let expected_cursor = interner
+            .cursor(CursorMode::Mut, expected_generated)
+            .unwrap();
+        let inferred_function = interner
+            .function(FunctionType::new(
+                true,
+                true,
+                vec![
+                    FunctionParameter::new(ParameterMode::Value, unknown),
+                    FunctionParameter::new(ParameterMode::Ref, inferred_option),
+                    FunctionParameter::new(ParameterMode::Mut, inferred_result),
+                    FunctionParameter::new(ParameterMode::Var, inferred_cursor),
+                ],
+                Some(unknown),
+                inferred_tuple,
+            ))
+            .unwrap();
+        let expected_function = interner
+            .function(FunctionType::new(
+                true,
+                true,
+                vec![
+                    FunctionParameter::new(ParameterMode::Value, int),
+                    FunctionParameter::new(ParameterMode::Ref, expected_option),
+                    FunctionParameter::new(ParameterMode::Mut, expected_result),
+                    FunctionParameter::new(ParameterMode::Var, expected_cursor),
+                ],
+                Some(int),
+                expected_tuple,
+            ))
+            .unwrap();
+        let inferred_root = interner
+            .tuple(vec![
+                inferred_nominal,
+                inferred_tuple,
+                inferred_function,
+                inferred_option,
+                inferred_result,
+                inferred_intrinsic,
+                inferred_opaque,
+                inferred_generated,
+                inferred_cursor,
+            ])
+            .unwrap();
+        let expected_root = interner
+            .tuple(vec![
+                expected_nominal,
+                expected_tuple,
+                expected_function,
+                expected_option,
+                expected_result,
+                expected_intrinsic,
+                expected_opaque,
+                expected_generated,
+                expected_cursor,
+            ])
+            .unwrap();
+
+        inference
+            .equate(&interner, inferred_root, expected_root)
+            .unwrap();
+        assert_eq!(
+            inference.resolve(&mut interner, inferred_root).unwrap(),
+            expected_root
+        );
+        assert_eq!(
+            inference
+                .finish(&mut interner, [unknown, inferred_root])
+                .unwrap(),
+            vec![int, expected_root]
+        );
+
+        let first = inference.fresh(&mut interner).unwrap();
+        let second = inference.fresh(&mut interner).unwrap();
+        inference.equate(&interner, first, second).unwrap();
+        inference.equate(&interner, second, int).unwrap();
+        assert_eq!(inference.resolve(&mut interner, first).unwrap(), int);
+        inference
+            .equate(&interner, interner.error(), string)
+            .unwrap();
     }
 
     #[test]

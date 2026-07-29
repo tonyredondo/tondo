@@ -1611,9 +1611,73 @@ fn source_set_parts(value: &str) -> Option<(&str, &str)> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
+    use crate::hir::{ExpressionCheckLimits, TypeLoweringLimits, check_expressions, lower_types};
     use crate::package::{Edition, PackageAlias, PackageNode};
-    use crate::source::{ModulePath, SourceId};
+    use crate::resolve::resolve;
+    use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
+    use crate::syntax::{LexMode, ParseLimits, ParseMode, lex, parse};
+
+    fn api_hash(source: &str) -> String {
+        let mut sources = SourceDatabase::new();
+        let file = sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("root:artifact-api").unwrap(),
+                ModulePath::new("main").unwrap(),
+                LogicalPath::new("main.to").unwrap(),
+                Arc::<[u8]>::from(source.as_bytes().to_vec()),
+            ))
+            .unwrap();
+        let lexed = lex(&sources, file, LexMode::Module).unwrap();
+        assert!(lexed.diagnostics().is_empty());
+        let parsed = parse(
+            &sources,
+            file,
+            lexed,
+            ParseMode::Module,
+            ParseLimits::default(),
+        )
+        .unwrap();
+        assert!(parsed.diagnostics().is_empty());
+        let packages = PackageGraph::loose(&sources, file).unwrap();
+        let (resolved, diagnostics) = resolve(&packages, &sources, [(file, &parsed)], 100)
+            .unwrap()
+            .into_parts();
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+        let (program, diagnostics) = lower_types(
+            &packages,
+            &sources,
+            [(file, &parsed)],
+            &resolved,
+            TypeLoweringLimits {
+                max_type_nodes: 20_000,
+                max_trait_obligations: 20_000,
+                max_diagnostics: 100,
+            },
+        )
+        .unwrap()
+        .into_parts();
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+        let (program, diagnostics, complete) = check_expressions(
+            &sources,
+            [(file, &parsed)],
+            &resolved,
+            program,
+            ExpressionCheckLimits {
+                max_nodes: 20_000,
+                max_pattern_steps: 20_000,
+                max_trait_obligations: 20_000,
+                max_diagnostics: 100,
+            },
+        )
+        .unwrap()
+        .into_parts();
+        assert!(complete);
+        assert!(diagnostics.is_empty(), "{diagnostics:#?}");
+        public_api_hash(packages.root(), &resolved, &program).unwrap()
+    }
 
     fn valid_interface() -> CompiledInterface {
         CompiledInterface::new(
@@ -1682,6 +1746,62 @@ mod tests {
         );
         assert!(SourceSetId::new("@01:a#common").is_err());
         assert!(SourceSetId::new("").is_err());
+    }
+
+    #[test]
+    fn public_api_hash_serializes_every_declaration_and_constant_shape() {
+        const SOURCE: &str = "pub alias Count = Int\n\
+             pub type UserId = Int\n\
+             pub type Person = {\n\
+                 id: UserId\n\
+                 name: String\n\
+                 priv secret: Int\n\
+             }\n\
+             pub enum Choice {\n\
+                 Empty\n\
+                 Pair(Int)\n\
+                 Named { value: Int }\n\
+             }\n\
+             pub trait Summary {\n\
+                 fn summarize(self): String\n\
+                 fn code(): Int\n\
+             }\n\
+             pub const UnitValue: Unit = ()\n\
+             pub const Flag: Bool = true\n\
+             pub const Answer: Int = 42\n\
+             pub const Ratio: Float = 2.5\n\
+             pub const Letter: Char = 'x'\n\
+             pub const Text: String = \"value\"\n\
+             pub const PairValue: (Int, String) = (Answer, Text)\n\
+             pub const Numbers: Array[Int] = [1, 2]\n\
+             pub const Entries: Map[String, Int] = [\"one\": 1]\n\
+             pub const Permissions: Set[String] = Set[\"read\"]\n\
+             pub const Missing: Int? = none\n\
+             pub const Present: Int? = some(Answer)\n\
+             pub const Success: Int ! String = ok(Answer)\n\
+             pub const Failure: Int ! String = err(Text)\n\
+             pub const Span: Range[Int] = 1..=3\n\
+             pub const Converted: Int8 ! NumericConversionError = Int8(127)\n\
+             pub const ConversionFailure: Int8 ! NumericConversionError = Int8(128)\n\
+             pub const Id: UserId = UserId(9)\n\
+             pub const User: Person = Person { id: Id, name: \"Ada\", secret: 7 }\n\
+             pub const UnitChoice: Choice = Choice.Empty\n\
+             pub const TupleChoice: Choice = Choice.Pair(1)\n\
+             pub const RecordChoice: Choice = Choice.Named { value: 2 }\n\
+             pub fn identity(value: Int): Int { value }\n\
+             pub const Handler: fn(Int): Int = identity\n\
+             pub fn keep[T: Discard](value: T): T { value }\n\
+             pub fn total(first: Int, rest: ...Int): Int {\n\
+                 _ = rest\n\
+                 first\n\
+             }\n\
+             pub fn hide(value: Int): impl Discard { value }\n";
+
+        let first = api_hash(SOURCE);
+        let second = api_hash(SOURCE);
+        assert_eq!(first, second);
+        assert!(first.starts_with("sha256:"));
+        assert_ne!(first, api_hash(&SOURCE.replace("42", "43")));
     }
 
     #[test]

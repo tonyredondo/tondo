@@ -1813,6 +1813,101 @@ mod tests {
     }
 
     #[test]
+    fn project_error_vocabulary_and_scalar_parsers_are_closed() {
+        let hash = sha256(b"value");
+        let errors = vec![
+            ProjectError::InvalidManifest("manifest".into()),
+            ProjectError::InvalidLockfile("lockfile".into()),
+            ProjectError::InvalidPrivilegedUnit("unit".into()),
+            ProjectError::UnsupportedManifestFormat("manifest/9".into()),
+            ProjectError::UnsupportedLockfileFormat("lockfile/9".into()),
+            ProjectError::UnsupportedTarget("unknown".into()),
+            ProjectError::UnsupportedProfile("unknown".into()),
+            ProjectError::UnsupportedEdition("9".into()),
+            ProjectError::UnsupportedStandardPackage("pkg:std@9".into()),
+            ProjectError::InvalidIdentity {
+                field: "source",
+                value: "bad".into(),
+            },
+            ProjectError::InvalidSourceSetName("Bad".into()),
+            ProjectError::InvalidSourceOrder("order".into()),
+            ProjectError::InvalidPrivilegedUnitId("Bad".into()),
+            ProjectError::DuplicatePackage("pkg:item".into()),
+            ProjectError::DuplicateSourceSet {
+                package: "pkg:item".into(),
+                source_set: "common".into(),
+            },
+            ProjectError::DuplicatePhysicalInput("src/main.to".into()),
+            ProjectError::DuplicateLogicalSource {
+                package: "pkg:item".into(),
+                logical_path: "main.to".into(),
+            },
+            ProjectError::DuplicateNamedInput {
+                kind: "generator",
+                name: "schema".into(),
+            },
+            ProjectError::ConflictingSourceSetCondition("condition".into()),
+            ProjectError::UnknownRootPackage("pkg:missing".into()),
+            ProjectError::UnknownRootSource {
+                package: "pkg:item".into(),
+                path: "src/main.to".into(),
+            },
+            ProjectError::InactiveRootSource {
+                package: "pkg:item".into(),
+                path: "src/main.to".into(),
+            },
+            ProjectError::ManifestHashMismatch {
+                expected: hash.clone(),
+                actual: sha256(b"other"),
+            },
+            ProjectError::LockGraphMismatch("graph".into()),
+            ProjectError::PackageContentHashMismatch {
+                package: "pkg:item".into(),
+                expected: hash.clone(),
+                actual: sha256(b"other"),
+            },
+            ProjectError::MissingInput("src/main.to".into()),
+            ProjectError::UndeclaredInput("ambient.txt".into()),
+            ProjectError::InputHashMismatch {
+                path: "src/main.to".into(),
+                expected: hash.clone(),
+                actual: sha256(b"other"),
+            },
+            ProjectError::InterfacePackageMismatch {
+                expected: "pkg:item".into(),
+                actual: "pkg:other".into(),
+            },
+            ProjectError::PrivilegedUnitIdMismatch {
+                expected: "vendor.native".into(),
+                actual: "vendor.other".into(),
+            },
+            ProjectError::NonCanonicalPrivilegedUnit("vendor.native".into()),
+            ProjectError::NonCanonicalList("features"),
+            ProjectError::from(crate::artifact::ArtifactError::InvalidHash("bad".into())),
+            ProjectError::from(DriverError::InvalidCapability("telepathy".into())),
+            ProjectError::from(PackageGraphError::EmptyPackageId),
+            ProjectError::from(SourceId::new("").unwrap_err()),
+            ProjectError::Serialization("serialization".into()),
+        ];
+        assert_eq!(errors.len(), 37);
+        for error in errors {
+            assert!(!error.to_string().is_empty(), "{error:?}");
+        }
+
+        assert_eq!(parse_edition("0.1").unwrap(), Edition::V0_1);
+        assert!(parse_edition("0.2").is_err());
+        assert_eq!(parse_profile("hosted").unwrap(), HostProfile::Hosted);
+        assert!(parse_profile("native").is_err());
+        assert_eq!(parse_source_form("module").unwrap(), SourceForm::Module);
+        assert_eq!(parse_source_form("script").unwrap(), SourceForm::Script);
+        assert_eq!(parse_source_form("fragment").unwrap(), SourceForm::Fragment);
+        assert!(parse_source_form("unknown").is_err());
+        assert!(validate_identity_field("source", "valid").is_ok());
+        assert!(validate_identity_field("source", "").is_err());
+        assert!(validate_identity_field("source", "bad\nvalue").is_err());
+    }
+
+    #[test]
     fn identical_declared_inputs_produce_identical_interface_and_artifact_bytes() {
         let (manifest, lockfile, supplied) = root_project(b"fn main() {}\n", b"ignored");
         let plan = ProjectPlan::parse(&manifest, &lockfile).unwrap();

@@ -1,0 +1,75 @@
+{
+  "format": "tondo-normative-evidence/1",
+  "document": "TONDO_LANGUAGE_SPEC.md",
+  "edition": "0.1",
+  "document_sha256": "ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084",
+  "target": "tondo-vm-hosted",
+  "claims": [
+    {
+      "requirements": [
+        "TL01-12-8-R001",
+        "TL01-12-8-R002",
+        "TL01-12-8-R003",
+        "TL01-12-8-R004"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "document:language-0.1:fence:0169",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+            "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0170",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+            "rust:tondo-compiler:src::hir::check:opaque_unit_returns_infer_wrap_and_reject_the_same_closed_witness"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0169",
+            "document:language-0.1:fence:0170",
+            "rust:tondo-compiler:src::hir::verify:opaque_call_protocol_implications_are_reproved_before_mir",
+            "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+            "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "document:language-0.1:fence:0169",
+            "rust:tondo-compiler:src::hir::check:opaque_and_generic_call_protocol_implications_are_closed",
+            "rust:tondo-compiler:src::hir::check:opaque_results_expose_only_published_bounds_to_callers"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "rust:tondo-compiler:src::hir::check:opaque_results_infer_one_witness_and_seal_every_normal_exit",
+            "rust:tondo-compiler:src::hir::check:opaque_results_reject_distinct_missing_and_cyclic_witnesses",
+            "rust:tondo-compiler:src::hir::verify:opaque_contracts_and_seals_are_reproved_before_mir",
+            "rust:tondo-vm:src::bytecode::verify:opaque_bytecode_cannot_hide_a_terminal_witness"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "conformance:compile-fail/invalid-opaque-result",
+            "document:language-0.1:fence:0169",
+            "document:language-0.1:fence:0170"
+          ],
+          "waiver": null
+        }
+      }
+    }
+  ]
+}

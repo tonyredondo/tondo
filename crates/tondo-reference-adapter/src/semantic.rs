@@ -2856,3 +2856,253 @@ fn pattern_kind_name(kind: &HirPatternKind) -> &'static str {
         HirPatternKind::Array { .. } => "array",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use tondo_compiler::hir::{
+        HirLiteral, HirRangeKind, HirTerminalOperation, HirTerminalUnwindAction,
+    };
+    use tondo_compiler::types::NumericConversionErrorVariant;
+
+    use super::*;
+
+    #[test]
+    fn closed_semantic_vocabulary_has_one_wire_spelling_per_variant() {
+        assert_eq!(
+            [
+                HirCapabilityStatus::Satisfied,
+                HirCapabilityStatus::Deferred,
+                HirCapabilityStatus::Unsatisfied,
+            ]
+            .map(capability_status_name),
+            ["satisfied", "deferred", "unsatisfied"]
+        );
+        assert_eq!(
+            [
+                HirTerminalStatus::Absent,
+                HirTerminalStatus::Potential,
+                HirTerminalStatus::Present,
+            ]
+            .map(terminal_status_name),
+            ["absent", "potential", "present"]
+        );
+        assert_eq!(
+            [
+                HirTerminalOperation::JoinAwait,
+                HirTerminalOperation::ProcessFinish,
+            ]
+            .map(terminal_operation_name),
+            ["join-await", "process-finish"]
+        );
+        assert_eq!(
+            [
+                HirTerminalUnwindAction::JoinTeardown,
+                HirTerminalUnwindAction::ProcessCleanup,
+            ]
+            .map(terminal_unwind_name),
+            ["join-teardown", "process-cleanup"]
+        );
+        assert_eq!(
+            [
+                ParameterMode::Value,
+                ParameterMode::Ref,
+                ParameterMode::Mut,
+                ParameterMode::Var,
+            ]
+            .map(parameter_mode_name),
+            ["value", "ref", "mut", "var"]
+        );
+        assert_eq!(
+            [MirLoanKind::CallLocal, MirLoanKind::Region].map(mir_loan_kind_name),
+            ["call-local", "region"]
+        );
+        assert_eq!(
+            [
+                HirIndexAccess::Array,
+                HirIndexAccess::String,
+                HirIndexAccess::MapLookup,
+                HirIndexAccess::MapEntry,
+            ]
+            .map(index_access_name),
+            ["array", "string", "map-lookup", "map-entry"]
+        );
+        assert_eq!(
+            [CursorMode::Own, CursorMode::Ref, CursorMode::Mut].map(cursor_mode_name),
+            ["own", "ref", "mut"]
+        );
+        assert_eq!(
+            [
+                HirCallProtocol::Call,
+                HirCallProtocol::CallMut,
+                HirCallProtocol::CallOnce,
+            ]
+            .map(call_protocol_name),
+            ["Call", "CallMut", "CallOnce"]
+        );
+        assert_eq!(
+            [
+                HirMatchMode::Copy,
+                HirMatchMode::Observe,
+                HirMatchMode::Consume,
+            ]
+            .map(match_mode_name),
+            ["copy", "observe", "consume"]
+        );
+        assert_eq!(
+            [
+                MemberKind::RecordField,
+                MemberKind::NewtypeValue,
+                MemberKind::EnumVariant,
+                MemberKind::VariantField,
+                MemberKind::InherentMethod,
+                MemberKind::AssociatedFunction,
+                MemberKind::TraitMethod,
+                MemberKind::TraitAssociatedFunction,
+            ]
+            .map(member_kind_name),
+            [
+                "record-field",
+                "newtype-value",
+                "enum-variant",
+                "variant-field",
+                "inherent-method",
+                "associated-function",
+                "trait-method",
+                "trait-associated-function",
+            ]
+        );
+        assert_eq!(
+            [
+                LocalKind::GenericParameter,
+                LocalKind::Parameter,
+                LocalKind::Binding,
+                LocalKind::Pattern,
+                LocalKind::ForPattern,
+                LocalKind::ClosureParameter,
+            ]
+            .map(local_kind_name),
+            [
+                "generic-parameter",
+                "parameter",
+                "binding",
+                "pattern",
+                "for-pattern",
+                "closure-parameter",
+            ]
+        );
+        assert_eq!(mir_local_kind_name(MirLocalKind::Return), "return");
+        assert_eq!(mir_local_kind_name(MirLocalKind::Temporary), "temporary");
+        assert_eq!(
+            mir_local_kind_name(MirLocalKind::Parameter {
+                index: 3,
+                source: None,
+            }),
+            "parameter:3:synthetic"
+        );
+    }
+
+    #[test]
+    fn semantic_sorting_and_span_helpers_are_total_and_deterministic() {
+        let ranked = [
+            Value::Null,
+            json!(false),
+            json!(-1),
+            json!("text"),
+            json!([1, 2]),
+            json!({"key": 1}),
+        ];
+        for (index, left) in ranked.iter().enumerate() {
+            assert_eq!(compare_json(left, left), std::cmp::Ordering::Equal);
+            for right in ranked.iter().skip(index + 1) {
+                assert_eq!(compare_json(left, right), std::cmp::Ordering::Less);
+                assert_eq!(compare_json(right, left), std::cmp::Ordering::Greater);
+            }
+        }
+        assert_eq!(
+            compare_json(&json!(-2), &json!(1)),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_json(&json!(2_u64), &json!(3_u64)),
+            std::cmp::Ordering::Less
+        );
+        let heterogeneous = compare_json(&json!(u64::MAX), &json!(1.5));
+        assert_ne!(heterogeneous, std::cmp::Ordering::Equal);
+        assert_eq!(
+            compare_json(&json!(1.5), &json!(u64::MAX)),
+            heterogeneous.reverse()
+        );
+        assert_eq!(
+            compare_json(&json!([1, 2]), &json!([1, 3])),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_json(&json!([1]), &json!([1, 0])),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_json(&json!({"a": 1}), &json!({"b": 1})),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_json(&json!({"a": 1}), &json!({"a": 2})),
+            std::cmp::Ordering::Less
+        );
+
+        let mut unordered = vec![
+            json!({"span": 2, "id": "b"}),
+            json!({"span": 1, "id": "z"}),
+            json!({"span": 1, "id": "a"}),
+        ];
+        sort_values(&mut unordered, &["span", "id"]);
+        assert_eq!(
+            unordered,
+            [
+                json!({"span": 1, "id": "a"}),
+                json!({"span": 1, "id": "z"}),
+                json!({"span": 2, "id": "b"}),
+            ]
+        );
+
+        let container =
+            json!({"source_id":"source","module":"main","file":"main.to","start":10,"end":30});
+        let inner =
+            json!({"source_id":"source","module":"main","file":"main.to","start":12,"end":20});
+        assert!(span_contains(&container, &inner));
+        assert!(!span_contains(&inner, &container));
+        assert_eq!(span_length(&container), 20);
+        assert_eq!(span_length(&json!({})), u64::MAX);
+        assert_eq!(
+            stable_id("kind", ["a".into(), "bc".into()]),
+            stable_id("kind", ["a".into(), "bc".into()])
+        );
+        assert_ne!(
+            stable_id("kind", ["ab".into(), "c".into()]),
+            stable_id("kind", ["a".into(), "bc".into()])
+        );
+
+        assert_eq!(
+            expression_kind_name(&HirExpressionKind::Literal(HirLiteral::Unit)),
+            "literal"
+        );
+        assert_eq!(
+            expression_kind_name(&HirExpressionKind::NumericConversionError(
+                NumericConversionErrorVariant::OutOfRange,
+            )),
+            "numeric-conversion-error"
+        );
+        assert_eq!(
+            pattern_kind_name(&HirPatternKind::NumericConversionError(
+                NumericConversionErrorVariant::NotFinite,
+            )),
+            "numeric-conversion-error"
+        );
+        assert_eq!(pattern_kind_name(&HirPatternKind::Wildcard), "wildcard");
+        assert_eq!(
+            pattern_kind_name(&HirPatternKind::OptionNone),
+            "option-none"
+        );
+        let _ = HirRangeKind::Inclusive;
+    }
+}

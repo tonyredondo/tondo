@@ -10971,6 +10971,2535 @@ mod tests {
         }
     }
 
+    fn verifier(program: &BytecodeProgram) -> Verifier<'_> {
+        Verifier {
+            program,
+            limits: BytecodeVerificationLimits::default(),
+            dataflow_steps: Cell::new(0),
+            capabilities: OnceCell::new(),
+            terminals: OnceCell::new(),
+        }
+    }
+
+    #[derive(Clone, Copy)]
+    struct CatalogIds {
+        unit: BytecodeTypeId,
+        never: BytecodeTypeId,
+        bool: BytecodeTypeId,
+        int: BytecodeTypeId,
+        int8: BytecodeTypeId,
+        float: BytecodeTypeId,
+        char: BytecodeTypeId,
+        string: BytecodeTypeId,
+        parameter: BytecodeTypeId,
+        wrapper: BytecodeTypeId,
+        record: BytecodeTypeId,
+        choice: BytecodeTypeId,
+        tuple: BytecodeTypeId,
+        function: BytecodeTypeId,
+        option: BytecodeTypeId,
+        result: BytecodeTypeId,
+        union: BytecodeTypeId,
+        array: BytecodeTypeId,
+        map: BytecodeTypeId,
+        set: BytecodeTypeId,
+        range: BytecodeTypeId,
+        numeric_error: BytecodeTypeId,
+        join: BytecodeTypeId,
+        opaque: BytecodeTypeId,
+        generated: BytecodeTypeId,
+        cursor: BytecodeTypeId,
+        reference: BytecodeTypeId,
+    }
+
+    fn catalog_program() -> (BytecodeProgram, CatalogIds) {
+        let mut program = BytecodeProgram {
+            types: Vec::new(),
+            nominals: Vec::new(),
+            callables: Vec::new(),
+            constants: Vec::new(),
+            functions: Vec::new(),
+        };
+        let unit = push_type(
+            &mut program,
+            "Unit",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Unit),
+        );
+        let never = push_type(
+            &mut program,
+            "Never",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Never),
+        );
+        let int = push_type(
+            &mut program,
+            "Int",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Int),
+        );
+        let int8 = push_type(
+            &mut program,
+            "Int8",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Int8),
+        );
+        let bool = push_type(
+            &mut program,
+            "Bool",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Bool),
+        );
+        let float = push_type(
+            &mut program,
+            "Float",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Float),
+        );
+        let char = push_type(
+            &mut program,
+            "Char",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Char),
+        );
+        let string = push_type(
+            &mut program,
+            "String",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::String),
+        );
+        let parameter = push_type(&mut program, "$0", BytecodeTypeKind::GenericParameter(0));
+        program.nominals.push(BytecodeNominal {
+            name: "Wrapper".into(),
+            identity: "test::Wrapper".into(),
+            generic_arity: 1,
+            shape: BytecodeNominalShape::Newtype {
+                underlying: parameter,
+            },
+        });
+        program.nominals.push(BytecodeNominal {
+            name: "Record".into(),
+            identity: "test::Record".into(),
+            generic_arity: 0,
+            shape: BytecodeNominalShape::Record {
+                fields: vec![
+                    BytecodeField { member: 0, ty: int },
+                    BytecodeField {
+                        member: 1,
+                        ty: string,
+                    },
+                ],
+            },
+        });
+        program.nominals.push(BytecodeNominal {
+            name: "Choice".into(),
+            identity: "test::Choice".into(),
+            generic_arity: 0,
+            shape: BytecodeNominalShape::Enum {
+                variants: vec![
+                    BytecodeVariant {
+                        member: 0,
+                        payload: BytecodeVariantPayload::Unit,
+                    },
+                    BytecodeVariant {
+                        member: 1,
+                        payload: BytecodeVariantPayload::Tuple(vec![int]),
+                    },
+                    BytecodeVariant {
+                        member: 2,
+                        payload: BytecodeVariantPayload::Record(vec![BytecodeField {
+                            member: 0,
+                            ty: string,
+                        }]),
+                    },
+                ],
+            },
+        });
+        let wrapper = push_type(
+            &mut program,
+            "Wrapper[Int]",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(BytecodeNominalId::new(0)),
+                identity: "test::Wrapper".into(),
+                arguments: vec![int],
+            },
+        );
+        let record = push_type(
+            &mut program,
+            "Record",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(BytecodeNominalId::new(1)),
+                identity: "test::Record".into(),
+                arguments: Vec::new(),
+            },
+        );
+        let choice = push_type(
+            &mut program,
+            "Choice",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(BytecodeNominalId::new(2)),
+                identity: "test::Choice".into(),
+                arguments: Vec::new(),
+            },
+        );
+        let tuple = push_type(
+            &mut program,
+            "(Int, String)",
+            BytecodeTypeKind::Tuple(vec![int, string]),
+        );
+        let function = push_type(
+            &mut program,
+            "fn(Int)",
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: false,
+                is_unsafe: false,
+                parameters: vec![BytecodeFunctionParameter {
+                    mode: BytecodeParameterMode::Value,
+                    ty: int,
+                }],
+                variadic: None,
+                outcome: unit,
+            }),
+        );
+        let option = push_type(&mut program, "Int?", BytecodeTypeKind::Option(int));
+        let result = push_type(
+            &mut program,
+            "Int ! String",
+            BytecodeTypeKind::Result {
+                success: int,
+                error: string,
+            },
+        );
+        let union = push_type(
+            &mut program,
+            "Int | String",
+            BytecodeTypeKind::Union(vec![int, string]),
+        );
+        let array = push_type(
+            &mut program,
+            "Array[Int]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Array,
+                arguments: vec![int],
+            },
+        );
+        let map = push_type(
+            &mut program,
+            "Map[String, Int]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Map,
+                arguments: vec![string, int],
+            },
+        );
+        let set = push_type(
+            &mut program,
+            "Set[String]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Set,
+                arguments: vec![string],
+            },
+        );
+        let range = push_type(
+            &mut program,
+            "Range[Int]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Range,
+                arguments: vec![int],
+            },
+        );
+        let numeric_error = push_type(
+            &mut program,
+            "NumericConversionError",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::NumericConversionError,
+                arguments: Vec::new(),
+            },
+        );
+        let join = push_type(
+            &mut program,
+            "Join[Int, String]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Join,
+                arguments: vec![int, string],
+            },
+        );
+        let opaque = push_type(
+            &mut program,
+            "opaque",
+            BytecodeTypeKind::OpaqueResult {
+                identity: "test::opaque".into(),
+                arguments: Vec::new(),
+                witness: int,
+                capabilities: BytecodeCapabilitySet {
+                    discard: true,
+                    ..BytecodeCapabilitySet::default()
+                },
+            },
+        );
+        let generated = push_type(
+            &mut program,
+            "generated",
+            BytecodeTypeKind::Generated {
+                identity: "test::generated".into(),
+                arguments: Vec::new(),
+            },
+        );
+        let cursor = push_type(
+            &mut program,
+            "Cursor[Array[Int]]",
+            BytecodeTypeKind::Cursor {
+                mode: BytecodeCursorMode::Ref,
+                collection: array,
+            },
+        );
+        let reference = push_type(
+            &mut program,
+            "Ref[Int]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Ref,
+                arguments: vec![int],
+            },
+        );
+        program.callables.push(BytecodeCallable {
+            name: "consume".into(),
+            generic_arity: 0,
+            parameters: vec![BytecodeParameter {
+                mode: BytecodeParameterMode::Value,
+                ty: int,
+                variadic_element: None,
+                receiver: false,
+            }],
+            outcome: unit,
+            function_type: function,
+            implementation: None,
+            closure: None,
+        });
+        (
+            program,
+            CatalogIds {
+                unit,
+                never,
+                bool,
+                int,
+                int8,
+                float,
+                char,
+                string,
+                parameter,
+                wrapper,
+                record,
+                choice,
+                tuple,
+                function,
+                option,
+                result,
+                union,
+                array,
+                map,
+                set,
+                range,
+                numeric_error,
+                join,
+                opaque,
+                generated,
+                cursor,
+                reference,
+            },
+        )
+    }
+
+    fn assert_invariant(result: Result<(), BytecodeVerificationError>, expected: &str) {
+        let error = result.unwrap_err();
+        assert!(
+            error.message().contains(expected),
+            "expected `{expected}`, got `{error}`"
+        );
+    }
+
+    fn projection_function(program: &BytecodeProgram, ids: CatalogIds) -> BytecodeFunction {
+        let span = BytecodeSpan {
+            file: 0,
+            start: 0,
+            end: 0,
+        };
+        let slot_types = [
+            ids.unit,
+            ids.int,
+            ids.bool,
+            ids.string,
+            ids.wrapper,
+            ids.record,
+            ids.choice,
+            ids.tuple,
+            ids.option,
+            ids.result,
+            ids.union,
+            ids.array,
+            ids.map,
+            ids.set,
+            ids.range,
+            ids.cursor,
+            ids.reference,
+            ids.int,
+            ids.generated,
+        ];
+        BytecodeFunction {
+            callable: BytecodeCallableId::new(0),
+            source: span,
+            types: (0..program.types.len())
+                .map(|index| BytecodeTypeId::new(index as u32))
+                .collect(),
+            spans: vec![span],
+            slots: slot_types
+                .into_iter()
+                .enumerate()
+                .map(|(index, ty)| BytecodeSlot {
+                    ty,
+                    span: BytecodeSpanId::new(0),
+                    kind: if index == 0 {
+                        BytecodeSlotKind::Return
+                    } else {
+                        BytecodeSlotKind::Temporary
+                    },
+                })
+                .collect(),
+            loans: Vec::new(),
+            parameters: Vec::new(),
+            return_slot: BytecodeSlotId::new(0),
+            entry: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(1),
+            blocks: Vec::new(),
+        }
+    }
+
+    fn projected_place(
+        slot: u32,
+        ty: BytecodeTypeId,
+        kind: BytecodeProjectionKind,
+    ) -> BytecodePlace {
+        BytecodePlace {
+            slot: BytecodeSlotId::new(slot),
+            ty,
+            projections: vec![BytecodeProjection { ty, kind }],
+            source_loan: None,
+        }
+    }
+
+    fn slot_place(slot: u32, ty: BytecodeTypeId) -> BytecodePlace {
+        BytecodePlace {
+            slot: BytecodeSlotId::new(slot),
+            ty,
+            projections: Vec::new(),
+            source_loan: None,
+        }
+    }
+
+    #[test]
+    fn place_projection_matrix_covers_every_closed_projection_shape() {
+        let (mut program, ids) = catalog_program();
+        program.callables.push(BytecodeCallable {
+            name: "closure".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: ids.int,
+            function_type: ids.function,
+            implementation: None,
+            closure: Some(BytecodeClosure {
+                environment: ids.generated,
+                captures: vec![ids.int],
+                protocols: BytecodeClosureProtocols {
+                    call: true,
+                    call_mut: false,
+                    call_once: true,
+                },
+            }),
+        });
+        let mut function = projection_function(&program, ids);
+        let verifier = verifier(&program);
+        verifier.verify_types().unwrap();
+        verifier
+            .capabilities
+            .set(CapabilityAnalysis::new(&program).unwrap())
+            .unwrap();
+
+        let valid = [
+            projected_place(
+                18,
+                ids.int,
+                BytecodeProjectionKind::ClosureCapture {
+                    callable: BytecodeCallableId::new(1),
+                    index: 0,
+                },
+            ),
+            projected_place(5, ids.int, BytecodeProjectionKind::Field(0)),
+            projected_place(7, ids.int, BytecodeProjectionKind::TupleField(0)),
+            projected_place(4, ids.int, BytecodeProjectionKind::NewtypeValue),
+            projected_place(16, ids.int, BytecodeProjectionKind::RefValue),
+            projected_place(
+                6,
+                ids.int,
+                BytecodeProjectionKind::VariantTuple {
+                    variant: 1,
+                    index: 0,
+                },
+            ),
+            projected_place(
+                6,
+                ids.string,
+                BytecodeProjectionKind::VariantField {
+                    variant: 2,
+                    field: 0,
+                },
+            ),
+            projected_place(8, ids.int, BytecodeProjectionKind::OptionValue),
+            projected_place(9, ids.int, BytecodeProjectionKind::ResultOkValue),
+            projected_place(9, ids.string, BytecodeProjectionKind::ResultErrValue),
+            projected_place(10, ids.int, BytecodeProjectionKind::UnionValue(ids.int)),
+            projected_place(11, ids.int, BytecodeProjectionKind::ArrayPatternIndex(0)),
+            projected_place(
+                11,
+                ids.array,
+                BytecodeProjectionKind::ArrayPatternRest {
+                    start: 1,
+                    suffix: 1,
+                },
+            ),
+            projected_place(15, ids.array, BytecodeProjectionKind::IteratorSource),
+            projected_place(
+                11,
+                ids.int,
+                BytecodeProjectionKind::Index {
+                    index: BytecodeSlotId::new(17),
+                    access: BytecodeIndexAccess::Array,
+                },
+            ),
+            projected_place(
+                12,
+                ids.option,
+                BytecodeProjectionKind::Index {
+                    index: BytecodeSlotId::new(3),
+                    access: BytecodeIndexAccess::MapLookup,
+                },
+            ),
+            projected_place(
+                12,
+                ids.int,
+                BytecodeProjectionKind::Index {
+                    index: BytecodeSlotId::new(3),
+                    access: BytecodeIndexAccess::MapEntry,
+                },
+            ),
+            projected_place(
+                11,
+                ids.array,
+                BytecodeProjectionKind::Slice {
+                    start: Some(BytecodeSlotId::new(17)),
+                    end: None,
+                    step: Some(BytecodeSlotId::new(1)),
+                },
+            ),
+        ];
+        for place in valid {
+            verifier
+                .verify_place(&function, &place, "projection")
+                .unwrap();
+        }
+
+        let region = BytecodeLoanId::new(0);
+        function.loans.push(BytecodeLoan {
+            kind: BytecodeLoanKind::Region,
+            mode: BytecodeParameterMode::Ref,
+            place: BytecodePlace {
+                slot: BytecodeSlotId::new(11),
+                ty: ids.array,
+                projections: Vec::new(),
+                source_loan: None,
+            },
+        });
+        verifier
+            .verify_place(
+                &function,
+                &BytecodePlace {
+                    slot: BytecodeSlotId::new(11),
+                    ty: ids.array,
+                    projections: Vec::new(),
+                    source_loan: Some(region),
+                },
+                "projection",
+            )
+            .unwrap();
+
+        let invalid = [
+            projected_place(1, ids.int, BytecodeProjectionKind::Field(0)),
+            projected_place(7, ids.int, BytecodeProjectionKind::TupleField(99)),
+            projected_place(5, ids.int, BytecodeProjectionKind::NewtypeValue),
+            projected_place(1, ids.int, BytecodeProjectionKind::RefValue),
+            projected_place(
+                6,
+                ids.int,
+                BytecodeProjectionKind::VariantTuple {
+                    variant: 0,
+                    index: 0,
+                },
+            ),
+            projected_place(
+                6,
+                ids.string,
+                BytecodeProjectionKind::VariantField {
+                    variant: 1,
+                    field: 0,
+                },
+            ),
+            projected_place(1, ids.int, BytecodeProjectionKind::OptionValue),
+            projected_place(1, ids.int, BytecodeProjectionKind::ResultOkValue),
+            projected_place(1, ids.string, BytecodeProjectionKind::ResultErrValue),
+            projected_place(10, ids.bool, BytecodeProjectionKind::UnionValue(ids.bool)),
+            projected_place(
+                11,
+                ids.array,
+                BytecodeProjectionKind::ArrayPatternRest {
+                    start: u32::MAX,
+                    suffix: 1,
+                },
+            ),
+            projected_place(
+                11,
+                ids.int,
+                BytecodeProjectionKind::IteratorElement {
+                    index: BytecodeSlotId::new(17),
+                },
+            ),
+            projected_place(11, ids.array, BytecodeProjectionKind::IteratorSource),
+            projected_place(
+                11,
+                ids.int,
+                BytecodeProjectionKind::Index {
+                    index: BytecodeSlotId::new(17),
+                    access: BytecodeIndexAccess::String,
+                },
+            ),
+            projected_place(
+                11,
+                ids.array,
+                BytecodeProjectionKind::Slice {
+                    start: Some(BytecodeSlotId::new(2)),
+                    end: None,
+                    step: None,
+                },
+            ),
+        ];
+        for place in invalid {
+            let error = verifier
+                .verify_place(&function, &place, "projection")
+                .unwrap_err();
+            assert_eq!(
+                error.context(),
+                "projection",
+                "unexpected error boundary: {error}"
+            );
+        }
+
+        function.loans[0].kind = BytecodeLoanKind::CallLocal;
+        assert_invariant(
+            verifier.verify_place(
+                &function,
+                &BytecodePlace {
+                    slot: BytecodeSlotId::new(11),
+                    ty: ids.array,
+                    projections: Vec::new(),
+                    source_loan: Some(region),
+                },
+                "projection",
+            ),
+            "place source is not a region loan",
+        );
+        function.loans[0].kind = BytecodeLoanKind::Region;
+        assert_invariant(
+            verifier.verify_place(
+                &function,
+                &BytecodePlace {
+                    slot: BytecodeSlotId::new(12),
+                    ty: ids.map,
+                    projections: Vec::new(),
+                    source_loan: Some(region),
+                },
+                "projection",
+            ),
+            "escapes the source region",
+        );
+    }
+
+    #[test]
+    fn operand_matrix_covers_immediates_places_loans_and_function_values() {
+        let (mut program, ids) = catalog_program();
+        program.constants.push(BytecodeNamedConstant {
+            name: "answer".into(),
+            value: BytecodeConstantValue {
+                ty: ids.int,
+                kind: BytecodeConstantValueKind::Integer(42),
+            },
+        });
+        program.callables.push(BytecodeCallable {
+            name: "closure".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: ids.int,
+            function_type: ids.function,
+            implementation: None,
+            closure: Some(BytecodeClosure {
+                environment: ids.generated,
+                captures: vec![ids.int],
+                protocols: BytecodeClosureProtocols {
+                    call: true,
+                    call_mut: false,
+                    call_once: true,
+                },
+            }),
+        });
+        let mut function = projection_function(&program, ids);
+        function.loans.extend([
+            BytecodeLoan {
+                kind: BytecodeLoanKind::CallLocal,
+                mode: BytecodeParameterMode::Ref,
+                place: slot_place(1, ids.int),
+            },
+            BytecodeLoan {
+                kind: BytecodeLoanKind::Region,
+                mode: BytecodeParameterMode::Ref,
+                place: slot_place(1, ids.int),
+            },
+        ]);
+        let verifier = verifier(&program);
+        verifier
+            .capabilities
+            .set(CapabilityAnalysis::new(&program).unwrap())
+            .unwrap();
+
+        let valid = [
+            BytecodeOperand {
+                ty: ids.unit,
+                kind: BytecodeOperandKind::Constant(BytecodeConstant::Unit),
+            },
+            BytecodeOperand {
+                ty: ids.bool,
+                kind: BytecodeOperandKind::Constant(BytecodeConstant::Bool(true)),
+            },
+            BytecodeOperand {
+                ty: ids.int,
+                kind: BytecodeOperandKind::Constant(BytecodeConstant::Integer("42".into())),
+            },
+            BytecodeOperand {
+                ty: ids.float,
+                kind: BytecodeOperandKind::Constant(BytecodeConstant::Float("1.5".into())),
+            },
+            BytecodeOperand {
+                ty: ids.char,
+                kind: BytecodeOperandKind::Constant(BytecodeConstant::Char("'x'".into())),
+            },
+            BytecodeOperand {
+                ty: ids.string,
+                kind: BytecodeOperandKind::Constant(BytecodeConstant::String("\"text\"".into())),
+            },
+            BytecodeOperand {
+                ty: ids.int,
+                kind: BytecodeOperandKind::Constant(BytecodeConstant::Named(
+                    BytecodeConstantId::new(0),
+                )),
+            },
+            BytecodeOperand {
+                ty: ids.int,
+                kind: BytecodeOperandKind::Copy(slot_place(1, ids.int)),
+            },
+            BytecodeOperand {
+                ty: ids.int,
+                kind: BytecodeOperandKind::Move(slot_place(1, ids.int)),
+            },
+            BytecodeOperand {
+                ty: ids.int,
+                kind: BytecodeOperandKind::Borrow(slot_place(1, ids.int)),
+            },
+            BytecodeOperand {
+                ty: ids.int,
+                kind: BytecodeOperandKind::Loan(BytecodeLoanId::new(0)),
+            },
+            BytecodeOperand {
+                ty: ids.function,
+                kind: BytecodeOperandKind::Function {
+                    callable: BytecodeCallableId::new(0),
+                    arguments: Vec::new(),
+                },
+            },
+        ];
+        for operand in valid {
+            verifier
+                .verify_operand(&function, &operand, "operand")
+                .unwrap();
+        }
+
+        let invalid = [
+            (
+                BytecodeOperand {
+                    ty: ids.array,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::Integer("1".into())),
+                },
+                "integer constant has a non-scalar type",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.int,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::Integer("0xgg".into())),
+                },
+                "integer constant is malformed",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.int8,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::Integer("128".into())),
+                },
+                "exceeds",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.array,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::Float("1.0".into())),
+                },
+                "float constant has a non-scalar type",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.int,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::Float("1.0".into())),
+                },
+                "float constant has a non-float type",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.float,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::Float("1.0f32".into())),
+                },
+                "float constant is malformed",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.int,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::Char("'x'".into())),
+                },
+                "character constant has a non-Char type",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.char,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::Char("'xy'".into())),
+                },
+                "character constant is malformed",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.int,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::String("\"x\"".into())),
+                },
+                "string constant has a non-String type",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.string,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::String(
+                        "\"unterminated".into(),
+                    )),
+                },
+                "string constant is malformed",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.int,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::Named(
+                        BytecodeConstantId::new(99),
+                    )),
+                },
+                "unknown constant",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.bool,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::Named(
+                        BytecodeConstantId::new(0),
+                    )),
+                },
+                "named constant operand has the wrong type",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.int,
+                    kind: BytecodeOperandKind::Constant(BytecodeConstant::Unit),
+                },
+                "constant kind does not match its type",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.bool,
+                    kind: BytecodeOperandKind::Move(slot_place(1, ids.int)),
+                },
+                "place operand changes its type",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.int,
+                    kind: BytecodeOperandKind::Loan(BytecodeLoanId::new(1)),
+                },
+                "region loan cannot be consumed",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.bool,
+                    kind: BytecodeOperandKind::Loan(BytecodeLoanId::new(0)),
+                },
+                "loan operand changes its reserved place type",
+            ),
+            (
+                BytecodeOperand {
+                    ty: ids.function,
+                    kind: BytecodeOperandKind::Function {
+                        callable: BytecodeCallableId::new(1),
+                        arguments: Vec::new(),
+                    },
+                },
+                "function operand does not match",
+            ),
+        ];
+        for (operand, expected) in invalid {
+            assert_invariant(
+                verifier.verify_operand(&function, &operand, "operand"),
+                expected,
+            );
+        }
+
+        let moved_ref = BytecodeOperand {
+            ty: ids.int,
+            kind: BytecodeOperandKind::Move(projected_place(
+                16,
+                ids.int,
+                BytecodeProjectionKind::RefValue,
+            )),
+        };
+        assert_invariant(
+            verifier.verify_operand(&function, &moved_ref, "operand"),
+            "cannot be moved out",
+        );
+    }
+
+    #[test]
+    fn rvalue_matrix_covers_every_closed_value_constructor_and_observation() {
+        let (mut program, ids) = catalog_program();
+        program.callables.push(BytecodeCallable {
+            name: "closure".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: ids.int,
+            function_type: ids.function,
+            implementation: None,
+            closure: Some(BytecodeClosure {
+                environment: ids.generated,
+                captures: vec![ids.int],
+                protocols: BytecodeClosureProtocols {
+                    call: true,
+                    call_mut: false,
+                    call_once: true,
+                },
+            }),
+        });
+        let mut function = projection_function(&program, ids);
+        function.loans.push(BytecodeLoan {
+            kind: BytecodeLoanKind::Region,
+            mode: BytecodeParameterMode::Var,
+            place: slot_place(12, ids.map),
+        });
+        let verifier = verifier(&program);
+        verifier
+            .capabilities
+            .set(CapabilityAnalysis::new(&program).unwrap())
+            .unwrap();
+
+        let integer = || BytecodeOperand {
+            ty: ids.int,
+            kind: BytecodeOperandKind::Constant(BytecodeConstant::Integer("1".into())),
+        };
+        let boolean = || BytecodeOperand {
+            ty: ids.bool,
+            kind: BytecodeOperandKind::Constant(BytecodeConstant::Bool(true)),
+        };
+        let string = || BytecodeOperand {
+            ty: ids.string,
+            kind: BytecodeOperandKind::Constant(BytecodeConstant::String("\"text\"".into())),
+        };
+        let character = || BytecodeOperand {
+            ty: ids.char,
+            kind: BytecodeOperandKind::Constant(BytecodeConstant::Char("'x'".into())),
+        };
+        let move_slot = |slot, ty| BytecodeOperand {
+            ty,
+            kind: BytecodeOperandKind::Move(slot_place(slot, ty)),
+        };
+
+        let valid = vec![
+            BytecodeRvalue {
+                ty: ids.int,
+                kind: BytecodeRvalueKind::Use(integer()),
+            },
+            BytecodeRvalue {
+                ty: ids.bool,
+                kind: BytecodeRvalueKind::Prefix {
+                    operator: BytecodePrefixOperator::LogicalNot,
+                    operand: boolean(),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.bool,
+                kind: BytecodeRvalueKind::Binary {
+                    operator: BytecodeBinaryOperator::Equal,
+                    left: integer(),
+                    right: integer(),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.tuple,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::Tuple,
+                    values: vec![integer(), string()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.array,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::Array,
+                    values: vec![integer(), integer()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.set,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::Set,
+                    values: vec![string()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.generated,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::Closure {
+                        callable: BytecodeCallableId::new(1),
+                        captures: vec![ids.int],
+                    },
+                    values: vec![integer()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.wrapper,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::Newtype {
+                        nominal: BytecodeNominalId::new(0),
+                    },
+                    values: vec![integer()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.reference,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::Ref,
+                    values: vec![integer()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.record,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::Record {
+                        nominal: BytecodeNominalId::new(1),
+                        fields: vec![0, 1],
+                    },
+                    values: vec![integer(), string()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.choice,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::Variant {
+                        variant: 0,
+                        fields: Vec::new(),
+                    },
+                    values: Vec::new(),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.choice,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::Variant {
+                        variant: 1,
+                        fields: vec![None],
+                    },
+                    values: vec![integer()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.choice,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::Variant {
+                        variant: 2,
+                        fields: vec![Some(0)],
+                    },
+                    values: vec![string()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.numeric_error,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::Variant {
+                        variant: BytecodeNumericConversionError::OutOfRange.index(),
+                        fields: Vec::new(),
+                    },
+                    values: Vec::new(),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.option,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::OptionNone,
+                    values: Vec::new(),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.option,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::OptionSome,
+                    values: vec![integer()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.result,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::ResultOk,
+                    values: vec![integer()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.result,
+                kind: BytecodeRvalueKind::Construct {
+                    shape: BytecodeAggregateKind::ResultErr,
+                    values: vec![string()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.record,
+                kind: BytecodeRvalueKind::RecordUpdate {
+                    base: move_slot(5, ids.record),
+                    fields: vec![(0, integer())],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.option,
+                kind: BytecodeRvalueKind::Coerce {
+                    kind: BytecodeCoercion::OptionLift,
+                    value: integer(),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.union,
+                kind: BytecodeRvalueKind::Coerce {
+                    kind: BytecodeCoercion::UnionInjection,
+                    value: integer(),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.int,
+                kind: BytecodeRvalueKind::NumericConversion {
+                    target: BytecodeScalarType::Int,
+                    conversion: BytecodeNumericConversion::Identity,
+                    value: integer(),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.range,
+                kind: BytecodeRvalueKind::Range {
+                    kind: BytecodeRangeKind::Inclusive,
+                    start: integer(),
+                    end: integer(),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.bool,
+                kind: BytecodeRvalueKind::Contains {
+                    kind: BytecodeContainmentKind::Array,
+                    item: integer(),
+                    container: move_slot(11, ids.array),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.bool,
+                kind: BytecodeRvalueKind::Contains {
+                    kind: BytecodeContainmentKind::MapKey,
+                    item: string(),
+                    container: move_slot(12, ids.map),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.bool,
+                kind: BytecodeRvalueKind::Contains {
+                    kind: BytecodeContainmentKind::Set,
+                    item: string(),
+                    container: move_slot(13, ids.set),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.bool,
+                kind: BytecodeRvalueKind::Contains {
+                    kind: BytecodeContainmentKind::Range,
+                    item: integer(),
+                    container: move_slot(14, ids.range),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.bool,
+                kind: BytecodeRvalueKind::Contains {
+                    kind: BytecodeContainmentKind::StringChar,
+                    item: character(),
+                    container: string(),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.option,
+                kind: BytecodeRvalueKind::MapRemove {
+                    map: BytecodePlace {
+                        slot: BytecodeSlotId::new(12),
+                        ty: ids.map,
+                        projections: Vec::new(),
+                        source_loan: Some(BytecodeLoanId::new(0)),
+                    },
+                    key: string(),
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.string,
+                kind: BytecodeRvalueKind::Interpolate {
+                    segments: vec!["before".into(), "after".into()],
+                    values: vec![string()],
+                },
+            },
+            BytecodeRvalue {
+                ty: ids.int,
+                kind: BytecodeRvalueKind::Length(string()),
+            },
+            BytecodeRvalue {
+                ty: ids.int,
+                kind: BytecodeRvalueKind::Length(move_slot(11, ids.array)),
+            },
+            BytecodeRvalue {
+                ty: ids.cursor,
+                kind: BytecodeRvalueKind::IteratorState(BytecodeOperand {
+                    ty: ids.array,
+                    kind: BytecodeOperandKind::Borrow(slot_place(11, ids.array)),
+                }),
+            },
+        ];
+        for value in valid {
+            verifier.verify_rvalue(&function, &value, "rvalue").unwrap();
+        }
+
+        let invalid = [
+            (
+                BytecodeRvalue {
+                    ty: ids.int,
+                    kind: BytecodeRvalueKind::Use(BytecodeOperand {
+                        ty: ids.int,
+                        kind: BytecodeOperandKind::Borrow(slot_place(1, ids.int)),
+                    }),
+                },
+                "borrow escapes",
+            ),
+            (
+                BytecodeRvalue {
+                    ty: ids.bool,
+                    kind: BytecodeRvalueKind::Use(integer()),
+                },
+                "rvalue operands",
+            ),
+            (
+                BytecodeRvalue {
+                    ty: ids.int,
+                    kind: BytecodeRvalueKind::Prefix {
+                        operator: BytecodePrefixOperator::Negate,
+                        operand: integer(),
+                    },
+                },
+                "potentially panicking prefix",
+            ),
+            (
+                BytecodeRvalue {
+                    ty: ids.int,
+                    kind: BytecodeRvalueKind::Binary {
+                        operator: BytecodeBinaryOperator::Divide,
+                        left: integer(),
+                        right: integer(),
+                    },
+                },
+                "potentially panicking binary",
+            ),
+            (
+                BytecodeRvalue {
+                    ty: ids.array,
+                    kind: BytecodeRvalueKind::Construct {
+                        shape: BytecodeAggregateKind::Array,
+                        values: vec![string()],
+                    },
+                },
+                "rvalue operands",
+            ),
+            (
+                BytecodeRvalue {
+                    ty: ids.record,
+                    kind: BytecodeRvalueKind::RecordUpdate {
+                        base: move_slot(5, ids.record),
+                        fields: vec![(0, integer()), (0, integer())],
+                    },
+                },
+                "rvalue operands",
+            ),
+            (
+                BytecodeRvalue {
+                    ty: ids.int,
+                    kind: BytecodeRvalueKind::Coerce {
+                        kind: BytecodeCoercion::Exact,
+                        value: integer(),
+                    },
+                },
+                "rvalue operands",
+            ),
+            (
+                BytecodeRvalue {
+                    ty: ids.range,
+                    kind: BytecodeRvalueKind::Range {
+                        kind: BytecodeRangeKind::Exclusive,
+                        start: integer(),
+                        end: string(),
+                    },
+                },
+                "rvalue operands",
+            ),
+            (
+                BytecodeRvalue {
+                    ty: ids.option,
+                    kind: BytecodeRvalueKind::MapRemove {
+                        map: slot_place(12, ids.map),
+                        key: string(),
+                    },
+                },
+                "rvalue operands",
+            ),
+            (
+                BytecodeRvalue {
+                    ty: ids.string,
+                    kind: BytecodeRvalueKind::Interpolate {
+                        segments: vec!["only".into()],
+                        values: vec![string()],
+                    },
+                },
+                "rvalue operands",
+            ),
+            (
+                BytecodeRvalue {
+                    ty: ids.int,
+                    kind: BytecodeRvalueKind::Length(integer()),
+                },
+                "rvalue operands",
+            ),
+            (
+                BytecodeRvalue {
+                    ty: ids.cursor,
+                    kind: BytecodeRvalueKind::IteratorState(move_slot(11, ids.array)),
+                },
+                "rvalue operands",
+            ),
+        ];
+        for (value, expected) in invalid {
+            assert_invariant(
+                verifier.verify_rvalue(&function, &value, "rvalue"),
+                expected,
+            );
+        }
+    }
+
+    #[test]
+    fn operation_matrix_covers_fallible_calls_collections_and_bootstrap_hosts() {
+        let (mut program, ids) = catalog_program();
+        let array_string = push_type(
+            &mut program,
+            "Array[String]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Array,
+                arguments: vec![ids.string],
+            },
+        );
+        let command = push_type(
+            &mut program,
+            "Command",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Command,
+                arguments: Vec::new(),
+            },
+        );
+        let pipeline = push_type(
+            &mut program,
+            "Pipeline",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Pipeline,
+                arguments: Vec::new(),
+            },
+        );
+        let process_output = push_type(
+            &mut program,
+            "ProcessOutput",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::ProcessOutput,
+                arguments: Vec::new(),
+            },
+        );
+        let bytes = push_type(
+            &mut program,
+            "Bytes",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Bytes,
+                arguments: Vec::new(),
+            },
+        );
+        let exit_status = push_type(
+            &mut program,
+            "ExitStatus",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::ExitStatus,
+                arguments: Vec::new(),
+            },
+        );
+        let statuses = push_type(
+            &mut program,
+            "Array[ExitStatus]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Array,
+                arguments: vec![exit_status],
+            },
+        );
+        let pointer_int = push_type(
+            &mut program,
+            "Pointer[Int]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Pointer,
+                arguments: vec![ids.int],
+            },
+        );
+        let pointer_string = push_type(
+            &mut program,
+            "Pointer[String]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Pointer,
+                arguments: vec![ids.string],
+            },
+        );
+        let uint64 = push_type(
+            &mut program,
+            "UInt64",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::UInt64),
+        );
+        let mut function = projection_function(&program, ids);
+        function.slots.extend(
+            [
+                array_string,
+                command,
+                pipeline,
+                process_output,
+                bytes,
+                exit_status,
+                statuses,
+                pointer_int,
+                pointer_string,
+                uint64,
+            ]
+            .into_iter()
+            .map(|ty| BytecodeSlot {
+                ty,
+                span: BytecodeSpanId::new(0),
+                kind: BytecodeSlotKind::Temporary,
+            }),
+        );
+        function.loans.push(BytecodeLoan {
+            kind: BytecodeLoanKind::CallLocal,
+            mode: BytecodeParameterMode::Ref,
+            place: slot_place(1, ids.int),
+        });
+        let verifier = verifier(&program);
+        verifier
+            .capabilities
+            .set(CapabilityAnalysis::new(&program).unwrap())
+            .unwrap();
+
+        let integer = || BytecodeOperand {
+            ty: ids.int,
+            kind: BytecodeOperandKind::Constant(BytecodeConstant::Integer("1".into())),
+        };
+        let boolean = || BytecodeOperand {
+            ty: ids.bool,
+            kind: BytecodeOperandKind::Constant(BytecodeConstant::Bool(true)),
+        };
+        let string = || BytecodeOperand {
+            ty: ids.string,
+            kind: BytecodeOperandKind::Constant(BytecodeConstant::String("\"text\"".into())),
+        };
+        let move_slot = |slot, ty| BytecodeOperand {
+            ty,
+            kind: BytecodeOperandKind::Move(slot_place(slot, ty)),
+        };
+        let borrow_slot = |slot, ty| BytecodeOperand {
+            ty,
+            kind: BytecodeOperandKind::Borrow(slot_place(slot, ty)),
+        };
+        let call = || BytecodeOperation {
+            ty: ids.unit,
+            kind: BytecodeOperationKind::Call {
+                callee: BytecodeOperand {
+                    ty: ids.function,
+                    kind: BytecodeOperandKind::Function {
+                        callable: BytecodeCallableId::new(0),
+                        arguments: Vec::new(),
+                    },
+                },
+                arguments: vec![BytecodeCallArgument {
+                    mode: BytecodeParameterMode::Value,
+                    target: BytecodeCallArgumentTarget::Fixed(0),
+                    value: integer(),
+                }],
+                signature: ids.function,
+                protocol: BytecodeCallProtocol::Call,
+                unsafe_call: false,
+            },
+        };
+        let host = |function, ty, arguments| BytecodeOperation {
+            ty,
+            kind: BytecodeOperationKind::BootstrapHostCall {
+                function,
+                arguments,
+            },
+        };
+
+        let valid = vec![
+            BytecodeOperation {
+                ty: ids.int,
+                kind: BytecodeOperationKind::CheckedPrefix {
+                    operator: BytecodePrefixOperator::Negate,
+                    operand: integer(),
+                },
+            },
+            BytecodeOperation {
+                ty: ids.int,
+                kind: BytecodeOperationKind::CheckedBinary {
+                    operator: BytecodeBinaryOperator::Divide,
+                    left: integer(),
+                    right: integer(),
+                },
+            },
+            BytecodeOperation {
+                ty: ids.array,
+                kind: BytecodeOperationKind::ArraySequence {
+                    kind: BytecodeArraySequenceKind::Concat,
+                    array: borrow_slot(11, ids.array),
+                    argument: move_slot(11, ids.array),
+                },
+            },
+            BytecodeOperation {
+                ty: ids.array,
+                kind: BytecodeOperationKind::ArraySequence {
+                    kind: BytecodeArraySequenceKind::Repeat,
+                    array: borrow_slot(11, ids.array),
+                    argument: integer(),
+                },
+            },
+            BytecodeOperation {
+                ty: ids.map,
+                kind: BytecodeOperationKind::BuildMap {
+                    entries: vec![(string(), integer())],
+                    reject_dynamic_duplicates: true,
+                },
+            },
+            BytecodeOperation {
+                ty: ids.int,
+                kind: BytecodeOperationKind::Index {
+                    base: borrow_slot(11, ids.array),
+                    index: BytecodeOperand {
+                        ty: ids.int,
+                        kind: BytecodeOperandKind::Copy(slot_place(17, ids.int)),
+                    },
+                    access: BytecodeIndexAccess::Array,
+                    against: Vec::new(),
+                },
+            },
+            BytecodeOperation {
+                ty: ids.array,
+                kind: BytecodeOperationKind::Slice {
+                    base: borrow_slot(11, ids.array),
+                    bounds: Box::new(BytecodeSliceBounds {
+                        start: Some(BytecodeOperand {
+                            ty: ids.int,
+                            kind: BytecodeOperandKind::Copy(slot_place(17, ids.int)),
+                        }),
+                        end: None,
+                        step: None,
+                    }),
+                    against: Vec::new(),
+                },
+            },
+            call(),
+            BytecodeOperation {
+                ty: ids.string,
+                kind: BytecodeOperationKind::Display {
+                    argument: BytecodeCallArgument {
+                        mode: BytecodeParameterMode::Ref,
+                        target: BytecodeCallArgumentTarget::Receiver,
+                        value: BytecodeOperand {
+                            ty: ids.int,
+                            kind: BytecodeOperandKind::Loan(BytecodeLoanId::new(0)),
+                        },
+                    },
+                },
+            },
+            BytecodeOperation {
+                ty: ids.never,
+                kind: BytecodeOperationKind::ExplicitPanic { message: string() },
+            },
+            BytecodeOperation {
+                ty: ids.unit,
+                kind: BytecodeOperationKind::Assert {
+                    condition: boolean(),
+                    condition_repr: "condition".into(),
+                    message_parts: vec![
+                        BytecodeAssertMessagePart {
+                            value: string(),
+                            spread: false,
+                        },
+                        BytecodeAssertMessagePart {
+                            value: move_slot(19, array_string),
+                            spread: true,
+                        },
+                    ],
+                },
+            },
+            host(
+                BytecodeBootstrapHostFunction::ConsolePrint,
+                ids.unit,
+                vec![string()],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::ProcessPipe,
+                pipeline,
+                vec![move_slot(20, command), move_slot(21, pipeline)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::ProcessOutputStdout,
+                bytes,
+                vec![move_slot(22, process_output)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::ProcessOutputStderr,
+                bytes,
+                vec![move_slot(22, process_output)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::ProcessOutputStatuses,
+                statuses,
+                vec![move_slot(22, process_output)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::ExitStatusCode,
+                ids.option,
+                vec![move_slot(24, exit_status)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::ExitStatusSuccess,
+                ids.bool,
+                vec![move_slot(24, exit_status)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::PointerRead,
+                ids.int,
+                vec![move_slot(26, pointer_int)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::PointerWrite,
+                ids.unit,
+                vec![move_slot(26, pointer_int), integer()],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::PointerOffset,
+                pointer_int,
+                vec![move_slot(26, pointer_int), integer()],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::PointerCast,
+                pointer_string,
+                vec![move_slot(26, pointer_int)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::PointerAddress,
+                uint64,
+                vec![move_slot(26, pointer_int)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::PointerFromAddress,
+                pointer_int,
+                vec![move_slot(28, uint64)],
+            ),
+        ];
+        for operation in valid {
+            verifier
+                .verify_operation(
+                    &function,
+                    &operation,
+                    OperationContext::Immediate,
+                    "operation",
+                )
+                .unwrap();
+        }
+
+        let invalid = [
+            (
+                BytecodeOperation {
+                    ty: ids.map,
+                    kind: BytecodeOperationKind::BuildMap {
+                        entries: vec![(borrow_slot(3, ids.string), integer())],
+                        reject_dynamic_duplicates: false,
+                    },
+                },
+                OperationContext::Immediate,
+                "borrow escapes",
+            ),
+            (
+                BytecodeOperation {
+                    ty: ids.int,
+                    kind: BytecodeOperationKind::CheckedPrefix {
+                        operator: BytecodePrefixOperator::BitwiseNot,
+                        operand: integer(),
+                    },
+                },
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                BytecodeOperation {
+                    ty: ids.bool,
+                    kind: BytecodeOperationKind::CheckedBinary {
+                        operator: BytecodeBinaryOperator::Equal,
+                        left: integer(),
+                        right: integer(),
+                    },
+                },
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                BytecodeOperation {
+                    ty: ids.array,
+                    kind: BytecodeOperationKind::ArraySequence {
+                        kind: BytecodeArraySequenceKind::Concat,
+                        array: move_slot(11, ids.array),
+                        argument: move_slot(11, ids.array),
+                    },
+                },
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                BytecodeOperation {
+                    ty: ids.map,
+                    kind: BytecodeOperationKind::BuildMap {
+                        entries: vec![(integer(), integer())],
+                        reject_dynamic_duplicates: false,
+                    },
+                },
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (call(), OperationContext::Await, "call effects differ"),
+            (
+                BytecodeOperation {
+                    ty: ids.string,
+                    kind: BytecodeOperationKind::Display {
+                        argument: BytecodeCallArgument {
+                            mode: BytecodeParameterMode::Value,
+                            target: BytecodeCallArgumentTarget::Receiver,
+                            value: BytecodeOperand {
+                                ty: ids.int,
+                                kind: BytecodeOperandKind::Loan(BytecodeLoanId::new(0)),
+                            },
+                        },
+                    },
+                },
+                OperationContext::Immediate,
+                "borrow escapes",
+            ),
+            (
+                BytecodeOperation {
+                    ty: ids.unit,
+                    kind: BytecodeOperationKind::ExplicitPanic { message: string() },
+                },
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                BytecodeOperation {
+                    ty: ids.unit,
+                    kind: BytecodeOperationKind::Assert {
+                        condition: boolean(),
+                        condition_repr: String::new(),
+                        message_parts: Vec::new(),
+                    },
+                },
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                host(
+                    BytecodeBootstrapHostFunction::ConsolePrint,
+                    ids.unit,
+                    vec![integer()],
+                ),
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+        ];
+        for (index, (operation, operation_context, expected)) in invalid.into_iter().enumerate() {
+            let error = verifier
+                .verify_operation(&function, &operation, operation_context, "operation")
+                .unwrap_err();
+            assert!(
+                error.message().contains(expected),
+                "invalid operation case {index}: expected `{expected}`, got `{error}`"
+            );
+        }
+
+        assert_invariant(
+            verifier.verify_operation(
+                &function,
+                &BytecodeOperation {
+                    ty: ids.int,
+                    kind: BytecodeOperationKind::CheckedPrefix {
+                        operator: BytecodePrefixOperator::Negate,
+                        operand: integer(),
+                    },
+                },
+                OperationContext::Spawn,
+                "operation",
+            ),
+            "async initiation",
+        );
+    }
+
+    #[test]
+    fn type_nominal_and_callable_catalog_corruption_matrix_is_closed() {
+        let (program, ids) = catalog_program();
+        verifier(&program).verify_types().unwrap();
+        verifier(&program).verify_nominals().unwrap();
+        verifier(&program).verify_callables().unwrap();
+        verify_bytecode(&program).unwrap();
+
+        let mutate_type = |mutate: &dyn Fn(&mut BytecodeProgram), expected: &str| {
+            let mut malformed = program.clone();
+            mutate(&mut malformed);
+            assert_invariant(verifier(&malformed).verify_types(), expected);
+        };
+        mutate_type(&|program| program.types[0].name.clear(), "type name");
+        mutate_type(
+            &|program| program.types[1].name = program.types[0].name.clone(),
+            "type name",
+        );
+        mutate_type(
+            &|program| {
+                let BytecodeTypeKind::Nominal { identity, .. } =
+                    &mut program.types[ids.wrapper.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                identity.clear();
+            },
+            "nominal identity is empty",
+        );
+        mutate_type(
+            &|program| {
+                let BytecodeTypeKind::Nominal { nominal, .. } =
+                    &mut program.types[ids.wrapper.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                *nominal = Some(BytecodeNominalId::new(u32::MAX));
+            },
+            "unknown nominal",
+        );
+        mutate_type(
+            &|program| {
+                let BytecodeTypeKind::Nominal { arguments, .. } =
+                    &mut program.types[ids.wrapper.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                arguments.clear();
+            },
+            "generic arity",
+        );
+        mutate_type(
+            &|program| {
+                let BytecodeTypeKind::Tuple(items) =
+                    &mut program.types[ids.tuple.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                items.truncate(1);
+            },
+            "fewer than two",
+        );
+        mutate_type(
+            &|program| {
+                let BytecodeTypeKind::Union(members) =
+                    &mut program.types[ids.union.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                members.truncate(1);
+            },
+            "fewer than two",
+        );
+        mutate_type(
+            &|program| {
+                let BytecodeTypeKind::Union(members) =
+                    &mut program.types[ids.union.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                members.reverse();
+            },
+            "canonical order",
+        );
+        mutate_type(
+            &|program| {
+                let BytecodeTypeKind::Intrinsic { arguments, .. } =
+                    &mut program.types[ids.array.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                arguments.clear();
+            },
+            "wrong arity",
+        );
+        mutate_type(
+            &|program| {
+                let BytecodeTypeKind::OpaqueResult { identity, .. } =
+                    &mut program.types[ids.opaque.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                identity.clear();
+            },
+            "opaque result identity",
+        );
+        mutate_type(
+            &|program| {
+                let BytecodeTypeKind::Generated { identity, .. } =
+                    &mut program.types[ids.generated.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                identity.clear();
+            },
+            "generated type identity",
+        );
+        mutate_type(
+            &|program| {
+                let BytecodeTypeKind::Cursor { collection, .. } =
+                    &mut program.types[ids.cursor.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                *collection = BytecodeTypeId::new(u32::MAX);
+            },
+            "unknown type",
+        );
+
+        let mutate_nominal = |mutate: &dyn Fn(&mut BytecodeProgram), expected: &str| {
+            let mut malformed = program.clone();
+            mutate(&mut malformed);
+            assert_invariant(verifier(&malformed).verify_nominals(), expected);
+        };
+        mutate_nominal(&|program| program.nominals[0].name.clear(), "nominal name");
+        mutate_nominal(
+            &|program| program.nominals[1].identity = program.nominals[0].identity.clone(),
+            "duplicated",
+        );
+        mutate_nominal(
+            &|program| {
+                let BytecodeNominalShape::Record { fields } = &mut program.nominals[1].shape else {
+                    unreachable!()
+                };
+                fields[1].member = fields[0].member;
+            },
+            "field member is duplicated",
+        );
+        mutate_nominal(
+            &|program| {
+                let BytecodeNominalShape::Enum { variants } = &mut program.nominals[2].shape else {
+                    unreachable!()
+                };
+                variants[1].member = variants[0].member;
+            },
+            "variant member is duplicated",
+        );
+        mutate_nominal(
+            &|program| {
+                let BytecodeNominalShape::Enum { variants } = &mut program.nominals[2].shape else {
+                    unreachable!()
+                };
+                let BytecodeVariantPayload::Record(fields) = &mut variants[2].payload else {
+                    unreachable!()
+                };
+                fields.push(fields[0]);
+            },
+            "field member is duplicated",
+        );
+
+        let mutate_callable = |mutate: &dyn Fn(&mut BytecodeProgram), expected: &str| {
+            let mut malformed = program.clone();
+            mutate(&mut malformed);
+            assert_invariant(verifier(&malformed).verify_callables(), expected);
+        };
+        mutate_callable(
+            &|program| program.callables[0].name.clear(),
+            "callable name",
+        );
+        mutate_callable(
+            &|program| program.callables[0].function_type = ids.int,
+            "not a function",
+        );
+        mutate_callable(
+            &|program| program.callables[0].outcome = ids.string,
+            "outcome differs",
+        );
+        mutate_callable(
+            &|program| {
+                let mut extra = program.callables[0].parameters[0];
+                program.callables[0].parameters[0].receiver = true;
+                extra.receiver = true;
+                program.callables[0].parameters.push(extra);
+            },
+            "receiver or variadic shape",
+        );
+        mutate_callable(
+            &|program| program.callables[0].parameters[0].variadic_element = Some(ids.int),
+            "variadic element differs",
+        );
+        mutate_callable(
+            &|program| {
+                let extra = program.callables[0].parameters[0];
+                program.callables[0].parameters.push(extra);
+            },
+            "excess fixed parameters",
+        );
+        mutate_callable(
+            &|program| program.callables[0].parameters[0].mode = BytecodeParameterMode::Ref,
+            "parameter differs",
+        );
+        mutate_callable(
+            &|program| program.callables[0].parameters.clear(),
+            "function type has excess parameters",
+        );
+        mutate_callable(
+            &|program| {
+                let BytecodeTypeKind::Function(function) =
+                    &mut program.types[ids.function.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                function.is_async = true;
+                function.parameters[0].mode = BytecodeParameterMode::Mut;
+                program.callables[0].parameters[0].mode = BytecodeParameterMode::Mut;
+            },
+            "async callable has an exclusive parameter",
+        );
+        mutate_callable(
+            &|program| {
+                let BytecodeTypeKind::Function(function) =
+                    &mut program.types[ids.function.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                function.parameters[0].mode = BytecodeParameterMode::Ref;
+                program.callables[0].parameters[0].mode = BytecodeParameterMode::Ref;
+            },
+            "host callable ABI",
+        );
+        mutate_callable(
+            &|program| {
+                program.callables[0].implementation = Some(BytecodeFunctionId::new(u32::MAX))
+            },
+            "unknown function",
+        );
+    }
+
+    #[test]
+    fn constant_catalog_acceptance_and_corruption_matrix_is_closed() {
+        let (mut program, ids) = catalog_program();
+        let value = |ty, kind| BytecodeConstantValue { ty, kind };
+        let integer = || value(ids.int, BytecodeConstantValueKind::Integer(42));
+        let string = || {
+            value(
+                ids.string,
+                BytecodeConstantValueKind::String("Tondo".into()),
+            )
+        };
+
+        let constants = vec![
+            value(ids.unit, BytecodeConstantValueKind::Unit),
+            value(ids.bool, BytecodeConstantValueKind::Bool(true)),
+            integer(),
+            value(
+                ids.float,
+                BytecodeConstantValueKind::Float(1.5_f64.to_bits()),
+            ),
+            value(ids.char, BytecodeConstantValueKind::Char('T')),
+            string(),
+            value(
+                ids.function,
+                BytecodeConstantValueKind::Function {
+                    callable: BytecodeCallableId::new(0),
+                    arguments: Vec::new(),
+                },
+            ),
+            value(
+                ids.tuple,
+                BytecodeConstantValueKind::Tuple(vec![integer(), string()]),
+            ),
+            value(
+                ids.array,
+                BytecodeConstantValueKind::Array(vec![integer(), integer()]),
+            ),
+            value(
+                ids.map,
+                BytecodeConstantValueKind::Map(vec![(string(), integer())]),
+            ),
+            value(ids.set, BytecodeConstantValueKind::Set(vec![string()])),
+            value(
+                ids.wrapper,
+                BytecodeConstantValueKind::Newtype {
+                    nominal: BytecodeNominalId::new(0),
+                    value: Box::new(integer()),
+                },
+            ),
+            value(
+                ids.record,
+                BytecodeConstantValueKind::Record {
+                    nominal: BytecodeNominalId::new(1),
+                    fields: vec![(0, integer()), (1, string())],
+                },
+            ),
+            value(
+                ids.choice,
+                BytecodeConstantValueKind::Variant {
+                    variant: 0,
+                    payload: BytecodeConstantVariantValue::Unit,
+                },
+            ),
+            value(
+                ids.choice,
+                BytecodeConstantValueKind::Variant {
+                    variant: 1,
+                    payload: BytecodeConstantVariantValue::Tuple(vec![integer()]),
+                },
+            ),
+            value(
+                ids.choice,
+                BytecodeConstantValueKind::Variant {
+                    variant: 2,
+                    payload: BytecodeConstantVariantValue::Record(vec![(0, string())]),
+                },
+            ),
+            value(ids.option, BytecodeConstantValueKind::OptionNone),
+            value(
+                ids.option,
+                BytecodeConstantValueKind::OptionSome(Box::new(integer())),
+            ),
+            value(
+                ids.result,
+                BytecodeConstantValueKind::ResultOk(Box::new(integer())),
+            ),
+            value(
+                ids.result,
+                BytecodeConstantValueKind::ResultErr(Box::new(string())),
+            ),
+            value(
+                ids.range,
+                BytecodeConstantValueKind::Range {
+                    kind: BytecodeRangeKind::Inclusive,
+                    start: Box::new(integer()),
+                    end: Box::new(integer()),
+                },
+            ),
+            value(
+                ids.numeric_error,
+                BytecodeConstantValueKind::Variant {
+                    variant: BytecodeNumericConversionError::NotFinite.index(),
+                    payload: BytecodeConstantVariantValue::Unit,
+                },
+            ),
+        ];
+        program.constants = constants
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| BytecodeNamedConstant {
+                name: format!("constant-{index}"),
+                value,
+            })
+            .collect();
+        verifier(&program).verify_constants().unwrap();
+
+        let mut malformed = program.clone();
+        malformed.constants[0].name.clear();
+        assert_invariant(
+            verifier(&malformed).verify_constants(),
+            "constant name is empty",
+        );
+
+        let mut malformed = program.clone();
+        malformed.constants[1].name = malformed.constants[0].name.clone();
+        assert_invariant(verifier(&malformed).verify_constants(), "duplicated");
+
+        let rejects = |candidate: BytecodeConstantValue, expected: &str| {
+            assert_invariant(
+                verifier(&program).verify_constant_value(&candidate, "constant matrix"),
+                expected,
+            );
+        };
+        rejects(
+            value(ids.bool, BytecodeConstantValueKind::Unit),
+            "does not match",
+        );
+        rejects(
+            value(ids.int8, BytecodeConstantValueKind::Integer(128)),
+            "does not match",
+        );
+        rejects(
+            value(ids.int, BytecodeConstantValueKind::Float(1.0_f64.to_bits())),
+            "does not match",
+        );
+        rejects(
+            value(
+                ids.function,
+                BytecodeConstantValueKind::Function {
+                    callable: BytecodeCallableId::new(u32::MAX),
+                    arguments: Vec::new(),
+                },
+            ),
+            "unknown callable",
+        );
+        rejects(
+            value(
+                ids.tuple,
+                BytecodeConstantValueKind::Function {
+                    callable: BytecodeCallableId::new(0),
+                    arguments: Vec::new(),
+                },
+            ),
+            "does not match its callable",
+        );
+        rejects(
+            value(ids.tuple, BytecodeConstantValueKind::Tuple(vec![integer()])),
+            "does not match",
+        );
+        rejects(
+            value(ids.array, BytecodeConstantValueKind::Array(vec![string()])),
+            "does not match",
+        );
+        rejects(
+            value(
+                ids.map,
+                BytecodeConstantValueKind::Map(vec![(integer(), integer())]),
+            ),
+            "does not match",
+        );
+        rejects(
+            value(ids.set, BytecodeConstantValueKind::Set(vec![integer()])),
+            "does not match",
+        );
+        rejects(
+            value(
+                ids.wrapper,
+                BytecodeConstantValueKind::Newtype {
+                    nominal: BytecodeNominalId::new(1),
+                    value: Box::new(integer()),
+                },
+            ),
+            "does not match",
+        );
+        rejects(
+            value(
+                ids.record,
+                BytecodeConstantValueKind::Record {
+                    nominal: BytecodeNominalId::new(1),
+                    fields: vec![(1, integer()), (0, string())],
+                },
+            ),
+            "does not match",
+        );
+        rejects(
+            value(
+                ids.choice,
+                BytecodeConstantValueKind::Variant {
+                    variant: u32::MAX,
+                    payload: BytecodeConstantVariantValue::Unit,
+                },
+            ),
+            "does not match",
+        );
+        rejects(
+            value(
+                ids.choice,
+                BytecodeConstantValueKind::Variant {
+                    variant: 1,
+                    payload: BytecodeConstantVariantValue::Unit,
+                },
+            ),
+            "does not match",
+        );
+        rejects(
+            value(
+                ids.option,
+                BytecodeConstantValueKind::OptionSome(Box::new(string())),
+            ),
+            "does not match",
+        );
+        rejects(
+            value(
+                ids.result,
+                BytecodeConstantValueKind::ResultOk(Box::new(string())),
+            ),
+            "does not match",
+        );
+        rejects(
+            value(
+                ids.result,
+                BytecodeConstantValueKind::ResultErr(Box::new(integer())),
+            ),
+            "does not match",
+        );
+        rejects(
+            value(
+                ids.range,
+                BytecodeConstantValueKind::Range {
+                    kind: BytecodeRangeKind::Exclusive,
+                    start: Box::new(string()),
+                    end: Box::new(integer()),
+                },
+            ),
+            "does not match",
+        );
+        rejects(
+            value(
+                ids.numeric_error,
+                BytecodeConstantValueKind::Variant {
+                    variant: u32::MAX,
+                    payload: BytecodeConstantVariantValue::Unit,
+                },
+            ),
+            "does not match",
+        );
+
+        rejects(
+            value(ids.set, BytecodeConstantValueKind::Array(Vec::new())),
+            "intrinsic constructor is inconsistent",
+        );
+        let mut missing_argument = program.clone();
+        let BytecodeTypeKind::Intrinsic { arguments, .. } =
+            &mut missing_argument.types[ids.array.index() as usize].kind
+        else {
+            unreachable!()
+        };
+        arguments.clear();
+        assert_invariant(
+            verifier(&missing_argument).verify_constant_value(
+                &value(ids.array, BytecodeConstantValueKind::Array(Vec::new())),
+                "constant matrix",
+            ),
+            "intrinsic argument is absent",
+        );
+        assert_invariant(
+            verifier(&program).verify_constant_value(
+                &value(
+                    ids.int,
+                    BytecodeConstantValueKind::Newtype {
+                        nominal: BytecodeNominalId::new(0),
+                        value: Box::new(integer()),
+                    },
+                ),
+                "constant matrix",
+            ),
+            "expected a local nominal type",
+        );
+    }
+
+    #[test]
+    fn closed_analyses_and_opaque_formation_corruption_matrix_is_closed() {
+        let (program, ids) = catalog_program();
+        let all_types = (0..program.types.len())
+            .map(|index| BytecodeTypeId::new(index as u32))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            derive_copy_capabilities(&program, &all_types)
+                .unwrap()
+                .len(),
+            all_types.len()
+        );
+        assert_eq!(
+            derive_discard_capabilities(&program, &all_types)
+                .unwrap()
+                .len(),
+            all_types.len()
+        );
+        assert_eq!(
+            derive_terminal_statuses(&program, &all_types)
+                .unwrap()
+                .len(),
+            all_types.len()
+        );
+
+        let rejects = |mutate: &dyn Fn(&mut BytecodeProgram), expected: &str| {
+            let mut malformed = program.clone();
+            mutate(&mut malformed);
+            assert_invariant(verify_bytecode(&malformed), expected);
+        };
+        rejects(
+            &|program| {
+                let BytecodeTypeKind::Intrinsic { arguments, .. } =
+                    &mut program.types[ids.map.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                arguments[0] = ids.float;
+            },
+            "Map key",
+        );
+        rejects(
+            &|program| {
+                let BytecodeTypeKind::Intrinsic { arguments, .. } =
+                    &mut program.types[ids.set.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                arguments[0] = ids.function;
+            },
+            "Set key",
+        );
+        rejects(
+            &|program| {
+                program.types.push(BytecodeType {
+                    name: "Ref[Join[Int, String]]".into(),
+                    kind: BytecodeTypeKind::Intrinsic {
+                        constructor: BytecodeIntrinsicType::Ref,
+                        arguments: vec![ids.join],
+                    },
+                });
+            },
+            "Ref target",
+        );
+        rejects(
+            &|program| {
+                let BytecodeTypeKind::OpaqueResult { capabilities, .. } =
+                    &mut program.types[ids.opaque.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                capabilities.discard = false;
+            },
+            "non-normalized",
+        );
+        rejects(
+            &|program| {
+                let BytecodeTypeKind::OpaqueResult { capabilities, .. } =
+                    &mut program.types[ids.opaque.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                capabilities.key = true;
+            },
+            "non-normalized",
+        );
+        rejects(
+            &|program| {
+                let mut duplicate = program.types[ids.opaque.index() as usize].clone();
+                duplicate.name = "opaque-duplicate".into();
+                program.types.push(duplicate);
+            },
+            "family and arguments are duplicated",
+        );
+        rejects(
+            &|program| {
+                let BytecodeTypeKind::OpaqueResult { arguments, .. } =
+                    &mut program.types[ids.opaque.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                arguments.push(ids.parameter);
+            },
+            "retains a generic parameter",
+        );
+        rejects(
+            &|program| {
+                let BytecodeTypeKind::OpaqueResult { witness, .. } =
+                    &mut program.types[ids.opaque.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                *witness = ids.never;
+            },
+            "witness is Never",
+        );
+        rejects(
+            &|program| {
+                let BytecodeTypeKind::OpaqueResult { witness, .. } =
+                    &mut program.types[ids.opaque.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                *witness = ids.opaque;
+            },
+            "form a cycle",
+        );
+        rejects(
+            &|program| {
+                let BytecodeTypeKind::OpaqueResult { witness, .. } =
+                    &mut program.types[ids.opaque.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                *witness = ids.join;
+            },
+            "retains a terminal obligation",
+        );
+        rejects(
+            &|program| {
+                let BytecodeTypeKind::OpaqueResult {
+                    witness,
+                    capabilities,
+                    ..
+                } = &mut program.types[ids.opaque.index() as usize].kind
+                else {
+                    unreachable!()
+                };
+                *witness = ids.function;
+                capabilities.equatable = true;
+            },
+            "publishes Equatable",
+        );
+
+        let unknown = BytecodeTypeId::new(u32::MAX);
+        assert_invariant(
+            derive_copy_capabilities(&program, &[unknown]).map(drop),
+            "unknown type",
+        );
+        assert_invariant(
+            derive_terminal_statuses(&program, &[unknown]).map(drop),
+            "unknown type",
+        );
+    }
+
     #[test]
     fn closed_capability_matrix_covers_every_bytecode_type_family() {
         let mut program = BytecodeProgram {
@@ -12114,5 +14643,448 @@ mod tests {
             &[MovePathComponent::ArrayPatternIndex(0)],
             &static_integers,
         ));
+    }
+
+    #[test]
+    fn static_collection_relations_cover_every_closed_region_pair() {
+        use StaticCollectionRegion::{Index, PatternIndex, PatternRest, Slice};
+
+        let slice = |start, end, step| StaticSlice { start, end, step };
+        let cases = [
+            (Index(1), Index(1), StaticRegionRelation::Overlap),
+            (Index(1), Index(2), StaticRegionRelation::Disjoint),
+            (
+                PatternIndex(2),
+                PatternIndex(3),
+                StaticRegionRelation::Disjoint,
+            ),
+            (Index(2), PatternIndex(2), StaticRegionRelation::Overlap),
+            (
+                Index(3),
+                Slice(slice(Some(1), Some(6), Some(2))),
+                StaticRegionRelation::Overlap,
+            ),
+            (
+                PatternIndex(2),
+                Slice(slice(Some(1), Some(6), Some(2))),
+                StaticRegionRelation::Disjoint,
+            ),
+            (
+                Slice(slice(None, Some(3), None)),
+                Slice(slice(Some(3), None, None)),
+                StaticRegionRelation::Disjoint,
+            ),
+            (
+                Slice(slice(Some(0), Some(10), Some(2))),
+                Slice(slice(Some(1), Some(10), Some(2))),
+                StaticRegionRelation::Disjoint,
+            ),
+            (
+                Slice(slice(Some(0), Some(10), Some(2))),
+                Slice(slice(Some(2), Some(10), Some(4))),
+                StaticRegionRelation::Runtime,
+            ),
+            (
+                Slice(slice(Some(0), Some(0), None)),
+                Slice(slice(None, None, None)),
+                StaticRegionRelation::Disjoint,
+            ),
+            (
+                PatternIndex(0),
+                PatternRest {
+                    start: 1,
+                    suffix: 0,
+                },
+                StaticRegionRelation::Disjoint,
+            ),
+            (
+                Index(2),
+                PatternRest {
+                    start: 1,
+                    suffix: 0,
+                },
+                StaticRegionRelation::Overlap,
+            ),
+            (
+                Index(2),
+                PatternRest {
+                    start: 1,
+                    suffix: 1,
+                },
+                StaticRegionRelation::Runtime,
+            ),
+            (
+                PatternRest {
+                    start: 0,
+                    suffix: 0,
+                },
+                PatternRest {
+                    start: 1,
+                    suffix: 0,
+                },
+                StaticRegionRelation::Runtime,
+            ),
+            (
+                Slice(slice(None, None, None)),
+                PatternRest {
+                    start: 0,
+                    suffix: 0,
+                },
+                StaticRegionRelation::Runtime,
+            ),
+        ];
+
+        for (left, right, expected) in cases {
+            assert_eq!(static_collection_relation(left, right), expected);
+            assert_eq!(static_collection_relation(right, left), expected);
+        }
+        assert_eq!(greatest_common_divisor(54, 24), 6);
+        assert_eq!(greatest_common_divisor(7, 0), 7);
+        assert!(positive_progression(slice(None, None, None)).is_some());
+        assert!(positive_progression(slice(None, None, Some(0))).is_none());
+        assert!(positive_progression(slice(Some(4), Some(4), None)).is_none());
+    }
+
+    #[test]
+    fn move_paths_cover_projection_identity_runtime_inputs_and_partial_state() {
+        let static_index = BytecodeSlotId::new(1);
+        let dynamic_index = BytecodeSlotId::new(2);
+        let start = BytecodeSlotId::new(3);
+        let end = BytecodeSlotId::new(4);
+        let step = BytecodeSlotId::new(5);
+        let static_integers = BTreeMap::from([(static_index, 2), (start, 1), (end, 7), (step, 2)]);
+
+        let fixed_cases = [
+            (MovePathComponent::Field(0), MovePathComponent::Field(1)),
+            (
+                MovePathComponent::TupleField(0),
+                MovePathComponent::TupleField(1),
+            ),
+            (
+                MovePathComponent::ClosureCapture(BytecodeCallableId::new(0), 0),
+                MovePathComponent::ClosureCapture(BytecodeCallableId::new(1), 1),
+            ),
+            (
+                MovePathComponent::VariantTuple(0, 0),
+                MovePathComponent::VariantTuple(1, 0),
+            ),
+            (
+                MovePathComponent::VariantField(0, 0),
+                MovePathComponent::VariantField(0, 1),
+            ),
+            (
+                MovePathComponent::OptionValue,
+                MovePathComponent::ResultErrValue,
+            ),
+            (
+                MovePathComponent::ResultOkValue,
+                MovePathComponent::ResultErrValue,
+            ),
+            (
+                MovePathComponent::UnionValue(BytecodeTypeId::new(0)),
+                MovePathComponent::UnionValue(BytecodeTypeId::new(1)),
+            ),
+            (
+                MovePathComponent::ArrayPatternIndex(0),
+                MovePathComponent::ArrayPatternIndex(1),
+            ),
+        ];
+        for (left, right) in fixed_cases {
+            assert_eq!(
+                loan_paths_relation(&[left], &[right], &static_integers),
+                StaticRegionRelation::Disjoint
+            );
+        }
+
+        assert_eq!(
+            loan_paths_relation(
+                &[MovePathComponent::Index {
+                    index: static_index,
+                    access: BytecodeIndexAccess::Array,
+                }],
+                &[MovePathComponent::ArrayPatternIndex(2)],
+                &static_integers,
+            ),
+            StaticRegionRelation::Overlap
+        );
+        assert_eq!(
+            loan_paths_relation(
+                &[MovePathComponent::Slice {
+                    start: Some(start),
+                    end: Some(end),
+                    step: Some(step),
+                }],
+                &[MovePathComponent::ArrayPatternIndex(3)],
+                &static_integers,
+            ),
+            StaticRegionRelation::Overlap
+        );
+        assert_eq!(
+            loan_paths_relation(
+                &[MovePathComponent::Index {
+                    index: dynamic_index,
+                    access: BytecodeIndexAccess::Array,
+                }],
+                &[MovePathComponent::TupleField(0)],
+                &static_integers,
+            ),
+            StaticRegionRelation::Runtime
+        );
+
+        let iterator = BytecodeSlotId::new(6);
+        assert_eq!(
+            move_path_runtime_inputs(&[
+                MovePathComponent::Index {
+                    index: dynamic_index,
+                    access: BytecodeIndexAccess::MapEntry,
+                },
+                MovePathComponent::IteratorElement { index: iterator },
+                MovePathComponent::Slice {
+                    start: Some(start),
+                    end: Some(end),
+                    step: Some(step),
+                },
+                MovePathComponent::NewtypeValue,
+            ])
+            .collect::<Vec<_>>(),
+            [dynamic_index, iterator, start, end, step]
+        );
+
+        let projections = [
+            BytecodeProjectionKind::ClosureCapture {
+                callable: BytecodeCallableId::new(0),
+                index: 1,
+            },
+            BytecodeProjectionKind::Field(2),
+            BytecodeProjectionKind::TupleField(3),
+            BytecodeProjectionKind::NewtypeValue,
+            BytecodeProjectionKind::RefValue,
+            BytecodeProjectionKind::VariantTuple {
+                variant: 4,
+                index: 5,
+            },
+            BytecodeProjectionKind::VariantField {
+                variant: 6,
+                field: 7,
+            },
+            BytecodeProjectionKind::OptionValue,
+            BytecodeProjectionKind::ResultOkValue,
+            BytecodeProjectionKind::ResultErrValue,
+            BytecodeProjectionKind::UnionValue(BytecodeTypeId::new(8)),
+            BytecodeProjectionKind::ArrayPatternIndex(9),
+            BytecodeProjectionKind::ArrayPatternRest {
+                start: 10,
+                suffix: 11,
+            },
+            BytecodeProjectionKind::IteratorElement { index: iterator },
+            BytecodeProjectionKind::IteratorSource,
+            BytecodeProjectionKind::Index {
+                index: dynamic_index,
+                access: BytecodeIndexAccess::Array,
+            },
+            BytecodeProjectionKind::Slice {
+                start: Some(start),
+                end: Some(end),
+                step: Some(step),
+            },
+        ];
+        for kind in projections {
+            let projection = BytecodeProjection {
+                ty: BytecodeTypeId::new(0),
+                kind,
+            };
+            let component = MovePathComponent::from_projection(&projection);
+            assert_eq!(component, MovePathComponent::from_projection(&projection));
+        }
+
+        let slot = BytecodeSlotId::new(7);
+        let field_zero = vec![MovePathComponent::TupleField(0)];
+        let field_one = vec![MovePathComponent::TupleField(1)];
+        let nested = vec![
+            MovePathComponent::TupleField(0),
+            MovePathComponent::TupleField(1),
+        ];
+        let mut unavailable = BTreeSet::new();
+        move_path_unchecked(&mut unavailable, nested.clone());
+        move_path_unchecked(&mut unavailable, field_zero.clone());
+        assert_eq!(unavailable, BTreeSet::from([field_zero.clone()]));
+        assert!(!path_is_available(&unavailable, &nested));
+        assert!(path_is_available(&unavailable, &field_one));
+        assert!(!path_parent_is_available(&unavailable, &nested));
+        write_path_unchecked(&mut unavailable, &field_zero);
+        assert!(unavailable.is_empty());
+
+        let live = transfer_local(
+            LocalState {
+                live: false,
+                unavailable: BTreeSet::new(),
+            },
+            &[LocalEvent::StorageLive(slot)],
+            slot,
+        );
+        assert!(live.live);
+        let initialized = transfer_local(
+            live,
+            &[LocalEvent::Write(LocalAccess {
+                slot,
+                path: Vec::new(),
+                source_loan: None,
+            })],
+            slot,
+        );
+        assert!(initialized.unavailable.is_empty());
+        let dead = transfer_local(initialized, &[LocalEvent::StorageDead(slot)], slot);
+        assert!(!dead.live);
+    }
+
+    #[test]
+    fn consumed_defer_events_and_scalar_catalog_have_closed_outcomes() {
+        let slot = BytecodeSlotId::new(9);
+        let whole = LocalAccess {
+            slot,
+            path: Vec::new(),
+            source_loan: None,
+        };
+        let partial = LocalAccess {
+            slot,
+            path: vec![MovePathComponent::TupleField(0)],
+            source_loan: None,
+        };
+        for event in [
+            LocalEvent::Read(partial.clone()),
+            LocalEvent::Resolve(partial.clone()),
+            LocalEvent::Move(partial.clone()),
+        ] {
+            let mut state = DeferFlowState {
+                consumed: BTreeSet::from([whole.clone()]),
+                ..DeferFlowState::default()
+            };
+            let error = apply_consumed_defer_events(&mut state, &[event], "test").unwrap_err();
+            assert!(error.message().contains("already consumed"));
+        }
+        let mut state = DeferFlowState {
+            consumed: BTreeSet::from([whole.clone()]),
+            ..DeferFlowState::default()
+        };
+        assert!(
+            apply_consumed_defer_events(
+                &mut state,
+                &[LocalEvent::WriteAccess(partial.clone())],
+                "test",
+            )
+            .unwrap_err()
+            .message()
+            .contains("partial write")
+        );
+        let mut state = DeferFlowState {
+            consumed: BTreeSet::from([whole.clone()]),
+            ..DeferFlowState::default()
+        };
+        assert!(
+            apply_consumed_defer_events(&mut state, &[LocalEvent::Write(partial.clone())], "test",)
+                .unwrap_err()
+                .message()
+                .contains("partially reinitializes")
+        );
+        let mut state = DeferFlowState {
+            consumed: BTreeSet::from([whole]),
+            ..DeferFlowState::default()
+        };
+        apply_consumed_defer_events(
+            &mut state,
+            &[LocalEvent::Write(LocalAccess {
+                slot,
+                path: Vec::new(),
+                source_loan: None,
+            })],
+            "test",
+        )
+        .unwrap();
+        assert!(state.consumed.is_empty());
+
+        for scalar in [
+            BytecodeScalarType::Int,
+            BytecodeScalarType::Int8,
+            BytecodeScalarType::Int16,
+            BytecodeScalarType::Int32,
+            BytecodeScalarType::UInt8,
+            BytecodeScalarType::UInt16,
+            BytecodeScalarType::UInt32,
+            BytecodeScalarType::UInt64,
+        ] {
+            assert!(is_integer(scalar), "{scalar:?}");
+            assert!(is_arithmetic(scalar), "{scalar:?}");
+            assert!(is_relational(scalar), "{scalar:?}");
+        }
+        for scalar in [
+            BytecodeScalarType::Int,
+            BytecodeScalarType::Int8,
+            BytecodeScalarType::Int16,
+            BytecodeScalarType::Int32,
+        ] {
+            assert!(is_signed_integer(scalar), "{scalar:?}");
+        }
+        for scalar in [BytecodeScalarType::Float, BytecodeScalarType::Float32] {
+            assert!(is_float(scalar), "{scalar:?}");
+            assert!(is_arithmetic(scalar), "{scalar:?}");
+        }
+        for scalar in [
+            BytecodeScalarType::Byte,
+            BytecodeScalarType::Char,
+            BytecodeScalarType::String,
+        ] {
+            assert!(is_relational(scalar), "{scalar:?}");
+            assert!(!is_arithmetic(scalar), "{scalar:?}");
+        }
+        for scalar in [
+            BytecodeScalarType::Bool,
+            BytecodeScalarType::Unit,
+            BytecodeScalarType::Never,
+        ] {
+            assert!(!is_integer(scalar), "{scalar:?}");
+            assert!(!is_float(scalar), "{scalar:?}");
+            assert!(!is_relational(scalar), "{scalar:?}");
+        }
+
+        assert_eq!(
+            unavailable_read_message(slot, &[]),
+            "reads slot#9 before a dominating live definition"
+        );
+        assert_eq!(
+            unavailable_read_message(slot, &partial.path),
+            "reads an unavailable move path of slot#9"
+        );
+        assert_eq!(
+            unavailable_move_message(slot, &[]),
+            "moves slot#9 after its value became unavailable"
+        );
+        assert_eq!(
+            unavailable_move_message(slot, &partial.path),
+            "moves an unavailable move path of slot#9"
+        );
+    }
+
+    #[test]
+    fn static_integer_parser_accepts_every_radix_and_rejects_non_values() {
+        for (spelling, expected) in [
+            ("42", 42),
+            ("4_294", 4_294),
+            ("0b1010u8", 10),
+            ("0o17i16", 15),
+            ("0xffu32", 255),
+            ("18446744073709551615u64", u64::MAX),
+        ] {
+            assert_eq!(parse_nonnegative_integer(spelling), Some(expected));
+        }
+        for spelling in [
+            "",
+            "-1",
+            "0b102",
+            "0xgg",
+            "18446744073709551616",
+            "not-a-number",
+        ] {
+            assert_eq!(parse_nonnegative_integer(spelling), None, "{spelling}");
+        }
     }
 }

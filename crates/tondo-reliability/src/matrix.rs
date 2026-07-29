@@ -11,6 +11,8 @@ use crate::inventory::Inventory;
 use crate::{canonical_json, sha256};
 
 pub const FORMAT: &str = "tondo-normative-coverage/1";
+pub const EVIDENCE_FORMAT: &str = "tondo-normative-evidence/1";
+pub const EVIDENCE_PATH: &str = "testing/normative-evidence.json";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -71,6 +73,24 @@ pub struct Dimension {
     pub waiver: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EvidenceMap {
+    format: String,
+    document: String,
+    edition: String,
+    document_sha256: String,
+    target: String,
+    claims: Vec<EvidenceClaim>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EvidenceClaim {
+    requirements: Vec<String>,
+    dimensions: Dimensions,
+}
+
 impl Dimension {
     fn evidence(values: impl IntoIterator<Item = String>) -> Self {
         let mut evidence = values.into_iter().collect::<Vec<_>>();
@@ -101,9 +121,13 @@ pub fn build(root: &Path, inventory: &Inventory) -> Result<CoverageMatrix, Strin
     let suite = LoadedSuite::load(root, Path::new("conformance/0.1/manifest.json"))
         .map_err(|error| error.to_string())?;
     let extracted = extract_requirements(document)?;
+    let evidence = load_evidence(root, &document_sha256, inventory, &extracted)?;
     let mut requirements = extracted
         .into_iter()
-        .map(|item| classify(item, &document_sha256, &suite))
+        .map(|item| {
+            let claim = evidence.get(&item.id);
+            classify(item, &document_sha256, &suite, claim)
+        })
         .collect::<Vec<_>>();
     requirements.sort_by(|left, right| left.id.cmp(&right.id));
     require_unique_ids(&requirements)?;
@@ -344,6 +368,7 @@ fn classify(
     extracted: ExtractedRequirement,
     document_sha256: &str,
     suite: &LoadedSuite,
+    claim: Option<&EvidenceClaim>,
 ) -> Requirement {
     let codes = diagnostic_codes(&extracted.text);
     let failure_cases = matching_cases(&suite.manifest().cases, &codes, false);
@@ -358,10 +383,14 @@ fn classify(
         "TONDO_LANGUAGE_SPEC.md:{}#{}",
         extracted.line_start, extracted.heading_anchor
     );
-    let (status, reason, evidence, dimensions) = if target_not_applicable(
-        &extracted.section,
-        &extracted.text,
-    ) {
+    let (status, reason, evidence, dimensions) = if let Some(claim) = claim {
+        (
+            "covered",
+            "The versioned normative evidence map links this requirement to executable public-boundary evidence.",
+            claim_evidence(claim),
+            claim.dimensions.clone(),
+        )
+    } else if target_not_applicable(&extracted.section, &extracted.text) {
         let reason =
             "The requirement describes a deliberately absent or non-bootstrap target surface.";
         (
@@ -431,6 +460,142 @@ fn classify(
         classification_reason: reason.into(),
         evidence,
         dimensions,
+    }
+}
+
+fn load_evidence(
+    root: &Path,
+    document_sha256: &str,
+    inventory: &Inventory,
+    requirements: &[ExtractedRequirement],
+) -> Result<BTreeMap<String, EvidenceClaim>, String> {
+    let path = root.join(EVIDENCE_PATH);
+    let bytes =
+        fs::read(&path).map_err(|error| format!("cannot read `{}`: {error}", path.display()))?;
+    let evidence: EvidenceMap = serde_json::from_slice(&bytes)
+        .map_err(|error| format!("cannot decode `{}`: {error}", path.display()))?;
+    validate_evidence(
+        &evidence,
+        document_sha256,
+        inventory,
+        &requirements
+            .iter()
+            .map(|requirement| requirement.id.as_str())
+            .collect::<BTreeSet<_>>(),
+    )
+}
+
+fn validate_evidence(
+    evidence: &EvidenceMap,
+    document_sha256: &str,
+    inventory: &Inventory,
+    requirements: &BTreeSet<&str>,
+) -> Result<BTreeMap<String, EvidenceClaim>, String> {
+    if evidence.format != EVIDENCE_FORMAT
+        || evidence.document != "TONDO_LANGUAGE_SPEC.md"
+        || evidence.edition != "0.1"
+        || evidence.target != "tondo-vm-hosted"
+    {
+        return Err("normative evidence targets an unsupported format, document, or target".into());
+    }
+    if evidence.document_sha256 != document_sha256 {
+        return Err("normative evidence does not match the current language specification".into());
+    }
+
+    let inventory = inventory
+        .tests
+        .iter()
+        .map(|test| (test.id.as_str(), test))
+        .collect::<BTreeMap<_, _>>();
+    let mut result = BTreeMap::new();
+    let mut previous = None::<&str>;
+    for claim in &evidence.claims {
+        require_sorted_unique("normative evidence requirements", &claim.requirements)?;
+        if claim.requirements.is_empty() {
+            return Err("normative evidence claims require requirements".into());
+        }
+        for (name, dimension) in claim_dimensions(&claim.dimensions) {
+            validate_dimension("normative evidence", name, dimension)?;
+        }
+        for (name, dimension) in claim_dimensions(&claim.dimensions) {
+            for test_id in &dimension.evidence {
+                let test = inventory
+                    .get(test_id.as_str())
+                    .ok_or_else(|| format!("normative evidence names unknown test `{test_id}`"))?;
+                if test.status != "executable" {
+                    return Err(format!(
+                        "normative evidence test `{test_id}` is not executable"
+                    ));
+                }
+                if name == "public-boundary"
+                    && (test.target != evidence.target
+                        || !matches!(
+                            test.kind.as_str(),
+                            "conformance-case" | "fixture" | "spec-fence"
+                        ))
+                {
+                    return Err(format!(
+                        "normative evidence test `{test_id}` is not a public-boundary test"
+                    ));
+                }
+            }
+        }
+        if claim.dimensions.oracle.evidence.is_empty()
+            || claim.dimensions.public_boundary.evidence.is_empty()
+        {
+            return Err(
+                "normative evidence requires executable oracle and public-boundary dimensions"
+                    .into(),
+            );
+        }
+
+        for requirement in &claim.requirements {
+            if !requirements.contains(requirement.as_str()) {
+                return Err(format!(
+                    "normative evidence names unknown requirement `{requirement}`"
+                ));
+            }
+            if previous.is_some_and(|previous| previous >= requirement.as_str()) {
+                return Err("normative evidence claims must be globally sorted and unique".into());
+            }
+            previous = Some(requirement);
+            result.insert(requirement.clone(), claim.clone());
+        }
+    }
+    Ok(result)
+}
+
+fn claim_dimensions(dimensions: &Dimensions) -> [(&'static str, &Dimension); 6] {
+    [
+        ("positive", &dimensions.positive),
+        ("rejection-or-failure", &dimensions.rejection_or_failure),
+        ("boundary", &dimensions.boundary),
+        ("composition", &dimensions.composition),
+        ("oracle", &dimensions.oracle),
+        ("public-boundary", &dimensions.public_boundary),
+    ]
+}
+
+fn claim_evidence(claim: &EvidenceClaim) -> Vec<String> {
+    let mut evidence = claim_dimensions(&claim.dimensions)
+        .into_iter()
+        .flat_map(|(_, dimension)| dimension.evidence.iter().cloned())
+        .collect::<Vec<_>>();
+    evidence.sort();
+    evidence.dedup();
+    evidence
+}
+
+#[cfg(test)]
+fn evidence_dimensions(test: &str) -> Dimensions {
+    let dimension = || Dimension::evidence([test.to_owned()]);
+    Dimensions {
+        positive: dimension(),
+        rejection_or_failure: dimension(),
+        boundary: dimension(),
+        composition: dimension(),
+        oracle: dimension(),
+        public_boundary: dimension(),
     }
 }
 
@@ -684,6 +849,8 @@ fn is_sha256(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::inventory::{DocumentRevision, InventorySummary, TestEntry};
+
     use super::*;
 
     #[test]
@@ -743,5 +910,124 @@ El compilador debe aceptar el caso.
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn normative_evidence_is_closed_and_requires_a_real_public_test() {
+        let document_sha256 = "a".repeat(64);
+        let requirement = "TL01-1-R001";
+        let requirements = [requirement].into_iter().collect::<BTreeSet<_>>();
+        let inventory = evidence_inventory("executable", "tondo-vm-hosted", "conformance-case");
+        let mut evidence = EvidenceMap {
+            format: EVIDENCE_FORMAT.into(),
+            document: "TONDO_LANGUAGE_SPEC.md".into(),
+            edition: "0.1".into(),
+            document_sha256: document_sha256.clone(),
+            target: "tondo-vm-hosted".into(),
+            claims: vec![EvidenceClaim {
+                requirements: vec![requirement.into()],
+                dimensions: evidence_dimensions("conformance:case"),
+            }],
+        };
+
+        let validated =
+            validate_evidence(&evidence, &document_sha256, &inventory, &requirements).unwrap();
+        assert_eq!(
+            validated.keys().map(String::as_str).collect::<Vec<_>>(),
+            [requirement]
+        );
+        let claim = validated.get(requirement).unwrap();
+        assert_eq!(
+            claim.dimensions.public_boundary.evidence,
+            ["conformance:case"]
+        );
+        assert_eq!(claim_evidence(claim), ["conformance:case"]);
+
+        evidence.document_sha256 = "b".repeat(64);
+        assert!(
+            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+                .unwrap_err()
+                .contains("does not match")
+        );
+        evidence.document_sha256 = document_sha256.clone();
+
+        evidence.claims[0].requirements = vec!["TL01-UNKNOWN".into()];
+        assert!(
+            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+                .unwrap_err()
+                .contains("unknown requirement")
+        );
+        evidence.claims[0].requirements = vec![requirement.into()];
+
+        evidence.claims[0].dimensions.positive.evidence = vec!["conformance:missing".into()];
+        assert!(
+            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+                .unwrap_err()
+                .contains("unknown test")
+        );
+        evidence.claims[0].dimensions.positive.evidence = vec!["conformance:case".into()];
+
+        evidence.claims[0].dimensions.boundary.evidence.clear();
+        assert!(
+            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+                .unwrap_err()
+                .contains("needs evidence")
+        );
+        evidence.claims[0].dimensions.boundary.waiver =
+            Some("The rule has no material boundary.".into());
+        validate_evidence(&evidence, &document_sha256, &inventory, &requirements).unwrap();
+
+        let internal = evidence_inventory("executable", "host-rust", "rust-test");
+        assert!(
+            validate_evidence(&evidence, &document_sha256, &internal, &requirements)
+                .unwrap_err()
+                .contains("public-boundary")
+        );
+        let future = evidence_inventory("future-contract", "tondo-vm-hosted", "conformance-case");
+        assert!(
+            validate_evidence(&evidence, &document_sha256, &future, &requirements)
+                .unwrap_err()
+                .contains("not executable")
+        );
+    }
+
+    fn evidence_inventory(status: &str, target: &str, kind: &str) -> Inventory {
+        Inventory {
+            format: crate::inventory::FORMAT.into(),
+            repository: "tonyredondo/tondo".into(),
+            documents: vec![DocumentRevision {
+                path: "TONDO_LANGUAGE_SPEC.md".into(),
+                edition: "0.1".into(),
+                status: "normative".into(),
+                sha256: "a".repeat(64),
+            }],
+            summary: InventorySummary {
+                logical_tests: 1,
+                repetitions: 1,
+                physical_sources: 1,
+                unique_source_hashes: 1,
+                by_kind: BTreeMap::new(),
+                by_status: BTreeMap::new(),
+                by_phase: BTreeMap::new(),
+            },
+            tests: vec![TestEntry {
+                id: "conformance:case".into(),
+                kind: kind.into(),
+                crate_name: Some("tondo-conformance".into()),
+                phase: "runtime".into(),
+                source: "case.expect.json".into(),
+                fixture: Some("case".into()),
+                group: "runtime".into(),
+                requirements: Vec::new(),
+                oracle: "exact-observation".into(),
+                repetitions: 1,
+                source_sha256: "b".repeat(64),
+                target: target.into(),
+                document: Some("TONDO_LANGUAGE_SPEC.md".into()),
+                edition: "0.1".into(),
+                status: status.into(),
+                sidecars: Vec::new(),
+            }],
+        }
     }
 }

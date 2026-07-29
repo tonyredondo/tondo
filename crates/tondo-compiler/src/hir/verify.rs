@@ -3463,7 +3463,7 @@ impl Verifier<'_> {
                     async_call_parents[child.index() as usize] += 1;
                 }
             }
-            self.verify_expression_category(id, expression, &context)?;
+            self.verify_expression_category(expression, &context)?;
             self.verify_expression_names(expression, &context)?;
             self.verify_expression_loops(id, expression, loops, &context)?;
         }
@@ -3557,7 +3557,6 @@ impl Verifier<'_> {
 
     fn verify_expression_category(
         &self,
-        id: HirExpressionId,
         expression: &HirExpression,
         context: &str,
     ) -> Result<(), HirInvariantError> {
@@ -3602,20 +3601,6 @@ impl Verifier<'_> {
                     category_name(expression.category),
                     category_name(expected)
                 ),
-            ));
-        }
-        if expression.category == HirValueCategory::Place
-            && matches!(
-                expression.kind,
-                HirExpressionKind::Return { .. }
-                    | HirExpressionKind::Fail { .. }
-                    | HirExpressionKind::Break { .. }
-                    | HirExpressionKind::Continue { .. }
-            )
-        {
-            return Err(HirInvariantError::new(
-                format!("expression#{}", id.index()),
-                "control transfer cannot be a place",
             ));
         }
         Ok(())
@@ -6103,8 +6088,9 @@ mod tests {
     use std::sync::Arc;
 
     use crate::hir::{
-        ExpressionCheckLimits, HirArraySequenceKind, HirExpressionKind, HirMatchMode,
-        HirPrefixOperator, TypeLoweringLimits, check_expressions, lower_types,
+        ExpressionCheckLimits, HirArraySequenceKind, HirBootstrapHostFunction,
+        HirCallArgumentTarget, HirCallProtocol, HirExpressionKind, HirLiteral, HirMatchMode,
+        HirNominalShape, HirPrefixOperator, TypeLoweringLimits, check_expressions, lower_types,
     };
     use crate::package::PackageGraph;
     use crate::resolve::{ResolvedProgram, resolve};
@@ -6176,6 +6162,44 @@ mod tests {
         assert!(diagnostics.is_empty());
         assert!(complete);
         (resolved, program)
+    }
+
+    fn symbol_named(resolved: &ResolvedProgram, name: &str) -> crate::resolve::SymbolId {
+        resolved
+            .symbols()
+            .find(|symbol| symbol.name().as_str() == name)
+            .unwrap_or_else(|| panic!("fixture has no symbol named {name}"))
+            .id()
+    }
+
+    fn member_named(resolved: &ResolvedProgram, name: &str) -> crate::resolve::MemberId {
+        resolved
+            .members()
+            .find(|member| member.name().as_str() == name)
+            .unwrap_or_else(|| panic!("fixture has no member named {name}"))
+            .id()
+    }
+
+    fn corrupted_hir(
+        source: &str,
+        mutate: impl FnOnce(&ResolvedProgram, &mut HirProgram),
+    ) -> HirInvariantError {
+        let (resolved, mut program) = checked_program_from(source);
+        verify_typed_hir(&resolved, &program).unwrap();
+        mutate(&resolved, &mut program);
+        verify_typed_hir(&resolved, &program).unwrap_err()
+    }
+
+    fn expression_id(
+        program: &HirProgram,
+        predicate: impl Fn(&HirExpressionKind) -> bool,
+    ) -> HirExpressionId {
+        program
+            .expressions
+            .iter()
+            .position(|expression| predicate(&expression.kind))
+            .map(|index| HirExpressionId(index as u32))
+            .expect("fixture contains the requested expression")
     }
 
     #[test]
@@ -6398,6 +6422,35 @@ mod tests {
     }
 
     #[test]
+    fn opaque_call_protocol_implications_are_reproved_before_mir() {
+        const SOURCE: &str = "fn opaqueCall(): impl Discard + Call[fn(Int): Int] {\n\
+             (value: Int): Int { value + 1 }\n\
+         }\n\
+         fn opaqueCallMut(): impl Discard + CallMut[fn(Int): Int] {\n\
+             opaqueCall()\n\
+         }\n\
+         fn opaqueCallOnce(): impl Discard + CallOnce[fn(Int): Int] {\n\
+             opaqueCall()\n\
+         }\n\
+         fn opaqueCallAgain(): impl Discard + Call[fn(Int): Int] {\n\
+             opaqueCall()\n\
+         }\n\
+         fn genericCallMut[F: Discard + Call[fn(Int): Int]](\n\
+             operation: F,\n\
+         ): impl Discard + CallMut[fn(Int): Int] {\n\
+             operation\n\
+         }\n\
+         fn genericCallOnce[F: Discard + Call[fn(Int): Int]](\n\
+             operation: F,\n\
+         ): impl Discard + CallOnce[fn(Int): Int] {\n\
+             operation\n\
+         }\n";
+
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+    }
+
+    #[test]
     fn trait_contract_metadata_is_verified_before_mir() {
         const SOURCE: &str = "trait Contract[T: Discard] {\n\
              async fn send(self)\n\
@@ -6509,10 +6562,94 @@ mod tests {
         let error = verify_typed_hir(&resolved, &incomplete).unwrap_err();
         assert!(error.message().contains("contract is incomplete"));
 
+        let (resolved, mut wrong_implementation_id) = checked_program_from(SOURCE);
+        wrong_implementation_id.implementations[0].id = crate::hir::HirImplementationId(1);
+        let error = verify_typed_hir(&resolved, &wrong_implementation_id).unwrap_err();
+        assert!(error.message().contains("table position"));
+
         let (resolved, mut wrong_id) = checked_program_from(SOURCE);
         wrong_id.implementations[0].methods[0].id.index = 1;
         let error = verify_typed_hir(&resolved, &wrong_id).unwrap_err();
         assert!(error.message().contains("table position"));
+
+        let (resolved, mut wrong_trait_arity) = checked_program_from(SOURCE);
+        let unit = wrong_trait_arity.interner.scalar(ScalarType::Unit);
+        wrong_trait_arity.implementations[0]
+            .trait_reference
+            .arguments
+            .push(unit);
+        let error = verify_typed_hir(&resolved, &wrong_trait_arity).unwrap_err();
+        assert!(error.message().contains("trait argument arity"));
+
+        let (resolved, mut closed_prelude) = checked_program_from(SOURCE);
+        closed_prelude.implementations[0]
+            .trait_reference
+            .constructor =
+            HirTraitConstructor::Prelude(crate::package::Name::new("Discard").unwrap());
+        closed_prelude.implementations[0]
+            .trait_reference
+            .arguments
+            .clear();
+        let error = verify_typed_hir(&resolved, &closed_prelude).unwrap_err();
+        assert!(error.message().contains("closed or unknown prelude trait"));
+
+        let (resolved, mut external_trait) = checked_program_from(SOURCE);
+        let identity = resolved
+            .symbols()
+            .find(|symbol| symbol.name().as_str() == "Contract")
+            .unwrap()
+            .identity()
+            .clone();
+        external_trait.implementations[0]
+            .trait_reference
+            .constructor = HirTraitConstructor::External(identity);
+        let error = verify_typed_hir(&resolved, &external_trait).unwrap_err();
+        assert!(error.message().contains("external trait contract"));
+
+        let (resolved, mut missing_contract) = checked_program_from(SOURCE);
+        missing_contract.implementations[0].methods[0].contract = None;
+        let error = verify_typed_hir(&resolved, &missing_contract).unwrap_err();
+        assert!(error.message().contains("no matched trait contract"));
+
+        let (resolved, mut missing_callable) = checked_program_from(SOURCE);
+        let method_id = missing_callable.implementations[0].methods[0].id;
+        missing_callable
+            .callables
+            .retain(|callable| callable.id != HirCallableId::Implementation(method_id));
+        let error = verify_typed_hir(&resolved, &missing_callable).unwrap_err();
+        assert!(error.message().contains("no callable signature"));
+
+        let (resolved, mut missing_body) = checked_program_from(SOURCE);
+        let method_id = missing_body.implementations[0].methods[0].id;
+        missing_body
+            .callables
+            .iter_mut()
+            .find(|callable| callable.id == HirCallableId::Implementation(method_id))
+            .unwrap()
+            .body_source = None;
+        let error = verify_typed_hir(&resolved, &missing_body).unwrap_err();
+        assert!(error.message().contains("no source body"));
+
+        let (resolved, mut callable_signature_drift) = checked_program_from(SOURCE);
+        let unit = callable_signature_drift.interner.scalar(ScalarType::Unit);
+        let method_id = callable_signature_drift.implementations[0].methods[0].id;
+        callable_signature_drift
+            .callables
+            .iter_mut()
+            .find(|callable| callable.id == HirCallableId::Implementation(method_id))
+            .unwrap()
+            .function_type = unit;
+        let error = verify_typed_hir(&resolved, &callable_signature_drift).unwrap_err();
+        assert!(error.message().contains("callable signature differs"));
+
+        let (resolved, mut receiver_drift) = checked_program_from(SOURCE);
+        receiver_drift.implementations[0].methods[0]
+            .contract
+            .as_mut()
+            .unwrap()
+            .has_receiver = false;
+        let error = verify_typed_hir(&resolved, &receiver_drift).unwrap_err();
+        assert!(error.message().contains("receiver classification"));
 
         let (resolved, mut wrong_signature) = checked_program_from(SOURCE);
         let wrong = wrong_signature.interner.scalar(ScalarType::Unit);
@@ -6547,6 +6684,118 @@ mod tests {
             error.message().contains("required trait method")
                 || error.message().contains("one-to-one correspondence")
         );
+
+        const TWO_METHODS: &str = "trait Contract {\n\
+             fn first(self): Int\n\
+             fn second(self): Int\n\
+         }\n\
+         type Item = Int\n\
+         impl Contract for Item {\n\
+             fn first(self): Int { 1 }\n\
+             fn second(self): Int { 2 }\n\
+         }\n";
+        let (resolved, mut duplicate_contract) = checked_program_from(TWO_METHODS);
+        let first = duplicate_contract.implementations[0].methods[0]
+            .contract
+            .clone();
+        duplicate_contract.implementations[0].methods[1].contract = first;
+        let error = verify_typed_hir(&resolved, &duplicate_contract).unwrap_err();
+        assert!(error.message().contains("implemented more than once"));
+
+        let (resolved, mut extra_callable) = checked_program_from(SOURCE);
+        let method_id = extra_callable.implementations[0].methods[0].id;
+        let mut callable = extra_callable
+            .callables
+            .iter()
+            .find(|callable| callable.id == HirCallableId::Implementation(method_id))
+            .unwrap()
+            .clone();
+        callable.id = HirCallableId::Implementation(crate::hir::HirImplementationMethodId {
+            implementation: method_id.implementation(),
+            index: 9,
+        });
+        extra_callable.callables.push(callable);
+        let error = verify_typed_hir(&resolved, &extra_callable).unwrap_err();
+        assert!(error.message().contains("one-to-one correspondence"));
+
+        const GENERIC_IMPL: &str = "trait Contract {}\n\
+             type Box[T] = { value: T }\n\
+             impl[T] Contract for Box[T] {}\n";
+        let (resolved, mut unused_generic) = checked_program_from(GENERIC_IMPL);
+        unused_generic.implementations[0].target = unused_generic.interner.scalar(ScalarType::Int);
+        let error = verify_typed_hir(&resolved, &unused_generic).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("does not occur in the coherence header")
+        );
+
+        const GENERIC_METHOD: &str = "trait Contract {\n\
+             fn echo[T: Discard](self, value: T): T\n\
+         }\n\
+         type Item = Int\n\
+         impl Contract for Item {\n\
+             fn echo[T: Discard](self, value: T): T { value }\n\
+         }\n";
+        let (resolved, mut generic_bounds) = checked_program_from(GENERIC_METHOD);
+        generic_bounds.implementations[0].methods[0]
+            .contract
+            .as_mut()
+            .unwrap()
+            .generic_bounds
+            .clear();
+        let error = verify_typed_hir(&resolved, &generic_bounds).unwrap_err();
+        assert!(error.message().contains("method generic bounds differ"));
+
+        let (resolved, mut generic_prefix) = checked_program_from(
+            "trait Contract {\n\
+                 fn read(self): Int\n\
+             }\n\
+             type Box[T] = { value: T }\n\
+             impl[T] Contract for Box[T] {\n\
+                 fn read(self): Int { 1 }\n\
+             }\n",
+        );
+        let method_id = generic_prefix.implementations[0].methods[0].id;
+        generic_prefix
+            .callables
+            .iter_mut()
+            .find(|callable| callable.id == HirCallableId::Implementation(method_id))
+            .unwrap()
+            .generics
+            .clear();
+        let error = verify_typed_hir(&resolved, &generic_prefix).unwrap_err();
+        assert!(error.message().contains("generic prefix"));
+
+        const DISPLAY: &str = "type Item = { value: Int }\n\
+             impl Display for Item {\n\
+                 fn display(self): String { \"item\" }\n\
+             }\n";
+        let (resolved, mut wrong_prelude_arity) = checked_program_from(DISPLAY);
+        let unit = wrong_prelude_arity.interner.scalar(ScalarType::Unit);
+        wrong_prelude_arity.implementations[0]
+            .trait_reference
+            .arguments
+            .push(unit);
+        let error = verify_typed_hir(&resolved, &wrong_prelude_arity).unwrap_err();
+        assert!(error.message().contains("prelude trait argument arity"));
+
+        let (resolved, mut missing_prelude_method) = checked_program_from(DISPLAY);
+        missing_prelude_method.implementations[0].methods.clear();
+        let error = verify_typed_hir(&resolved, &missing_prelude_method).unwrap_err();
+        assert!(error.message().contains("required prelude trait method"));
+
+        const SEND: &str = "trait Contract {\n\
+                 async fn send(self)\n\
+             }\n\
+             type Item = Int\n\
+             impl Contract for Item {\n\
+                 async fn send(self) {}\n\
+             }\n";
+        let (resolved, mut wrong_send) = checked_program_from(SEND);
+        wrong_send.implementations[0].requires_self_send = false;
+        let error = verify_typed_hir(&resolved, &wrong_send).unwrap_err();
+        assert!(error.message().contains("inconsistent Self: Send"));
     }
 
     #[test]
@@ -6763,6 +7012,147 @@ mod tests {
         wrong_arity.closures[0].generic_arity = 1;
         let error = verify_typed_hir(&resolved, &wrong_arity).unwrap_err();
         assert!(error.message().contains("generic arity"));
+
+        let (resolved, mut wrong_id) = checked_program_from(SOURCE);
+        wrong_id.closures[0].id = crate::hir::HirClosureId(1);
+        let error = verify_typed_hir(&resolved, &wrong_id).unwrap_err();
+        assert!(error.message().contains("IDs are not dense"));
+
+        let (resolved, mut no_construction) = checked_program_from(SOURCE);
+        let construction = no_construction
+            .expressions
+            .iter_mut()
+            .find(|expression| matches!(expression.kind, HirExpressionKind::Closure(_)))
+            .unwrap();
+        construction.kind = HirExpressionKind::Closure(crate::hir::HirClosureId(9));
+        let error = verify_typed_hir(&resolved, &no_construction).unwrap_err();
+        assert!(error.message().contains("no construction expression"));
+
+        let (resolved, mut concrete_type) = checked_program_from(SOURCE);
+        concrete_type.closures[0].ty = concrete_type.interner.scalar(ScalarType::Int);
+        let error = verify_typed_hir(&resolved, &concrete_type).unwrap_err();
+        assert!(error.message().contains("non-generated concrete type"));
+
+        let (resolved, mut non_function_signature) = checked_program_from(SOURCE);
+        non_function_signature.closures[0].function_type =
+            non_function_signature.interner.scalar(ScalarType::Int);
+        let error = verify_typed_hir(&resolved, &non_function_signature).unwrap_err();
+        assert!(error.message().contains("not a function type"));
+
+        let (resolved, mut invalid_parameter) = checked_program_from(SOURCE);
+        invalid_parameter.closures[0].parameters[0].local = None;
+        let error = verify_typed_hir(&resolved, &invalid_parameter).unwrap_err();
+        assert!(error.message().contains("invalid local metadata"));
+
+        let (resolved, mut receiver_parameter) = checked_program_from(SOURCE);
+        receiver_parameter.closures[0].parameters[0].receiver = true;
+        let error = verify_typed_hir(&resolved, &receiver_parameter).unwrap_err();
+        assert!(error.message().contains("invalid local metadata"));
+
+        let (resolved, mut unsorted_captures) = checked_program_from(SOURCE);
+        unsorted_captures.closures[0].captures.swap(0, 1);
+        let error = verify_typed_hir(&resolved, &unsorted_captures).unwrap_err();
+        assert!(error.message().contains("not sorted and unique"));
+
+        const TWO_CLOSURES: &str = "fn build() {\n\
+             let first = (): Int { 1 }\n\
+             let second = (): Int { 2 }\n\
+             _ = first\n\
+             _ = second\n\
+         }\n";
+        let (resolved, mut duplicate_identity) = checked_program_from(TWO_CLOSURES);
+        duplicate_identity.closures[1].identity = duplicate_identity.closures[0].identity.clone();
+        let error = Verifier {
+            resolved: &resolved,
+            program: &duplicate_identity,
+        }
+        .verify_closures()
+        .unwrap_err();
+        assert!(error.message().contains("identity is duplicated"));
+
+        let (resolved, mut wrong_identity_position) = checked_program_from(TWO_CLOSURES);
+        wrong_identity_position.closures[0].identity =
+            wrong_identity_position.closures[1].identity.clone();
+        let error = Verifier {
+            resolved: &resolved,
+            program: &wrong_identity_position,
+        }
+        .verify_closures()
+        .unwrap_err();
+        assert!(error.message().contains("wrong source position"));
+
+        let (resolved, mut wrong_generated_type) = checked_program_from(TWO_CLOSURES);
+        wrong_generated_type.closures[0].ty = wrong_generated_type.closures[1].ty;
+        let error = verify_typed_hir(&resolved, &wrong_generated_type).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("type identity or inherited generic arguments")
+        );
+
+        const INNER_CAPTURE: &str = "fn build() {\n\
+             let outer = 1\n\
+             let closure = (value: Int): Int { outer + value }\n\
+             _ = closure\n\
+         }\n";
+        let (resolved, mut inner_capture) = checked_program_from(INNER_CAPTURE);
+        let parameter = inner_capture.closures[0].parameters[0].local.unwrap();
+        let parameter_ty = inner_capture.closures[0].parameters[0].ty;
+        inner_capture.closures[0].captures[0].local = parameter;
+        inner_capture.closures[0].captures[0].ty = parameter_ty;
+        inner_capture.closures[0].captures[0].mutable = false;
+        let error = verify_typed_hir(&resolved, &inner_capture).unwrap_err();
+        assert!(error.message().contains("not an owned outer binding"));
+
+        const ASYNC_PARAMETER: &str = "fn build() {\n\
+             let operation = async (value: Int): Int { value }\n\
+             _ = operation\n\
+         }\n";
+        let (resolved, mut exclusive_async) = checked_program_from(ASYNC_PARAMETER);
+        exclusive_async.closures[0].parameters[0].mode = ParameterMode::Mut;
+        let error = verify_typed_hir(&resolved, &exclusive_async).unwrap_err();
+        assert!(error.message().contains("exclusive parameter"));
+
+        const VARIADIC: &str = "fn build() {\n\
+             let operation = (values: ...String): Int { 0 }\n\
+             _ = operation\n\
+         }\n";
+        let (resolved, program) = checked_program_from(VARIADIC);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        let (resolved, mut invalid_variadic_mode) = checked_program_from(VARIADIC);
+        invalid_variadic_mode.closures[0].parameters[0].mode = ParameterMode::Ref;
+        let error = verify_typed_hir(&resolved, &invalid_variadic_mode).unwrap_err();
+        assert!(error.message().contains("not unique, final, and by value"));
+
+        let (resolved, mut invalid_variadic_binding) = checked_program_from(VARIADIC);
+        let local = invalid_variadic_binding.closures[0].parameters[0]
+            .local
+            .unwrap();
+        let string = invalid_variadic_binding.interner.scalar(ScalarType::String);
+        invalid_variadic_binding.closures[0].parameters[0].ty = string;
+        invalid_variadic_binding.local_types.insert(local, string);
+        let error = verify_typed_hir(&resolved, &invalid_variadic_binding).unwrap_err();
+        assert!(error.message().contains("not Array[element]"));
+
+        let (resolved, mut wrong_body_result) = checked_program_from(INNER_CAPTURE);
+        let root = wrong_body_result.closures[0].body.root;
+        wrong_body_result.expressions[root.index() as usize].ty =
+            wrong_body_result.interner.scalar(ScalarType::Unit);
+        let error = verify_typed_hir(&resolved, &wrong_body_result).unwrap_err();
+        assert!(
+            error
+                .message()
+                .contains("parameters, body result, and call signature disagree")
+        );
+
+        let (resolved, discarded_parameter) = checked_program_from(
+            "fn build() {\n\
+                 let operation = (_: Int): Int { 1 }\n\
+                 _ = operation\n\
+             }\n",
+        );
+        verify_typed_hir(&resolved, &discarded_parameter).unwrap();
     }
 
     #[test]
@@ -7629,5 +8019,1528 @@ mod tests {
         program.local_types.remove(&local);
         let error = verify_typed_hir(&resolved, &program).unwrap_err();
         assert!(error.message().contains("has no checked type"));
+    }
+
+    #[test]
+    fn pattern_corruption_matrix_rejects_identity_type_and_topology_drift() {
+        const SOURCE: &str = "type UserId = Int\n\
+             type Pair = { first: Int, second: String }\n\
+             enum Choice {\n\
+                 Empty\n\
+                 Item(Int)\n\
+                 Named { value: Int }\n\
+             }\n\
+             fn inspect(\n\
+                 choice: Choice,\n\
+                 identifier: UserId,\n\
+                 pair: Pair,\n\
+                 conversion: NumericConversionError,\n\
+                 unionValue: Int | String,\n\
+                 values: Array[Int],\n\
+             ): Int {\n\
+                 let UserId(number) = identifier\n\
+                 let Pair { first, second } = pair\n\
+                 match conversion {\n\
+                     NumericConversionError.OutOfRange => ()\n\
+                     NumericConversionError.NotFinite => ()\n\
+                     NumericConversionError.NotIntegral => ()\n\
+                 }\n\
+                 match unionValue {\n\
+                     Int(integerValue) => ()\n\
+                     String(textValue) => ()\n\
+                 }\n\
+                 match values {\n\
+                     [] => ()\n\
+                     [head, ..ref tail] => ()\n\
+                 }\n\
+                 match choice {\n\
+                     Choice.Empty => number + first\n\
+                     Choice.Item(item) => item\n\
+                     Choice.Named { value } => value\n\
+                 }\n\
+             }\n";
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            program.patterns[0].kind = HirPatternKind::Recovery;
+        });
+        assert!(error.message().contains("recovery pattern"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let (index, child) = program
+                .patterns
+                .iter()
+                .enumerate()
+                .find_map(|(index, pattern)| match &pattern.kind {
+                    HirPatternKind::Newtype { value, .. }
+                    | HirPatternKind::OptionSome(value)
+                    | HirPatternKind::ResultOk(value)
+                    | HirPatternKind::ResultErr(value)
+                    | HirPatternKind::UnionMember { pattern: value, .. } => Some((index, *value)),
+                    _ => None,
+                })
+                .expect("fixture has a unary pattern");
+            assert!(child.index() < index as u32);
+            let HirPatternKind::Newtype { value, .. } = &mut program.patterns[index].kind else {
+                panic!("the first unary pattern is the UserId newtype")
+            };
+            *value = HirPatternId(index as u32);
+        });
+        assert!(error.message().contains("not earlier"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let integer = program.interner.scalar(ScalarType::Int);
+            let string = program.interner.scalar(ScalarType::String);
+            let binding = program
+                .patterns
+                .iter()
+                .find_map(|pattern| match pattern.kind {
+                    HirPatternKind::Binding(local) if pattern.ty == integer => Some(local),
+                    _ => None,
+                })
+                .expect("fixture has an Int binding");
+            let other = program
+                .patterns
+                .iter()
+                .find_map(|pattern| match pattern.kind {
+                    HirPatternKind::Binding(local)
+                        if program.local_types.get(&local) == Some(&string) =>
+                    {
+                        Some(local)
+                    }
+                    _ => None,
+                })
+                .expect("fixture has a String binding");
+            let pattern = program
+                .patterns
+                .iter_mut()
+                .find(|pattern| {
+                    matches!(pattern.kind, HirPatternKind::Binding(local) if local == binding)
+                })
+                .unwrap();
+            pattern.kind = HirPatternKind::Binding(other);
+        });
+        assert!(error.message().contains("pattern has"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let local = program
+                .patterns
+                .iter()
+                .find_map(|pattern| match pattern.kind {
+                    HirPatternKind::Binding(local) => Some(local),
+                    _ => None,
+                })
+                .unwrap();
+            program.local_types.remove(&local);
+        });
+        assert!(error.message().contains("has no checked type"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let pattern = program
+                .patterns
+                .iter_mut()
+                .find(|pattern| matches!(pattern.kind, HirPatternKind::BorrowBinding { .. }))
+                .expect("fixture has a borrowed array rest pattern");
+            let HirPatternKind::BorrowBinding { mode, .. } = &mut pattern.kind else {
+                unreachable!()
+            };
+            *mode = ParameterMode::Value;
+        });
+        assert!(
+            error.message().contains("records value parameter mode"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let inspect = symbol_named(resolved, "inspect");
+            let pattern = program
+                .patterns
+                .iter_mut()
+                .find(|pattern| matches!(pattern.kind, HirPatternKind::Newtype { .. }))
+                .expect("fixture has a newtype pattern");
+            let HirPatternKind::Newtype { constructor, .. } = &mut pattern.kind else {
+                unreachable!()
+            };
+            *constructor = inspect;
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let first = member_named(resolved, "first");
+            let pattern = program
+                .patterns
+                .iter_mut()
+                .find(|pattern| matches!(pattern.kind, HirPatternKind::Variant { .. }))
+                .expect("fixture has a variant pattern");
+            let HirPatternKind::Variant { variant, .. } = &mut pattern.kind else {
+                unreachable!()
+            };
+            *variant = first;
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let integer = program.interner.scalar(ScalarType::Int);
+            let pattern = program
+                .patterns
+                .iter_mut()
+                .find(|pattern| matches!(pattern.kind, HirPatternKind::NumericConversionError(_)))
+                .expect("fixture has a conversion-error pattern");
+            pattern.ty = integer;
+        });
+        assert!(error.message().contains("wrong intrinsic type"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let inspect = symbol_named(resolved, "inspect");
+            let pattern = program
+                .patterns
+                .iter_mut()
+                .find(|pattern| matches!(pattern.kind, HirPatternKind::Record { .. }))
+                .expect("fixture has a record pattern");
+            let HirPatternKind::Record { owner, .. } = &mut pattern.kind else {
+                unreachable!()
+            };
+            *owner = inspect;
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let empty = member_named(resolved, "Empty");
+            let pattern = program
+                .patterns
+                .iter_mut()
+                .find(|pattern| matches!(pattern.kind, HirPatternKind::Record { .. }))
+                .expect("fixture has a record pattern");
+            let HirPatternKind::Record { fields, .. } = &mut pattern.kind else {
+                unreachable!()
+            };
+            fields[0].member = empty;
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let error_type = program.interner.error();
+            let pattern = program
+                .patterns
+                .iter_mut()
+                .find(|pattern| matches!(pattern.kind, HirPatternKind::UnionMember { .. }))
+                .expect("fixture has a union-member pattern");
+            let HirPatternKind::UnionMember { member, .. } = &mut pattern.kind else {
+                unreachable!()
+            };
+            *member = error_type;
+        });
+        assert!(error.message().contains("not canonical"), "{error}");
+    }
+
+    #[test]
+    fn expression_corruption_matrix_rejects_names_shapes_and_call_contracts() {
+        const SOURCE: &str = "const Answer: Int = 42\n\
+             type UserId = Int\n\
+             type Person = { value: Int }\n\
+             enum Choice {\n\
+                 Empty\n\
+                 Item(Int)\n\
+             }\n\
+             fn identity[T](value: T): T { value }\n\
+             fn plain(value: Int): Int { value }\n\
+             fn returning(): Int {\n\
+                 return 1\n\
+             }\n\
+             fn main() {\n\
+                 let number = Answer\n\
+                 let text = \"text\"\n\
+                 let generic = identity[Int]\n\
+                 let function = plain\n\
+                 let closure = (value: Int): Int { value }\n\
+                 let identifier = UserId(number)\n\
+                 let reference = Ref(number)\n\
+                 let person = Person { value: number }\n\
+                 let choice = Choice.Item(number)\n\
+                 let updated = person with { value: number }\n\
+                 let personValue = person.value\n\
+                 let projected = reference.value\n\
+                 let optional: Int? = number\n\
+                 _ = function(number)\n\
+                 _ = NumericConversionError.OutOfRange\n\
+                 assert(true, \"message\")\n\
+                 _ = \"value {number}\"\n\
+                 _ = text\n\
+                 _ = generic\n\
+                 _ = closure\n\
+                 _ = identifier\n\
+                 _ = choice\n\
+                 _ = updated\n\
+                 _ = personValue\n\
+                 _ = projected\n\
+                 _ = optional\n\
+             }\n";
+        let (resolved, program) = checked_program_from(SOURCE);
+        verify_typed_hir(&resolved, &program).unwrap();
+
+        macro_rules! reject {
+            ($mutate:expr) => {{
+                let (malformed_resolved, mut malformed) = checked_program_from(SOURCE);
+                ($mutate)(&mut malformed);
+                verify_typed_hir(&malformed_resolved, &malformed).unwrap_err()
+            }};
+        }
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Literal(_)))
+                .unwrap();
+            expression.kind = HirExpressionKind::Recovery;
+        });
+        assert!(error.message().contains("recovery expression"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let plain = symbol_named(&resolved, "plain");
+            let identity = symbol_named(&resolved, "identity");
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::Function(HirCallableId::Symbol(symbol))
+                            if symbol == plain
+                    )
+                })
+                .unwrap();
+            expression.kind = HirExpressionKind::Function(HirCallableId::Symbol(identity));
+        });
+        assert!(
+            error.message().contains("generic named function escaped"),
+            "{error}"
+        );
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let integer = malformed.interner.scalar(ScalarType::Int);
+            let plain = symbol_named(&resolved, "plain");
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::Function(HirCallableId::Symbol(symbol))
+                            if symbol == plain
+                    )
+                })
+                .unwrap();
+            expression.ty = integer;
+        });
+        assert!(
+            error
+                .message()
+                .contains("differs from its callable signature"),
+            "{error}"
+        );
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Literal(_)))
+                .unwrap();
+            expression.kind = HirExpressionKind::SyntheticFunction;
+        });
+        assert!(
+            error.message().contains("does not have a function type"),
+            "{error}"
+        );
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::SpecializedFunction { .. }
+                    )
+                })
+                .unwrap();
+            let HirExpressionKind::SpecializedFunction { arguments, .. } = &mut expression.kind
+            else {
+                unreachable!()
+            };
+            arguments.clear();
+        });
+        assert!(error.message().contains("specialization has"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let error_type = malformed.interner.error();
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::SpecializedFunction { .. }
+                    )
+                })
+                .unwrap();
+            let HirExpressionKind::SpecializedFunction { arguments, .. } = &mut expression.kind
+            else {
+                unreachable!()
+            };
+            arguments[0] = error_type;
+        });
+        assert!(error.message().contains("not canonical"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let string = malformed.interner.scalar(ScalarType::String);
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::SpecializedFunction { .. }
+                    )
+                })
+                .unwrap();
+            expression.ty = string;
+        });
+        assert!(
+            error
+                .message()
+                .contains("differs from its exact substituted signature"),
+            "{error}"
+        );
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::PreludeTraitFunction { .. }
+                    )
+                })
+                .expect("interpolation has a Display function");
+            let HirExpressionKind::PreludeTraitFunction { arguments, .. } = &mut expression.kind
+            else {
+                unreachable!()
+            };
+            arguments.push(arguments[0]);
+        });
+        assert!(
+            error.message().contains("prelude trait specialization has"),
+            "{error}"
+        );
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let integer = malformed.interner.scalar(ScalarType::Int);
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::PreludeTraitFunction { .. }
+                    )
+                })
+                .expect("interpolation has a Display function");
+            expression.ty = integer;
+        });
+        assert!(
+            error.message().contains("differs from its closed contract"),
+            "{error}"
+        );
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let integer = malformed.interner.scalar(ScalarType::Int);
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Closure(_)))
+                .unwrap();
+            expression.ty = integer;
+        });
+        assert!(error.message().contains("concrete closure type"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let plain = symbol_named(&resolved, "plain");
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Newtype { .. }))
+                .unwrap();
+            let HirExpressionKind::Newtype { constructor, .. } = &mut expression.kind else {
+                unreachable!()
+            };
+            *constructor = plain;
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let integer = malformed.interner.scalar(ScalarType::Int);
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Ref { .. }))
+                .unwrap();
+            expression.ty = integer;
+        });
+        assert!(error.message().contains("non-Ref result type"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let text = malformed
+                .expressions
+                .iter()
+                .enumerate()
+                .find_map(|(index, expression)| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::Literal(HirLiteral::String(_))
+                    )
+                    .then_some(HirExpressionId(index as u32))
+                })
+                .unwrap();
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Ref { .. }))
+                .unwrap();
+            let HirExpressionKind::Ref { value } = &mut expression.kind else {
+                unreachable!()
+            };
+            assert!(text.index() < value.index());
+            *value = text;
+        });
+        assert!(
+            error
+                .message()
+                .contains("payload differs from its target type"),
+            "{error}"
+        );
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let plain = symbol_named(&resolved, "plain");
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Record { .. }))
+                .unwrap();
+            let HirExpressionKind::Record { owner, .. } = &mut expression.kind else {
+                unreachable!()
+            };
+            *owner = plain;
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let item = member_named(&resolved, "Item");
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Record { .. }))
+                .unwrap();
+            let HirExpressionKind::Record { fields, .. } = &mut expression.kind else {
+                unreachable!()
+            };
+            fields[0].member = item;
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let value = member_named(&resolved, "value");
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Variant { .. }))
+                .unwrap();
+            let HirExpressionKind::Variant { variant, .. } = &mut expression.kind else {
+                unreachable!()
+            };
+            *variant = value;
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let integer = malformed.interner.scalar(ScalarType::Int);
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::NumericConversionError(_)
+                    )
+                })
+                .unwrap();
+            expression.ty = integer;
+        });
+        assert!(error.message().contains("wrong intrinsic type"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let item = member_named(&resolved, "Item");
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Field { .. }))
+                .unwrap();
+            let HirExpressionKind::Field { member, .. } = &mut expression.kind else {
+                unreachable!()
+            };
+            *member = item;
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let integer = malformed
+                .expressions
+                .iter()
+                .enumerate()
+                .find_map(|(index, expression)| {
+                    (expression.ty == malformed.interner.scalar(ScalarType::Int)
+                        && matches!(expression.kind, HirExpressionKind::Local(_)))
+                    .then_some(HirExpressionId(index as u32))
+                })
+                .unwrap();
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::RefValue { .. }))
+                .unwrap();
+            let HirExpressionKind::RefValue { base } = &mut expression.kind else {
+                unreachable!()
+            };
+            assert!(integer.index() < base.index());
+            *base = integer;
+        });
+        assert!(error.message().contains("non-Ref base"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let string = malformed.interner.scalar(ScalarType::String);
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::RefValue { .. }))
+                .unwrap();
+            expression.ty = string;
+        });
+        assert!(error.message().contains("wrong target type"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let integer = malformed.interner.scalar(ScalarType::Int);
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Call { .. }))
+                .unwrap();
+            let HirExpressionKind::Call { signature, .. } = &mut expression.kind else {
+                unreachable!()
+            };
+            *signature = integer;
+        });
+        assert!(
+            error
+                .message()
+                .contains("does not carry a function signature"),
+            "{error}"
+        );
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Call { .. }))
+                .unwrap();
+            let HirExpressionKind::Call { unsafe_call, .. } = &mut expression.kind else {
+                unreachable!()
+            };
+            *unsafe_call = !*unsafe_call;
+        });
+        assert!(error.message().contains("call effects"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let string = malformed.interner.scalar(ScalarType::String);
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Call { .. }))
+                .unwrap();
+            expression.ty = string;
+        });
+        assert!(error.message().contains("call result differs"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::Call {
+                            ref arguments,
+                            ..
+                        } if !arguments.is_empty()
+                    )
+                })
+                .unwrap();
+            let HirExpressionKind::Call { arguments, .. } = &mut expression.kind else {
+                unreachable!()
+            };
+            arguments[0].target = HirCallArgumentTarget::Invalid;
+        });
+        assert!(
+            error.message().contains("invalid argument association"),
+            "{error}"
+        );
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::Call {
+                            ref arguments,
+                            ..
+                        } if !arguments.is_empty()
+                    )
+                })
+                .unwrap();
+            let HirExpressionKind::Call { arguments, .. } = &mut expression.kind else {
+                unreachable!()
+            };
+            arguments[0].mode = ParameterMode::Var;
+        });
+        assert!(
+            error
+                .message()
+                .contains("mode or type differs from its signature slot"),
+            "{error}"
+        );
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(expression.kind, HirExpressionKind::PreludeAssert { .. })
+                })
+                .unwrap();
+            let HirExpressionKind::PreludeAssert { condition_repr, .. } = &mut expression.kind
+            else {
+                unreachable!()
+            };
+            condition_repr.clear();
+        });
+        assert!(error.message().contains("prelude assert"), "{error}");
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::InterpolatedString { .. }
+                    )
+                })
+                .unwrap();
+            let HirExpressionKind::InterpolatedString { segments, .. } = &mut expression.kind
+            else {
+                unreachable!()
+            };
+            segments.clear();
+        });
+        assert!(
+            error.message().contains("one more segment than value"),
+            "{error}"
+        );
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let integer = malformed
+                .expressions
+                .iter()
+                .enumerate()
+                .find_map(|(index, expression)| {
+                    (expression.ty == malformed.interner.scalar(ScalarType::Int)
+                        && matches!(expression.kind, HirExpressionKind::Local(_)))
+                    .then_some(HirExpressionId(index as u32))
+                })
+                .unwrap();
+            let expression = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| {
+                    matches!(
+                        expression.kind,
+                        HirExpressionKind::InterpolatedString { .. }
+                    )
+                })
+                .unwrap();
+            let HirExpressionKind::InterpolatedString { values, .. } = &mut expression.kind else {
+                unreachable!()
+            };
+            assert!(integer.index() < values[0].index());
+            values[0] = integer;
+        });
+        assert!(
+            error
+                .message()
+                .contains("values must be Display results or Never"),
+            "{error}"
+        );
+
+        let error = reject!(|malformed: &mut HirProgram| {
+            let transfer = malformed
+                .expressions
+                .iter_mut()
+                .find(|expression| matches!(expression.kind, HirExpressionKind::Return { .. }))
+                .expect("callable bodies contain an explicit or synthesized return");
+            transfer.category = HirValueCategory::Place;
+        });
+        assert!(
+            error
+                .message()
+                .contains("category is place, expected value"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn effect_and_collection_expression_corruption_matrix_is_closed() {
+        const SOURCE: &str = "import std.console\n\
+             fn identity(value: Int): Int { value }\n\
+             fn inspect(\n\
+                 value: Int,\n\
+                 flag: Bool,\n\
+                 text: String,\n\
+                 messages: Array[String],\n\
+                 values: Array[Int],\n\
+                 entries: var Map[String, Int],\n\
+             ) {\n\
+                 _ = values.concat(values)\n\
+                 _ = entries.remove(text)\n\
+                 _ = identity(1)\n\
+                 assert(flag, text, ...messages)\n\
+                 console.print(text)\n\
+                 _ = \"value {value}\"\n\
+                 match values {\n\
+                     [ref first, ..] => {\n\
+                         _ = first\n\
+                     }\n\
+                     [] => ()\n\
+                 }\n\
+             }\n\
+             fn stop(): Never { panic(\"stop\") }\n\
+             async fn load(value: Int): Int { value }\n\
+             async fn effects(): Int {\n\
+                 let direct = await load(1)\n\
+                 scope {\n\
+                     let task = spawn load(direct)\n\
+                     await task\n\
+                 }\n\
+             }\n";
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let integer = program.interner.scalar(ScalarType::Int);
+            let id = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::ArraySequence { .. })
+            });
+            program.expressions[id.index() as usize].ty = integer;
+        });
+        assert!(error.message().contains("non-Array result"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let integer = program
+                .expressions
+                .iter()
+                .enumerate()
+                .find_map(|(index, expression)| {
+                    (expression.ty == program.interner.scalar(ScalarType::Int)
+                        && matches!(expression.kind, HirExpressionKind::Local(_)))
+                    .then_some(HirExpressionId(index as u32))
+                })
+                .unwrap();
+            let remove = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::MapRemove { .. })
+            });
+            let HirExpressionKind::MapRemove { map, .. } =
+                &mut program.expressions[remove.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            assert!(integer.index() < remove.index());
+            *map = integer;
+        });
+        assert!(error.message().contains("non-Map receiver"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let integer = program.interner.scalar(ScalarType::Int);
+            let remove = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::MapRemove { .. })
+            });
+            program.expressions[remove.index() as usize].ty = integer;
+        });
+        assert!(error.message().contains("non-Option result"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let integer = program
+                .expressions
+                .iter()
+                .enumerate()
+                .find_map(|(index, expression)| {
+                    (expression.ty == program.interner.scalar(ScalarType::Int)
+                        && matches!(expression.kind, HirExpressionKind::Local(_)))
+                    .then_some(HirExpressionId(index as u32))
+                })
+                .unwrap();
+            let remove = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::MapRemove { .. })
+            });
+            let HirExpressionKind::MapRemove { key, .. } =
+                &mut program.expressions[remove.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            assert!(integer.index() < remove.index());
+            *key = integer;
+        });
+        assert!(
+            error
+                .message()
+                .contains("operands or result differ from its closed signature"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let call = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::Call { .. })
+            });
+            let HirExpressionKind::Call { protocol, .. } =
+                &mut program.expressions[call.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            *protocol = HirCallProtocol::CallOnce;
+        });
+        assert!(
+            error
+                .message()
+                .contains("signature or protocol is not provided"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let string = program.interner.scalar(ScalarType::String);
+            let await_id = expression_id(program, |kind| {
+                matches!(
+                    kind,
+                    HirExpressionKind::Await { operation }
+                        if matches!(
+                            program.expressions[operation.index() as usize].kind,
+                            HirExpressionKind::AsyncCall { .. }
+                        )
+                )
+            });
+            program.expressions[await_id.index() as usize].ty = string;
+        });
+        assert!(
+            error
+                .message()
+                .contains("awaited async call changed its logical result type"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let integer = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::Literal(HirLiteral::Integer(_)))
+            });
+            let await_id = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::Await { .. })
+            });
+            let HirExpressionKind::Await { operation } =
+                &mut program.expressions[await_id.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            assert!(integer.index() < await_id.index());
+            *operation = integer;
+        });
+        assert!(
+            error.message().contains("neither an async call nor Join"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let integer = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::Literal(HirLiteral::Integer(_)))
+            });
+            let spawn = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::Spawn { .. })
+            });
+            let HirExpressionKind::Spawn { operation } =
+                &mut program.expressions[spawn.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            assert!(integer.index() < spawn.index());
+            *operation = integer;
+        });
+        assert!(
+            error.message().contains("operand is not one async call"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let integer = program.interner.scalar(ScalarType::Int);
+            let spawn = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::Spawn { .. })
+            });
+            program.expressions[spawn.index() as usize].ty = integer;
+        });
+        assert!(error.message().contains("not the exact Join"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let integer = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::Literal(HirLiteral::Integer(_)))
+            });
+            let scope = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::Scope { .. })
+            });
+            let HirExpressionKind::Scope { body } =
+                &mut program.expressions[scope.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            assert!(integer.index() < scope.index());
+            *body = integer;
+        });
+        assert!(
+            error.message().contains("scope must wrap one block"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let integer = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::Literal(HirLiteral::Integer(_)))
+            });
+            let panic = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::PreludePanic { .. })
+            });
+            let HirExpressionKind::PreludePanic { message } =
+                &mut program.expressions[panic.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            assert!(integer.index() < panic.index());
+            *message = integer;
+        });
+        assert!(
+            error.message().contains("panic requires a String"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let integer = program
+                .expressions
+                .iter()
+                .enumerate()
+                .find_map(|(index, expression)| {
+                    (expression.ty == program.interner.scalar(ScalarType::Int)
+                        && matches!(expression.kind, HirExpressionKind::Local(_)))
+                    .then_some(HirExpressionId(index as u32))
+                })
+                .unwrap();
+            let assertion = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::PreludeAssert { .. })
+            });
+            let HirExpressionKind::PreludeAssert { message_parts, .. } =
+                &mut program.expressions[assertion.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            assert!(integer.index() < assertion.index());
+            message_parts[0].value = integer;
+        });
+        assert!(
+            error.message().contains("message part is not String"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let text = program
+                .expressions
+                .iter()
+                .enumerate()
+                .find_map(|(index, expression)| {
+                    (expression.ty == program.interner.scalar(ScalarType::String)
+                        && matches!(expression.kind, HirExpressionKind::Local(_)))
+                    .then_some(HirExpressionId(index as u32))
+                })
+                .unwrap();
+            let assertion = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::PreludeAssert { .. })
+            });
+            let HirExpressionKind::PreludeAssert { message_parts, .. } =
+                &mut program.expressions[assertion.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            assert!(text.index() < assertion.index());
+            message_parts
+                .iter_mut()
+                .find(|part| part.is_spread())
+                .unwrap()
+                .value = text;
+        });
+        assert!(
+            error
+                .message()
+                .contains("spread assert message part is not Array[String]"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let host = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::BootstrapHostCall { .. })
+            });
+            let HirExpressionKind::BootstrapHostCall { function, .. } =
+                &mut program.expressions[host.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            *function = HirBootstrapHostFunction::ExitStatusSuccess;
+        });
+        assert!(
+            error
+                .message()
+                .contains("bootstrap host operation does not match"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let matched = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::Match { .. })
+            });
+            let HirExpressionKind::Match { arms, .. } =
+                &mut program.expressions[matched.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            arms[0].pattern = HirPatternId(u32::MAX);
+        });
+        assert!(
+            error.message().contains("references unknown pattern"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let borrowed = program
+                .patterns
+                .iter_mut()
+                .find(|pattern| matches!(pattern.kind, HirPatternKind::BorrowBinding { .. }))
+                .unwrap();
+            let HirPatternKind::BorrowBinding { mode, .. } = &mut borrowed.kind else {
+                unreachable!()
+            };
+            *mode = ParameterMode::Mut;
+        });
+        assert!(
+            error
+                .message()
+                .contains("match pattern contains an exclusive loan binding"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            let interpolation = expression_id(program, |kind| {
+                matches!(kind, HirExpressionKind::InterpolatedString { .. })
+            });
+            let HirExpressionKind::InterpolatedString { values, .. } =
+                &program.expressions[interpolation.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            let converted = values[0];
+            let HirExpressionKind::Call { arguments, .. } =
+                &mut program.expressions[converted.index() as usize].kind
+            else {
+                unreachable!()
+            };
+            arguments[0].target = HirCallArgumentTarget::Fixed(0);
+        });
+        assert!(
+            error
+                .message()
+                .contains("canonical shared Display receiver"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn declaration_corruption_matrix_rejects_every_closed_shape() {
+        const SOURCE: &str = "alias AliasNumber = Int\n\
+             type UserId = Int\n\
+             type Person = { name: String }\n\
+             enum Choice {\n\
+                 Empty\n\
+                 Pair(Int, String)\n\
+                 Named { value: Int }\n\
+             }\n\
+             trait Contract {\n\
+                 fn first(self): Int\n\
+                 fn second(self): Int\n\
+             }\n\
+             trait Other {\n\
+                 fn foreign(self): Int\n\
+             }\n\
+             fn main() {}\n";
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let person = symbol_named(resolved, "Person");
+            let user_id = symbol_named(resolved, "UserId");
+            program.declarations.get_mut(&person).unwrap().symbol = user_id;
+        });
+        assert!(error.message().contains("arena key"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let alias = symbol_named(resolved, "AliasNumber");
+            let declaration = program.declarations.get_mut(&alias).unwrap();
+            let HirTypeDeclarationKind::Alias { target } = &mut declaration.kind else {
+                panic!("AliasNumber remains an alias")
+            };
+            *target = program.interner.error();
+        });
+        assert!(error.message().contains("not canonical"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let user_id = symbol_named(resolved, "UserId");
+            let declaration = program.declarations.get_mut(&user_id).unwrap();
+            let HirTypeDeclarationKind::Nominal(nominal) = &mut declaration.kind else {
+                panic!("UserId remains nominal")
+            };
+            let HirNominalShape::Newtype { underlying } = &mut nominal.shape else {
+                panic!("UserId remains a newtype")
+            };
+            *underlying = program.interner.error();
+        });
+        assert!(error.message().contains("not canonical"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let person = symbol_named(resolved, "Person");
+            let declaration = program.declarations.get_mut(&person).unwrap();
+            let HirTypeDeclarationKind::Nominal(nominal) = &mut declaration.kind else {
+                panic!("Person remains nominal")
+            };
+            let HirNominalShape::Record { fields } = &mut nominal.shape else {
+                panic!("Person remains a record")
+            };
+            fields[0].ty = program.interner.error();
+        });
+        assert!(error.message().contains("not canonical"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let choice = symbol_named(resolved, "Choice");
+            let declaration = program.declarations.get_mut(&choice).unwrap();
+            let HirTypeDeclarationKind::Nominal(nominal) = &mut declaration.kind else {
+                panic!("Choice remains nominal")
+            };
+            let HirNominalShape::Enum { variants } = &mut nominal.shape else {
+                panic!("Choice remains an enum")
+            };
+            let HirVariantPayload::Tuple(items) = &mut variants[1].payload else {
+                panic!("Pair remains a tuple variant")
+            };
+            items[0] = program.interner.error();
+        });
+        assert!(error.message().contains("not canonical"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let choice = symbol_named(resolved, "Choice");
+            let person_name = member_named(resolved, "name");
+            let declaration = program.declarations.get_mut(&choice).unwrap();
+            let HirTypeDeclarationKind::Nominal(nominal) = &mut declaration.kind else {
+                panic!("Choice remains nominal")
+            };
+            let HirNominalShape::Enum { variants } = &mut nominal.shape else {
+                panic!("Choice remains an enum")
+            };
+            let HirVariantPayload::Record(fields) = &mut variants[2].payload else {
+                panic!("Named remains a record variant")
+            };
+            fields[0].member = person_name;
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let contract = symbol_named(resolved, "Contract");
+            let declaration = program.declarations.get_mut(&contract).unwrap();
+            let HirTypeDeclarationKind::Trait(definition) = &mut declaration.kind else {
+                panic!("Contract remains a trait")
+            };
+            definition.self_type = program.interner.scalar(ScalarType::Int);
+        });
+        assert!(error.message().contains("contextual Self"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let contract = symbol_named(resolved, "Contract");
+            let declaration = program.declarations.get_mut(&contract).unwrap();
+            let HirTypeDeclarationKind::Trait(definition) = &mut declaration.kind else {
+                panic!("Contract remains a trait")
+            };
+            definition.methods.reverse();
+        });
+        assert!(
+            error.message().contains("strict member-ID order"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let contract = symbol_named(resolved, "Contract");
+            let foreign = member_named(resolved, "foreign");
+            let declaration = program.declarations.get_mut(&contract).unwrap();
+            let HirTypeDeclarationKind::Trait(definition) = &mut declaration.kind else {
+                panic!("Contract remains a trait")
+            };
+            definition.methods[0].member = foreign;
+        });
+        assert!(error.message().contains("another owner"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let contract = symbol_named(resolved, "Contract");
+            let first = member_named(resolved, "first");
+            program
+                .callables
+                .retain(|callable| callable.id != HirCallableId::Member(first));
+            let HirTypeDeclarationKind::Trait(definition) = &program.declarations[&contract].kind
+            else {
+                panic!("Contract remains a trait")
+            };
+            assert!(
+                definition
+                    .methods
+                    .iter()
+                    .any(|method| method.member == first)
+            );
+        });
+        assert!(error.message().contains("no callable signature"), "{error}");
+    }
+
+    #[test]
+    fn constant_corruption_matrix_rejects_incomplete_and_mistyped_values() {
+        const SOURCE: &str = "const UnitValue: Unit = ()\n\
+             const Flag: Bool = true\n\
+             const Answer: Int = 42\n\
+             const Ratio: Float = 2.5\n\
+             const Letter: Char = 'x'\n\
+             const Text: String = \"value\"\n\
+             const Pair: (Int, String) = (Answer, Text)\n\
+             const Numbers: Array[Int] = [1, 2]\n\
+             const Entries: Map[String, Int] = [\"one\": 1]\n\
+             const Permissions: Set[String] = Set[\"read\"]\n\
+             const Missing: Int? = none\n\
+             const Present: Int? = some(Answer)\n\
+             const Success: Int ! String = ok(Answer)\n\
+             const Failure: Int ! String = err(Text)\n\
+             const Span: Range[Int] = 1..=3\n\
+             type UserId = Int\n\
+             type Person = { id: UserId, name: String }\n\
+             enum Choice {\n\
+                 Empty\n\
+                 Pair(Int)\n\
+                 Named { value: Int }\n\
+             }\n\
+             const Id: UserId = UserId(9)\n\
+             const User: Person = Person { id: Id, name: \"Ada\" }\n\
+             const UnitChoice: Choice = Choice.Empty\n\
+             const TupleChoice: Choice = Choice.Pair(1)\n\
+             const RecordChoice: Choice = Choice.Named { value: 2 }\n\
+             fn identity(value: Int): Int { value }\n\
+             const Handler: fn(Int): Int = identity\n";
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let answer = symbol_named(resolved, "Answer");
+            program.constants.get_mut(&answer).unwrap().ty = None;
+        });
+        assert!(
+            error.message().contains("no checked initializer type"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let answer = symbol_named(resolved, "Answer");
+            program.constants.get_mut(&answer).unwrap().value = None;
+        });
+        assert!(
+            error
+                .message()
+                .contains("no checked initializer expression"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let answer = symbol_named(resolved, "Answer");
+            program.constants.get_mut(&answer).unwrap().evaluated = None;
+        });
+        assert!(
+            error.message().contains("no normalized compile-time value"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let answer = symbol_named(resolved, "Answer");
+            program.constants.get_mut(&answer).unwrap().declared_type =
+                Some(program.interner.error());
+        });
+        assert!(error.message().contains("not canonical"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let answer = symbol_named(resolved, "Answer");
+            program
+                .constants
+                .get_mut(&answer)
+                .unwrap()
+                .evaluated
+                .as_mut()
+                .unwrap()
+                .ty = program.interner.scalar(ScalarType::String);
+        });
+        assert!(error.message().contains("normalized value has"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let handler = symbol_named(resolved, "Handler");
+            let answer = symbol_named(resolved, "Answer");
+            let evaluated = program
+                .constants
+                .get_mut(&handler)
+                .unwrap()
+                .evaluated
+                .as_mut()
+                .unwrap();
+            let HirConstantValueKind::Function { callable, .. } = &mut evaluated.kind else {
+                panic!("Handler remains a function constant")
+            };
+            *callable = HirCallableId::Symbol(answer);
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let user = symbol_named(resolved, "User");
+            let choice = symbol_named(resolved, "Choice");
+            let evaluated = program
+                .constants
+                .get_mut(&user)
+                .unwrap()
+                .evaluated
+                .as_mut()
+                .unwrap();
+            let HirConstantValueKind::Record { owner, .. } = &mut evaluated.kind else {
+                panic!("User remains a record constant")
+            };
+            *owner = choice;
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let record_choice = symbol_named(resolved, "RecordChoice");
+            let name = member_named(resolved, "name");
+            let evaluated = program
+                .constants
+                .get_mut(&record_choice)
+                .unwrap()
+                .evaluated
+                .as_mut()
+                .unwrap();
+            let HirConstantValueKind::Variant { payload, .. } = &mut evaluated.kind else {
+                panic!("RecordChoice remains a variant constant")
+            };
+            let HirConstantVariantValue::Record(fields) = payload else {
+                panic!("RecordChoice remains a record payload")
+            };
+            fields[0].member = name;
+        });
+        assert!(error.message().contains("expected one of"), "{error}");
+    }
+
+    #[test]
+    fn callable_corruption_matrix_rejects_identity_signature_and_body_drift() {
+        const SOURCE: &str = "fn identity[T](value: T): T { value }\n\
+             fn collect(values: ...Int): Array[Int] { values }\n\
+             fn main() {\n\
+                 _ = collect(1, 2)\n\
+             }\n";
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            program.callables.push(program.callables[0].clone());
+        });
+        assert!(error.message().contains("duplicated"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |_resolved, program| {
+            program.callables.swap(0, 1);
+        });
+        assert!(
+            error.message().contains("strict deterministic ID order"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let identity = symbol_named(resolved, "identity");
+            let callable = program
+                .callables
+                .iter_mut()
+                .find(|callable| callable.id == HirCallableId::Symbol(identity))
+                .unwrap();
+            callable.function_type = program.interner.scalar(ScalarType::Int);
+        });
+        assert!(error.message().contains("not a function type"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let identity = symbol_named(resolved, "identity");
+            let callable = program
+                .callables
+                .iter_mut()
+                .find(|callable| callable.id == HirCallableId::Symbol(identity))
+                .unwrap();
+            callable.outcome = program.interner.scalar(ScalarType::String);
+        });
+        assert!(
+            error.message().contains("parameters and outcome disagree"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let collect = symbol_named(resolved, "collect");
+            let callable = program
+                .callables
+                .iter_mut()
+                .find(|callable| callable.id == HirCallableId::Symbol(collect))
+                .unwrap();
+            callable.parameters[0].variadic_element =
+                Some(program.interner.scalar(ScalarType::String));
+        });
+        assert!(
+            error.message().contains("not Array[element]")
+                || error.message().contains("function type"),
+            "{error}"
+        );
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let identity = symbol_named(resolved, "identity");
+            let callable = program
+                .callables
+                .iter_mut()
+                .find(|callable| callable.id == HirCallableId::Symbol(identity))
+                .unwrap();
+            callable.generic_arity = 2;
+        });
+        assert!(error.message().contains("generic"), "{error}");
+
+        let error = corrupted_hir(SOURCE, |resolved, program| {
+            let identity = symbol_named(resolved, "identity");
+            program.bodies.remove(&HirCallableId::Symbol(identity));
+        });
+        assert!(error.message().contains("no checked HIR body"), "{error}");
     }
 }

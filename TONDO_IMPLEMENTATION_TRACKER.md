@@ -3,7 +3,7 @@
 **Estado:** M10.5b y Gate H0 cerrados; el sustrato temporal de STD-0.1 es el
 siguiente slice
 
-**Versión del tracker:** 0.92
+**Versión del tracker:** 0.93
 
 **Última actualización:** 2026-07-29
 
@@ -318,7 +318,7 @@ necesaria; la fragmentación del workspace no.
 
 Estado observado del workspace:
 
-- Repositorio local: `/media/portable/Tony/Projects/tondo`, branch `main`, con
+- Repositorio local: `/mnt/media/Tony/Projects/tondo`, branch `main`, con
   upstream en
   `github.com/tonyredondo/tondo`.
 - Workspace: `tondo-cli`, `tondo-compiler`, `tondo-conformance`,
@@ -326,10 +326,10 @@ Estado observado del workspace:
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
 - Última validación: 2026-07-29, con formatter check, `cargo check` de todos los
-  targets, Clippy con warnings denegados, 768 tests Rust inventariados, Rustdoc
+  targets, Clippy con warnings denegados, 830 tests Rust inventariados, Rustdoc
   con warnings denegados y metadatos locked. La suite oficial pasa 205 casos y
-  424 repeticiones byte-estables; el inventario completo registra 1.445 casos
-  lógicos y 1.664 repeticiones.
+  424 repeticiones byte-estables; el inventario completo registra 1.507 casos
+  lógicos y 1.726 repeticiones.
 
 ### 4.1 Ruta crítica
 
@@ -2329,16 +2329,19 @@ de M10.6, STD-0.1, M11 y STD-0.2.
   añaden contratos positivos, negativos y de borde para CLI, artefactos,
   manifiestos, protocolo del adaptador, consultas y snapshots semánticos,
   bytecode, valores gestionados y tooling de fiabilidad. El inventario resultante
-  contiene 1.445 casos lógicos y 1.664 repeticiones; no se cuenta un subprocess
+  contiene 1.507 casos lógicos y 1.726 repeticiones; no se cuenta un subprocess
   opaco como cobertura de las rutas que ejecuta.
 
 - [x] **COV-002 — Elevar y ratchetear la baseline sin exclusiones.** La
-  observación completa alcanza 104.699/121.590 líneas (86,11 %),
-  7.171/8.576 funciones (83,62 %) y 150.780/178.550 regiones (84,45 %).
-  El gate conserva floors truncados de 8.610, 8.361 y 8.444 basis points y
+  observación completa alcanza 119.622/132.793 líneas (90,08 %),
+  7.866/9.102 funciones (86,42 %) y 169.052/191.782 regiones (88,15 %).
+  El gate conserva floors truncados de 9.008, 8.642 y 8.814 basis points y
   floors independientes para parser, checkers, verifiers, heap, ejecución y
-  protocolos no confiables. Cualquier descenso falla aunque el porcentaje
-  global permanezca por encima del valor anterior.
+  protocolos no confiables. Branch y MC/DC no se interpretan como 0 %: Rust
+  1.93.0 con LLVM 21.1.8 publica ambos contadores con cero unidades
+  instrumentadas, por lo que permanecen explícitamente no medidos hasta que el
+  toolchain produzca una señal estable. Cualquier descenso medido falla aunque
+  el porcentaje global permanezca por encima del valor anterior.
 
 - [x] **MUT-002 — Revalidar la resistencia tras el hardening.** La selección
   revisada conserva exactamente 28 mutantes: 27 ejecutables detectados, uno
@@ -3436,6 +3439,22 @@ Gate N1.
 ---
 
 ## 24. Historial del tracker
+
+### 0.93 — 2026-07-29
+
+- El workspace se migra y verifica íntegramente en el SSD montado en
+  `/mnt/media`; branch, remotes, objetos Git y contenido permanecen idénticos y
+  la copia anterior se retira solo después de la comparación exacta.
+- El hardening alcanza 1.507 casos lógicos y 1.726 repeticiones. La baseline
+  sube a 90,08 % de líneas, 86,42 % de funciones y 88,15 % de regiones, con
+  ratchets actualizados globales y por riesgo; branch y MC/DC se registran como
+  no medidos porque el toolchain fijado no instrumenta ninguna unidad.
+- Un mapa de evidencia revisado enlaza por separado las seis dimensiones de las
+  reglas de resultados opacos con tests ejecutables y frontera pública. La
+  matriz pasa a 17 requisitos cubiertos y 271 límites de trazabilidad
+  explícitos, sin convertir proximidad documental en evidencia.
+- La campaña de mutación conserva 27/27 mutantes ejecutables detectados, uno
+  inviable, cero timeouts y cero supervivientes.
 
 ### 0.92 — 2026-07-29
 

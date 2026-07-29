@@ -932,4 +932,128 @@ mod tests {
             graph.root()
         );
     }
+
+    #[test]
+    fn package_and_import_error_vocabulary_is_closed_and_observable() {
+        for (error, expected) in [
+            (NameError::Empty, "cannot be empty"),
+            (NameError::Discard, "discard"),
+            (NameError::Keyword("import".into()), "keyword"),
+            (
+                NameError::InvalidIdentifier("not valid!".into()),
+                "not a valid Tondo identifier",
+            ),
+        ] {
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+        assert!(matches!(Name::new(""), Err(NameError::Empty)));
+        assert!(matches!(Name::new("_"), Err(NameError::Discard)));
+        assert!(matches!(Name::new("import"), Err(NameError::Keyword(_))));
+        assert!(matches!(
+            Name::new("not valid!"),
+            Err(NameError::InvalidIdentifier(_))
+        ));
+
+        let graph = PackageGraph::new(
+            PackageId::new("pkg:app").unwrap(),
+            PackageId::new("pkg:std").unwrap(),
+            [
+                node("pkg:app", "source:app", "app", &["main"], &[]),
+                node("pkg:std", "source:std", "tondoStd", &["core"], &[]),
+            ],
+        )
+        .unwrap();
+        let module = graph
+            .module(
+                &PackageId::new("pkg:app").unwrap(),
+                &ModulePath::new("main").unwrap(),
+            )
+            .unwrap()
+            .clone();
+        let alias = PackageAlias::new("dependency").unwrap();
+        let package = PackageId::new("pkg:item").unwrap();
+        let source = SourceId::new("source:item").unwrap();
+        let mut sources = SourceDatabase::new();
+        let file = sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("source:file").unwrap(),
+                ModulePath::new("main").unwrap(),
+                LogicalPath::new("main.to").unwrap(),
+                Arc::<[u8]>::from(&b""[..]),
+            ))
+            .unwrap();
+
+        let errors = vec![
+            PackageGraphError::EmptyPackageId,
+            PackageGraphError::PackageIdContainsLineBreak("bad\nid".into()),
+            PackageGraphError::InvalidPackageAlias(NameError::Discard),
+            PackageGraphError::ReservedStandardAlias,
+            PackageGraphError::DuplicatePackage(package.clone()),
+            PackageGraphError::DuplicateSourceId(source.clone()),
+            PackageGraphError::DuplicateDependencyAlias(alias.clone()),
+            PackageGraphError::AliasMatchesCurrentPackage(alias.clone()),
+            PackageGraphError::UnknownRootPackage(package.clone()),
+            PackageGraphError::UnknownStandardPackage(package.clone()),
+            PackageGraphError::RootIsStandardPackage,
+            PackageGraphError::UnknownDependency {
+                package: package.clone(),
+                dependency: PackageId::new("pkg:missing").unwrap(),
+            },
+            PackageGraphError::DependencyCycle,
+            PackageGraphError::UnknownSourceId(source),
+            PackageGraphError::UndeclaredModule {
+                package: package.clone(),
+                module: ModulePath::new("missing").unwrap(),
+            },
+            PackageGraphError::RootSourceOwnedByAnotherPackage {
+                root: file,
+                expected: package.clone(),
+                actual: PackageId::new("pkg:other").unwrap(),
+            },
+        ];
+        for error in errors {
+            assert!(!error.to_string().is_empty(), "{error:?}");
+        }
+        assert!(PackageId::new("").is_err());
+        assert!(PackageId::new("bad\nid").is_err());
+
+        let import_errors = [
+            ImportResolutionError::EmptyPath,
+            ImportResolutionError::UnknownPackageAlias(Name::new("missing").unwrap()),
+            ImportResolutionError::MissingModulePath(Name::new("dependency").unwrap()),
+            ImportResolutionError::UnknownModule(module.clone()),
+            ImportResolutionError::MissingTargetCapability {
+                module,
+                capability: "process",
+            },
+            ImportResolutionError::UnknownFromPackage(package),
+        ];
+        for error in import_errors {
+            assert!(!error.to_string().is_empty(), "{error:?}");
+        }
+
+        let app = graph
+            .package(&PackageId::new("pkg:app").unwrap())
+            .expect("app package");
+        assert_eq!(app.source_id().as_str(), "source:app");
+        assert_eq!(app.local_name().as_str(), "app");
+        assert_eq!(app.edition(), Edition::V0_1);
+        assert_eq!(app.modules().len(), 1);
+        assert!(app.dependencies().is_empty());
+        assert_eq!(
+            graph
+                .package_for_source(&SourceId::new("source:app").unwrap())
+                .map(PackageNode::id),
+            Some(app.id())
+        );
+        assert!(
+            graph
+                .package_for_source(&SourceId::new("source:missing").unwrap())
+                .is_none()
+        );
+        assert_eq!(
+            [Namespace::Type, Namespace::Value, Namespace::Module].map(Namespace::as_str),
+            ["type", "value", "module"]
+        );
+    }
 }

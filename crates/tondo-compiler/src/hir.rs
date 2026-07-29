@@ -2425,3 +2425,92 @@ impl HirBody {
         self.root
     }
 }
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn hir_error_vocabulary_and_conversion_edges_are_observable() {
+        let file = FileId::from_index(3).unwrap();
+        for (error, expected) in [
+            (
+                HirError::DiagnosticLimit { file, offset: 5 },
+                "HIR diagnostic limit exceeded in file 3 at byte 5".to_owned(),
+            ),
+            (
+                HirError::NodeLimit { file, offset: 6 },
+                "typed HIR node limit exceeded in file 3 at byte 6".to_owned(),
+            ),
+            (
+                HirError::PatternAnalysisLimit { file, offset: 7 },
+                "pattern analysis limit exceeded in file 3 at byte 7".to_owned(),
+            ),
+            (
+                HirError::TraitObligationLimit { file, offset: 8 },
+                "trait obligation limit exceeded in file 3 at byte 8".to_owned(),
+            ),
+            (
+                HirError::TraitTerminationInvariant {
+                    message: "cycle".into(),
+                },
+                "trait termination invariant failed: cycle".to_owned(),
+            ),
+            (
+                HirError::TraitSelectionInvariant {
+                    message: "ambiguous".into(),
+                },
+                "trait selection invariant failed: ambiguous".to_owned(),
+            ),
+            (
+                HirError::TextInvariant {
+                    message: "invalid text".into(),
+                },
+                "text invariant failed: invalid text".to_owned(),
+            ),
+            (
+                HirError::Diagnostic(DiagnosticError::EmptyMessage),
+                "diagnostic message cannot be empty".to_owned(),
+            ),
+            (
+                HirError::Package(PackageGraphError::EmptyPackageId),
+                "a package ID cannot be empty".to_owned(),
+            ),
+            (
+                HirError::Source(SourceError::TooManyFiles),
+                "source database contains too many files".to_owned(),
+            ),
+            (
+                HirError::Type(TypeError::ResourceLimit { limit: 9 }),
+                "interned type node limit exceeded (9)".to_owned(),
+            ),
+            (
+                HirError::Inference(InferenceError::Type(TypeError::ResourceLimit { limit: 10 })),
+                "interned type node limit exceeded (10)".to_owned(),
+            ),
+        ] {
+            assert_eq!(error.to_string(), expected);
+        }
+
+        assert!(matches!(
+            HirError::from(DiagnosticError::EmptyMessage),
+            HirError::Diagnostic(DiagnosticError::EmptyMessage)
+        ));
+        assert!(matches!(
+            HirError::from(PackageGraphError::EmptyPackageId),
+            HirError::Package(PackageGraphError::EmptyPackageId)
+        ));
+        assert!(matches!(
+            HirError::from(SourceError::TooManyFiles),
+            HirError::Source(SourceError::TooManyFiles)
+        ));
+        assert!(matches!(
+            HirError::from(TypeError::CyclicOpaqueRepresentation),
+            HirError::Type(TypeError::CyclicOpaqueRepresentation)
+        ));
+        assert!(matches!(
+            HirError::from(InferenceError::Type(TypeError::CyclicOpaqueRepresentation)),
+            HirError::Inference(InferenceError::Type(TypeError::CyclicOpaqueRepresentation))
+        ));
+    }
+}

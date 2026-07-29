@@ -295,3 +295,197 @@ fn static_integer_rvalue(hir: &HirProgram, value: &MirRvalue) -> Option<u64> {
         | MirOperandKind::PreludeTraitFunction { .. } => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::hir::{HirIndexAccess, StaticRegionRelation};
+    use crate::types::{ScalarType, TypeInterner};
+
+    use super::*;
+
+    fn projection(ty: crate::types::TypeId, kind: MirProjectionKind) -> MirProjection {
+        MirProjection { ty, kind }
+    }
+
+    fn place(local: u32, ty: crate::types::TypeId, projections: Vec<MirProjection>) -> MirPlace {
+        MirPlace {
+            local: MirLocalId(local),
+            ty,
+            projections,
+            source_loan: None,
+        }
+    }
+
+    #[test]
+    fn loan_place_relations_cover_static_dynamic_and_fixed_projection_pairs() {
+        let interner = TypeInterner::new(64).unwrap();
+        let int = interner.scalar(ScalarType::Int);
+        let string = interner.scalar(ScalarType::String);
+        let index_a = MirLocalId(0);
+        let index_b = MirLocalId(1);
+        let dynamic = MirLocalId(2);
+        let static_integers = BTreeMap::from([(index_a, 5), (index_b, 8)]);
+
+        assert_eq!(
+            loan_place_relation(
+                &place(0, int, Vec::new()),
+                &place(1, int, Vec::new()),
+                &static_integers,
+            ),
+            StaticRegionRelation::Disjoint
+        );
+        assert_eq!(
+            loan_place_relation(
+                &place(0, int, Vec::new()),
+                &place(0, int, Vec::new()),
+                &static_integers,
+            ),
+            StaticRegionRelation::Overlap
+        );
+
+        let indexed = |index| {
+            vec![projection(
+                int,
+                MirProjectionKind::Index {
+                    index,
+                    access: HirIndexAccess::Array,
+                },
+            )]
+        };
+        assert_eq!(
+            loan_place_relation(
+                &place(0, int, indexed(index_a)),
+                &place(
+                    0,
+                    int,
+                    vec![projection(int, MirProjectionKind::ArrayPatternIndex(5))]
+                ),
+                &static_integers,
+            ),
+            StaticRegionRelation::Overlap
+        );
+        assert_eq!(
+            loan_place_relation(
+                &place(0, int, indexed(index_a)),
+                &place(0, int, indexed(index_b)),
+                &static_integers,
+            ),
+            StaticRegionRelation::Disjoint
+        );
+        assert_eq!(
+            loan_place_relation(
+                &place(0, int, indexed(dynamic)),
+                &place(0, int, indexed(index_b)),
+                &static_integers,
+            ),
+            StaticRegionRelation::Runtime
+        );
+        assert_eq!(
+            loan_place_relation(
+                &place(
+                    0,
+                    int,
+                    vec![projection(
+                        int,
+                        MirProjectionKind::Index {
+                            index: index_a,
+                            access: HirIndexAccess::String,
+                        },
+                    )],
+                ),
+                &place(0, int, indexed(index_b)),
+                &static_integers,
+            ),
+            StaticRegionRelation::Runtime
+        );
+
+        let slice = |start, end, step| {
+            vec![projection(
+                int,
+                MirProjectionKind::Slice { start, end, step },
+            )]
+        };
+        assert_eq!(
+            loan_place_relation(
+                &place(0, int, slice(Some(index_a), Some(index_b), None)),
+                &place(0, int, slice(Some(index_a), Some(index_b), None)),
+                &static_integers,
+            ),
+            StaticRegionRelation::Runtime
+        );
+        assert_eq!(
+            loan_place_relation(
+                &place(0, int, slice(Some(dynamic), None, None)),
+                &place(0, int, indexed(index_a)),
+                &static_integers,
+            ),
+            StaticRegionRelation::Runtime
+        );
+
+        for (left, right) in [
+            (
+                MirProjectionKind::TupleField(0),
+                MirProjectionKind::TupleField(1),
+            ),
+            (
+                MirProjectionKind::OptionValue,
+                MirProjectionKind::ResultOkValue,
+            ),
+            (
+                MirProjectionKind::ResultOkValue,
+                MirProjectionKind::ResultErrValue,
+            ),
+            (
+                MirProjectionKind::UnionValue(int),
+                MirProjectionKind::UnionValue(string),
+            ),
+        ] {
+            assert_eq!(
+                loan_place_relation(
+                    &place(0, int, vec![projection(int, left)]),
+                    &place(0, int, vec![projection(int, right)]),
+                    &static_integers,
+                ),
+                StaticRegionRelation::Disjoint
+            );
+        }
+        assert_eq!(
+            loan_place_relation(
+                &place(
+                    0,
+                    int,
+                    vec![projection(int, MirProjectionKind::TupleField(0))]
+                ),
+                &place(
+                    0,
+                    int,
+                    vec![projection(int, MirProjectionKind::NewtypeValue)]
+                ),
+                &static_integers,
+            ),
+            StaticRegionRelation::Overlap
+        );
+        assert_eq!(
+            loan_place_relation(
+                &place(
+                    0,
+                    int,
+                    vec![projection(
+                        int,
+                        MirProjectionKind::ArrayPatternRest {
+                            start: 1,
+                            suffix: 1,
+                        },
+                    )],
+                ),
+                &place(
+                    0,
+                    int,
+                    vec![projection(int, MirProjectionKind::ArrayPatternIndex(0))],
+                ),
+                &static_integers,
+            ),
+            StaticRegionRelation::Disjoint
+        );
+    }
+}

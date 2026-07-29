@@ -8093,23 +8093,37 @@ fn integer_bounds(scalar: BytecodeScalarType) -> Option<(i128, i128)> {
 }
 
 fn collection_length_fits_int(length: usize) -> bool {
-    let Some((_, maximum)) = integer_bounds(BytecodeScalarType::Int) else {
-        return false;
-    };
+    let (_, maximum) =
+        integer_bounds(BytecodeScalarType::Int).expect("the closed Int scalar is always integral");
     i128::try_from(length).is_ok_and(|length| length <= maximum)
 }
 
 #[cfg(test)]
 mod tests {
     use crate::bytecode::{
-        BytecodeBinaryOperator, BytecodeConstantValue, BytecodeConstantValueKind,
-        BytecodeCursorMode, BytecodeIntrinsicType, BytecodeProgram, BytecodeRangeKind,
-        BytecodeScalarType, BytecodeType, BytecodeTypeId, BytecodeTypeKind, derive_trace_metadata,
+        BytecodeAggregateKind, BytecodeBinaryOperator, BytecodeBlockId, BytecodeCallable,
+        BytecodeCallableId, BytecodeCapabilitySet, BytecodeClosure, BytecodeClosureProtocols,
+        BytecodeConstant, BytecodeConstantValue, BytecodeConstantValueKind,
+        BytecodeConstantVariantValue, BytecodeContainmentKind, BytecodeCursorMode, BytecodeField,
+        BytecodeFrameTraceDescriptor, BytecodeFunctionId, BytecodeIndexAccess,
+        BytecodeIntrinsicType, BytecodeLoanId, BytecodeNominal, BytecodeNominalId,
+        BytecodeNominalShape, BytecodeNumericConversionError, BytecodeOperand, BytecodeOperandKind,
+        BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode, BytecodePlace,
+        BytecodePrefixOperator, BytecodeProgram, BytecodeRangeKind, BytecodeScalarType,
+        BytecodeScopeId, BytecodeSliceBounds, BytecodeSlotId, BytecodeTraceDescriptor,
+        BytecodeType, BytecodeTypeId, BytecodeTypeKind, BytecodeVariant, BytecodeVariantPayload,
+        derive_trace_metadata,
     };
 
     use super::{
-        Engine, PanicCode, RejectingHost, RuntimeType, RuntimeValue, TaskCompletion, TaskRecord,
-        TaskStatus, TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits, snapshot_value,
+        AggregatePayload, Engine, Frame, HeapObject, PanicCode, PlaceComponent, PlaceFailure,
+        RejectingHost, ResolvedPlacePath, RuntimeFallback, RuntimeHostValueKind, RuntimeJoin,
+        RuntimeLoan, RuntimeType, RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus,
+        TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits, clone_field, clone_index,
+        clone_present, collection_length_fits_int, convert_numeric, integer_bounds, integer_shape,
+        next_unicode_scalar, operand_materialized_slot, operation_access_place, paths_overlap,
+        present, queue_object_equality, queue_payload_equality, runtime_host_kind, set_field,
+        set_index, slice_indices, snapshot_value, take_field, take_index, take_option,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -8172,6 +8186,315 @@ mod tests {
         }
     }
 
+    fn terminal_fallback_program() -> BytecodeProgram {
+        let mut program = root_pressure_program();
+        let string = BytecodeTypeId::new(0);
+        let strings = BytecodeTypeId::new(1);
+        let int = BytecodeTypeId::new(5);
+        let ints = BytecodeTypeId::new(6);
+        let never = BytecodeTypeId::new(19);
+
+        program.types.extend([
+            BytecodeType {
+                name: "Set[String]".into(),
+                kind: BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Set,
+                    arguments: vec![string],
+                },
+            },
+            BytecodeType {
+                name: "String?".into(),
+                kind: BytecodeTypeKind::Option(string),
+            },
+            BytecodeType {
+                name: "String ! Array[String]".into(),
+                kind: BytecodeTypeKind::Result {
+                    success: string,
+                    error: strings,
+                },
+            },
+            BytecodeType {
+                name: "String | Array[String]".into(),
+                kind: BytecodeTypeKind::Union(vec![string, strings]),
+            },
+            BytecodeType {
+                name: "$0".into(),
+                kind: BytecodeTypeKind::GenericParameter(0),
+            },
+            BytecodeType {
+                name: "TextBox".into(),
+                kind: BytecodeTypeKind::Nominal {
+                    nominal: Some(BytecodeNominalId::new(0)),
+                    identity: "test::TextBox".into(),
+                    arguments: Vec::new(),
+                },
+            },
+            BytecodeType {
+                name: "Message".into(),
+                kind: BytecodeTypeKind::Nominal {
+                    nominal: Some(BytecodeNominalId::new(1)),
+                    identity: "test::Message".into(),
+                    arguments: Vec::new(),
+                },
+            },
+            BytecodeType {
+                name: "Event".into(),
+                kind: BytecodeTypeKind::Nominal {
+                    nominal: Some(BytecodeNominalId::new(2)),
+                    identity: "test::Event".into(),
+                    arguments: Vec::new(),
+                },
+            },
+            BytecodeType {
+                name: "closure-environment".into(),
+                kind: BytecodeTypeKind::Generated {
+                    identity: "test::closure".into(),
+                    arguments: Vec::new(),
+                },
+            },
+            BytecodeType {
+                name: "cursor[ref, Array[Int]]".into(),
+                kind: BytecodeTypeKind::Cursor {
+                    mode: BytecodeCursorMode::Ref,
+                    collection: ints,
+                },
+            },
+            BytecodeType {
+                name: "ProcessHandle".into(),
+                kind: BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::ProcessHandle,
+                    arguments: Vec::new(),
+                },
+            },
+            BytecodeType {
+                name: "Never".into(),
+                kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Never),
+            },
+            BytecodeType {
+                name: "Join[String, Never]".into(),
+                kind: BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Join,
+                    arguments: vec![string, never],
+                },
+            },
+        ]);
+        program.nominals.extend([
+            BytecodeNominal {
+                name: "TextBox".into(),
+                identity: "test::TextBox".into(),
+                generic_arity: 0,
+                shape: BytecodeNominalShape::Newtype { underlying: string },
+            },
+            BytecodeNominal {
+                name: "Message".into(),
+                identity: "test::Message".into(),
+                generic_arity: 0,
+                shape: BytecodeNominalShape::Record {
+                    fields: vec![
+                        BytecodeField {
+                            member: 0,
+                            ty: string,
+                        },
+                        BytecodeField {
+                            member: 1,
+                            ty: strings,
+                        },
+                    ],
+                },
+            },
+            BytecodeNominal {
+                name: "Event".into(),
+                identity: "test::Event".into(),
+                generic_arity: 0,
+                shape: BytecodeNominalShape::Enum {
+                    variants: vec![
+                        BytecodeVariant {
+                            member: 0,
+                            payload: BytecodeVariantPayload::Unit,
+                        },
+                        BytecodeVariant {
+                            member: 1,
+                            payload: BytecodeVariantPayload::Tuple(vec![string]),
+                        },
+                        BytecodeVariant {
+                            member: 2,
+                            payload: BytecodeVariantPayload::Record(vec![BytecodeField {
+                                member: 0,
+                                ty: strings,
+                            }]),
+                        },
+                    ],
+                },
+            },
+        ]);
+        program.callables.push(BytecodeCallable {
+            name: "closure".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: int,
+            function_type: int,
+            implementation: None,
+            closure: Some(BytecodeClosure {
+                environment: BytecodeTypeId::new(16),
+                captures: vec![string, strings],
+                protocols: BytecodeClosureProtocols {
+                    call: true,
+                    call_mut: false,
+                    call_once: true,
+                },
+            }),
+        });
+        program
+    }
+
+    fn install_fallback_frame(
+        engine: &mut Engine<'_, '_>,
+        ty: BytecodeTypeId,
+        value: Value,
+    ) -> RuntimeFallback {
+        let function = BytecodeFunctionId::new(0);
+        engine.frame_traces.push(BytecodeFrameTraceDescriptor {
+            function,
+            slots: vec![ty],
+        });
+        engine.frames.push(Frame {
+            function,
+            block: BytecodeBlockId::new(0),
+            instruction: 0,
+            slots: vec![SlotState::Value(value)],
+            loans: Vec::new(),
+            cleanups: Vec::new(),
+            task_scopes: Vec::new(),
+            continuation: None,
+        });
+        RuntimeFallback {
+            scope: BytecodeScopeId::new(0),
+            owner: BytecodePlace {
+                slot: BytecodeSlotId::new(0),
+                ty,
+                projections: Vec::new(),
+                source_loan: None,
+            },
+        }
+    }
+
+    fn assert_fallback_error(
+        program: &BytecodeProgram,
+        ty: BytecodeTypeId,
+        value: Value,
+        expected: &str,
+    ) {
+        let trace = derive_trace_metadata(program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            program,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        let fallback = install_fallback_frame(&mut engine, ty, value);
+        let error = engine.execute_terminal_fallback(0, fallback).unwrap_err();
+        assert!(
+            error.to_string().contains(expected),
+            "expected `{expected}`, got `{error}`"
+        );
+    }
+
+    fn assert_fallback_heap_error(
+        program: &BytecodeProgram,
+        ty: BytecodeTypeId,
+        object: HeapObject,
+        expected: &str,
+    ) {
+        let mut trace = derive_trace_metadata(program).unwrap();
+        trace.types[ty.index() as usize] = match &object {
+            HeapObject::String(_) => BytecodeTraceDescriptor::String,
+            HeapObject::Tuple(values) => BytecodeTraceDescriptor::Tuple {
+                fields: vec![BytecodeTypeId::new(0); values.len()],
+            },
+            HeapObject::Record { nominal, fields } => BytecodeTraceDescriptor::Record {
+                nominal: *nominal,
+                arguments: Vec::new(),
+                fields: fields
+                    .iter()
+                    .map(|(member, _)| BytecodeField {
+                        member: *member,
+                        ty: BytecodeTypeId::new(0),
+                    })
+                    .collect(),
+            },
+            HeapObject::Variant { variant, payload } => BytecodeTraceDescriptor::Variant {
+                nominal: Some(BytecodeNominalId::new(2)),
+                arguments: Vec::new(),
+                variants: vec![BytecodeVariant {
+                    member: *variant,
+                    payload: match payload {
+                        AggregatePayload::Unit => BytecodeVariantPayload::Unit,
+                        AggregatePayload::Tuple(values) => BytecodeVariantPayload::Tuple(vec![
+                            BytecodeTypeId::new(0);
+                            values.len()
+                        ]),
+                        AggregatePayload::Record(fields) => BytecodeVariantPayload::Record(
+                            fields
+                                .iter()
+                                .map(|(member, _)| BytecodeField {
+                                    member: *member,
+                                    ty: BytecodeTypeId::new(0),
+                                })
+                                .collect(),
+                        ),
+                    },
+                }],
+            },
+            HeapObject::Closure { callable, captures } => BytecodeTraceDescriptor::Closure {
+                callable: *callable,
+                captures: vec![BytecodeTypeId::new(0); captures.len()],
+            },
+            HeapObject::Iterator { mode, .. } => BytecodeTraceDescriptor::Cursor {
+                mode: *mode,
+                collection: BytecodeTypeId::new(6),
+            },
+            _ => panic!("error fixture must provide an explicit trace-compatible object"),
+        };
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            program,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        let value = engine.allocate(ty, object, &[]).unwrap();
+        let fallback = install_fallback_frame(&mut engine, ty, value);
+        let error = engine.execute_terminal_fallback(0, fallback).unwrap_err();
+        assert!(
+            error.to_string().contains(expected),
+            "expected `{expected}`, got `{error}`"
+        );
+    }
+
+    fn execute_fallback_object(
+        program: &BytecodeProgram,
+        ty: BytecodeTypeId,
+        object: HeapObject,
+    ) -> HeapObject {
+        let trace = derive_trace_metadata(program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            program,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        let value = engine.allocate(ty, object, &[]).unwrap();
+        let handle = value.heap_handle().unwrap();
+        let fallback = install_fallback_frame(&mut engine, ty, value);
+        engine.execute_terminal_fallback(0, fallback).unwrap();
+        engine.heap.get(handle).unwrap().clone()
+    }
+
     fn pressure_limits() -> VmLimits {
         VmLimits {
             max_heap_objects: 64,
@@ -8194,6 +8517,1375 @@ mod tests {
             join_consumed: true,
             panic_observed: false,
         }
+    }
+
+    #[test]
+    fn terminal_fallback_dismantles_every_managed_shape_without_retaining_children() {
+        let program = terminal_fallback_program();
+
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(4),
+                HeapObject::Tuple(vec![None, None]),
+            ),
+            HeapObject::Tuple(vec![None, None])
+        );
+        assert_eq!(
+            execute_fallback_object(&program, BytecodeTypeId::new(9), HeapObject::OptionNone,),
+            HeapObject::OptionNone
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(9),
+                HeapObject::OptionSome(Some(Value::Unit)),
+            ),
+            HeapObject::OptionSome(None)
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(10),
+                HeapObject::ResultOk(Some(Value::Unit)),
+            ),
+            HeapObject::ResultOk(None)
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(10),
+                HeapObject::ResultErr(None),
+            ),
+            HeapObject::ResultErr(None)
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(11),
+                HeapObject::Union {
+                    member: BytecodeTypeId::new(0),
+                    value: Some(Value::Unit),
+                },
+            ),
+            HeapObject::Union {
+                member: BytecodeTypeId::new(0),
+                value: None,
+            }
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(1),
+                HeapObject::Array(vec![Some(Value::Unit)].into()),
+            ),
+            HeapObject::Array(vec![None].into())
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(8),
+                HeapObject::Set(vec![Some(Value::Unit)].into()),
+            ),
+            HeapObject::Set(vec![None].into())
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(2),
+                HeapObject::Map(vec![(Some(Value::Unit), None)].into()),
+            ),
+            HeapObject::Map(vec![(None, None)].into())
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(3),
+                HeapObject::Range {
+                    kind: BytecodeRangeKind::Inclusive,
+                    start: Some(Value::Unit),
+                    end: Some(Value::Unit),
+                },
+            ),
+            HeapObject::Range {
+                kind: BytecodeRangeKind::Inclusive,
+                start: None,
+                end: None,
+            }
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(13),
+                HeapObject::Newtype {
+                    nominal: BytecodeNominalId::new(0),
+                    value: Some(Value::Unit),
+                },
+            ),
+            HeapObject::Newtype {
+                nominal: BytecodeNominalId::new(0),
+                value: None,
+            }
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(14),
+                HeapObject::Record {
+                    nominal: BytecodeNominalId::new(1),
+                    fields: vec![(0, Some(Value::Unit)), (1, None)],
+                },
+            ),
+            HeapObject::Record {
+                nominal: BytecodeNominalId::new(1),
+                fields: vec![(0, None), (1, None)],
+            }
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(15),
+                HeapObject::Variant {
+                    variant: 0,
+                    payload: AggregatePayload::Unit,
+                },
+            ),
+            HeapObject::Variant {
+                variant: 0,
+                payload: AggregatePayload::Unit,
+            }
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(15),
+                HeapObject::Variant {
+                    variant: 1,
+                    payload: AggregatePayload::Tuple(vec![Some(Value::Unit)]),
+                },
+            ),
+            HeapObject::Variant {
+                variant: 1,
+                payload: AggregatePayload::Tuple(vec![None]),
+            }
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(15),
+                HeapObject::Variant {
+                    variant: 2,
+                    payload: AggregatePayload::Record(vec![(0, None)]),
+                },
+            ),
+            HeapObject::Variant {
+                variant: 2,
+                payload: AggregatePayload::Record(vec![(0, None)]),
+            }
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(16),
+                HeapObject::Closure {
+                    callable: BytecodeCallableId::new(0),
+                    captures: vec![Some(Value::Unit), None],
+                },
+            ),
+            HeapObject::Closure {
+                callable: BytecodeCallableId::new(0),
+                captures: vec![None, None],
+            }
+        );
+        assert_eq!(
+            execute_fallback_object(
+                &program,
+                BytecodeTypeId::new(7),
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Own,
+                    source: None,
+                    next: 3,
+                },
+            ),
+            HeapObject::Iterator {
+                mode: BytecodeCursorMode::Own,
+                source: None,
+                next: 3,
+            }
+        );
+
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        let fallback = install_fallback_frame(&mut engine, BytecodeTypeId::new(17), Value::Unit);
+        engine.execute_terminal_fallback(0, fallback).unwrap();
+    }
+
+    #[test]
+    fn terminal_fallback_rejects_every_incompatible_runtime_shape() {
+        let program = terminal_fallback_program();
+
+        assert_fallback_error(
+            &program,
+            BytecodeTypeId::new(999),
+            Value::Unit,
+            "unknown type",
+        );
+        assert_fallback_error(
+            &program,
+            BytecodeTypeId::new(12),
+            Value::Unit,
+            "cannot resolve a generic nominal component",
+        );
+        for (ty, expected) in [
+            (4, "tuple fallback found a non-managed value"),
+            (9, "Option fallback found a non-managed value"),
+            (10, "Result fallback found a non-managed value"),
+            (11, "union fallback found a non-managed value"),
+            (1, "collection fallback found a non-managed value"),
+            (8, "collection fallback found a non-managed value"),
+            (2, "Map fallback found a non-managed value"),
+            (3, "Range fallback found a non-managed value"),
+            (13, "nominal fallback found a non-managed value"),
+            (16, "closure fallback found a non-managed value"),
+            (7, "cursor fallback found a non-managed value"),
+        ] {
+            assert_fallback_error(&program, BytecodeTypeId::new(ty), Value::Unit, expected);
+        }
+        assert_fallback_error(
+            &program,
+            BytecodeTypeId::new(18),
+            Value::Unit,
+            "ProcessHandle fallback found a non-host value",
+        );
+        assert_fallback_error(
+            &program,
+            BytecodeTypeId::new(20),
+            Value::Unit,
+            "Join fallback found no task handle",
+        );
+
+        for (ty, expected) in [
+            (4, "tuple fallback found a different heap object"),
+            (9, "Option fallback found a different heap object"),
+            (10, "Result fallback found a different heap object"),
+            (11, "union fallback found a different heap object"),
+            (1, "collection fallback found a different heap object"),
+            (8, "collection fallback found a different heap object"),
+            (2, "Map fallback found a different heap object"),
+            (3, "Range fallback found a different heap object"),
+            (13, "nominal fallback found a different heap object"),
+            (16, "closure fallback found a different heap object"),
+            (7, "cursor fallback found a different heap object"),
+        ] {
+            assert_fallback_heap_error(
+                &program,
+                BytecodeTypeId::new(ty),
+                HeapObject::String("wrong".into()),
+                expected,
+            );
+        }
+        assert_fallback_heap_error(
+            &program,
+            BytecodeTypeId::new(4),
+            HeapObject::Tuple(vec![None]),
+            "tuple fallback found the wrong arity",
+        );
+        assert_fallback_heap_error(
+            &program,
+            BytecodeTypeId::new(14),
+            HeapObject::Record {
+                nominal: BytecodeNominalId::new(1),
+                fields: vec![(999, None)],
+            },
+            "record fallback found an unknown field",
+        );
+        assert_fallback_heap_error(
+            &program,
+            BytecodeTypeId::new(15),
+            HeapObject::Variant {
+                variant: 999,
+                payload: AggregatePayload::Unit,
+            },
+            "enum fallback found an unknown variant",
+        );
+        assert_fallback_heap_error(
+            &program,
+            BytecodeTypeId::new(15),
+            HeapObject::Variant {
+                variant: 1,
+                payload: AggregatePayload::Unit,
+            },
+            "enum fallback found the wrong payload shape",
+        );
+        assert_fallback_heap_error(
+            &program,
+            BytecodeTypeId::new(16),
+            HeapObject::Closure {
+                callable: BytecodeCallableId::new(0),
+                captures: vec![None],
+            },
+            "closure fallback found the wrong capture arity",
+        );
+        assert_fallback_heap_error(
+            &program,
+            BytecodeTypeId::new(7),
+            HeapObject::Iterator {
+                mode: BytecodeCursorMode::Ref,
+                source: None,
+                next: 0,
+            },
+            "cursor fallback found a ref iterator",
+        );
+    }
+
+    #[test]
+    fn terminal_process_fallback_invokes_the_host_cleanup_boundary() {
+        #[derive(Default)]
+        struct CleanupHost {
+            cleaned: Vec<RuntimeValue>,
+        }
+
+        impl VmHost for CleanupHost {
+            fn invoke(
+                &mut self,
+                name: &str,
+                _arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                Err(VmError::UnsupportedHostCall(name.into()))
+            }
+
+            fn cleanup(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
+                self.cleaned.push(value.clone());
+                Ok(())
+            }
+        }
+
+        let program = terminal_fallback_program();
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = CleanupHost::default();
+        {
+            let mut engine = Engine::new(
+                &program,
+                &mut host,
+                pressure_limits(),
+                ValueCopyStrategy::default(),
+                trace,
+            );
+            let fallback = install_fallback_frame(
+                &mut engine,
+                BytecodeTypeId::new(18),
+                Value::Host(RuntimeValue::String("process".into())),
+            );
+            engine.execute_terminal_fallback(0, fallback).unwrap();
+        }
+        assert_eq!(host.cleaned, [RuntimeValue::String("process".into())]);
+    }
+
+    #[test]
+    fn default_host_and_closed_runtime_helpers_have_explicit_boundaries() {
+        #[derive(Default)]
+        struct MinimalHost;
+
+        impl VmHost for MinimalHost {
+            fn invoke(
+                &mut self,
+                name: &str,
+                _arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                Err(VmError::UnsupportedHostCall(name.into()))
+            }
+        }
+
+        let mut host = MinimalHost;
+        assert!(matches!(
+            host.start_async("work", &[]),
+            Err(VmError::UnsupportedHostCall(name)) if name == "work"
+        ));
+        assert_eq!(host.poll_async(7).unwrap(), None);
+        assert!(matches!(host.wait_async(&[]), Err(VmError::Invariant(_))));
+        assert!(matches!(
+            host.wait_async(&[7]),
+            Err(VmError::UnsupportedHostCall(name)) if name == "async host call #7"
+        ));
+        host.cancel_async(7).unwrap();
+        host.cleanup(&RuntimeValue::Unit).unwrap();
+
+        let mut rejecting = RejectingHost;
+        assert!(matches!(
+            rejecting.invoke("missing", &[]),
+            Err(VmError::UnsupportedHostCall(name)) if name == "missing"
+        ));
+
+        for (constructor, expected) in [
+            (
+                BytecodeIntrinsicType::Command,
+                RuntimeHostValueKind::Command,
+            ),
+            (
+                BytecodeIntrinsicType::Pipeline,
+                RuntimeHostValueKind::Pipeline,
+            ),
+            (BytecodeIntrinsicType::Bytes, RuntimeHostValueKind::Bytes),
+            (
+                BytecodeIntrinsicType::ExitStatus,
+                RuntimeHostValueKind::ExitStatus,
+            ),
+            (
+                BytecodeIntrinsicType::ProcessOutput,
+                RuntimeHostValueKind::ProcessOutput,
+            ),
+            (
+                BytecodeIntrinsicType::ProcessHandle,
+                RuntimeHostValueKind::ProcessHandle,
+            ),
+            (
+                BytecodeIntrinsicType::ProcessError,
+                RuntimeHostValueKind::ProcessError,
+            ),
+            (
+                BytecodeIntrinsicType::ProcessExitError,
+                RuntimeHostValueKind::ProcessExitError,
+            ),
+            (
+                BytecodeIntrinsicType::Utf8Error,
+                RuntimeHostValueKind::Utf8Error,
+            ),
+        ] {
+            assert_eq!(runtime_host_kind(constructor), Some(expected));
+        }
+        for constructor in [
+            BytecodeIntrinsicType::Array,
+            BytecodeIntrinsicType::Map,
+            BytecodeIntrinsicType::Set,
+            BytecodeIntrinsicType::Range,
+            BytecodeIntrinsicType::Ref,
+            BytecodeIntrinsicType::Pointer,
+            BytecodeIntrinsicType::Join,
+            BytecodeIntrinsicType::NumericConversionError,
+        ] {
+            assert_eq!(runtime_host_kind(constructor), None);
+        }
+
+        assert_eq!(next_unicode_scalar(0x41), Some(0x42));
+        assert_eq!(next_unicode_scalar(0xd7ff), Some(0xe000));
+        assert_eq!(next_unicode_scalar(0x10ffff), None);
+        assert_eq!(next_unicode_scalar(u32::MAX), None);
+        assert!(collection_length_fits_int(0));
+        assert!(!collection_length_fits_int(usize::MAX));
+
+        let failure = PlaceFailure::from(VmError::invariant("closed"));
+        assert!(matches!(
+            failure,
+            PlaceFailure::Vm(VmError::Invariant(message)) if message == "closed"
+        ));
+    }
+
+    #[test]
+    fn host_materialization_accepts_every_supported_shape_and_rejects_drift() {
+        let mut program = root_pressure_program();
+        let append = |program: &mut BytecodeProgram, name: &str, kind: BytecodeTypeKind| {
+            let id = BytecodeTypeId::new(program.types.len() as u32);
+            program.types.push(BytecodeType {
+                name: name.into(),
+                kind,
+            });
+            id
+        };
+        let unit = append(
+            &mut program,
+            "Unit",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Unit),
+        );
+        let boolean = append(
+            &mut program,
+            "Bool",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Bool),
+        );
+        let float = append(
+            &mut program,
+            "Float",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Float),
+        );
+        let float32 = append(
+            &mut program,
+            "Float32",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Float32),
+        );
+        let byte = append(
+            &mut program,
+            "Byte",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Byte),
+        );
+        let character = append(
+            &mut program,
+            "Char",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Char),
+        );
+        let option = append(
+            &mut program,
+            "Int?",
+            BytecodeTypeKind::Option(BytecodeTypeId::new(5)),
+        );
+        let result = append(
+            &mut program,
+            "Int ! String",
+            BytecodeTypeKind::Result {
+                success: BytecodeTypeId::new(5),
+                error: BytecodeTypeId::new(0),
+            },
+        );
+        let union = append(
+            &mut program,
+            "Int | String",
+            BytecodeTypeKind::Union(vec![BytecodeTypeId::new(5), BytecodeTypeId::new(0)]),
+        );
+        let opaque = append(
+            &mut program,
+            "impl Copy",
+            BytecodeTypeKind::OpaqueResult {
+                identity: "test::opaque".into(),
+                arguments: Vec::new(),
+                witness: BytecodeTypeId::new(5),
+                capabilities: BytecodeCapabilitySet {
+                    copy: true,
+                    discard: true,
+                    equatable: true,
+                    key: true,
+                    send: true,
+                    share: true,
+                },
+            },
+        );
+        let scalars = append(
+            &mut program,
+            "(Unit, Bool, Int, Float, Byte, Char)",
+            BytecodeTypeKind::Tuple(vec![
+                unit,
+                boolean,
+                BytecodeTypeId::new(5),
+                float,
+                byte,
+                character,
+            ]),
+        );
+
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+
+        for (ty, runtime, expected) in [
+            (unit, RuntimeValue::Unit, Value::Unit),
+            (boolean, RuntimeValue::Bool(true), Value::Bool(true)),
+            (
+                BytecodeTypeId::new(5),
+                RuntimeValue::Integer(42),
+                Value::Integer(42),
+            ),
+            (float, RuntimeValue::Float(1.5), Value::Float(1.5)),
+            (
+                float32,
+                RuntimeValue::Float(16_777_217.0),
+                Value::Float(16_777_216.0),
+            ),
+            (byte, RuntimeValue::Byte(255), Value::Byte(255)),
+            (character, RuntimeValue::Char('λ'), Value::Char('λ')),
+        ] {
+            assert_eq!(
+                engine.materialize_host_value(ty, runtime).unwrap(),
+                expected
+            );
+        }
+
+        let tuple = RuntimeValue::Tuple(vec![
+            RuntimeValue::Unit,
+            RuntimeValue::Bool(true),
+            RuntimeValue::Integer(7),
+            RuntimeValue::Float(2.5),
+            RuntimeValue::Byte(8),
+            RuntimeValue::Char('x'),
+        ]);
+        let value = engine
+            .materialize_host_value(scalars, tuple.clone())
+            .unwrap();
+        assert_eq!(
+            snapshot_value(
+                &value,
+                &engine.heap,
+                &engine.callable_names,
+                &engine.nominal_names,
+            )
+            .unwrap(),
+            tuple
+        );
+
+        for (runtime, expected) in [
+            (RuntimeValue::OptionNone, RuntimeValue::OptionNone),
+            (
+                RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(9))),
+                RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(9))),
+            ),
+        ] {
+            let value = engine.materialize_host_value(option, runtime).unwrap();
+            assert_eq!(
+                snapshot_value(
+                    &value,
+                    &engine.heap,
+                    &engine.callable_names,
+                    &engine.nominal_names,
+                )
+                .unwrap(),
+                expected
+            );
+        }
+        for runtime in [
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(10))),
+            RuntimeValue::ResultErr(Box::new(RuntimeValue::String("error".into()))),
+        ] {
+            let value = engine
+                .materialize_host_value(result, runtime.clone())
+                .unwrap();
+            assert_eq!(
+                snapshot_value(
+                    &value,
+                    &engine.heap,
+                    &engine.callable_names,
+                    &engine.nominal_names,
+                )
+                .unwrap(),
+                runtime
+            );
+        }
+
+        let selected = RuntimeValue::Union {
+            member: 5,
+            value: Box::new(RuntimeValue::Integer(11)),
+        };
+        let value = engine
+            .materialize_host_value(union, selected.clone())
+            .unwrap();
+        assert_eq!(
+            snapshot_value(
+                &value,
+                &engine.heap,
+                &engine.callable_names,
+                &engine.nominal_names,
+            )
+            .unwrap(),
+            selected
+        );
+        assert_eq!(
+            engine
+                .materialize_host_value(opaque, RuntimeValue::Integer(12))
+                .unwrap(),
+            Value::Integer(12)
+        );
+
+        assert!(matches!(
+            engine.materialize_host_value(boolean, RuntimeValue::Integer(1)),
+            Err(VmError::Host(_))
+        ));
+        assert!(matches!(
+            engine.materialize_host_value(
+                union,
+                RuntimeValue::Union {
+                    member: u32::MAX,
+                    value: Box::new(RuntimeValue::Integer(1)),
+                },
+            ),
+            Err(VmError::Host(_))
+        ));
+        assert!(matches!(
+            engine.materialize_host_value(scalars, RuntimeValue::Tuple(vec![RuntimeValue::Unit]),),
+            Err(VmError::Host(_))
+        ));
+        assert!(matches!(
+            engine.value_tag(&Value::Integer(1)),
+            Err(VmError::Invariant(_))
+        ));
+        let untagged = engine
+            .allocate(
+                BytecodeTypeId::new(0),
+                super::HeapObject::String("untagged".into()),
+                &[],
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.value_tag(&untagged),
+            Err(VmError::Invariant(_))
+        ));
+    }
+
+    #[test]
+    fn numeric_conversion_and_structural_equality_helpers_are_closed() {
+        use BytecodeNumericConversionError::{NotFinite, NotIntegral, OutOfRange};
+
+        assert_eq!(
+            convert_numeric(BytecodeScalarType::Bool, &Value::Integer(1)),
+            Err(OutOfRange)
+        );
+        assert_eq!(
+            convert_numeric(BytecodeScalarType::Byte, &Value::Byte(7)),
+            Ok(Value::Byte(7))
+        );
+        assert_eq!(
+            convert_numeric(BytecodeScalarType::Byte, &Value::Float(255.0)),
+            Ok(Value::Byte(255))
+        );
+        assert_eq!(
+            convert_numeric(BytecodeScalarType::Byte, &Value::Float(256.0)),
+            Err(OutOfRange)
+        );
+        assert_eq!(
+            convert_numeric(BytecodeScalarType::Int8, &Value::Float(42.0)),
+            Ok(Value::Integer(42))
+        );
+        assert_eq!(
+            convert_numeric(BytecodeScalarType::Int8, &Value::Float(128.0)),
+            Err(OutOfRange)
+        );
+        assert_eq!(
+            convert_numeric(BytecodeScalarType::Bool, &Value::Float(1.0)),
+            Err(OutOfRange)
+        );
+        assert_eq!(
+            convert_numeric(BytecodeScalarType::Int, &Value::Float(f64::INFINITY)),
+            Err(NotFinite)
+        );
+        assert_eq!(
+            convert_numeric(BytecodeScalarType::Int, &Value::Float(1.5)),
+            Err(NotIntegral)
+        );
+        assert_eq!(
+            convert_numeric(BytecodeScalarType::Int, &Value::Unit),
+            Err(OutOfRange)
+        );
+
+        let mut pending = Vec::new();
+        assert!(
+            !queue_object_equality(
+                &super::HeapObject::Tuple(vec![Some(Value::Integer(1))]),
+                &super::HeapObject::Tuple(Vec::new()),
+                &mut pending,
+            )
+            .unwrap()
+        );
+        assert!(
+            !queue_object_equality(
+                &super::HeapObject::Newtype {
+                    nominal: BytecodeNominalId::new(0),
+                    value: Some(Value::Integer(1)),
+                },
+                &super::HeapObject::Newtype {
+                    nominal: BytecodeNominalId::new(1),
+                    value: Some(Value::Integer(1)),
+                },
+                &mut pending,
+            )
+            .unwrap()
+        );
+        assert!(
+            !queue_object_equality(
+                &super::HeapObject::Record {
+                    nominal: BytecodeNominalId::new(0),
+                    fields: vec![(0, Some(Value::Integer(1)))],
+                },
+                &super::HeapObject::Record {
+                    nominal: BytecodeNominalId::new(0),
+                    fields: vec![(1, Some(Value::Integer(1)))],
+                },
+                &mut pending,
+            )
+            .unwrap()
+        );
+        assert!(
+            !queue_object_equality(
+                &super::HeapObject::Range {
+                    kind: BytecodeRangeKind::Exclusive,
+                    start: Some(Value::Integer(1)),
+                    end: Some(Value::Integer(2)),
+                },
+                &super::HeapObject::Range {
+                    kind: BytecodeRangeKind::Inclusive,
+                    start: Some(Value::Integer(1)),
+                    end: Some(Value::Integer(2)),
+                },
+                &mut pending,
+            )
+            .unwrap()
+        );
+        assert!(
+            queue_object_equality(
+                &super::HeapObject::Range {
+                    kind: BytecodeRangeKind::Inclusive,
+                    start: Some(Value::Integer(1)),
+                    end: Some(Value::Integer(2)),
+                },
+                &super::HeapObject::Range {
+                    kind: BytecodeRangeKind::Inclusive,
+                    start: Some(Value::Integer(1)),
+                    end: Some(Value::Integer(2)),
+                },
+                &mut pending,
+            )
+            .unwrap()
+        );
+        assert!(matches!(
+            queue_object_equality(
+                &super::HeapObject::Closure {
+                    callable: BytecodeCallableId::new(0),
+                    captures: Vec::new(),
+                },
+                &super::HeapObject::Closure {
+                    callable: BytecodeCallableId::new(0),
+                    captures: Vec::new(),
+                },
+                &mut pending,
+            ),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            queue_object_equality(
+                &super::HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Own,
+                    source: Some(Value::Integer(1)),
+                    next: 0,
+                },
+                &super::HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Own,
+                    source: Some(Value::Integer(1)),
+                    next: 0,
+                },
+                &mut pending,
+            ),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(
+            !queue_object_equality(
+                &super::HeapObject::OptionNone,
+                &super::HeapObject::String("different".into()),
+                &mut pending,
+            )
+            .unwrap()
+        );
+
+        assert!(
+            !queue_payload_equality(
+                &AggregatePayload::Tuple(vec![Some(Value::Integer(1))]),
+                &AggregatePayload::Tuple(Vec::new()),
+                &mut pending,
+            )
+            .unwrap()
+        );
+        assert!(
+            !queue_payload_equality(
+                &AggregatePayload::Record(vec![(0, Some(Value::Integer(1)))]),
+                &AggregatePayload::Record(vec![(1, Some(Value::Integer(1)))]),
+                &mut pending,
+            )
+            .unwrap()
+        );
+        assert!(
+            !queue_payload_equality(
+                &AggregatePayload::Unit,
+                &AggregatePayload::Tuple(Vec::new()),
+                &mut pending,
+            )
+            .unwrap()
+        );
+
+        macro_rules! equal_object {
+            ($object:expr) => {{
+                let object = $object;
+                let clone = object.clone();
+                assert!(queue_object_equality(&object, &clone, &mut pending).unwrap());
+            }};
+        }
+        equal_object!(super::HeapObject::String("same".into()));
+        equal_object!(super::HeapObject::Tuple(vec![Some(Value::Integer(1))]));
+        equal_object!(super::HeapObject::Array(
+            vec![Some(Value::Integer(1))].into()
+        ));
+        equal_object!(super::HeapObject::Newtype {
+            nominal: BytecodeNominalId::new(0),
+            value: Some(Value::Integer(1)),
+        });
+        equal_object!(super::HeapObject::Record {
+            nominal: BytecodeNominalId::new(0),
+            fields: vec![(0, Some(Value::Integer(1)))],
+        });
+        for payload in [
+            AggregatePayload::Unit,
+            AggregatePayload::Tuple(vec![Some(Value::Integer(1))]),
+            AggregatePayload::Record(vec![(0, Some(Value::Integer(1)))]),
+        ] {
+            equal_object!(super::HeapObject::Variant {
+                variant: 0,
+                payload,
+            });
+        }
+        equal_object!(super::HeapObject::OptionNone);
+        equal_object!(super::HeapObject::OptionSome(Some(Value::Integer(1))));
+        equal_object!(super::HeapObject::ResultOk(Some(Value::Integer(1))));
+        equal_object!(super::HeapObject::ResultErr(Some(Value::Integer(1))));
+        equal_object!(super::HeapObject::Union {
+            member: BytecodeTypeId::new(0),
+            value: Some(Value::Integer(1)),
+        });
+        assert!(
+            !queue_object_equality(
+                &super::HeapObject::Union {
+                    member: BytecodeTypeId::new(0),
+                    value: Some(Value::Integer(1)),
+                },
+                &super::HeapObject::Union {
+                    member: BytecodeTypeId::new(1),
+                    value: Some(Value::Integer(1)),
+                },
+                &mut pending,
+            )
+            .unwrap()
+        );
+        assert!(
+            !queue_object_equality(
+                &super::HeapObject::Ref(Some(Value::Integer(1))),
+                &super::HeapObject::Ref(Some(Value::Integer(1))),
+                &mut pending,
+            )
+            .unwrap()
+        );
+    }
+
+    #[test]
+    fn projection_and_storage_helper_boundaries_are_closed() {
+        let ty = BytecodeTypeId::new(0);
+        let slot = |index| BytecodeSlotId::new(index);
+        let place = |index| BytecodePlace {
+            slot: slot(index),
+            ty,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let operand = |kind| BytecodeOperand { ty, kind };
+        for kind in [
+            BytecodeOperandKind::Copy(place(1)),
+            BytecodeOperandKind::Move(place(2)),
+            BytecodeOperandKind::Borrow(place(3)),
+        ] {
+            let expected = match &kind {
+                BytecodeOperandKind::Copy(place)
+                | BytecodeOperandKind::Move(place)
+                | BytecodeOperandKind::Borrow(place) => place.slot,
+                _ => unreachable!(),
+            };
+            assert_eq!(operand_materialized_slot(&operand(kind)).unwrap(), expected);
+        }
+        assert!(matches!(
+            operand_materialized_slot(&operand(BytecodeOperandKind::Constant(
+                BytecodeConstant::Integer("0".into()),
+            ))),
+            Err(VmError::Invariant(_))
+        ));
+        let mut projected = place(1);
+        projected
+            .projections
+            .push(crate::bytecode::BytecodeProjection {
+                ty,
+                kind: crate::bytecode::BytecodeProjectionKind::TupleField(0),
+            });
+        assert!(matches!(
+            operand_materialized_slot(&operand(BytecodeOperandKind::Copy(projected))),
+            Err(VmError::Invariant(_))
+        ));
+        let mut sourced = place(1);
+        sourced.source_loan = Some(BytecodeLoanId::new(0));
+        assert!(matches!(
+            operand_materialized_slot(&operand(BytecodeOperandKind::Copy(sourced))),
+            Err(VmError::Invariant(_))
+        ));
+
+        let index = BytecodeOperation {
+            ty,
+            kind: BytecodeOperationKind::Index {
+                base: operand(BytecodeOperandKind::Borrow(place(0))),
+                index: operand(BytecodeOperandKind::Copy(place(1))),
+                access: BytecodeIndexAccess::Array,
+                against: Vec::new(),
+            },
+        };
+        let access = operation_access_place(&index).unwrap().unwrap();
+        assert!(matches!(
+            access.projections.last().map(|projection| &projection.kind),
+            Some(crate::bytecode::BytecodeProjectionKind::Index { index, .. })
+                if *index == slot(1)
+        ));
+
+        let slice = BytecodeOperation {
+            ty,
+            kind: BytecodeOperationKind::Slice {
+                base: operand(BytecodeOperandKind::Borrow(place(0))),
+                bounds: Box::new(BytecodeSliceBounds {
+                    start: Some(operand(BytecodeOperandKind::Copy(place(1)))),
+                    end: Some(operand(BytecodeOperandKind::Move(place(2)))),
+                    step: Some(operand(BytecodeOperandKind::Borrow(place(3)))),
+                }),
+                against: Vec::new(),
+            },
+        };
+        let access = operation_access_place(&slice).unwrap().unwrap();
+        assert!(matches!(
+            access.projections.last().map(|projection| &projection.kind),
+            Some(crate::bytecode::BytecodeProjectionKind::Slice {
+                start: Some(start),
+                end: Some(end),
+                step: Some(step),
+            }) if *start == slot(1) && *end == slot(2) && *step == slot(3)
+        ));
+
+        let mut invalid_base = index.clone();
+        let BytecodeOperationKind::Index { base, .. } = &mut invalid_base.kind else {
+            unreachable!()
+        };
+        base.kind = BytecodeOperandKind::Copy(place(0));
+        assert!(matches!(
+            operation_access_place(&invalid_base),
+            Err(VmError::Invariant(_))
+        ));
+        let mut invalid_index = index.clone();
+        let BytecodeOperationKind::Index { index, .. } = &mut invalid_index.kind else {
+            unreachable!()
+        };
+        index.kind = BytecodeOperandKind::Constant(BytecodeConstant::Integer("0".into()));
+        assert!(matches!(
+            operation_access_place(&invalid_index),
+            Err(VmError::Invariant(_))
+        ));
+        let unrelated = BytecodeOperation {
+            ty,
+            kind: BytecodeOperationKind::ExplicitPanic {
+                message: operand(BytecodeOperandKind::Constant(BytecodeConstant::String(
+                    "\"stop\"".into(),
+                ))),
+            },
+        };
+        assert_eq!(operation_access_place(&unrelated).unwrap(), None);
+
+        let path = |root, components| ResolvedPlacePath { root, components };
+        let root = (0, 1, 2);
+        assert!(paths_overlap(
+            &path(root, Vec::new()),
+            &path(root, Vec::new())
+        ));
+        assert!(!paths_overlap(
+            &path(root, Vec::new()),
+            &path((1, 1, 2), Vec::new())
+        ));
+        assert!(!paths_overlap(
+            &path(root, vec![PlaceComponent::Field(0)]),
+            &path(root, vec![PlaceComponent::Field(1)])
+        ));
+        assert!(paths_overlap(
+            &path(root, vec![PlaceComponent::Slice(vec![1, 3])]),
+            &path(root, vec![PlaceComponent::Slice(vec![2, 3])])
+        ));
+        assert!(!paths_overlap(
+            &path(root, vec![PlaceComponent::Slice(vec![1, 3])]),
+            &path(root, vec![PlaceComponent::Slice(vec![2, 4])])
+        ));
+        assert!(paths_overlap(
+            &path(root, vec![PlaceComponent::Slice(vec![2])]),
+            &path(root, vec![PlaceComponent::Index(2)])
+        ));
+        assert!(paths_overlap(
+            &path(root, vec![PlaceComponent::Index(2)]),
+            &path(root, vec![PlaceComponent::Slice(vec![2])])
+        ));
+        assert!(!paths_overlap(
+            &path(root, vec![PlaceComponent::Index(-1)]),
+            &path(root, vec![PlaceComponent::Slice(vec![usize::MAX])])
+        ));
+        assert!(!paths_overlap(
+            &path(
+                root,
+                vec![PlaceComponent::MapKey(RuntimeValue::String("a".into()))]
+            ),
+            &path(
+                root,
+                vec![PlaceComponent::MapKey(RuntimeValue::String("b".into()))]
+            )
+        ));
+
+        assert_eq!(slice_indices(None, None, None, 3).unwrap(), [0, 1, 2]);
+        assert_eq!(
+            slice_indices(Some(-1), None, Some(-1), 3).unwrap(),
+            [2, 1, 0]
+        );
+        assert!(matches!(
+            slice_indices(None, None, Some(0), 3),
+            Err((PanicCode::ZeroSliceStep, _))
+        ));
+
+        let mut values = vec![Some(Value::Integer(1)), None];
+        assert_eq!(
+            clone_present(&values[0], "value").unwrap(),
+            Value::Integer(1)
+        );
+        assert_eq!(clone_index(&values, 0, "item").unwrap(), Value::Integer(1));
+        assert!(clone_index(&values, 1, "item").is_err());
+        assert!(clone_index(&values, 2, "item").is_err());
+        assert_eq!(
+            take_index(&mut values, 0, "item").unwrap(),
+            Value::Integer(1)
+        );
+        assert!(take_index(&mut values, 0, "item").is_err());
+        set_index(&mut values, 1, Value::Integer(2), "item").unwrap();
+        assert!(set_index(&mut values, 2, Value::Integer(3), "item").is_err());
+
+        let mut fields = vec![(7, Some(Value::Bool(true))), (8, None)];
+        assert_eq!(clone_field(&fields, 7, "field").unwrap(), Value::Bool(true));
+        assert!(clone_field(&fields, 8, "field").is_err());
+        assert!(clone_field(&fields, 9, "field").is_err());
+        assert_eq!(
+            take_field(&mut fields, 7, "field").unwrap(),
+            Value::Bool(true)
+        );
+        assert!(take_field(&mut fields, 7, "field").is_err());
+        set_field(&mut fields, 8, Value::Bool(false)).unwrap();
+        assert!(set_field(&mut fields, 9, Value::Bool(false)).is_err());
+
+        let mut optional = Some(Value::Char('T'));
+        assert_eq!(present(&optional, "value").unwrap(), &Value::Char('T'));
+        assert_eq!(
+            take_option(&mut optional, "value").unwrap(),
+            Value::Char('T')
+        );
+        assert!(present(&optional, "value").is_err());
+        assert!(take_option(&mut optional, "value").is_err());
+
+        for (scalar, expected) in [
+            (BytecodeScalarType::Int, Some((true, 64))),
+            (BytecodeScalarType::Int8, Some((true, 8))),
+            (BytecodeScalarType::Int16, Some((true, 16))),
+            (BytecodeScalarType::Int32, Some((true, 32))),
+            (BytecodeScalarType::UInt8, Some((false, 8))),
+            (BytecodeScalarType::UInt16, Some((false, 16))),
+            (BytecodeScalarType::UInt32, Some((false, 32))),
+            (BytecodeScalarType::UInt64, Some((false, 64))),
+            (BytecodeScalarType::Float, None),
+        ] {
+            assert_eq!(integer_shape(scalar), expected);
+            assert_eq!(integer_bounds(scalar).is_some(), expected.is_some());
+        }
+    }
+
+    #[test]
+    fn scope_join_search_traverses_every_managed_shape_and_terminates_on_cycles() {
+        let mut program = terminal_fallback_program();
+        let reference = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Ref[String]".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Ref,
+                arguments: vec![BytecodeTypeId::new(0)],
+            },
+        });
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        let join = Value::Join(RuntimeJoin { task: 3, scope: 7 });
+
+        assert!(
+            engine
+                .value_contains_scope_join(&join, 7, &mut Default::default())
+                .unwrap()
+        );
+        assert!(
+            !engine
+                .value_contains_scope_join(&join, 8, &mut Default::default())
+                .unwrap()
+        );
+        assert!(
+            !engine
+                .any_value_contains_scope_join(
+                    [Value::Integer(1), Value::Bool(false)].iter(),
+                    7,
+                    &mut Default::default(),
+                )
+                .unwrap()
+        );
+
+        macro_rules! assert_nested_join {
+            ($ty:expr, $object:expr) => {{
+                let value = engine
+                    .allocate($ty, $object, std::slice::from_ref(&join))
+                    .unwrap();
+                assert!(
+                    engine
+                        .value_contains_scope_join(&value, 7, &mut Default::default())
+                        .unwrap()
+                );
+                assert!(
+                    !engine
+                        .value_contains_scope_join(&value, 8, &mut Default::default())
+                        .unwrap()
+                );
+            }};
+        }
+
+        assert_nested_join!(
+            BytecodeTypeId::new(4),
+            HeapObject::Tuple(vec![None, Some(join.clone())])
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(1),
+            HeapObject::Array(vec![None, Some(join.clone())].into())
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(8),
+            HeapObject::Set(vec![Some(join.clone())].into())
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(2),
+            HeapObject::Map(vec![(None, Some(join.clone()))].into())
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(16),
+            HeapObject::Closure {
+                callable: BytecodeCallableId::new(0),
+                captures: vec![None, Some(join.clone())],
+            }
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(13),
+            HeapObject::Newtype {
+                nominal: BytecodeNominalId::new(0),
+                value: Some(join.clone()),
+            }
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(9),
+            HeapObject::OptionSome(Some(join.clone()))
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(10),
+            HeapObject::ResultOk(Some(join.clone()))
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(10),
+            HeapObject::ResultErr(Some(join.clone()))
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(11),
+            HeapObject::Union {
+                member: BytecodeTypeId::new(0),
+                value: Some(join.clone()),
+            }
+        );
+        assert_nested_join!(reference, HeapObject::Ref(Some(join.clone())));
+        assert_nested_join!(
+            BytecodeTypeId::new(17),
+            HeapObject::Iterator {
+                mode: BytecodeCursorMode::Ref,
+                source: Some(join.clone()),
+                next: 0,
+            }
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(14),
+            HeapObject::Record {
+                nominal: BytecodeNominalId::new(1),
+                fields: vec![(0, None), (1, Some(join.clone()))],
+            }
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(15),
+            HeapObject::Variant {
+                variant: 1,
+                payload: AggregatePayload::Tuple(vec![Some(join.clone())]),
+            }
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(15),
+            HeapObject::Variant {
+                variant: 2,
+                payload: AggregatePayload::Record(vec![(0, Some(join.clone()))]),
+            }
+        );
+        assert_nested_join!(
+            BytecodeTypeId::new(3),
+            HeapObject::Range {
+                kind: BytecodeRangeKind::Inclusive,
+                start: None,
+                end: Some(join.clone()),
+            }
+        );
+
+        for (ty, object) in [
+            (
+                BytecodeTypeId::new(0),
+                HeapObject::String("join-free".into()),
+            ),
+            (BytecodeTypeId::new(9), HeapObject::OptionNone),
+            (
+                BytecodeTypeId::new(15),
+                HeapObject::Variant {
+                    variant: 0,
+                    payload: AggregatePayload::Unit,
+                },
+            ),
+            (
+                BytecodeTypeId::new(17),
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Ref,
+                    source: None,
+                    next: usize::MAX,
+                },
+            ),
+        ] {
+            let value = engine.allocate(ty, object, &[]).unwrap();
+            assert!(
+                !engine
+                    .value_contains_scope_join(&value, 7, &mut Default::default())
+                    .unwrap()
+            );
+        }
+
+        let cycle = engine
+            .allocate(BytecodeTypeId::new(9), HeapObject::OptionNone, &[])
+            .unwrap();
+        let Value::Heap(cycle_handle) = cycle else {
+            unreachable!()
+        };
+        engine
+            .replace_object(
+                cycle_handle,
+                HeapObject::OptionSome(Some(Value::Heap(cycle_handle))),
+                &[],
+            )
+            .unwrap();
+        assert!(
+            !engine
+                .value_contains_scope_join(&cycle, 7, &mut Default::default())
+                .unwrap()
+        );
     }
 
     #[test]
@@ -8704,6 +10396,778 @@ mod tests {
             }
         );
         assert!(engine.statistics.collections > 0);
+    }
+
+    #[test]
+    fn normalized_constant_materialization_preserves_every_closed_value_shape() {
+        let mut program = terminal_fallback_program();
+        let append_scalar =
+            |program: &mut BytecodeProgram, name: &str, scalar: BytecodeScalarType| {
+                let ty = BytecodeTypeId::new(program.types.len() as u32);
+                program.types.push(BytecodeType {
+                    name: name.into(),
+                    kind: BytecodeTypeKind::Scalar(scalar),
+                });
+                ty
+            };
+        let unit = append_scalar(&mut program, "Unit", BytecodeScalarType::Unit);
+        let boolean = append_scalar(&mut program, "Bool", BytecodeScalarType::Bool);
+        let float = append_scalar(&mut program, "Float", BytecodeScalarType::Float);
+        let byte = append_scalar(&mut program, "Byte", BytecodeScalarType::Byte);
+        let character = append_scalar(&mut program, "Char", BytecodeScalarType::Char);
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+        let value = |ty, kind| BytecodeConstantValue { ty, kind };
+        let string = |text: &str| {
+            value(
+                BytecodeTypeId::new(0),
+                BytecodeConstantValueKind::String(text.into()),
+            )
+        };
+        let strings = |items: &[&str]| {
+            value(
+                BytecodeTypeId::new(1),
+                BytecodeConstantValueKind::Array(items.iter().map(|item| string(item)).collect()),
+            )
+        };
+
+        for (constant, expected) in [
+            (
+                value(unit, BytecodeConstantValueKind::Unit),
+                RuntimeValue::Unit,
+            ),
+            (
+                value(boolean, BytecodeConstantValueKind::Bool(true)),
+                RuntimeValue::Bool(true),
+            ),
+            (
+                value(
+                    BytecodeTypeId::new(5),
+                    BytecodeConstantValueKind::Integer(42),
+                ),
+                RuntimeValue::Integer(42),
+            ),
+            (
+                value(byte, BytecodeConstantValueKind::Integer(255)),
+                RuntimeValue::Byte(255),
+            ),
+            (
+                value(float, BytecodeConstantValueKind::Float(1.5_f64.to_bits())),
+                RuntimeValue::Float(1.5),
+            ),
+            (
+                value(character, BytecodeConstantValueKind::Char('T')),
+                RuntimeValue::Char('T'),
+            ),
+            (
+                value(
+                    BytecodeTypeId::new(5),
+                    BytecodeConstantValueKind::Function {
+                        callable: BytecodeCallableId::new(0),
+                        arguments: vec![BytecodeTypeId::new(5)],
+                    },
+                ),
+                RuntimeValue::Function {
+                    name: "closure".into(),
+                    type_arguments: vec![5],
+                },
+            ),
+            (
+                value(
+                    BytecodeTypeId::new(8),
+                    BytecodeConstantValueKind::Set(vec![string("one"), string("two")]),
+                ),
+                RuntimeValue::Set(vec![
+                    RuntimeValue::String("one".into()),
+                    RuntimeValue::String("two".into()),
+                ]),
+            ),
+            (
+                value(
+                    BytecodeTypeId::new(13),
+                    BytecodeConstantValueKind::Newtype {
+                        nominal: BytecodeNominalId::new(0),
+                        value: Box::new(string("boxed")),
+                    },
+                ),
+                RuntimeValue::Newtype {
+                    name: "TextBox".into(),
+                    value: Box::new(RuntimeValue::String("boxed".into())),
+                },
+            ),
+            (
+                value(
+                    BytecodeTypeId::new(14),
+                    BytecodeConstantValueKind::Record {
+                        nominal: BytecodeNominalId::new(1),
+                        fields: vec![(0, string("message")), (1, strings(&["a", "b"]))],
+                    },
+                ),
+                RuntimeValue::Record {
+                    name: "Message".into(),
+                    fields: vec![
+                        (0, RuntimeValue::String("message".into())),
+                        (
+                            1,
+                            RuntimeValue::Array(vec![
+                                RuntimeValue::String("a".into()),
+                                RuntimeValue::String("b".into()),
+                            ]),
+                        ),
+                    ],
+                },
+            ),
+            (
+                value(
+                    BytecodeTypeId::new(15),
+                    BytecodeConstantValueKind::Variant {
+                        variant: 1,
+                        payload: BytecodeConstantVariantValue::Tuple(vec![string("tuple")]),
+                    },
+                ),
+                RuntimeValue::Variant {
+                    variant: 1,
+                    payload: vec![(None, RuntimeValue::String("tuple".into()))],
+                },
+            ),
+            (
+                value(
+                    BytecodeTypeId::new(15),
+                    BytecodeConstantValueKind::Variant {
+                        variant: 2,
+                        payload: BytecodeConstantVariantValue::Record(vec![(
+                            0,
+                            strings(&["record"]),
+                        )]),
+                    },
+                ),
+                RuntimeValue::Variant {
+                    variant: 2,
+                    payload: vec![(
+                        Some(0),
+                        RuntimeValue::Array(vec![RuntimeValue::String("record".into())]),
+                    )],
+                },
+            ),
+            (
+                value(
+                    BytecodeTypeId::new(9),
+                    BytecodeConstantValueKind::OptionNone,
+                ),
+                RuntimeValue::OptionNone,
+            ),
+            (
+                value(
+                    BytecodeTypeId::new(9),
+                    BytecodeConstantValueKind::OptionSome(Box::new(string("some"))),
+                ),
+                RuntimeValue::OptionSome(Box::new(RuntimeValue::String("some".into()))),
+            ),
+            (
+                value(
+                    BytecodeTypeId::new(10),
+                    BytecodeConstantValueKind::ResultOk(Box::new(string("ok"))),
+                ),
+                RuntimeValue::ResultOk(Box::new(RuntimeValue::String("ok".into()))),
+            ),
+            (
+                value(
+                    BytecodeTypeId::new(10),
+                    BytecodeConstantValueKind::ResultErr(Box::new(strings(&["error"]))),
+                ),
+                RuntimeValue::ResultErr(Box::new(RuntimeValue::Array(vec![RuntimeValue::String(
+                    "error".into(),
+                )]))),
+            ),
+        ] {
+            let materialized = engine.materialize_constant(&constant).unwrap();
+            assert_eq!(
+                snapshot_value(
+                    &materialized,
+                    &engine.heap,
+                    &engine.callable_names,
+                    &engine.nominal_names,
+                )
+                .unwrap(),
+                expected
+            );
+        }
+
+        assert_eq!(
+            engine
+                .inline_constant(byte, &BytecodeConstant::Integer("255".into()))
+                .unwrap(),
+            Value::Byte(255)
+        );
+        assert!(matches!(
+            engine.inline_constant(byte, &BytecodeConstant::Integer("256".into())),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.materialize_constant(&value(byte, BytecodeConstantValueKind::Integer(256),)),
+            Err(VmError::Invariant(_))
+        ));
+    }
+
+    #[test]
+    fn runtime_value_algorithms_reject_corruption_and_cover_closed_collection_semantics() {
+        let mut program = terminal_fallback_program();
+        let append = |program: &mut BytecodeProgram, name: &str, kind: BytecodeTypeKind| {
+            let ty = BytecodeTypeId::new(program.types.len() as u32);
+            program.types.push(BytecodeType {
+                name: name.into(),
+                kind,
+            });
+            ty
+        };
+        let boolean = append(
+            &mut program,
+            "Bool",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Bool),
+        );
+        let byte = append(
+            &mut program,
+            "Byte",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Byte),
+        );
+        let float = append(
+            &mut program,
+            "Float",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Float),
+        );
+        let character = append(
+            &mut program,
+            "Char",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Char),
+        );
+        let reference = append(
+            &mut program,
+            "Ref[String]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Ref,
+                arguments: vec![BytecodeTypeId::new(0)],
+            },
+        );
+        let mut_cursor = append(
+            &mut program,
+            "cursor[mut, Array[Int]]",
+            BytecodeTypeKind::Cursor {
+                mode: BytecodeCursorMode::Mut,
+                collection: BytecodeTypeId::new(6),
+            },
+        );
+        let trace = derive_trace_metadata(&program).unwrap();
+        let mut host = RejectingHost;
+        let mut engine = Engine::new(
+            &program,
+            &mut host,
+            VmLimits::default(),
+            ValueCopyStrategy::default(),
+            trace,
+        );
+
+        let place = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: BytecodeTypeId::new(5),
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        assert!(matches!(
+            engine.copy_value(&Value::Loan(RuntimeLoan {
+                task: 0,
+                frame: 0,
+                place,
+                mode: BytecodeParameterMode::Ref,
+            })),
+            Err(VmError::Invariant(_))
+        ));
+
+        let text = engine
+            .allocate(
+                BytecodeTypeId::new(0),
+                HeapObject::String("éclair".into()),
+                &[],
+            )
+            .unwrap();
+        let reference_value = engine
+            .allocate(
+                reference,
+                HeapObject::Ref(Some(text.clone())),
+                std::slice::from_ref(&text),
+            )
+            .unwrap();
+        assert_eq!(
+            engine.copy_value(&reference_value).unwrap(),
+            reference_value
+        );
+
+        let empty_array = engine
+            .allocate(
+                BytecodeTypeId::new(6),
+                HeapObject::Array(Vec::new().into()),
+                &[],
+            )
+            .unwrap();
+        let ref_cursor = engine
+            .allocate(
+                BytecodeTypeId::new(17),
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Ref,
+                    source: Some(empty_array.clone()),
+                    next: 3,
+                },
+                std::slice::from_ref(&empty_array),
+            )
+            .unwrap();
+        let copied_cursor = engine.copy_value(&ref_cursor).unwrap();
+        assert_ne!(copied_cursor, ref_cursor);
+        let exclusive_cursor = engine
+            .allocate(
+                mut_cursor,
+                HeapObject::Iterator {
+                    mode: BytecodeCursorMode::Mut,
+                    source: Some(empty_array.clone()),
+                    next: 0,
+                },
+                std::slice::from_ref(&empty_array),
+            )
+            .unwrap();
+        assert!(matches!(
+            engine.copy_value(&exclusive_cursor),
+            Err(VmError::Invariant(_))
+        ));
+
+        for value in [
+            Value::Unit,
+            Value::Bool(true),
+            Value::Integer(42),
+            Value::Float(1.5),
+            Value::Byte(7),
+            Value::Char('T'),
+            Value::Function {
+                callable: BytecodeCallableId::new(0),
+                arguments: vec![BytecodeTypeId::new(5)],
+            },
+        ] {
+            assert!(engine.value_equal(&value, &value).unwrap());
+        }
+        assert!(
+            !engine
+                .value_equal(&Value::Unit, &Value::Bool(true))
+                .unwrap()
+        );
+        assert!(
+            !engine
+                .value_equal(&Value::Integer(1), &Value::Integer(2))
+                .unwrap()
+        );
+
+        let string = |engine: &mut Engine<'_, '_>, value: &str| {
+            engine
+                .allocate(
+                    BytecodeTypeId::new(0),
+                    HeapObject::String(value.into()),
+                    &[],
+                )
+                .unwrap()
+        };
+        let one = string(&mut engine, "one");
+        let two = string(&mut engine, "two");
+        let three = string(&mut engine, "three");
+        let left_set = engine
+            .allocate(
+                BytecodeTypeId::new(8),
+                HeapObject::Set(vec![Some(one.clone()), Some(two.clone())].into()),
+                &[one.clone(), two.clone()],
+            )
+            .unwrap();
+        let reordered_set = engine
+            .allocate(
+                BytecodeTypeId::new(8),
+                HeapObject::Set(vec![Some(two.clone()), Some(one.clone())].into()),
+                &[one.clone(), two.clone()],
+            )
+            .unwrap();
+        let different_set = engine
+            .allocate(
+                BytecodeTypeId::new(8),
+                HeapObject::Set(vec![Some(one.clone()), Some(three.clone())].into()),
+                &[one.clone(), three.clone()],
+            )
+            .unwrap();
+        assert!(engine.value_equal(&left_set, &reordered_set).unwrap());
+        assert!(!engine.value_equal(&left_set, &different_set).unwrap());
+
+        let left_map = engine
+            .allocate(
+                BytecodeTypeId::new(2),
+                HeapObject::Map(
+                    vec![
+                        (Some(one.clone()), Some(two.clone())),
+                        (Some(two.clone()), Some(three.clone())),
+                    ]
+                    .into(),
+                ),
+                &[one.clone(), two.clone(), three.clone()],
+            )
+            .unwrap();
+        let reordered_map = engine
+            .allocate(
+                BytecodeTypeId::new(2),
+                HeapObject::Map(
+                    vec![
+                        (Some(two.clone()), Some(three.clone())),
+                        (Some(one.clone()), Some(two.clone())),
+                    ]
+                    .into(),
+                ),
+                &[one.clone(), two.clone(), three.clone()],
+            )
+            .unwrap();
+        let changed_map = engine
+            .allocate(
+                BytecodeTypeId::new(2),
+                HeapObject::Map(
+                    vec![
+                        (Some(two.clone()), Some(one.clone())),
+                        (Some(one.clone()), Some(two.clone())),
+                    ]
+                    .into(),
+                ),
+                &[one.clone(), two.clone()],
+            )
+            .unwrap();
+        assert!(engine.value_equal(&left_map, &reordered_map).unwrap());
+        assert!(!engine.value_equal(&left_map, &changed_map).unwrap());
+
+        let first_cycle = engine
+            .allocate(BytecodeTypeId::new(9), HeapObject::OptionNone, &[])
+            .unwrap();
+        let second_cycle = engine
+            .allocate(BytecodeTypeId::new(9), HeapObject::OptionNone, &[])
+            .unwrap();
+        for value in [&first_cycle, &second_cycle] {
+            let Value::Heap(handle) = value else {
+                unreachable!()
+            };
+            engine
+                .replace_object(
+                    *handle,
+                    HeapObject::OptionSome(Some(Value::Heap(*handle))),
+                    &[],
+                )
+                .unwrap();
+        }
+        assert!(engine.value_equal(&first_cycle, &second_cycle).unwrap());
+
+        assert_eq!(
+            engine
+                .value_order(&Value::Integer(1), &Value::Integer(2))
+                .unwrap(),
+            Some(std::cmp::Ordering::Less)
+        );
+        assert_eq!(
+            engine
+                .value_order(&Value::Float(f64::NAN), &Value::Float(0.0))
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            engine
+                .value_order(&Value::Byte(2), &Value::Byte(1))
+                .unwrap(),
+            Some(std::cmp::Ordering::Greater)
+        );
+        assert_eq!(
+            engine
+                .value_order(&Value::Char('a'), &Value::Char('a'))
+                .unwrap(),
+            Some(std::cmp::Ordering::Equal)
+        );
+        assert_eq!(
+            engine.value_order(&one, &two).unwrap(),
+            Some(std::cmp::Ordering::Less)
+        );
+        assert!(matches!(
+            engine.value_order(&left_set, &reordered_set),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.value_order(&Value::Unit, &Value::Unit),
+            Err(VmError::Invariant(_))
+        ));
+
+        let array = engine
+            .allocate(
+                BytecodeTypeId::new(1),
+                HeapObject::Array(vec![Some(one.clone()), Some(two.clone())].into()),
+                &[one.clone(), two.clone()],
+            )
+            .unwrap();
+        assert!(
+            engine
+                .contains(BytecodeContainmentKind::Array, &one, &array)
+                .unwrap()
+        );
+        assert!(
+            !engine
+                .contains(BytecodeContainmentKind::Array, &three, &array)
+                .unwrap()
+        );
+        assert!(
+            engine
+                .contains(BytecodeContainmentKind::Set, &two, &left_set)
+                .unwrap()
+        );
+        assert!(
+            engine
+                .contains(BytecodeContainmentKind::MapKey, &two, &left_map)
+                .unwrap()
+        );
+        let range = engine
+            .allocate(
+                BytecodeTypeId::new(3),
+                HeapObject::Range {
+                    kind: BytecodeRangeKind::Exclusive,
+                    start: Some(Value::Integer(1)),
+                    end: Some(Value::Integer(3)),
+                },
+                &[],
+            )
+            .unwrap();
+        assert!(
+            engine
+                .contains(BytecodeContainmentKind::Range, &Value::Integer(2), &range)
+                .unwrap()
+        );
+        assert!(
+            !engine
+                .contains(BytecodeContainmentKind::Range, &Value::Integer(3), &range)
+                .unwrap()
+        );
+        assert!(
+            engine
+                .contains(
+                    BytecodeContainmentKind::StringChar,
+                    &Value::Char('é'),
+                    &text
+                )
+                .unwrap()
+        );
+        assert!(matches!(
+            engine.contains(
+                BytecodeContainmentKind::StringChar,
+                &Value::Integer(1),
+                &text
+            ),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.contains(BytecodeContainmentKind::Set, &one, &array),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.contains(BytecodeContainmentKind::Array, &one, &Value::Integer(1),),
+            Err(VmError::Invariant(_))
+        ));
+
+        assert_eq!(engine.string_value(&text).unwrap(), "éclair");
+        assert!(matches!(
+            engine.string_value(&Value::Integer(1)),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.string_value(&left_set),
+            Err(VmError::Invariant(_))
+        ));
+        assert_eq!(engine.type_name(BytecodeTypeId::new(5)), "Int");
+        assert_eq!(engine.type_name(BytecodeTypeId::new(999)), "<invalid-type>");
+
+        assert!(matches!(
+            engine.borrowed_iterator_has_item(&Value::Integer(1), 0),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.borrowed_iterator_has_item(&text, 0),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.iterator_item(&Value::Integer(1), BytecodeTypeId::new(5), 0),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.iterator_item(&array, BytecodeTypeId::new(5), 1),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.iterator_item(&left_set, BytecodeTypeId::new(0), 1),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.iterator_item(&left_map, BytecodeTypeId::new(4), 1),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.iterator_item(&text, character, 1),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.iterator_item(&first_cycle, BytecodeTypeId::new(5), 0),
+            Err(VmError::Invariant(_))
+        ));
+        assert!(matches!(
+            engine.range_item(
+                BytecodeRangeKind::Exclusive,
+                &Value::Integer(1),
+                &Value::Char('z'),
+                0,
+            ),
+            Err(VmError::Invariant(_))
+        ));
+        assert_eq!(
+            engine
+                .range_item(
+                    BytecodeRangeKind::Exclusive,
+                    &Value::Char('a'),
+                    &Value::Char('c'),
+                    3,
+                )
+                .unwrap(),
+            (None, usize::MAX)
+        );
+        assert_eq!(
+            engine
+                .range_item(
+                    BytecodeRangeKind::Inclusive,
+                    &Value::Integer(i128::MAX),
+                    &Value::Integer(i128::MAX),
+                    1,
+                )
+                .unwrap(),
+            (None, usize::MAX)
+        );
+
+        assert_eq!(
+            engine
+                .checked_prefix(
+                    BytecodePrefixOperator::Negate,
+                    BytecodeTypeId::new(5),
+                    Value::Integer(42),
+                )
+                .unwrap()
+                .unwrap(),
+            Value::Integer(-42)
+        );
+        assert_eq!(
+            engine
+                .checked_prefix(
+                    BytecodePrefixOperator::Negate,
+                    BytecodeTypeId::new(5),
+                    Value::Integer(i64::MIN as i128),
+                )
+                .unwrap()
+                .unwrap_err()
+                .0,
+            PanicCode::CheckedOverflow
+        );
+        assert!(matches!(
+            engine.checked_prefix(
+                BytecodePrefixOperator::LogicalNot,
+                boolean,
+                Value::Bool(true),
+            ),
+            Err(VmError::Invariant(_))
+        ));
+        assert_eq!(
+            engine
+                .checked_scalar_binary(
+                    BytecodeBinaryOperator::Add,
+                    byte,
+                    BytecodeTypeId::new(5),
+                    Value::Byte(40),
+                    Value::Integer(2),
+                )
+                .unwrap()
+                .unwrap(),
+            Value::Byte(42)
+        );
+        assert_eq!(
+            engine
+                .checked_scalar_binary(
+                    BytecodeBinaryOperator::Multiply,
+                    byte,
+                    byte,
+                    Value::Byte(6),
+                    Value::Byte(7),
+                )
+                .unwrap()
+                .unwrap(),
+            Value::Byte(42)
+        );
+        assert!(matches!(
+            engine.checked_scalar_binary(
+                BytecodeBinaryOperator::Add,
+                float,
+                float,
+                Value::Unit,
+                Value::Unit,
+            ),
+            Err(VmError::Invariant(_))
+        ));
+
+        for (shape, values) in [
+            (
+                BytecodeAggregateKind::Closure {
+                    callable: BytecodeCallableId::new(0),
+                    captures: vec![BytecodeTypeId::new(0)],
+                },
+                Vec::new(),
+            ),
+            (
+                BytecodeAggregateKind::Newtype {
+                    nominal: BytecodeNominalId::new(0),
+                },
+                Vec::new(),
+            ),
+            (BytecodeAggregateKind::Ref, Vec::new()),
+            (
+                BytecodeAggregateKind::Record {
+                    nominal: BytecodeNominalId::new(1),
+                    fields: vec![0, 1],
+                },
+                vec![Value::Unit],
+            ),
+            (
+                BytecodeAggregateKind::Variant {
+                    variant: 1,
+                    fields: vec![None],
+                },
+                Vec::new(),
+            ),
+            (
+                BytecodeAggregateKind::Variant {
+                    variant: 2,
+                    fields: vec![Some(0), None],
+                },
+                vec![Value::Unit, Value::Unit],
+            ),
+            (BytecodeAggregateKind::OptionNone, vec![Value::Unit]),
+            (BytecodeAggregateKind::OptionSome, Vec::new()),
+            (BytecodeAggregateKind::ResultOk, Vec::new()),
+            (BytecodeAggregateKind::ResultErr, Vec::new()),
+        ] {
+            assert!(matches!(
+                engine.construct_aggregate(BytecodeTypeId::new(9), &shape, values),
+                Err(VmError::Invariant(_))
+            ));
+        }
     }
 
     #[test]

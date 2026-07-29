@@ -140,6 +140,105 @@ unsafe fn pointer_facts(pointer: Pointer[Int], address: UInt64): UInt64 {
 }
 ";
 
+const ADVANCED_SOURCE: &str = "\
+pub type Label = {
+    text: String
+}
+
+pub trait Summary {
+    fn summarize(self): String
+}
+
+impl Summary for Int {
+    fn summarize(self): String {
+        \"integer\"
+    }
+}
+
+impl Display for Label {
+    fn display(self): String {
+        self.text
+    }
+}
+
+fn hidden(value: Int): impl Summary + Discard {
+    value
+}
+
+fn consume[T: Discard](value: T) {
+    _ = value
+}
+
+fn deferred(value: Int) {
+    let owner = hidden(value)
+    defer consume(owner)
+}
+
+fn collect(prefix: String, parts: ...String): Array[String] {
+    _ = prefix
+    parts
+}
+
+fn fallible(flag: Bool): Int ! (Bool | String) {
+    if flag {
+        1
+    } else {
+        fail \"bad\"
+    }
+}
+
+fn propagate(flag: Bool): Int ! (Bool | String) {
+    fallible(flag)?
+}
+
+fn collections(
+    label: Label,
+    key: String,
+    values: var Array[Int],
+    groups: var Array[Array[Int]],
+    entries: var Map[Int, Int],
+): Int {
+    let dynamic: Map[String, Int] = [key: 1, key: 2]
+    let repeated = values.repeat(2)
+    let combined = values.concat(repeated)
+    let range = 0..=3
+    var total = 0
+    for ref value in values {
+        total += value
+    }
+    for mut value in values {
+        value += 1
+    }
+    for var group in groups {
+        group = [9]
+    }
+    for (ref entryKey, mut entryValue) in entries {
+        entryValue += entryKey
+    }
+    _ = entries.remove(1)
+    _ = 1 in range
+    _ = 1 in combined
+    _ = dynamic[key]
+    let rendered = \"{label}:{total}\"
+    let updated = label with { text: rendered }
+    _ = updated
+    total
+}
+
+async fn load(value: Int): Int {
+    value
+}
+
+async fn concurrent(value: Int): Int {
+    let direct = await load(value)
+    scope {
+        let task = spawn load(direct)
+        let transferred = task
+        await transferred
+    }
+}
+";
+
 #[test]
 fn semantic_queries_expose_option_union_enum_and_generic_shapes() {
     let action = WireSourceAction {
@@ -332,6 +431,187 @@ fn semantic_snapshot_exposes_unsafe_borrow_projection_and_pattern_contracts() {
                 projection["kind"].as_str(),
                 Some("field" | "index" | "slice" | "ref-value")
             ))
+    );
+}
+
+#[test]
+fn semantic_queries_and_snapshot_cover_advanced_language_contracts_end_to_end() {
+    let action = WireSourceAction {
+        operation: WireOperation::Check,
+        form: WireSourceForm::Module,
+        root: "advanced.to".into(),
+        sources: vec![WireSource {
+            source_id: "test:semantic-advanced".into(),
+            module: "main".into(),
+            logical_path: "advanced.to".into(),
+            contents_hex: tondo_conformance::encode_hex(ADVANCED_SOURCE.as_bytes()),
+        }],
+        warning_profiles: Vec::new(),
+        arguments: Vec::new(),
+        gc_threshold: None,
+    };
+    let hidden_declaration = occurrence_span(ADVANCED_SOURCE, "hidden", 0);
+    let hidden_call = occurrence_span(ADVANCED_SOURCE, "hidden(value)", 0);
+    let collect_declaration = occurrence_span(ADVANCED_SOURCE, "collect", 0);
+    let fallible_call = occurrence_span(ADVANCED_SOURCE, "fallible(flag)", 0);
+    let union_annotation = occurrence_span(ADVANCED_SOURCE, "Bool | String", 0);
+    let dynamic_map = occurrence_span(ADVANCED_SOURCE, "[key: 1, key: 2]", 0);
+    let request = AdapterRequest::new(
+        2,
+        "semantic-advanced",
+        TargetSelection {
+            name: "tondo-vm-hosted".into(),
+            profile: "hosted".into(),
+            capabilities: vec!["console".into(), "process".into()],
+        },
+        AdapterAction::Semantic(WireSemanticAction {
+            source: action,
+            queries: vec![
+                SemanticQuery::FormattedAst,
+                SemanticQuery::ExpressionType {
+                    file: "advanced.to".into(),
+                    start: hidden_call.0,
+                    end: hidden_call.1,
+                },
+                SemanticQuery::Entities {
+                    file: "advanced.to".into(),
+                    start: hidden_declaration.0,
+                    end: hidden_declaration.1,
+                },
+                SemanticQuery::References {
+                    file: "advanced.to".into(),
+                    start: hidden_declaration.0,
+                    end: hidden_declaration.1,
+                },
+                SemanticQuery::Signature {
+                    file: "advanced.to".into(),
+                    start: hidden_declaration.0,
+                    end: hidden_declaration.1,
+                },
+                SemanticQuery::Signature {
+                    file: "advanced.to".into(),
+                    start: collect_declaration.0,
+                    end: collect_declaration.1,
+                },
+                SemanticQuery::TypeMembers {
+                    file: "advanced.to".into(),
+                    start: union_annotation.0,
+                    end: union_annotation.1,
+                },
+                SemanticQuery::ClosedCallErrors {
+                    file: "advanced.to".into(),
+                    start: fallible_call.0,
+                    end: fallible_call.1,
+                },
+                SemanticQuery::TypeFacts {
+                    file: "advanced.to".into(),
+                    start: hidden_call.0,
+                    end: hidden_call.1,
+                },
+                SemanticQuery::ExpressionFacts {
+                    file: "advanced.to".into(),
+                    start: dynamic_map.0,
+                    end: dynamic_map.1,
+                },
+                SemanticQuery::SemanticSnapshot {
+                    file: "advanced.to".into(),
+                },
+            ],
+        }),
+    );
+
+    let response = ReferenceAdapter.handle(&request);
+    let AdapterResult::Ok { observation } = response.result else {
+        panic!("advanced semantic request must succeed: {response:#?}");
+    };
+    assert_eq!(
+        observation.compilation,
+        CompilationState::Success,
+        "{:#?}",
+        observation.diagnostics
+    );
+    assert!(
+        observation.diagnostics.is_empty(),
+        "{:#?}",
+        observation.diagnostics
+    );
+    assert!(
+        observation.data["expression_check_complete"]
+            .as_bool()
+            .unwrap()
+    );
+    let queries = observation.data["queries"].as_array().unwrap();
+    assert_eq!(queries.len(), 11);
+    assert_eq!(queries[0]["query"], "formatted-ast");
+    assert_eq!(queries[0]["encoding"], "utf-8");
+    assert!(
+        queries[1]["type"]["canonical"]
+            .as_str()
+            .unwrap()
+            .ends_with("hidden#result")
+    );
+    assert_eq!(queries[1]["type"]["shape"]["kind"], "opaque-result");
+    assert!(
+        queries[2]["entities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entity| entity["kind"] == "symbol" && entity["name"] == "hidden")
+    );
+    assert!(!queries[3]["references"].as_array().unwrap().is_empty());
+    assert_eq!(
+        queries[4]["signature"]["opaque_result"]["bounds"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        queries[5]["signature"]["parameters"][1]["variadic_element"],
+        "String"
+    );
+    assert_eq!(queries[6]["members"]["kind"], "union");
+    assert!(!queries[7]["errors"].as_array().unwrap().is_empty());
+    assert_eq!(queries[8]["facts"]["shape"]["kind"], "opaque-result");
+    assert_eq!(
+        queries[9]["facts"]["semantic"]["dynamic_duplicate_check"]["status"],
+        "elided"
+    );
+    assert_eq!(
+        queries[9]["facts"]["semantic"]["dynamic_duplicate_check"]["proof"],
+        "value-type-satisfies-Discard"
+    );
+
+    let snapshot = &queries[10];
+    assert_eq!(snapshot["schema"], "tondo-semantic-snapshot-0.1/1");
+    assert_eq!(snapshot["opaque_results"].as_array().unwrap().len(), 1);
+    assert!(
+        snapshot["iterators"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|iterator| iterator["cursor"]
+                .as_str()
+                .unwrap()
+                .starts_with("cursor[mut,"))
+    );
+    assert!(
+        snapshot["ownership"]["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|function| function["joins"].as_array().unwrap())
+            .any(|join| join["state"] == "consumed"
+                && !join["transfers"].as_array().unwrap().is_empty())
+    );
+    assert!(
+        snapshot["ownership"]["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|function| function["affine_values"].as_array().unwrap())
+            .flat_map(|value| value["events"].as_array().unwrap())
+            .any(|event| event["cause"] == "defer-registration")
     );
 }
 
