@@ -192,8 +192,12 @@ or capability set.
 ## Project documentation
 
 - `TONDO_LANGUAGE_SPEC.md` is the normative language definition.
+- `TONDO_STANDARD_LIBRARY_SPEC.md` defines the normative architecture,
+  versioning, module catalog, and publication rules for the Standard Library.
 - `TONDO_TOOLCHAIN_SPEC.md` defines the implemented manifest, lockfile,
   interface, artifact, and privileged-unit formats.
+- `TONDO_TESTING_SPEC.md` defines the Tondo 0.2 testing language, runner, and
+  sealed `std.testing` boundary.
 - `docs/architecture.md` describes the compiler pipeline and phase invariants.
 - `docs/adr/` records accepted architectural decisions.
 - `docs/contracts/` records bootstrap interfaces that later milestones build on.

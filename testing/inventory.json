@@ -12,7 +12,7 @@
       "path": "TONDO_TESTING_SPEC.md",
       "edition": "0.2",
       "status": "future-contract",
-      "sha256": "f9bc5c09209b315b915839aba17e6e00b287e77d73073904bbcb37df509935c2"
+      "sha256": "e0b3fbb109055efc722c42cb5a9e1661579fcf3f0eeab756d1adc65169528036"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
@@ -10563,7 +10563,7 @@
       "requirements": [],
       "oracle": "future-contract-only",
       "repetitions": 1,
-      "source_sha256": "745f5293a0f2c4f40bcd5740a87d17efdc55cd13ef6b06954119e23b0be1752a",
+      "source_sha256": "356a87d544895d0c9d76908c71e1ec14cd445dd8ad29a7068b57b6c973e3bed2",
       "target": "future",
       "document": "TONDO_TESTING_SPEC.md",
       "edition": "0.2",

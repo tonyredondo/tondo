@@ -1,15 +1,16 @@
 # Tondo: tracker de implementación
 
-**Estado:** M10.5b y Gate H0 cerrados; el sustrato temporal de STD-0.1 es el
-siguiente slice
+**Estado:** M10.5b y Gate H0 cerrados; la arquitectura base de STD-0.1 y
+DEC-012 están cerradas; su sustrato temporal es el siguiente slice
 
-**Versión del tracker:** 0.93
+**Versión del tracker:** 0.94
 
 **Última actualización:** 2026-07-29
 
 **Especificaciones normativas:**
 
 - [Tondo 0.1 publicada](./TONDO_LANGUAGE_SPEC.md)
+- [Arquitectura base de Standard Library 0.1](./TONDO_STANDARD_LIBRARY_SPEC.md)
 - [Extensión de testing para Tondo 0.2](./TONDO_TESTING_SPEC.md)
 
 **Objetivo inmediato:** fijar e implementar el sustrato temporal mínimo de
@@ -223,9 +224,12 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   fallo, medición de coverage/mutation score, umbrales y excepciones
   justificadas.
 
-- [ ] **DEC-012 — Versionado y distribución de la stdlib.** Antes de publicar
-  STD-0.1, fijar compatibilidad, módulos, prelude, PackageIds, hashes,
-  capabilities, actualización y coexistencia con la release Tondo 0.1.0.
+- [x] **DEC-012 — Versionado y distribución de la stdlib.** El contrato base
+  [`TONDO_STANDARD_LIBRARY_SPEC.md`](./TONDO_STANDARD_LIBRARY_SPEC.md) fija una
+  sola distribución `std` por grafo, versionado conservador incluso antes de
+  1.0, PackageId y hashes exactos, prelude mínimo, catálogo cerrado,
+  capabilities, actualización explícita y coexistencia inmutable con la
+  release bootstrap Tondo 0.1.0.
 
 - [ ] **DEC-013 — Backend nativo y ABI runtime interna.** NATIVE-001 debe
   concluir con un ADR que elija backend y registre targets, calling convention
@@ -312,7 +316,7 @@ necesaria; la fragmentación del workspace no.
 | **M10 — Conformidad y release** | Gate G5: Tondo 0.1 | Completado |
 | **M10.5 — Reliability y testing** | Infraestructura y hardening continuo de evidencia | Completado |
 | **M10.6 — Testing de usuario y edición 0.2** | Gate T0: `tondo test` conforme | Especificado; implementación pendiente |
-| **STD-0.1 — Core + Hosted Standard Library** | API estándar mínima; su sustrato temporal precede T0 | Pendiente |
+| **STD-0.1 — Core + Hosted Standard Library** | API estándar mínima; su sustrato temporal precede T0 | Arquitectura base cerrada; APIs pendientes |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.2 — Concurrency + Application Standard Library** | Ecosistema estándar ampliado | Futuro |
 
@@ -2532,7 +2536,8 @@ seleccionar la edición 0.2.
   terminales, `defer`, `Send`, `Share` y `unsafe`. Resolver el módulo test-only
   `std.testing` con las seis operaciones monomórficas exactas de
   control/metadata/evidencia, incluidos `tags(Map[String, String])`,
-  `attach(String, String, Bytes)` y `snapshot(String, String)`, y el núcleo temporal con
+  `attach(String, String, bytes.Bytes)` y `snapshot(String, String)`, y el
+  núcleo temporal con
   `withVirtualTime[E, F: Send + CallOnce[async fn(ref VirtualTime): Unit ! E]]`,
   `settle` y `advance(Duration)`. Comprobar propagación de `E`, `Unit`/`Never`,
   opacidad/no escape/no `Share` de `VirtualTime`, nombres/media types,
@@ -2704,8 +2709,8 @@ seleccionar la edición 0.2.
   `allow-repeat-flaky`.
 
 - [ ] **UTEST-ARTIFACT-001 — Persistir attachments por intento.** Implementar
-  `testing.attach` con copia exacta y linealizada de `Bytes`, gramática cerrada
-  de nombre/media type, unicidad por intento, límites y `P2006`. Calcular
+  `testing.attach` con copia exacta y linealizada de `std.bytes.Bytes`, gramática
+  cerrada de nombre/media type, unicidad por intento, límites y `P2006`. Calcular
   descriptors SHA-256 y escribir `tondo-test-artifacts-0.2/1` con objects
   content-addressed inmutables, deduplicación, manifest canónico y publicación
   atómica. Rechazar symlinks, paths derivados incorrectos, duplicados y
@@ -2892,6 +2897,11 @@ sobre la VM antes de fijar decisiones del runtime nativo. La especificación de
 la stdlib es independiente de la especificación del lenguaje; una API
 ilustrativa no se vuelve pública por aparecer en un ejemplo.
 
+La arquitectura, identidad, catálogo y reglas comunes están fijadas en
+[`TONDO_STANDARD_LIBRARY_SPEC.md`](./TONDO_STANDARD_LIBRARY_SPEC.md). Cerrar esa
+base no cierra ninguna firma de módulo salvo el núcleo sellado que ya pertenece
+a la especificación de testing.
+
 **Dependencia:** tras Gate H0 se ejecutan únicamente
 `STD-TIME-BASE-SPEC-001`, `STD-TIME-BASE-IMPL-001` y
 `STD-TIME-BASE-CONF-001`, porque Gate T0 necesita probar la API temporal real.
@@ -2906,7 +2916,15 @@ artifact store ni harness paralelos.
 
 ### 18.1 Contrato y distribución
 
-- [ ] **STD-TIME-BASE-SPEC-001 — Abrir la especificación estándar con el
+- [x] **STD-FOUNDATION-SPEC-001 — Crear la especificación base de la stdlib.**
+  Fijar relación con lenguaje/toolchain/testing, versionado, PackageId,
+  convivencia con bootstrap, namespace y prelude, propietario canónico,
+  catálogo de módulos, availability/capabilities, forma de API, errores,
+  ownership, async, determinismo, costes, bindings privilegiados, distribución
+  reproducible, conformidad y checklist de publicación. Mantener pendientes las
+  firmas concretas de módulos y no anunciar STD-0.1 como publicada.
+
+- [ ] **STD-TIME-BASE-SPEC-001 — Extender la especificación estándar con el
   sustrato temporal mínimo.** Fijar `Duration` portable con quantum de
   nanosegundo y overflow explícito, `Instant` monotónico, consulta del instante,
   suspensión, timer one-shot y deadline; declarar ownership, resolución,
@@ -2918,28 +2936,35 @@ artifact store ni harness paralelos.
   se ejecuta tras H0 y antes de M10.6 para que testing virtualice producción, no
   una API provisional.
 
-- [ ] **STD-SPEC-001 — Completar `TONDO_STANDARD_LIBRARY_SPEC.md`.** Fijar versión,
-  módulos, firmas, tipos de error, ownership, complejidad, orden, Unicode,
+- [ ] **STD-SPEC-001 — Completar `TONDO_STANDARD_LIBRARY_SPEC.md`.** Fijar las
+  firmas y contratos concretos de todas las superficies del catálogo, incluidos
+  tipos de error, ownership, complejidad, orden, Unicode,
   bloqueo/suspensión, cancelación, capabilities, disponibilidad por target y
-  ejemplos verificables, preservando el sustrato temporal ya cerrado.
+  ejemplos verificables, preservando la arquitectura y el sustrato temporal ya
+  cerrados.
 
-- [ ] **STD-MOD-001 — Definir módulos y prelude mínimo.** Imports y nombres
-  implícitos deben ser cerrados, deterministas y compatibles con los
-  namespaces del lenguaje; no existe extensión global de métodos.
+- [x] **STD-MOD-001 — Definir módulos y prelude mínimo.** El contrato base fija
+  el catálogo cerrado, un propietario canónico por declaración, `std` único y
+  reservado, imports ordinarios, cero inicialización global y ningún nombre
+  implícito adicional ni extensión global de métodos.
 
-- [ ] **STD-CAP-001 — Versionar la matriz de capabilities.** Core permanece
-  target-neutral. Toda API hosted declara su capability y fallo de admisión. La
-  release `tondo-vm-hosted` 0.1.0 y su manifiesto `[console, process]` no se
-  reescriben al ampliar el registro o añadir otro target/capability set.
+- [x] **STD-CAP-001 — Versionar la matriz de capabilities.** El contrato base
+  clasifica cada superficie como Core, capability-gated, test-only o
+  target-specific, fija `tondo-capabilities/1`, exige ausencia estática `E1008`
+  y conserva sin reescritura la release `tondo-vm-hosted` 0.1.0 con
+  `[console, process]`. Cada módulo pendiente deberá completar su matriz por
+  target antes de publicarse.
 
-- [ ] **STD-ERR-001 — Definir errores portables.** Los errores exponen
-  clasificación nominal y datos portables; códigos, mensajes y payloads del SO
-  no se convierten accidentalmente en semántica estable.
+- [x] **STD-ERR-001 — Definir errores portables.** El contrato base separa
+  Option, Result, pánico y error de toolchain; exige errores públicos nominales,
+  cerrados y con payloads portables; y excluye códigos, mensajes y payloads del
+  SO de la semántica estable. Las variantes concretas permanecen en cada módulo.
 
-- [ ] **STD-DIST-001 — Definir distribución reproducible.** Fuentes Tondo,
-  unidades privilegiadas y metadatos de la stdlib se fijan por versión y hash,
-  entran en el plan cerrado y no requieren red ni búsqueda ambiental durante
-  compilación.
+- [x] **STD-DIST-001 — Definir distribución reproducible.** El contrato base
+  fija versión, PackageId, content/API hashes, fuentes Tondo, source sets,
+  interfaces, unidades privilegiadas, conformidad y documentación como una
+  distribución inmutable, canónica, cerrada y sin red ni búsqueda ambiental
+  durante compilación. Sus bytes finales se materializan al cerrar S1.
 
 ### 18.2 Core Standard Library
 
@@ -2947,9 +2972,25 @@ artifact store ni harness paralelos.
   `Option`, `Result`, `Display`, comparación, `Key` y utilidades de
   error conservan las capacidades y efectos ya definidos por el lenguaje.
 
-- [ ] **STD-TEXT-001 — Especificar texto y bytes.** `String`, `Char`, `Byte` y
-  `Bytes` fijan construcción, búsqueda, transformación, encoding/decoding,
-  invalid UTF-8, límites y costes sin confundir scalar, grapheme ni byte.
+- [ ] **STD-TEXT-001 — Especificar texto.** `String`, `Char`, `Byte` y
+  sus operaciones fijan construcción, búsqueda, transformación, Unicode,
+  límites y costes sin confundir scalar, grapheme ni byte.
+
+- [ ] **STD-BYTES-001 — Especificar `std.bytes`.** `Bytes`, builders,
+  conversión con `Array[Byte]`, encoding/decoding, UTF-8 inválido, slicing,
+  igualdad, hashing y límites tienen una única identidad binaria reutilizada por
+  console, filesystem, procesos y testing.
+
+- [ ] **STD-IO-001 — Especificar `std.io`.** Fijar protocolos estáticos de
+  lectura/escritura, buffers, EOF, partial I/O, errores portables, ownership,
+  backpressure, suspensión y cancelación sin que importar los contratos conceda
+  ninguna capability. Console, archivos y procesos reutilizan esta única
+  frontera en vez de inventar streams incompatibles.
+
+- [ ] **STD-MATH-001 — Especificar `std.math`.** Fijar las operaciones escalares
+  portables que completan los numéricos intrínsecos, incluidos floor, ceil,
+  round, truncate, sqrt y FMA explícita, conservando IEEE, ausencia de fast-math
+  observable, dominio, errores y casos límite.
 
 - [ ] **STD-COLL-001 — Especificar colecciones.** `Array`, `Map` y `Set` fijan
   consulta, construcción, actualización funcional, mutación explícita,
@@ -2959,9 +3000,9 @@ artifact store ni harness paralelos.
   combinadores usan dispatch estático, un único elemento por target, evaluación
   lazy acotada y consumo/copia visibles.
 
-- [ ] **STD-FMT-001 — Especificar formatting.** Display de tipos compuestos,
+- [ ] **STD-FMT-001 — Especificar `std.format`.** Display de tipos compuestos,
   builders y formato estructurado deben reutilizar el protocolo estático sin
-  introducir reflection, vtables ni lookup abierto.
+  introducir reflection, vtables, lookup abierto ni una segunda interpolación.
 
 - [ ] **STD-TESTING-SPEC-001 — Especificar `std.testing`.** Fijar assertions de
   igualdad, diffs de texto, comparación float con tolerancia, consumo explícito
@@ -2985,9 +3026,9 @@ artifact store ni harness paralelos.
   capabilities adicionales. Esta tarea se ejecuta tras
   `STD-TIME-BASE-SPEC-001` y antes de `UTEST-VTIME-001`.
 
-- [ ] **STD-CONSOLE-001 — Consolidar consola y streams.** Fijar stdout, stderr,
-  entrada, flushing, texto/binario, errores y comportamiento async sin asumir
-  terminal interactiva.
+- [ ] **STD-CONSOLE-001 — Consolidar consola sobre `std.io`.** Fijar stdout,
+  stderr, entrada, flushing, texto/binario, errores y comportamiento async sin
+  asumir terminal interactiva ni duplicar los protocolos generales.
 
 - [ ] **STD-PATH-001 — Definir paths portables y nativos.** Separar operaciones
   léxicas de acceso al host, preservar bytes no Unicode cuando el target lo
@@ -3048,8 +3089,8 @@ artifact store ni harness paralelos.
 
 ### Gate S1 — Standard Library 0.1
 
-- [ ] La spec estándar fija todas las firmas Core + Hosted incluidas en 0.1 y
-  clasifica explícitamente lo diferido a STD-0.2.
+- [ ] La spec estándar fija todas las firmas de su catálogo Core + Hosted
+  incluidas en 0.1 y clasifica explícitamente lo diferido a STD-0.2.
 - [ ] El sustrato monotónico de `Duration`, `Instant`, suspensión, timers y
   deadlines es único para producción/testing, está modelado y funciona con
   proveedor real o virtual sin cambiar bytecode de usuario.
@@ -3322,7 +3363,8 @@ Orden recomendado:
 2. **Time-base spec:** `Duration`, `Instant` monotónico, suspensión, timers y
    deadlines compartidos por producción y testing.
 3. **Core stdlib spec:** métodos exactos de `String`, `Array`, `Map`, `Set`,
-   `Range`, iterators, formatting, `Bytes` y helpers portables de testing.
+   `Range`, iterators, `Bytes`, protocolos de I/O, matemática, formatting y
+   helpers portables de testing.
 4. **Hosted stdlib spec:** consola, environment, paths, filesystem y procesos.
 5. **Concurrency stdlib spec:** channels, mutexes, atomics, actors y pools.
 6. **Application stdlib:** calendario civil, networking, codecs, JSON, regex,
@@ -3406,15 +3448,17 @@ M4 sin adelantar trabajo de ownership o async.
     en evidencia continua.
 17. [x] Añadir generadores, properties, fuzz targets y modelos de M10.5.
 18. [x] Medir coverage y mutation score, cerrar huecos críticos y superar H0.
-19. [ ] Ejecutar **STD-TIME-BASE-SPEC-001**, **STD-TIME-BASE-IMPL-001** y
+19. [x] Ejecutar **STD-FOUNDATION-SPEC-001** y cerrar **DEC-012** sin fingir
+    que las APIs de módulo o STD-0.1 completa ya están publicadas.
+20. [ ] Ejecutar **STD-TIME-BASE-SPEC-001**, **STD-TIME-BASE-IMPL-001** y
     **STD-TIME-BASE-CONF-001** como único slice temprano de STD-0.1.
-20. [ ] Implementar M10.6 empezando por **ASYNC-DEFER-SPEC-001**,
+21. [ ] Implementar M10.6 empezando por **ASYNC-DEFER-SPEC-001**,
     **UTEST-EDITION-001** y **ASYNC-DEFER-IMPL-001**, continuar hasta
     **UTEST-DOGFOOD-001** y superar T0 sin mutar Tondo 0.1.
-21. [ ] Completar STD-0.1 por **STD-SPEC-001**, incluida la definición exacta
+22. [ ] Completar STD-0.1 por **STD-SPEC-001**, incluida la definición exacta
     del resto de `std.testing`, nunca por implementación ad hoc.
-22. [ ] Cerrar S1 y comenzar M11 por **NATIVE-001**.
-23. [ ] Cerrar N1 antes de iniciar los módulos de STD-0.2.
+23. [ ] Cerrar S1 y comenzar M11 por **NATIVE-001**.
+24. [ ] Cerrar N1 antes de iniciar los módulos de STD-0.2.
 
 La ruta autorizada siguiente es:
 
@@ -3439,6 +3483,25 @@ Gate N1.
 ---
 
 ## 24. Historial del tracker
+
+### 0.94 — 2026-07-29
+
+- Se crea `TONDO_STANDARD_LIBRARY_SPEC.md` como contrato normativo de
+  arquitectura, sin fingir firmas de módulos todavía abiertas. Fija versionado
+  conservador, una sola `std` por grafo, PackageId/hash, actualización explícita,
+  prelude mínimo, propietarios canónicos, availability/capabilities, errores,
+  ownership, async, determinismo, distribución, conformidad y migración
+  inmutable desde bootstrap.
+- Se cierran DEC-012, `STD-FOUNDATION-SPEC-001`, `STD-MOD-001`,
+  `STD-CAP-001`, `STD-ERR-001` y `STD-DIST-001`. El catálogo 0.1 reserva métodos
+  de intrínsecos, `std.bytes`, `std.io`, `std.math`, `std.format`, `std.time`,
+  `std.path`, `std.console`, `std.env`, `std.fs`, `std.process` y
+  `std.testing`; las firmas concretas permanecen pendientes.
+- `Bytes` adquiere `std.bytes` como propietario futuro único y los argumentos
+  runtime migrarán de la superficie bootstrap de process a `std.env`. La
+  extensión de testing referencia ya la identidad binaria canónica.
+- `STD-TIME-BASE-SPEC-001` sigue siendo la acción inmediata; no se implementan
+  todavía tiempo, testing de usuario ni otra API estándar.
 
 ### 0.93 — 2026-07-29
 

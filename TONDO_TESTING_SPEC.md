@@ -1905,11 +1905,11 @@ presenta sus outputs como completos.
 
 ### 9.7 Artifacts y snapshots por intento
 
-`testing.attach(name, mediaType, data)` copia los `Bytes` exactos al artifact
-store del runner y añade un descriptor al intento activo. `name` es un `String`
-no vacío sin `/`, `\` ni ningún scalar Unicode de categoría general `Cc`; se
-compara por bytes UTF-8 sin normalización. `mediaType` conserva sus bytes ASCII
-y usa esta gramática cerrada, sin whitespace ni parámetros:
+`testing.attach(name, mediaType, data)` copia el `std.bytes.Bytes` exacto al
+artifact store del runner y añade un descriptor al intento activo. `name` es un
+`String` no vacío sin `/`, `\` ni ningún scalar Unicode de categoría general
+`Cc`; se compara por bytes UTF-8 sin normalización. `mediaType` conserva sus
+bytes ASCII y usa esta gramática cerrada, sin whitespace ni parámetros:
 
 ~~~abnf
 media-type = token "/" token
@@ -2103,13 +2103,14 @@ El control, la metadata, la evidencia y el dominio temporal mínimos del runner
 forman parte de esta especificación. Sus firmas exactas son:
 
 ~~~tondo
+import std.bytes
 import std.time
 
 pub fn log(message: String)
 pub fn tags(values: Map[String, String])
 pub fn failNow(message: String): Never
 pub fn skip(reason: String): Never
-pub fn attach(name: String, mediaType: String, data: Bytes)
+pub fn attach(name: String, mediaType: String, data: bytes.Bytes)
 pub fn snapshot(name: String, actual: String)
 
 pub async fn withVirtualTime[
@@ -2153,8 +2154,9 @@ test importsUsers {
 Las seis operaciones de control, metadata y evidencia son monomórficas.
 `log`, `failNow` y `skip` reciben un solo `String`; interpolación y formatting
 ocurren antes de la llamada. `tags` recibe exactamente un
-`Map[String, String]`. `attach` recibe bytes ya materializados y `snapshot`
-compara texto ya convertido mediante las APIs ordinarias de formatting. No
+`Map[String, String]`. `attach` recibe un `std.bytes.Bytes` ya materializado y
+`snapshot` compara texto ya convertido mediante las APIs ordinarias de
+formatting. No
 existen niveles de log, timestamps, un tipo dinámico de metadata, reflection de
 valores ni sobrecargas variádicas en 0.2.
 
@@ -3486,7 +3488,8 @@ parent que sea symlink o escape esa raíz.
 ### 15.8 Artifact store canónico
 
 El root efectivo contiene `manifest.json` y `objects/`. Cada object path usa el
-SHA-256 lowercase de sus bytes y su contenido es exactamente el `Bytes` adjunto.
+SHA-256 lowercase de sus bytes y su contenido es exactamente el
+`std.bytes.Bytes` adjunto.
 El manifest es JSON canónico UTF-8, termina en un único `LF` y tiene:
 
 ~~~json
