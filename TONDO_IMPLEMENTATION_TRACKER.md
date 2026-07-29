@@ -2,7 +2,7 @@
 
 **Estado:** M10 y Gate G5 cerrados; M10.5 es el siguiente milestone
 
-**Versión del tracker:** 0.89
+**Versión del tracker:** 0.90
 
 **Última actualización:** 2026-07-29
 
@@ -238,18 +238,20 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
 - [x] **DEC-015 — Testing first-class y límite de edición.** La especificación
   [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) reserva `suite` y `test`
   para Tondo 0.2: `suite` es un contenedor estático con setup léxico y teardown
-  por `defer`; `test` es siempre una hoja. Mantiene Tondo 0.1 y
+  por `defer`/`defer await`; `test` es siempre una hoja. Mantiene Tondo 0.1 y
   `tondo-conformance-0.1` inmutables, separa unit overlays de integration roots
   y fija árbol/identidad, capturas `Copy + Send + Share`, envelope estructurado,
-  `std.testing.log/tags/failNow/skip/withVirtualTime`, inferencia de error/async,
-  aislamiento,
+  `std.testing.log/tags/failNow/skip/attach/snapshot/withVirtualTime`, inferencia
+  de error/async, aislamiento,
   selección substring/glob/exact, ownership por CODEOWNERS, sharding, orden
-  aleatorio reproducible, retries explícitos en workers nuevos, tiempo virtual
-  opt-in sobre la API monotónica de producción, límites, output, exit status,
-  reportes `tondo-test-report-0.2/6`, `tondo-test-list-0.2/5` y
-  `tondo-junit-report-0.2/3`. No se introducen `TestContext`, attributes, clases,
-  reflection, registro runtime, hooks, selección regex o por tags runtime,
-  retries implícitos ni un reloj exclusivo de testing.
+  aleatorio reproducible, retries y repeat explícitos en workers nuevos, tiempo
+  virtual opt-in sobre la API monotónica de producción, inputs públicos/secretos,
+  interrupción, artifacts content-addressed, snapshots versionados, límites,
+  output, exit status, reportes `tondo-test-report-0.2/7`,
+  `tondo-test-list-0.2/6` y `tondo-junit-report-0.2/4`. No se introducen
+  `TestContext`, attributes, clases, reflection, registro runtime, hooks,
+  selección regex o por tags runtime, retries/repeat implícitos, actualización
+  automática de snapshots ni un reloj exclusivo de testing.
 
 ### 3.3 Estructura inicial recomendada
 
@@ -331,7 +333,8 @@ Estado observado del workspace:
 
 ~~~text
 M0 -> M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10
-  -> M10.5 -> STD-0.1/time-base -> M10.6 -> STD-0.1/resto -> M11 -> STD-0.2
+  -> M10.5 -> STD-0.1/time-base -> M10.6/defer-await+testing
+  -> STD-0.1/resto -> M11 -> STD-0.2
        \_____________________________________________________/
                   testing y conformidad continuos
 ~~~
@@ -345,8 +348,10 @@ indefinida para perseguir un número arbitrario de tests. Su gate debe existir
 antes de ampliar sintaxis. Tras H0, STD-0.1 abre únicamente el slice de
 `Duration`, `Instant` monotónico, suspensión, timers y deadlines que M10.6
 necesita para virtualizar la API real; calendario civil y el resto de la stdlib
-no se adelantan. M10.6 implementa después la extensión de testing sin reescribir
-Tondo 0.1 y proporciona `tondo test` para completar y probar la propia stdlib.
+no se adelantan. M10.6 consolida primero `defer await` como efecto general de la
+edición 0.2 y después implementa sobre él la extensión de testing, sin
+reescribir Tondo 0.1. El resultado proporciona `tondo test` para completar y
+probar la propia stdlib.
 Cada API posterior de STD-0.1 amplía la matriz generativa y de conformidad y
 añade evidencia escrita en Tondo. M11 depende de Gate T0 y STD-0.1 porque el
 backend nativo debe implementar una frontera runtime ya especificada y
@@ -2339,11 +2344,13 @@ de lenguaje posterior a Tondo 0.1. El resultado es una declaración
 `test name { ... }` para cada hoja y una declaración `suite name { ... }` para
 jerarquía y lifecycle compartido, unit tests con acceso privado controlado,
 integration tests contra API pública, control y metadata sellados de
-log/tags/fallo/skip sin contexto visible, ownership resuelto desde CODEOWNERS,
-selección glob portable, sharding estable, orden aleatorio reproducible, retries
-explícitos y aislados con historial honesto, tiempo virtual opt-in sobre las
-APIs monotónicas de producción y reportes JSON/JUnit desde una sola invocación.
-El runner resultante puede utilizarse para completar y validar la stdlib.
+log/tags/fallo/skip/attachments/snapshots sin contexto visible, ownership
+resuelto desde CODEOWNERS, selección glob portable, sharding estable, orden
+aleatorio reproducible, retries y repetición proactiva explícitos y aislados con
+historial honesto, tiempo virtual opt-in sobre las APIs monotónicas de
+producción, inputs públicos/secretos explícitos, interrupción fiable y reportes
+JSON/JUnit desde una sola invocación. El runner resultante puede utilizarse para
+completar y validar la stdlib.
 
 **Dependencia:** la implementación comienza únicamente después de Gate H0 y de
 `STD-TIME-BASE-SPEC-001`, `STD-TIME-BASE-IMPL-001` y
@@ -2351,7 +2358,9 @@ El runner resultante puede utilizarse para completar y validar la stdlib.
 matriz normativa y CI conozcan el próximo contrato, pero no se añade token,
 parser path, feature flag ni extensión privada mientras H0 permanezca abierto.
 El slice temporal es API de producción de STD-0.1, no un shim privado del
-runner.
+runner. La edición consolidada 0.2 debe cerrar además `defer await` mediante
+`ASYNC-DEFER-SPEC-001` y `ASYNC-DEFER-IMPL-001` antes de ejecutar lifecycle de
+suite; testing no puede sustituirlo por un hook.
 
 **Compatibilidad:** `TONDO_LANGUAGE_SPEC.md`, su hash normativo y
 `tondo-conformance-0.1` permanecen inmutables. Ningún binario puede aceptar
@@ -2363,27 +2372,52 @@ seleccionar la edición 0.2.
 - [x] **UTEST-SPEC-001 — Fijar el contrato normativo de testing.**
   `TONDO_TESTING_SPEC.md` define keywords, grammar, árbol suite/test, formato,
   identidad, source classes, overlays, capturas, lifecycle, envelope,
-  `std.testing.log/tags/failNow/skip/withVirtualTime`, inferencia, aislamiento,
-  resultados,
+  `std.testing.log/tags/failNow/skip/attach/snapshot/withVirtualTime`, inferencia,
+  aislamiento, resultados,
   ownership, selección substring/glob/exact, sharding, orden reproducible,
-  retries por rondas y workers nuevos, `withVirtualTime`/`settle`/`advance`,
-  quiescencia durable, CLI, JSON/JUnit, stdlib boundary, diagnósticos y
-  conformidad sin depender de una implementación provisional.
+  retries por rondas, repeat por iteraciones y workers nuevos,
+  `withVirtualTime`/`settle`/`advance`, quiescencia durable, cleanup async,
+  interrupción, inputs públicos/secretos, artifact/snapshot stores, update
+  explícito, CLI, JSON/JUnit, stdlib boundary, diagnósticos y conformidad sin
+  depender de una implementación provisional.
+
+- [ ] **ASYNC-DEFER-SPEC-001 — Cerrar `defer await` como efecto general de
+  Tondo 0.2.** Especificar grammar, inferencia async solo en
+  test/setup/script, requisito `async` explícito en funciones, métodos y cierres,
+  única llamada infallible `Unit`, reserva de un operando afín, liveness/`Send`,
+  LIFO, no cancelación cooperativa durante unwind, pánico/suprimidos,
+  timeout/resource/interrupt y rechazo por capability. No admitir bloque async,
+  error propagado, hook de testing ni await oculto. Añadir sus casos a la
+  especificación consolidada antes de implementar suites.
 
 - [ ] **UTEST-EDITION-001 — Materializar Tondo 0.2 como edición separada.**
-  Consolidar la especificación de lenguaje 0.2, añadir `suite` y `test` a su
-  registry de keywords y diagnósticos y versionar los formatos afectados. La
-  edición 0.1 debe seguir seleccionable y byte-compatible; tests de migración
-  prueban que identificadores `suite`/`test` válidos en 0.1 reciben `E1005`
-  únicamente bajo 0.2.
+  Consolidar la especificación de lenguaje 0.2 después de
+  `ASYNC-DEFER-SPEC-001`, añadir `suite` y `test` a su registry de keywords,
+  incorporar el efecto general `defer await` sin nueva keyword y versionar
+  grammar/diagnósticos/formatos afectados. La edición 0.1 debe seguir
+  seleccionable y byte-compatible; tests de migración prueban que identificadores
+  `suite`/`test` válidos en 0.1 reciben `E1005` únicamente bajo 0.2 y que un
+  cleanup async continúa recibiendo `E1608` bajo 0.1.
 
 - [ ] **UTEST-PLAN-001 — Extender el project plan con source classes de test.**
   Representar exactamente `production`, `unit-test` e `integration-test`,
   dev-dependencies, roots, paths lógicos, raíz de repositorio, inputs
-  CODEOWNERS, selector, shard, orden, seed, policy y plan de retry, reporters,
-  target, capabilities, catálogo temporal estándar y límites. El plan fija
-  bytes/hash de toda entrada y el hash de un artefacto de producción no puede
-  depender de metadata ni fuentes test-only.
+  CODEOWNERS, perfiles públicos/secretos, selector, shard, orden, seed, policy,
+  retry/repeat, reporters, artifact store, snapshot stores, target,
+  capabilities, catálogo temporal estándar y límites. El plan fija bytes/hash
+  de cada input público, solo descriptors/versiones de secretos y hashes
+  canónicos de stores; el hash de un artefacto de producción no puede depender
+  de metadata ni fuentes test-only.
+
+- [ ] **UTEST-INPUTS-001 — Materializar inputs públicos y secretos sin
+  filtraciones.** Implementar los tres estados de reproducibilidad, hashes de
+  bytes públicos y descriptor profile secreto, materialización exclusiva dentro
+  del worker y revocación al terminar. Probar que valores secretos no entran en
+  plan serializado, cache key de compilación, diagnostics, reportes, snapshots,
+  artifacts o productos salvo copia explícita del programa, y documentar que el
+  runner no realiza redacción heurística. Un fallo de materialización termina
+  con exit `1` sin reporte parcial; un fallo de revocación pierde aislamiento y
+  usa exit `3`.
 
 - [ ] **UTEST-DISC-001 — Implementar descubrimiento convencional y explícito.**
   Soportar `_test.to` dentro de production roots y `.to` bajo `tests/`, con la
@@ -2424,6 +2458,15 @@ seleccionar la edición 0.2.
   setup-members, declaraciones adyacentes, recovery e idempotencia en ambas
   ediciones. `fmt` no depende de discovery runtime.
 
+- [ ] **ASYNC-DEFER-IMPL-001 — Implementar y verificar `defer await`.** Añadir
+  la forma edition-gated al CST/formatter, checks de firma/efecto/ownership,
+  guards async en HIR/MIR/bytecode y conducción LIFO en el executor. Probar
+  inferencia de entradas/script, `E1610` en función no async, retorno, error
+  exterior, pánico, cancelación, cleanup suprimido, timeout, resource limit,
+  interrupción, un owner afín, `Send` y rechazo de bloque/llamada
+  fallible/capability mediante `E1608`/`E14xx`; Tondo 0.1 y sus bytes permanecen
+  inmutables.
+
 - [ ] **UTEST-ID-001 — Construir el árbol estático suite/test.** La identidad
   interna usa PackageId + source class + module path + ordered node path + kind;
   la visible usa `package::unit|integration::path::suite...::test`. Registrar
@@ -2454,40 +2497,46 @@ seleccionar la edición 0.2.
   cerrada `E: Discard`, admitir `fail`, `?`, `await` y `scope` donde corresponda
   y reutilizar todos los checks ordinarios de tipos, ownership, préstamos,
   terminales, `defer`, `Send`, `Share` y `unsafe`. Resolver el módulo test-only
-  `std.testing` con las cuatro operaciones monomórficas exactas de
-  control/metadata, incluido `tags(Map[String, String])`, y el núcleo temporal con
+  `std.testing` con las seis operaciones monomórficas exactas de
+  control/metadata/evidencia, incluidos `tags(Map[String, String])`,
+  `attach(String, String, Bytes)` y `snapshot(String, String)`, y el núcleo temporal con
   `withVirtualTime[E, F: Send + CallOnce[async fn(ref VirtualTime): Unit ! E]]`,
   `settle` y `advance(Duration)`. Comprobar propagación de `E`, `Unit`/`Never`,
-  opacidad/no escape/no `Share` de `VirtualTime` y `E2003` al cruzar a
-  producción.
+  opacidad/no escape/no `Share` de `VirtualTime`, nombres/media types,
+  `P2006`-`P2008` y `E2003` al cruzar a producción.
 
 ### 17.3 Lowering, runtime y CLI
 
 - [ ] **UTEST-LOWER-001 — Bajar entradas de test por el pipeline común.** HIR,
   MIR, bytecode y sus admission verifiers representan árbol/parent, entradas de
   setup, snapshots de entorno, identidad, source span, error, async, cleanup,
-  `TestLog`, `TestTags`, `TestFailNow`, `TestSkip`, entrada/salida de dominio,
-  `VirtualTimeSettle` y `VirtualTimeAdvance` sin crear un segundo frontend o una
-  ruta de ejecución no verificada. `main` nunca se ejecuta en un test target.
+  `TestLog`, `TestTags`, `TestFailNow`, `TestSkip`, `TestAttach`,
+  `TestSnapshot`, entrada/salida de dominio, `VirtualTimeSettle` y
+  `VirtualTimeAdvance` sin crear un segundo frontend o una ruta de ejecución no
+  verificada. `main` nunca se ejecuta en un test target.
 
 - [ ] **UTEST-CONTROL-001 — Implementar el envelope sellado de ejecución.** Cada
-  suite/test recibe node ID, tag/log/stdout/stderr sinks, cancelación y límites
-  en estado privado del runtime, nunca como valor o thread-local Tondo. Helpers,
+  suite/test recibe node ID, tag/log/artifact/snapshot/stdout/stderr sinks,
+  cancelación y límites en estado privado del runtime, nunca como valor o
+  thread-local Tondo. Helpers,
   closures y tasks estructuradas heredan el enlace; verifiers rechazan
   operaciones forjadas o presentes en artefactos de producción. Implementar
   `log`, merge atómico e idempotente de `tags`, primera key conflictiva estable,
   `P2002` ante valores incompatibles, `failNow` con `P0007`, `skip`, precedencia
   de cleanup y `P2001` sin exponer `TestContext`, `currentTest()` ni identidad
   del nodo. Los tags no se heredan entre nodos ni intervienen en
-  discovery/selección/sharding/orden. Un skip de hijo marca la entrada completa,
+  discovery/selección/sharding/orden. Artifacts/snapshots usan registros
+  separados por intento y no exponen paths/store al programa. Un skip de hijo
+  marca la entrada completa,
   cancela el resto del scope y se propaga a la task propietaria con la prioridad
   determinista fijada por el lenguaje. El mismo envelope mantiene un registro
   por intento de dominios virtuales, pero no expone su node ID, sinks o policy al
   controlador temporal prestado.
 
 - [ ] **UTEST-RUNTIME-001 — Ejecutar cada hoja en una raíz aislada.** Estado,
-  roots, heap observable, tasks, handles, pánicos, tags, logs, stdout, stderr,
-  envelopes y presupuestos no cruzan hojas salvo snapshots de suite comprobados.
+  roots, heap observable, tasks, handles, pánicos, tags, logs, attachments,
+  comprobaciones de snapshot, stdout, stderr, envelopes y presupuestos no cruzan
+  hojas salvo snapshots de entorno de suite comprobados.
   Retorno, skip, error, pánico, resource limit, timeout e infrastructure
   producen exactamente los estados normativos; los terminales cooperativos
   completan unwind y cleanup, mientras una terminación forzada garantiza
@@ -2496,7 +2545,8 @@ seleccionar la edición 0.2.
   procesos/recursos de host hasta revocarlos, sin serializar heap, roots ni
   handles como snapshot reutilizable. El executor recibe el proveedor monotónico
   real o virtual mediante una frontera interna única; el bytecode de usuario y
-  las llamadas de `std.time` no cambian entre ambos.
+  las llamadas de `std.time` no cambian entre ambos. Cada worker recibe solo los
+  inputs públicos/secretos declarados y revoca secretos y recursos al cerrarse.
 
 - [ ] **UTEST-SUITE-001 — Implementar lifecycle jerárquico de suite.** Ejecutar
   setup una vez por participación y solo si existe una hoja seleccionada,
@@ -2507,15 +2557,17 @@ seleccionar la edición 0.2.
   Un skip de setup produce `skipped`/`blocked-skip`; un fallo durante su cleanup
   prevalece y convierte descendientes en `blocked-setup`. La misma máquina de
   lifecycle debe admitir una participación posterior en un worker de retry sin
-  reutilizar el entorno ni sus snapshots.
+  reutilizar el entorno ni sus snapshots. Conducir `defer await` hasta completar
+  dentro de teardown, sin bloquear el worker ni inventar `afterAll`.
 
 - [ ] **UTEST-LIMIT-001 — Hacer límites y timeout terminales reales.** Publicar
   defaults finitos, aplicar `--timeout` por hoja y por fase setup/teardown sin
   contar la espera de descendientes, cargar tags/logs/stdout/stderr al mismo
-  presupuesto de output, y dominios/timers/cola/descriptores virtuales a
-  presupuestos finitos de trabajo, memoria y metadata. Aplicar el delta de tags
-  sin cambios parciales, registrar valores efectivos y garantizar que una
-  entrada no cooperativa no continúa tras `timeout`. Cada intento obtiene
+  presupuesto de output, artifacts/snapshot actual a límites separados de
+  cantidad/bytes y dominios/timers/cola/descriptores virtuales a presupuestos
+  finitos de trabajo, memoria y metadata. Aplicar deltas sin cambios parciales,
+  registrar valores efectivos, fijar grace period de interrupción y garantizar
+  que una entrada no cooperativa no continúa tras `timeout`. Cada intento obtiene
   presupuestos nuevos bajo el mismo resource profile; timeout,
   CPU/instrucciones, memoria y output siempre usan recursos reales aunque el
   intento abra tiempo virtual. OOM, abort o pérdida de aislamiento nunca se
@@ -2523,14 +2575,16 @@ seleccionar la edición 0.2.
 
 - [ ] **UTEST-CLI-001 — Añadir `tondo test`.** Implementar manifest/default
   discovery, `--filter`, `--glob`, `--exact`, `--list`, `--jobs`, `--timeout`,
-  `--retry`, `--test-format`, `--show-output`, `--deny-skips`,
+  `--retry`, `--repeat`, `--artifacts`, `--update-snapshots`, `--test-format`,
+  `--show-output`, `--deny-skips`,
   `--allow-flaky`, `--allow-empty`, `--codeowners`, `--shard`, `--order`,
   `--seed` y `--report`, incluidas exclusiones, multiplicidad, compatibilidad
-  de modos, parsing estricto, colisiones de output y exit codes 0/1/2/3.
+  de modos, parsing estricto, colisiones de output y exit codes 0/1/2/3/4.
   Primero compila toda la suite y el selector solo limita ejecución. `--filter`
   compara hojas; glob/exact aceptan hoja o suite y esta última selecciona su
-  subárbol. Rechazar retry/allow-flaky con list antes de compilar. No
-  implementar `--tag`, selector regex ni `--fail-fast` bajo este contrato.
+  subárbol. Rechazar repeat/retry/allow-flaky/artifacts/update con list y las
+  combinaciones inseguras de snapshot update antes de compilar. No implementar
+  `--tag`, selector regex ni `--fail-fast` bajo este contrato.
 
 - [ ] **UTEST-GLOB-001 — Implementar el selector glob portable.** Parsear
   componentes `::`, `*`, `?` y `**` con la gramática cerrada de la spec,
@@ -2557,11 +2611,13 @@ seleccionar la edición 0.2.
   prioridad de dispatch. Verificar los digests normativos. Con jobs=1 una seed
   reproduce el orden exacto; con jobs=N reproduce la prioridad, no completion
   timing. Jobs explícitos limitan conjuntamente setup/test/teardown; cada
-  envelope conserva tags/logs/streams y los arrays finales permanecen canónicos
+  envelope conserva tags/artifacts/snapshots/logs/streams y los arrays finales
+  permanecen canónicos
   y nunca intercalan nodos. El mismo límite global gobierna workers e intentos
   de todas las rondas de retry. Dentro de un dominio virtual, usar una cola
   determinista por secuencia de creación/wake y ordenar timers empatados por
-  creación sin cambiar el scheduler de producción fuera de tests.
+  creación sin cambiar el scheduler de producción fuera de tests. Iteraciones
+  repeat son secuenciales y cada una vuelve a aplicar el mismo límite global.
 
 - [ ] **UTEST-VTIME-001 — Implementar tiempo virtual determinista sobre la API
   de producción.** Ejecutar `withVirtualTime` como `CallOnce` async bajo un
@@ -2592,43 +2648,101 @@ seleccionar la edición 0.2.
   revoca recursos rastreados y nunca cruza shard. No reintentar compile errors,
   skips, resource-limit ni infrastructure; no añadir delays, historial o
   annotations, ni reintroducir esos terminales indirectamente desde un agregado
-  previo. Preservar todos los intentos con referencia de ronda/unidad, derivar
-  intento decisivo y `flaky-pass`; este último falla por default y
-  `--allow-flaky` solo cambia policy de salida. Cada worker empieza sin dominios
-  y cada dominio vuelve al mismo cero virtual, sin heredar timers, task order,
-  contadores ni tiempo avanzado.
+  previo. Preservar todos los intentos con `iteration: 1` y referencia de
+  ronda/unidad, derivar intento decisivo y `flaky-pass`; este último falla por
+  default y `--allow-flaky` solo cambia policy de salida. Cada worker empieza
+  sin dominios ni registros de attachments/snapshots y cada dominio vuelve al
+  mismo cero virtual, sin heredar timers, task order, contadores ni tiempo
+  avanzado. El snapshot store esperado permanece como input inmutable y los
+  attachments de cada intento permanecen separados. Rechazar la combinación
+  con repeat o snapshot update.
+
+- [ ] **UTEST-REPEAT-001 — Implementar repetición completa y aislada.** Parsear
+  `--repeat N` con default uno y `N >= 1`; rechazar retry, allow-flaky, list y
+  snapshot update. Ejecutar cada iteración completa de forma secuencial en un
+  proceso worker nuevo, sin recompilar y conservando selección, shard,
+  `execution_plan`, seed, inputs, stores, capabilities, limits y orden. Dentro
+  de cada iteración respetar `--jobs`, pero no solapar dos iteraciones.
+  Registrar `iteration: 1..N`, `round: 0` y `unit: null`; cualquier intento no
+  `passed` mantiene exit `1` bajo `N > 1` aunque otra iteración pase; `N = 1`
+  conserva exactamente la policy ordinaria. Probar revocación de procesos,
+  secretos y recursos, cero virtual, registros y presupuestos nuevos,
+  determinismo del replay y ausencia de un modo implícito o
+  `allow-repeat-flaky`.
+
+- [ ] **UTEST-ARTIFACT-001 — Persistir attachments por intento.** Implementar
+  `testing.attach` con copia exacta y linealizada de `Bytes`, gramática cerrada
+  de nombre/media type, unicidad por intento, límites y `P2006`. Calcular
+  descriptors SHA-256 y escribir `tondo-test-artifacts-0.2/1` con objects
+  content-addressed inmutables, deduplicación, manifest canónico y publicación
+  atómica. Rechazar symlinks, paths derivados incorrectos, duplicados y
+  colisiones; no incluir Base64, upload, ejecución, timestamps ni paths físicos.
+  Mantener blobs huérfanos fuera del store lógico tras interrupción y permitir
+  su recolección segura.
+
+- [ ] **UTEST-SNAPSHOT-001 — Implementar snapshots textuales explícitos.**
+  Resolver `(node_id, name)` contra `tondo-snapshot-store-0.2/1`, comparar el
+  `String` exacto, registrar `matched/missing/mismatched` y producir
+  `P2007`/`P2008` con diffs humanos acotados. Parsear, validar, ordenar y
+  hashear el store canónico; preservar entries stale y stores de paquetes no
+  seleccionados y rechazar symlinks o escapes de package root.
+  `--update-snapshots` stagea `created/updated`, exige jobs uno y orden canónico,
+  rechaza shard/retry/repeat/allow-flaky y solo publica por reemplazo atómico
+  tras una invocación completa sin otros estados no exitosos. Probar
+  `snapshot_policy.published: false`, ausencia de update/borrado implícito y
+  separación de registros entre intentos.
+
+- [ ] **UTEST-INTERRUPT-001 — Cerrar la interrupción externa.** En la primera
+  señal, detener dispatch, cancelar cooperativamente, conducir cleanup
+  incluyendo `defer await` durante el grace period y revocar secretos,
+  procesos, handles y recursos; una segunda señal puede forzar terminación.
+  Emitir exit `4` solo si se restauró aislamiento y exit `3` en caso contrario.
+  No publicar JSON, JUnit, manifest de artifacts ni snapshot update parcial;
+  cada output final conserva sus bytes anteriores o permanece ausente. Permitir
+  únicamente blobs content-addressed huérfanos y una salida humana marcada
+  `interrupted`, nunca un resultado machine-readable presentado como completo.
 
 - [ ] **UTEST-REPORT-001 — Implementar los formatos machine-readable.**
-  Serializar `tondo-test-report-0.2/6` y `tondo-test-list-0.2/5` con arrays
-  separados de suites/tests, parents, source, owners, paths, estado agregado,
+  Implementar una sola vez `tondo-test-json-v1` y serializar con ella
+  `tondo-test-report-0.2/7` y `tondo-test-list-0.2/6`, con arrays separados de
+  suites/tests, parents, source, owners, paths, estado agregado,
   intento decisivo e historial por intento de phase, `blocked_by` causal,
-  ronda/unidad, `failure`, `skip`, tags, dominios `virtual_time`, logs y streams.
+  iteración/ronda/unidad, `failure`, `skip`, tags, artifacts, snapshots,
+  dominios `virtual_time`, logs y streams.
   Incluir por dominio índice, `elapsed_ns` decimal sin pérdida y contadores de
-  avance automático/explícito/settle; incluir además policy, ownership, selector
-  incluido glob, shard, order, seed, algoritmos, `execution_plan`, plan/rondas de
-  retry, resource profile y las invariantes exactas de summary/attempts. No
-  incluir reloj o duración wall-clock, PID, paths físicos ni direcciones.
+  avance automático/explícito/settle; incluir además policy, ownership, inputs
+  públicos/perfil secreto, selector incluido glob, shard, order, seed,
+  algoritmos, `execution_plan`, retry, repeat, artifact store, snapshot policy,
+  resource profile y las invariantes exactas de summary/attempts y sus
+  contadores de evidencia. No añadir valores secretos desde el materializador
+  de inputs ni incluir bytes de attachments, valores completos de snapshots,
+  reloj o duración wall-clock, PID, paths físicos ni direcciones; un programa
+  que copie un secreto a un canal observable conserva la advertencia de la
+  spec.
   `--test-format json` y `--report json=path` producen bytes idénticos para la
   misma ejecución. Fallos de compilación continúan usando diagnostics
   estructurados, no consumen intentos y no ejecutan setup ni bodies.
 
 - [ ] **UTEST-JUNIT-001 — Exportar JUnit desde el resultado normativo.**
-  Proyectar la misma ejecución como `tondo-junit-report-0.2/3`, XML 1.0 UTF-8,
+  Proyectar la misma ejecución como `tondo-junit-report-0.2/4`, XML 1.0 UTF-8,
   con un testcase agregado por hoja, testcases sintéticos únicos para fallos de
   lifecycle y flaky suite, y
-  `tondo.retry/decisive_attempt/attempts`. Mapear `flaky-pass` a failure por
-  default y omitir solo ese outcome bajo `--allow-flaky`, sin cambiar identidad,
-  conteo ni historial; proyectar streams decisivos, scalars no representables,
-  carrier vacío, owners, shard, order, seed, `tondo.virtual_time`, conteos por
-  identidad y duración real sumada por intentos. Publicar cada path
-  atómicamente, rechazar colisiones y mantener JSON como representación
-  canónica y sin pérdida.
+  `tondo.retry/repeat/decisive_attempt/attempts`. Mapear `flaky-pass` a failure
+  por default y omitir solo ese outcome bajo `--allow-flaky`, sin cambiar
+  identidad, conteo ni historial; repeat con count mayor que uno permanece rojo
+  si cualquier oportunidad no pasa. Proyectar streams decisivos, scalars no
+  representables, carrier vacío, owners, perfil de inputs sin valores secretos,
+  shard, order, seed,
+  artifact/snapshot descriptors, policy, `tondo.virtual_time`, conteos por
+  identidad y duración real sumada por intentos. No embeber bytes ni valores de
+  snapshot. Publicar cada path atómicamente, rechazar colisiones y mantener JSON
+  como representación canónica y sin pérdida.
 
 ### 17.4 Evidencia, conformidad y dogfooding
 
 - [ ] **UTEST-CONF-001 — Crear una suite de conformidad Tondo 0.2 nueva.** No
   mutar manifests, cases, hashes ni observations de 0.1. La suite 0.2 cubre los
-  cuarenta y cinco grupos mínimos enumerados por la spec de testing y tiene
+  cincuenta y dos grupos mínimos enumerados por la spec de testing y tiene
   adaptador público para VM y futuros backends.
 
 - [ ] **UTEST-PROJECTS-001 — Añadir proyectos de aceptación completos.**
@@ -2639,17 +2753,21 @@ seleccionar la edición 0.2.
   `blocked-skip`, `P2001`, deny-skips, pánico/cleanup, host capabilities,
   CODEOWNERS, substring/glob/exact, selección vacía, shards, orden/seed,
   retries de hoja/setup/teardown, aislamiento externo idempotente,
-  `flaky-pass`/allow-flaky, backoff/deadline/debounce con tiempo virtual,
-  quiescencia, deadlock/solapamiento/rango y reporters JSON/JUnit. Cada proyecto
-  debe poder ejecutarse desde una copia en otro path físico con observaciones
-  canónicas iguales salvo duración JUnit.
+  `flaky-pass`/allow-flaky, campañas repeat, backoff/deadline/debounce con tiempo
+  virtual, quiescencia, deadlock/solapamiento/rango, cleanup mediante
+  `defer await`, inputs públicos/secretos y sus fallos de
+  materialización/revocación, interrupción, attachments y snapshots en
+  check/update mode, y reporters JSON/JUnit. Cada proyecto debe poder ejecutarse
+  desde una copia en otro path físico con observaciones canónicas iguales salvo
+  duración JUnit y material secreto deliberadamente externo.
 
 - [ ] **UTEST-PLATFORM-001 — Validar la matriz publicada.** Linux ejecuta el
   gate canónico completo; Linux ARM64, macOS Intel/ARM64 y Windows ejecutan
   discovery, paths jerárquicos, substring/glob/exact de suite/test, lifecycle,
   envelopes, tags/logs/skips, CODEOWNERS, sharding, orden/seed, workers nuevos
-  de retry, reloj virtual y ties de timers deterministas, aislamiento, timeout,
-  captura y reportes JSON/JUnit aplicables además del smoke test de binario.
+  de retry y repeat, reloj virtual y ties de timers deterministas, cleanup async,
+  inputs, interrupción, artifacts/snapshots, aislamiento, timeout, captura y
+  reportes JSON/JUnit aplicables además del smoke test de binario.
 
 - [ ] **UTEST-DOGFOOD-001 — Probar componentes Tondo mediante `tondo test`.**
   Antes de Gate T0, mantener una pequeña biblioteca de aceptación escrita en
@@ -2658,18 +2776,22 @@ seleccionar la edición 0.2.
   `failNow`/skip en casos de aceptación controlados y ejecutar el mismo corpus
   repartido en shards con seed registrada y un retry aislado determinista que
   ejercite `flaky-pass` mediante una fixture externa controlada, sin depender de
-  timing y con cleanup final verificable. Debe probar además una API de
-  producción con backoff o deadline mediante `withVirtualTime`, sin pausas
-  reales, y producir reportes JSON/JUnit con tiempo virtual separado de duración
-  operacional. No sustituye los tests Rust ni la conformidad; demuestra que la
-  experiencia pública funciona sin harness privado.
+  timing y con cleanup final verificable. Debe ejecutar además una campaña
+  repeat determinista, adjuntar al menos un artifact, comprobar y actualizar un
+  snapshot textual en un fixture aislado, y levantar/cerrar mediante
+  `defer await` un servicio de integración. Debe probar una API de producción
+  con backoff o deadline mediante `withVirtualTime`, sin pausas reales, y
+  producir reportes JSON/JUnit con inputs, stores y tiempo virtual separado de
+  duración operacional. No sustituye los tests Rust ni la conformidad;
+  demuestra que la experiencia pública funciona sin harness privado.
 
 ### Gate T0 — Testing first-class conforme
 
 - [ ] Tondo 0.1, su spec, suite, diagnostics y comportamiento permanecen
   inmutables y pasan Gate H0.
-- [ ] La edición 0.2 consolidada incorpora el contrato de testing y solo ella
-  reserva `suite` y `test`.
+- [ ] La edición 0.2 consolidada incorpora el contrato de testing, reserva solo
+  en ella `suite` y `test`, y define `defer await` como cleanup general,
+  infallible y verificable sin añadir hooks de testing.
 - [ ] Lexer, CST, parser, formatter, HIR, MIR, bytecode y VM recorren la ruta
   común y sus verifiers aceptan o rechazan árboles suite/test con diagnostics
   exactos.
@@ -2680,12 +2802,16 @@ seleccionar la edición 0.2.
   frames/tasks y nunca se deriva de un thread-local del host; tags, logs y
   terminales se atribuyen al nodo exacto sin `TestContext` ni `currentTest()`.
 - [ ] Suites ejecutan setup una vez por participación solo para subárboles
-  seleccionados, permiten únicamente snapshots `let: Copy + Send + Share`,
+  seleccionados, permiten únicamente capturas `let: Copy + Send + Share`,
   hacen teardown tras todos los descendientes y reportan setup, teardown,
   `blocked-setup`, skip y `blocked-skip` sin duplicar causas.
 - [ ] Retorno, error, `assert`, `failNow`, skip, pánico, async, cancelación,
-  ownership y `defer` conservan cleanup y precedencia; `P2001`, resource limits
-  y timeout no esconden cleanup de usuario no observado ni rompen aislamiento.
+  ownership, `defer` y `defer await` conservan cleanup y precedencia; `P2001`,
+  resource limits, timeout e interrupción no esconden cleanup observado ni
+  rompen aislamiento.
+- [ ] Inputs públicos se fijan por bytes/hash y secretos solo por descriptor;
+  ningún valor secreto entra en productos, cache keys, reportes o stores
+  implícitos, y cada worker materializa y revoca únicamente lo declarado.
 - [ ] `Duration`, `Instant`, suspensión, timers y deadlines usan el sustrato
   monotónico de producción; `withVirtualTime` lo sustituye solo dentro de su
   closure, presta un controlador no escapable y conserva el timeout real.
@@ -2694,18 +2820,30 @@ seleccionar la edición 0.2.
   `P2004` y `P2005` conservan sus condiciones exactas.
 - [ ] `tondo test` implementa discovery, compilación completa, selección,
   substring/glob/exact de suite/test, CODEOWNERS, sharding estable, orden/seed,
-  ejecución serial/paralela, retries aislados por rondas, captura, reporters,
-  exit codes deny-skips/allow-flaky y selección vacía según contrato; no inventa
-  regex, filtrado por tags, retries implícitos ni fail-fast.
+  ejecución serial/paralela, retries aislados por rondas, repeat aislado por
+  iteraciones, captura, artifacts, snapshots, reporters, interrupción y exit
+  codes deny-skips/allow-flaky/empty según contrato; no inventa regex, filtrado
+  por tags, retries/repeat implícitos ni fail-fast.
 - [ ] Cada retry reutiliza solo el artefacto inmutable, arranca un worker nuevo,
   conserva shard/configuración, respeta el máximo global de jobs y deja
   procesos, recursos rastreados, heap, roots, tasks, handles, envelopes y
   buffers sin supervivientes; cada dominio virtual vuelve al mismo cero.
-- [ ] El reporte JSON `/6` es canónico y reproducible, conserva todos los
-  intentos y sus dominios y no agrega `flaky-pass` como `passed`; JUnit `/3`
-  proyecta la misma ejecución y policy con duración operacional real y tiempo
-  virtual separado. La salida humana no intercala suites/tests o intentos y
-  muestra owners, tags, tiempo virtual, logs, razones y fallos accionables.
+- [ ] Cada iteración repeat ejecuta el plan completo en worker nuevo, no se
+  solapa con otra iteración y, con count mayor que uno, mantiene exit rojo ante
+  cualquier non-pass aunque otra oportunidad del mismo nodo pase; count uno
+  conserva la policy ordinaria.
+- [ ] Attachments y snapshots pertenecen al intento exacto; los stores `/1`
+  son canónicos, acotados y atómicos, y snapshot update nunca se activa ni
+  elimina entries de forma implícita.
+- [ ] Una interrupción deja de despachar, intenta cleanup/revocación y usa exit
+  `4` o `3` según aislamiento; nunca publica reportes, manifests o updates
+  parciales como completos.
+- [ ] El reporte JSON `/7` es canónico y reproducible, conserva todos los
+  intentos, iteraciones, dominios y descriptors sin material secreto añadido
+  por el runner ni payloads externos embebidos; JUnit `/4` proyecta la misma
+  ejecución y policy con duración operacional real y tiempo virtual separado.
+  La salida humana no intercala suites/tests o intentos y muestra owners, tags,
+  evidence, tiempo virtual, logs, razones y fallos accionables.
 - [ ] La suite Tondo 0.2 pasa en la VM y la matriz de plataformas aplicable está
   verde.
 - [ ] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
@@ -2727,9 +2865,11 @@ ilustrativa no se vuelve pública por aparecer en un ejemplo.
 El resto de la implementación pública comienza después de T0. Ninguna firma se
 congela ni distribuye como estable sin modelos, tests y contrato de capability.
 El otro slice temprano es el núcleo test-only
-`std.testing.log/tags/failNow/skip/withVirtualTime`, cuyas firmas y bridge quedan
-fijados y ejecutables en T0 porque forman parte del contrato del runner.
-STD-0.1 completa esos mismos módulos; no crea un reloj ni harness paralelos.
+`std.testing.log/tags/failNow/skip/attach/snapshot/withVirtualTime`, cuyas firmas
+y bridge quedan fijados y ejecutables en T0 porque forman parte del contrato del
+runner. `defer await` es semántica general de la edición 0.2, no una API de ese
+módulo. STD-0.1 completa esos mismos módulos; no crea reloj, snapshot engine,
+artifact store ni harness paralelos.
 
 ### 18.1 Contrato y distribución
 
@@ -2792,12 +2932,14 @@ STD-0.1 completa esos mismos módulos; no crea un reloj ni harness paralelos.
 
 - [ ] **STD-TESTING-SPEC-001 — Especificar `std.testing`.** Fijar assertions de
   igualdad, diffs de texto, comparación float con tolerancia, consumo explícito
-  de Option/Result, recursos temporales, snapshots y datos generados que entren
-  realmente en 0.1. Cada API declara tipos, ownership, cleanup, formato, seed,
-  actualización, capabilities y límites; reutiliza sin alterar
-  `log/tags/failNow/skip/withVirtualTime`, `VirtualTime.settle/advance` ni sus
-  diagnósticos, no registra tests, no interpreta tags runtime como selectores ni
-  captura pánicos como excepciones recuperables.
+  de Option/Result, recursos temporales y datos generados que entren realmente
+  en 0.1. Cada API declara tipos, ownership, cleanup, formato, seed,
+  capabilities y límites; reutiliza sin alterar
+  `log/tags/failNow/skip/attach/snapshot/withVirtualTime`,
+  `VirtualTime.settle/advance`, el snapshot textual/store/update ya normativos
+  ni sus diagnósticos. Los helpers de diff o generación no crean un segundo
+  snapshot format, no registran tests, no interpretan tags runtime como
+  selectores ni capturan pánicos como excepciones recuperables.
 
 ### 18.3 Hosted Standard Library
 
@@ -2852,9 +2994,10 @@ STD-0.1 completa esos mismos módulos; no crea un reloj ni harness paralelos.
 - [ ] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** Escribir en
   Tondo toda utilidad portable y reutilizar el bridge privilegiado de T0 sin
   duplicarlo. Confinar a unidades privilegiadas únicamente temp resources,
-  captura o aislamiento que requieran host. Los helpers producen mensajes
-  accionables sin reflection privada y se prueban mediante `tondo test`, no
-  mediante registro interno.
+  captura o aislamiento que requieran host; `attach`, `snapshot` y tiempo
+  virtual siguen usando los sinks/controladores sellados de T0. Los helpers
+  producen mensajes accionables sin reflection privada y se prueban mediante
+  `tondo test`, no mediante registro interno.
 
 - [ ] **STD-TEST-001 — Añadir modelos y properties por módulo.** Cada API prueba
   valores normales, vacíos, límites, errores, composición, ownership,
@@ -2887,7 +3030,8 @@ STD-0.1 completa esos mismos módulos; no crea un reloj ni harness paralelos.
   corpus funcional inicial para NATIVE-001 y PERF-001.
 - [ ] `std.testing` está especificado, implementado y probado con su propio
   runner público; un proyecto puede escribir tests útiles usando solo
-  `assert` y enriquecerlos mediante imports explícitos.
+  `assert` y enriquecerlos mediante imports explícitos, sin crear un segundo
+  formato de snapshots, artifacts o generated cases.
 - [ ] No se ha congelado una ABI FFI general ni un layout nativo público.
 
 ---
@@ -3188,12 +3332,18 @@ pública definitiva hasta ser fijados por la especificación estándar.
 | `R-026` | Permitir que skips escondan regresiones o cleanup fallido | CI verde con cobertura real ausente o recursos sin cerrar | Razón obligatoria, sin ignored estático, cleanup antes de confirmar, fallo con precedencia y `--deny-skips` |
 | `R-027` | Usar tags runtime como autoridad de discovery o scheduling | Ejecutar el body cambia qué tests existen, el shard o su orden | Tags solo en el envelope posterior al dispatch; selección, ownership, sharding y orden usan metadata estática |
 | `R-028` | Particionar u ordenar mediante hashes o iteration order del host | Shards solapados, huecos y seeds que no reproducen entre plataformas | Algoritmos versionados sobre IDs UTF-8, vectores de conformidad y `execution_plan` reportado |
-| `R-029` | Tratar JUnit como representación normativa sin pérdida | Consumidores CI descartan jerarquía, metadata o estados Tondo | JSON `/6` es canónico; JUnit `/3` es una proyección versionada de la misma ejecución y CI puede emitir ambos |
+| `R-029` | Tratar JUnit como representación normativa sin pérdida | Consumidores CI descartan jerarquía, metadata o estados Tondo | JSON `/7` es canónico; JUnit `/4` es una proyección versionada de la misma ejecución y CI puede emitir ambos |
 | `R-030` | Reintentar dentro del mismo runtime o restaurar una fixture parcial | Un intento pasa por heap, tasks, handles o buffers heredados y no confirma flakiness real | Worker nuevo por unidad; solo artefacto inmutable reutilizable; recursos rastreados revocados antes de completar |
 | `R-031` | Tratar un éxito posterior como pass ordinario | CI verde oculta una regresión intermitente y pierde la evidencia inicial | Estado `flaky-pass`, todos los intentos en JSON/JUnit y exit `1` por default; `--allow-flaky` es policy explícita |
 | `R-032` | Añadir regex o delegar globs al host | Dialectos, expansión accidental, complejidad no acotada y selección distinta por plataforma | Un glob propio de match completo con `*`/`?`/`**`, gramática cerrada, DP acotada y vectores multiplataforma |
 | `R-033` | Crear un reloj o `Duration` exclusivo de testing | Los tests validan otra API y la semántica diverge de producción | Time-base de STD-0.1 antes de T0; mismo bytecode y frontera monotónica con proveedor real o virtual |
 | `R-034` | Tratar I/O externo o timeout del runner como tiempo virtualizable | Saltos prematuros, hangs o tests instantáneos que fallan en producción | Catálogo cerrado de bloqueo durable; I/O/civil continúan reales y timeout/límites siempre usan recursos reales |
+| `R-035` | Publicar un resultado parcial tras interrupción | CI consume una ejecución incompleta como evidencia válida o acepta snapshots a medias | Stop dispatch, cleanup/revocación acotados, exits `4`/`3` y publicación atómica solo tras completar |
+| `R-036` | Añadir hooks async exclusivos del runner o esperar cleanup de forma oculta | Segundo lifecycle, orden sorprendente y código distinto entre test y producción | `defer await` general, edition-gated, infallible y verificable; suites reutilizan exactamente esa semántica |
+| `R-037` | Embeber, subir o dejar crecer artifacts sin contrato | Filtración de datos, reportes enormes y almacenamiento no reproducible | `attach` explícito, límites, descriptors SHA-256 y store content-addressed local sin Base64 ni upload |
+| `R-038` | Hashear, reportar o redactor heurísticamente secretos | El secreto se filtra o la reproducibilidad declarada es falsa | Descriptors/versiones solamente, materialización/revocación por worker y responsabilidad explícita si el programa copia el valor |
+| `R-039` | Confundir repeat con retry o solapar iteraciones | Una campaña deja de reproducir el plan y comparte estado entre oportunidades | Modos incompatibles, iteraciones completas secuenciales en workers nuevos, count uno como no-op y cualquier non-pass rojo con count mayor |
+| `R-040` | Actualizar o borrar snapshots de forma automática o parcial | CI acepta cambios accidentales y el store queda incoherente tras fallos | Texto exacto, update explícito y restringido, staging total, reemplazo atómico y preservación de entries no alcanzadas |
 
 ---
 
@@ -3225,7 +3375,8 @@ M4 sin adelantar trabajo de ownership o async.
 18. [ ] Medir coverage y mutation score, cerrar huecos críticos y superar H0.
 19. [ ] Ejecutar **STD-TIME-BASE-SPEC-001**, **STD-TIME-BASE-IMPL-001** y
     **STD-TIME-BASE-CONF-001** como único slice temprano de STD-0.1.
-20. [ ] Implementar M10.6 desde **UTEST-EDITION-001** hasta
+20. [ ] Implementar M10.6 empezando por **ASYNC-DEFER-SPEC-001**,
+    **UTEST-EDITION-001** y **ASYNC-DEFER-IMPL-001**, continuar hasta
     **UTEST-DOGFOOD-001** y superar T0 sin mutar Tondo 0.1.
 21. [ ] Completar STD-0.1 por **STD-SPEC-001**, incluida la definición exacta
     del resto de `std.testing`, nunca por implementación ad hoc.
@@ -3243,7 +3394,8 @@ TEST-001
   -> STD-TIME-BASE-SPEC-001
   -> STD-TIME-BASE-IMPL-001
   -> STD-TIME-BASE-CONF-001
-  -> UTEST-EDITION-001..UTEST-DOGFOOD-001
+  -> ASYNC-DEFER-SPEC-001 + UTEST-EDITION-001 + ASYNC-DEFER-IMPL-001
+  -> UTEST-PLAN-001..UTEST-DOGFOOD-001
   -> Gate T0
   -> STD-SPEC-001
   -> Gate S1
@@ -3257,6 +3409,31 @@ y ese time-base, y M11 por H0, T0 y S1. No se inicia STD-0.2 antes de Gate N1.
 ---
 
 ## 24. Historial del tracker
+
+### 0.90 — 2026-07-29
+
+- La extensión de testing sube a `0.2-draft.7`. Tondo 0.2 incorpora
+  `defer await` como cleanup general e infallible, sin crear hooks async de
+  testing; Tondo 0.1 permanece inmutable.
+- Se fijan inputs públicos por bytes/hash y secretos únicamente por
+  descriptor/version, los tres estados de reproducibilidad y la respuesta
+  transaccional a interrupciones con exits `4`/`3`.
+- `testing.attach` registra bytes por intento en
+  `tondo-test-artifacts-0.2/1`; `testing.snapshot` compara texto exacto contra
+  `tondo-snapshot-store-0.2/1`, y solo `--update-snapshots` puede stagear y
+  publicar cambios atómicos sin borrar entries no alcanzadas.
+- `--repeat N` se separa de retry: reejecuta el plan completo en iteraciones
+  secuenciales con workers nuevos, es incompatible con retry/update y mantiene
+  exit rojo ante cualquier oportunidad no exitosa cuando `N > 1`; `N = 1`
+  conserva la policy ordinaria.
+- Los formatos incompatibles suben a `tondo-test-report-0.2/7`,
+  `tondo-test-list-0.2/6` y `tondo-junit-report-0.2/4`, con inputs, iteraciones,
+  stores y descriptors que no embeben material secreto añadido por el runner,
+  bytes de artifacts ni valores completos de snapshots.
+- M10.6 añade `ASYNC-DEFER-*`, `UTEST-INPUTS-001`,
+  `UTEST-REPEAT-001`, `UTEST-ARTIFACT-001`, `UTEST-SNAPSHOT-001` y
+  `UTEST-INTERRUPT-001`; amplía aceptación, plataformas, dogfooding y gates,
+  registra R-035 a R-040 y eleva la conformidad mínima de 45 a 52 grupos.
 
 ### 0.89 — 2026-07-29
 
