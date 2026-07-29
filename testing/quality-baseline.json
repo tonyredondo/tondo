@@ -1,24 +1,24 @@
 {
   "format": "tondo-quality-baseline/1",
-  "revision": "M10.5-H0",
+  "revision": "M10.5b-H0",
   "coverage": {
     "tool": "cargo-llvm-cov 0.8.7",
     "command": "cargo llvm-cov --workspace --all-targets --json --output-path <coverage.json>",
     "global": {
       "lines": {
-        "count": 119050,
-        "covered": 96565,
-        "basis_points": 8111
+        "count": 121590,
+        "covered": 104699,
+        "basis_points": 8610
       },
       "functions": {
-        "count": 8508,
-        "covered": 6688,
-        "basis_points": 7860
+        "count": 8576,
+        "covered": 7171,
+        "basis_points": 8361
       },
       "regions": {
-        "count": 175441,
-        "covered": 139038,
-        "basis_points": 7925
+        "count": 178550,
+        "covered": 150780,
+        "basis_points": 8444
       }
     },
     "risk_scopes": [
@@ -33,18 +33,18 @@
         "metrics": {
           "lines": {
             "count": 6185,
-            "covered": 5834,
-            "basis_points": 9432
+            "covered": 5846,
+            "basis_points": 9451
           },
           "functions": {
             "count": 554,
-            "covered": 525,
-            "basis_points": 9476
+            "covered": 526,
+            "basis_points": 9494
           },
           "regions": {
             "count": 11035,
-            "covered": 9927,
-            "basis_points": 8995
+            "covered": 9948,
+            "basis_points": 9014
           }
         }
       },
@@ -63,18 +63,18 @@
         "metrics": {
           "lines": {
             "count": 34068,
-            "covered": 29509,
-            "basis_points": 8661
+            "covered": 29744,
+            "basis_points": 8730
           },
           "functions": {
             "count": 2052,
-            "covered": 1896,
-            "basis_points": 9239
+            "covered": 1901,
+            "basis_points": 9264
           },
           "regions": {
             "count": 50491,
-            "covered": 41167,
-            "basis_points": 8153
+            "covered": 41523,
+            "basis_points": 8223
           }
         }
       },
@@ -87,19 +87,19 @@
         ],
         "metrics": {
           "lines": {
-            "count": 23039,
-            "covered": 18116,
-            "basis_points": 7863
+            "count": 23396,
+            "covered": 18546,
+            "basis_points": 7926
           },
           "functions": {
-            "count": 1381,
-            "covered": 1065,
-            "basis_points": 7711
+            "count": 1386,
+            "covered": 1077,
+            "basis_points": 7770
           },
           "regions": {
-            "count": 33115,
-            "covered": 27514,
-            "basis_points": 8308
+            "count": 33498,
+            "covered": 28075,
+            "basis_points": 8381
           }
         }
       },
@@ -111,19 +111,19 @@
         ],
         "metrics": {
           "lines": {
-            "count": 658,
-            "covered": 540,
-            "basis_points": 8206
+            "count": 1047,
+            "covered": 1017,
+            "basis_points": 9713
           },
           "functions": {
-            "count": 77,
-            "covered": 55,
-            "basis_points": 7142
+            "count": 83,
+            "covered": 74,
+            "basis_points": 8915
           },
           "regions": {
-            "count": 930,
-            "covered": 719,
-            "basis_points": 7731
+            "count": 1195,
+            "covered": 1128,
+            "basis_points": 9439
           }
         }
       },
@@ -136,8 +136,8 @@
         "metrics": {
           "lines": {
             "count": 17913,
-            "covered": 15178,
-            "basis_points": 8473
+            "covered": 15187,
+            "basis_points": 8478
           },
           "functions": {
             "count": 1270,
@@ -146,8 +146,8 @@
           },
           "regions": {
             "count": 23473,
-            "covered": 19416,
-            "basis_points": 8271
+            "covered": 19437,
+            "basis_points": 8280
           }
         }
       },
@@ -162,19 +162,19 @@
         ],
         "metrics": {
           "lines": {
-            "count": 12988,
-            "covered": 6351,
-            "basis_points": 4889
+            "count": 14353,
+            "covered": 12657,
+            "basis_points": 8818
           },
           "functions": {
-            "count": 1231,
-            "covered": 503,
-            "basis_points": 4086
+            "count": 1278,
+            "covered": 915,
+            "basis_points": 7159
           },
           "regions": {
-            "count": 20315,
-            "covered": 9350,
-            "basis_points": 4602
+            "count": 22500,
+            "covered": 19107,
+            "basis_points": 8492
           }
         }
       }

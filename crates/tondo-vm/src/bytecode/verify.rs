@@ -10875,6 +10875,19 @@ fn place_contains_ref_value(place: &BytecodePlace) -> bool {
 mod tests {
     use super::*;
 
+    fn push_type(
+        program: &mut BytecodeProgram,
+        name: impl Into<String>,
+        kind: BytecodeTypeKind,
+    ) -> BytecodeTypeId {
+        let id = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: name.into(),
+            kind,
+        });
+        id
+    }
+
     fn terminal_program(opaque_witness_terminal: bool) -> BytecodeProgram {
         let int = BytecodeTypeId::new(0);
         let never = BytecodeTypeId::new(1);
@@ -10956,6 +10969,449 @@ mod tests {
             constants: Vec::new(),
             functions: Vec::new(),
         }
+    }
+
+    #[test]
+    fn closed_capability_matrix_covers_every_bytecode_type_family() {
+        let mut program = BytecodeProgram {
+            types: Vec::new(),
+            nominals: Vec::new(),
+            callables: Vec::new(),
+            constants: Vec::new(),
+            functions: Vec::new(),
+        };
+        let int = push_type(
+            &mut program,
+            "Int",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Int),
+        );
+        let float = push_type(
+            &mut program,
+            "Float",
+            BytecodeTypeKind::Scalar(BytecodeScalarType::Float),
+        );
+        let parameter = push_type(&mut program, "$0", BytecodeTypeKind::GenericParameter(0));
+        let function = push_type(
+            &mut program,
+            "fn(): Int",
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: false,
+                is_unsafe: false,
+                parameters: Vec::new(),
+                variadic: None,
+                outcome: int,
+            }),
+        );
+        let tuple = push_type(
+            &mut program,
+            "(Int, Float)",
+            BytecodeTypeKind::Tuple(vec![int, float]),
+        );
+        let union = push_type(
+            &mut program,
+            "Int | Float",
+            BytecodeTypeKind::Union(vec![int, float]),
+        );
+        let option = push_type(&mut program, "Int?", BytecodeTypeKind::Option(int));
+        let result = push_type(
+            &mut program,
+            "Int ! Float",
+            BytecodeTypeKind::Result {
+                success: int,
+                error: float,
+            },
+        );
+
+        program.nominals.push(BytecodeNominal {
+            name: "Wrapper".into(),
+            identity: "test::Wrapper".into(),
+            generic_arity: 1,
+            shape: BytecodeNominalShape::Newtype {
+                underlying: parameter,
+            },
+        });
+        let wrapper_int = push_type(
+            &mut program,
+            "Wrapper[Int]",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(BytecodeNominalId::new(0)),
+                identity: "test::Wrapper".into(),
+                arguments: vec![int],
+            },
+        );
+        let wrapper_float = push_type(
+            &mut program,
+            "Wrapper[Float]",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(BytecodeNominalId::new(0)),
+                identity: "test::Wrapper".into(),
+                arguments: vec![float],
+            },
+        );
+        let unresolved_nominal = push_type(
+            &mut program,
+            "Unresolved",
+            BytecodeTypeKind::Nominal {
+                nominal: None,
+                identity: "test::Unresolved".into(),
+                arguments: Vec::new(),
+            },
+        );
+        let opaque = push_type(
+            &mut program,
+            "opaque",
+            BytecodeTypeKind::OpaqueResult {
+                identity: "test::opaque".into(),
+                arguments: Vec::new(),
+                witness: int,
+                capabilities: BytecodeCapabilitySet {
+                    copy: true,
+                    discard: true,
+                    equatable: true,
+                    key: true,
+                    send: true,
+                    share: true,
+                },
+            },
+        );
+        let environment = push_type(
+            &mut program,
+            "closure-environment",
+            BytecodeTypeKind::Generated {
+                identity: "test::closure".into(),
+                arguments: Vec::new(),
+            },
+        );
+        let orphan_environment = push_type(
+            &mut program,
+            "orphan-environment",
+            BytecodeTypeKind::Generated {
+                identity: "test::orphan".into(),
+                arguments: Vec::new(),
+            },
+        );
+        program.callables.push(BytecodeCallable {
+            name: "closure".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: int,
+            function_type: function,
+            implementation: None,
+            closure: Some(BytecodeClosure {
+                environment,
+                captures: vec![int],
+                protocols: BytecodeClosureProtocols {
+                    call: true,
+                    call_mut: true,
+                    call_once: true,
+                },
+            }),
+        });
+
+        let cursor_ref = push_type(
+            &mut program,
+            "cursor-ref",
+            BytecodeTypeKind::Cursor {
+                mode: BytecodeCursorMode::Ref,
+                collection: option,
+            },
+        );
+        let cursor_mut = push_type(
+            &mut program,
+            "cursor-mut",
+            BytecodeTypeKind::Cursor {
+                mode: BytecodeCursorMode::Mut,
+                collection: option,
+            },
+        );
+        let cursor_own = push_type(
+            &mut program,
+            "cursor-own",
+            BytecodeTypeKind::Cursor {
+                mode: BytecodeCursorMode::Own,
+                collection: option,
+            },
+        );
+
+        let mut intrinsics = Vec::new();
+        for constructor in [
+            BytecodeIntrinsicType::Array,
+            BytecodeIntrinsicType::Map,
+            BytecodeIntrinsicType::Set,
+            BytecodeIntrinsicType::Range,
+            BytecodeIntrinsicType::Ref,
+            BytecodeIntrinsicType::Pointer,
+            BytecodeIntrinsicType::Join,
+            BytecodeIntrinsicType::Command,
+            BytecodeIntrinsicType::Pipeline,
+            BytecodeIntrinsicType::Bytes,
+            BytecodeIntrinsicType::ExitStatus,
+            BytecodeIntrinsicType::ProcessOutput,
+            BytecodeIntrinsicType::ProcessHandle,
+            BytecodeIntrinsicType::ProcessError,
+            BytecodeIntrinsicType::ProcessExitError,
+            BytecodeIntrinsicType::Utf8Error,
+            BytecodeIntrinsicType::NumericConversionError,
+        ] {
+            let arguments = match constructor.arity() {
+                0 => Vec::new(),
+                1 => vec![int],
+                2 => vec![int, int],
+                _ => unreachable!(),
+            };
+            let id = push_type(
+                &mut program,
+                format!("{constructor:?}"),
+                BytecodeTypeKind::Intrinsic {
+                    constructor,
+                    arguments,
+                },
+            );
+            intrinsics.push((constructor, id));
+        }
+
+        let analysis = CapabilityAnalysis::new(&program).unwrap();
+        let statuses = |ty| {
+            ClosedCapability::ALL
+                .map(|capability| analysis.status(&program, ty, capability).unwrap())
+        };
+        let all = [true; 6];
+        let structural_without_key = [true, true, true, false, true, true];
+        assert_eq!(statuses(int), all);
+        assert_eq!(statuses(float), [true, true, true, false, true, true]);
+        assert_eq!(statuses(function), [true, true, false, false, true, true]);
+        assert_eq!(statuses(tuple), structural_without_key);
+        assert_eq!(statuses(union), structural_without_key);
+        assert_eq!(statuses(option), all);
+        assert_eq!(statuses(result), structural_without_key);
+        assert_eq!(statuses(parameter), all);
+        assert_eq!(statuses(wrapper_int), all);
+        assert_eq!(statuses(wrapper_float), structural_without_key);
+        assert_eq!(statuses(unresolved_nominal), [false; 6]);
+        assert_eq!(statuses(opaque), all);
+        assert_eq!(
+            statuses(environment),
+            [true, true, false, false, true, true]
+        );
+        assert_eq!(statuses(orphan_environment), [false; 6]);
+        assert_eq!(statuses(cursor_ref), [true, true, false, false, true, true]);
+        assert_eq!(
+            statuses(cursor_mut),
+            [false, true, false, false, false, false]
+        );
+        assert_eq!(statuses(cursor_own), [true, true, false, false, true, true]);
+
+        for (constructor, ty) in intrinsics {
+            let expected = match constructor {
+                BytecodeIntrinsicType::Array
+                | BytecodeIntrinsicType::Map
+                | BytecodeIntrinsicType::Set => structural_without_key,
+                BytecodeIntrinsicType::Range => [true, true, false, false, true, true],
+                BytecodeIntrinsicType::Ref | BytecodeIntrinsicType::NumericConversionError => all,
+                BytecodeIntrinsicType::Pointer => [true, true, false, false, false, false],
+                BytecodeIntrinsicType::Join => [false; 6],
+                BytecodeIntrinsicType::Command
+                | BytecodeIntrinsicType::Pipeline
+                | BytecodeIntrinsicType::Bytes
+                | BytecodeIntrinsicType::ExitStatus
+                | BytecodeIntrinsicType::ProcessOutput
+                | BytecodeIntrinsicType::ProcessError
+                | BytecodeIntrinsicType::ProcessExitError
+                | BytecodeIntrinsicType::Utf8Error => [true, true, false, false, true, true],
+                BytecodeIntrinsicType::ProcessHandle => [false, false, false, false, true, false],
+            };
+            assert_eq!(statuses(ty), expected, "{constructor:?}");
+        }
+
+        assert_eq!(
+            derive_copy_capabilities(&program, &[int, float, cursor_mut]).unwrap(),
+            [true, true, false]
+        );
+        assert_eq!(
+            derive_discard_capabilities(&program, &[int, cursor_mut, orphan_environment]).unwrap(),
+            [true, true, false]
+        );
+        let error = analysis
+            .status(
+                &program,
+                BytecodeTypeId::new(u32::MAX),
+                ClosedCapability::Copy,
+            )
+            .unwrap_err();
+        assert_eq!(error.context(), "capability graph");
+        assert!(error.message().contains("unknown type"));
+        assert!(!error.is_resource_limit());
+        assert!(error.to_string().contains("bytecode invariant failed"));
+    }
+
+    #[test]
+    fn terminal_matrix_covers_owned_borrowed_generated_and_unresolved_shapes() {
+        let mut program = terminal_program(false);
+        let int = BytecodeTypeId::new(0);
+        let join = BytecodeTypeId::new(3);
+        let function = push_type(
+            &mut program,
+            "fn(): Int",
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: false,
+                is_unsafe: false,
+                parameters: Vec::new(),
+                variadic: None,
+                outcome: int,
+            }),
+        );
+        let tuple = push_type(
+            &mut program,
+            "(Int, Join)",
+            BytecodeTypeKind::Tuple(vec![int, join]),
+        );
+        let union = push_type(
+            &mut program,
+            "Int | Join",
+            BytecodeTypeKind::Union(vec![int, join]),
+        );
+        let result = push_type(
+            &mut program,
+            "Int ! Join",
+            BytecodeTypeKind::Result {
+                success: int,
+                error: join,
+            },
+        );
+        let unresolved = push_type(
+            &mut program,
+            "Unresolved",
+            BytecodeTypeKind::Nominal {
+                nominal: None,
+                identity: "test::Unresolved".into(),
+                arguments: Vec::new(),
+            },
+        );
+        let missing_argument = push_type(
+            &mut program,
+            "Wrapper[missing]",
+            BytecodeTypeKind::Nominal {
+                nominal: Some(BytecodeNominalId::new(0)),
+                identity: "test::Wrapper".into(),
+                arguments: Vec::new(),
+            },
+        );
+        let environment = push_type(
+            &mut program,
+            "terminal-environment",
+            BytecodeTypeKind::Generated {
+                identity: "test::terminal-closure".into(),
+                arguments: Vec::new(),
+            },
+        );
+        let orphan = push_type(
+            &mut program,
+            "orphan-environment",
+            BytecodeTypeKind::Generated {
+                identity: "test::orphan".into(),
+                arguments: Vec::new(),
+            },
+        );
+        program.callables.push(BytecodeCallable {
+            name: "terminal-closure".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: int,
+            function_type: function,
+            implementation: None,
+            closure: Some(BytecodeClosure {
+                environment,
+                captures: vec![join],
+                protocols: BytecodeClosureProtocols {
+                    call: false,
+                    call_mut: false,
+                    call_once: true,
+                },
+            }),
+        });
+        let cursor_own = push_type(
+            &mut program,
+            "cursor-own",
+            BytecodeTypeKind::Cursor {
+                mode: BytecodeCursorMode::Own,
+                collection: join,
+            },
+        );
+        let cursor_ref = push_type(
+            &mut program,
+            "cursor-ref",
+            BytecodeTypeKind::Cursor {
+                mode: BytecodeCursorMode::Ref,
+                collection: join,
+            },
+        );
+        let cursor_mut = push_type(
+            &mut program,
+            "cursor-mut",
+            BytecodeTypeKind::Cursor {
+                mode: BytecodeCursorMode::Mut,
+                collection: join,
+            },
+        );
+        let map = push_type(
+            &mut program,
+            "Map[Int,Join]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Map,
+                arguments: vec![int, join],
+            },
+        );
+        let process_handle = push_type(
+            &mut program,
+            "ProcessHandle",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::ProcessHandle,
+                arguments: Vec::new(),
+            },
+        );
+        let pointer = push_type(
+            &mut program,
+            "Pointer[Int]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Pointer,
+                arguments: vec![int],
+            },
+        );
+
+        let analysis = TerminalAnalysis::new(&program).unwrap();
+        let statuses = [
+            (int, BytecodeTerminalStatus::Absent),
+            (function, BytecodeTerminalStatus::Absent),
+            (tuple, BytecodeTerminalStatus::Present),
+            (union, BytecodeTerminalStatus::Present),
+            (result, BytecodeTerminalStatus::Present),
+            (unresolved, BytecodeTerminalStatus::Potential),
+            (missing_argument, BytecodeTerminalStatus::Potential),
+            (environment, BytecodeTerminalStatus::Present),
+            (orphan, BytecodeTerminalStatus::Potential),
+            (cursor_own, BytecodeTerminalStatus::Present),
+            (cursor_ref, BytecodeTerminalStatus::Absent),
+            (cursor_mut, BytecodeTerminalStatus::Absent),
+            (map, BytecodeTerminalStatus::Present),
+            (process_handle, BytecodeTerminalStatus::Present),
+            (pointer, BytecodeTerminalStatus::Absent),
+        ];
+        for (ty, expected) in statuses {
+            assert_eq!(analysis.status(&program, ty).unwrap(), expected);
+        }
+        assert_eq!(
+            derive_terminal_statuses(&program, &[tuple, unresolved, cursor_ref]).unwrap(),
+            [
+                BytecodeTerminalStatus::Present,
+                BytecodeTerminalStatus::Potential,
+                BytecodeTerminalStatus::Absent,
+            ]
+        );
+        let error = analysis
+            .status(&program, BytecodeTypeId::new(u32::MAX))
+            .unwrap_err();
+        assert_eq!(error.context(), "terminal graph");
+        assert!(error.message().contains("unknown type"));
     }
 
     #[test]

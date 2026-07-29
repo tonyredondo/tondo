@@ -112,3 +112,83 @@ fn parse_group(value: &str) -> Result<CaseGroup, String> {
         _ => Err(format!("unknown group `{value}`")),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn suite_arguments(command: &str) -> Vec<String> {
+        vec![
+            command.into(),
+            "--root".into(),
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .display()
+                .to_string(),
+            "--manifest".into(),
+            "conformance/0.1/manifest.json".into(),
+        ]
+    }
+
+    #[test]
+    fn every_group_name_is_closed_and_round_trips() {
+        for (name, expected) in [
+            ("lex-parse-format", CaseGroup::LexParseFormat),
+            ("compile-pass", CaseGroup::CompilePass),
+            ("compile-fail", CaseGroup::CompileFail),
+            ("semantic-queries", CaseGroup::SemanticQueries),
+            ("runtime", CaseGroup::Runtime),
+            ("concurrency", CaseGroup::Concurrency),
+            ("hosted", CaseGroup::Hosted),
+            ("memory", CaseGroup::Memory),
+            ("determinism", CaseGroup::Determinism),
+            ("documentation", CaseGroup::Documentation),
+        ] {
+            assert_eq!(parse_group(name).unwrap(), expected);
+        }
+        assert_eq!(
+            parse_group("unknown").unwrap_err(),
+            "unknown group `unknown`"
+        );
+    }
+
+    #[test]
+    fn command_arguments_are_single_assignment_and_command_scoped() {
+        assert!(run(suite_arguments("validate")).is_ok());
+        assert!(
+            run(Vec::new())
+                .unwrap_err()
+                .contains("a command is required")
+        );
+        assert_eq!(
+            run(vec!["validate".into(), "--root".into()]).unwrap_err(),
+            "`--root` requires a value"
+        );
+        assert!(
+            run(vec!["validate".into(), "--unknown".into(), "x".into()])
+                .unwrap_err()
+                .contains("unknown option")
+        );
+
+        let mut duplicate = suite_arguments("validate");
+        duplicate.extend(["--root".into(), ".".into()]);
+        assert_eq!(run(duplicate).unwrap_err(), "`--root` may appear only once");
+
+        let mut validate_with_adapter = suite_arguments("validate");
+        validate_with_adapter.extend(["--adapter".into(), "adapter".into()]);
+        assert_eq!(
+            run(validate_with_adapter).unwrap_err(),
+            "validate accepts only --root and --manifest"
+        );
+
+        assert_eq!(
+            run(suite_arguments("run")).unwrap_err(),
+            "`--adapter` is required for the run command"
+        );
+        assert!(
+            run(suite_arguments("other"))
+                .unwrap_err()
+                .contains("unknown command `other`")
+        );
+    }
+}

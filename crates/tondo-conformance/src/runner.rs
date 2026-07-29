@@ -1764,4 +1764,430 @@ mod tests {
             b"type T = {\n     value: Int\n}\n"
         );
     }
+
+    #[test]
+    fn diagnostic_protocol_rejects_each_malformed_dimension() {
+        let valid = published_diagnostic();
+        let mut observation = Observation {
+            diagnostics: vec![valid.clone()],
+            ..Observation::empty()
+        };
+        validate_diagnostic_protocol(&observation).unwrap();
+
+        observation.diagnostics = vec![valid.clone(), valid.clone()];
+        assert_error_contains(
+            validate_diagnostic_protocol(&observation),
+            "duplicate diagnostic ID",
+        );
+
+        for (field, value, expected) in [
+            ("severity", serde_json::json!("fatal"), "invalid severity"),
+            (
+                "severity",
+                serde_json::json!("warning"),
+                "inconsistent severity",
+            ),
+            (
+                "code",
+                serde_json::json!("T0001"),
+                "non-normative diagnostic",
+            ),
+            (
+                "message",
+                serde_json::json!("bad\nmessage"),
+                "invalid message",
+            ),
+            (
+                "source_id",
+                serde_json::json!("bad\nsource"),
+                "invalid source ID",
+            ),
+            ("id", serde_json::json!("diag:wrong"), "does not match"),
+        ] {
+            let mut diagnostic = valid.clone();
+            diagnostic[field] = value;
+            assert_error_contains(
+                validate_diagnostic_protocol(&Observation {
+                    diagnostics: vec![diagnostic],
+                    ..Observation::empty()
+                }),
+                expected,
+            );
+        }
+
+        let mut partial_target = valid.clone();
+        partial_target["range"] = Value::Null;
+        assert_error_contains(
+            validate_diagnostic_protocol(&Observation {
+                diagnostics: vec![partial_target],
+                ..Observation::empty()
+            }),
+            "partial target location",
+        );
+
+        let mut partial_source = valid.clone();
+        partial_source["module"] = Value::Null;
+        assert_error_contains(
+            validate_diagnostic_protocol(&Observation {
+                diagnostics: vec![partial_source],
+                ..Observation::empty()
+            }),
+            "partial source location",
+        );
+
+        let mut related = valid.clone();
+        related["related"] =
+            serde_json::json!([valid["related"][0].clone(), valid["related"][0].clone()]);
+        assert_error_contains(
+            validate_diagnostic_protocol(&Observation {
+                diagnostics: vec![related],
+                ..Observation::empty()
+            }),
+            "related locations are not sorted and unique",
+        );
+
+        let mut fixes = valid.clone();
+        fixes["fixes"] = serde_json::json!([valid["fixes"][0].clone(), valid["fixes"][0].clone()]);
+        assert_error_contains(
+            validate_diagnostic_protocol(&Observation {
+                diagnostics: vec![fixes],
+                ..Observation::empty()
+            }),
+            "fixes are not sorted and unique",
+        );
+    }
+
+    #[test]
+    fn fix_position_span_hash_and_json_order_contracts_are_closed() {
+        let diagnostic = published_diagnostic();
+        let fix = diagnostic["fixes"][0].clone();
+        validate_fix(&fix).unwrap();
+
+        for (mut invalid, expected) in [
+            (fix.clone(), "invalid applicability"),
+            (fix.clone(), "title cannot be empty"),
+            (fix.clone(), "at least one edit"),
+        ] {
+            if expected == "invalid applicability" {
+                invalid["applicability"] = serde_json::json!("automatic");
+            } else if expected == "title cannot be empty" {
+                invalid["title"] = serde_json::json!("");
+            } else {
+                invalid["edits"] = serde_json::json!([]);
+            }
+            assert_error_contains(validate_fix(&invalid), expected);
+        }
+
+        let edit = fix["edits"][0].clone();
+        let mut duplicate = fix.clone();
+        duplicate["edits"] = serde_json::json!([edit.clone(), edit.clone()]);
+        assert_error_contains(validate_fix(&duplicate), "sorted and unique");
+
+        let mut overlapping_edit = edit.clone();
+        overlapping_edit["range"]["start"] =
+            serde_json::json!({"byte": 22, "line": 1, "column": 6});
+        overlapping_edit["range"]["end"] = serde_json::json!({"byte": 26, "line": 1, "column": 10});
+        let mut overlapping = fix;
+        overlapping["edits"] = serde_json::json!([edit, overlapping_edit]);
+        assert_error_contains(validate_fix(&overlapping), "edits overlap");
+
+        assert_error_contains(
+            validate_range(
+                &serde_json::json!({
+                    "start": {"byte": 2},
+                    "end": {"byte": 1}
+                }),
+                "range",
+            ),
+            "range is reversed",
+        );
+        assert_error_contains(
+            validate_position(
+                &serde_json::json!({"byte": 1, "line": 0, "column": null}),
+                "position",
+            ),
+            "line and column must both be unsigned",
+        );
+        assert!(validate_sha256(&"a".repeat(64)).is_ok());
+        assert_error_contains(
+            validate_sha256(&"A".repeat(64)),
+            "invalid lowercase SHA-256",
+        );
+
+        let semantic_span = serde_json::json!({
+            "source_id": "source",
+            "module": "main",
+            "file": "case.to",
+            "start": 3,
+            "end": 2
+        });
+        assert_error_contains(
+            validate_semantic_span(semantic_span.as_object().unwrap(), "span"),
+            "reversed semantic span",
+        );
+        assert!(validate_semantic_id("sem:receiver:self").is_ok());
+        assert!(validate_semantic_id("sem:type:Self").is_ok());
+        assert!(validate_semantic_id("sem:symbol:0123456789abcdef01234567").is_ok());
+        assert!(validate_semantic_id("symbol#1").is_err());
+
+        let ordered = [
+            Value::Null,
+            Value::Bool(false),
+            serde_json::json!(-1),
+            serde_json::json!("text"),
+            serde_json::json!([1]),
+            serde_json::json!({"field": 1}),
+        ];
+        for pair in ordered.windows(2) {
+            assert_eq!(
+                compare_json_values(&pair[0], &pair[1]),
+                std::cmp::Ordering::Less
+            );
+        }
+        assert_eq!(
+            compare_json_values(&serde_json::json!([1, 2]), &serde_json::json!([1, 3])),
+            std::cmp::Ordering::Less
+        );
+        assert_eq!(
+            compare_json_values(&serde_json::json!({"a": 1}), &serde_json::json!({"a": 2})),
+            std::cmp::Ordering::Less
+        );
+    }
+
+    #[test]
+    fn semantic_and_memory_protocol_variants_are_all_validated() {
+        let file_query = |query| match query {
+            "expression-type" => SemanticQuery::ExpressionType {
+                file: "case.to".into(),
+                start: 0,
+                end: 1,
+            },
+            "entities" => SemanticQuery::Entities {
+                file: "case.to".into(),
+                start: 0,
+                end: 1,
+            },
+            "references" => SemanticQuery::References {
+                file: "case.to".into(),
+                start: 0,
+                end: 1,
+            },
+            "signature" => SemanticQuery::Signature {
+                file: "case.to".into(),
+                start: 0,
+                end: 1,
+            },
+            "type-members" => SemanticQuery::TypeMembers {
+                file: "case.to".into(),
+                start: 0,
+                end: 1,
+            },
+            "closed-call-errors" => SemanticQuery::ClosedCallErrors {
+                file: "case.to".into(),
+                start: 0,
+                end: 1,
+            },
+            "type-facts" => SemanticQuery::TypeFacts {
+                file: "case.to".into(),
+                start: 0,
+                end: 1,
+            },
+            "expression-facts" => SemanticQuery::ExpressionFacts {
+                file: "case.to".into(),
+                start: 0,
+                end: 1,
+            },
+            _ => unreachable!(),
+        };
+        let queries = vec![
+            (
+                file_query("expression-type"),
+                serde_json::json!({"query": "expression-type", "type": null}),
+            ),
+            (
+                file_query("entities"),
+                serde_json::json!({"query": "entities", "entities": []}),
+            ),
+            (
+                file_query("references"),
+                serde_json::json!({
+                    "query": "references",
+                    "entity_id": null,
+                    "references": []
+                }),
+            ),
+            (
+                file_query("signature"),
+                serde_json::json!({
+                    "query": "signature",
+                    "entity_id": null,
+                    "signature": null
+                }),
+            ),
+            (
+                file_query("type-members"),
+                serde_json::json!({
+                    "query": "type-members",
+                    "type": null,
+                    "members": null
+                }),
+            ),
+            (
+                file_query("closed-call-errors"),
+                serde_json::json!({"query": "closed-call-errors", "errors": null}),
+            ),
+            (
+                file_query("type-facts"),
+                serde_json::json!({"query": "type-facts", "facts": null}),
+            ),
+            (
+                file_query("expression-facts"),
+                serde_json::json!({"query": "expression-facts", "facts": null}),
+            ),
+            (
+                SemanticQuery::SemanticSnapshot {
+                    file: "case.to".into(),
+                },
+                serde_json::json!({
+                    "query": "semantic-snapshot",
+                    "schema": "tondo-semantic-snapshot-0.1/1",
+                    "file": "case.to",
+                    "declarations": [],
+                    "references": [],
+                    "expressions": [],
+                    "closures": [],
+                    "opaque_results": [],
+                    "public_types": [],
+                    "iterators": [],
+                    "borrow_bindings": [],
+                    "ownership": {
+                        "schema": "tondo-semantic-ownership-0.1/1",
+                        "functions": []
+                    },
+                    "unsafe": {}
+                }),
+            ),
+            (
+                SemanticQuery::FormattedAst,
+                serde_json::json!({
+                    "query": "formatted-ast",
+                    "encoding": "utf-8",
+                    "formatted_hex": "666e",
+                    "sha256": "a".repeat(64)
+                }),
+            ),
+        ];
+        for (query, value) in &queries {
+            validate_semantic_query_result(query, value).unwrap();
+        }
+
+        let requested = [queries[0].0.clone()];
+        let valid_semantic = Observation {
+            data: serde_json::json!({
+                "schema": "tondo-semantic-observation-0.1/1",
+                "expression_check_complete": true,
+                "queries": [queries[0].1.clone()]
+            }),
+            ..Observation::empty()
+        };
+        validate_semantic_protocol(&requested, &valid_semantic).unwrap();
+
+        for (field, value, expected) in [
+            ("schema", serde_json::json!("unknown"), "unknown schema"),
+            ("expression_check_complete", Value::Null, "must be boolean"),
+            ("queries", serde_json::json!([]), "returned 0 results"),
+        ] {
+            let mut invalid = valid_semantic.clone();
+            invalid.data[field] = value;
+            assert_error_contains(validate_semantic_protocol(&requested, &invalid), expected);
+        }
+
+        for (scenario, name) in [
+            (MemoryScenario::ReachableRoots, "reachable-roots"),
+            (MemoryScenario::UnreachableCycles, "unreachable-cycles"),
+            (MemoryScenario::SustainedPressure, "sustained-pressure"),
+            (MemoryScenario::RetryBeforeOom, "retry-before-oom"),
+        ] {
+            let retries = scenario == MemoryScenario::RetryBeforeOom;
+            let observation = Observation {
+                data: serde_json::json!({
+                    "schema": "tondo-memory-observation-0.1/1",
+                    "scenario": name,
+                    "collections": 1,
+                    "peak_live_objects": 1,
+                    "reclaimed_objects": 1,
+                    "cycles_reclaimed": true,
+                    "roots_preserved": true,
+                    "retry_before_oom": retries,
+                    "retry_before_success": retries
+                }),
+                ..Observation::empty()
+            };
+            validate_memory_protocol(scenario, &observation).unwrap();
+        }
+
+        let base_memory = Observation {
+            data: serde_json::json!({
+                "schema": "tondo-memory-observation-0.1/1",
+                "scenario": "reachable-roots",
+                "collections": 1,
+                "peak_live_objects": 1,
+                "reclaimed_objects": 1,
+                "cycles_reclaimed": true,
+                "roots_preserved": true,
+                "retry_before_oom": false,
+                "retry_before_success": false
+            }),
+            ..Observation::empty()
+        };
+        for (field, value, expected) in [
+            ("schema", serde_json::json!("unknown"), "unknown schema"),
+            ("scenario", serde_json::json!("other"), "does not describe"),
+            ("collections", serde_json::json!(0), "positive integer"),
+            ("cycles_reclaimed", serde_json::json!(false), "must be true"),
+            ("retry_before_oom", serde_json::json!(true), "must be false"),
+        ] {
+            let mut invalid = base_memory.clone();
+            invalid.data[field] = value;
+            assert_error_contains(
+                validate_memory_protocol(MemoryScenario::ReachableRoots, &invalid),
+                expected,
+            );
+        }
+
+        for (error, expected) in [
+            (RunError::Adapter("message".into()), "adapter failed"),
+            (
+                RunError::Protocol("message".into()),
+                "adapter protocol failed",
+            ),
+            (
+                RunError::Case {
+                    id: "case".into(),
+                    message: "message".into(),
+                },
+                "case `case` failed",
+            ),
+            (RunError::Document("message".into()), "document case failed"),
+            (RunError::Json("message".into()), "result JSON failed"),
+        ] {
+            assert!(error.to_string().contains(expected));
+        }
+    }
+
+    fn published_diagnostic() -> Value {
+        let expectation: Value = serde_json::from_slice(include_bytes!(
+            "../../../conformance/0.1/cases/semantic-queries/fix-redundant-priv.expect.json"
+        ))
+        .expect("the published expectation must be JSON");
+        expectation["exact_diagnostics"][0].clone()
+    }
+
+    fn assert_error_contains<T>(result: Result<T, String>, expected: &str) {
+        let error = result.err().expect("the invalid value must be rejected");
+        assert!(
+            error.contains(expected),
+            "expected `{expected}` in `{error}`"
+        );
+    }
 }

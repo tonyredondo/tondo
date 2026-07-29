@@ -48,6 +48,10 @@ fn main() -> ExitCode {
 
 fn bless() -> Result<String, String> {
     let root = workspace_root();
+    bless_at(&root)
+}
+
+fn bless_at(root: &Path) -> Result<String, String> {
     let registry = extract_registry(&fs::read(root.join(SPECIFICATION)).map_err(io_error)?)?;
     let target = TargetSelection {
         name: "tondo-vm-hosted".into(),
@@ -67,14 +71,14 @@ fn bless() -> Result<String, String> {
         sources.sort();
         for source in sources {
             let case =
-                bless_source_case(&root, group, &source, &target, &mut adapter, &mut sequence)?;
+                bless_source_case(root, group, &source, &target, &mut adapter, &mut sequence)?;
             cases.push(case);
         }
     }
-    bless_determinism_case(&root, &target, &mut adapter, &mut sequence, &mut cases)?;
-    bless_memory_cases(&root, &target, &mut adapter, &mut sequence, &mut cases)?;
+    bless_determinism_case(root, &target, &mut adapter, &mut sequence, &mut cases)?;
+    bless_memory_cases(root, &target, &mut adapter, &mut sequence, &mut cases)?;
     bless_document_case(
-        &root,
+        root,
         &registry,
         &target,
         &mut adapter,
@@ -83,8 +87,8 @@ fn bless() -> Result<String, String> {
     )?;
     cases.sort_by(|left, right| left.id.cmp(&right.id));
 
-    let specification = pinned(&root, SPECIFICATION)?;
-    let fixture_manifest = pinned(&root, FIXTURE_MANIFEST)?;
+    let specification = pinned(root, SPECIFICATION)?;
+    let fixture_manifest = pinned(root, FIXTURE_MANIFEST)?;
     if fixture_manifest.sha256 != "1b6ab9f853b7ef4b94b4b9aaff6297e20556f81e8d99c322bed03854453d76c2"
     {
         return Err("appendix C fixture manifest does not have its normative hash".into());
@@ -1016,4 +1020,128 @@ fn io_error(error: std::io::Error) -> String {
 
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct TemporaryWorkspace {
+        path: PathBuf,
+    }
+
+    impl TemporaryWorkspace {
+        fn copy_from(source: &Path) -> Self {
+            let nonce = TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+            let path = env::temp_dir().join(format!(
+                "tondo-conformance-maintain-{}-{nonce}",
+                std::process::id()
+            ));
+            if path.exists() {
+                fs::remove_dir_all(&path).expect("stale temporary workspace must be removable");
+            }
+            fs::create_dir_all(&path).expect("temporary workspace must be creatable");
+            fs::copy(source.join(SPECIFICATION), path.join(SPECIFICATION))
+                .expect("the specification must be copied");
+            copy_directory(&source.join("conformance"), &path.join("conformance"));
+            Self { path }
+        }
+    }
+
+    impl Drop for TemporaryWorkspace {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn blessing_is_a_reproducible_source_tree_transformation() {
+        let source = workspace_root();
+        let workspace = TemporaryWorkspace::copy_from(&source);
+        let before = source_snapshot(&source);
+
+        let summary = bless_at(&workspace.path).expect("the published suite must be reproducible");
+
+        assert_eq!(source_snapshot(&workspace.path), before);
+        assert_eq!(
+            summary,
+            format!(
+                "wrote 205 cases to {MANIFEST} ({})",
+                tondo_conformance::sha256(
+                    &fs::read(source.join(MANIFEST)).expect("the manifest must exist")
+                )
+            )
+        );
+    }
+
+    #[test]
+    fn helper_contracts_reject_noncanonical_inputs() {
+        for path in ["/absolute.to", "../escape.to", "nested/../escape.to", "."] {
+            assert!(validate_case_input_path(path).is_err(), "{path}");
+        }
+        assert!(validate_case_input_path("nested/source.to").is_ok());
+        assert_eq!(
+            canonical_case_component("A name+VALUE.to"),
+            "a-name-value.to"
+        );
+
+        assert!(require_sorted_unique("values", &["a".into(), "b".into()]).is_ok());
+        assert!(require_sorted_unique("values", &["a".into(), "a".into()]).is_err());
+        assert!(require_sorted_unique("values", &["b".into(), "a".into()]).is_err());
+
+        assert!(extract_registry(b"not a specification").is_err());
+        assert!(logical_path(Path::new("/root"), Path::new("/elsewhere")).is_err());
+    }
+
+    fn copy_directory(source: &Path, destination: &Path) {
+        fs::create_dir_all(destination).expect("destination directory must be creatable");
+        let mut entries = fs::read_dir(source)
+            .expect("source directory must be readable")
+            .map(|entry| entry.expect("directory entry must be readable").path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for path in entries {
+            let target = destination.join(path.file_name().expect("entry must have a name"));
+            if path.is_dir() {
+                copy_directory(&path, &target);
+            } else {
+                fs::copy(&path, target).expect("source file must be copied");
+            }
+        }
+    }
+
+    fn source_snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
+        let mut snapshot = BTreeMap::new();
+        snapshot.insert(
+            SPECIFICATION.into(),
+            fs::read(root.join(SPECIFICATION)).expect("the specification must be readable"),
+        );
+        collect_snapshot(root, &root.join("conformance"), &mut snapshot);
+        snapshot
+    }
+
+    fn collect_snapshot(root: &Path, directory: &Path, snapshot: &mut BTreeMap<String, Vec<u8>>) {
+        let mut entries = fs::read_dir(directory)
+            .expect("snapshot directory must be readable")
+            .map(|entry| entry.expect("directory entry must be readable").path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        for path in entries {
+            if path.is_dir() {
+                collect_snapshot(root, &path, snapshot);
+            } else {
+                let logical = logical_path(root, &path).expect("snapshot path must be logical");
+                let previous = snapshot.insert(
+                    logical,
+                    fs::read(&path).expect("snapshot file must be readable"),
+                );
+                assert!(previous.is_none());
+            }
+        }
+    }
 }

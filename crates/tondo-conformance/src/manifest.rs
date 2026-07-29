@@ -997,6 +997,79 @@ fn invalid<T>(message: impl Into<String>) -> Result<T, ManifestError> {
 mod tests {
     use super::*;
 
+    fn pinned(path: &str) -> PinnedFile {
+        PinnedFile {
+            path: path.into(),
+            sha256: "a".repeat(64),
+        }
+    }
+
+    fn source_action(operation: SourceOperation) -> SourceAction {
+        SourceAction {
+            operation,
+            form: SourceForm::Module,
+            root: "main.to".into(),
+            sources: vec![SourceFile {
+                source_id: "test:main".into(),
+                module: "main".into(),
+                logical_path: "main.to".into(),
+                contents: pinned("main.to"),
+            }],
+            warning_profiles: Vec::new(),
+            arguments: Vec::new(),
+            gc_threshold: None,
+        }
+    }
+
+    fn conformance_case(group: CaseGroup, action: CaseAction) -> ConformanceCase {
+        ConformanceCase {
+            id: "test/case".into(),
+            group,
+            target: "tondo-vm-hosted".into(),
+            profile: "hosted".into(),
+            capabilities: vec!["console".into(), "process".into()],
+            repeat: 1,
+            covers: Vec::new(),
+            positive_for: Vec::new(),
+            requirements: Vec::new(),
+            action,
+            expectation: Expectation::Exact {
+                observation: pinned("expected.json"),
+            },
+        }
+    }
+
+    fn manifest_with_case(case: ConformanceCase) -> SuiteManifest {
+        SuiteManifest {
+            format: SUITE_FORMAT.into(),
+            suite: SUITE_NAME.into(),
+            version: "0.1.0".into(),
+            edition: "0.1".into(),
+            adapter_protocol: ADAPTER_PROTOCOL.into(),
+            specification: pinned("spec.md"),
+            fixture_manifest: pinned("fixtures.json"),
+            registry: NormativeRegistry {
+                errors: vec!["E0001".into()],
+                warnings: vec!["W0001".into()],
+                panics: vec!["P0001".into()],
+            },
+            targets: vec![TargetDeclaration {
+                name: "tondo-vm-hosted".into(),
+                profile: "hosted".into(),
+                capabilities: vec!["console".into(), "process".into()],
+            }],
+            cases: vec![case],
+        }
+    }
+
+    fn invalid_message<T>(result: Result<T, ManifestError>) -> String {
+        match result {
+            Err(ManifestError::Invalid(message)) => message,
+            Err(other) => panic!("expected an invalid-manifest error, got {other}"),
+            Ok(_) => panic!("expected validation to fail"),
+        }
+    }
+
     #[test]
     fn paths_and_case_ids_are_closed() {
         for path in ["cases/main.to", "TONDO_LANGUAGE_SPEC.md"] {
@@ -1020,5 +1093,272 @@ mod tests {
         assert!(validate_hash(&"a".repeat(63)).is_err());
         validate_code("E0001", b'E').unwrap();
         assert!(validate_code("W0001", b'E').is_err());
+    }
+
+    #[test]
+    fn case_actions_reject_every_cross_group_and_incomplete_shape() {
+        let source = source_action(SourceOperation::Check);
+        assert!(
+            invalid_message(validate_case_action(&conformance_case(
+                CaseGroup::Memory,
+                CaseAction::Source(source.clone()),
+            )))
+            .contains("source case")
+        );
+
+        let semantic = SemanticAction {
+            source: source.clone(),
+            queries: vec![SemanticQuery::FormattedAst],
+        };
+        assert!(
+            invalid_message(validate_case_action(&conformance_case(
+                CaseGroup::CompilePass,
+                CaseAction::Semantic(semantic.clone()),
+            )))
+            .contains("semantic-queries")
+        );
+        let mut wrong_operation = semantic.clone();
+        wrong_operation.source.operation = SourceOperation::Run;
+        assert!(
+            invalid_message(validate_case_action(&conformance_case(
+                CaseGroup::SemanticQueries,
+                CaseAction::Semantic(wrong_operation),
+            )))
+            .contains("check operation")
+        );
+        let mut no_queries = semantic;
+        no_queries.queries.clear();
+        assert!(
+            invalid_message(validate_case_action(&conformance_case(
+                CaseGroup::SemanticQueries,
+                CaseAction::Semantic(no_queries),
+            )))
+            .contains("at least one query")
+        );
+
+        assert!(
+            invalid_message(validate_case_action(&conformance_case(
+                CaseGroup::Runtime,
+                CaseAction::Memory {
+                    scenario: MemoryScenario::ReachableRoots,
+                },
+            )))
+            .contains("memory group")
+        );
+        let determinism = DeterminismAction {
+            manifest: pinned("project/tondo.json"),
+            lockfile: pinned("project/tondo.lock.json"),
+            inputs: vec![BuildInput {
+                logical_path: "src/main.to".into(),
+                contents: pinned("project/src/main.to"),
+            }],
+        };
+        assert!(
+            invalid_message(validate_case_action(&conformance_case(
+                CaseGroup::Runtime,
+                CaseAction::Determinism(determinism.clone()),
+            )))
+            .contains("determinism group")
+        );
+        let mut empty = determinism.clone();
+        empty.inputs.clear();
+        assert!(
+            invalid_message(validate_case_action(&conformance_case(
+                CaseGroup::Determinism,
+                CaseAction::Determinism(empty),
+            )))
+            .contains("project inputs")
+        );
+        let mut duplicate = determinism;
+        duplicate.inputs.push(duplicate.inputs[0].clone());
+        assert!(
+            invalid_message(validate_case_action(&conformance_case(
+                CaseGroup::Determinism,
+                CaseAction::Determinism(duplicate),
+            )))
+            .contains("sorted and unique")
+        );
+        assert!(
+            invalid_message(validate_case_action(&conformance_case(
+                CaseGroup::Runtime,
+                CaseAction::Document(DocumentAction {
+                    markdown: pinned("spec.md"),
+                }),
+            )))
+            .contains("documentation group")
+        );
+    }
+
+    #[test]
+    fn source_and_case_validation_close_each_user_controlled_boundary() {
+        let mut action = source_action(SourceOperation::Check);
+        action.sources.clear();
+        assert!(
+            invalid_message(validate_source_action("test/case", &action)).contains("no source")
+        );
+
+        let mut action = source_action(SourceOperation::Check);
+        action.sources.push(action.sources[0].clone());
+        assert!(
+            invalid_message(validate_source_action("test/case", &action))
+                .contains("sorted and unique")
+        );
+        let mut action = source_action(SourceOperation::Check);
+        action.root = "missing.to".into();
+        assert!(
+            invalid_message(validate_source_action("test/case", &action))
+                .contains("not one of its sources")
+        );
+        let mut action = source_action(SourceOperation::Check);
+        action.sources[0].source_id.clear();
+        assert!(
+            invalid_message(validate_source_action("test/case", &action)).contains("non-empty")
+        );
+        let mut action = source_action(SourceOperation::Check);
+        action.warning_profiles = vec!["core".into(), "core".into()];
+        assert!(
+            invalid_message(validate_source_action("test/case", &action))
+                .contains("sorted and unique")
+        );
+        let mut action = source_action(SourceOperation::Check);
+        action.warning_profiles = vec!["strict".into()];
+        assert!(
+            invalid_message(validate_source_action("test/case", &action))
+                .contains("unknown warning profile")
+        );
+        let mut action = source_action(SourceOperation::Check);
+        action.arguments = vec!["argument".into()];
+        assert!(
+            invalid_message(validate_source_action("test/case", &action))
+                .contains("non-run operation")
+        );
+        let mut action = source_action(SourceOperation::Run);
+        action.gc_threshold = Some(0);
+        assert!(
+            invalid_message(validate_source_action("test/case", &action))
+                .contains("zero GC threshold")
+        );
+
+        let registry = NormativeRegistry {
+            errors: vec!["E0001".into()],
+            warnings: vec!["W0001".into()],
+            panics: vec!["P0001".into()],
+        };
+        let target = TargetDeclaration {
+            name: "tondo-vm-hosted".into(),
+            profile: "hosted".into(),
+            capabilities: vec!["console".into(), "process".into()],
+        };
+        let targets = BTreeMap::from([(target.name.as_str(), &target)]);
+        let base = conformance_case(
+            CaseGroup::CompilePass,
+            CaseAction::Source(source_action(SourceOperation::Check)),
+        );
+        let mut mutations: Vec<(ConformanceCase, &str)> = Vec::new();
+        let mut case = base.clone();
+        case.target = "unknown".into();
+        mutations.push((case, "unknown target"));
+        let mut case = base.clone();
+        case.profile = "sandboxed".into();
+        mutations.push((case, "selects profile"));
+        let mut case = base.clone();
+        case.capabilities = vec!["console".into(), "console".into()];
+        mutations.push((case, "sorted and unique"));
+        let mut case = base.clone();
+        case.capabilities = vec!["network".into()];
+        mutations.push((case, "unsupported capability"));
+        let mut case = base.clone();
+        case.repeat = 0;
+        mutations.push((case, "repeat must be"));
+        let mut case = base.clone();
+        case.covers = vec!["E0001".into(), "E0001".into()];
+        mutations.push((case, "sorted and unique"));
+        let mut case = base;
+        case.covers = vec!["E9999".into()];
+        mutations.push((case, "unknown normative code"));
+
+        for (case, expected) in mutations {
+            assert!(
+                invalid_message(validate_case(&case, &registry, &targets)).contains(expected),
+                "mutation should report {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn expectations_accessors_and_error_text_are_exact() {
+        let exact = Expectation::Exact {
+            observation: pinned("exact.json"),
+        };
+        let one_of = Expectation::OneOf {
+            observations: pinned("one-of.json"),
+        };
+        assert_eq!(exact.pinned_file().path, "exact.json");
+        assert_eq!(one_of.pinned_file().path, "one-of.json");
+
+        let case = conformance_case(
+            CaseGroup::CompilePass,
+            CaseAction::Source(source_action(SourceOperation::Check)),
+        );
+        let manifest = manifest_with_case(case.clone());
+        let pinned_files = BTreeMap::from([("expected.json".into(), b"null".to_vec())]);
+        assert!(
+            invalid_message(validate_expectations(&manifest, &pinned_files))
+                .contains("one observation object")
+        );
+        let mut one_of_case = case;
+        one_of_case.expectation = Expectation::OneOf {
+            observations: pinned("expected.json"),
+        };
+        let manifest = manifest_with_case(one_of_case);
+        let pinned_files = BTreeMap::from([("expected.json".into(), b"[]".to_vec())]);
+        assert!(
+            invalid_message(validate_expectations(&manifest, &pinned_files))
+                .contains("non-empty array")
+        );
+
+        assert_eq!(
+            ManifestError::Io {
+                path: PathBuf::from("missing.json"),
+                message: "not found".into(),
+            }
+            .to_string(),
+            "cannot read `missing.json`: not found"
+        );
+        assert_eq!(
+            ManifestError::Json("bad token".into()).to_string(),
+            "invalid suite manifest JSON: bad token"
+        );
+        assert_eq!(
+            ManifestError::Invalid("bad shape".into()).to_string(),
+            "invalid suite manifest: bad shape"
+        );
+        assert_eq!(
+            ManifestError::HashMismatch {
+                path: "source.to".into(),
+                expected: "expected".into(),
+                actual: "actual".into(),
+            }
+            .to_string(),
+            "pinned file `source.to` has SHA-256 `actual`, expected `expected`"
+        );
+    }
+
+    #[test]
+    fn published_suite_accessors_preserve_loaded_identity() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let suite = LoadedSuite::load(root, "conformance/0.1/manifest.json").unwrap();
+        assert_eq!(suite.root(), root);
+        assert_eq!(
+            suite.manifest_path(),
+            Path::new("conformance/0.1/manifest.json")
+        );
+        assert_eq!(suite.manifest_sha256().len(), 64);
+        let expectation = suite.manifest().cases[0].expectation.pinned_file();
+        let value = suite.json_file(expectation).unwrap();
+        assert!(value.is_object() || value.is_array());
     }
 }

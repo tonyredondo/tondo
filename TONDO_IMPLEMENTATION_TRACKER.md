@@ -1,9 +1,9 @@
 # Tondo: tracker de implementación
 
-**Estado:** M10.5 y Gate H0 cerrados; el sustrato temporal de STD-0.1 es el
+**Estado:** M10.5b y Gate H0 cerrados; el sustrato temporal de STD-0.1 es el
 siguiente slice
 
-**Versión del tracker:** 0.91
+**Versión del tracker:** 0.92
 
 **Última actualización:** 2026-07-29
 
@@ -310,7 +310,7 @@ necesaria; la fragmentación del workspace no.
 | **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Conformidad y release** | Gate G5: Tondo 0.1 | Completado |
-| **M10.5 — Reliability y testing** | Infraestructura de evidencia continua | Completado |
+| **M10.5 — Reliability y testing** | Infraestructura y hardening continuo de evidencia | Completado |
 | **M10.6 — Testing de usuario y edición 0.2** | Gate T0: `tondo test` conforme | Especificado; implementación pendiente |
 | **STD-0.1 — Core + Hosted Standard Library** | API estándar mínima; su sustrato temporal precede T0 | Pendiente |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
@@ -326,16 +326,16 @@ Estado observado del workspace:
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
 - Última validación: 2026-07-29, con formatter check, `cargo check` de todos los
-  targets, Clippy con warnings denegados, 723 tests Rust inventariados, Rustdoc
+  targets, Clippy con warnings denegados, 768 tests Rust inventariados, Rustdoc
   con warnings denegados y metadatos locked. La suite oficial pasa 205 casos y
-  424 repeticiones byte-estables; el inventario completo registra 1.400 casos
-  lógicos y 1.619 repeticiones.
+  424 repeticiones byte-estables; el inventario completo registra 1.445 casos
+  lógicos y 1.664 repeticiones.
 
 ### 4.1 Ruta crítica
 
 ~~~text
 M0 -> M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10
-  -> M10.5 -> STD-0.1/time-base -> M10.6/defer-await+testing
+  -> M10.5 -> M10.5b -> STD-0.1/time-base -> M10.6/defer-await+testing
   -> STD-0.1/resto -> M11 -> STD-0.2
        \_____________________________________________________/
                   testing y conformidad continuos
@@ -345,7 +345,8 @@ M4, M5 y M6 pueden investigarse conjuntamente, pero deben integrarse en ese
 orden para evitar que collections o closures introduzcan una semántica de copia
 incompatible con ownership.
 
-M10.5 es una fase acotada de infraestructura y clasificación, no una pausa
+M10.5 y su hardening M10.5b son fases acotadas de infraestructura,
+clasificación y cierre de huecos reales, no una pausa
 indefinida para perseguir un número arbitrario de tests. Su gate debe existir
 antes de ampliar sintaxis. Tras H0, STD-0.1 abre únicamente el slice de
 `Duration`, `Instant` monotónico, suspensión, timers y deadlines que M10.6
@@ -2321,6 +2322,30 @@ de M10.6, STD-0.1, M11 y STD-0.2.
   incorpora el caso mínimo en la frontera pública más baja que habría fallado,
   además de cualquier test interno necesario para localizar la causa.
 
+### 16.5 M10.5b — Hardening de cobertura y oracles
+
+- [x] **TEST-HARDEN-001 — Cerrar los huecos observables de mayor retorno.**
+  La suite publicada completa se ejecuta dentro del proceso instrumentado y se
+  añaden contratos positivos, negativos y de borde para CLI, artefactos,
+  manifiestos, protocolo del adaptador, consultas y snapshots semánticos,
+  bytecode, valores gestionados y tooling de fiabilidad. El inventario resultante
+  contiene 1.445 casos lógicos y 1.664 repeticiones; no se cuenta un subprocess
+  opaco como cobertura de las rutas que ejecuta.
+
+- [x] **COV-002 — Elevar y ratchetear la baseline sin exclusiones.** La
+  observación completa alcanza 104.699/121.590 líneas (86,11 %),
+  7.171/8.576 funciones (83,62 %) y 150.780/178.550 regiones (84,45 %).
+  El gate conserva floors truncados de 8.610, 8.361 y 8.444 basis points y
+  floors independientes para parser, checkers, verifiers, heap, ejecución y
+  protocolos no confiables. Cualquier descenso falla aunque el porcentaje
+  global permanezca por encima del valor anterior.
+
+- [x] **MUT-002 — Revalidar la resistencia tras el hardening.** La selección
+  revisada conserva exactamente 28 mutantes: 27 ejecutables detectados, uno
+  inviable, cero timeouts y cero supervivientes. Ninguno de los cuatro archivos
+  de producción seleccionados cambió durante el hardening; el reporte fijado se
+  verifica contra la nueva baseline antes de publicarla.
+
 ### Gate H0 — Infraestructura de fiabilidad
 
 - [x] El gate completo de Tondo 0.1 se ejecuta automáticamente en PR y `main`.
@@ -3402,7 +3427,8 @@ STD-TIME-BASE-SPEC-001
   -> NATIVE-001
 ~~~
 
-M4, M5, M6, M7, M8, M9, M10, M10.5 y Gates G4/G5/H0 quedan cerrados.
+M4, M5, M6, M7, M8, M9, M10, M10.5, M10.5b y Gates G4/G5/H0 quedan
+cerrados.
 `STD-TIME-BASE-SPEC-001` pasa a ser la acción inmediata; M10.6 continúa
 bloqueado por ese time-base y M11 por T0 y S1. No se inicia STD-0.2 antes de
 Gate N1.
@@ -3410,6 +3436,19 @@ Gate N1.
 ---
 
 ## 24. Historial del tracker
+
+### 0.92 — 2026-07-29
+
+- Se completa M10.5b con 1.445 casos lógicos y 1.664 repeticiones. La
+  conformidad publicada completa se ejecuta dentro de la misma instrumentación
+  y se añaden contratos cerrados para CLI, artefactos, manifiestos, adaptador,
+  semántica, bytecode, runtime y tooling de fiabilidad.
+- La baseline revisada sube a 86,11 % de líneas, 83,62 % de funciones y
+  84,45 % de regiones, con ratchets globales y separados para parser, checkers,
+  verifiers, heap, ejecución y protocolos no confiables.
+- La selección de mutación conserva 27/27 mutantes ejecutables detectados, uno
+  inviable y ningún timeout o superviviente. La cola sigue en
+  `STD-TIME-BASE-SPEC-001`; el hardening no inicia STD-0.1 ni M10.6.
 
 ### 0.91 — 2026-07-29
 

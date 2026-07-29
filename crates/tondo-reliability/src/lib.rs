@@ -146,3 +146,141 @@ fn collect_files_inner(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use serde::Serialize;
+
+    use super::*;
+
+    struct TemporaryDirectory(PathBuf);
+
+    impl TemporaryDirectory {
+        fn new(label: &str) -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "tondo-reliability-{label}-{}-{nonce}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TemporaryDirectory {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[derive(Serialize)]
+    struct Document {
+        value: u32,
+    }
+
+    #[test]
+    fn workspace_discovery_stops_at_the_nearest_workspace_and_reports_absence() {
+        let directory = TemporaryDirectory::new("workspace");
+        fs::write(
+            directory.0.join("Cargo.toml"),
+            "[workspace]\nmembers = []\n",
+        )
+        .unwrap();
+        let nested = directory.0.join("nested/deeper");
+        fs::create_dir_all(&nested).unwrap();
+        assert_eq!(workspace_root(&nested).unwrap(), directory.0);
+
+        let absent = TemporaryDirectory::new("no-workspace");
+        assert!(
+            workspace_root(&absent.0)
+                .unwrap_err()
+                .contains("cannot find")
+        );
+        assert!(
+            workspace_root(&absent.0.join("missing"))
+                .unwrap_err()
+                .contains("cannot resolve")
+        );
+    }
+
+    #[test]
+    fn canonical_files_are_replaced_only_on_change_and_checked_exactly() {
+        let directory = TemporaryDirectory::new("canonical");
+        let path = directory.0.join("nested/evidence.json");
+        let bytes = canonical_json(&Document { value: 42 }).unwrap();
+        assert_eq!(bytes, b"{\n  \"value\": 42\n}\n");
+        assert!(write_if_changed(&path, &bytes).unwrap());
+        assert!(!write_if_changed(&path, &bytes).unwrap());
+        check_bytes(&path, &bytes).unwrap();
+        assert!(
+            check_bytes(&path, b"different")
+                .unwrap_err()
+                .contains("stale")
+        );
+        assert!(
+            check_bytes(&directory.0.join("missing"), &bytes)
+                .unwrap_err()
+                .contains("cannot read")
+        );
+        assert_eq!(
+            sha256(b"tondo"),
+            "a363d0a0361858dfd0bab4fa12573ba30d4feee1d1104bf45265225150bed6bd"
+        );
+    }
+
+    #[test]
+    fn logical_paths_and_recursive_collection_are_closed_to_the_workspace() {
+        let directory = TemporaryDirectory::new("collection");
+        fs::create_dir_all(directory.0.join("src/nested")).unwrap();
+        fs::create_dir_all(directory.0.join(".git")).unwrap();
+        fs::create_dir_all(directory.0.join("target")).unwrap();
+        fs::write(directory.0.join("src/z.rs"), "").unwrap();
+        fs::write(directory.0.join("src/nested/a.rs"), "").unwrap();
+        fs::write(directory.0.join(".git/ignored"), "").unwrap();
+        fs::write(directory.0.join("target/ignored"), "").unwrap();
+
+        assert_eq!(
+            logical_path(&directory.0, &directory.0.join("src/nested/a.rs")).unwrap(),
+            "src/nested/a.rs"
+        );
+        assert!(
+            logical_path(&directory.0, Path::new("/definitely/outside"))
+                .unwrap_err()
+                .contains("outside workspace")
+        );
+        assert_eq!(
+            collect_files(&directory.0, &directory.0).unwrap(),
+            [
+                directory.0.join("src/nested/a.rs"),
+                directory.0.join("src/z.rs"),
+            ]
+        );
+        assert!(
+            collect_files(&directory.0, &directory.0.join("missing"))
+                .unwrap_err()
+                .contains("cannot read")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_logical_components_are_rejected() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let directory = TemporaryDirectory::new("non-utf8");
+        let path = directory
+            .0
+            .join(OsString::from_vec(vec![b'f', 0xff, b'.', b'r', b's']));
+        assert!(
+            logical_path(&directory.0, &path)
+                .unwrap_err()
+                .contains("not valid UTF-8")
+        );
+    }
+}

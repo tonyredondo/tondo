@@ -1615,6 +1615,56 @@ mod tests {
     use crate::package::{Edition, PackageAlias, PackageNode};
     use crate::source::{ModulePath, SourceId};
 
+    fn valid_interface() -> CompiledInterface {
+        CompiledInterface::new(
+            "0.1".into(),
+            "workspace:app@1".into(),
+            "tondo-vm-hosted".into(),
+            "hosted".into(),
+            vec!["console".into(), "process".into()],
+            vec!["fast".into()],
+            vec!["@15:workspace:app@1#common".into()],
+            vec!["main".into()],
+            sha256(b"api"),
+            vec![InterfaceDependency {
+                alias: "util".into(),
+                package_id: "registry:util@1#content".into(),
+                api_hash: sha256(b"util-api"),
+            }],
+        )
+        .unwrap()
+    }
+
+    fn valid_artifact() -> BuildArtifact {
+        let mut artifact = BuildArtifact {
+            format: ARTIFACT_FORMAT.into(),
+            compiler: COMPILER_ID.into(),
+            edition: "0.1".into(),
+            source_form: "module".into(),
+            package_id: "workspace:app@1".into(),
+            target: "tondo-vm-hosted".into(),
+            profile: "hosted".into(),
+            capability_registry: CAPABILITY_REGISTRY.into(),
+            capabilities: vec!["console".into(), "process".into()],
+            features: vec!["fast".into()],
+            source_sets: vec!["@15:workspace:app@1#common".into()],
+            manifest_hash: Some(sha256(b"manifest")),
+            lockfile_hash: Some(sha256(b"lockfile")),
+            generator_inputs: BTreeMap::from([("bindings".into(), sha256(b"bindings"))]),
+            source_hashes: vec![SourceHash {
+                source_id: "pkg:15:workspace:app@1".into(),
+                module: "main".into(),
+                path: "src/main.to".into(),
+                sha256: sha256(b"fn main() {}\n"),
+            }],
+            interface_hash: sha256(b"interface"),
+            build_hash: String::new(),
+            reproducible: true,
+        };
+        artifact.build_hash = artifact.calculated_build_hash().unwrap();
+        artifact
+    }
+
     #[test]
     fn hashes_and_names_have_closed_canonical_forms() {
         assert_eq!(
@@ -1632,6 +1682,229 @@ mod tests {
         );
         assert!(SourceSetId::new("@01:a#common").is_err());
         assert!(SourceSetId::new("").is_err());
+    }
+
+    #[test]
+    fn public_artifact_metadata_round_trips_every_declared_input() {
+        let package = PackageId::new("workspace:app@1").unwrap();
+        let feature = FeatureName::new("native-ffi").unwrap();
+        let source_set = SourceSetId::for_package(&package, "generated").unwrap();
+        assert_eq!(feature.as_str(), "native-ffi");
+        assert_eq!(feature.to_string(), "native-ffi");
+        assert_eq!(source_set.as_str(), "@15:workspace:app@1#generated");
+        assert_eq!(source_set.to_string(), "@15:workspace:app@1#generated");
+        assert!(matches!(
+            SourceSetId::for_package(&package, "Generated"),
+            Err(ArtifactError::InvalidSourceSet(value)) if value == "Generated"
+        ));
+
+        let dependency = valid_interface();
+        let inputs = DeclaredBuildInputs::new(
+            [feature.clone()].into_iter().collect(),
+            [source_set.clone()].into_iter().collect(),
+        )
+        .with_manifest_hash(sha256(b"manifest"))
+        .unwrap()
+        .with_lockfile_hash(sha256(b"lockfile"))
+        .unwrap()
+        .with_generator_inputs(BTreeMap::from([(
+            "bindings".into(),
+            sha256(b"generator-input"),
+        )]))
+        .unwrap()
+        .with_dependency_interfaces(
+            BTreeMap::from([(PackageId::new(dependency.package_id()).unwrap(), dependency)]),
+            true,
+        );
+        assert_eq!(inputs.features(), &[feature].into_iter().collect());
+        assert_eq!(inputs.source_sets(), &[source_set].into_iter().collect());
+        assert_eq!(inputs.manifest_hash(), Some(sha256(b"manifest").as_str()));
+        assert_eq!(inputs.lockfile_hash(), Some(sha256(b"lockfile").as_str()));
+        assert_eq!(
+            inputs.generator_inputs().get("bindings"),
+            Some(&sha256(b"generator-input"))
+        );
+        assert_eq!(inputs.dependency_interfaces().len(), 1);
+        assert!(inputs.require_dependency_interfaces());
+        assert!(matches!(
+            DeclaredBuildInputs::default().with_manifest_hash("not-a-hash".into()),
+            Err(ArtifactError::InvalidHash(_))
+        ));
+        assert!(matches!(
+            DeclaredBuildInputs::default().with_lockfile_hash("sha256:ABC".into()),
+            Err(ArtifactError::InvalidHash(_))
+        ));
+        assert!(matches!(
+            DeclaredBuildInputs::default().with_generator_inputs(BTreeMap::from([(
+                "bad\nname".into(),
+                sha256(b"value"),
+            )])),
+            Err(ArtifactError::InvalidGeneratorInput(name)) if name == "bad\nname"
+        ));
+
+        let interface = valid_interface();
+        let dependency = &interface.dependencies()[0];
+        assert_eq!(interface.format(), INTERFACE_FORMAT);
+        assert_eq!(interface.compiler(), COMPILER_ID);
+        assert_eq!(interface.edition(), "0.1");
+        assert_eq!(interface.package_id(), "workspace:app@1");
+        assert_eq!(interface.target(), "tondo-vm-hosted");
+        assert_eq!(interface.profile(), "hosted");
+        assert_eq!(interface.capability_registry(), CAPABILITY_REGISTRY);
+        assert_eq!(interface.capabilities(), ["console", "process"]);
+        assert_eq!(interface.features(), ["fast"]);
+        assert_eq!(interface.source_sets(), ["@15:workspace:app@1#common"]);
+        assert_eq!(interface.modules(), ["main"]);
+        assert_eq!(interface.api_hash(), sha256(b"api"));
+        assert_eq!(dependency.alias(), "util");
+        assert_eq!(dependency.package_id(), "registry:util@1#content");
+        assert_eq!(dependency.api_hash(), sha256(b"util-api"));
+        assert_eq!(
+            interface.content_hash().unwrap(),
+            sha256(&interface.encode().unwrap())
+        );
+
+        let artifact = valid_artifact();
+        let source = &artifact.source_hashes()[0];
+        assert_eq!(artifact.format(), ARTIFACT_FORMAT);
+        assert_eq!(artifact.compiler(), COMPILER_ID);
+        assert_eq!(artifact.edition(), "0.1");
+        assert_eq!(artifact.source_form(), "module");
+        assert_eq!(artifact.package_id(), "workspace:app@1");
+        assert_eq!(artifact.target(), "tondo-vm-hosted");
+        assert_eq!(artifact.profile(), "hosted");
+        assert_eq!(artifact.capability_registry(), CAPABILITY_REGISTRY);
+        assert_eq!(artifact.capabilities(), ["console", "process"]);
+        assert_eq!(artifact.features(), ["fast"]);
+        assert_eq!(artifact.source_sets(), ["@15:workspace:app@1#common"]);
+        assert_eq!(artifact.manifest_hash(), Some(sha256(b"manifest").as_str()));
+        assert_eq!(artifact.lockfile_hash(), Some(sha256(b"lockfile").as_str()));
+        assert_eq!(
+            artifact.generator_inputs().get("bindings"),
+            Some(&sha256(b"bindings"))
+        );
+        assert_eq!(artifact.interface_hash(), sha256(b"interface"));
+        assert_eq!(
+            artifact.build_hash(),
+            artifact.calculated_build_hash().unwrap()
+        );
+        assert!(artifact.reproducible());
+        assert_eq!(source.source_id(), "pkg:15:workspace:app@1");
+        assert_eq!(source.module(), "main");
+        assert_eq!(source.path(), "src/main.to");
+        assert_eq!(source.sha256(), sha256(b"fn main() {}\n"));
+
+        let products = BuildProducts {
+            interface: interface.clone(),
+            artifact: artifact.clone(),
+        };
+        assert_eq!(products.interface(), &interface);
+        assert_eq!(products.artifact(), &artifact);
+        assert_eq!(products.into_parts(), (interface, artifact));
+    }
+
+    #[test]
+    fn artifact_validation_rejects_each_noncanonical_boundary() {
+        let mut interface_cases = Vec::new();
+        let mut invalid = valid_interface();
+        invalid.format = "tondo-interface-9".into();
+        interface_cases.push(invalid);
+        let mut invalid = valid_interface();
+        invalid.capability_registry = "tondo-capabilities/9".into();
+        interface_cases.push(invalid);
+        let mut invalid = valid_interface();
+        invalid.edition = "\n".into();
+        interface_cases.push(invalid);
+        let mut invalid = valid_interface();
+        invalid.source_sets = vec!["@17:workspace:other@1#common".into()];
+        interface_cases.push(invalid);
+        let mut invalid = valid_interface();
+        invalid.dependencies[0].alias.clear();
+        interface_cases.push(invalid);
+        let mut invalid = valid_interface();
+        invalid.dependencies[0].api_hash = "sha256:ABC".into();
+        interface_cases.push(invalid);
+        for invalid in interface_cases {
+            assert!(invalid.encode().is_err());
+        }
+        assert!(matches!(
+            valid_interface().encode().and_then(|mut bytes| {
+                bytes.extend_from_slice(b"\n");
+                CompiledInterface::decode(&bytes)
+            }),
+            Err(ArtifactError::NonCanonicalInterface)
+        ));
+
+        let mut artifact_cases = Vec::new();
+        let mut invalid = valid_artifact();
+        invalid.format = "tondo-artifact-9".into();
+        artifact_cases.push(invalid);
+        let mut invalid = valid_artifact();
+        invalid.capability_registry = "tondo-capabilities/9".into();
+        artifact_cases.push(invalid);
+        let mut invalid = valid_artifact();
+        invalid.source_form = "unknown".into();
+        artifact_cases.push(invalid);
+        let mut invalid = valid_artifact();
+        invalid.edition = "0.1\n".into();
+        artifact_cases.push(invalid);
+        let mut invalid = valid_artifact();
+        invalid.source_sets = vec!["common".into()];
+        artifact_cases.push(invalid);
+        let mut invalid = valid_artifact();
+        invalid.generator_inputs = BTreeMap::from([("".into(), sha256(b"value"))]);
+        artifact_cases.push(invalid);
+        let mut invalid = valid_artifact();
+        invalid.source_hashes = vec![
+            valid_artifact().source_hashes[0].clone(),
+            valid_artifact().source_hashes[0].clone(),
+        ];
+        artifact_cases.push(invalid);
+        let mut invalid = valid_artifact();
+        invalid.source_hashes[0].path.clear();
+        artifact_cases.push(invalid);
+        let mut invalid = valid_artifact();
+        invalid.interface_hash = "invalid".into();
+        artifact_cases.push(invalid);
+        for invalid in artifact_cases {
+            assert!(invalid.encode().is_err());
+        }
+    }
+
+    #[test]
+    fn artifact_error_messages_cover_the_closed_error_vocabulary() {
+        let errors = [
+            ArtifactError::InvalidFeature("Bad".into()),
+            ArtifactError::InvalidSourceSet("common".into()),
+            ArtifactError::InvalidGeneratorInput("bad\nname".into()),
+            ArtifactError::InvalidHash("invalid".into()),
+            ArtifactError::InvalidInterface("identity".into()),
+            ArtifactError::InvalidArtifact("identity".into()),
+            ArtifactError::UnsupportedInterfaceFormat("interface/9".into()),
+            ArtifactError::UnsupportedArtifactFormat("artifact/9".into()),
+            ArtifactError::UnsupportedCapabilityRegistry("capabilities/9".into()),
+            ArtifactError::IncompatibleCompiler("compiler/9".into()),
+            ArtifactError::NonCanonicalInterface,
+            ArtifactError::NonCanonicalArtifact,
+            ArtifactError::NonCanonicalList("features"),
+            ArtifactError::MissingDependencyInterface("pkg:dep@1".into()),
+            ArtifactError::IncompatibleDependencyInterface {
+                package: "pkg:dep@1".into(),
+                reason: "target differs".into(),
+            },
+            ArtifactError::MissingRootPackage("pkg:root@1".into()),
+            ArtifactError::MissingResolvedSymbol("root::missing".into()),
+            ArtifactError::from(TypeError::ResourceLimit { limit: 7 }),
+            ArtifactError::Serialization("JSON".into()),
+        ];
+        let messages = errors.map(|error| error.to_string());
+        assert_eq!(messages.len(), 19);
+        assert!(messages.iter().all(|message| !message.is_empty()));
+        assert!(messages[0].contains("Bad"));
+        assert!(messages[10].contains("canonical byte form"));
+        assert!(messages[14].contains("target differs"));
+        assert!(messages[17].contains('7'));
+        assert!(messages[18].contains("JSON"));
     }
 
     #[test]

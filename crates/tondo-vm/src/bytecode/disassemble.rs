@@ -318,3 +318,263 @@ fn place_text(place: &BytecodePlace) -> String {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn operand() -> BytecodeOperand {
+        BytecodeOperand {
+            ty: BytecodeTypeId::new(0),
+            kind: BytecodeOperandKind::Constant(BytecodeConstant::Unit),
+        }
+    }
+
+    fn place() -> BytecodePlace {
+        BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty: BytecodeTypeId::new(0),
+            projections: Vec::new(),
+            source_loan: None,
+        }
+    }
+
+    fn operation() -> BytecodeOperation {
+        BytecodeOperation {
+            ty: BytecodeTypeId::new(0),
+            kind: BytecodeOperationKind::ExplicitPanic { message: operand() },
+        }
+    }
+
+    #[test]
+    fn tooling_text_covers_every_instruction_and_control_flow_shape() {
+        let instructions = [
+            BytecodeInstructionKind::StorageLive(BytecodeSlotId::new(0)),
+            BytecodeInstructionKind::StorageDead(BytecodeSlotId::new(0)),
+            BytecodeInstructionKind::ReserveLoan(BytecodeLoanId::new(0)),
+            BytecodeInstructionKind::ReleaseLoan(BytecodeLoanId::new(0)),
+            BytecodeInstructionKind::Store {
+                destination: place(),
+                value: BytecodeRvalue {
+                    ty: BytecodeTypeId::new(0),
+                    kind: BytecodeRvalueKind::Use(operand()),
+                },
+            },
+            BytecodeInstructionKind::EnterTaskScope {
+                scope: BytecodeScopeId::new(0),
+            },
+            BytecodeInstructionKind::RegisterDefer {
+                scope: BytecodeScopeId::new(0),
+                action: operation(),
+                guard: Some(place()),
+            },
+            BytecodeInstructionKind::RegisterFallback {
+                scope: BytecodeScopeId::new(0),
+                owner: place(),
+            },
+            BytecodeInstructionKind::RetargetCleanup {
+                from: place(),
+                to: place(),
+            },
+            BytecodeInstructionKind::DisarmCleanup(place()),
+        ];
+        for instruction in &instructions {
+            assert!(!instruction_text(instruction).is_empty());
+        }
+
+        let block = BytecodeBlockId::new(0);
+        let terminators = [
+            BytecodeTerminatorKind::Goto { target: block },
+            BytecodeTerminatorKind::BranchBool {
+                condition: operand(),
+                if_true: block,
+                if_false: block,
+            },
+            BytecodeTerminatorKind::BranchTag {
+                value: operand(),
+                cases: vec![(BytecodeTag::OptionNone, block)],
+                otherwise: block,
+            },
+            BytecodeTerminatorKind::Invoke {
+                operation: operation(),
+                destination: Some(place()),
+                target: Some(block),
+                unwind: block,
+            },
+            BytecodeTerminatorKind::Invoke {
+                operation: operation(),
+                destination: None,
+                target: None,
+                unwind: block,
+            },
+            BytecodeTerminatorKind::Await {
+                awaitable: BytecodeAwaitable::Join(operand()),
+                destination: place(),
+                target: block,
+                unwind: block,
+            },
+            BytecodeTerminatorKind::Spawn {
+                operation: operation(),
+                scope: BytecodeScopeId::new(0),
+                destination: place(),
+                target: block,
+                unwind: block,
+            },
+            BytecodeTerminatorKind::IteratorNext {
+                state: place(),
+                destination: place(),
+                borrowed_source: Some(place()),
+                exhaustion_guard: Some(place()),
+                has_value: block,
+                exhausted: block,
+                unwind: block,
+            },
+            BytecodeTerminatorKind::ValidatePlaces {
+                places: vec![place()],
+                replacements: vec![Some(operand())],
+                against: vec![vec![BytecodeLoanId::new(0)]],
+                for_write: true,
+                target: block,
+                unwind: block,
+            },
+            BytecodeTerminatorKind::ValidateLoan {
+                loan: BytecodeLoanId::new(0),
+                against: vec![BytecodeLoanId::new(1)],
+                target: block,
+                unwind: block,
+            },
+            BytecodeTerminatorKind::DrainDefers {
+                scopes: vec![BytecodeScopeId::new(0)],
+                target: block,
+                unwind: block,
+            },
+            BytecodeTerminatorKind::DrainScopes {
+                task_scopes: vec![BytecodeScopeId::new(0)],
+                defer_scopes: vec![BytecodeScopeId::new(1)],
+                target: block,
+                unwind: block,
+            },
+            BytecodeTerminatorKind::DrainUnwind { target: block },
+            BytecodeTerminatorKind::Return,
+            BytecodeTerminatorKind::ResumePanic,
+            BytecodeTerminatorKind::Unreachable,
+        ];
+        for terminator in &terminators {
+            assert!(!terminator_text(terminator).is_empty());
+        }
+    }
+
+    #[test]
+    fn complete_program_disassembly_is_deterministic_and_explicit() {
+        let ty = BytecodeTypeId::new(0);
+        let projected = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty,
+            projections: vec![BytecodeProjection {
+                ty,
+                kind: BytecodeProjectionKind::TupleField(0),
+            }],
+            source_loan: Some(BytecodeLoanId::new(0)),
+        };
+        assert_eq!(place_text(&place()), "s0:t0");
+        assert!(place_text(&projected).contains("@l0"));
+        assert!(
+            type_kind_text(&BytecodeTypeKind::OpaqueResult {
+                identity: "test::opaque".into(),
+                arguments: vec![ty],
+                witness: ty,
+                capabilities: BytecodeCapabilitySet::default(),
+            })
+            .contains("test::opaque")
+        );
+        assert!(
+            type_kind_text(&BytecodeTypeKind::Scalar(BytecodeScalarType::Unit)).contains("Unit")
+        );
+
+        let program = BytecodeProgram {
+            types: vec![BytecodeType {
+                name: "Unit".into(),
+                kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Unit),
+            }],
+            nominals: vec![BytecodeNominal {
+                name: "Wrapper".into(),
+                identity: "test::Wrapper".into(),
+                generic_arity: 0,
+                shape: BytecodeNominalShape::Newtype { underlying: ty },
+            }],
+            callables: vec![BytecodeCallable {
+                name: "main".into(),
+                generic_arity: 0,
+                parameters: Vec::new(),
+                outcome: ty,
+                function_type: ty,
+                implementation: Some(BytecodeFunctionId::new(0)),
+                closure: None,
+            }],
+            constants: vec![BytecodeNamedConstant {
+                name: "UNIT".into(),
+                value: BytecodeConstantValue {
+                    ty,
+                    kind: BytecodeConstantValueKind::Unit,
+                },
+            }],
+            functions: vec![BytecodeFunction {
+                callable: BytecodeCallableId::new(0),
+                source: BytecodeSpan {
+                    file: 0,
+                    start: 1,
+                    end: 2,
+                },
+                types: vec![ty],
+                spans: vec![BytecodeSpan {
+                    file: 0,
+                    start: 1,
+                    end: 2,
+                }],
+                slots: vec![BytecodeSlot {
+                    ty,
+                    span: BytecodeSpanId::new(0),
+                    kind: BytecodeSlotKind::Return,
+                }],
+                loans: vec![BytecodeLoan {
+                    kind: BytecodeLoanKind::CallLocal,
+                    mode: BytecodeParameterMode::Ref,
+                    place: place(),
+                }],
+                parameters: Vec::new(),
+                return_slot: BytecodeSlotId::new(0),
+                entry: BytecodeBlockId::new(0),
+                unwind: BytecodeBlockId::new(0),
+                blocks: vec![BytecodeBlock {
+                    kind: BytecodeBlockKind::Normal,
+                    instructions: vec![BytecodeInstruction {
+                        span: BytecodeSpanId::new(0),
+                        kind: BytecodeInstructionKind::StorageLive(BytecodeSlotId::new(0)),
+                    }],
+                    terminator: BytecodeTerminator {
+                        span: BytecodeSpanId::new(0),
+                        kind: BytecodeTerminatorKind::Return,
+                    },
+                }],
+            }],
+        };
+        let first = disassemble(&program);
+        assert_eq!(disassemble(&program), first);
+        for expected in [
+            "type t0 = Unit",
+            "nominal n0 = test::Wrapper",
+            "callable c0 main",
+            "const k0 UNIT",
+            "function f0 c0",
+            "slot s0",
+            "loan l0",
+            "storage_live s0",
+            "return",
+        ] {
+            assert!(
+                first.contains(expected),
+                "missing `{expected}` in:\n{first}"
+            );
+        }
+    }
+}

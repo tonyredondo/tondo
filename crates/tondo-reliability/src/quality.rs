@@ -667,6 +667,38 @@ fn require_sorted_unique(context: &str, values: &[String]) -> Result<(), String>
 mod tests {
     use super::*;
 
+    fn complete_coverage_json(count: u64, covered: u64) -> Value {
+        let files = risk_scope_paths()
+            .into_iter()
+            .flat_map(|(_, paths)| paths)
+            .map(|path| {
+                let filename = if path.ends_with('/') {
+                    format!("/workspace/{path}representative.rs")
+                } else {
+                    format!("/workspace/{path}")
+                };
+                serde_json::json!({
+                    "filename": filename,
+                    "summary": {
+                        "lines": {"count": count, "covered": covered},
+                        "functions": {"count": count, "covered": covered},
+                        "regions": {"count": count, "covered": covered}
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::json!({
+            "data": [{
+                "totals": {
+                    "lines": {"count": count, "covered": covered},
+                    "functions": {"count": count, "covered": covered},
+                    "regions": {"count": count, "covered": covered}
+                },
+                "files": files
+            }]
+        })
+    }
+
     fn baseline() -> QualityBaseline {
         let metrics = CoverageMetrics {
             lines: metric(100, 80).unwrap(),
@@ -835,5 +867,267 @@ mod tests {
         assert_eq!(report.unviable, 1);
         assert_eq!(report.score_basis_points, 3_333);
         assert_eq!(report.missed_ids, ["survivor"]);
+    }
+
+    #[test]
+    fn baseline_validation_rejects_every_inconsistent_dimension() {
+        let mut invalid = baseline();
+        invalid.format = "quality/9".into();
+        assert!(invalid.validate().unwrap_err().contains("unsupported"));
+
+        let mut invalid = baseline();
+        invalid.revision.clear();
+        assert!(invalid.validate().unwrap_err().contains("provenance"));
+
+        let mut invalid = baseline();
+        invalid.coverage.global.lines.covered = 101;
+        assert!(
+            invalid
+                .validate()
+                .unwrap_err()
+                .contains("coverage is invalid")
+        );
+
+        let mut invalid = baseline();
+        invalid.coverage.global.lines.basis_points -= 1;
+        assert!(
+            invalid
+                .validate()
+                .unwrap_err()
+                .contains("percentage is inconsistent")
+        );
+
+        let mut invalid = baseline();
+        invalid.coverage.risk_scopes[0].paths.clear();
+        assert!(invalid.validate().unwrap_err().contains("unique names"));
+
+        let mut invalid = baseline();
+        invalid
+            .coverage
+            .risk_scopes
+            .push(invalid.coverage.risk_scopes[0].clone());
+        assert!(invalid.validate().unwrap_err().contains("unique names"));
+
+        let mut invalid = baseline();
+        invalid.coverage.risk_scopes[0].paths = vec!["z".into(), "a".into(), "a".into()];
+        assert!(
+            invalid
+                .validate()
+                .unwrap_err()
+                .contains("sorted and unique")
+        );
+
+        let mut invalid = baseline();
+        invalid.mutation.selected_paths = vec!["z".into(), "a".into()];
+        assert!(
+            invalid
+                .validate()
+                .unwrap_err()
+                .contains("sorted and unique")
+        );
+
+        let mut invalid = baseline();
+        invalid.mutation.total += 1;
+        assert!(invalid.validate().unwrap_err().contains("do not sum"));
+
+        let mut only_unviable = baseline();
+        only_unviable.mutation.total = 1;
+        only_unviable.mutation.caught = 0;
+        only_unviable.mutation.missed = 0;
+        only_unviable.mutation.timeout = 0;
+        only_unviable.mutation.unviable = 1;
+        only_unviable.mutation.score_basis_points = 0;
+        only_unviable.mutation.minimum_score_basis_points = 0;
+        only_unviable.mutation.survivors.clear();
+        only_unviable.validate().unwrap();
+
+        let mut invalid = baseline();
+        invalid.mutation.score_basis_points = 7_499;
+        assert!(invalid.validate().unwrap_err().contains("score or gate"));
+
+        let mut invalid = baseline();
+        invalid.mutation.survivors[0].classification = "unknown".into();
+        assert!(invalid.validate().unwrap_err().contains("classified"));
+
+        let mut invalid = baseline();
+        invalid.mutation.survivors[0].rationale.clear();
+        assert!(invalid.validate().unwrap_err().contains("classified"));
+
+        let mut invalid = baseline();
+        invalid.mutation.survivors.clear();
+        assert!(
+            invalid
+                .validate()
+                .unwrap_err()
+                .contains("must be classified")
+        );
+    }
+
+    #[test]
+    fn report_gates_identify_global_scope_and_mutation_regressions() {
+        let baseline = baseline();
+        let observed = CoverageReport {
+            global: baseline.coverage.global.clone(),
+            risk_scopes: baseline.coverage.risk_scopes.clone(),
+        };
+        baseline.verify_coverage_report(&observed).unwrap();
+
+        let mut missing = observed.clone();
+        missing.risk_scopes.clear();
+        assert!(
+            baseline
+                .verify_coverage_report(&missing)
+                .unwrap_err()
+                .contains("omits risk scope")
+        );
+
+        for dimension in ["lines", "functions", "regions"] {
+            let mut regressed = observed.clone();
+            let metrics = &mut regressed.risk_scopes[0].metrics;
+            let metric = match dimension {
+                "lines" => &mut metrics.lines,
+                "functions" => &mut metrics.functions,
+                "regions" => &mut metrics.regions,
+                _ => unreachable!(),
+            };
+            metric.basis_points -= 26;
+            assert!(
+                baseline
+                    .verify_coverage_report(&regressed)
+                    .unwrap_err()
+                    .contains(dimension.trim_end_matches('s'))
+            );
+        }
+
+        for dimension in ["functions", "regions"] {
+            let mut regressed = baseline.coverage.global.clone();
+            let metric = match dimension {
+                "functions" => &mut regressed.functions,
+                "regions" => &mut regressed.regions,
+                _ => unreachable!(),
+            };
+            metric.basis_points -= 26;
+            assert!(
+                baseline
+                    .verify_coverage(&regressed)
+                    .unwrap_err()
+                    .contains(dimension.trim_end_matches('s'))
+            );
+        }
+
+        let mut more_unviable = MutationReport {
+            total: 4,
+            caught: 3,
+            missed: 0,
+            timeout: 0,
+            unviable: 1,
+            score_basis_points: 10_000,
+            missed_ids: Vec::new(),
+        };
+        assert!(
+            baseline
+                .verify_mutation_report(&more_unviable)
+                .unwrap_err()
+                .contains("unviable")
+        );
+        more_unviable.unviable = 0;
+        more_unviable.caught = 2;
+        more_unviable.missed = 2;
+        more_unviable.score_basis_points = 5_000;
+        assert!(
+            baseline
+                .verify_mutation_report(&more_unviable)
+                .unwrap_err()
+                .contains("score")
+        );
+        more_unviable.score_basis_points = 7_500;
+        assert!(
+            baseline
+                .verify_mutation_report(&more_unviable)
+                .unwrap_err()
+                .contains("caught")
+        );
+    }
+
+    #[test]
+    fn report_parsers_cover_json_lines_fallback_ids_and_malformed_inputs() {
+        let coverage = serde_json::to_vec(&complete_coverage_json(10, 9)).unwrap();
+        let mutation = br#"
+{"status":"Killed","mutant":{"display_name":"caught"}}
+
+{"nested":{"summary":"Survived"},"payload":[{"id":"fallback-id"}]}
+{"outcome":"Timeout","id":"slow"}
+{"outcome":"CompileFailure","id":"compile"}
+{"status":"Ignored"}
+"#;
+        let parsed = parse_mutation_report(mutation).unwrap();
+        assert_eq!(parsed.total, 4);
+        assert_eq!(parsed.missed_ids, ["fallback-id"]);
+        let captured = capture("revision", &coverage, mutation).unwrap();
+        assert_eq!(captured.revision, "revision");
+        assert_eq!(captured.mutation.selected_paths, mutation_paths());
+        assert_eq!(captured.mutation.survivors[0].id, "fallback-id");
+        assert_eq!(
+            captured.mutation.survivors[0].classification,
+            "missing-test"
+        );
+
+        let hashed = parse_mutation_report(
+            br#"[{"outcome":"MissedMutant","detail":{"location":"src/lib.rs:1"}}]"#,
+        )
+        .unwrap();
+        assert!(hashed.missed_ids[0].starts_with("mutant:"));
+
+        let only_unviable =
+            parse_mutation_report(br#"{"outcome":"NonViable","name":"compile"}"#).unwrap();
+        assert_eq!(only_unviable.score_basis_points, 0);
+        assert!(parse_mutation_report(br#"{"status":"ignored"}"#).is_err());
+        assert!(
+            parse_mutation_report(b"{broken\n")
+                .unwrap_err()
+                .contains("line 1")
+        );
+        assert!(
+            parse_mutation_report(
+                br#"[{"outcome":"Missed","id":"same"},{"outcome":"Survived","id":"same"}]"#
+            )
+            .unwrap_err()
+            .contains("duplicate")
+        );
+
+        assert_eq!(metric(0, 0).unwrap().basis_points, 10_000);
+        assert!(metric(1, 2).is_err());
+        assert_eq!(
+            normalize_report_path(r"C:\repo\crates\x\src\lib.rs"),
+            "crates/x/src/lib.rs"
+        );
+        assert_eq!(normalize_report_path("./relative.rs"), "relative.rs");
+        assert_eq!(
+            flatten_outcomes(&serde_json::json!([{"status": "caught"}])).len(),
+            1
+        );
+        assert_eq!(
+            flatten_outcomes(&serde_json::json!({"status": "caught"})).len(),
+            1
+        );
+
+        for malformed in [
+            serde_json::json!({}),
+            serde_json::json!({"data": [{}]}),
+            serde_json::json!({"data": [{"totals": {}}]}),
+        ] {
+            assert!(parse_llvm_cov(&serde_json::to_vec(&malformed).unwrap()).is_err());
+        }
+        let mut malformed = complete_coverage_json(10, 9);
+        malformed["data"][0]["files"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("summary");
+        assert!(
+            parse_llvm_cov(&serde_json::to_vec(&malformed).unwrap())
+                .unwrap_err()
+                .contains("no summary")
+        );
+        assert!(QualityBaseline::load(Path::new("/definitely/missing/baseline.json")).is_err());
     }
 }

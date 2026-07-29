@@ -1,6 +1,6 @@
 # Reliability and continuous testing contract
 
-**Status:** accepted for M10.5 / Gate H0
+**Status:** accepted for M10.5b / Gate H0
 
 This contract defines how Tondo turns tests into reproducible evidence. It does
 not change Tondo 0.1 semantics and does not implement the future Tondo 0.2
@@ -35,10 +35,10 @@ One logical test is not necessarily one source file or one execution:
 - Tondo 0.2 testing-spec fences are `future-contract`; they are never counted
   as executable Tondo 0.1 coverage.
 
-The M10.5 inventory contains 1,400 logical tests and 1,619 repetitions. Of
-those, 38 are future contracts, three are fuzz campaigns, and one is a
-non-executable pseudocode fence. Counts are derived from entries and cannot be
-edited independently.
+The M10.5b inventory contains 1,445 logical tests and 1,664 repetitions. Of
+those, 1,403 are executable, 38 are future contracts, three are fuzz campaigns,
+and one is a non-executable pseudocode fence. Counts are derived from entries
+and cannot be edited independently.
 
 The inventory rejects:
 
@@ -180,9 +180,31 @@ deterministic gate.
 `cargo-llvm-cov 0.8.7` measures every workspace target. The baseline stores
 lines, functions, and regions globally and separately for parser, checkers,
 HIR/MIR/bytecode verifiers, heap, execution, and untrusted protocols. No source
-is excluded to improve the percentage. The reviewed M10.5 baseline is 81.11%
-of lines, 78.60% of functions, and 79.25% of regions. Each basis-point
-threshold is the reviewed observed value; a decrease fails.
+is excluded to improve the percentage.
+
+M10.5b executes the complete 205-case published conformance suite in-process,
+so compiler, adapter, protocol, semantic-query, and VM work contributes to the
+same instrumented report instead of disappearing behind a subprocess. It also
+adds closed negative and boundary contracts for the CLI, canonical artifacts,
+manifest and adapter protocols, semantic snapshots, bytecode verification and
+disassembly, managed runtime values, and the reliability tooling itself.
+
+The reviewed M10.5b observation is 86.11% of lines (104,699/121,590), 83.62%
+of functions (7,171/8,576), and 84.45% of regions (150,780/178,550). The
+machine gate deliberately truncates those observations to exact non-regression
+floors of 8,610, 8,361, and 8,444 basis points. Its line floors by risk are:
+
+- parser: 9,451 basis points;
+- checkers: 8,730;
+- HIR/MIR/bytecode verifiers: 7,926;
+- heap and managed values: 9,713;
+- lowering and execution: 8,478; and
+- untrusted artifacts, projects, conformance, adapters, and reliability
+  protocols: 8,818.
+
+Function and region floors for every risk scope remain machine-readable in
+`testing/quality-baseline.json`. Every floor is the reviewed observed value; a
+decrease fails.
 
 `cargo-mutants 27.1.0` runs a bounded, explicit 28-mutant selection over:
 
@@ -233,7 +255,7 @@ cargo run -p tondo-reliability --locked -- quality capture \
   --root . \
   --coverage target/reliability/quality/coverage.json \
   --mutants target/reliability/quality/mutation/mutants.out/outcomes.json \
-  --revision M10.5-H0
+  --revision M10.5b-H0
 ~~~
 
 The strict gate must remain green after any regenerated record.

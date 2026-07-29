@@ -490,6 +490,14 @@ fn validate_source_extension(path: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    fn arguments(values: &[&str]) -> Vec<OsString> {
+        values.iter().map(OsString::from).collect()
+    }
+
+    fn invocation_error(values: &[&str]) -> String {
+        parse_invocation(&arguments(values)).unwrap_err()
+    }
+
     #[test]
     fn parses_json_diagnostics_in_either_option_form() {
         for arguments in [
@@ -587,5 +595,171 @@ mod tests {
             Path::new("project/out/../interface.ti"),
             Path::new("project/interface.ti")
         ));
+    }
+
+    #[test]
+    fn invocation_rejects_every_ambiguous_or_incomplete_cli_shape() {
+        let invalid = [
+            (&[][..], "UTF-8 command"),
+            (&["unknown", "main.to"], "unknown command"),
+            (&["run", "--"], "must appear before `--`"),
+            (
+                &["check", "--diagnostic-format"],
+                "`--diagnostic-format` requires",
+            ),
+            (
+                &["check", "--diagnostic-format", "xml", "main.to"],
+                "unknown diagnostic format",
+            ),
+            (&["check", "--warnings"], "`--warnings` requires"),
+            (
+                &["check", "--warnings", "all", "main.to"],
+                "unknown warning profile",
+            ),
+            (&["check", "--manifest"], "`--manifest` requires"),
+            (
+                &["check", "--manifest", "one.json", "--manifest", "two.json"],
+                "`--manifest` may appear only once",
+            ),
+            (&["check", "--lockfile"], "`--lockfile` requires"),
+            (
+                &[
+                    "check",
+                    "--manifest",
+                    "tondo.json",
+                    "--lockfile",
+                    "one.lock",
+                    "--lockfile",
+                    "two.lock",
+                ],
+                "`--lockfile` may appear only once",
+            ),
+            (
+                &["check", "--emit-interface"],
+                "`--emit-interface` requires",
+            ),
+            (
+                &[
+                    "check",
+                    "main.to",
+                    "--emit-interface",
+                    "one.ti",
+                    "--emit-interface",
+                    "two.ti",
+                ],
+                "`--emit-interface` may appear only once",
+            ),
+            (&["check", "--emit-artifact"], "`--emit-artifact` requires"),
+            (
+                &[
+                    "check",
+                    "main.to",
+                    "--emit-artifact",
+                    "one.ta",
+                    "--emit-artifact",
+                    "two.ta",
+                ],
+                "`--emit-artifact` may appear only once",
+            ),
+            (&["check", "--unknown", "main.to"], "unknown option"),
+            (
+                &["check", "main.to", "--manifest", "tondo.json"],
+                "choose either",
+            ),
+            (
+                &["fmt", "--manifest", "tondo.json"],
+                "accepts a source file",
+            ),
+            (
+                &["fmt", "main.to", "--emit-interface", "main.ti"],
+                "build products",
+            ),
+            (&["fmt", "--warnings=core", "main.to"], "warning profiles"),
+            (
+                &["check", "--lockfile", "tondo.lock.json", "main.to"],
+                "requires `--manifest`",
+            ),
+            (&["check", "main.tondo"], "`.to` extension"),
+            (
+                &[
+                    "check",
+                    "--manifest",
+                    "tondo.json",
+                    "--emit-interface",
+                    "tondo.json",
+                ],
+                "must not overwrite the manifest or lockfile",
+            ),
+            (
+                &[
+                    "check",
+                    "--manifest",
+                    "tondo.json",
+                    "--lockfile",
+                    "custom.lock",
+                    "--emit-artifact",
+                    "custom.lock",
+                ],
+                "must not overwrite the manifest or lockfile",
+            ),
+            (
+                &[
+                    "check",
+                    "main.to",
+                    "--emit-interface",
+                    "product",
+                    "--emit-artifact",
+                    "product",
+                ],
+                "distinct paths",
+            ),
+            (
+                &["check", "main.to", "--emit-artifact", "main.to"],
+                "must not overwrite the source file",
+            ),
+        ];
+
+        for (values, expected) in invalid {
+            let error = invocation_error(values);
+            assert!(
+                error.contains(expected),
+                "`{values:?}` returned unexpected error: {error}"
+            );
+        }
+
+        for values in [
+            &["check", "--diagnostic-format", "human", "main.to"][..],
+            &["check", "--warnings", "core", "main.to"][..],
+            &["check", "--warnings=core", "main.to"][..],
+        ] {
+            parse_invocation(&arguments(values)).unwrap();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_commands_and_source_names_are_rejected_at_their_boundaries() {
+        use std::os::unix::ffi::OsStringExt;
+
+        assert!(
+            parse_invocation(&[OsString::from_vec(vec![0xff])])
+                .unwrap_err()
+                .contains("UTF-8 command")
+        );
+        let invalid_name = OsString::from_vec(vec![0xff, b'.', b't', b'o']);
+        assert!(
+            parse_invocation(&[OsString::from("check"), invalid_name.clone()])
+                .unwrap_err()
+                .contains("filename is not valid UTF-8")
+        );
+        assert!(
+            parse_invocation(&[
+                OsString::from("check"),
+                OsString::from("main.to"),
+                invalid_name,
+            ])
+            .unwrap_err()
+            .contains("exactly one source file")
+        );
     }
 }

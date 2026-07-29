@@ -246,3 +246,47 @@ fn project_check_uses_the_default_lockfile_and_emits_canonical_products() {
 
     fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn source_io_and_product_write_failures_have_stable_exit_classes() {
+    let missing = std::env::temp_dir().join(format!(
+        "missing-tondo-cli-{}-{}.to",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .arg("check")
+        .arg(&missing)
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot read source"));
+
+    let source = source_file();
+    let directory = std::env::temp_dir().join(format!(
+        "tondo-cli-product-dir-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir(&directory).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .arg("check")
+        .arg(&source)
+        .arg("--emit-interface")
+        .arg(&directory)
+        .output()
+        .unwrap();
+    fs::remove_file(source).unwrap();
+    fs::remove_dir(directory).unwrap();
+
+    assert_eq!(output.status.code(), Some(3));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot write interface"));
+}
