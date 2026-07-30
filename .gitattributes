@@ -1,3 +1,7 @@
+# Repository text has one checkout representation so source identities do not
+# depend on the host's core.autocrlf setting.
+* text=auto eol=lf
+
 # Runtime stdout sidecars are exact byte snapshots on every host.
 *.stdout -text
 
