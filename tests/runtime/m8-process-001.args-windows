@@ -1,2 +1,2 @@
-<nul set /p "=stdout" & <nul set /p "=stderr" 1>&2
+powershell.exe -NoLogo -NoProfile -NonInteractive -Command "[Console]::Out.Write('stdout'); [Console]::Error.Write('stderr')"
 for /L %i in (1,1,2147483647) do @rem

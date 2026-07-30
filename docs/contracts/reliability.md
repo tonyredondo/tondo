@@ -40,8 +40,8 @@ One logical test is not necessarily one source file or one execution:
   They are contracts within Tondo 0.1, but are never counted as executable
   coverage before their implementation and live evidence exist.
 
-The current live inventory contains 1,526 logical tests and 1,745 repetitions.
-Of those, 1,476 are executable, 38 are draft-pending contracts, three are fuzz
+The current live inventory contains 1,527 logical tests and 1,746 repetitions.
+Of those, 1,477 are executable, 38 are draft-pending contracts, three are fuzz
 campaigns, and nine are non-executable fences. Counts are derived from entries
 and cannot be edited independently.
 

@@ -34,8 +34,8 @@
     }
   ],
   "summary": {
-    "logical_tests": 1526,
-    "repetitions": 1745,
+    "logical_tests": 1527,
+    "repetitions": 1746,
     "physical_sources": 410,
     "unique_source_hashes": 756,
     "by_kind": {
@@ -43,13 +43,13 @@
       "draft-contract": 38,
       "fixture": 129,
       "fuzz-target": 3,
-      "rust-test": 841,
+      "rust-test": 842,
       "spec-fence": 310
     },
     "by_status": {
       "campaign": 3,
       "draft-pending": 38,
-      "executable": 1476,
+      "executable": 1477,
       "non-executable": 9
     },
     "by_phase": {
@@ -70,7 +70,7 @@
       "reliability": 49,
       "resolution": 27,
       "runtime": 159,
-      "semantic": 301,
+      "semantic": 302,
       "testing": 38,
       "tooling": 4
     }
@@ -26139,7 +26139,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "9e030719974723d32c701b582fe9de4b5b0584cd2a83a97ff1a3877a9e34d541",
+      "source_sha256": "e445a3b9fa1cbf1832f5dc6ad08c1b9c9566ede844f1d4399f9676b11207caca",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -26157,7 +26157,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "9e030719974723d32c701b582fe9de4b5b0584cd2a83a97ff1a3877a9e34d541",
+      "source_sha256": "e445a3b9fa1cbf1832f5dc6ad08c1b9c9566ede844f1d4399f9676b11207caca",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -26175,7 +26175,25 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "9e030719974723d32c701b582fe9de4b5b0584cd2a83a97ff1a3877a9e34d541",
+      "source_sha256": "e445a3b9fa1cbf1832f5dc6ad08c1b9c9566ede844f1d4399f9676b11207caca",
+      "target": "host-rust",
+      "document": null,
+      "edition": "host",
+      "status": "executable",
+      "sidecars": []
+    },
+    {
+      "id": "rust:tondo-compiler:tests::support::mod:runtime_exit_mismatches_retain_diagnostics_and_stdout",
+      "kind": "rust-test",
+      "crate_name": "tondo-compiler",
+      "phase": "semantic",
+      "source": "crates/tondo-compiler/tests/support/mod.rs",
+      "fixture": null,
+      "group": "integration",
+      "requirements": [],
+      "oracle": "rust-assertions",
+      "repetitions": 1,
+      "source_sha256": "e445a3b9fa1cbf1832f5dc6ad08c1b9c9566ede844f1d4399f9676b11207caca",
       "target": "host-rust",
       "document": null,
       "edition": "host",

@@ -173,9 +173,11 @@ impl Fixture {
                     .map_err(|error| error.to_string())?;
                 if observation.exit_code() != expected_exit {
                     return Err(format!(
-                        "{} exited {}, expected {expected_exit}",
+                        "{} exited {}, expected {expected_exit}\ndiagnostics:\n{}\nstdout: {:?}",
                         self.source.display(),
-                        observation.exit_code()
+                        observation.exit_code(),
+                        observation.human,
+                        String::from_utf8_lossy(&observation.stdout)
                     ));
                 }
                 if self.sidecar("codes").exists() {
@@ -500,6 +502,27 @@ mod tests {
                 .unwrap_err()
                 .contains("LF-terminated")
         );
+        remove_fixture(&fixture);
+    }
+
+    #[test]
+    fn runtime_exit_mismatches_retain_diagnostics_and_stdout() {
+        let fixture = temporary_fixture(FixtureKind::Runtime);
+        fs::write(fixture.sidecar("exit"), b"0\n").unwrap();
+        let observation = FixtureObservation {
+            status: CompilationStatus::Success,
+            exit_code: 101,
+            codes: Vec::new(),
+            json: String::new(),
+            human: "panic detail".into(),
+            stdout: b"progress".to_vec(),
+            stderr: Vec::new(),
+        };
+
+        let error = fixture.assert_matches(&observation).unwrap_err();
+        assert!(error.contains("exited 101, expected 0"));
+        assert!(error.contains("panic detail"));
+        assert!(error.contains("progress"));
         remove_fixture(&fixture);
     }
 }
