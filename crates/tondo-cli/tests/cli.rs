@@ -1,5 +1,6 @@
 use std::fs;
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tondo_compiler::artifact::{BuildArtifact, CompiledInterface, sha256};
@@ -7,12 +8,16 @@ use tondo_compiler::project::{
     BOOTSTRAP_STANDARD_PACKAGE, LOCKFILE_FORMAT, MANIFEST_FORMAT, bootstrap_standard_hash,
 };
 
+static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
+
 fn source_file_with(bytes: &[u8]) -> std::path::PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("system clock must follow the Unix epoch")
         .as_nanos();
-    let path = std::env::temp_dir().join(format!("tondo-cli-{}-{nonce}.to", std::process::id()));
+    let id = TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+    let path =
+        std::env::temp_dir().join(format!("tondo-cli-{}-{nonce}-{id}.to", std::process::id()));
     fs::write(&path, bytes).unwrap();
     path
 }
