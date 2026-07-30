@@ -6,6 +6,8 @@
 *.args-windows text eol=lf
 
 # Historical conformance packages and canonical manifests are byte-exact.
+/TONDO_*_SPEC.md -text
 /conformance/0.1/** -text
 /conformance/checkpoints/** -text
 /conformance/live/*.json -text
+/testing/*.json -text
