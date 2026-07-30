@@ -13,6 +13,7 @@ pub mod resolve;
 pub mod semantic;
 pub mod source;
 pub mod syntax;
+pub mod toolchain;
 pub mod types;
 
 /// Language edition targeted by the bootstrap compiler.

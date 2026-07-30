@@ -240,6 +240,17 @@ impl ProjectPlan {
         Self::from_wire(manifest_bytes, lockfile_bytes, manifest, lockfile)
     }
 
+    /// Parses the explicit toolchain `/2` records without changing the
+    /// historical bootstrap `/1` plan above.  The returned plan is still
+    /// pure: it only validates supplied bytes and enumerates required inputs.
+    pub fn parse_v2(
+        manifest_bytes: &[u8],
+        lockfile_bytes: &[u8],
+        descriptor_bytes: &[u8],
+    ) -> Result<crate::toolchain::ProjectPlanV2, crate::toolchain::FormatError> {
+        crate::toolchain::ProjectPlanV2::parse(manifest_bytes, lockfile_bytes, descriptor_bytes)
+    }
+
     pub fn manifest_hash(&self) -> &str {
         &self.manifest_hash
     }

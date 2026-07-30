@@ -1,11 +1,11 @@
 # Tondo: tracker de implementación
 
-**Estado:** M10.5b y Gate H0 están cerrados sobre el checkpoint previo; Tondo
+**Estado:** M10.5b, Gate H0 y `META-FORMAT-001` están cerrados sobre el checkpoint previo; Tondo
 0.1 sigue en desarrollo y las superficies consolidadas de metaprogramación,
 testing y Standard Library deben implementarse y añadirse a conformidad antes
 de publicar la primera versión
 
-**Versión del tracker:** 1.00
+**Versión del tracker:** 1.01
 
 **Última actualización:** 2026-07-30
 
@@ -15,8 +15,10 @@ de publicar la primera versión
 - [Arquitectura base de Standard Library 0.1](./TONDO_STANDARD_LIBRARY_SPEC.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
-**Objetivo inmediato:** implementar `META-FORMAT-001`, primer nodo compartido por
-metaprogramación y el nuevo plan de testing. A partir de ahí avanzan dos lanes:
+**Objetivo inmediato:** cerrar `PARSER-STACK-001`, el siguiente prerrequisito
+portable de Wave 2. `META-FORMAT-001` ya dejó aislados los formatos `/2` y el
+descriptor estándar para que las lanes de metaprogramación y testing puedan
+avanzar sin reinterpretar el checkpoint `/1`. A partir de aquí avanzan dos lanes:
 M10.7 sobre los slices tempranos de `std.meta`/`std.reflect`, y M10.6 sobre
 `std.bytes`, `std.env` read-only, el time-base monotónico y `defer await`. Gate
 G5 solo vuelve a cerrarse cuando ambas lanes forman parte de la conformidad
@@ -3191,12 +3193,15 @@ vez los errores de los slices anteriores.
   estructura pública y no ofrece `Any`, value access, constructors, invocation,
   private members, layout ni enumeración global.
 
-- [ ] **META-FORMAT-001 — Implementar formatos toolchain `/2`.** Parsear,
+- [x] **META-FORMAT-001 — Implementar formatos toolchain `/2`.** Parsear,
   validar y canonicalizar los nuevos records y el descriptor estándar `/1`;
   rechazar campos, providers, meta packages, roots, límites, paths, outputs y
   hashes inconsistentes antes de ejecutar código.
   Mantener un lector explícito del checkpoint `/1` solo si la migración lo
-  necesita; nunca reinterpretarlo como `/2`.
+  necesita; nunca reinterpretarlo como `/2`. Cerrado con
+  `crates/tondo-compiler/src/toolchain.rs`, `ProjectPlan::parse_v2`, contrato
+  `docs/contracts/toolchain-formats-v2.md` y tests de round-trip, canonicalidad,
+  grafos, hashes, outputs y separación `/1`/`/2`.
 
 ### 18.2 Frontend y modelo semántico
 
@@ -4133,10 +4138,11 @@ gates en una barrera artificial.
     `testing/conformance-ratchet.json` fija hashes de manifest, inventario,
     matriz y quality baseline; no atribuye las capas pendientes como pass y el
     gate estricto lo valida en cada ejecución.
-21. [ ] **Wave 1 — Formatos compartidos.** Implementar `META-FORMAT-001` con
-    parse/canonicalización/round-trip/rechazo de `/2`. Mini-gate: manifest,
-    lockfile, interface, artifact y descriptor estándar pueden evolucionar en
-    la línea viva sin tocar `/1`.
+21. [x] **Wave 1 — Formatos compartidos.** Implementar `META-FORMAT-001` con
+    parse/canonicalización/round-trip/rechazo de `/2`. El mini-gate queda
+    cerrado: manifest, lockfile, interface, artifact y descriptor estándar
+    evolucionan mediante un lector explícito sin tocar `/1`; los hashes del
+    checkpoint histórico permanecen intactos.
 22. [ ] **Wave 2 — Prerrequisitos y frontends, en paralelo.**
     - Base portable: cerrar `PARSER-STACK-001`; lexer y planes que no modifican
       descenso sintáctico pueden avanzar en paralelo, pero
@@ -4236,6 +4242,21 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.01 — 2026-07-30
+
+- Se cierra `META-FORMAT-001`. El nuevo módulo puro `toolchain` valida y
+  canonicaliza manifest/lockfile `/2`, interfaces y artefactos `/2`, y el
+  descriptor estándar `/1`; comprueba grafos runtime/meta, providers,
+  generators, límites, paths, colisiones, hashes de contenido y
+  `build_hash` antes de enumerar entradas.
+- `ProjectPlan::parse_v2` expone la frontera explícita sin modificar los
+  lectores `/1` ni el oráculo histórico. Se añade el contrato
+  `docs/contracts/toolchain-formats-v2.md` y cobertura unitaria de rechazo y
+  round-trip.
+- Wave 1 queda cerrada. La siguiente acción es `PARSER-STACK-001` en Wave 2;
+  la sintaxis `derive` sigue bloqueada hasta disponer de una pila de parser
+  portable.
 
 ### 1.00 — 2026-07-30
 

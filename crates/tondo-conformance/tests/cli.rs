@@ -54,7 +54,7 @@ fn validate_command_reports_the_live_draft_identity() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).expect("identity must be UTF-8");
-    assert!(stdout.starts_with("tondo-0.1-live 0.1 open 2 "));
+    assert!(stdout.starts_with("tondo-0.1-live 0.1 open 3 "));
     assert_eq!(stdout.trim_end().rsplit(' ').next().unwrap().len(), 64);
 }
 

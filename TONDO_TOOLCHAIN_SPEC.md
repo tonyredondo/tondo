@@ -373,6 +373,29 @@ ambas identidades y hashes para que la selección siga siendo explícita y
 auditable. Dentro del grafo meta, `std` resuelve a ese paquete; nunca al
 `standard` runtime.
 
+La codificación concreta del descriptor es compacta y con campos en este orden:
+
+~~~json
+{
+  "format": "tondo-standard-descriptor-0.1/1",
+  "runtime": {
+    "package_id": "toolchain:std:0.1.0",
+    "content_hash": "sha256:..."
+  },
+  "meta": {
+    "package_id": "toolchain:std-meta:0.1.0",
+    "content_hash": "sha256:..."
+  },
+  "derive_providers": []
+}
+~~~
+
+Cada elemento de `derive_providers` usa la misma forma expandida del lockfile y
+debe llevar `origin: "standard"`. El lector `/2` expone este contrato como
+`StandardDescriptor`; `ProjectPlanV2::parse` exige que `standard`, `meta_standard`
+y todos los providers estándar del lockfile coincidan con él antes de enumerar
+fuentes.
+
 ## 4. Source sets
 
 ### 4.1 Condición
