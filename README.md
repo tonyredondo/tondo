@@ -1,8 +1,12 @@
 # Tondo
 
-**Released:** Tondo 0.1 language edition, reference toolchain 0.1.0
+**Development status:** Tondo 0.1 is not published. The reference toolchain has
+an internal 0.1.0 checkpoint; the current draft additionally specifies static
+metaprogramming, `defer await` and first-class testing that are not implemented
+yet.
 
-**Conformant target:** `tondo-vm-hosted` / `hosted` / `[console, process]`
+**Checkpoint conformance target:** `tondo-vm-hosted` / `hosted` /
+`[console, process]`
 
 Reference workspace for the Tondo compiler.
 
@@ -179,14 +183,17 @@ four iteration forms are also verified through the VM. `for ref` observes
 stable `Array`, `Map`, and `Set` places; `for mut` and `for var` update stable
 writable `Array` and `Map` elements without exposing mutable keys or changing
 the collection traversed by the cursor. User-defined `Iterator[T]` targets
-retain one statically coherent element type. Synchronous `defer` now captures
+retain one statically coherent element type. At this checkpoint, synchronous
+`defer` captures
 its operands at registration,
 drains lexical scopes in LIFO order on normal and panic exits, and follows or
 disarms a unique affine guard through verified ownership transfers. Async
-cleanup cannot itself suspend; structured task teardown runs before the defers
+cleanup cannot itself suspend there; structured task teardown runs before the defers
 of the abandoned task scope and cannot leak cancellation into a recoverable
-error type. This exact toolchain and target are covered by the portable Tondo
-0.1 conformance suite; the claim does not extend to another backend, profile,
+error type. This exact checkpoint and target are covered by its pinned portable
+Tondo 0.1 conformance snapshot; that evidence predates the draft's
+`derive`/meta, `defer await`, and `suite`/`test` additions and does not
+establish conformance for the complete current draft, another backend, profile,
 or capability set.
 
 ## Project documentation
@@ -194,9 +201,10 @@ or capability set.
 - `TONDO_LANGUAGE_SPEC.md` is the normative language definition.
 - `TONDO_STANDARD_LIBRARY_SPEC.md` defines the normative architecture,
   versioning, module catalog, and publication rules for the Standard Library.
-- `TONDO_TOOLCHAIN_SPEC.md` defines the implemented manifest, lockfile,
-  interface, artifact, and privileged-unit formats.
-- `TONDO_TESTING_SPEC.md` defines the Tondo 0.2 testing language, runner, and
+- `TONDO_TOOLCHAIN_SPEC.md` defines the first-version toolchain contract. The
+  checkpoint implements its `/1` formats; the `/2` generation contract remains
+  pending.
+- `TONDO_TESTING_SPEC.md` defines the Tondo 0.1 testing language, runner, and
   sealed `std.testing` boundary.
 - `docs/architecture.md` describes the compiler pipeline and phase invariants.
 - `docs/adr/` records accepted architectural decisions.
@@ -225,29 +233,32 @@ or capability set.
 - `docs/contracts/diagnostics-json.md` freezes the machine-readable diagnostics
   format for Tondo 0.1.
 - `docs/contracts/conformance.md` defines the portable suite, adapter boundary,
-  and Gate G5 release checks.
+  and checkpoint Gate G5 evidence.
 - `docs/contracts/reliability.md` defines the M10.5 inventory, traceability,
   CI tiers, generators, models, fuzzing, coverage, mutation, and regression
   gates.
 - `docs/contracts/types.md` records the canonical semantic type representation.
-- `docs/releases/0.1.0.md` records the exact release matrix, limitations, and
-  reproducible conformance evidence.
+- `docs/releases/0.1.0.md` records the exact internal checkpoint matrix,
+  limitations, and reproducible conformance evidence; it is not a public
+  release note.
 
-## Prebuilt test binaries
+## CI test binaries
 
 The
 [Build binaries](https://github.com/tonyredondo/tondo/actions/workflows/build-binaries.yml)
-workflow builds and smoke-tests the public `tondo` CLI on native runners for:
+workflow builds and smoke-tests the checkpoint `tondo` CLI on native runners
+for:
 
 - Linux x86_64 and ARM64;
 - macOS Intel and Apple Silicon;
 - Windows x86_64.
 
-It runs for version tags and can also be started manually from GitHub Actions.
-Each platform artifact is retained for 14 days and contains a native archive
-plus its SHA-256 checksum. The archive includes the CLI, this README, and both
-language and toolchain specifications. It also contains the same hello-world
-program exercised by the workflow:
+It runs for internal version tags and can also be started manually from GitHub
+Actions. These workflow artifacts are development binaries, not a published
+Tondo release. Each platform artifact is retained for 14 days and contains a
+native archive plus its SHA-256 checksum. The archive includes the CLI, this
+README, and both language and toolchain specifications. It also contains the
+same hello-world program exercised by the workflow:
 
 ~~~text
 ./tondo --version
@@ -264,20 +275,17 @@ cargo check --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --all-targets --locked
 RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps --locked
-cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
-cargo run -p tondo-conformance --locked -- validate \
-  --root . \
-  --manifest conformance/0.1/manifest.json
-cargo run -p tondo-conformance --locked -- run \
-  --root . \
-  --manifest conformance/0.1/manifest.json \
-  --adapter target/debug/tondo-reference-adapter \
-  --output /tmp/tondo-reference-0.1.0.json
-cargo run -p tondo-reliability --locked -- check --root .
 ~~~
 
-The equivalent canonical gate is `bash scripts/test-gate.sh`. Deterministic
-fuzz smoke tests use `TONDO_FUZZ_RUNS=128 bash scripts/fuzz-smoke.sh`.
-Coverage and the reviewed mutation selection require the pinned external tools
-documented in `docs/contracts/reliability.md` and run through
-`bash scripts/quality-gate.sh`.
+The pinned checkpoint conformance and its original canonical
+`bash scripts/test-gate.sh` are reproducible from a separate checkout of Git tag
+`v0.1.0`. On the current draft, that old manifest deliberately fails its
+specification-hash check until M10.7 is implemented and receives new cases; it
+must not be re-blessed as evidence for the expanded language.
+
+Deterministic fuzz smoke tests use
+`TONDO_FUZZ_RUNS=128 bash scripts/fuzz-smoke.sh`. Coverage and the reviewed
+mutation selection require the pinned external tools documented in
+`docs/contracts/reliability.md` and run through
+`bash scripts/quality-gate.sh` once their normative inventory has been updated
+for the current draft.

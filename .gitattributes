@@ -1,0 +1,6 @@
+# Runtime stdout sidecars are exact byte snapshots on every host.
+*.stdout -text
+
+# Historical conformance packages and canonical manifests are byte-exact.
+/conformance/checkpoints/** -text
+/conformance/live/*.json -text

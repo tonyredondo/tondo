@@ -5,6 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
+use tondo_conformance::lineage::{LIVE_LINEAGE_PATH, LiveLineage};
 use tondo_conformance::manifest::{ConformanceCase, LoadedSuite};
 
 use crate::inventory::Inventory;
@@ -118,15 +119,48 @@ pub fn build(root: &Path, inventory: &Inventory) -> Result<CoverageMatrix, Strin
         .map_err(|error| format!("TONDO_LANGUAGE_SPEC.md is not valid UTF-8: {error}"))?;
     let document_sha256 = sha256(&document_bytes);
     let inventory_sha256 = sha256(&canonical_json(inventory)?);
-    let suite = LoadedSuite::load(root, Path::new("conformance/0.1/manifest.json"))
-        .map_err(|error| error.to_string())?;
+    let lineage =
+        LiveLineage::load(root, Path::new(LIVE_LINEAGE_PATH)).map_err(|error| error.to_string())?;
+    let suite = lineage.checkpoint_suite();
+    let checkpoint_document =
+        std::str::from_utf8(lineage.checkpoint_specification()).map_err(|error| {
+            format!("checkpoint language specification is not valid UTF-8: {error}")
+        })?;
+    let checkpoint_requirements = extract_requirements(checkpoint_document)?
+        .into_iter()
+        .map(|requirement| (requirement.id, sha256(requirement.text.as_bytes())))
+        .collect::<BTreeMap<_, _>>();
     let extracted = extract_requirements(document)?;
     let evidence = load_evidence(root, &document_sha256, inventory, &extracted)?;
+    let implemented_requirements = lineage.implemented_requirements();
+    let current_ids = extracted
+        .iter()
+        .map(|requirement| requirement.id.as_str())
+        .collect::<BTreeSet<_>>();
+    if let Some(requirement) = implemented_requirements
+        .iter()
+        .find(|requirement| !current_ids.contains(**requirement))
+    {
+        return Err(format!(
+            "live case layer names unknown requirement `{requirement}`"
+        ));
+    }
     let mut requirements = extracted
         .into_iter()
         .map(|item| {
             let claim = evidence.get(&item.id);
-            classify(item, &document_sha256, &suite, claim)
+            let inherited_unchanged = checkpoint_requirements
+                .get(&item.id)
+                .is_some_and(|hash| *hash == sha256(item.text.as_bytes()));
+            let implemented_live = implemented_requirements.contains(item.id.as_str());
+            classify(
+                item,
+                &document_sha256,
+                suite,
+                claim,
+                inherited_unchanged,
+                implemented_live,
+            )
         })
         .collect::<Vec<_>>();
     requirements.sort_by(|left, right| left.id.cmp(&right.id));
@@ -183,7 +217,11 @@ pub fn validate(matrix: &CoverageMatrix) -> Result<(), String> {
         }
         if !matches!(
             requirement.status.as_str(),
-            "covered" | "target-not-applicable" | "stdlib-pending" | "toolchain-limit"
+            "covered"
+                | "draft-pending"
+                | "target-not-applicable"
+                | "stdlib-pending"
+                | "toolchain-limit"
         ) {
             return Err(format!(
                 "requirement `{}` has unknown status `{}`",
@@ -369,6 +407,8 @@ fn classify(
     document_sha256: &str,
     suite: &LoadedSuite,
     claim: Option<&EvidenceClaim>,
+    inherited_unchanged: bool,
+    implemented_live: bool,
 ) -> Requirement {
     let codes = diagnostic_codes(&extracted.text);
     let failure_cases = matching_cases(&suite.manifest().cases, &codes, false);
@@ -383,7 +423,32 @@ fn classify(
         "TONDO_LANGUAGE_SPEC.md:{}#{}",
         extracted.line_start, extracted.heading_anchor
     );
-    let (status, reason, evidence, dimensions) = if let Some(claim) = claim {
+    let (status, reason, evidence, dimensions) = if !inherited_unchanged {
+        if !implemented_live {
+            let reason = "The requirement is new or changed since the immutable checkpoint and no live case layer claims its implementation.";
+            (
+                "draft-pending",
+                reason,
+                vec![location.clone()],
+                waived_dimensions(reason),
+            )
+        } else if let Some(claim) = claim {
+            (
+                "covered",
+                "A live case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
+                claim_evidence(claim),
+                claim.dimensions.clone(),
+            )
+        } else {
+            let reason = "A live case layer names this new or changed requirement, but no reviewed executable evidence claim covers it.";
+            (
+                "toolchain-limit",
+                reason,
+                vec![location.clone()],
+                waived_dimensions(reason),
+            )
+        }
+    } else if let Some(claim) = claim {
         (
             "covered",
             "The versioned normative evidence map links this requirement to executable public-boundary evidence.",
@@ -809,6 +874,8 @@ fn phase_for_section(section: &str) -> &'static str {
         Some(23) => "grammar",
         Some(24) => "integrated-examples",
         Some(25 | 26) => "boundary",
+        Some(27) => "metaprogramming",
+        Some(28) => "testing",
         _ => "language-contract",
     }
 }
@@ -818,6 +885,7 @@ fn risk_for_section(section: &str) -> &'static str {
         Some(5 | 6 | 7 | 8 | 12 | 13 | 14 | 15 | 16 | 20 | 22) => "critical",
         Some(9 | 10 | 11 | 17 | 18 | 19 | 23) => "high",
         Some(21 | 24 | 26) => "medium",
+        Some(27 | 28) => "critical",
         _ => "low",
     }
 }
@@ -910,6 +978,65 @@ El compilador debe aceptar el caso.
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn changed_live_requirements_cannot_inherit_checkpoint_evidence() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .unwrap();
+        let lineage = LiveLineage::load(root, LIVE_LINEAGE_PATH).unwrap();
+        let extracted = || ExtractedRequirement {
+            id: "TL01-LIVE-R001".into(),
+            heading: "Live requirement".into(),
+            heading_anchor: "live-requirement".into(),
+            line_start: 1,
+            line_end: 1,
+            text: "El compilador debe aceptar la forma viva.".into(),
+            section: "28".into(),
+        };
+        let document_sha256 = "a".repeat(64);
+
+        let pending = classify(
+            extracted(),
+            &document_sha256,
+            lineage.checkpoint_suite(),
+            None,
+            false,
+            false,
+        );
+        assert_eq!(pending.status, "draft-pending");
+
+        let declared_without_evidence = classify(
+            extracted(),
+            &document_sha256,
+            lineage.checkpoint_suite(),
+            None,
+            false,
+            true,
+        );
+        assert_eq!(declared_without_evidence.status, "toolchain-limit");
+        assert!(
+            declared_without_evidence
+                .classification_reason
+                .contains("no reviewed executable evidence")
+        );
+
+        let claim = EvidenceClaim {
+            requirements: vec!["TL01-LIVE-R001".into()],
+            dimensions: evidence_dimensions("conformance:case"),
+        };
+        let covered = classify(
+            extracted(),
+            &document_sha256,
+            lineage.checkpoint_suite(),
+            Some(&claim),
+            false,
+            true,
+        );
+        assert_eq!(covered.status, "covered");
+        assert_eq!(covered.evidence, ["conformance:case"]);
     }
 
     #[test]

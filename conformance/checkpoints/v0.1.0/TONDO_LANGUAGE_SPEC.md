@@ -1,8 +1,8 @@
 # Tondo: especificación del lenguaje
 
-**Estado:** borrador normativo de la primera versión de Tondo; todavía no publicado
+**Estado:** especificación publicada Tondo 0.1
 
-**Revisión del Markdown:** 0.1-draft.10 — 2026-07-29
+**Revisión del Markdown:** 0.1 — 2026-07-28
 **Nombre:** Tondo  
 **Extensión:** `.to`  
 **Lema:** **Pequeño por diseño, completo en la práctica.**
@@ -41,8 +41,6 @@ En este documento, **debe** expresa un requisito de conformidad, **no puede** ex
 24. [Ejemplos integrados](#24-ejemplos-integrados)
 25. [Características deliberadamente ausentes](#25-características-deliberadamente-ausentes)
 26. [Frontera con la librería estándar](#26-frontera-con-la-librería-estándar)
-27. [Metaprogramación estática y reflection](#27-metaprogramación-estática-y-reflection)
-28. [Testing integrado](#28-testing-integrado)
 
 Apéndices:
 
@@ -146,8 +144,7 @@ Tondo 0.1 no pretende:
 - Imponer a todas las implementaciones una única estrategia interna de gestión
   automática de memoria.
 - Tener clases, herencia o jerarquías nominales de objetos.
-- Tener macros textuales, reescritura arbitraria del AST, evaluación dinámica o
-  metaprogramación con efectos ambientales implícitos.
+- Tener metaprogramación arbitraria, macros textuales o evaluación dinámica.
 - Tener excepciones recuperables mediante `throw`/`catch`.
 - Tener sobrecarga de operadores definida por el usuario.
 - Inferir firmas públicas ni tipos a través de módulos.
@@ -221,8 +218,6 @@ Se adoptan:
 - Ergonomía en llamadas con argumentos nombrados.
 - Funciones asíncronas cuyo contrato muestra el valor lógico que producen.
 - Concurrencia estructurada y cancelación ligada a scopes.
-- Generación de serializers durante compilación en lugar de reflection de
-  valores en runtime.
 
 No se adoptan:
 
@@ -547,14 +542,14 @@ Las palabras reservadas de Tondo 0.1 son:
 
 ~~~text
 alias      and        as         async      await
-break      const      continue   defer      derive
-else       enum       err        fail       false
-fn         for        if         impl       import
-in         let        match      mut        none
-not        ok         or         priv       pub
-ref        return     scope      self       some
-spawn      suite      test       trait      true
-type       unsafe     var        with
+break      const      continue   defer      else
+enum       err        fail       false      fn
+for        if         impl       import     in
+let        match      mut        none       not
+ok         or         priv       pub        ref
+return     scope      self       some       spawn
+trait      true       type       unsafe     var
+with
 ~~~
 
 | Keyword | Función |
@@ -568,7 +563,6 @@ type       unsafe     var        with
 | `const` | Declarar una constante de módulo |
 | `continue` | Avanzar a la siguiente iteración |
 | `defer` | Registrar cleanup de scope |
-| `derive` | Solicitar una implementación estática generada de uno o más traits |
 | `else` | Rama alternativa de `if` |
 | `enum` | Declarar una unión nominal |
 | `err` | Construir o reconocer error de `Result` |
@@ -595,8 +589,6 @@ type       unsafe     var        with
 | `self` | Receptor del método actual |
 | `some` | Construir o reconocer presencia de `Option` |
 | `spawn` | Iniciar una llamada asíncrona dentro de su `scope` propietario |
-| `suite` | Declarar un contenedor estático de tests en una fuente de test |
-| `test` | Declarar una hoja ejecutable en una fuente de test |
 | `trait` | Declarar un contrato de comportamiento estático |
 | `true` | Literal booleano |
 | `type` | Declarar un record o newtype nominal |
@@ -854,8 +846,6 @@ Los archivos de un módulo comparten:
 - Funciones.
 - Constantes.
 - Implementaciones.
-- Solicitudes `derive`.
-- Declaraciones `suite` y `test` cuando el source set está clasificado como test.
 - Declaraciones privadas.
 
 Los imports son locales al archivo para que las dependencias sean visibles donde se utilizan.
@@ -907,15 +897,9 @@ Se permiten:
 - `enum`.
 - `trait`.
 - `impl`.
-- `derive`.
 - `fn`.
-- `suite` y `test`, únicamente en fuentes clasificadas como test.
 
-En módulos ordinarios no se permiten sentencias ejecutables, `let`, `var` ni
-inicialización mutable en el nivel superior. Las declaraciones `suite` y `test`
-se reconocen sintácticamente en cualquier módulo para poder producir un
-diagnóstico preciso, pero fuera de una fuente de test producen `E2001` y no
-introducen ejecución superior en producción.
+En módulos ordinarios no se permiten sentencias ejecutables, `let`, `var` ni inicialización mutable en el nivel superior.
 
 Un archivo raíz compilado en modo script puede contener sentencias de nivel superior según la sección 20. Esas sentencias pertenecen a un `main` implícito; nunca se convierten en inicializadores de módulo.
 
@@ -936,13 +920,12 @@ Una constante debe poder evaluarse en compilación usando:
 - Otras constantes ya resueltas sin ciclos.
 
 Tondo 0.1 no introduce una keyword `comptime` ni permite llamar a funciones de
-usuario durante evaluación constante. Los programas generadores de la sección
-27 se ejecutan en una fase de build separada y no amplían este evaluador. Los
-constructores nominales y los intrinsics puros enumerados por el lenguaje no
-cuentan como llamadas de usuario. Un pánico que se produciría al evaluar una
-constante es un error de compilación. Un error recuperable representado como
-valor ordinario no lo es: por ejemplo, una conversión numérica comprobada
-conserva `ok(valor)` o `err(NumericConversionError...)` dentro de la constante.
+usuario durante evaluación constante. Los constructores nominales y los
+intrinsics puros enumerados por el lenguaje no cuentan como llamadas de
+usuario. Un pánico que se produciría al evaluar una constante es un error de
+compilación. Un error recuperable representado como valor ordinario no lo es:
+por ejemplo, una conversión numérica comprobada conserva `ok(valor)` o
+`err(NumericConversionError...)` dentro de la constante.
 
 Las constantes no pueden realizar I/O, acceder al reloj o al entorno, crear identidad mediante `Ref`, construir punteros, tasks, cursores afines, handles de recursos ni asignar memoria mutable observable. Una constante pública debe declarar su tipo porque ese tipo forma parte de la API del módulo.
 
@@ -1027,14 +1010,9 @@ Reglas:
 - Un generador declara entradas, salidas y configuración. Sus salidas son fuente
   Tondo ordinaria, reciben paths lógicos y pasan por el mismo lexer, formatter,
   typechecker y reglas de visibilidad.
-- Los generadores se ejecutan por el toolchain antes de la compilación completa,
-  nunca por imports, inicializadores o llamadas ordinarias. El modelo tipado,
-  sandbox, orden y hashes se definen en la sección 27 y en la especificación del
-  toolchain.
-- La generación no puede observar red, reloj, aleatoriedad, filesystem, entorno
-  ni ningún otro estado ambiental. Todo dato externo entra por valor como input
-  declarado y fijado por hash; un target que no pueda demostrarlo se rechaza en
-  vez de producir un artefacto “no reproducible”.
+- La generación no puede leer red, reloj, aleatoriedad o entorno no declarados y
+  seguir reclamando un build reproducible. El toolchain registra esas entradas o
+  marca el artefacto como no reproducible.
 
 El schema concreto del manifiesto, lockfile, interfaces, artefactos y unidades
 privilegiadas se define en
@@ -3729,9 +3707,8 @@ La forma canónica anterior equivale a aplicar `?` al resultado obtenido despué
 
 `await`:
 
-- Solo puede aparecer dentro de una función o cierre `async`, en un script cuyo
-  `main` implícito sea async o en una entrada de test cuyo contexto async se
-  infiera según 28.3; otro contexto produce `E1610`.
+- Solo puede aparecer dentro de una función o cierre `async`, o en un script cuyo
+  `main` implícito sea async; otro contexto produce `E1610`.
 - Acepta una llamada async nombrada, a un valor `async fn(...)`, a un callable
   concreto con el protocolo correspondiente, o un `Join[T, E]` producido por
   `spawn`; cualquier otra forma produce `E1611`.
@@ -3739,9 +3716,7 @@ La forma canónica anterior equivale a aplicar `?` al resultado obtenido despué
 - Consume el `Join` cuando su operando es un handle; el handle queda no disponible aunque la espera produzca error o pánico.
 - No crea concurrencia por sí mismo; dos awaits consecutivos son secuenciales.
 - No propaga errores implícitamente; `?` continúa siendo visible y separado.
-- No puede aparecer dentro de un bloque `defer`. La única forma de cleanup que
-  puede suspenderse es la llamada infalible `defer await` definida en 13.7; no
-  existe un bloque async equivalente.
+- No puede aparecer dentro de un bloque `defer` en 0.1. El cleanup asíncrono debe esperarse explícitamente antes de abandonar el scope.
 
 ### 11.12 Concurrencia estructurada con `scope` y `spawn`
 
@@ -3872,9 +3847,8 @@ Un bucle de CPU sin esos puntos no se cancela por preempción. Debe cooperar med
 - Se desenrollan scopes según el orden único de 8.10: primero termina el registro
   estructural de hijos de cada `scope` y después se drena su cleanup léxico en
   LIFO.
-- Se ejecutan tanto los `defer` síncronos como los `defer await` registrados y
-  el fallback de cada token terminal vivo que no tenga guard, exactamente una
-  vez.
+- Se ejecutan tanto los `defer` síncronos registrados como el fallback de cada
+  token terminal vivo que no tenga guard, exactamente una vez.
 - No se convierte la cancelación en un éxito ni se descartan errores ya observados.
 - El error o pánico que originó la salida conserva prioridad sobre cancelaciones derivadas.
 
@@ -4562,12 +4536,6 @@ defer {
 }
 ~~~
 
-Una llamada async infalible se registra con una única forma:
-
-~~~tondo pseudocode
-defer await Service.stop(service)
-~~~
-
 Reglas:
 
 - Los defers se ejecutan en orden LIFO.
@@ -4609,28 +4577,9 @@ Reglas:
   consume el binding completo; el compilador puede comprobar así un único
   propietario y un orden terminal inequívoco.
 - La expresión diferida debe ser infallible y devolver `Unit`.
-- Las formas ordinarias `defer call()` y `defer { ... }` son estrictamente
-  síncronas: no pueden contener `await`, `spawn`, una expresión `scope` ni una
-  llamada async.
-- `defer await call()` solo acepta una llamada `async fn(...): Unit`
-  infallible. La llamada no se inicia al registrar el defer: sus operandos y
-  ownership se reservan entonces y se invoca y espera al abandonar el scope, en
-  su posición LIFO.
-- `defer await` cuenta como suspensión de la entrada que lo contiene. Una
-  función o cierre debe ser `async`; un script, test o setup de suite infiere su
-  contexto async según sus reglas. Todos los valores reservados que continúen
-  vivos satisfacen el mismo contrato `Send` y de liveness que en cualquier otro
-  `await`.
-- La llamada async diferida admite como máximo el mismo operando afín propietario
-  que una llamada diferida ordinaria. No existe `defer await { ... }`, no puede
-  propagar un error ni iniciar `scope` o `spawn`.
-- Una salida cooperativa, incluido `return`, `fail`, pánico o cancelación
-  estructurada, no cancela el cleanup async que ella misma inicia. Timeout,
-  resource limit, interrupción externa, pérdida de aislamiento, OOM
-  irrecuperable o aborto continúan pudiendo terminarlo.
-- El runtime conduce el cleanup suspendido sin bloquear un worker del host. Un
-  target incapaz de hacerlo rechaza el artefacto por capability antes de
-  ejecutarlo.
+- Un defer es estrictamente síncrono: no puede contener `await`, `spawn`, una
+  expresión `scope` ni una llamada async. No puede crear trabajo estructurado
+  nuevo mientras otro scope está terminando.
 - Un bloque defer no puede registrar otro `defer` ni ejecutar `return`, `fail` o un `break`/`continue` cuyo destino quede fuera del propio bloque. Sus bucles internos sí pueden controlarse normalmente.
 - Un cleanup que pueda fallar debe manejar ese error dentro del bloque defer o realizarse explícitamente antes de salir.
 - Todos los defers continúan ejecutándose aunque uno produzca pánico. Sin un pánico previo, el primero según orden LIFO es el principal; los posteriores se adjuntan como suprimidos. Si el scope ya se desenrollaba por otro pánico, ese pánico conserva prioridad. Un pánico de cleanup prevalece sobre un `return`, `fail` o cancelación que todavía no fuera pánico.
@@ -6805,8 +6754,7 @@ console.print(output.stdout.text()?)
 
 En un script raíz:
 
-- `import`, `const`, `type`, `alias`, `enum`, `trait`, `impl`, `derive` y
-  funciones nombradas siguen siendo declaraciones de módulo.
+- `import`, `const`, `type`, `alias`, `enum`, `trait`, `impl` y funciones nombradas siguen siendo declaraciones de módulo.
 - `let`, `var`, control de flujo, expresiones y `defer` de nivel superior son sentencias locales del `main` implícito.
 - Una función nombrada de módulo no captura `let` o `var` del script; esos bindings solo son visibles para sentencias posteriores del `main` implícito.
 - Las sentencias se ejecutan en orden de fuente.
@@ -7147,10 +7095,6 @@ Estas reglas determinan dónde aparecen las primitivas anteriores:
 - Declaraciones de nivel superior se separan por exactamente una línea vacía.
   Dentro de un bloque hay un `hardline` entre unidades; si la fuente tenía una o
   más líneas vacías se conserva exactamente una, salvo al inicio o final.
-- Una declaración `derive` forma un único `group`: `derive`, sus binders
-  opcionales, la lista de traits con el layout de bounds anterior, `for` y el
-  target. Si se parte, solo los tramos posteriores a `+` usan la indentación de
-  cuatro espacios; `for Target` permanece unido al último trait.
 - El shebang se conserva como primer átomo salvo el final `LF`. Si existe otra
   unidad, se emite exactamente una línea vacía entre ambas; si alcanza
   directamente `EOF`, se emite solo su `LF` final.
@@ -7687,7 +7631,7 @@ oculten un diagnóstico independiente.
 | `E1605` | `non-send-transfer` | Valor no `Send` cruza task/thread o queda vivo a través de `await`. |
 | `E1606` | `non-share-borrow` | Préstamo concurrente exige `Share` y el origen no lo cumple. |
 | `E1607` | `exclusive-borrow-across-await` | Préstamo `mut`/`var` cruza una suspensión prohibida. |
-| `E1608` | `invalid-async-cleanup` | Cleanup async usa una forma distinta de una única llamada infallible `defer await`, o un defer intenta crear scope o lanzar trabajo. |
+| `E1608` | `invalid-async-cleanup` | `defer` intenta suspender, crear scope o lanzar trabajo. |
 | `E1609` | `invalid-async-signature` | Firma async contiene receptor o parámetro exclusivo prohibido. |
 | `E1610` | `invalid-async-context` | `await` o `scope` aparece fuera de una función, cierre o script async. |
 | `E1611` | `invalid-async-operand` | `await` o `spawn` recibe una forma que no representa la operación permitida. |
@@ -7707,30 +7651,6 @@ oculten un diagnóstico independiente.
 | `E1901` | `nonconstant-expression` | Un `const` usa una operación no evaluable en compilación. |
 | `E1902` | `constant-cycle` | Dependencias entre constantes forman un ciclo. |
 | `E1903` | `constant-panic` | La evaluación constante produciría un pánico. |
-
-#### Testing
-
-| Código | Nombre estable | Condición primaria |
-|---|---|---|
-| `E2001` | `test-node-outside-test-source` | Una declaración `suite` o `test` aparece en una fuente de producción, script o forma no clasificada como test. |
-| `E2002` | `duplicate-test-node` | Dos miembros suite/test producen la misma identidad o nombre de hermano dentro del mismo árbol. |
-| `E2003` | `invalid-test-source-declaration` | Una fuente de test intenta exportar API, alterar la unidad de producción sellada o ser consumida desde producción; o producción intenta importar `std.testing`. |
-| `E2004` | `empty-test-suite` | Una suite no contiene ningún miembro directo y, por tanto, ningún test descendiente. |
-| `E2005` | `invalid-suite-capture` | Un descendiente intenta capturar `var`, préstamo, valor afín/terminal o un tipo que no cumple `Copy + Send + Share`. |
-
-#### Metaprogramación estática
-
-| Código | Nombre estable | Condición primaria |
-|---|---|---|
-| `E2101` | `invalid-derive-target` | El target de `derive` no es nominal, no pertenece al módulo actual o sus binders no coinciden. |
-| `E2102` | `missing-derive-provider` | No existe un provider fijado para la identidad exacta del trait solicitado. |
-| `E2103` | `invalid-derive-request` | La lista o el módulo repite la misma pareja trait/target, nombra algo que no es trait o contiene una solicitud no admitida por el provider. |
-| `E2104` | `derive-expansion-failed` | El provider rechazó una estructura válida y produjo uno o más diagnósticos asociados a la declaración. |
-| `E2105` | `invalid-generated-source` | La salida no es fuente Tondo válida, excede la superficie autorizada o intenta iniciar otra ronda de generación. |
-| `E2106` | `generator-contract-violation` | Un generador omitió, añadió, duplicó o escribió fuera de las salidas declaradas. |
-| `E2107` | `generator-resource-limit` | Un provider o generador agotó un presupuesto declarado de ejecución, memoria o salida. |
-| `E2108` | `meta-capability-denied` | Código del target `meta` intenta utilizar una operación o capacidad no disponible en ese perfil. |
-| `E2109` | `generation-dependency-cycle` | Un root del snapshot meta depende transitivamente de una declaración que solo existiría como salida de la misma ronda. |
 
 #### Warnings
 
@@ -7763,14 +7683,6 @@ oculten un diagnóstico independiente.
 | `P0009` | `duplicate-dynamic-map-key` | Literal de map con valor terminal produce claves dinámicas repetidas. |
 | `P0010` | `invalid-shift-count` | Conteo de shift negativo, no representable como `Int` o mayor o igual que el ancho izquierdo. |
 | `P0011` | `invalid-repeat-count` | `Array.repeat` recibe un conteo negativo. |
-| `P2001` | `test-skip-during-cleanup` | `testing.skip` intenta omitir un nodo durante cleanup, unwind o teardown. |
-| `P2002` | `test-tag-conflict` | `testing.tags` intenta cambiar el valor ya asociado a una key en el mismo envelope. |
-| `P2003` | `test-virtual-time-deadlock` | Un dominio temporal virtual queda quiescente sin timer ni evento interno capaz de progresar. |
-| `P2004` | `overlapping-test-virtual-time` | Un envelope intenta mantener más de un dominio temporal virtual activo. |
-| `P2005` | `test-virtual-time-range` | Un avance temporal virtual es negativo o excede el rango representable. |
-| `P2006` | `test-artifact-conflict` | Un attachment tiene nombre o media type inválido, o repite nombre en el mismo intento. |
-| `P2007` | `test-snapshot-mismatch` | Un snapshot esperado falta o difiere fuera del modo explícito de actualización. |
-| `P2008` | `test-snapshot-conflict` | Un snapshot tiene nombre inválido o repite una key en el mismo intento. |
 
 Un runtime incluye el código `P` y el nombre estable en su diagnóstico. OOM
 irrecuperable y los aborts fuera del modelo de 15.7 no reciben un código `P`.
@@ -7968,10 +7880,6 @@ El tooling debe poder consultar de forma estructurada:
   determina un campo privado, sin revelar su representación.
 - Constructibilidad externa de cada record público, sin revelar qué campo privado
   la impide.
-- Cada solicitud `derive`, provider resuelto, bounds introducidos, impl
-  resultante, hash de expansión y source map.
-- La versión/hash del snapshot meta y producers que originaron cada archivo
-  generado, sin exponer inputs privados más allá de sus descriptores.
 - Presencia y origen estructural de una obligación terminal.
 - Estado disponible, movido, reservado o consumido de cada valor afín.
 - Regiones `unsafe` y operación que exige cada una.
@@ -8013,12 +7921,11 @@ mismos órdenes.
 
 La interfaz compilada registra al menos versión de formato, compilador, edición,
 target, perfil, capacidades, features, `PackageId`, hash de API y hashes de
-dependencias. Cuando exista generación registra además modelo meta y hash
-canónico de expansions/outputs. Un artefacto registra la forma de fuente
-(`module`/`script`/`fragment`), los source sets, hashes de fuente, producers,
-requests, outputs y todos los inputs declarados utilizados por generadores.
-Esos metadatos sirven para rechazar mezclas incompatibles; no crean la ABI
-binaria estable que 8.13 excluye.
+dependencias. Un artefacto registra además la forma de fuente
+(`module`/`script`/`fragment`), los source sets, hashes de fuente y todos los
+inputs declarados utilizados por generadores. Esos metadatos sirven para
+rechazar mezclas incompatibles; no crean la ABI binaria estable que 8.13
+excluye.
 
 La reproducibilidad bit a bit del artefacto es un objetivo de implementación,
 aunque metadatos de plataforma pueden requerir normalización adicional.
@@ -8107,9 +8014,9 @@ del target. Un modo estricto puede promoverlos, pero conserva el código `W`.
 
 La conformidad completa de la edición 0.1 requiere una suite versionada denominada
 `tondo-conformance-0.1`. Los ejemplos y doc-tests de esta especificación ayudan a
-detectar inconsistencias editoriales, pero no sustituyen esa suite. Antes de
-publicar Tondo 0.1, su distribución oficial deberá incluir un manifiesto portátil
-de la suite y una versión pública de conformidad con:
+detectar inconsistencias editoriales, pero no sustituyen esa suite. La
+distribución oficial de Tondo 0.1 incluye un manifiesto portátil de la suite y
+una release de conformidad publica:
 
 - Un manifiesto con versión de suite, edición y hashes de todos los casos.
 - El target, perfil de host y capacidades exigidos por cada grupo.
@@ -8135,14 +8042,6 @@ La suite se divide como mínimo en:
 6. **Hosted:** entrada, salida, código de terminación, `main` async y cleanup del
    scope raíz. Los casos de procesos solo se aplican cuando existe la capacidad
    `process`.
-7. **Metaprogramación:** gramática y formato de `derive`, autorización y
-   coherencia, snapshot meta, sandbox y presupuestos, outputs atómicos,
-   reproducibilidad, queries de expansión y metadata runtime sin acceso a
-   valores.
-8. **Testing:** gramática y formato de `suite`/`test`, source sets, inferencia
-   async/fallible, lifecycle, aislamiento, selección, retries, tiempo virtual,
-   snapshots y equivalencia de los formatos versionados definidos por
-   `TONDO_TESTING_SPEC.md`.
 
 Un compilador que anuncie **conformidad completa Tondo 0.1** para un target debe
 pasar todos los grupos aplicables al perfil y capacidades declarados. Una
@@ -8218,14 +8117,14 @@ identifier      = letter, { letter_or_digit } ;
 
 field_name      = identifier
                 | "alias" | "and" | "as" | "async" | "await"
-                | "break" | "const" | "continue" | "defer" | "derive"
-                | "else" | "enum" | "err" | "fail" | "false" | "fn"
+                | "break" | "const" | "continue" | "defer" | "else"
+                | "enum" | "err" | "fail" | "false" | "fn"
                 | "for" | "if" | "impl" | "import" | "in"
                 | "let" | "match" | "mut" | "none" | "not"
                 | "ok" | "or" | "priv" | "pub" | "ref"
                 | "return" | "scope" | "self" | "some" | "spawn"
-                | "suite" | "test" | "trait" | "true" | "type"
-                | "unsafe" | "var" | "with" ;
+                | "trait" | "true" | "type" | "unsafe" | "var"
+                | "with" ;
 
 decimal_digit   = "0"…"9" ;
 nonzero_decimal_digit
@@ -8336,24 +8235,12 @@ top_decl        = const_decl
                 | enum_decl
                 | trait_decl
                 | impl_decl
-                | derive_decl
-                | function_decl
-                | test_decl
-                | suite_decl ;
+                | function_decl ;
 
 visibility      = "pub" ;
-
-test_decl       = "test", identifier, block ;
-suite_decl      = "suite", identifier, suite_block ;
-suite_block     = "{", { NL | statement },
-                  { suite_member, { NL } }, "}" ;
-suite_member    = test_decl | suite_decl ;
 ~~~
 
 La herramienta selecciona `module_program` o `script_program` antes del análisis semántico según el target raíz. Un archivo importado siempre se valida como `module_program`.
-`test_decl` y `suite_decl` se conservan en el árbol sintáctico de cualquier
-forma módulo, pero solo son válidas en una fuente clasificada como test; en un
-script o fuente de producción producen `E2001`.
 
 ### 23.5 Imports
 
@@ -8548,10 +8435,6 @@ impl_decl       = "impl", [ generic_params ],
                   { NL | implementation_method },
                   "}", declaration_end ;
 
-derive_decl     = "derive", [ generic_params ],
-                  type_path, { "+", type_path },
-                  "for", type_expr, declaration_end ;
-
 implementation_method
                 = [ function_modifiers ], "fn", identifier,
                   [ generic_params ], parameter_list,
@@ -8563,10 +8446,6 @@ Un método de trait puede anteponer `async`, `unsafe` o la combinación canónic
 parámetro puede ser `self`, `mut self` o `var self`.
 
 En una llamada calificada a una operación de trait sin receptor, el primer argumento genérico después del nombre del método selecciona `Self`; no forma parte de los `generic_params` declarados por el método.
-
-`derive_decl` se rige por la sección 27. La lista separada por `+` es un conjunto
-de traits normalizados, no una secuencia de expansiones observable. Un
-`derive_decl` no contiene body, visibilidad ni configuración ad hoc.
 
 ### 23.13 Funciones y métodos
 
@@ -8629,10 +8508,7 @@ fail_stmt       = "fail", expression ;
 break_stmt      = "break" ;
 continue_stmt   = "continue" ;
 
-defer_stmt      = "defer",
-                  ( deferred_async_call | postfix_expression | block ) ;
-deferred_async_call
-                = "await", plain_postfix_expression ;
+defer_stmt      = "defer", ( postfix_expression | block ) ;
 
 expression_stmt = expression ;
 tail_expression = expression ;
@@ -8648,11 +8524,7 @@ La alternativa sin `= expression` se conserva únicamente para que el parser
 pueda producir el diagnóstico específico `E1109`; nunca forma un binding válido
 ni introduce un nombre en el scope.
 
-Fuera de la forma `defer { ... }`, tanto el `postfix_expression` ordinario como
-el `plain_postfix_expression` de `deferred_async_call` deben terminar en un
-`call_suffix`; diferir un valor, un acceso de campo o un método sin llamarlo es
-error semántico. La segunda forma queda además restringida por 13.7 a una
-llamada async infallible que devuelve `Unit`.
+Fuera de la forma `defer { ... }`, el `postfix_expression` debe terminar en un `call_suffix`; diferir un valor, un acceso de campo o un método sin llamarlo es error semántico.
 
 ### 23.15 Asignación
 
@@ -9620,34 +9492,22 @@ Tondo seguro no expone lectura, escritura, offsets, casts, `malloc` ni `free` ra
 
 ### 25.15 Macros y metaprogramación
 
-No hay preprocesador, macros textuales, reescritura arbitraria del AST,
-reflection mutable, `eval` ni ejecución de código metaprogramado durante una
-llamada ordinaria.
+No hay preprocesador, macros textuales, AST macros, reflection mutable, `eval` ni generación de declaraciones dentro del lenguaje.
 
-Tondo sí ofrece las dos formas cerradas de metaprogramación estática definidas en
-la sección 27:
+El código repetitivo puede resolverse mediante:
 
-- `derive`, que solicita implementaciones de traits mediante providers fijados; y
-- generadores declarados por el manifiesto, ejecutados por el toolchain antes de
-  la compilación completa.
+- Genéricos.
+- Funciones.
+- Herramientas externas deterministas.
+- Generación previa declarada por el sistema de build.
 
-Ambas producen fuente Tondo ordinaria, visible para tooling y sometida al mismo
-lexer, formatter, typechecker, coherencia, visibilidad y conformidad que el
-código escrito a mano. No existe una tercera API que permita mutar el programa
-en curso.
+El código generado es fuente ordinaria y se valida igual.
 
-La serialización de un record de usuario nunca inspecciona valores mediante
-reflection en runtime. Se resuelve con un `impl` manual, un `derive` estático o
-código fuente producido por un generador declarado. Solo un `derive` escrito por
-el módulo propietario concede al provider la vista privada limitada descrita en
-27.4.
+La serialización de un record de usuario no obtiene acceso reflectivo implícito a sus campos. Debe existir una implementación explícita de un trait de codec, una función escrita por el módulo propietario o código fuente generado antes de compilar. Los campos privados solo pueden ser leídos o construidos por código con visibilidad válida.
 
 ### 25.16 Tipo dinámico universal
 
-No existe `Any`. Datos heterogéneos usan enums o uniones cerradas. Datos externos
-sin schema usan un enum explícito como `Json`. `TypeInfo` y `TypeId`, definidos
-por la librería de reflection, describen tipos; no contienen un valor borrado ni
-permiten leerlo, escribirlo, construirlo o invocarlo dinámicamente.
+No existe `Any`. Datos heterogéneos usan enums o uniones cerradas. Datos externos sin schema usan un enum explícito como `Json`.
 
 ### 25.17 Múltiples colecciones equivalentes
 
@@ -9714,11 +9574,6 @@ la compilación de una declaración. La documentación y el metadato de tooling
 pueden acompañar símbolos, pero no modificar resolución, tipos, layout,
 ownership, efectos ni generación de código.
 
-`derive` es una declaración cerrada, no un atributo general: solo puede producir
-los `impl` autorizados por 27.3 y no acepta configuración sintáctica abierta.
-Los generadores generales se declaran en el manifiesto, con entradas y salidas
-cerradas; tampoco introducen annotations dentro de `.to`.
-
 La selección por plataforma, perfil y capacidad utiliza source sets declarados
 por el build según 6.8 y 20.11. Las integraciones FFI utilizan unidades
 privilegiadas o descriptores del toolchain según 8.13; no crean una puerta lateral
@@ -9766,49 +9621,37 @@ Esta especificación define:
   cualquier futura frontera FFI.
 - Requisitos de diagnostics, tooling, builds deterministas y conformidad
   ejecutable.
-- Declaraciones `derive`, el modelo semántico estático entregado a providers y
-  generadores, la fase cerrada de generación y los límites de reflection
-  conservada en runtime.
-- Declaraciones `suite` y `test`, sus entradas ocultas, inferencia local,
-  lifecycle léxico y aislamiento respecto al producto de producción.
 
 ### 26.2 Responsabilidad de la librería estándar
 
-La especificación estándar de Tondo 0.1 define, sin cambiar la semántica
-anterior:
+La futura especificación deberá definir, sin cambiar la semántica anterior:
 
-- Métodos completos de los tipos intrínsecos `Option`, `Result`, `String`,
-  `Array`, `Map`, `Set` y `Range`, adaptadores de `Iterator[T]` y algoritmos
-  genéricos sobre `Call`, `CallMut` o `CallOnce`; no existe un módulo importable
-  `std.core` ni otro propietario paralelo de las colecciones.
-- `std.bytes`, `std.io`, `std.math` y `std.format`: bytes y buffers,
-  protocolos de I/O, matemáticas escalares y formatting sin una segunda
-  interpolación.
-- `std.serialization`, `std.reflect` y `std.meta`: serialización estática,
-  metadata descriptiva `TypeInfo`/`TypeId` sin inspección dinámica de valores y
-  el modelo seguro de generación.
-- JSON, MessagePack y Protobuf, además de `std.encoding`, YAML, TOML y CBOR,
-  todos sobre los contratos comunes de serialización y streaming acotado.
-- `std.time`: `Duration`, `Instant`, timers y deadlines monotónicos, junto con
-  `Date`, `Time`, `DateTime` y zonas horarias versionadas.
-- `std.path`, `std.console`, `std.env`, `std.fs` y `std.process`, incluidos
-  constructores y operaciones de `Command` y `Pipeline`, procesos hijos, exit
-  status y shell explícito.
-- `std.regex`, `std.uuid` y `std.net`: regex Unicode acotado, UUID con
-  generadores explícitos por versión, direcciones, DNS, sockets, datagrams y la
-  frontera TLS.
-- `std.channel`, `std.sync` y `std.executor`: canales, mutexes, rwlocks,
-  condvars, semáforos, atomics, pools bloqueantes y actores sobre el único
-  modelo de concurrencia del lenguaje.
-- `std.log`, con eventos estructurados y sinks capability-gated.
-- El módulo test-only `std.testing`; discovery, ejecución y reportes se rigen
-  además por la especificación normativa de testing.
-
-El catálogo cerrado, sus capabilities y las características diferidas se fijan
-exclusivamente en `TONDO_STANDARD_LIBRARY_SPEC.md`. En particular, esta
-frontera no incorpora a STD-0.1 `Deque`, priority queues, `Decimal`, `BigInt`,
-`Complex`, aleatoriedad general de usuario, `WeakRef`, `Cell`, streams async
-generales ni una FFI pública.
+- Métodos completos de `String`, `Array`, `Map`, `Set` y `Range`, además de
+  adaptadores que produzcan cursores nominales o resultados concretos
+  `impl Iterator[T] + Discard`.
+- Algoritmos de orden superior genéricos sobre `Call`, `CallMut` o `CallOnce`
+  según su patrón real de invocación; `fn(...)` se reserva para almacenamiento
+  uniforme explícito.
+- `Bytes` y buffers binarios.
+- `Deque` y priority queues.
+- `Decimal`, `BigInt` y `Complex`.
+- Formato, parsing y codecs.
+- Paths y filesystem.
+- Consola, constructores y operaciones de `Command` y `Pipeline`, procesos hijos, exit status y shell explícito.
+- Environment.
+- Tiempo: `Duration`, `Instant`, `Date`, `Time`, `DateTime` y `TimeZone`.
+- `Url`, `Uuid`, IPs y sockets.
+- Regex.
+- JSON y serialización.
+- Aleatoriedad.
+- `WeakRef`, mutabilidad interior auditada como `Cell`, y contratos concretos de
+  observación de liveness.
+- Threads, canales, mutexes, atomics, actores, streams, pools bloqueantes y APIs
+  explícitas de cancelación.
+- Capacidades `Copy`, `Discard`, `Equatable`, `Key`, `Send` y `Share`, identidad y operaciones terminales de cada tipo opaco de librería.
+- Testing.
+- Logging.
+- Declaraciones FFI, layouts, calling conventions y wrappers seguros sobre `Pointer[T]`.
 
 ### 26.3 Prelude
 
@@ -9882,9 +9725,7 @@ Si no cumple estos criterios, permanece en la librería.
 
 ### 26.6 Criterio de estabilidad
 
-Tondo evoluciona de manera conservadora. Mientras esta primera versión siga en
-desarrollo, su revisión y sus hashes identifican snapshots exactos pero no
-constituyen una promesa pública de compatibilidad. Desde su publicación:
+Tondo evoluciona de manera conservadora:
 
 - Una versión menor puede aclarar reglas, mejorar diagnósticos y añadir APIs de librería compatibles.
 - La compatibilidad de Tondo 0.1 es de fuente y semántica para una edición,
@@ -9924,443 +9765,6 @@ constituyen una promesa pública de compatibilidad. Desde su publicación:
 
 ---
 
-## 27. Metaprogramación estática y reflection
-
-### 27.1 Modelo único
-
-Tondo 0.1 elimina boilerplate sin convertir la compilación en ejecución
-ambiental. Existen exactamente dos mecanismos:
-
-1. una declaración `derive` solicita uno o más `impl` estáticos para un tipo
-   nominal del módulo actual; y
-2. el manifiesto puede declarar programas generadores Tondo con entradas y
-   salidas cerradas.
-
-Los dos mecanismos usan el mismo modelo semántico inmutable, se ejecutan en el
-perfil hermético `meta`, producen fuente ordinaria y terminan antes del
-typecheck completo. Una función normal, un import, un `const`, un comentario o
-un nombre especial nunca dispara generación.
-
-La evaluación constante de 6.5 permanece deliberadamente pequeña. Un programa
-generador no es una función `comptime`: es un target separado del build y no
-puede llamarse desde fuente de aplicación.
-
-### 27.2 Declaración `derive`
-
-La forma canónica es:
-
-~~~tondo pseudocode
-import std.serialization
-
-derive serialization.Serialize + serialization.Deserialize for User
-~~~
-
-Un tipo genérico declara sus binders una sola vez:
-
-~~~tondo pseudocode
-import std.serialization
-
-derive[T] serialization.Serialize + serialization.Deserialize for Page[T]
-~~~
-
-`derive` es una declaración top-level. No tiene cuerpo, `pub`, `priv`, opciones,
-attributes ni forma abreviada sobre la declaración del tipo. La lista separada
-por `+` es semánticamente un conjunto de identidades nominales de trait; cada una
-debe aparecer una sola vez y la misma pareja trait/target no puede solicitarse
-en otra declaración del módulo. El formatter conserva el orden escrito y el
-toolchain normaliza la solicitud por identidad canónica antes de ejecutarla.
-
-El target debe ser un record, enum o newtype nominal declarado en el mismo
-módulo. Sus argumentos deben ser exactamente los binders de `derive`, en el
-mismo orden y sin repetirlos. No se permite derivar para aliases, uniones,
-tuples, tipos intrínsecos ni tipos de otro módulo. Esta regla convierte la
-declaración en una autorización explícita del propietario.
-
-Los bounds escritos en los binders son parte de la solicitud. Además, un
-provider puede introducir únicamente los bounds positivos mínimos necesarios
-sobre esos mismos binders; por ejemplo, el `impl Serialize for Page[T]`
-generado puede requerir `T: Serialize`. Los bounds y la cabecera exacta del
-`impl` aparecen en la expansión semántica y en la interfaz pública cuando sean
-observables. Para cada bound introducido, el compilador vuelve a comprobar la
-expansión sin ese bound; si continúa siendo válida, la salida se rechaza por
-redundante. Un provider no puede añadir parámetros genéricos, elegir tipos
-ocultos distintos según el entorno ni cambiar la declaración objetivo.
-
-### 27.3 Providers y resultado de `derive`
-
-Cada trait derivable tiene exactamente un provider seleccionado por identidad
-nominal exacta. La selección procede del descriptor de la distribución estándar
-o del manifiesto raíz y siempre queda materializada en el lockfile. Un nombre
-parecido, otro `PackageId` o una versión distinta no reutiliza el provider. Los
-providers estándar se resuelven y hashean como cualquier otro input del build;
-el compilador no carga plugins nativos.
-
-Por cada trait solicitado, el provider puede emitir únicamente:
-
-- un único `impl` de ese trait para el target autorizado, con los métodos y
-  operaciones asociadas exigidos por el contrato del trait.
-
-No puede emitir helpers, tipos, globals, otra declaración `derive`, otra
-solicitud de generación ni un `impl` para un target o trait distinto. Puede
-utilizar paths completamente calificados dentro del body. La expansión completa
-se valida como fuente ordinaria. Orphan rules, terminación y coherencia
-continúan aplicándose; un `impl` manual solapado, dos providers que convergen en
-la misma cabecera o un impl generado que solape con otro impl válido producen
-`E1111`. Repetir la solicitud derive se detecta antes como `E2103`.
-
-El toolchain, no el provider, asigna a la expansión un source ID y path lógico
-reservados derivados de su request hash. La expansión pertenece al módulo del
-target y ningún archivo de usuario puede ocupar ese path.
-
-Un fallo propio del dominio se informa como `E2104`, con el span primario de
-`derive` y ubicaciones relacionadas en campos o variantes relevantes. Fuente
-mal formada o una salida fuera de la superficie anterior produce `E2105`; el
-toolchain nunca oculta el error ni conserva parcialmente la expansión.
-
-Para inspección y depuración, el compilador ofrece una consulta que devuelve la
-fuente formateada, provider, versión, hash de inputs y mapa de spans de cada
-expansión. El usuario puede copiar esa fuente y reemplazar `derive` por un
-`impl` manual sin cambiar la semántica.
-
-### 27.4 Acceso privado de un provider
-
-La declaración `derive` concede al provider una vista estructural del target
-equivalente a la visibilidad del módulo propietario. Incluye nombres, tipos,
-orden normativo y visibilidad de sus campos o variantes, pero no bodies de
-funciones, valores en runtime, offsets, padding, direcciones ni detalles del
-collector.
-
-El `impl` generado se atribuye al mismo módulo a efectos de visibilidad. Esta
-concesión existe solo para la pareja exacta `(declaración derive, target,
-provider)` y no se propaga a helpers de otro paquete, a reflection en runtime ni
-a un generador general. El provider no puede enumerar otros tipos privados del
-módulo.
-
-La personalización que no pueda expresarse por el contrato normal del trait
-requiere un `impl` manual. Tondo 0.1 no añade field annotations ni una bolsa
-dinámica de opciones a `derive`.
-
-### 27.5 Generadores declarados por el manifiesto
-
-Un generador general es un programa Tondo identificado por `PackageId`, hash,
-entry point y versión del modelo meta. El manifiesto declara:
-
-- su conjunto finito de inputs, cada uno con nombre, bytes y hash;
-- los roots públicos exactos del snapshot semántico que puede consultar;
-- todos los paths lógicos y módulos que puede producir;
-- target, perfil y versión de su API meta; y
-- presupuestos de pasos, memoria y bytes de salida.
-
-No existe sintaxis `.to` para registrar o ejecutar un generador. El toolchain
-compila el programa para el target cerrado `meta`, le entrega los inputs como
-valores y recibe un resultado estructurado con archivos o diagnósticos. `stdout`
-no es un canal de generación.
-
-Cada salida declarada debe aparecer exactamente una vez. Una salida adicional,
-ausente, duplicada, con otro módulo o fuera de su path produce `E2106` y descarta
-la generación completa. Los bytes aceptados se formatean canónicamente, reciben
-identidad de fuente generada y pasan por el lexer, parser, resolver y typechecker
-ordinarios.
-
-Un generador general solo observa la clausura semántica pública de los roots
-declarados. Una lista vacía produce un modelo sin declaraciones y es la forma
-normal de un generador schema-first. No recibe bodies ni símbolos privados. Para
-generar a partir de un schema, descriptor o archivo de datos, ese contenido debe
-ser un input explícito; no puede abrir el archivo por su cuenta.
-
-Cada root, y toda declaración necesaria para resolver su firma o estructura,
-debe poder typecheckearse usando únicamente fuente escrita e interfaces de
-dependencias. Si depende de una salida de la ronda actual se produce `E2109`.
-Las declaraciones que no pertenezcan a esa clausura pueden referenciar fuente
-generada y se validan durante el typecheck completo posterior.
-
-### 27.6 Modelo semántico meta
-
-El modelo se identifica como `tondo-meta-model-0.1/1`. Cada request recibe solo
-la clausura de sus roots, no un inventario implícito del programa. Es un árbol
-de datos inmutable, sin métodos que modifiquen el compilador, y contiene:
-
-- edición, target, perfil, capabilities, features y PackageIds exactos;
-- módulos e identidades nominales;
-- clases de declaración, visibilidad, parámetros genéricos y bounds;
-- tipos canónicos de firmas, campos públicos, variantes y payloads;
-- traits, operaciones requeridas e implementaciones visibles; y
-- spans lógicos y documentación pública.
-
-Para `derive`, los roots implícitos son el trait, el target y la clausura
-necesaria para resolverlos; 27.4 sustituye la vista pública del único target
-autorizado por su vista privada limitada. Esos roots tampoco pueden depender de
-la salida de la ronda. El modelo nunca contiene valores vivos, direcciones,
-layout físico, metadatos del GC, estado mutable del compilador ni bodies
-ejecutables. Sus colecciones recorren elementos en un orden canónico definido
-por identidad nominal y posición de fuente; no exponen el orden de tablas hash
-internas.
-
-Cada versión del modelo tiene schema y codificación canónica. Cambiar su forma o
-semántica exige una versión nueva. Un generador que solicite una versión no
-soportada se rechaza antes de ejecutarse.
-
-### 27.7 Perfil hermético `meta`
-
-El perfil `meta` ejecuta semántica Tondo ordinaria sobre memoria aislada, pero no
-ofrece filesystem, red, procesos, environment, reloj, aleatoriedad, threads,
-FFI, `unsafe`, `Pointer`, identidad de host ni tasks asíncronas. Tampoco puede
-descubrir archivos, paquetes o tipos que no estén en su request.
-
-Un run tiene presupuestos enteros declarados de pasos, memoria administrada y
-bytes de resultado. Alcanzar uno produce `E2107`; pedir una capacidad ausente
-produce `E2108`. El mismo programa, modelo, inputs, límites, toolchain y target
-debe producir exactamente los mismos bytes o los mismos diagnósticos ordenados.
-Un proveedor que no pueda cumplirlo no es válido para un build reproducible.
-
-Los pánicos se convierten en un diagnóstico de generación y no atraviesan al
-compilador. No hay teardown observable, almacenamiento persistente entre runs ni
-estado compartido entre providers.
-
-### 27.8 Fases y ausencia de ciclos
-
-El build sigue una sola ronda:
-
-1. resuelve manifiesto, lockfile, toolchain, source sets, providers, generators e
-   inputs;
-2. resuelve únicamente las clausuras escritas a mano requeridas por los roots
-   explícitos de generators y los roots implícitos de `derive`; cualquier
-   dependencia hacia una salida todavía inexistente produce `E2109`;
-3. construye para cada request su clausura inmutable desde la misma base
-   pre-generación y ejecuta todos los providers y generators;
-4. verifica, formatea y fusiona atómicamente todas las salidas; y
-5. resuelve y typecheckea el programa completo, genera interfaces y produce el
-   artefacto.
-
-Ningún generador observa la salida de otro. La fuente generada no puede contener
-`derive`, registrar generadores ni crear una segunda ronda. Tampoco puede
-reemplazar un path escrito a mano o una salida de otro productor. Así, el grafo
-de generación es finito por construcción y su resultado no depende del orden de
-ejecución.
-
-Un error en cualquier provider, generador o archivo generado hace fallar el
-target completo. No se publican interfaces, artefactos ni caches parciales de
-esa ejecución.
-
-### 27.9 Identidad, cache y observabilidad
-
-La identidad de cada run incluye al menos:
-
-~~~text
-toolchain + meta model version + target/profile/capabilities/features
-+ generator/provider PackageId + artifact hash + entry point
-+ semantic snapshot hash + declared input hashes + output manifest
-+ execution/memory/output budgets
-~~~
-
-El toolchain registra esa identidad, los hashes de cada salida formateada y la
-relación entre spans generados y spans/input de origen. Una cache solo puede
-reutilizar el resultado si coincide toda la identidad. El directorio actual,
-locale, orden de filesystem, número de cores y variables ambientales nunca
-participan porque no son observables.
-
-Una implementación puede ejecutar productores independientes en paralelo, pero
-fusiona diagnósticos y salidas por identidad canónica. Paralelizar no cambia los
-bytes ni el primer error observable.
-
-### 27.10 Reflection conservada en runtime
-
-La librería `std.reflect` puede exponer:
-
-~~~tondo pseudocode
-let info: TypeInfo = reflect.typeInfo[User]()
-let id: TypeId = info.id()
-~~~
-
-La llamada se especializa en compilación y solo conserva metadata descriptiva
-para tipos alcanzables desde una solicitud explícita. `TypeInfo` es opaco y
-puede informar:
-
-- identidad, nombre calificado y clase de tipo;
-- argumentos genéricos;
-- campos **públicos** de records;
-- variantes y payloads públicos de enums;
-- tipo base de un newtype; y
-- capabilities y traits públicos demostrados.
-
-No permite obtener o modificar el campo de un valor, construir por nombre,
-invocar una función, enumerar todos los tipos del proceso, revelar miembros
-privados ni observar layout, offsets, direcciones o estado de memoria. No existe
-un `Value`, `Any` o cast dinámico asociado.
-
-`TypeId` solo garantiza igualdad estable dentro del mismo artefacto exacto. No
-es un identificador de wire, no se serializa y puede cambiar entre builds,
-targets o versiones. La metadata no solicitada puede eliminarse; `typeInfo[T]()`
-es la raíz explícita de retención.
-
-### 27.11 Serialización
-
-Los serializers y deserializers de tipos estáticos se implementan como traits
-ordinarios y código especializado.
-`derive serialization.Serialize + serialization.Deserialize for User` puede
-generar acceso directo a sus campos, validación y construcción sin tabla de
-reflection ni árbol intermedio. El mismo par de traits puede alimentar JSON y
-MessagePack; Protobuf utiliza además código schema-first generado desde
-descriptores `.proto` declarados como inputs.
-
-Un codec puede ofrecer un enum de valores dinámicos para documentos sin schema,
-pero esa heterogeneidad pertenece al formato y no introduce `Any`. Los formatos,
-políticas de campos, límites de recursos y APIs concretas pertenecen a la
-especificación estándar.
-
-### 27.12 Propiedades de diseño
-
-El modelo anterior garantiza:
-
-- cero lookup reflectivo obligatorio en rutas de producción;
-- posibilidad de inline, monomorfización, dead-code elimination y SIMD igual
-  que en código manual;
-- builds reproducibles y cacheables;
-- acceso privado solo por autorización local y explícita;
-- expansión inspeccionable por personas, IDEs y LLMs; y
-- una única semántica de tipos, traits, ownership y diagnósticos para código
-  manual y generado.
-
-La comodidad nunca autoriza ejecución ambiental oculta. Si una necesidad no cabe
-en `derive`, un generador cerrado o código Tondo ordinario, queda fuera de la
-primera versión en lugar de ampliar implícitamente el compilador.
-
----
-
-## 28. Testing integrado
-
-### 28.1 Un único contrato Tondo 0.1
-
-Tondo 0.1 incorpora testing como parte del lenguaje y del toolchain, no como una
-edición posterior ni como una convención de librería. Esta especificación fija
-la sintaxis, tipos, ownership y semántica general. La
-[especificación de testing](./TONDO_TESTING_SPEC.md) es su companion normativo
-para discovery, lifecycle completo, aislamiento, CLI, selección, retries,
-tiempo virtual, artefactos, snapshots y formatos de reporte.
-
-El tag interno `v0.1.0` y su suite de conformidad conservan la evidencia del
-checkpoint que existía antes de integrar esta superficie. No constituyen una
-versión pública ni una edición alternativa: la primera publicación de Tondo 0.1
-debe implementar el contrato consolidado y publicar nuevos hashes de
-conformidad.
-
-### 28.2 Árbol estático
-
-Existen exactamente dos declaraciones:
-
-~~~tondo pseudocode
-test addsValues {
-    assert(add(20, 22) == 42)
-}
-
-suite arithmetic {
-    let offset = 20
-
-    test subtractsOffset {
-        assert(22 - offset == 2)
-    }
-}
-~~~
-
-`test` es siempre una hoja y `suite` siempre un contenedor léxico. Ambas:
-
-- solo son válidas en fuentes clasificadas como test por el plan cerrado;
-- tienen un identificador estático y no admiten `pub`, `priv`, parámetros,
-  genéricos, retorno escrito, `async`, `unsafe`, atributos ni nombre string;
-- pueden aparecer en el nivel superior; dentro de una suite solo pueden
-  anidarse otras suites y tests;
-- no pueden aparecer en funciones, cierres, traits, `impl`, bloques ordinarios,
-  scripts ni bodies de test; y
-- forman un namespace de tooling por nivel, sin reapertura ni fusión de suites.
-
-El prefijo de un `suite_block` contiene las sentencias ordinarias de setup.
-Después del primer miembro solo pueden aparecer otros miembros. Una suite vacía
-produce `E2004`. El árbol completo se conoce sin ejecutar setup, importar un
-registro runtime ni usar reflection.
-
-### 28.3 Entradas ocultas e inferencia
-
-Cada test se comprueba como una entrada privada no direccionable equivalente a:
-
-~~~text
-async? fn <test-entry>(): Unit ! E
-~~~
-
-Cada setup de suite se comprueba como otra entrada equivalente a:
-
-~~~text
-async? fn <suite-setup>(): Unit ! E
-~~~
-
-`E` es la unión cerrada inferida localmente y debe cumplir `Discard`; si no hay
-fallos, es `Never`. La entrada se vuelve async cuando contiene una operación que
-exige suspensión, incluido `defer await`. No se escribe un modificador porque
-ninguna entrada es una API invocable. El body de test puede usar `return` sin
-valor, `fail` y `?`; el setup admite `fail` y `?`, pero un `return` que ocultaría
-descendientes produce `E1205`. Ninguna forma introduce `TestResult`.
-
-`scope`, `spawn`, `Join`, `Send`, `Share`, préstamos, pánicos, cancelación y
-cleanup mantienen su semántica ordinaria. El scope raíz del runner no sustituye
-un `scope` escrito: una entrada que lance trabajo concurrente continúa
-delimitándolo explícitamente.
-
-### 28.4 Setup, capturas y teardown
-
-Para cada subárbol seleccionado, el runner ejecuta el setup de una suite una vez,
-después sus descendientes y finalmente abandona el scope léxico de la suite. Los
-`defer` registrados por el setup forman su teardown LIFO, incluso cuando el setup
-o un descendiente falla. `defer await` es la única forma de teardown async; no
-existen hooks `before`/`after` ni callbacks de lifecycle paralelos.
-
-Un descendiente solo puede leer un binding ancestral cuando fue declarado con
-`let`, su tipo cumple `Copy + Send + Share` y el uso no mueve, muta ni consume el
-binding. `var`, préstamos, valores afines y obligaciones terminales producen
-`E2005`. Constantes, funciones y declaraciones de módulo se resuelven por nombre
-y no cuentan como capturas.
-
-Cada hoja se ejecuta en un envelope de test no falsificable que acompaña a sus
-helpers, cierres y tasks estructuradas. Ese contexto permite que `std.testing`
-asocie logs, tags, skip, fallo inmediato, attachments, snapshots y tiempo
-virtual sin exponer un `TestContext` como valor ni introducir estado global
-accesible al programa.
-
-### 28.5 Frontera con producción
-
-Las fuentes unitarias se compilan como overlay separado y pueden comprobar
-declaraciones privadas de su propia unidad. Las fuentes de integración consumen
-solo la interfaz pública sellada. En ambos casos, dev-dependencies,
-`std.testing`, entradas ocultas y metadata del runner quedan fuera del grafo y
-del artefacto de producción.
-
-Una declaración de test en producción o script produce `E2001`. Alterar desde
-test la API sellada, exportar una declaración de test o importar `std.testing`
-desde producción produce `E2003`. La validez del producto se comprueba antes de
-aplicar el overlay: los tests no pueden reparar una unidad de producción
-inválida.
-
-### 28.6 Runner y evidencia versionada
-
-`tondo test` compila una vez el plan completo y después selecciona hojas
-estáticas. El contrato detallado exige filtros exactos y globs portables,
-CODEOWNERS opcional y reproducible, sharding, orden canónico o aleatorio con
-seed, paralelismo acotado, retries y repeticiones en workers limpios, aislamiento
-de recursos, tiempo monotónico virtual, captura de output, snapshots y
-artefactos content-addressed.
-
-Una ejecución alimenta la salida humana y, sin volver a ejecutar tests, los
-formatos `tondo-test-report-0.1/7`, `tondo-test-list-0.1/6` y
-`tondo-junit-report-0.1/4`. Artefactos y snapshots usan respectivamente
-`tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`. El número tras `/`
-versiona el schema, no la edición del lenguaje.
-
-Un retry que pasa después de fallar se reporta como `flaky-pass`, no como
-`passed`; cada intento y su aislamiento permanecen observables. Interrupción,
-fallos de infraestructura o publicación parcial nunca se presentan como una
-ejecución completa. La especificación de testing define los estados, orden,
-campos, exit status y bytes canónicos exactos.
-
----
-
 ## Apéndice A. Referencia rápida
 
 ### Declaraciones
@@ -10378,15 +9782,6 @@ pub enum Choice {
     First
     Second(Type)
 }
-~~~
-
-### Derivación estática
-
-~~~tondo pseudocode
-import std.serialization
-
-derive serialization.Serialize + serialization.Deserialize for User
-derive[T] serialization.Serialize + serialization.Deserialize for Page[T]
 ~~~
 
 ### Funciones
@@ -10459,10 +9854,6 @@ scope {
     let value = await job?
     consume(value)
 }
-~~~
-
-~~~tondo pseudocode
-defer await cleanupAsync()
 ~~~
 
 ### Errores
@@ -10541,23 +9932,6 @@ console.print(output.stdout.text()?)
 ~~~
 
 Las sentencias top-level existen solo en el archivo raíz de un script y forman un `main` implícito.
-
-### Testing
-
-~~~tondo pseudocode
-suite userApi {
-    let service = await TestService.start()?
-    let endpoint = service.endpoint()
-    defer await TestService.stop(service)
-
-    test reportsHealth {
-        assert((await readHealth(endpoint)?).ready)
-    }
-}
-~~~
-
-`suite` y `test` solo aparecen en fuentes de test. Sus entradas infieren
-asincronía y errores; `defer` sigue siendo su única construcción de teardown.
 
 ---
 

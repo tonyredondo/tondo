@@ -2,11 +2,12 @@
 
 **Versión objetivo de la librería:** 0.1.0
 
-**Revisión del documento:** 0.1
+**Revisión del documento:** 0.1-draft.3
 
-**Estado:** contrato normativo de arquitectura; APIs de módulos pendientes
+**Estado:** borrador normativo de la primera versión; Tondo y STD-0.1 todavía no
+se han publicado
 
-**Ediciones de lenguaje compatibles:** Tondo 0.1 y, donde se indique, Tondo 0.2
+**Edición de lenguaje compatible:** Tondo 0.1
 
 **Última actualización:** 2026-07-29
 
@@ -56,7 +57,7 @@ Este documento fija de forma normativa:
   determinismo, coste y portabilidad.
 - La distribución cerrada, reproducible y fijada por hashes.
 - Los requisitos de documentación, tests y conformidad de cada API.
-- La coexistencia con la release bootstrap de Tondo 0.1.0.
+- La coexistencia temporal con el checkpoint bootstrap interno de Tondo 0.1.0.
 
 Esta revisión no fija todavía:
 
@@ -64,7 +65,11 @@ Esta revisión no fija todavía:
 - El conjunto exacto de variantes y payloads de cada error.
 - Los formatos concretos de `std.format`.
 - Los métodos concretos de strings, colecciones e iteradores.
-- La superficie definitiva de consola, filesystem, environment o procesos.
+- Las declaraciones exhaustivas de consola, filesystem, environment, procesos,
+  networking, concurrencia, calendario civil, codecs adicionales, regex, UUID
+  y logging.
+- Las declaraciones exhaustivas de cada operación de JSON, MessagePack y
+  Protobuf; este documento sí fija sus owners, arquitectura y garantías comunes.
 - La representación interna de ningún tipo.
 
 Una firma ilustrativa, un ejemplo del lenguaje o una operación existente en el
@@ -90,6 +95,8 @@ La Standard Library debe ser:
    significado canónico y las alternativas no se multiplican.
 8. **Implementable por terceros:** el comportamiento se expresa mediante
    contratos y observaciones, no mediante detalles privados de la VM.
+9. **Rápida por construcción:** las APIs permiten streaming, préstamos,
+   especialización y vectorización sin exigir materializaciones intermedias.
 
 ### 1.2 No objetivos
 
@@ -99,12 +106,15 @@ STD-0.1 no intenta:
 - Exponer una clase o wrapper para cada concepto imaginable.
 - Convertir todo helper útil en parte del prelude.
 - Ocultar fallos de host mediante valores por defecto.
-- Proporcionar reflection general, carga dinámica o una ABI FFI pública.
+- Proporcionar reflection dinámica sobre valores, carga dinámica o una ABI FFI
+  pública. La metadata estática y descriptiva de `std.reflect` no es una
+  excepción abierta a esta regla.
 - Congelar el layout, calling convention o estrategia de memoria del backend
   nativo.
 - Añadir sintaxis, keywords, coerciones o reglas de inferencia.
-- Resolver en la primera versión networking, calendario civil, JSON, regex,
-  logging o sincronización compartida.
+- Convertir networking, calendario civil, regex, logging o sincronización
+  compartida en semántica implícita del lenguaje; Tondo 0.1 los ofrece como APIs
+  estándar explícitas y acotadas.
 
 ### 1.3 Lenguaje normativo
 
@@ -115,7 +125,29 @@ En este documento:
 - **Puede** expresa una libertad de implementación que no altera observables.
 - **STD-0.1** nombra el milestone de producto.
 - **0.1.0** nombra la primera versión pública completa de la stdlib.
-- **Bootstrap** nombra la superficie provisional publicada con Tondo 0.1.0.
+- **Bootstrap** nombra la superficie provisional implementada como checkpoint
+  interno durante el desarrollo de Tondo 0.1.
+
+### 1.4 Inspiraciones aplicadas
+
+La stdlib selecciona ideas, no clones de APIs:
+
+- **Go:** módulos pequeños con owner claro, protocolos `Reader`/`Writer`,
+  errores como valores y generación schema-first para Protobuf.
+- **Kotlin:** serializers generados en compile time y configuración mediante
+  valores nominales, sin reflection de valores en el hot path.
+- **Rust:** traits estáticos, iteradores concretos, ownership visible y el
+  enfoque de serialization dirigida por tipos.
+- **Zig:** costes y allocation visibles, fallback escalar simple y cálculo en
+  build time reproducible; Tondo aísla ese cálculo en `tondo-meta` en vez de
+  mezclarlo con evaluación constante ordinaria.
+- **.NET:** vistas prestadas tipo `Span`, readers/writers incrementales y
+  source generation para evitar reflection y materializaciones.
+- **Odin:** procedimientos y datos explícitos, sin contextos ambientales
+  implícitos.
+
+Cuando dos ecosistemas ofrecen varias formas equivalentes, Tondo conserva una
+sola shape que encaje con su sistema de tipos y ownership.
 
 ---
 
@@ -126,9 +158,9 @@ reparten así:
 
 | Documento | Autoridad |
 |---|---|
-| [`TONDO_LANGUAGE_SPEC.md`](./TONDO_LANGUAGE_SPEC.md) | Sintaxis, tipos, ownership, async, módulos, imports, prelude e intrinsics |
-| [`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md) | Manifiesto, lockfile, PackageId, target, capabilities, interfaces, artefactos y unidades privilegiadas |
-| [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) | Edición 0.2, `suite`, `test`, runner y núcleo sellado de `std.testing` |
+| [`TONDO_LANGUAGE_SPEC.md`](./TONDO_LANGUAGE_SPEC.md) | Sintaxis, tipos, ownership, async, módulos, imports, prelude, intrinsics, `derive` y límites de reflection |
+| [`TONDO_TOOLCHAIN_SPEC.md`](./TONDO_TOOLCHAIN_SPEC.md) | Manifiesto, lockfile, PackageId, target, capabilities, generación meta, interfaces, artefactos y unidades privilegiadas |
+| [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) | Testing Tondo 0.1, runner y núcleo sellado de `std.testing` |
 | Este documento | API estándar, reglas comunes, catálogo de módulos y distribución de la stdlib |
 
 Si una API estándar no puede expresarse sin cambiar sintaxis, resolución,
@@ -139,6 +171,12 @@ compilador reconozca en secreto.
 Si una operación necesita host o implementación privilegiada, su enlace se
 describe mediante el toolchain. El binding privilegiado implementa una firma
 Tondo ya especificada; no inventa la firma ni amplía sus capabilities.
+
+Si una API elimina boilerplate mediante `derive` o generación, la stdlib define
+el trait y el comportamiento observable, el lenguaje limita la autorización y
+el modelo semántico, y el toolchain fija provider, inputs, sandbox, hashes y
+outputs. El código generado no recibe una semántica paralela ni acceso dinámico
+a valores.
 
 ### 2.1 Identidad de compatibilidad
 
@@ -226,6 +264,19 @@ identidad del build.
 Otro toolchain puede utilizar otro PackageId para su implementación conforme.
 Sus tipos nominales no son intercambiables accidentalmente con los de la
 distribución de referencia.
+
+El descriptor de la distribución runtime selecciona además, para el grafo meta
+separado, su paquete build-only compatible:
+
+~~~text
+toolchain:std-meta:0.1.0
+~~~
+
+Ese paquete contiene `std.meta` y los providers estándar. El proyecto no repite
+la asociación en cada manifest; el lockfile sí materializa ambos PackageIds y
+SHA-256 exactos. El companion no forma parte del grafo runtime ni hace visible
+`std.meta` al programa final. La separación permite que cada grafo conserve una
+única distribución `std`; no autoriza dos versiones dentro del mismo grafo.
 
 ### 3.4 Una sola stdlib por grafo
 
@@ -388,7 +439,7 @@ una función alcanzada desde ellos.
 
 ## 5. Clases de disponibilidad y capabilities
 
-### 5.1 Cuatro clases
+### 5.1 Cinco clases
 
 Cada declaración estándar pertenece exactamente a una clase:
 
@@ -397,6 +448,7 @@ Cada declaración estándar pertenece exactamente a una clase:
 | **Core** | En todo target que anuncie STD-0.1 |
 | **Capability-gated** | Solo cuando el target selecciona la capability exacta |
 | **Test-only** | Solo dentro del grafo cerrado de `tondo test` |
+| **Build-only** | Solo dentro del target hermético `tondo-meta`; nunca en un artefacto de aplicación |
 | **Target-specific** | Solo en una interfaz que identifica expresamente ese target |
 
 STD-0.1 evita APIs target-specific salvo que no exista un contrato portable
@@ -969,6 +1021,12 @@ Las APIs evitan allocation obligatoria cuando un préstamo o resultado opaco
 estático conserva la ergonomía. Tampoco exponen buffers internos de forma que
 rompa COW, ownership o seguridad.
 
+Una API de transformación ofrece una ruta de streaming o escritura sobre
+`std.io.Writer` cuando materializar el resultado completo no es inherente al
+contrato. La operación cómoda que devuelve `Bytes` puede existir además, pero se
+define como collector de la misma máquina semántica y no como una implementación
+divergente.
+
 ### 11.5 Límites
 
 Toda operación sobre input no confiable define:
@@ -981,6 +1039,46 @@ Toda operación sobre input no confiable define:
 
 Un límite de implementación configurable no se convierte en semántica portable
 salvo que la API lo publique.
+
+### 11.6 Implementación de referencia y kernels optimizados
+
+Toda familia crítica de bytes, texto, parsing, hashing o codecs mantiene:
+
+1. una implementación escalar sencilla que actúa como oracle ejecutable;
+2. properties y vectores que comparan cualquier ruta optimizada con ese oracle;
+3. kernels especializados cuando la evidencia demuestra beneficio; y
+4. un fallback portable con exactamente los mismos observables.
+
+Se permiten SIMD, operaciones de palabra ancha, lookup tables, vectorización
+automática, specialization, monomorfización y target multiversioning. La
+selección de kernel puede depender de arquitectura y CPU disponible, pero nunca
+cambia aceptación, resultado, error, orden, overflow ni consumo visible. No
+forma parte del API y se realiza como máximo una vez por unidad apropiada, no en
+cada byte del hot path.
+
+Un kernel nativo se encapsula en una unidad privilegiada fijada cuando requiere
+instrucciones o layout no expresables en Tondo seguro. La ruta escalar continúa
+siendo obligatoria para portabilidad, pruebas diferenciales y targets sin esa
+instrucción.
+
+### 11.7 Presupuestos de rendimiento
+
+“Rápido” no se acredita con una impresión ni con un único throughput. Cada
+módulo crítico publica workloads representativos y gates para:
+
+- throughput y latencia, incluida cola cuando sea material;
+- allocations por operación y bytes asignados;
+- memoria pico y crecimiento con el input;
+- coste de startup y primera llamada;
+- tamaño de código o artefacto;
+- tiempo de compilación añadido por generadores y monomorfización; y
+- comportamiento de inputs pequeños, medianos, grandes y adversarios.
+
+Los benchmarks registran hardware, OS, target, backend, toolchain, flags, corpus
+y varianza. Una optimización se acepta solo con tests de equivalencia y sin una
+regresión material no justificada en otra dimensión publicada. Los números
+concretos pertenecen al contrato de cada módulo y al tracker; esta arquitectura
+no inventa un umbral universal.
 
 ---
 
@@ -1062,6 +1160,22 @@ Una API que deba conservar o mostrar datos sensibles hace visible esa decisión
 al caller. La capability permite alcanzar la frontera del host; no rebaja estas
 obligaciones.
 
+### 12.6 Código generado y specialization
+
+Los providers estándar de `derive` y los generadores de schema son parte de la
+distribución fijada. Producen código Tondo ordinario y especializado:
+
+- acceso directo a fields y variants conocidos;
+- loops y validaciones concretos para el tipo;
+- llamadas estáticas a traits;
+- constantes y tablas derivables en build time; y
+- fast paths que el optimizador puede inlinear o eliminar.
+
+No pueden introducir lookup por nombre en runtime, un registro global de tipos,
+boxing universal ni un árbol dinámico intermedio cuando el caller solicita un
+tipo estático. Un backend puede optimizar el resultado como código manual y debe
+conservar una expansión inspeccionable para diagnostics y tooling.
+
 ---
 
 ## 13. Distribución reproducible
@@ -1080,6 +1194,10 @@ Una distribución estándar completa contiene, de forma cerrada:
 8. API hash público.
 9. Manifest de conformidad aplicable.
 10. Documentación normativa y ejemplos ejecutables.
+11. Providers `derive`, programas meta y schemas de inputs/outputs.
+12. Oracles escalares, vectores de interoperabilidad y corpus de benchmarks.
+13. Descriptor canónico `tondo-standard-descriptor-0.1/1` que une runtime,
+    companion meta, providers, hashes y límites.
 
 No depende de archivos instalados fuera de su manifest lógico.
 
@@ -1104,6 +1222,8 @@ La distribución utiliza SHA-256 lowercase. Como mínimo se fijan:
 - Hash de cada fuente.
 - Hash de cada unidad privilegiada.
 - Hash de cada input generado, si existiera.
+- Hash de cada provider o programa meta.
+- Hash de cada expansión y output generado que forme parte de la distribución.
 
 El hash de contenido cambia ante cualquier byte. El API hash cambia solo ante
 la interfaz pública canónica y sus contratos versionados. Cambiar implementación
@@ -1149,13 +1269,30 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.io` | Core | — | 0.1 | Protocolos de lectura/escritura, buffers, EOF, partial I/O y errores portables |
 | `std.math` | Core | — | 0.1 | Matemática escalar portable y semántica IEEE nombrada |
 | `std.format` | Core | — | 0.1 | Formatting explícito sobre `Display`, sin reflection |
-| `std.time` | Core + gated | `clock` para proveedor | 0.1 | Duration, Instant monotónico, suspensión, timers y deadlines |
+| `std.serialization` | Core | — | 0.1 | Traits estáticos, eventos estructurales y contratos compartidos de encode/decode |
+| `std.reflect` | Core | — | 0.1 | Metadata de tipos retenida explícitamente, sin inspección dinámica de valores |
+| `std.meta` | Build-only | — | 0.1 | Modelo semántico inmutable, requests y emisión para providers/generators |
+| `std.encoding` | Core | — | 0.1 | Encodings binario-texto, incluidos Base64 y hexadecimal, con APIs materializadas y streaming |
+| `std.json` | Core | — | 0.1 | JSON RFC 8259, APIs tipadas, streaming y árbol dinámico explícito |
+| `std.messagepack` | Core | — | 0.1 | MessagePack tipado, streaming y árbol dinámico explícito |
+| `std.protobuf` | Core + Build-only | — | 0.1 | Wire format y código schema-first generado desde `.proto` |
+| `std.yaml` | Core | — | 0.1 | YAML seguro, tipado y streaming sobre `std.serialization`, con límites explícitos |
+| `std.toml` | Core | — | 0.1 | TOML tipado y árbol dinámico explícito, preservando errores con spans |
+| `std.cbor` | Core | — | 0.1 | CBOR tipado, streaming y modo determinista explícito |
+| `std.time` | Core + gated | `clock` para proveedor | 0.1 | Duration, Instant, timers, deadlines, calendario civil y zonas horarias versionadas |
 | `std.path` | Core | — | 0.1 | Paths nativos y operaciones puramente léxicas |
+| `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
+| `std.uuid` | Core + gated | `entropy` y/o `clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
+| `std.channel` | Core | — | 0.1 | Canales tipados, cierre, backpressure y selección cancelable |
+| `std.sync` | Core + gated | `threads` para operaciones cross-thread | 0.1 | Mutex, rwlock, condvar, semáforo y atomics con memoria explícita |
+| `std.executor` | Core + gated | `threads` para pools bloqueantes | 0.1 | Configuración de ejecución, actores y bridge de trabajo bloqueante |
+| `std.log` | Core + gated | `console`, `filesystem` o `network` por sink | 0.1 | Eventos estructurados, niveles, backpressure y sinks explícitos |
 | `std.console` | Capability-gated | `console` | 0.1 | stdin, stdout, stderr, texto, bytes y flushing |
 | `std.env` | Capability-gated | `environment` | 0.1 | Argumentos y environment runtime explícitos |
 | `std.fs` | Capability-gated | `filesystem` | 0.1 | Filesystem, metadata, iteración y recursos de archivo |
 | `std.process` | Capability-gated | `process` | 0.1 | Planes, procesos, pipes, status, output y cancelación |
-| `std.testing` | Test-only | ninguna implícita | 0.2 | Control sellado y helpers portables del runner |
+| `std.net` | Capability-gated | `network` | 0.1 | Direcciones, DNS, sockets, streams, datagrams y frontera TLS |
+| `std.testing` | Test-only | ninguna implícita | 0.1 | Control sellado y helpers portables del runner |
 
 ### 14.1 Reglas del catálogo
 
@@ -1169,18 +1306,324 @@ actualizar esta especificación y el tracker antes de implementar.
 - `std.time.Duration` es usable sin `clock`; consultar tiempo o suspenderse
   contra un proveedor requiere `clock`.
 - `std.console` no es un alias de `std.format`.
+- `std.serialization` es el único owner de los traits estructurales compartidos;
+  no existe un facade universal `std.codec` que oculte el formato.
+- `std.reflect` describe tipos y nunca es dependencia de los codecs tipados.
+- `std.meta` solo existe para programas del target `tondo-meta` y no concede
+  capabilities de host.
+- `std.protobuf` ejecuta su compilador de schema en build time; su runtime
+  portable continúa siendo core.
+- `std.encoding`, `std.yaml`, `std.toml` y `std.cbor` reutilizan `std.io` y
+  `std.serialization`; no introducen otro facade universal ni árboles
+  heterogéneos compartidos entre formatos.
+- `std.channel`, `std.sync` y `std.executor` reutilizan el único modelo async,
+  de ownership y de memoria del lenguaje; ninguna API crea tasks desligadas o
+  un segundo tipo de future.
+- `std.time` separa estrictamente el reloj monotónico del calendario civil. Los
+  datos de zona horaria son inputs versionados de la distribución, nunca una
+  consulta ambiental durante compilación.
+- `std.net` no concede red por import: cada target debe seleccionar `network` y
+  cada operación conserva I/O, timeout y cancelación en su firma.
+- `std.uuid` separa representación y parsing core de cualquier generador que
+  requiera `entropy` o `clock`.
+- `std.log` define eventos puros en core; cada sink declara sus capabilities y
+  política de backpressure sin alterar silenciosamente el control del programa.
 - Los argumentos de proceso pertenecen a `std.env`; el contrato bootstrap de
   `std.process.args()` se migrará sin compatibilidad implícita.
 - `std.testing` solo existe en source sets de test y no forma parte de producción.
-- Las APIs async de streams generales, canales y red no se introducen
-  indirectamente en estos módulos antes de STD-0.2.
+- Streams, canales, red y sincronización solo aparecen bajo sus propietarios
+  canónicos; ningún módulo existente los introduce indirectamente.
 
 ### 14.2 Estado de esta revisión
 
-El catálogo y sus propietarios son normativos. Las declaraciones de las doce
-superficies permanecen pendientes, salvo el núcleo sellado que
+El catálogo y sus propietarios son normativos. Las declaraciones exhaustivas de
+las veintinueve superficies permanecen pendientes, salvo el núcleo sellado que
 `TONDO_TESTING_SPEC.md` ya fija para `std.testing`. El bootstrap conserva su
 propio contrato separado hasta completar la migración de la sección 19.
+
+La implementación usa dos gates internos sin crear versiones distintas:
+
+- **STD-0.1A / S1A** cierra intrinsics, `std.bytes`, `std.io`, `std.math`,
+  `std.format`, `std.serialization`, `std.reflect`, `std.meta`, `std.json`,
+  `std.messagepack`, `std.protobuf`, el sustrato monotónico de `std.time`,
+  `std.path`, `std.console`, `std.env`, `std.fs`, `std.process` y
+  `std.testing`. Es el corpus mínimo que debe existir antes del backend nativo.
+- **STD-0.1B / S1** completa `std.encoding`, `std.yaml`, `std.toml`,
+  `std.cbor`, calendario civil y zonas de `std.time`, `std.regex`, `std.uuid`,
+  `std.channel`, `std.sync`, `std.executor`, `std.log` y `std.net` sobre VM y
+  backend nativo.
+
+S1A no es una release ni permite publicar una stdlib incompleta como 0.1.0.
+Todos los módulos de ambas fases comparten una distribución, PackageId y
+política de compatibilidad; Gate S1 fija sus hashes finales.
+
+### 14.3 Arquitectura común de serialización
+
+Hay dos rutas deliberadamente distintas:
+
+- **Tipada:** un tipo concreto implementa `serialization.Serialize` y/o
+  `serialization.Deserialize`; el compilador monomorfiza la llamada y el codec
+  accede directamente a su estructura.
+- **Dinámica explícita:** cada formato posee su propio enum `Value` para
+  documentos cuyo schema no se conoce al compilar.
+
+La ruta tipada no construye un `Value`, no consulta `std.reflect` y no busca
+fields por string. La ruta dinámica no introduce `Any`: sus casos posibles son
+un enum cerrado y específico del formato.
+
+Todo codec ofrece tres niveles cuando el formato los admite:
+
+1. una operación cómoda que transforma un valor completo a/desde `Bytes`;
+2. un `Reader`/`Writer` incremental sobre `std.io`; y
+3. una máquina de eventos o tokens para procesar documentos sin materializarlos.
+
+Los tres niveles comparten parser, validador y encoder. Un helper materializado
+no mantiene una segunda semántica. Las APIs de streaming soportan chunks
+arbitrarios, incluida una secuencia UTF-8, varint o escalar dividida entre dos
+chunks, y aplican backpressure del reader/writer.
+
+Cada decoder acepta límites explícitos agrupados en un record: bytes de input,
+profundidad, longitud de string/blob, elementos de colección y bytes
+materializados. Los defaults estándar son finitos y versionados. Alcanzar un
+límite devuelve un error nominal con clase, offset y path estructural; no
+produce un pánico ni un valor parcial.
+
+### 14.4 `std.serialization`
+
+`std.serialization` posee los protocolos estáticos compartidos. Su shape lógico
+es:
+
+~~~tondo pseudocode
+pub trait Serialize {
+    fn serialize[E, S: Serializer[E]](
+        self,
+        var serializer: S,
+    ): !E
+}
+
+pub trait Deserialize {
+    fn deserialize[E, D: Deserializer[E]](
+        var deserializer: D,
+    ): Self !E
+}
+~~~
+
+`Serializer[E]` y `Deserializer[E]` son protocolos estáticos de eventos
+estructurales: escalares, bytes, secuencias, maps, records, fields, enums y
+variants. No son trait objects y no borran el tipo de error del formato. El
+contrato exhaustivo de sus operaciones se cerrará antes de implementar
+`STD-SER-001`; la decisión normativa ya fijada es que un solo `impl` generado
+puede alimentar varios formatos sin reflection.
+
+El receiver `self` de `Serialize` es la observación inmutable ordinaria del
+lenguaje: serializar no consume el valor. El serializer/deserializer sí se pasa
+como `var` para que avance su estado sin boxing ni allocation por evento.
+
+La distribución registra providers para:
+
+~~~tondo pseudocode
+import std.serialization
+
+derive serialization.Serialize + serialization.Deserialize for User
+~~~
+
+El comportamiento derivado:
+
+- visita fields en orden de declaración;
+- utiliza el spelling declarado de cada field como nombre externo por defecto,
+  incluidos fields privados cuya autorización concede `derive`;
+- conserva discriminante y payload de enum de forma estructural;
+- introduce bounds mínimos sobre parámetros genéricos;
+- rechaza en compile time un field sin implementación requerida; y
+- construye el valor solo después de validar todos sus componentes.
+
+Renombrar, omitir, aplanar o transformar fields cambia un contrato de wire y no
+se esconde en attributes generales. Se expresa con un `impl` manual o con un
+tipo DTO explícito. Protobuf no utiliza este derive para inferir field numbers.
+
+### 14.5 `std.reflect`
+
+`std.reflect` implementa la reflection conservada de 27.10. Su núcleo lógico es:
+
+~~~tondo pseudocode
+pub fn typeInfo[T](): TypeInfo
+
+pub type TypeInfo
+pub type TypeId
+pub enum TypeKind {
+    Primitive
+    Record
+    Enum
+    Newtype
+    Tuple
+    Union
+    Function
+    Applied
+    Reference
+    Opaque
+}
+~~~
+
+`TypeInfo` permite consultar nombre calificado, `TypeId`, kind, argumentos
+genéricos, fields públicos, variants públicas y capabilities demostradas. Los
+descriptores secundarios contienen únicamente nombres, tipos y posición
+declarativa; nunca contienen getters, setters, constructores o function
+handles.
+
+No hay enumeración global de tipos. `typeInfo[T]()` retiene solo metadata
+alcanzable para `T`; el linker puede eliminar el resto. `TypeId` solo compara
+identidad dentro del mismo artefacto exacto y no es estable para persistencia,
+red, schemas ni caches externas.
+
+Los usos previstos son diagnostics de aplicación, documentación y herramientas
+que necesitan describir un tipo conocido estáticamente. JSON, MessagePack y
+Protobuf no dependen de este módulo.
+
+### 14.6 `std.meta`
+
+`std.meta` solo está presente en `target = tondo-meta`. Define los valores
+inmutables de `GenerateRequest`, `DeriveRequest`, `GenerateResponse`,
+`DeriveResponse`, modelo semántico, diagnostics y outputs descritos por el
+toolchain.
+
+Además ofrece:
+
+- recorrido canónico de la clausura de roots autorizada: módulos,
+  declarations, fields y variants;
+- renderizado canónico de identidades, tipos, strings y literals;
+- un builder de fuente que maneja escaping e indentación; y
+- asociación explícita entre spans generados e inputs de origen.
+
+No ofrece filesystem, environment, process, clock, entropy, red, compiler
+callbacks ni mutación del AST que produjo el modelo. Crear un documento fuente
+es construir un valor nuevo; el toolchain decide si lo admite, lo formatea y lo
+compila.
+
+### 14.7 `std.json`
+
+`std.json` implementa JSON UTF-8 conforme a
+[RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html). Su superficie contiene:
+
+- encode/decode tipado mediante `Serialize` y `Deserialize`;
+- `JsonReader`, `JsonWriter` y eventos incrementales;
+- `JsonValue` para uso sin schema;
+- `JsonNumber`, que conserva una representación numérica validada sin forzar
+  pérdida inmediata a `Float64`; y
+- opciones nominales de límites, campos desconocidos, duplicados y números no
+  representables.
+
+El modo estricto por defecto rechaza trailing data, UTF-8 inválido, escapes
+inválidos, profundidad excedida, claves duplicadas y números fuera de la
+política solicitada. Ignorar campos desconocidos o elegir una política distinta
+requiere `DecodeOptions` explícito; no depende de globals.
+
+El encoder ordinario conserva el orden declarativo de un tipo y el orden de
+inserción de `JsonValue.Object`. `encodeCanonical` implementa
+[RFC 8785 (JCS)](https://www.rfc-editor.org/rfc/rfc8785.html):
+ordena properties según esa norma, usa su serialización de strings y números y
+emite UTF-8 sin whitespace. Como JCS restringe el dominio a I-JSON, la operación
+devuelve un error si un `JsonNumber` no puede representarse en ese dominio sin
+cambiar su valor; nunca redondea silenciosamente. La operación normal no promete
+que whitespace o spelling coincidan con el input.
+
+Un error contiene clase estable, byte offset, línea/columna cuando puedan
+calcularse y path estructural. No copia automáticamente el documento, el valor
+de un field ni datos potencialmente secretos dentro de su mensaje.
+
+### 14.8 `std.messagepack`
+
+`std.messagepack` implementa la
+[especificación MessagePack](https://github.com/msgpack/msgpack/blob/master/spec.md)
+binaria completa: nil, booleanos, enteros signed/unsigned, floats, strings
+UTF-8, binary, arrays, maps y extension values. Un objeto `str` con bytes UTF-8
+inválidos produce error; `bin` conserva cualquier secuencia de bytes.
+
+La ruta tipada comparte `Serialize`/`Deserialize` y escribe directamente al
+buffer o writer. `MessagePackValue` representa uso dinámico. Como una key
+MessagePack puede ser cualquier valor, un map dinámico conserva sus pares como
+secuencia ordenada en lugar de imponer artificialmente `Map[String, Value]`;
+así también puede detectar duplicados según la política del caller.
+
+El encoder usa siempre la representación válida más corta para enteros y
+longitudes. Conserva orden de entrada en modo ordinario. La operación canónica
+define además, de forma propia de Tondo:
+
+- `float32` solo cuando conserva exactamente el valor y sus signos relevantes;
+  en otro caso usa `float64`;
+- un único bit pattern quiet NaN, manteniendo distintos `-0.0` y `0.0`;
+- maps ordenados lexicográficamente por los bytes del encoding canónico de cada
+  key; y
+- rechazo de dos keys con el mismo encoding canónico, por lo que no existe un
+  desempate dependiente del layout.
+
+Así, dos layouts internos no alteran el resultado. Esta operación no se presenta
+como parte de la especificación MessagePack ni como compatible con un modo
+canónico externo sin nombre.
+
+Extension values conservan type code y payload exactos. La extensión timestamp
+estándar puede convertirse explícitamente a un `MessagePackTimestamp` de
+segundos Unix y nanosegundos; no adelanta calendario civil ni se convierte en
+`Instant`. Una extensión desconocida no se pierde ni se interpreta por
+reflection.
+
+### 14.9 `std.protobuf`
+
+[Protobuf](https://protobuf.dev/programming-guides/encoding/) es schema-first.
+Un `.proto` entra al build como generator input y el programa estándar fijado
+produce tipos, codecs y metadata de schema ordinarios. La versión inicial
+soporta proto3, incluido `optional`, repeated, packed fields, maps,
+[enums abiertos](https://protobuf.dev/programming-guides/enum/), nested messages
+y `oneof`. Services y gRPC se difieren porque requieren contratos de networking
+separados.
+
+El mapping de package y module es explícito en la declaración del generador. Dos
+schemas no pueden generar el mismo path, tipo o field identity. Los field
+numbers proceden solo del schema; nunca del orden de un record Tondo, un hash o
+reflection.
+
+Los tipos generados:
+
+- distinguen presencia cuando el schema la distingue;
+- validan wire type, varints, longitudes, recursion y límites;
+- preservan unknown fields al decodificar y re-encodear salvo descarte
+  explícito;
+- representan `oneof` mediante un enum cerrado;
+- representan cada enum proto3 abierto mediante un tipo nominal que conserva
+  siempre su `Int32` wire, operaciones asociadas para los valores conocidos y
+  una proyección `known(): KnownEnum?` hacia un enum cerrado generado; un número
+  desconocido no se convierte en sentinel ni pierde su payload; y
+- no exponen almacenamiento wire mutable.
+
+El encoder ordinario produce bytes válidos y puede elegir un orden permitido.
+`encodeDeterministic` ordena fields por número y maps por la regla publicada
+para obtener estabilidad con el mismo schema, versión estándar y valor. Esa
+garantía no afirma una canonicalización universal de Protobuf ni convierte los
+bytes en identidad duradera entre toolchains distintos.
+
+La evolución se comprueba como tarea de build: reutilizar field numbers,
+cambiar wire-incompatible types o romper una reserva produce diagnostics
+asociados al schema. El runtime no descubre schemas, carga descriptors
+ambientales ni genera código en la primera petición.
+
+### 14.10 Reglas de rendimiento de codecs
+
+Los tres codecs:
+
+- decodifican tipos estáticos directamente, sin DOM intermedio;
+- escriben a buffers crecientes con reservas comprobadas o a `Writer`;
+- utilizan vistas prestadas para tokens o bytes cuando su vida es local y
+  segura;
+- evitan transcoding cuando input y output ya son UTF-8 válido;
+- mantienen fast paths para ASCII, búsqueda de caracteres especiales, varints y
+  copias de bytes;
+- pueden usar SIMD o kernels nativos bajo las reglas de 11.6; y
+- demuestran equivalencia mediante vectores oficiales, fuzzing diferencial,
+  round trips, corpus adversario y comparación scalar/optimized.
+
+Los benchmarks separan parse, validate, typed decode, dynamic decode, encode,
+streaming y allocation. También miden profundidad hostil, strings con escapes,
+maps grandes, unknown fields y chunks mínimos; optimizar el happy path no puede
+convertir un input adversario en consumo no acotado.
 
 ---
 
@@ -1238,6 +1681,9 @@ Antes de considerarse especificado, cada módulo debe incluir:
 - Límites.
 - Resolución o precisión.
 - Comportamiento ante overflow y agotamiento.
+- Ruta escalar de referencia y rutas optimizadas, cuando existan.
+- Workloads, métricas y umbrales de regresión.
+- Efecto sobre tamaño de código y tiempo de compilación.
 
 ### 15.6 Portabilidad
 
@@ -1257,6 +1703,8 @@ Antes de considerarse especificado, cada módulo debe incluir:
 - Composición.
 - Properties o modelo.
 - Adaptador público de conformidad.
+- Benchmarks reproducibles cuando la API esté en un hot path.
+- Expansión y hashes de providers/generators cuando genere código.
 
 Una sección marcada “implementation-defined” debe enumerar exactamente qué
 puede variar y cómo puede observarse. No es una cláusula abierta.
@@ -1305,6 +1753,28 @@ Una API async prueba además:
 - Roots a través de `await`.
 - Backpressure y límites.
 
+Un codec o parser prueba además:
+
+- Vectores oficiales e interoperabilidad con al menos dos implementaciones
+  independientes cuando existan.
+- Fuzzing de parser, decoder, streaming y round trip.
+- Chunks en todos los boundaries relevantes.
+- Profundidad, longitud, overflow y payloads truncados o mal formados.
+- Policies de unknown/duplicate fields.
+- Equivalencia typed/dynamic cuando representen el mismo valor.
+- Equivalencia byte a byte entre oracle escalar y cada kernel optimizado.
+- Ausencia de materialización intermedia en la ruta tipada mediante
+  instrumentación de allocations.
+
+Un provider o generador prueba además:
+
+- Determinismo byte a byte.
+- Sandbox y denegación de todas las capabilities.
+- Presupuestos de pasos, memoria y output.
+- Spans y diagnostics de input.
+- Colisiones, outputs ausentes/adicionales y fuente generada inválida.
+- Expansiones genéricas, campos privados autorizados y conflictos de coherencia.
+
 Un recurso afín prueba además:
 
 - Consumo correcto.
@@ -1321,7 +1791,7 @@ La suite estándar:
 - Tiene versión y manifest propios.
 - Fija la especificación y distribución por hash.
 - Se ejecuta mediante un adaptador público.
-- Conserva Tondo 0.1 bootstrap sin mutarlo.
+- Conserva el checkpoint Tondo 0.1 bootstrap sin mutarlo.
 - Ejecuta el mismo corpus contra VM y futuro backend nativo.
 - Distingue limitación de target de fallo de implementación.
 
@@ -1391,16 +1861,14 @@ el cambio se trata como compatibilidad, no como bug conveniente.
 
 No forman parte de STD-0.1:
 
-- Calendario civil, fechas, zonas horarias y locale.
-- Networking, DNS, IP, sockets y TLS.
-- JSON, codecs generales y serialización.
-- Regex.
-- UUID.
-- Logging estructurado.
+- Locale y formatting cultural implícito; calendario civil y zonas horarias sí
+  pertenecen a `std.time`.
+- RPC y gRPC; Protobuf y la frontera de red sí pertenecen a STD-0.1.
+- Formatos adicionales a JSON, MessagePack, Protobuf, YAML, TOML y CBOR.
 - Aleatoriedad y entropía de usuario.
-- Channels, mutexes, rwlocks, atomics, actores y pools.
 - Streams async generales o reactivos; los protocolos acotados de byte I/O de
-  `std.io` sí pertenecen a 0.1.
+  `std.io`, sockets de `std.net` y canales de `std.channel` sí pertenecen a
+  0.1.
 - Deque y priority queues.
 - Decimal, BigInt y Complex.
 - Matrices, tensors y álgebra lineal.
@@ -1412,12 +1880,14 @@ No forman parte de STD-0.1:
 La presencia de la capability correspondiente en
 `tondo-capabilities/1` no adelanta estas APIs.
 
-El orden previsto es:
+La división siguiente es solo una secuencia de implementación; ambas fases
+pertenecen al mismo contrato y deben cerrarse antes de publicar 0.1.0:
 
 ~~~text
-STD-0.1 core + hosted
+STD-0.1A foundation + hosted
     -> backend nativo conforme
-        -> STD-0.2 concurrency + application
+        -> STD-0.1B concurrency + application
+            -> Gate S1 y publicación STD 0.1.0
 ~~~
 
 Una necesidad concreta puede promover una familia mediante una revisión del
@@ -1427,7 +1897,7 @@ tracker y de esta especificación, no mediante implementación ad hoc.
 
 ## 19. Migración desde el bootstrap
 
-Tondo 0.1.0 publicó:
+El checkpoint bootstrap interno utiliza:
 
 ~~~text
 PackageId = toolchain:std:0.1-bootstrap
@@ -1436,7 +1906,8 @@ profile   = hosted
 caps      = [console, process]
 ~~~
 
-Esa distribución y su suite de conformidad permanecen inmutables.
+Esos bytes y su suite de conformidad se conservan como evidencia reproducible
+del desarrollo, pero no constituyen una release pública de Tondo.
 
 ### 19.1 `std.console`
 
@@ -1465,8 +1936,8 @@ El bootstrap expone una superficie cerrada de procesos, `Bytes` opaco y
 - Sustituye errores y tipos provisionales por propietarios canónicos.
 - Mantiene argv exacto, shell explícito, pipes, backpressure y cleanup.
 
-La release bootstrap no cambia. Un proyecto adopta STD-0.1 seleccionando el
-nuevo PackageId y lockfile.
+El checkpoint bootstrap no se reescribe. Un proyecto adopta STD-0.1
+seleccionando el nuevo PackageId y lockfile.
 
 ### 19.3 Implementación transitoria
 
@@ -1498,7 +1969,12 @@ STD-0.1 puede publicarse como 0.1.0 únicamente cuando:
 - [ ] Los programas representativos de texto, colecciones, archivos y procesos
       pasan el gate estricto.
 - [ ] La distribución es reproducible byte a byte.
-- [ ] La release bootstrap Tondo 0.1.0 permanece verificable sin cambios.
+- [ ] Providers y generators son herméticos, deterministas y están fijados.
+- [ ] JSON, MessagePack y Protobuf pasan interoperabilidad, fuzzing, streaming y
+      límites.
+- [ ] Cada hot path tiene oracle escalar, equivalencia de kernels y gate de
+      rendimiento multidimensional.
+- [ ] El checkpoint bootstrap Tondo 0.1.0 permanece verificable sin cambios.
 - [ ] Todo lo diferido está ausente o identificado fuera de `std`.
 
 Hasta cerrar esta lista, el documento puede ser normativo para las reglas base

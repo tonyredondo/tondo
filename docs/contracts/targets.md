@@ -1,6 +1,6 @@
 # Bootstrap target contract
 
-**Status:** released for Tondo 0.1
+**Status:** pinned by the internal Tondo 0.1 checkpoint
 
 The initial target is:
 

@@ -6,6 +6,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tondo_conformance::document::extract_fences;
+use tondo_conformance::lineage::{LIVE_LINEAGE_PATH, LiveLineage};
 use tondo_conformance::manifest::{
     CaseAction, CaseGroup, ConformanceCase, Expectation, LoadedSuite, PinnedFile,
 };
@@ -68,24 +69,27 @@ pub struct TestEntry {
 }
 
 pub fn build(root: &Path) -> Result<Inventory, String> {
-    let suite = LoadedSuite::load(root, Path::new("conformance/0.1/manifest.json"))
-        .map_err(|error| error.to_string())?;
-    validate_repository_sidecars(root, &suite)?;
+    let lineage =
+        LiveLineage::load(root, Path::new(LIVE_LINEAGE_PATH)).map_err(|error| error.to_string())?;
+    let suite = lineage.checkpoint_suite();
+    validate_repository_sidecars(root, suite)?;
 
     let mut tests = Vec::new();
     discover_rust_tests(root, &mut tests)?;
     discover_fixture_tests(root, &mut tests)?;
-    discover_conformance_tests(root, &suite, &mut tests)?;
-    discover_language_fences(root, &suite, &mut tests)?;
-    discover_future_fences(root, &mut tests)?;
+    discover_conformance_tests(root, suite, &mut tests)?;
+    discover_language_fences(root, suite, &mut tests)?;
+    discover_pending_testing_fences(root, &mut tests)?;
     discover_fuzz_targets(root, &mut tests)?;
     tests.sort_by(|left, right| left.id.cmp(&right.id));
     require_unique_ids(&tests)?;
 
     let documents = [
-        ("TONDO_LANGUAGE_SPEC.md", "0.1", "normative"),
-        ("TONDO_TESTING_SPEC.md", "0.2", "future-contract"),
-        ("TONDO_TOOLCHAIN_SPEC.md", "0.1", "normative"),
+        ("TONDO_LANGUAGE_SPEC.md", "0.1", "normative-live"),
+        ("TONDO_STANDARD_LIBRARY_SPEC.md", "0.1", "draft-pending"),
+        ("TONDO_TESTING_SPEC.md", "0.1", "draft-pending"),
+        ("TONDO_TOOLCHAIN_SPEC.md", "0.1", "normative-live"),
+        (LIVE_LINEAGE_PATH, "0.1", "lineage-open"),
     ]
     .into_iter()
     .map(|(path, edition, status)| {
@@ -387,7 +391,7 @@ fn discover_language_fences(
     Ok(())
 }
 
-fn discover_future_fences(root: &Path, tests: &mut Vec<TestEntry>) -> Result<(), String> {
+fn discover_pending_testing_fences(root: &Path, tests: &mut Vec<TestEntry>) -> Result<(), String> {
     let path = root.join("TONDO_TESTING_SPEC.md");
     let bytes =
         fs::read(&path).map_err(|error| format!("cannot read `{}`: {error}", path.display()))?;
@@ -395,21 +399,21 @@ fn discover_future_fences(root: &Path, tests: &mut Vec<TestEntry>) -> Result<(),
         .map_err(|error| format!("TONDO_TESTING_SPEC.md is not valid UTF-8: {error}"))?;
     for (index, fence) in generic_tondo_fences(contents)?.into_iter().enumerate() {
         tests.push(TestEntry {
-            id: format!("document:testing-0.2:fence:{:04}", index + 1),
-            kind: "future-contract".into(),
+            id: format!("document:testing-0.1:fence:{:04}", index + 1),
+            kind: "draft-contract".into(),
             crate_name: None,
-            phase: "future-testing".into(),
+            phase: "testing".into(),
             source: "TONDO_TESTING_SPEC.md".into(),
             fixture: None,
             group: fence.category,
             requirements: Vec::new(),
-            oracle: "future-contract-only".into(),
+            oracle: "draft-contract-only".into(),
             repetitions: 1,
             source_sha256: sha256(fence.source.as_bytes()),
-            target: "future".into(),
+            target: "tondo-vm-hosted".into(),
             document: Some("TONDO_TESTING_SPEC.md".into()),
-            edition: "0.2".into(),
-            status: "future-contract".into(),
+            edition: "0.1".into(),
+            status: "draft-pending".into(),
             sidecars: Vec::new(),
         });
     }

@@ -4,6 +4,7 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+bash scripts/materialize-checkpoint-spec.sh --check
 cargo check --workspace --all-targets --locked
 cargo test --workspace --all-targets --locked
 cargo build -p tondo-cli --locked

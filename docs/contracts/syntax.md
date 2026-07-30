@@ -90,11 +90,14 @@ construct a second syntax tree.
 
 ## Defensive limits
 
-The parser enforces request-wide node and diagnostic budgets. Recursive CST and
-expression nesting is capped at 256 in the bootstrap even if an embedding host
-requests a larger value, because exceeding the safe host-stack bound must yield
-`ParseResource::NestingDepth`/`T0002`, never abort the process. This is an
-implementation safety limit, not Tondo language semantics.
+The parser enforces request-wide node and diagnostic budgets. While the
+bootstrap implementation still uses input-driven host recursion, recursive CST
+and expression nesting is temporarily capped at 128 even if an embedding host
+requests a larger value. Exceeding that portable process-safety ceiling yields
+`ParseResource::NestingDepth`/`T0002`, never an aborted process. This is an
+implementation safety limit, not Tondo language semantics. `PARSER-STACK-001`
+replaces the native recursion with explicit parser frames and removes the
+temporary clamp without removing the configured nesting budget.
 
 ## Validation
 

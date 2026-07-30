@@ -1,6 +1,6 @@
 # Bootstrap CLI contract
 
-**Status:** released for implementation version 0.1.0
+**Status:** pinned by the internal implementation checkpoint 0.1.0
 
 ## Commands
 

@@ -7,7 +7,10 @@ use crate::source::{FileId, SourceDatabase, SourceError};
 use super::cst::{Checkpoint, CstBuilder, TokenId};
 use super::{Cst, Lexed, SyntaxKind, Token, TokenKind};
 
-const MAX_SAFE_NESTING_DEPTH: u32 = 256;
+const DEFAULT_MAX_NESTING_DEPTH: u32 = 256;
+// Temporary portability guard for the recursive bootstrap parser. PARSER-STACK-001
+// replaces input-driven host recursion with explicit frames and removes this clamp.
+const MAX_SAFE_RECURSIVE_PARSER_DEPTH: u32 = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ParseMode {
@@ -30,7 +33,7 @@ impl Default for ParseLimits {
     fn default() -> Self {
         Self {
             max_nodes: 4_000_000,
-            max_nesting_depth: MAX_SAFE_NESTING_DEPTH,
+            max_nesting_depth: DEFAULT_MAX_NESTING_DEPTH,
             max_diagnostics: 10_000,
         }
     }
@@ -999,7 +1002,12 @@ impl Parser<'_> {
     }
 
     fn parse_expression_bp(&mut self, minimum_binding_power: u8) -> ParseResult {
-        if self.recursion_depth >= self.limits.max_nesting_depth.min(MAX_SAFE_NESTING_DEPTH) {
+        if self.recursion_depth
+            >= self
+                .limits
+                .max_nesting_depth
+                .min(MAX_SAFE_RECURSIVE_PARSER_DEPTH)
+        {
             return Err(ParseError::ResourceLimit {
                 resource: ParseResource::NestingDepth,
                 offset: self.current_offset(),
@@ -2457,7 +2465,12 @@ impl Parser<'_> {
                 offset: self.current_offset(),
             });
         }
-        if self.depth >= self.limits.max_nesting_depth.min(MAX_SAFE_NESTING_DEPTH) {
+        if self.depth
+            >= self
+                .limits
+                .max_nesting_depth
+                .min(MAX_SAFE_RECURSIVE_PARSER_DEPTH)
+        {
             return Err(ParseError::ResourceLimit {
                 resource: ParseResource::NestingDepth,
                 offset: self.current_offset(),

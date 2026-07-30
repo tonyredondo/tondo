@@ -2,9 +2,9 @@
 
 **Status:** accepted for M10.5b / Gate H0
 
-This contract defines how Tondo turns tests into reproducible evidence. It does
-not change Tondo 0.1 semantics and does not implement the future Tondo 0.2
-`test` or `suite` declarations.
+This contract defines how Tondo turns tests into reproducible evidence. It
+preserves the M10.5b checkpoint while describing pending Tondo 0.1 `test`,
+`suite` and metaprogramming requirements honestly in the open live lineage.
 
 ## Versioned evidence
 
@@ -14,7 +14,7 @@ The repository owns five machine-readable records:
 | --- | --- |
 | `testing/inventory.json` | Every discovered logical test, repetition, source, oracle, target, edition, status, and source hash. |
 | `testing/normative-evidence.json` | Reviewed requirement claims with separate positive, rejection, boundary, composition, oracle, and public-boundary evidence. |
-| `testing/coverage-matrix.json` | Every extracted normative Tondo 0.1 requirement, its stable identity, classification, dimensions, and evidence or waiver. |
+| `testing/coverage-matrix.json` | Every extracted normative Tondo 0.1 requirement, its stable identity, checkpoint relationship, classification, dimensions, and evidence or waiver. |
 | `testing/quality-baseline.json` | Reviewed line/function/region coverage and the bounded mutation selection with non-regression thresholds. |
 | `testing/regressions.json` | Confirmed defects tied to the lowest executable public boundary that would have detected them. |
 
@@ -33,12 +33,13 @@ One logical test is not necessarily one source file or one execution:
   requirements, and pinned source hashes.
 - Every Tondo fence in the normative language specification is recorded.
 - Fuzz targets are campaigns, not deterministic examples.
-- Tondo 0.2 testing-spec fences are `future-contract`; they are never counted
-  as executable Tondo 0.1 coverage.
+- Testing-spec fences use kind `draft-contract` and status `draft-pending`.
+  They are contracts within Tondo 0.1, but are never counted as executable
+  coverage before their implementation and live evidence exist.
 
-The M10.5b inventory contains 1,507 logical tests and 1,726 repetitions. Of
-those, 1,465 are executable, 38 are future contracts, three are fuzz campaigns,
-and one is a non-executable pseudocode fence. Counts are derived from entries
+The current live inventory contains 1,521 logical tests and 1,740 repetitions.
+Of those, 1,471 are executable, 38 are draft-pending contracts, three are fuzz
+campaigns, and nine are non-executable fences. Counts are derived from entries
 and cannot be edited independently.
 
 The inventory rejects:
@@ -63,19 +64,27 @@ Every requirement has exactly one status:
 
 - `covered`: explicit executable conformance evidence reaches a stable public
   oracle;
+- `draft-pending`: the requirement is new or changed relative to the immutable
+  checkpoint and no executable live case layer claims it;
 - `target-not-applicable`: the rule deliberately describes a surface absent
   from `tondo-vm-hosted`;
 - `stdlib-pending`: the rule belongs to the later standard-library contract;
 - `toolchain-limit`: implementation tests exist, but no executable case
   currently carries this prose requirement as a stable identity.
 
-`toolchain-limit` is an exposed traceability gap, not a claim that the behavior
-is unimplemented. A section or nearby example never counts as semantic
-coverage by proximity. The current matrix reports 17 covered, eight
-target-inapplicable, four standard-library-pending, and 271 explicit
-toolchain-limit requirements. Later milestones must replace those limits with
-reviewed claims in `testing/normative-evidence.json`; they cannot silently turn
-them green.
+`draft-pending` is an implementation state, while `toolchain-limit` is an
+exposed traceability gap and not a claim that behavior is unimplemented. A
+checkpoint requirement is inherited only when its stable ID and exact text
+hash are unchanged. A changed paragraph with the same ID is still live work.
+A live layer declaration without executable reviewed evidence cannot become
+`covered`. A section or nearby example never counts as semantic coverage by
+proximity.
+
+The current matrix reports 17 covered, 27 draft-pending, seven
+target-inapplicable, three standard-library-pending, and 262 explicit
+toolchain-limit requirements. Later milestones must replace pending states and
+limits with reviewed claims in `testing/normative-evidence.json`; they cannot
+silently turn them green.
 
 Each requirement records six dimensions: positive behavior,
 rejection/failure, material boundaries, composition, oracle, and public
@@ -95,11 +104,12 @@ runs:
 3. Clippy with warnings denied;
 4. every workspace test and target;
 5. Rustdoc with warnings denied;
-6. locked conformance runner and adapter builds;
-7. exact reliability-record validation;
-8. conformance-manifest validation;
-9. the complete reference conformance run; and
-10. byte-for-byte comparison with the versioned result.
+6. exact checkpoint snapshot provenance from tag, commit and SHA-256;
+7. locked conformance runner and adapter builds;
+8. exact reliability-record validation;
+9. explicit checkpoint and live-lineage validation;
+10. the complete reference checkpoint run; and
+11. byte-for-byte comparison with the versioned result.
 
 Linux ARM64, macOS Intel, macOS Apple Silicon, and Windows run the portable
 workspace tests plus a native CLI hello-world smoke test.
@@ -112,7 +122,9 @@ PR gate.
 Failure evidence lives under `target/reliability/`. Logs replace the physical
 workspace root with `./`; metadata includes only the target, seed, and tool
 versions. CI uploads logs, minimized fuzz artifacts, and quality reports, never
-credentials or ambient environment dumps.
+credentials or ambient environment dumps. The strict job also retains the
+content-addressed live manifest from every attempted revision, whether the
+later gate succeeds or fails.
 
 ## Generators, properties, and metamorphism
 

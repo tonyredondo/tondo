@@ -1,13 +1,13 @@
 # Tondo: especificación del lenguaje y toolchain de testing
 
-- **Estado:** diseño normativo aprobado para Tondo 0.2; todavía no implementado.
-- **Revisión:** 0.2-draft.7 — 2026-07-29.
-- **Edición objetivo:** Tondo 0.2.
+- **Estado:** borrador normativo de testing para Tondo 0.1; todavía no implementado.
+- **Revisión:** 0.1-draft.1 — 2026-07-29.
+- **Edición objetivo:** Tondo 0.1.
 - **Especificación base:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md).
-- **SHA-256 de la base:** `ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084`.
-- **Formatos de tooling:** `tondo-test-report-0.2/7`,
-  `tondo-test-list-0.2/6`, `tondo-junit-report-0.2/4`,
-  `tondo-test-artifacts-0.2/1` y `tondo-snapshot-store-0.2/1`.
+- **SHA-256 de la base:** `e24f1fd09b9d9096d0ade955e84ebc5dc89a4f2544ad517f5e01ab8eb0966266`.
+- **Formatos de tooling:** `tondo-test-report-0.1/7`,
+  `tondo-test-list-0.1/6`, `tondo-junit-report-0.1/4`,
+  `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`.
 
 Esta especificación añade a Tondo las declaraciones `suite` y `test` y define
 cómo el toolchain descubre, compila, ejecuta y reporta árboles estáticos de
@@ -26,14 +26,12 @@ proactiva, artefactos por intento y snapshots textuales complementan esa
 evidencia sin introducir subtests dinámicos ni estado global. Inputs secretos,
 interrupción externa y cleanup asíncrono tienen fronteras explícitas para que el
 runner nunca presente una ejecución parcial o no reproducible como completa.
-Complementa Tondo 0.1; no modifica retroactivamente esa edición ni la suite
-publicada `tondo-conformance-0.1`.
-
-La próxima especificación consolidada de Tondo debe incorporar normativamente
-estas reglas sin cambiar sus decisiones, resolver las referencias de sección
-contra la nueva numeración y publicar una suite de conformidad distinta. Hasta
-entonces, este documento es la fuente normativa para el diseño de testing de la
-edición 0.2 y el tracker es solo su plan de implementación.
+Forma parte del borrador consolidado Tondo 0.1 fijado por hash. La especificación
+principal incorpora las keywords, grammar, semántica general y diagnósticos; este
+documento fija el contrato especializado del runner y sus formatos. El tracker
+es únicamente el plan de implementación. Un compilador no puede anunciar
+conformidad completa Tondo 0.1 hasta implementar ambos contratos y pasar el
+grupo de testing de `tondo-conformance-0.1`.
 
 En este documento, **debe** expresa un requisito de conformidad, **no puede**
 expresa una prohibición, **puede** expresa una capacidad permitida y **se
@@ -42,7 +40,7 @@ recomienda** expresa orientación no obligatoria.
 ## Índice
 
 1. [Propósito y principios](#1-propósito-y-principios)
-2. [Compatibilidad y límite de edición](#2-compatibilidad-y-límite-de-edición)
+2. [Integración en Tondo 0.1](#2-integración-en-tondo-01)
 3. [Declaraciones `suite` y `test`](#3-declaraciones-suite-y-test)
 4. [Semántica estática](#4-semántica-estática)
 5. [Source sets y descubrimiento](#5-source-sets-y-descubrimiento)
@@ -133,29 +131,33 @@ el test como unidad ejecutable; `assert` proporciona la comprobación mínima y
 y tiempo virtual y añadirá comparaciones, diffs y recursos de test como API
 ordinaria.
 
-## 2. Compatibilidad y límite de edición
+## 2. Integración en Tondo 0.1
 
-### 2.1 Tondo 0.1 permanece inmutable
+### 2.1 Una sola edición
 
-Tondo 0.1 no contiene las keywords ni las declaraciones `test` y `suite`. Su
-especificación, diagnósticos, grammar, formatter y suite de conformidad
-permanecen byte a byte independientes de esta extensión.
+Tondo todavía no ha publicado su primera versión. Por ello el lenguaje de
+testing se integra directamente en Tondo 0.1 y no crea una edición intermedia.
+Este documento identifica mediante SHA-256 el snapshot exacto de la
+especificación principal que complementa. Cambiarlo obliga a revisar
+referencias, compatibilidad y evidencia antes de actualizar el hash.
 
-Una implementación no puede anunciar soporte Tondo 0.1 y aceptar `test` o
-`suite` como extensión silenciosa. Debe seleccionar explícitamente la edición
-0.2 o una edición posterior que incorpore este contrato.
+El tag interno `v0.1.0` conserva un checkpoint anterior a esta integración; no es
+una versión pública ni un segundo dialecto. La grammar, formatter, diagnostics y
+suite de conformidad vivos deben converger en el único contrato Tondo 0.1. Una
+implementación solo puede anunciar soporte parcial si declara expresamente los
+componentes que todavía no implementa.
 
-### 2.2 `test` y `suite` son keywords en Tondo 0.2
+### 2.2 `test` y `suite` son keywords en Tondo 0.1
 
-La edición 0.2 añade `test` y `suite` a la lista de palabras reservadas. Por
-tanto:
+Tondo 0.1 reserva `test` y `suite`. Por tanto:
 
 - Ninguna de las dos puede utilizarse como identificador no calificado.
 - Una función, variable, tipo, módulo o parámetro de usuario no puede llamarse
   `test` ni `suite`.
 - La API estándar utiliza el nombre de módulo `std.testing`, no `std.test`.
-- Código Tondo 0.1 que utilizara cualquiera de ambos nombres como identificador
-  requiere renombrarlo al migrar de edición.
+- Fuente escrita contra un checkpoint interno anterior que utilizara cualquiera
+  de ambos nombres como identificador debe renombrarlo antes de conformar con el
+  borrador final.
 
 Reservarlas globalmente evita keywords contextuales cuya interpretación dependa
 del source set o del lugar del parser.
@@ -206,8 +208,8 @@ sustrato mínimo compartido:
 `withVirtualTime` intercepta exactamente ese sustrato. El programa probado
 continúa llamando a las mismas APIs que usaría en producción y no recibe un
 `Clock` de test como parámetro. Calendario civil, timezone data y sincronización
-con reloj de pared no son requisito de esta extensión y pueden permanecer en una
-versión posterior de la librería.
+con reloj de pared pertenecen a la biblioteca estándar Tondo 0.1, pero no son
+requisito del dominio virtual ni se virtualizan implícitamente.
 
 El gate de testing no puede anunciar tiempo virtual conforme hasta que exista
 esa especificación mínima y el adaptador de la VM la ejecute tanto con proveedor
@@ -219,24 +221,25 @@ privados del runner.
 ### 2.5 Dependencia de cleanup asíncrono general
 
 Testing no añade `beforeAll`, `afterAll`, callbacks de teardown ni una operación
-privada para esperar cleanup. Tondo 0.2 admite en cualquier función o entrada
+privada para esperar cleanup. Tondo 0.1 admite en cualquier función o entrada
 async una única forma visible de registrar una llamada asíncrona infallible:
 
 ~~~tondo
 defer await Service.stop(service)
 ~~~
 
-El delta de grammar de la edición 0.2 es:
+La grammar consolidada de Tondo 0.1 contiene:
 
 ~~~ebnf
 defer_stmt         = "defer",
                      ( deferred_async_call | postfix_expression | block ) ;
-deferred_async_call = "await", postfix_expression ;
+deferred_async_call = "await", plain_postfix_expression ;
 ~~~
 
-Tanto `deferred_async_call` como el `postfix_expression` ordinario deben
-terminar en un `call_suffix`. `await` pertenece a la forma diferida completa;
-no ejecuta ni inicia la llamada durante el registro.
+Tanto el `plain_postfix_expression` de `deferred_async_call` como el
+`postfix_expression` ordinario deben terminar en un `call_suffix`. `await`
+pertenece a la forma diferida completa; no ejecuta ni inicia la llamada durante
+el registro.
 
 La llamada no se inicia al registrar el `defer`; sus operandos y ownership se
 reservan con las reglas ordinarias y se invoca y espera al abandonar el scope,
@@ -258,9 +261,9 @@ en su posición LIFO. La forma:
   resource limit, interrupción externa o pérdida de aislamiento continúan
   pudiendo terminarla.
 
-La especificación consolidada de Tondo 0.2 debe incorporar esta extensión
-general de `defer`, su grammar, efectos, ownership, MIR y cleanup antes de Gate
-T0. Una suite la reutiliza sin semántica especial:
+La especificación principal incorpora esta extensión general de `defer`, su
+grammar, efectos y ownership. La implementación debe cerrar también MIR, runtime
+y cleanup antes de Gate T0. Una suite la reutiliza sin semántica especial:
 
 ~~~tondo
 suite remoteApi {
@@ -291,7 +294,9 @@ test parsesNegativeNumbers {
 Gramática:
 
 ~~~ebnf
-top_decl_0_2  = top_decl_0_1 | test_decl | suite_decl ;
+top_decl      = const_decl | type_decl | alias_decl | enum_decl
+              | trait_decl | impl_decl | derive_decl | function_decl
+              | test_decl | suite_decl ;
 test_decl      = "test", identifier, block ;
 suite_decl     = "suite", identifier, suite_block ;
 suite_block    = "{", { NL | statement },
@@ -312,10 +317,10 @@ emite `E2004`: cada suite válida contiene al menos un miembro directo. Puesto q
 la regla se aplica recursivamente, toda suite válida contiene al menos un `test`
 descendiente.
 
-El parser de edición 0.2 reconoce ambos nodos dentro de una forma módulo y los
+El parser Tondo 0.1 reconoce ambos nodos dentro de una forma módulo y los
 conserva aunque la comprobación posterior determine que la fuente es
-`production`. Esa separación permite emitir `E2001` con el range completo. La
-edición 0.1 sigue utilizando exactamente `top_decl_0_1`.
+`production`. Esa separación permite emitir `E2001` con el range completo sin
+crear un segundo dialecto del parser.
 
 Ninguna declaración admite:
 
@@ -846,7 +851,7 @@ El artefacto contiene:
 - Operaciones verificadas de control de testing y la asociación de cada entrada
   con su envelope privado de ejecución.
 - Operaciones verificadas de attachment y snapshot, snapshot store
-  `tondo-snapshot-store-0.2/1`, su hash previo y el artifact store efectivo.
+  `tondo-snapshot-store-0.1/1`, su hash previo y el artifact store efectivo.
 - Operaciones verificadas de dominio temporal y su catálogo cerrado de puntos
   de suspensión duraderos.
 - Layout comprobado de los snapshots `Copy + Send + Share` que cruzan cada
@@ -1084,7 +1089,7 @@ del modelo de pánico, corrupción del runtime o imposibilidad de restablecer
 aislamiento se clasifica como fallo de infraestructura. El runner puede detener
 el bosque restante porque ya no puede garantizar resultados fiables. En ese
 caso termina con exit `3` y no emite un reporte canónico incompleto; todo reporte
-`tondo-test-report-0.2/7` válido clasifica cada hoja seleccionada.
+`tondo-test-report-0.1/7` válido clasifica cada hoja seleccionada.
 
 ### 7.6 Errores recuperables
 
@@ -1684,7 +1689,7 @@ seed, inputs o resource profile.
 runner. Tras registrar el resultado y completar cleanup, continúan hermanos y
 raíces posteriores cuando el aislamiento lo permite.
 
-La edición 0.2 no define `--fail-fast`. Detener el runner dejaría hojas
+Tondo 0.1 no define `--fail-fast`. Detener el runner dejaría hojas
 seleccionadas sin ejecutar y exigiría otro estado y otra política de scheduling,
 especialmente bajo `--jobs N`. Una edición posterior puede añadirlo únicamente
 si reporta honestamente esos nodos y conserva una frontera determinista.
@@ -1929,7 +1934,7 @@ distintos pueden compartir bytes físicos sin compartir identidad.
 
 El artifact store:
 
-- Usa `tondo-test-artifacts-0.2/1` y objetos inmutables
+- Usa `tondo-test-artifacts-0.1/1` y objetos inmutables
   `objects/<sha256-lowercase>`.
 - Publica un manifest canónico que relaciona intento, nombre, media type, hash,
   tamaño y object path lógico.
@@ -1943,7 +1948,7 @@ El artifact store:
   evidencia referenciada.
 
 `testing.snapshot(name, actual)` compara el `String` exacto con la entrada
-`(node_id, name)` de `tondo-snapshot-store-0.2/1`. Usa la misma gramática de
+`(node_id, name)` de `tondo-snapshot-store-0.1/1`. Usa la misma gramática de
 nombre que attachments, no normaliza newline, Unicode ni whitespace y devuelve
 `Unit`.
 
@@ -2036,7 +2041,7 @@ Reglas:
   ejecución, policy y schema que omitirlo. La opción sigue siendo incompatible
   con `--retry` y `--allow-flaky`, incluso con valor `1`.
 - `--artifacts` selecciona el root lógico de
-  `tondo-test-artifacts-0.2/1`. Sin la opción se usa el directorio de artifacts
+  `tondo-test-artifacts-0.1/1`. Sin la opción se usa el directorio de artifacts
   del target declarado por el toolchain. El path efectivo nunca entra en el
   reporte; el store sí es un output planificado y sujeto a colisiones.
 - `--update-snapshots` sigue 9.7. Exige `--jobs 1 --order canonical`, rechaza
@@ -2048,13 +2053,13 @@ Reglas:
   proyección JUnit no roja cuando los demás resultados lo permiten.
 - `--test-format human` es el default interactivo.
 - `--test-format json` emite exactamente un reporte
-  `tondo-test-report-0.2/7`, o una lista `tondo-test-list-0.2/6` con `--list`.
+  `tondo-test-report-0.1/7`, o una lista `tondo-test-list-0.1/6` con `--list`.
 - `--report` es repetible y escribe el resultado de la misma ejecución sin
   volver a compilar ni ejecutar. Se divide por el primer `=`; format y path
   vacíos son inválidos.
 - `--report json=<path>` escribe exactamente los mismos bytes que el JSON
   correspondiente de `--test-format json`.
-- `--report junit=<path>` escribe `tondo-junit-report-0.2/4` según 15.5.
+- `--report junit=<path>` escribe `tondo-junit-report-0.1/4` según 15.5.
 - Dos reportes no pueden resolver al mismo output ni sobrescribir un input,
   source, manifest, lockfile, snapshot store, artifact store u otro producto
   declarado. Cada archivo se publica atómicamente después de completar su
@@ -2158,7 +2163,7 @@ ocurren antes de la llamada. `tags` recibe exactamente un
 `snapshot` compara texto ya convertido mediante las APIs ordinarias de
 formatting. No
 existen niveles de log, timestamps, un tipo dinámico de metadata, reflection de
-valores ni sobrecargas variádicas en 0.2.
+valores ni sobrecargas variádicas en Tondo 0.1.
 
 `withVirtualTime` es genérica únicamente sobre la unión de error y el tipo
 concreto del cierre. Exige `CallOnce` porque ejecuta el body una vez y `Send`
@@ -2584,7 +2589,7 @@ semántica de `test`.
 
 ## 14. Diagnósticos nuevos
 
-La edición 0.2 añade estos códigos al registro normativo:
+Tondo 0.1 incluye estos códigos en su registro normativo:
 
 | Código | Nombre estable | Condición primaria |
 |---|---|---|
@@ -2626,11 +2631,9 @@ El resto reutiliza diagnósticos existentes:
 Selector vacío, glob inválido, CODEOWNERS inválido, opciones de
 retry/repeat/shard/order/report/artifacts/snapshot, interrupción, timeout e
 infraestructura son diagnósticos del toolchain, no nuevos errores de compilación
-`E`. La especificación consolidada de Tondo 0.2 versiona por separado el cambio
-general que permite `defer await`; bajo edición 0.1 continúa produciendo
-`E1608`. Bajo 0.2, `E1608` también rechaza una forma async de cleanup que no sea
-la llamada infallible fijada en 2.5; `E1610` conserva el contexto no async y las
-violaciones de ownership/liveness conservan sus códigos `E14xx`.
+`E`. Tondo 0.1 permite `defer await` únicamente en la forma general fijada en
+2.5. `E1608` rechaza cualquier otro cleanup async; `E1610` conserva el contexto
+no async y las violaciones de ownership/liveness conservan sus códigos `E14xx`.
 
 ## 15. Formato machine-readable
 
@@ -2659,8 +2662,8 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
 
 ~~~json
 {
-  "format": "tondo-test-report-0.2/7",
-  "edition": "0.2",
+  "format": "tondo-test-report-0.1/7",
+  "edition": "0.1",
   "target": {
     "name": "tondo-vm-hosted",
     "profile": "hosted",
@@ -2701,11 +2704,11 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
     "isolation": "fresh-worker-per-iteration-v1"
   },
   "artifact_store": {
-    "format": "tondo-test-artifacts-0.2/1",
+    "format": "tondo-test-artifacts-0.1/1",
     "algorithm": "sha256-objects-v1"
   },
   "snapshot_policy": {
-    "format": "tondo-snapshot-store-0.2/1",
+    "format": "tondo-snapshot-store-0.1/1",
     "mode": "check",
     "before_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
     "after_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
@@ -3141,7 +3144,7 @@ Campos privados y payloads opacos no se serializan por reflection.
 
 ### 15.4 Lista machine-readable
 
-`--list --test-format json` emite `tondo-test-list-0.2/6`. Comparte `edition`,
+`--list --test-format json` emite `tondo-test-list-0.1/6`. Comparte `edition`,
 `target`, `compiled`, `selection`, `ownership`, `inputs`, `shard`, `order` y
 `execution_plan`; añade la identidad del snapshot store, pero contiene
 descriptores sin estado, phase, failure, skip, tags, artifacts, snapshots,
@@ -3149,8 +3152,8 @@ bloqueo, logs ni output:
 
 ~~~json
 {
-  "format": "tondo-test-list-0.2/6",
-  "edition": "0.2",
+  "format": "tondo-test-list-0.1/6",
+  "edition": "0.1",
   "target": {
     "name": "tondo-vm-hosted",
     "profile": "hosted",
@@ -3173,7 +3176,7 @@ bloqueo, logs ni output:
     "reproducibility": "closed"
   },
   "snapshot_store": {
-    "format": "tondo-snapshot-store-0.2/1",
+    "format": "tondo-snapshot-store-0.1/1",
     "sha256": "3333333333333333333333333333333333333333333333333333333333333333"
   },
   "shard": null,
@@ -3234,7 +3237,7 @@ hash de árbol previo definido en 15.7, no el hash aislado de un solo package.
 
 ### 15.5 Perfil JUnit XML
 
-`--report junit=<path>` genera `tondo-junit-report-0.2/4` como XML 1.0 UTF-8. Es
+`--report junit=<path>` genera `tondo-junit-report-0.1/4` como XML 1.0 UTF-8. Es
 un artefacto operacional para CI, no la fuente normativa ni reproducible del
 resultado: incluye duración wall-clock. El reporte JSON `/7` continúa siendo la
 forma canónica y sin pérdida.
@@ -3344,8 +3347,8 @@ contenido después del escaping XML ordinario. Las properties aparecen en el
 orden listado, sin nombres duplicados; una property no aplicable se omite y una
 aplicable cuyo valor es nulo se conserva como `null`. Los valores de ejecución
 son los mismos del JSON `/7`;
-`tondo.format` vale `tondo-junit-report-0.2/4` y `tondo.json_format` conserva
-`tondo-test-report-0.2/7`. Las properties forman la representación completa de
+`tondo.format` vale `tondo-junit-report-0.1/4` y `tondo.json_format` conserva
+`tondo-test-report-0.1/7`. Las properties forman la representación completa de
 los campos normativos; los elementos JUnit convencionales proyectan además el
 subconjunto que los consumidores suelen mostrar.
 
@@ -3439,7 +3442,7 @@ UTF-8 sin BOM y usa este layout exacto:
 
 ~~~json
 {
-  "format": "tondo-snapshot-store-0.2/1",
+  "format": "tondo-snapshot-store-0.1/1",
   "entries": [
     {"id":"application::unit::invoice::rendersInvoice","name":"invoice-text","value":"Invoice 42\nTotal: 100 EUR"}
   ]
@@ -3494,7 +3497,7 @@ El manifest es JSON canónico UTF-8, termina en un único `LF` y tiene:
 
 ~~~json
 {
-  "format": "tondo-test-artifacts-0.2/1",
+  "format": "tondo-test-artifacts-0.1/1",
   "objects": [
     {
       "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
@@ -3532,11 +3535,12 @@ no ejecuta contenido y no interpreta media types.
 
 ## 16. Conformidad
 
-Una implementación de esta extensión debe publicar una suite distinta a
-`tondo-conformance-0.1`. La suite cubre como mínimo:
+Una implementación conforme incorpora estos casos como el grupo de testing de
+`tondo-conformance-0.1`, con manifiesto y hashes propios dentro de la misma suite
+versionada. El grupo cubre como mínimo:
 
 1. Tokens, CST lossless, parser y formatter de `suite_decl` y `test_decl`.
-2. Reserva de `suite` y `test` únicamente en edición 0.2.
+2. Reserva de `suite` y `test` en Tondo 0.1 y rechazo como identificadores.
 3. Rechazo de cada forma alternativa, hook y registro dinámico ausente.
 4. Árbol estático, suites vacías, nesting y colisiones de hermanos entre
    archivos.
@@ -3585,11 +3589,11 @@ Una implementación de esta extensión debe publicar una suite distinta a
 29. Captura separada de logs/stdout/stderr para suites y tests.
 30. Parsing y combinaciones de CLI, formatos stdout, reportes repetibles,
     colisiones de paths, publicación atómica por archivo y exits `3`/`4`.
-31. Bytes `tondo-test-json-v1`, reportes `tondo-test-report-0.2/7` y
-    `tondo-test-list-0.2/6`, ownership, inputs, shard, order, tags, artifacts,
+31. Bytes `tondo-test-json-v1`, reportes `tondo-test-report-0.1/7` y
+    `tondo-test-list-0.1/6`, ownership, inputs, shard, order, tags, artifacts,
     snapshots, iteraciones, intentos, retry/repeat, `execution_plan`, invariantes
     de summary, skips, bloqueos y rechazo de schema inválido.
-32. Perfil `tondo-junit-report-0.2/4`, mapeo de estados, lifecycle sintético,
+32. Perfil `tondo-junit-report-0.1/4`, mapeo de estados, lifecycle sintético,
     properties, streams, duración operacional, conteos y equivalencia con la
     misma ejecución JSON.
 33. Targets y capabilities distintos.
@@ -3629,10 +3633,10 @@ Una implementación de esta extensión debe publicar una suite distinta a
 45. `virtual_time` por intento en JSON `/7`, orden y contadores canónicos,
     reinicio exacto entre retries, `tondo.virtual_time` en JUnit `/4`, duración
     JUnit real y equivalencia VM/backend para el mismo corpus temporal.
-46. `defer await` bajo edición 0.2: única llamada async infallible, ownership
-    afín, inferencia en test/setup/script, `async` explícito en funciones,
-    cleanup LIFO esperado, pánico/límites y rechazo en 0.1 sin introducir hooks
-    de suite.
+46. `defer await` en Tondo 0.1: única llamada async infallible, ownership afín,
+    inferencia en test/setup/script, `async` explícito en funciones, cleanup
+    LIFO esperado, pánico/límites y rechazo de cualquier forma alternativa sin
+    introducir hooks de suite.
 47. Inputs públicos/secretos, hashes de perfil, tres estados de
     reproducibilidad, materialización/revocación por worker y ausencia de
     valores secretos añadidos por el runner en plan, reportes o productos,
@@ -3649,7 +3653,7 @@ Una implementación de esta extensión debe publicar una suite distinta a
     cualquier non-pass con count mayor y separación exacta respecto a retry.
 51. `testing.snapshot`, match/missing/mismatch, `P2007`/`P2008`, concurrencia,
     update mode explícito, restricciones, staging/publicación y store canónico
-    `tondo-snapshot-store-0.2/1` con layout source-control, hash y rechazo de
+    `tondo-snapshot-store-0.1/1` con layout source-control, hash y rechazo de
     symlinks/escapes.
 52. Inputs, repeat, artifact/snapshot policy, descriptores, hashes, contadores y
     todos los intentos se proyectan sin pérdida en JSON `/7` y mediante

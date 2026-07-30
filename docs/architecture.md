@@ -1,6 +1,6 @@
 # Tondo compiler architecture
 
-**Status:** released Tondo 0.1 baseline
+**Status:** internal Tondo 0.1 implementation checkpoint
 **Language baseline:** Tondo 0.1
 
 **Implementation version:** 0.1.0

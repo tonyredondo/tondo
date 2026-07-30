@@ -25,6 +25,9 @@ use tondo_reference_adapter::ReferenceAdapter;
 
 const ROOT: &str = "conformance/0.1";
 const SPECIFICATION: &str = "TONDO_LANGUAGE_SPEC.md";
+const CHECKPOINT_SPECIFICATION: &str = "conformance/checkpoints/v0.1.0/TONDO_LANGUAGE_SPEC.md";
+const CHECKPOINT_SPECIFICATION_SHA256: &str =
+    "ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084";
 const FIXTURE_MANIFEST: &str = "conformance/0.1/fixtures/tondo-fixture-manifest.txt";
 const MANIFEST: &str = "conformance/0.1/manifest.json";
 
@@ -52,7 +55,8 @@ fn bless() -> Result<String, String> {
 }
 
 fn bless_at(root: &Path) -> Result<String, String> {
-    let registry = extract_registry(&fs::read(root.join(SPECIFICATION)).map_err(io_error)?)?;
+    let checkpoint_specification = checkpoint_specification(root)?;
+    let registry = extract_registry(&checkpoint_specification)?;
     let target = TargetSelection {
         name: "tondo-vm-hosted".into(),
         profile: "hosted".into(),
@@ -87,7 +91,7 @@ fn bless_at(root: &Path) -> Result<String, String> {
     )?;
     cases.sort_by(|left, right| left.id.cmp(&right.id));
 
-    let specification = pinned(root, SPECIFICATION)?;
+    let specification = checkpoint_specification_pin(&checkpoint_specification);
     let fixture_manifest = pinned(root, FIXTURE_MANIFEST)?;
     if fixture_manifest.sha256 != "1b6ab9f853b7ef4b94b4b9aaff6297e20556f81e8d99c322bed03854453d76c2"
     {
@@ -646,7 +650,7 @@ fn bless_document_case(
     cases: &mut Vec<ConformanceCase>,
 ) -> Result<(), String> {
     let id = "documentation/language-spec".to_owned();
-    let specification = fs::read(root.join(SPECIFICATION)).map_err(io_error)?;
+    let specification = checkpoint_specification(root)?;
     let fixture_manifest = fs::read(root.join(FIXTURE_MANIFEST)).map_err(io_error)?;
     let errors = registry.errors.iter().cloned().collect::<BTreeSet<_>>();
     let fences = extract_fences(&specification, &errors).map_err(|error| error.to_string())?;
@@ -713,7 +717,7 @@ fn bless_document_case(
         positive_for: Vec::new(),
         requirements: vec!["CONF-002".into(), "CONF-003".into()],
         action: CaseAction::Document(DocumentAction {
-            markdown: pinned(root, SPECIFICATION)?,
+            markdown: checkpoint_specification_pin(&specification),
         }),
         expectation: Expectation::Exact {
             observation: pinned(root, &logical_path(root, &expectation_path)?)?,
@@ -1014,6 +1018,24 @@ fn write_generated(path: &Path, bytes: &[u8]) -> Result<(), String> {
     fs::write(path, bytes).map_err(io_error)
 }
 
+fn checkpoint_specification(root: &Path) -> Result<Vec<u8>, String> {
+    let bytes = fs::read(root.join(CHECKPOINT_SPECIFICATION)).map_err(io_error)?;
+    let actual = tondo_conformance::sha256(&bytes);
+    if actual != CHECKPOINT_SPECIFICATION_SHA256 {
+        return Err(format!(
+            "checkpoint specification has SHA-256 `{actual}`, expected `{CHECKPOINT_SPECIFICATION_SHA256}`"
+        ));
+    }
+    Ok(bytes)
+}
+
+fn checkpoint_specification_pin(bytes: &[u8]) -> PinnedFile {
+    PinnedFile {
+        path: SPECIFICATION.into(),
+        sha256: tondo_conformance::sha256(bytes),
+    }
+}
+
 fn io_error(error: std::io::Error) -> String {
     error.to_string()
 }
@@ -1063,6 +1085,11 @@ mod tests {
     fn blessing_is_a_reproducible_source_tree_transformation() {
         let source = workspace_root();
         let workspace = TemporaryWorkspace::copy_from(&source);
+        fs::write(
+            workspace.path.join(SPECIFICATION),
+            b"the live specification must not affect the checkpoint",
+        )
+        .expect("the live specification must be replaceable in the isolated workspace");
         let before = source_snapshot(&source);
 
         let summary = bless_at(&workspace.path).expect("the published suite must be reproducible");
@@ -1117,10 +1144,6 @@ mod tests {
 
     fn source_snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
         let mut snapshot = BTreeMap::new();
-        snapshot.insert(
-            SPECIFICATION.into(),
-            fs::read(root.join(SPECIFICATION)).expect("the specification must be readable"),
-        );
         collect_snapshot(root, &root.join("conformance"), &mut snapshot);
         snapshot
     }

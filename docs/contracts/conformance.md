@@ -1,6 +1,6 @@
 # Tondo 0.1 conformance suite
 
-**Status:** released with Tondo 0.1.0
+**Status:** pinned by the internal Tondo 0.1.0 checkpoint
 
 `tondo-conformance-0.1` is an immutable corpus and a runner protocol, not a
 test-only view of the reference compiler. The suite distribution contains:
@@ -11,10 +11,59 @@ test-only view of the reference compiler. The suite distribution contains:
 - an implementation-specific adapter speaking
   `tondo-conformance-adapter-0.1/1`.
 
+This contract describes the corpus at Git tag `v0.1.0`. The current Tondo 0.1
+draft has added M10.7 metaprogramming and M10.6 testing requirements, including
+`defer await`, `suite`, and `test`. Those rules belong to the separate open
+lineage `tondo-0.1-live`; they do not retroactively change the checkpoint or
+inherit its evidence merely because they remain in edition 0.1.
+
 The manifest is compact canonical JSON. Identifying arrays and case IDs are
 sorted and unique. Paths are logical, relative and portable. Loading the suite
 checks every referenced byte string before an adapter is started. A missing
 expectation never means success.
+
+## Checkpoint and live lineage
+
+`conformance/0.1/manifest.json` is the immutable checkpoint identity. Its
+language specification hash refers to the bytes at tag `v0.1.0`, not to the
+working tree. The repository materializes those exact bytes at
+`conformance/checkpoints/v0.1.0/TONDO_LANGUAGE_SPEC.md`; the materialization
+script verifies the tag, commit and SHA-256 before creating or accepting the
+snapshot. The snapshot is content evidence and must never be normalized by
+checkout line-ending rules.
+
+`conformance/live/manifest.json` is canonical pretty JSON and is the only entry
+point for selecting either lineage from a current checkout. It pins:
+
+- its format, edition, monotonically increasing revision and open state;
+- the exact checkpoint tag, commit, manifest and specification snapshot;
+- the four current language, standard-library, testing and toolchain specs;
+- a content-addressed parent for every revision after revision 1;
+- sorted case layers, each tied to non-empty implementation tasks and
+  normative requirement IDs; and
+- all tasks that still prevent sealing.
+
+There is no default lineage. Every CLI, reliability tool, script and CI job
+must explicitly select `checkpoint` or `live`. Loading the historical manifest
+directly from a changed working tree is intentionally rejected because its
+specification hash no longer matches. Checkpoint selection substitutes only
+the pinned historical snapshot and hash-checks every other referenced byte;
+live selection never presents the checkpoint cases as evidence for a new or
+changed requirement.
+
+A live case layer is admissible only in the same change as the implementation
+slice it names. Its ID, tasks and requirement IDs are sorted and unique, and
+its manifest is pinned below `conformance/live/layers/`. Until the incremental
+case runner and evidence ratchet are activated by `CONF-RATCHET-001`, the
+current revision contains no live layers and only the checkpoint lineage can be
+executed. Merely listing a task or requirement can never make the coverage
+matrix green.
+
+Each accepted live revision changes the manifest hash. CI copies the exact
+manifest to
+`target/reliability/evidence/live-manifest-<sha256>.json` before running the
+gate and retains it as an artifact, so a later revision cannot erase the
+evidence for an earlier one.
 
 ## Observation boundary
 
@@ -57,13 +106,13 @@ requests and cannot be selected by an ordinary source action.
 
 Coverage claims are data. `covers` requires the claimed normative code to occur
 in the observation. `positive_for` requires a neighboring case where that code
-does not occur. Release validation additionally requires complete registry,
+does not occur. Checkpoint validation additionally requires complete registry,
 warning-profile, panic, formatter, query, memory, concurrency and determinism
 coverage before Gate G5 can close.
 
 ## Closed auxiliary observations
 
-The release suite uses three additional closed schemas:
+The checkpoint suite uses three additional closed schemas:
 
 - `tondo-semantic-observation-0.1/1` for public semantic queries;
 - `tondo-memory-observation-0.1/1` for the four private collector scenarios;
@@ -86,9 +135,9 @@ calibration, not a probabilistic replacement for the closed outcome contract:
 each repetition must independently match an allowed observation and preserve
 structured cleanup.
 
-## Release validation
+## Checkpoint validation
 
-Loading the Tondo 0.1 release manifest verifies all hashes and additionally
+Loading the Tondo 0.1 checkpoint manifest verifies all hashes and additionally
 requires:
 
 - the exact target `tondo-vm-hosted`, profile `hosted`, and capabilities
@@ -104,24 +153,44 @@ requires:
 - an `E1008` boundary proof for every target capability that a case omits.
 
 The generic runner validates this contract without linking compiler or VM
-internals. The release result uses
+internals. The checkpoint result uses
 `tondo-conformance-result-0.1/1`; it records the manifest hash, exact adapter
 description, target declaration, per-case repetition count, and canonical
 observation hashes.
 
-From a repository root, the portable verification commands are:
+From the current checkout, the portable checkpoint verification commands are:
 
 ~~~text
+bash scripts/materialize-checkpoint-spec.sh --check
 cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
 cargo run -p tondo-conformance --locked -- validate \
   --root . \
-  --manifest conformance/0.1/manifest.json
+  --manifest conformance/live/manifest.json \
+  --lineage checkpoint
 cargo run -p tondo-conformance --locked -- run \
   --root . \
-  --manifest conformance/0.1/manifest.json \
+  --manifest conformance/live/manifest.json \
+  --lineage checkpoint \
   --adapter target/debug/tondo-reference-adapter \
   --output conformance/0.1/results/tondo-reference-0.1.0-tondo-vm-hosted.json
 ~~~
 
 Running the final command twice against an unchanged tree must produce
 byte-identical result files.
+
+The open draft is validated independently:
+
+~~~text
+cargo run -p tondo-conformance --locked -- validate \
+  --root . \
+  --manifest conformance/live/manifest.json \
+  --lineage live
+cargo run -p tondo-conformance --locked -- seal \
+  --root . \
+  --manifest conformance/live/manifest.json \
+  --lineage live
+~~~
+
+`seal` is a non-mutating preflight. It fails while pending tasks remain and
+does not create, overwrite or promote any manifest. `CONF-SEAL-001` owns the
+later atomic promotion after all live requirements and cases are complete.

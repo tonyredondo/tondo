@@ -850,9 +850,9 @@ mod tests {
         let mut host = BootstrapHost::default();
         for shape in 0..4 {
             let source = command(&mut host, "/usr/bin/printf", &["pipe"]);
-            let cat_one = command(&mut host, "/usr/bin/cat", &[]);
-            let cat_two = command(&mut host, "/usr/bin/cat", &[]);
-            let cat_three = command(&mut host, "/usr/bin/cat", &[]);
+            let cat_one = command(&mut host, "/bin/cat", &[]);
+            let cat_two = command(&mut host, "/bin/cat", &[]);
+            let cat_three = command(&mut host, "/bin/cat", &[]);
             let pipeline = match shape {
                 0 => pipe(&mut host, source, cat_one),
                 1 => {

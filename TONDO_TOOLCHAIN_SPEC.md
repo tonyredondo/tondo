@@ -1,10 +1,13 @@
 # Tondo Toolchain 0.1
 
-**Estado:** contrato bootstrap implementado
+**Estado:** borrador normativo de la primera versión; el perfil bootstrap
+implementado es un checkpoint interno, no una publicación
 
-**Versión:** `tondo-toolchain-0.1/1`
+**Versión:** `tondo-toolchain-0.1/2`
 
 **Especificación de lenguaje:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md)
+
+**Especificación de testing:** [Testing Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
 Esta especificación define la frontera de proyecto del toolchain Tondo 0.1:
 manifiesto, lockfile, selección de fuentes, grafo de paquetes, interfaces
@@ -12,9 +15,10 @@ compiladas, metadatos de artefacto y unidades privilegiadas. No modifica la
 sintaxis ni la semántica de un archivo `.to`.
 
 Las palabras **debe**, **no debe**, **puede** y **error** son normativas para el
-toolchain bootstrap cuando describen formatos o validaciones ya implementados.
-La resolución de versiones, descarga de paquetes, ejecución de generadores y
-una ABI nativa general permanecen fuera de este contrato.
+toolchain de la primera versión. La resolución de versiones, descarga de
+paquetes y una ABI nativa general permanecen fuera de este contrato. La
+generación hermética en compile time sí forma parte de él; su implementación se
+rastrea separadamente del checkpoint bootstrap ya disponible.
 
 ## 1. Objetivos
 
@@ -26,22 +30,30 @@ La frontera de proyecto tiene cinco propiedades:
    fuente.
 4. Una interfaz incompatible se rechaza antes de lexear o typecheckear el
    consumidor.
-5. Entradas idénticas producen bytes idénticos de interfaz y artefacto.
+5. Entradas idénticas producen bytes idénticos de fuente generada, interfaz y
+   artefacto.
 
 El compilador no consulta red, reloj, variables de entorno, directorio actual,
 aleatoriedad ni procesos. La CLI puede leer los paths que el plan cerrado le
 solicita, pero no puede añadir entradas por descubrimiento.
 
+`tondo test` añade una fase de orquestación definida por la especificación de
+testing: puede enumerar únicamente las convenciones dentro de roots declarados,
+normaliza y hashea el resultado y construye después un plan cerrado con clases
+`production`, `unit-test` e `integration-test`. El frontend nunca descubre
+archivos, y `check`/`run` no adquieren esta excepción acotada.
+
 ## 2. Identidades y codificación
 
 ### 2.1 JSON
 
-Los cinco formatos de este documento utilizan UTF-8 JSON:
+Los formatos persistentes de este documento utilizan UTF-8 JSON:
 
-- manifiesto: `tondo-manifest-0.1/1`;
-- lockfile: `tondo-lock-0.1/1`;
-- interfaz: `tondo-interface-0.1/1`;
-- artefacto: `tondo-artifact-0.1/1`;
+- manifiesto: `tondo-manifest-0.1/2`;
+- lockfile: `tondo-lock-0.1/2`;
+- interfaz: `tondo-interface-0.1/2`;
+- artefacto: `tondo-artifact-0.1/2`;
+- descriptor estándar: `tondo-standard-descriptor-0.1/1`;
 - unidad privilegiada: `tondo-privileged-unit-0.1/1`.
 
 Un lector rechaza campos desconocidos. El manifiesto y el lockfile no necesitan
@@ -49,7 +61,8 @@ una representación JSON canónica, pero sus bytes exactos participan en los
 hashes del build. Las interfaces, artefactos y unidades privilegiadas sí exigen
 la codificación canónica compacta producida por el toolchain: sin whitespace
 adicional, con los campos en el orden definido por su formato y con todas las
-listas identificadoras ordenadas y sin duplicados.
+listas identificadoras ordenadas y sin duplicados. El descriptor estándar usa
+también esa codificación canónica.
 
 Todos los hashes de este documento se escriben:
 
@@ -80,6 +93,22 @@ Los paths físico-lógico y lógico de toda fuente, incluida una salida generada
 terminan exactamente en `.to`. Interfaces, descriptores y generator inputs no
 usan esa restricción.
 
+El prefijo lógico `@generated/` está reservado al toolchain. No puede aparecer
+en `physical_path`, fuentes escritas ni outputs de un generador general. Cada
+derive recibe:
+
+~~~text
+@generated/derive/<request-hash-sin-prefijo>.to
+~~~
+
+Su módulo es exactamente el módulo propietario del target. El hash hexadecimal
+minúsculo evita colisiones sin introducir nombres elegidos por el provider.
+
+El source ID de una expansión es `derive:<64hex>` y el de un output general es
+`gen:<64hex>:<index>`, donde `<64hex>` es el request hash sin `sha256:` e
+`<index>` es su posición decimal sin ceros iniciales en la lista canónica de
+outputs. Estos namespaces no colisionan con IDs de paquetes o targets.
+
 ### 2.3 PackageId y aliases
 
 `PackageId` es una cadena opaca no vacía y sin saltos de línea. El resolvedor de
@@ -97,7 +126,7 @@ con su nombre local y resuelven a un `PackageId` exacto.
 
 ~~~json
 {
-  "format": "tondo-manifest-0.1/1",
+  "format": "tondo-manifest-0.1/2",
   "target": {
     "name": "tondo-vm-hosted",
     "profile": "hosted",
@@ -110,18 +139,14 @@ con su nombre local y resuelven a un `PackageId` exacto.
     "source": "app/src/main.to",
     "form": "module"
   },
-  "standard": "toolchain:std:0.1-bootstrap",
+  "standard": "toolchain:std:0.1.0",
+  "meta_packages": [],
   "packages": [
     {
       "id": "workspace:app@1",
       "local_name": "app",
       "edition": "0.1",
-      "dependencies": [
-        {
-          "alias": "util",
-          "package": "registry:util@2#sha256-content"
-        }
-      ],
+      "dependencies": [],
       "source_sets": [
         {
           "id": "common",
@@ -143,6 +168,31 @@ con su nombre local y resuelven a un `PackageId` exacto.
       "path": "inputs/schema.json"
     }
   ],
+  "generators": [
+    {
+      "id": "models",
+      "owner_package": "workspace:app@1",
+      "provider": {
+        "package": "toolchain:std-meta:0.1.0",
+        "entry": "schema.generateModels"
+      },
+      "meta_model": "tondo-meta-model-0.1/1",
+      "inputs": ["schema"],
+      "model_roots": [],
+      "outputs": [
+        {
+          "logical_path": "generated/models.to",
+          "module": "models"
+        }
+      ],
+      "limits": {
+        "steps": 10000000,
+        "memory_bytes": 67108864,
+        "output_bytes": 8388608
+      }
+    }
+  ],
+  "derive_providers": [],
   "privileged_units": [
     {
       "name": "vendor.native",
@@ -152,13 +202,65 @@ con su nombre local y resuelven a un `PackageId` exacto.
 }
 ~~~
 
-`generator_inputs` y `privileged_units` pueden omitirse y equivalen a listas
-vacías. `dependencies`, `capabilities`, `features` y `when` también admiten su
-forma vacía según el schema. Los demás campos son obligatorios.
+`meta_packages`, `generator_inputs`, `generators`, `derive_providers` y
+`privileged_units` pueden omitirse y equivalen a listas vacías. `dependencies`,
+`capabilities`, `features`, `model_roots` y `when` también admiten su forma
+vacía según el schema. Los demás campos son obligatorios.
 
 El nombre de un generator input es no vacío, no contiene saltos de línea y no
 puede comenzar por `privileged:`. Ese prefijo está reservado para registrar
 unidades privilegiadas sin colisiones en la identidad del artefacto.
+
+Un `generator.id` es kebab-case ASCII y único. `owner_package` debe existir en
+`packages`; todas sus salidas pertenecen a ese paquete. `provider.package` debe
+existir en el grafo meta cerrado de 3.5 o ser su paquete estándar exacto.
+`entry` es un value path Tondo. `inputs` no repite nombres y solo contiene
+elementos de `generator_inputs`.
+
+`model_roots` es una lista ordenada y sin duplicados de objetos
+`{"package": PackageId, "module": module_path}`. Cada elemento debe existir en
+el grafo runtime y selecciona la clausura pública que recibirá el generator. La
+lista vacía entrega un modelo sin declaraciones y es la forma normal de
+generación schema-first. Un root que dependa transitivamente de fuente generada
+en esa misma ronda produce `E2109`.
+
+Los outputs se ordenan por `(logical_path, module)`, no se repiten y no
+colisionan con fuentes activas ni con outputs de otro productor. Los tres límites
+son enteros decimales positivos. Sus unidades son pasos deterministas del VM
+meta, bytes máximos de memoria viva y bytes de la codificación canónica completa
+de la respuesta antes de formatear, incluidos fuente, diagnostics y source maps.
+
+Una entrada de `derive_providers` identifica un provider **adicional** del
+proyecto mediante la tupla exacta `(PackageId, module path, declaration name)`.
+Su forma es:
+
+~~~json
+{
+  "trait": {
+    "package": "workspace:domain@1",
+    "module": "model",
+    "name": "Validate"
+  },
+  "provider": {
+    "package": "workspace:domain-meta@1",
+    "entry": "validation.expand"
+  },
+  "meta_model": "tondo-meta-model-0.1/1",
+  "limits": {
+    "steps": 1000000,
+    "memory_bytes": 16777216,
+    "output_bytes": 1048576
+  }
+}
+~~~
+
+La distribución estándar seleccionada aporta sus propios mappings —por ejemplo
+`Serialize`— desde un descriptor fijado; el proyecto no los repite. La unión de
+ambos registros no puede contener dos entradas para la misma identidad de trait.
+El provider, modelo y límites siguen las mismas reglas que un generador. Un
+provider solo se ejecuta cuando la fuente contiene una solicitud `derive` para
+esa identidad. Si el trait es genérico, el mapping pertenece a su declaración y
+el request conserva por separado los argumentos concretos escritos.
 
 ### 3.2 Target
 
@@ -221,16 +323,55 @@ Cada paquete declara:
 - aliases de dependencias directas;
 - uno o más source sets.
 
-El paquete estándar es propiedad del toolchain y no aparece en `packages`. El
-bootstrap exige:
+El paquete estándar es propiedad del toolchain y no aparece en `packages`. La
+distribución de referencia candidata para la primera versión utiliza:
 
 ~~~text
-PackageId = toolchain:std:0.1-bootstrap
+PackageId = toolchain:std:0.1.0
 ~~~
+
+El checkpoint de manifest `/1` utilizaba
+`toolchain:std:0.1-bootstrap`; esos bytes siguen siendo reproducibles, pero un
+lector `/2` no los reinterpreta como la identidad anterior.
 
 El grafo resultante debe ser cerrado y acíclico. Toda dependencia debe existir
 en `packages`; no hay búsqueda por nombre, directorio ni registry durante la
 compilación.
+
+### 3.5 Grafo meta
+
+`meta_packages` forma un segundo grafo cerrado, separado de `packages`. Cada
+elemento declara:
+
+- `id`, `local_name` y edición `0.1`;
+- dependencies que solo pueden apuntar a otros `meta_packages`; y
+- una lista no vacía `sources` con `physical_path`, `logical_path` y `module`.
+
+Los PackageIds de ambos grafos son disjuntos. Los paths físicos son únicos en
+todo el manifiesto y las fuentes meta siguen las mismas reglas lógicas de 2.2,
+pero no usan source sets ni condiciones: siempre se compilan para
+`target = tondo-meta`, `profile = meta` y cero capabilities. Un paquete meta
+inaccesible desde algún `provider.package` se rechaza como input sobrante.
+
+La distribución runtime seleccionada por `standard` declara en su descriptor un
+único paquete estándar meta compatible. Para
+`toolchain:std:0.1.0` es:
+
+~~~text
+PackageId = toolchain:std-meta:0.1.0
+~~~
+
+El descriptor `tondo-standard-descriptor-0.1/1` forma parte de los bytes
+cubiertos por el `content_hash` runtime. Contiene exactamente el PackageId y
+content hash del companion meta y el registro ordenado de providers estándar;
+cada entrada conserva identidad de trait, PackageId/entry del provider, versión
+de modelo, `provider_hash` y límites. No contiene defaults ambientales ni
+aliases de proyecto.
+
+El proyecto no repite esa asociación en el manifiesto. El lockfile materializa
+ambas identidades y hashes para que la selección siga siendo explícita y
+auditable. Dentro del grafo meta, `std` resuelve a ese paquete; nunca al
+`standard` runtime.
 
 ## 4. Source sets
 
@@ -293,22 +434,21 @@ lógicos distintos y sus declaraciones no colisionan.
 
 ~~~json
 {
-  "format": "tondo-lock-0.1/1",
+  "format": "tondo-lock-0.1/2",
   "manifest_hash": "sha256:...",
   "standard": {
-    "package_id": "toolchain:std:0.1-bootstrap",
+    "package_id": "toolchain:std:0.1.0",
+    "content_hash": "sha256:..."
+  },
+  "meta_standard": {
+    "package_id": "toolchain:std-meta:0.1.0",
     "content_hash": "sha256:..."
   },
   "packages": [
     {
       "id": "workspace:app@1",
       "content_hash": "sha256:...",
-      "dependencies": [
-        {
-          "alias": "util",
-          "package": "registry:util@2#sha256-content"
-        }
-      ],
+      "dependencies": [],
       "sources": [
         {
           "source_set": "common",
@@ -319,22 +459,68 @@ lógicos distintos y sus declaraciones no colisionan.
         }
       ],
       "interface": null
-    },
-    {
-      "id": "registry:util@2#sha256-content",
-      "content_hash": "sha256:...",
-      "dependencies": [],
-      "sources": [],
-      "interface": {
-        "path": "interfaces/util.ti",
-        "sha256": "sha256:..."
-      }
     }
   ],
+  "meta_packages": [],
   "generator_inputs": [
     {
       "name": "schema",
       "sha256": "sha256:..."
+    }
+  ],
+  "generators": [
+    {
+      "id": "models",
+      "owner_package": "workspace:app@1",
+      "provider_package": "toolchain:std-meta:0.1.0",
+      "entry": "schema.generateModels",
+      "meta_model": "tondo-meta-model-0.1/1",
+      "provider_hash": "sha256:...",
+      "inputs": ["schema"],
+      "model_roots": [],
+      "outputs": [
+        {
+          "logical_path": "generated/models.to",
+          "module": "models"
+        }
+      ],
+      "limits": {
+        "steps": 10000000,
+        "memory_bytes": 67108864,
+        "output_bytes": 8388608
+      }
+    }
+  ],
+  "derive_providers": [
+    {
+      "origin": "standard",
+      "trait_package": "toolchain:std:0.1.0",
+      "trait_module": "serialization",
+      "trait_name": "Serialize",
+      "provider_package": "toolchain:std-meta:0.1.0",
+      "entry": "serialization.deriveSerialize",
+      "meta_model": "tondo-meta-model-0.1/1",
+      "provider_hash": "sha256:...",
+      "limits": {
+        "steps": 1000000,
+        "memory_bytes": 16777216,
+        "output_bytes": 1048576
+      }
+    },
+    {
+      "origin": "standard",
+      "trait_package": "toolchain:std:0.1.0",
+      "trait_module": "serialization",
+      "trait_name": "Deserialize",
+      "provider_package": "toolchain:std-meta:0.1.0",
+      "entry": "serialization.deriveDeserialize",
+      "meta_model": "tondo-meta-model-0.1/1",
+      "provider_hash": "sha256:...",
+      "limits": {
+        "steps": 1000000,
+        "memory_bytes": 16777216,
+        "output_bytes": 1048576
+      }
     }
   ],
   "privileged_units": [
@@ -346,21 +532,39 @@ lógicos distintos y sus declaraciones no colisionan.
 }
 ~~~
 
+Cada entrada no vacía de `meta_packages` contiene `id`, `content_hash`,
+`dependencies` y `sources`. Una dependency conserva `alias` y `package`; una
+source conserva `physical_path`, `logical_path`, `module` y `sha256`. Las listas
+usan el mismo orden canónico que su equivalente runtime, pero no contienen
+`source_set` ni `interface`.
+
 ### 5.2 Correspondencia exacta
 
 `manifest_hash` es SHA-256 de los bytes exactos del manifiesto. Los conjuntos de
-paquetes, fuentes, dependencies, generator inputs y unidades privilegiadas del
-lockfile deben coincidir exactamente con el manifiesto:
+paquetes runtime y meta, fuentes, dependencies, generator inputs, generators,
+derive providers y unidades privilegiadas del lockfile deben coincidir
+exactamente con el plan expandido:
 
 - mismo `PackageId`;
 - mismo alias y destino exacto;
 - mismo source set, path físico, path lógico y módulo;
 - mismo nombre de entrada;
+- mismo owner, provider, entry point, modelo meta, inputs, roots, outputs y
+  límites;
 - ningún elemento adicional ni ausente.
 
-La raíz no consume su propia interfaz. Todo paquete no raíz y no estándar debe
-tener una interfaz fijada. El hash de la interfaz participa además en el hash de
-contenido de ese paquete.
+`meta_standard` debe ser exactamente el companion declarado por el descriptor de
+`standard`. Los `derive_providers` con `origin: "standard"` deben coincidir con
+ese mismo descriptor; los de `origin: "manifest"` deben coincidir con la lista
+del proyecto. Un origen distinto, una repetición entre orígenes o una entrada
+alterada se rechaza antes de lexear.
+
+La raíz runtime no consume su propia interfaz. Todo paquete runtime no raíz y no
+estándar debe tener una interfaz fijada. Los `meta_packages` se compilan desde
+las fuentes fijadas en este build y no aceptan una interfaz sustitutiva; así, el
+programa que produce `provider_hash` siempre forma parte de la entrada cerrada.
+El hash de una interfaz runtime participa además en el hash de contenido de su
+paquete.
 
 ### 5.3 Hash de paquete
 
@@ -385,16 +589,31 @@ Para calcular `content_hash`, el toolchain:
 en orden, `source_set`, `physical_path`, `logical_path`, `module`, `sha256`.
 `interface_hash` es el hash de bytes de la interfaz o `null` para la raíz.
 
-El paquete estándar bootstrap utiliza el fingerprint fijo publicado por esa
-versión del compilador. Un hash estándar distinto se rechaza.
+Un meta package utiliza el mismo algoritmo con un record separado
+`{package_id, dependencies, sources}`; sus sources omiten `source_set` y
+conservan `physical_path`, `logical_path`, `module`, `sha256`. Runtime y meta no
+comparten un hash aunque sus bytes fuente coincidieran.
+
+Los paquetes estándar runtime y meta utilizan los fingerprints fijados por la
+distribución candidata seleccionada. Un hash distinto en cualquiera se rechaza.
+
+`provider_hash` identifica el programa meta exacto que se ejecutará. Para un
+provider compilado desde un paquete del grafo es el hash canónico de su artefacto
+meta; para uno suministrado por la distribución es el fingerprint fijado de ese
+componente. El lockfile no registra outputs generados: sus hashes se calculan
+durante la ejecución y se conservan en interfaz y artefacto.
 
 ## 6. Resolución cerrada
 
-La API pura sigue dos pasos:
+### 6.1 Plan puro
 
-1. `ProjectPlan::parse(manifest, lockfile)` valida identidades, condiciones y
-   grafo, y devuelve la lista exacta de entradas requeridas.
-2. `ProjectPlan::resolve(supplied)` acepta un mapa path → bytes.
+La planificación pura sigue dos pasos:
+
+1. `ProjectPlan::parse(manifest, lockfile)` valida identidades, condiciones,
+   providers, generators, los grafos runtime/meta y la expansión del descriptor
+   estándar, y devuelve la lista exacta de entradas requeridas.
+2. `ProjectPlan::resolve(supplied)` acepta un mapa path → bytes y construye un
+   `ResolvedProject`.
 
 Cada entrada requerida tiene kind y SHA-256:
 
@@ -402,16 +621,124 @@ Cada entrada requerida tiene kind y SHA-256:
 |---|---|
 | `source` | fuente de un source set activo |
 | `dependency-interface` | interfaz compilada fijada |
-| `generator-input` | dato declarado para generación previa |
+| `meta-source` | fuente de un meta package alcanzable |
+| `generator-input` | dato declarado entregado por valor al VM meta |
 | `privileged-unit` | descriptor privilegiado canónico |
 
 Falta, sobra o cambia un byte de una entrada y la resolución falla. Ninguna
-entrada inactiva se solicita. Tras validar todos los hashes, el plan construye
-determinísticamente `SourceDatabase`, `PackageGraph` y `CompilationRequest`.
+entrada inactiva o meta package inalcanzable se solicita. Los programas meta se
+obtienen exclusivamente del grafo `meta_packages` o del companion estándar
+fijado; no son paths ambientales adicionales.
 
-Los generator inputs ya deben haber producido, fuera del compilador, cualquier
-fuente declarada por el manifiesto. El compilador registra sus hashes, pero no
-ejecuta generadores.
+Tras validar todos los hashes, el plan construye determinísticamente
+`SourceDatabase`, `PackageGraph`, `GenerationPlan` y la parte inicial de
+`CompilationRequest`.
+
+### 6.2 Separación entre frontend y orquestador
+
+El frontend del compilador continúa siendo puro: recibe una base de fuentes
+completa y nunca ejecuta código de usuario. El orquestador del toolchain controla
+la fase meta, ejecuta programas en el VM cerrado descrito abajo y solo después
+entrega al frontend las fuentes escritas y generadas fusionadas.
+
+Así, “generación durante compilación” describe una fase del build, no una
+capacidad escondida en imports, parsing, resolución o evaluación constante. Un
+cliente que ya posea outputs válidos y su identidad completa puede invocar el
+frontend sin incluir un VM.
+
+### 6.3 Target `tondo-meta`
+
+Providers y generators son paquetes Tondo ordinarios compilados primero para:
+
+~~~text
+target       = tondo-meta
+profile      = meta
+capabilities = []
+~~~
+
+Un paquete meta no puede contener `derive`, declarar otro generador ni depender
+de una interfaz producida por generación en el mismo build. Sus entry points
+tienen exactamente una de estas firmas lógicas:
+
+~~~tondo pseudocode
+fn generate(request: meta.GenerateRequest): meta.GenerateResponse ! meta.Error
+fn expandDerive(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error
+~~~
+
+`GenerateRequest` contiene la clausura pública de `model_roots` codificada como
+`tondo-meta-model-0.1/1`, los inputs declarados por nombre, la lista cerrada de
+outputs y los límites. Una lista de roots vacía no incluye declaraciones.
+`DeriveRequest` contiene los roots implícitos del trait y target, la declaración
+`derive` y la vista privada limitada del único target autorizado. Los tipos son
+opacos fuera de `std.meta`; no son una API runtime de aplicación.
+
+`GenerateResponse` contiene exactamente un mapa `logical_path → UTF-8 source` y
+diagnósticos estructurados. `DeriveResponse` contiene una única expansión
+`impl`, diagnostics y su source map; el toolchain le asigna el path reservado de
+2.2. Ninguna respuesta expone stdout como resultado, mutaciones del AST ni
+handles hacia el compilador.
+
+Los offsets de un source map se refieren a los bytes UTF-8 de la respuesta
+original. El formatter devuelve el mapping de edits y el toolchain lo compone
+con el mapa del provider para obtener spans finales. Ranges inválidos,
+solapamientos no admitidos o una asociación que no sobreviva a esa composición
+producen `E2105`; nunca se atribuye silenciosamente el span al archivo completo.
+
+### 6.4 Sandbox y presupuestos
+
+El VM meta ofrece asignación administrada y operaciones puras de `std.meta`.
+Rechaza filesystem, red, procesos, environment, reloj, entropy, threads, FFI,
+`unsafe`, `Pointer` y async. Un generator input se lee desde el request; su path
+físico nunca se revela.
+
+Los contadores de pasos, memoria viva y bytes de salida se comprueban de forma
+determinista. Agotar uno produce `E2107`; intentar una capacidad ausente produce
+`E2108`. Un pánico se convierte en un diagnóstico de generación. Cada run parte
+de un VM, heap y estado meta nuevos; no existe storage persistente ni estado
+compartido entre producers.
+
+### 6.5 Una sola ronda
+
+El orquestador ejecuta:
+
+1. resolución cerrada de todos los bytes;
+2. compilación y validación de paquetes meta;
+3. resolución preliminar de las clausuras escritas seleccionadas por
+   `model_roots` y por cada `derive`, rechazando con `E2109` cualquier
+   dependencia hacia una salida de la ronda;
+4. construcción de un snapshot canónico por request y ejecución independiente
+   de providers y generators contra él;
+5. validación exacta de outputs, formato canónico y fusión atómica; y
+6. compilación completa con la base de fuentes resultante.
+
+Todos los snapshots se derivan de la misma base pre-generación; cada producer
+recibe únicamente la clausura de sus roots y ninguno observa outputs de otro. La
+fuente generada no puede contener `derive` ni solicitar otra ronda. Un path
+ausente, adicional o colisionante produce `E2106`; fuente inválida o una
+expansión fuera de su autorización produce `E2105`.
+
+El orden operativo no es observable. El toolchain puede ejecutar producers en
+paralelo, pero ordena solicitudes, outputs y diagnósticos por sus identidades
+canónicas antes de fusionarlos.
+
+### 6.6 Identidad y cache
+
+`GenerationPlan` calcula una identidad por producer a partir de:
+
+- compilador y VM meta exactos;
+- edición, target, perfil, capabilities y features del consumidor;
+- versión, roots y hash canónico del snapshot meta;
+- PackageId, `provider_hash` y entry point;
+- hashes de inputs;
+- lista de outputs; y
+- los tres presupuestos.
+
+Una cache local o remota futura solo puede devolver una respuesta cuyo hash y
+manifest de outputs coincidan con esa identidad. Cada salida aceptada se
+formatea primero y su hash se calcula sobre esos bytes finales. El artefacto
+registra inputs, producers y outputs; cambiar cualquiera invalida el build.
+
+Si cualquier producer falla, no se publica output parcial, interfaz ni artefacto.
 
 ## 7. Interfaces compiladas
 
@@ -425,7 +752,7 @@ layout, no fija name mangling y no promete una ABI.
 
 ~~~json
 {
-  "format": "tondo-interface-0.1/1",
+  "format": "tondo-interface-0.1/2",
   "compiler": "tondo-bootstrap/0.1.0",
   "edition": "0.1",
   "package_id": "registry:util@2#sha256-content",
@@ -434,8 +761,10 @@ layout, no fija name mangling y no promete una ABI.
   "capability_registry": "tondo-capabilities/1",
   "capabilities": ["console", "process"],
   "features": ["fast"],
+  "meta_model": "tondo-meta-model-0.1/1",
   "source_sets": ["@30:registry:util@2#sha256-content#common"],
   "modules": ["util"],
+  "generation_hash": "sha256:...",
   "api_hash": "sha256:...",
   "dependencies": [
     {
@@ -453,6 +782,12 @@ paquete descrito, no los de su consumidor. Cada dependencia directa conserva
 alias, `PackageId` completo y hash de API; la cadena de interfaces fija así el
 grafo transitivo.
 
+`meta_model` es `null` si el paquete no contiene fuente generada ni expansiones
+`derive`. En otro caso fija la versión exacta utilizada. `generation_hash` es
+SHA-256 de la secuencia canónica de identidades de producer y hashes de outputs
+que contribuyen al paquete; para un paquete sin generación es el hash de la
+secuencia vacía.
+
 `api_hash` se deriva de la superficie pública canónica: nombres nominales,
 signatures, genéricos y bounds, constantes públicas, formas nominales,
 capacidades derivadas observables, traits, métodos e implementaciones
@@ -469,6 +804,7 @@ Antes de lexear cualquier fuente, el consumidor comprueba:
 - `PackageId`;
 - target y perfil;
 - conjunto de capacidades y features;
+- modelo meta y generation hash;
 - source sets activos de ese paquete;
 - conjunto de módulos;
 - aliases, `PackageId` y hashes de API de dependencias transitivas.
@@ -485,7 +821,7 @@ Una discrepancia nunca intenta enlazar “por parecido” ni cae a búsqueda nom
 
 ~~~json
 {
-  "format": "tondo-artifact-0.1/1",
+  "format": "tondo-artifact-0.1/2",
   "compiler": "tondo-bootstrap/0.1.0",
   "edition": "0.1",
   "source_form": "module",
@@ -495,9 +831,9 @@ Una discrepancia nunca intenta enlazar “por parecido” ni cae a búsqueda nom
   "capability_registry": "tondo-capabilities/1",
   "capabilities": ["console", "process"],
   "features": ["fast"],
+  "meta_model": "tondo-meta-model-0.1/1",
   "source_sets": [
-    "@15:workspace:app@1#common",
-    "@30:registry:util@2#sha256-content#common"
+    "@15:workspace:app@1#common"
   ],
   "manifest_hash": "sha256:...",
   "lockfile_hash": "sha256:...",
@@ -505,7 +841,33 @@ Una discrepancia nunca intenta enlazar “por parecido” ni cae a búsqueda nom
     "privileged:vendor.native": "sha256:...",
     "schema": "sha256:..."
   },
+  "generation": [
+    {
+      "kind": "generator",
+      "id": "models",
+      "provider_package": "toolchain:std-meta:0.1.0",
+      "provider_hash": "sha256:...",
+      "entry": "schema.generateModels",
+      "model_roots": [],
+      "model_hash": "sha256:...",
+      "request_hash": "sha256:...",
+      "outputs": [
+        {
+          "source_id": "gen:...",
+          "module": "models",
+          "path": "generated/models.to",
+          "sha256": "sha256:..."
+        }
+      ]
+    }
+  ],
   "source_hashes": [
+    {
+      "source_id": "gen:...",
+      "module": "models",
+      "path": "generated/models.to",
+      "sha256": "sha256:..."
+    },
     {
       "source_id": "pkg:...",
       "module": "main",
@@ -520,17 +882,25 @@ Una discrepancia nunca intenta enlazar “por parecido” ni cae a búsqueda nom
 ~~~
 
 El artefacto registra todos los source sets del grafo seleccionado, no solo los
-de la raíz. `source_hashes` se ordena por `(source_id, module, path)`.
-`generator_inputs` incluye las entradas ordinarias por nombre y cada unidad
-privilegiada como `privileged:<id>`.
+de la raíz. `source_hashes` se ordena por `(source_id, module, path)` e incluye
+fuente escrita y generada. `generator_inputs` incluye las entradas ordinarias por
+nombre y cada unidad privilegiada como `privileged:<id>`.
+
+`generation` se ordena por `(kind, id)`. `kind` es `derive` o `generator`;
+`id` es el ID del manifiesto para un generator y el `source_id`
+`derive:<64hex>` para una expansión. `model_roots` conserva los roots explícitos
+o implícitos del request y `model_hash` fija su clausura canónica. `outputs` se
+ordena por `(source_id, module, path)`. `request_hash` cubre todos los
+componentes de 6.6, no solo los inputs crudos. Un build sin generación utiliza
+`meta_model: null` y `generation: []`.
 
 `build_hash` es SHA-256 de una codificación canónica que contiene, en orden:
 compilador, edición, source form, PackageId raíz, target, perfil, capacidades,
-features, source sets, hashes de manifiesto y lockfile, generator inputs, source
-hashes e interface hash.
+features, modelo meta, source sets, hashes de manifiesto y lockfile, generator
+inputs, generation, source hashes e interface hash.
 
-`reproducible: true` solo es válido porque todas esas entradas son explícitas y
-el compilador puro no accede a estado ambiental.
+`reproducible: true` solo es válido porque todas esas entradas son explícitas,
+el VM meta está cerrado y el compilador puro no accede a estado ambiental.
 
 ## 9. Unidades privilegiadas
 
@@ -591,13 +961,14 @@ escapar un estado inválido a Tondo seguro.
 El plan rechaza una unidad con compiler, target, perfil, registro o capacidad
 incompatible antes de compilar fuente. Su hash exacto forma parte del artefacto.
 
-## 10. CLI bootstrap
+## 10. CLI de proyecto
 
 Las formas de proyecto son:
 
 ~~~text
 tondo check --manifest <tondo.json>
 tondo run --manifest <tondo.json> -- [argument ...]
+tondo test --manifest <tondo.json> [opciones de test]
 ~~~
 
 Opciones:
@@ -610,6 +981,9 @@ Opciones:
 
 Sin `--lockfile`, se utiliza `tondo.lock.json` junto al manifiesto. `fmt` sigue
 operando sobre un único `.to` y no acepta manifiestos ni productos.
+La forma, opciones, selección, ejecución y reportes de `tondo test` se rigen por
+`TONDO_TESTING_SPEC.md`; antes de invocar al compilador debe materializar el
+plan cerrado descrito arriba.
 
 La CLI:
 
@@ -617,12 +991,15 @@ La CLI:
 2. crea el plan puro;
 3. lee exactamente `required_inputs`, relativos al manifiesto;
 4. entrega los bytes al plan;
-5. compila;
-6. escribe productos solo si la compilación tiene éxito.
+5. compila y valida los programas meta;
+6. construye el snapshot, ejecuta la única ronda de generación y valida todas
+   sus salidas;
+7. compila la base de fuentes completa; y
+8. escribe productos solo si todas las fases tienen éxito.
 
 Un producto no puede declarar el mismo path que una fuente suelta, manifiesto,
-lockfile, source activo, interfaz de dependencia, generator input, unidad
-privilegiada u otro producto de esa invocación.
+lockfile, source activo o generado, interfaz de dependencia, generator input,
+unidad privilegiada u otro producto de esa invocación.
 
 ## 11. Determinismo y frontera ambiental
 
@@ -632,6 +1009,7 @@ Dos ejecuciones con bytes idénticos de:
 - fuentes activas;
 - interfaces;
 - generator inputs;
+- programas, modelos, límites y outputs de generators y derive providers;
 - unidades privilegiadas;
 - misma versión de compilador;
 
@@ -641,10 +1019,11 @@ El orden físico de lectura no modifica source IDs, módulos, API hash, orden de
 diagnósticos ni build hash. Todo set o mapa que cruza una frontera serializada
 se ordena por su identidad canónica.
 
-El módulo de planificación del compilador no importa ni invoca APIs de
-filesystem, entorno, red, proceso o reloj. Un frontend diferente puede obtener
-los bytes desde memoria, un sandbox o un content-addressed store sin cambiar la
-compilación.
+El módulo de planificación y el frontend del compilador no importan ni invocan
+APIs de filesystem, entorno, red, proceso o reloj. El orquestador solo usa
+filesystem para leer los paths exactos del plan y escribir productos solicitados;
+el VM meta no lo observa. Un frontend diferente puede obtener los bytes desde
+memoria, un sandbox o un content-addressed store sin cambiar la compilación.
 
 ## 12. Errores de frontera
 
@@ -657,6 +1036,12 @@ Los errores de fuente conservan sus códigos normativos. En particular:
 - `E1008`: módulo o API ausente por target/capacidad;
 - `E1701`: llamada u operación raw fuera de una región `unsafe`;
 - `E1702`: captura de `Pointer` por un cierre seguro.
+- `E2101`–`E2105`: solicitud o fuente generada inválida asociada a un span.
+- `E2106`–`E2108`: contrato, presupuesto o capability meta inválido; cuando no
+  existe span causal usan la identidad del target y ubicación nula según 22.3.
+- `E2109`: un root semántico depende de una salida de la misma ronda; usa como
+  primario el root declarado o la declaración `derive` y relaciona el primer
+  uso que cruza la frontera.
 
 No se fabrica un span de fuente para un error del grafo cerrado.
 
@@ -666,13 +1051,14 @@ Este contrato no define:
 
 - resolución semver o acceso a registries;
 - comandos para actualizar el lockfile;
-- ejecución de generadores;
 - cache remota o incremental;
 - firma criptográfica de paquetes;
 - formato de bytecode persistente;
 - linker nativo;
 - ABI FFI general;
 - compatibilidad de interfaces entre compiladores distintos.
+- plugins nativos de compiler, generación multi-round o dependencias entre
+  outputs generados.
 
 Añadir cualquiera de esas piezas no puede relajar la entrada cerrada del
 compilador ni convertir estado ambiental no declarado en semántica fuente.

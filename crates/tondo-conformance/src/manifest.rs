@@ -252,6 +252,14 @@ impl LoadedSuite {
         root: impl Into<PathBuf>,
         manifest_path: impl AsRef<Path>,
     ) -> Result<Self, ManifestError> {
+        Self::load_with_overrides(root, manifest_path, BTreeMap::new())
+    }
+
+    pub fn load_with_overrides(
+        root: impl Into<PathBuf>,
+        manifest_path: impl AsRef<Path>,
+        mut overrides: BTreeMap<String, Vec<u8>>,
+    ) -> Result<Self, ManifestError> {
         let root = root.into();
         let manifest_path = manifest_path.as_ref().to_path_buf();
         let absolute_manifest = root.join(&manifest_path);
@@ -284,11 +292,15 @@ impl LoadedSuite {
                 }
                 continue;
             }
-            let physical = root.join(&file.path);
-            let bytes = fs::read(&physical).map_err(|error| ManifestError::Io {
-                path: physical,
-                message: error.to_string(),
-            })?;
+            let bytes = if let Some(bytes) = overrides.remove(&file.path) {
+                bytes
+            } else {
+                let physical = root.join(&file.path);
+                fs::read(&physical).map_err(|error| ManifestError::Io {
+                    path: physical,
+                    message: error.to_string(),
+                })?
+            };
             let actual = sha256(&bytes);
             if actual != file.sha256 {
                 return Err(ManifestError::HashMismatch {
@@ -298,6 +310,11 @@ impl LoadedSuite {
                 });
             }
             pinned.insert(file.path, bytes);
+        }
+        if let Some(path) = overrides.keys().next() {
+            return Err(ManifestError::Invalid(format!(
+                "override path `{path}` is not referenced by the suite manifest"
+            )));
         }
 
         validate_expectations(&manifest, &pinned)?;
@@ -1345,12 +1362,15 @@ mod tests {
     }
 
     #[test]
-    fn published_suite_accessors_preserve_loaded_identity() {
+    fn checkpoint_suite_accessors_preserve_loaded_identity() {
+        use crate::lineage::LiveLineage;
+
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
             .unwrap();
-        let suite = LoadedSuite::load(root, "conformance/0.1/manifest.json").unwrap();
+        let lineage = LiveLineage::load(root, "conformance/live/manifest.json").unwrap();
+        let suite = lineage.checkpoint_suite();
         assert_eq!(suite.root(), root);
         assert_eq!(
             suite.manifest_path(),
@@ -1360,5 +1380,27 @@ mod tests {
         let expectation = suite.manifest().cases[0].expectation.pinned_file();
         let value = suite.json_file(expectation).unwrap();
         assert!(value.is_object() || value.is_array());
+
+        assert!(matches!(
+            LoadedSuite::load(root, "conformance/0.1/manifest.json"),
+            Err(ManifestError::HashMismatch { path, .. }) if path == "TONDO_LANGUAGE_SPEC.md"
+        ));
+
+        let overrides = BTreeMap::from([
+            (
+                "TONDO_LANGUAGE_SPEC.md".into(),
+                lineage.checkpoint_specification().to_vec(),
+            ),
+            ("unreferenced.txt".into(), b"not part of the suite".to_vec()),
+        ]);
+        assert!(matches!(
+            LoadedSuite::load_with_overrides(
+                root,
+                "conformance/0.1/manifest.json",
+                overrides
+            ),
+            Err(ManifestError::Invalid(message))
+                if message.contains("override path `unreferenced.txt` is not referenced")
+        ));
     }
 }

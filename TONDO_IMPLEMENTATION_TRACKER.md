@@ -1,24 +1,32 @@
 # Tondo: tracker de implementación
 
-**Estado:** M10.5b y Gate H0 cerrados; la arquitectura base de STD-0.1 y
-DEC-012 están cerradas; su sustrato temporal es el siguiente slice
+**Estado:** M10.5b y Gate H0 están cerrados sobre el checkpoint previo; Tondo
+0.1 sigue en desarrollo y las superficies consolidadas de metaprogramación,
+testing y Standard Library deben implementarse y añadirse a conformidad antes
+de publicar la primera versión
 
-**Versión del tracker:** 0.94
+**Versión del tracker:** 0.99
 
-**Última actualización:** 2026-07-29
+**Última actualización:** 2026-07-30
 
 **Especificaciones normativas:**
 
-- [Tondo 0.1 publicada](./TONDO_LANGUAGE_SPEC.md)
+- [Borrador normativo de Tondo 0.1](./TONDO_LANGUAGE_SPEC.md)
 - [Arquitectura base de Standard Library 0.1](./TONDO_STANDARD_LIBRARY_SPEC.md)
-- [Extensión de testing para Tondo 0.2](./TONDO_TESTING_SPEC.md)
+- [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
-**Objetivo inmediato:** fijar e implementar el sustrato temporal mínimo de
-producción de STD-0.1, ahora que Gate H0 protege Tondo 0.1 con evidencia
-continua. Después se implementa M10.6 contra la extensión normativa de testing,
-se completa Core + Hosted Standard Library 0.1 y solo entonces comienza M11 con
-NATIVE-001. La VM permanece como implementación de referencia y oracle
-diferencial del futuro backend nativo.
+**Objetivo inmediato:** cerrar `CONF-RATCHET-001` sobre la línea viva ya
+separada y después implementar `META-FORMAT-001`, primer nodo compartido por
+metaprogramación y el nuevo plan de testing. A partir de ahí avanzan dos lanes:
+M10.7 sobre los slices tempranos de `std.meta`/`std.reflect`, y M10.6 sobre
+`std.bytes`, `std.env` read-only, el time-base monotónico y `defer await`. Gate
+G5 solo vuelve a cerrarse cuando ambas lanes forman parte de la conformidad
+vigente. Después se completa STD-0.1A, se fijan antes del backend los contratos
+runtime-facing de STD-0.1B, comienza M11 y, tras Gate N1, se implementa el resto
+de STD-0.1B y se cierra S1. Todo ello pertenece a la primera Standard Library
+0.1.0; los slices y fases son orden de implementación, no versiones públicas.
+La VM permanece como implementación de referencia y oracle diferencial del
+backend nativo.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -94,12 +102,12 @@ No es necesario para este primer gate:
 | **G2 — Primer compilador** | `tondo run` ejecuta bytecode | Vertical slice síncrona, segura y deliberadamente parcial |
 | **G3 — Alpha utilizable** | Núcleo síncrono completo | Genéricos, traits, ownership, préstamos y colecciones |
 | **G4 — Preview 0.1** | Superficie del lenguaje completa | Async, scripts, procesos, targets y `unsafe` |
-| **G5 — Tondo 0.1 conforme** | Release certificable | Suite de conformidad completa para el target anunciado |
+| **G5 — Tondo 0.1 conforme** | Primera versión publicable, todavía no publicada | Suite de conformidad completa para el draft final y el target anunciado |
 | **H0 — Fiabilidad continua** | Evidencia automatizada y reproducible | Trazabilidad, CI, properties, fuzzing, modelos y métricas |
-| **T0 — Testing first-class** | `tondo test` conforme | Edición 0.2, unit/integration tests, aislamiento y reporte estable |
-| **S1 — Standard Library 0.1** | Core + Hosted utilizable | Spec estándar, distribución, implementación VM y conformidad |
+| **T0 — Testing first-class** | `tondo test` conforme | Tondo 0.1, unit/integration tests, aislamiento y reporte estable |
+| **S1A — Standard Library 0.1 foundation** | Core + Hosted utilizable | Base necesaria para testing y backend nativo |
 | **N1 — Backend nativo conforme** | Segunda implementación de producción | Oracle diferencial, runtime nativo y targets verificados |
-| **S2 — Standard Library ampliada** | Concurrency + Application | APIs capability-gated con evidencia por módulo |
+| **S1 — Standard Library 0.1 completa** | Primera stdlib publicable | Foundation + Concurrency + Application conformes |
 
 ---
 
@@ -181,6 +189,7 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
 | `ADR-013` | Monomorfización como primera estrategia para genéricos y dispatch estático | Encaja con los traits sin vtables y mantiene el bytecode tipado |
 | `ADR-014` | Sin formato serializado estable de bytecode durante bootstrap | El bytecode puede ser in-memory hasta que la semántica y el loader estén estabilizados |
 | `ADR-015` | Un subconjunto bootstrap es una limitación del toolchain, no una edición ni dialecto de fuente | Las construcciones no implementadas se rechazan; nunca reciben semántica provisional |
+| `ADR-016` | Metaprogramación estática mediante `derive` y una ronda hermética de generators Tondo | Elimina boilerplate sin macros textuales, reflection dinámica, plugins nativos ni ejecución ambiental dentro del frontend |
 
 ### 3.2 Decisiones que deben documentarse antes de su milestone
 
@@ -228,35 +237,48 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   [`TONDO_STANDARD_LIBRARY_SPEC.md`](./TONDO_STANDARD_LIBRARY_SPEC.md) fija una
   sola distribución `std` por grafo, versionado conservador incluso antes de
   1.0, PackageId y hashes exactos, prelude mínimo, catálogo cerrado,
-  capabilities, actualización explícita y coexistencia inmutable con la
-  release bootstrap Tondo 0.1.0.
+  capabilities, actualización explícita y coexistencia verificable con el
+  checkpoint bootstrap interno Tondo 0.1.0.
 
-- [ ] **DEC-013 — Backend nativo y ABI runtime interna.** NATIVE-001 debe
-  concluir con un ADR que elija backend y registre targets, calling convention
-  interna, unwind, memoria, debug info, toolchain y criterios de portabilidad,
-  sin prometer ABI FFI pública.
+- [ ] **DEC-013 — Backend nativo y ABI runtime interna.** `NATIVE-001` elige
+  backend y registra targets, debug info, toolchain y portabilidad;
+  `NATIVE-ABI-001`, después del ADR de memoria, cierra calling convention,
+  unwind y fronteras runtime. Ninguna de ambas promete ABI FFI pública.
 
-- [ ] **DEC-014 — Gestión de memoria nativa.** Antes de ARC-001, fijar
-  ownership runtime, atomicidad, weak refs, detección de ciclos, interacción con
-  COW, async, FFI privilegiada y estrategia de verificación.
+- [ ] **DEC-014 — Gestión de memoria nativa.** `NATIVE-MEM-ADR-001` debe
+  cerrarla antes de ABI y lowering nativos, fijando ownership runtime,
+  atomicidad, weak refs, detección de ciclos, interacción con COW, async,
+  threads, FFI privilegiada y estrategia de verificación.
 
-- [x] **DEC-015 — Testing first-class y límite de edición.** La especificación
-  [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) reserva `suite` y `test`
-  para Tondo 0.2: `suite` es un contenedor estático con setup léxico y teardown
-  por `defer`/`defer await`; `test` es siempre una hoja. Mantiene Tondo 0.1 y
-  `tondo-conformance-0.1` inmutables, separa unit overlays de integration roots
-  y fija árbol/identidad, capturas `Copy + Send + Share`, envelope estructurado,
+- [x] **DEC-015 — Testing first-class integrado en 0.1.** La especificación
+  [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) forma parte del mismo
+  contrato Tondo 0.1 y reserva `suite` y `test`: `suite` es un contenedor
+  estático con setup léxico y teardown por `defer`/`defer await`; `test` es
+  siempre una hoja. El tag interno `v0.1.0` permanece como evidencia anterior,
+  no como edición o release pública. El contrato separa unit overlays de
+  integration roots y fija árbol/identidad, capturas `Copy + Send + Share`,
+  envelope estructurado,
   `std.testing.log/tags/failNow/skip/attach/snapshot/withVirtualTime`, inferencia
-  de error/async, aislamiento,
-  selección substring/glob/exact, ownership por CODEOWNERS, sharding, orden
-  aleatorio reproducible, retries y repeat explícitos en workers nuevos, tiempo
-  virtual opt-in sobre la API monotónica de producción, inputs públicos/secretos,
-  interrupción, artifacts content-addressed, snapshots versionados, límites,
-  output, exit status, reportes `tondo-test-report-0.2/7`,
-  `tondo-test-list-0.2/6` y `tondo-junit-report-0.2/4`. No se introducen
-  `TestContext`, attributes, clases, reflection, registro runtime, hooks,
-  selección regex o por tags runtime, retries/repeat implícitos, actualización
-  automática de snapshots ni un reloj exclusivo de testing.
+  de error/async, aislamiento, selección substring/glob/exact, ownership por
+  CODEOWNERS, sharding, orden aleatorio reproducible, retries y repeat explícitos
+  en workers nuevos, tiempo virtual opt-in sobre la API monotónica de
+  producción, inputs públicos/secretos, interrupción, artifacts
+  content-addressed, snapshots versionados, límites, output, exit status y
+  reportes `tondo-test-report-0.1/7`, `tondo-test-list-0.1/6` y
+  `tondo-junit-report-0.1/4`. No se introducen `TestContext`, attributes,
+  clases, reflection, registro runtime, hooks, selección regex o por tags
+  runtime, retries/repeat implícitos, actualización automática de snapshots ni
+  un reloj exclusivo de testing.
+
+- [x] **DEC-016 — Metaprogramación y reflection.** Tondo 0.1 incorpora una
+  declaración `derive` cerrada y generators declarados por manifest. Ambos
+  ejecutan programas Tondo fijados en un VM `tondo-meta` sin capabilities,
+  contra `tondo-meta-model-0.1/1`, en una única ronda y con inputs, outputs,
+  roots semánticos, presupuestos y hashes exactos. Los programas viven en un
+  grafo meta separado y el frontend permanece puro. `std.reflect`
+  conserva solo metadata descriptiva solicitada; no existe `Any`, inspección de
+  valores, acceso privado runtime, lookup por string ni dependencia reflectiva
+  de serializers.
 
 ### 3.3 Estructura inicial recomendada
 
@@ -313,12 +335,14 @@ necesaria; la fragmentación del workspace no.
 | **M7 — Async y concurrencia estructurada** | Tasks conformes | Completado |
 | **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
-| **M10 — Conformidad y release** | Gate G5: Tondo 0.1 | Completado |
+| **M10 — Conformidad del checkpoint previo** | Baseline ejecutable pre-`derive` | Completado |
 | **M10.5 — Reliability y testing** | Infraestructura y hardening continuo de evidencia | Completado |
-| **M10.6 — Testing de usuario y edición 0.2** | Gate T0: `tondo test` conforme | Especificado; implementación pendiente |
-| **STD-0.1 — Core + Hosted Standard Library** | API estándar mínima; su sustrato temporal precede T0 | Arquitectura base cerrada; APIs pendientes |
+| **M10.5c — Conformidad viva** | Linaje separado y sellado final del draft 0.1 | Lineage cerrado; ratchet pendiente en Wave 0 y sellado en Wave 4 |
+| **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Especificado; implementación pendiente |
+| **M10.6 — Testing de usuario Tondo 0.1** | Gate T0 y contribución testing a G5 | Especificado; implementación pendiente |
+| **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura base cerrada; slices tempranos y APIs pendientes |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
-| **STD-0.2 — Concurrency + Application Standard Library** | Ecosistema estándar ampliado | Futuro |
+| **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
 
 Estado observado del workspace:
 
@@ -329,20 +353,52 @@ Estado observado del workspace:
   `tondo-reference-adapter`, `tondo-reliability` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
-- Última validación: 2026-07-29, con formatter check, `cargo check` de todos los
+- Última validación del checkpoint implementado, anterior a la ampliación actual
+  del draft: 2026-07-29, con formatter check, `cargo check` de todos los
   targets, Clippy con warnings denegados, 830 tests Rust inventariados, Rustdoc
   con warnings denegados y metadatos locked. La suite oficial pasa 205 casos y
   424 repeticiones byte-estables; el inventario completo registra 1.507 casos
   lógicos y 1.726 repeticiones.
+- La línea viva separada registra 1.521 tests lógicos y 1.740 repeticiones:
+  1.471 ejecutables, 38 contratos `draft-pending`, tres campañas y nueve fences
+  no ejecutables. Su matriz conserva 17 requisitos cubiertos y expone
+  explícitamente 27 requisitos nuevos o modificados como `draft-pending`.
 
-### 4.1 Ruta crítica
+### 4.1 Grafo de dependencias y ruta crítica
 
 ~~~text
 M0 -> M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10
-  -> M10.5 -> M10.5b -> STD-0.1/time-base -> M10.6/defer-await+testing
-  -> STD-0.1/resto -> M11 -> STD-0.2
-       \_____________________________________________________/
-                  testing y conformidad continuos
+  -> M10.5 -> M10.5b -> CONF-LIVE-001 -> CONF-RATCHET-001
+                                                |
+                                                v
+                                         META-FORMAT-001
+                                                |
+                              +-----------------+------------------+
+             |                                    |
+             v                                    v
+  std.meta + std.reflect contract     std.bytes + std.env + std.time base
+             |                                    |
+             v                                    v
+          M10.7/meta                  M10.6/defer-await + testing
+             |                                    |
+             v                                    v
+         META-CONF                                T0
+             +-----------------+------------------+
+                               v
+                       CONF-SEAL -> Gate G5
+                               |
+                               v
+                  resto STD-0.1A -> Gate S1A
+                               |
+               contratos runtime STD-0.1B
+                               |
+                               v
+                         M11 -> Gate N1
+                               |
+                               v
+               implementación STD-0.1B -> Gate S1
+
+Cada unión ratchetea inventario, matriz, conformidad viva y H0.
 ~~~
 
 M4, M5 y M6 pueden investigarse conjuntamente, pero deben integrarse en ese
@@ -352,17 +408,67 @@ incompatible con ownership.
 M10.5 y su hardening M10.5b son fases acotadas de infraestructura,
 clasificación y cierre de huecos reales, no una pausa
 indefinida para perseguir un número arbitrario de tests. Su gate debe existir
-antes de ampliar sintaxis. Tras H0, STD-0.1 abre únicamente el slice de
-`Duration`, `Instant` monotónico, suspensión, timers y deadlines que M10.6
-necesita para virtualizar la API real; calendario civil y el resto de la stdlib
-no se adelantan. M10.6 consolida primero `defer await` como efecto general de la
-edición 0.2 y después implementa sobre él la extensión de testing, sin
-reescribir Tondo 0.1. El resultado proporciona `tondo test` para completar y
-probar la propia stdlib.
-Cada API posterior de STD-0.1 amplía la matriz generativa y de conformidad y
-añade evidencia escrita en Tondo. M11 depende de Gate T0 y STD-0.1 porque el
-backend nativo debe implementar una frontera runtime ya especificada y
-compararse byte a byte con la VM sobre programas reales. STD-0.2 no bloquea M11.
+antes de ampliar sintaxis. `CONF-LIVE-001` separa la evidencia inmutable del
+checkpoint de la línea incremental del draft; ningún slice nuevo trabaja con el
+gate permanentemente roto ni cuenta el checkpoint como prueba de reglas nuevas.
+
+`META-FORMAT-001` es el primer cambio de código porque materializa los formatos
+`/2` compartidos. Después no existe una dependencia serial entre M10.7 completo
+y M10.6 completo. La lane meta requiere la API build-only exacta de `std.meta`
+y el contrato de `std.reflect`; la lane testing requiere la identidad estable de
+`std.bytes`, el snapshot read-only de `std.env` y el time-base de producción.
+Plan/discovery, sintaxis de testing y `defer await` pueden avanzar antes de
+terminar esos slices; solo el typecheck que consume sus APIs, materialización de
+inputs, virtual time, lifecycle completo y Gate T0 los esperan.
+
+M10.7 y M10.6 ratchetean evidencia al terminar cada wave, no únicamente en
+`META-CONF-001` o `UTEST-CONF-001`. T0 cierra testing; G5 espera además toda la
+lane meta, ejecuta `CONF-SEAL-001` y vuelve a verificar el corpus consolidado.
+El resultado proporciona `tondo test` para completar y probar la propia stdlib.
+
+Cada API posterior de STD-0.1A se implementa como slice vertical y amplía
+matriz, conformidad y dogfooding. Antes de `NATIVE-001` deben estar cerrados los
+contratos —no necesariamente las implementaciones— de `std.channel`,
+`std.sync`, `std.executor` y la frontera host de `std.net`, porque condicionan
+memoria, atomics, wakeups, bloqueo y ABI runtime. M11 depende de T0, G5, S1A y
+esos contratos. La implementación de STD-0.1B continúa tras N1 y sigue siendo
+requisito de la primera publicación STD 0.1.0.
+
+Los números M10.6 y M10.7 son IDs históricos estables, no prioridad
+cronológica. Este DAG y la cola de la sección 24 son la autoridad para ordenar
+el trabajo.
+
+### 4.1.1 Dependencias duras
+
+| Consumidor | Prerrequisito obligatorio | No necesita esperar |
+|---|---|---|
+| Cualquier cambio del draft vivo | `CONF-LIVE-001` y H0 verde | Un nuevo Gate G5 |
+| Nuevas formas de parser de M10.7/M10.6 | `PARSER-STACK-001` | Resto de meta o testing runtime |
+| Plan `/2`, meta y testing de proyecto | `META-FORMAT-001` | Meta VM completa |
+| `META-VM-001` | contrato exacto de `std.meta` | Su implementación completa |
+| `STD-META-IMPL-001` | meta VM y `META-MODEL-001` | Derive/generators |
+| Derive y generators | meta VM + implementación/conformidad de `std.meta` | JSON/MessagePack/Protobuf |
+| `REFLECT-IMPL-001` | contrato público exacto de `std.reflect` | Serializers o reflection de valores |
+| `STD-ENV-IMPL-001` | `STD-ENV-SPEC-001` y `STD-BYTES-CONF-001` | Mutación de environment |
+| `UTEST-ID-001` | project plan, discovery y dev-dependencies cerrados | Worker o reporters |
+| `UTEST-CHECK-001` y attachments | spec + implementación + evidencia de `std.bytes`; tipos del time-base para el checker | Resto de `std.io` y calendario civil |
+| `UTEST-INPUTS-001` | `UTEST-INPUTS-PLAN-001`, `UTEST-RUNTIME-001` y `STD-ENV-CONF-001` | Mutación de environment |
+| `UTEST-VTIME-001` y Gate T0 | spec + implementación + evidencia del time-base | Calendario civil |
+| Lifecycle de suites | `ASYNC-DEFER-IMPL-001`, lowering y worker aislado | Retry, JUnit o snapshot update |
+| `CONF-SEAL-001` | `META-CONF-001`, `UTEST-CONF-001`, Gate T0 y hashes actuales | STD-0.1A completa |
+| Gate G5 vivo | `CONF-SEAL-001` | STD-0.1A completa |
+| `NATIVE-001` | Gates G5/S1A y contratos runtime-facing de STD-0.1B | Implementación de STD-0.1B |
+| `NATIVE-ABI-001` | `NATIVE-001`, `NATIVE-MEM-ADR-001` y contratos de sync/executor | ABI FFI pública |
+| ARC/runtime nativo | `NATIVE-ABI-001` y DEC-014 | Eliminación de retains, COW o escape analysis |
+| Gate S1 | N1 y todos los slices A/B conformes | Incrementalidad o LSP |
+
+### 4.1.2 Regla de integración por waves
+
+Cada wave termina con un mini-gate que actualiza inventario, trazabilidad,
+tests, cobertura aplicable y conformidad viva. Una wave posterior no utiliza
+una API provisional de la anterior. Trabajo de lanes distintas puede ejecutarse
+en paralelo; dos cambios que toquen el mismo schema, parser, IR o runtime se
+integran en el orden de la tabla anterior.
 
 ### 4.2 Mapa de cobertura del spec
 
@@ -382,18 +488,19 @@ entre dos subsistemas:
 | 13. Expresiones y control | M2; cleanup en M5 | G1, G3 y M10 |
 | 14. Patrones y `match` | M2; lowering en M3 | G1, G2 y M10 |
 | 15. Errores y pánicos | M2, M3 y M5 | G2, G3 y M10 |
-| 16. Mutabilidad, memoria y concurrencia | M5, M7 y M9; APIs en STD-0.2 | G3, G4, M10 y STD-0.2 |
+| 16. Mutabilidad, memoria y concurrencia | M5, M7 y M9; APIs en STD-0.1B | G3, G4, M10 y S1 |
 | 17. Operadores | M2, M6 y M8 | G3, G4 y M10 |
 | 18. Semántica numérica | M3 y M6 | G3 y M10 |
 | 19. Texto y Unicode | M1 para léxico; M6 para runtime | G0, G3 y M10 |
-| 20. Ejecutables, scripts y procesos | M3, M7, M8 y M9; API host en STD-0.1 | G2, G4, M10 y STD-0.1 |
+| 20. Ejecutables, scripts y procesos | M3, M7, M8 y M9; API host en STD-0.1A | G2, G4, M10 y S1A |
 | 21. Formato y documentación | M1 y trabajo transversal | G0 y M10 |
 | 22. Diagnósticos y tooling | M0, M1, M2, M9 y M10 | Todos los gates |
 | 23. Gramática de referencia | M1 | G0 y M10 |
 | 24. Ejemplos integrados | Tests de aceptación progresivos | G2, G3, G4 y M10 |
 | 25. Características ausentes | Compile-fail distribuido por milestone | M10 |
-| 26. Frontera con la stdlib | M6, M8, STD-0.1 y STD-0.2 | G3, G4, M10 y gates STD |
-| Extensión de testing Tondo 0.2 | Time-base de STD-0.1 + M10.6; helpers en resto de STD-0.1 | T0 y S1 |
+| 26. Frontera con la stdlib | M6, M8, STD-0.1A y STD-0.1B | G3, G4, M10, S1A y S1 |
+| 27. Metaprogramación estática | M10.7; providers en STD-0.1A | G5 y S1A |
+| 28. Testing integrado Tondo 0.1 | Time-base de STD-0.1A + M10.6; helpers en STD-0.1A | T0, G5 y S1A |
 
 ---
 
@@ -540,8 +647,9 @@ Evidencia observada el 2026-07-21:
   deterministas y el límite profundo se resuelven sin crash ni pérdida de
   fuente.
 - El límite request-wide de nodos, diagnostics y nesting produce rechazo
-  tipado; el bootstrap fija un techo seguro de 256 niveles para no agotar la
-  pila del host.
+  tipado. Mientras el bootstrap dependa de recursión del host, una guarda
+  portable temporal lo detiene a 128 niveles aunque el presupuesto configurado
+  siga siendo 256; `PARSER-STACK-001` elimina esta restricción interna.
 
 ### 6.3 Formatter
 
@@ -1035,7 +1143,7 @@ Evidencia observada el 2026-07-21:
 - Overflow, división inválida, bounds implementados y `panic` no dependen de
   modo debug/release.
 - Los diagnósticos runtime contienen código, nombre estable y ubicación.
-- La release se identifica expresamente como bootstrap y no conforme.
+- El build se identifica expresamente como bootstrap y no conforme.
 
 ---
 
@@ -2081,7 +2189,8 @@ Evidencia de cierre:
   fijan compilador, edición, PackageIds, target, perfil, capacidades, features,
   módulos, source sets y dependencias transitivas. El artefacto vuelve a derivar
   su propio `build_hash` al decodificarse y rechaza cualquier manipulación.
-- La CLI carga exactamente el plan cerrado, no ejecuta generadores ni busca
+- La CLI del checkpoint carga exactamente el plan cerrado, todavía no ejecuta
+  generadores ni busca
   dependencias, emite productos solo tras éxito y evita que estos sobrescriban
   inputs o se solapen entre sí, incluidos aliases de path.
 - La frontera nativa 0.1 termina deliberadamente en unidades privilegiadas
@@ -2090,7 +2199,7 @@ Evidencia de cierre:
 
 ---
 
-## 15. M10 — Suite de conformidad y release 0.1
+## 15. M10 — Suite de conformidad del checkpoint 0.1
 
 **Objetivo:** convertir la afirmación “implementamos Tondo” en evidencia
 versionada y reproducible.
@@ -2141,13 +2250,13 @@ versionada y reproducible.
 
 - [x] **CONC-CONF-001 — Repetir litmus tests con límites calibrados.**
 
-### 15.3 Release
+### 15.3 Checkpoint reproducible
 
-- [x] **REL-001 — Publicar matriz exacta de target, perfil y capacidades.**
+- [x] **REL-001 — Registrar matriz exacta de target, perfil y capacidades.**
 
-- [x] **REL-002 — Publicar versión de compilador, formatter, edición y suite.**
+- [x] **REL-002 — Fijar versión de compilador, formatter, edición y suite.**
 
-- [x] **REL-003 — Publicar resultados reproducibles de conformidad.**
+- [x] **REL-003 — Registrar resultados reproducibles de conformidad.**
 
 - [x] **REL-004 — Documentar limitaciones que no contradigan capacidades
   anunciadas.**
@@ -2156,14 +2265,17 @@ versionada y reproducible.
 
 - [x] **REL-006 — Congelar el formato público de diagnostics JSON 0.1.**
 
-- [x] **REL-007 — Etiquetar Tondo 0.1 únicamente después de superar todos los
-  grupos aplicables.**
+- [x] **REL-007 — Etiquetar el checkpoint interno únicamente después de superar
+  todos los grupos aplicables del snapshot.**
 
-### Gate G5
+### Gate G5 del snapshot pre-M10.7
 
 - [x] La versión exacta del toolchain pasa `tondo-conformance-0.1`.
 - [x] El target y sus capacidades están declarados.
 - [x] No hay exclusiones sin justificar por capacidad.
+
+Este cierre es evidencia histórica del checkpoint. La ampliación M10.7 reabre el
+Gate G5 de la primera versión completa, definido en 18.4.
 - [x] Los artefactos, resultados y versiones pueden reproducirse.
 - [x] La documentación no afirma soporte más amplio que la evidencia.
 
@@ -2190,21 +2302,22 @@ El resultado estructurado se conserva en
 
 **Objetivo:** instalar una infraestructura de evidencia continua antes de
 ampliar la API pública o duplicar la ejecución en un backend nativo. Este
-milestone no cambia la semántica Tondo 0.1 ni reabre Gate G5: clasifica la
+milestone no cambió la semántica del snapshot Tondo 0.1 ni reabrió entonces
+Gate G5: clasifica la
 cobertura actual, automatiza el gate existente y crea las herramientas con las
 que cada milestone posterior multiplicará casos reproducibles.
 
 **Límite:** M10.5 no se cierra por alcanzar una cifra arbitraria de tests. Se
 cierra cuando inventario, trazabilidad, CI, generación, fuzzing, modelos y
 métricas tienen contratos ejecutables. La expansión del corpus continúa dentro
-de M10.6, STD-0.1, M11 y STD-0.2.
+de M10.6, STD-0.1A, M11 y STD-0.1B.
 
 ### 16.1 Baseline y trazabilidad normativa
 
 - [x] **TEST-AUDIT-001 — Auditar el corpus 0.1 existente.** La baseline
   observada contiene 685 tests Rust ejecutables y ninguno ignorado, 129
   fixtures internos `.to`, 205 casos y 424 repeticiones de conformidad, 302
-  fences Tondo de la spec publicada 0.1 y 203 fuentes `.to` únicas al descontar
+  fences Tondo del snapshot de spec 0.1 y 203 fuentes `.to` únicas al descontar
   los 127
   duplicados exactos entre fixtures internos y conformidad. El inventario
   distingue cantidad física, caso lógico, repetición y fuente única.
@@ -2214,8 +2327,9 @@ de M10.6, STD-0.1, M11 y STD-0.2.
   requisito, oracle, repetición, hash de fuente y target. Debe detectar IDs
   duplicados, sidecars huérfanos, casos no descubiertos y deriva entre el
   manifiesto y el repositorio. También registra documento, edición y estado:
-  los ejemplos de `TONDO_TESTING_SPEC.md` se registran como contrato futuro,
-  pero no cuentan como tests ejecutables ni cobertura de Tondo 0.1.
+  los ejemplos de `TONDO_TESTING_SPEC.md` se registran como contrato 0.1
+  pendiente, pero no cuentan como tests ejecutables ni cobertura del
+  checkpoint.
 
 - [x] **TEST-002 — Crear la matriz normativa de cobertura.** Cada requisito
   `debe`/`no puede` de Tondo 0.1 recibe una identidad estable. La matriz conserva
@@ -2329,7 +2443,7 @@ de M10.6, STD-0.1, M11 y STD-0.2.
 ### 16.5 M10.5b — Hardening de cobertura y oracles
 
 - [x] **TEST-HARDEN-001 — Cerrar los huecos observables de mayor retorno.**
-  La suite publicada completa se ejecuta dentro del proceso instrumentado y se
+  La suite versionada completa se ejecuta dentro del proceso instrumentado y se
   añaden contratos positivos, negativos y de borde para CLI, artefactos,
   manifiestos, protocolo del adaptador, consultas y snapshots semánticos,
   bytecode, valores gestionados y tooling de fiabilidad. El inventario resultante
@@ -2357,8 +2471,8 @@ de M10.6, STD-0.1, M11 y STD-0.2.
 
 - [x] El gate completo de Tondo 0.1 se ejecuta automáticamente en PR y `main`.
 - [x] El inventario y la matriz normativa se validan sin entradas sin
-  clasificar para el target publicado; la extensión 0.2 queda clasificada como
-  futura, no omitida ni contada como evidencia verde.
+  clasificar para el target del checkpoint; el contrato de testing todavía
+  pendiente queda clasificado, no omitido ni contado como evidencia verde.
 - [x] Existen generadores con seed reproducible y reducción de fallos.
 - [x] Frontend, protocolos y admission verifiers tienen fuzz targets
   persistentes con corpus versionado.
@@ -2371,13 +2485,70 @@ de M10.6, STD-0.1, M11 y STD-0.2.
 - [x] El gate estricto y la conformidad continúan verdes después de integrar la
   infraestructura.
 
+### 16.6 M10.5c — Preparación portable y linaje del draft vivo
+
+H0 permanece cerrado para el checkpoint que lo demostró, pero cada ampliación
+del draft necesita un frontend portable y evidencia activa sin reescribir esos
+bytes. Antes de ampliar la gramática de M10.7 o M10.6:
+
+- [ ] **PARSER-STACK-001 — Eliminar la dependencia del stack nativo.**
+  Reemplazar toda recursión cuya profundidad controle la fuente por una máquina
+  iterativa con una pila explícita de frames: Pratt de expresiones y sus
+  prefix/postfix/infix, grupos, tuples, arrays, records, interpolaciones, tipos,
+  patterns y cualquier descenso anidado restante. Cada frame debe conservar el
+  estado mínimo de continuación, checkpoint CST, binding power, política de
+  recuperación y span necesarios; no se crea un segundo AST ni se cambia la
+  gramática, precedencia o shape del CST. `ParseLimits.max_nesting_depth`
+  permanece como presupuesto lógico configurable y se carga contra la pila
+  explícita; al cerrar la tarea se elimina
+  `MAX_SAFE_RECURSIVE_PARSER_DEPTH`, de modo que no exista un segundo límite
+  oculto dependiente del tamaño de stack del thread. Validar equivalencia byte a
+  byte de CST, diagnostics, recuperación y formatter sobre el corpus actual;
+  añadir casos válidos e inválidos profundamente anidados que alcancen un
+  presupuesto elevado en un thread de stack pequeño, properties de
+  terminación/memoria `O(depth)`, fuzzing y la matriz Linux ARM64, macOS y
+  Windows. Actualizar ADR-004 y los contratos de límites solo cuando la ruta
+  iterativa sea la implementación efectiva.
+
+- [x] **CONF-LIVE-001 — Separar checkpoint y conformidad viva.** Conservar
+  byte a byte `conformance/0.1/manifest.json`, sus cases, observations y
+  resultados como evidencia del tag interno `v0.1.0`; crear una identidad y
+  path explícitos para el manifest no sellado del draft 0.1 actual; enseñar a
+  reliability, matriz, scripts y CI a seleccionar ambos sin fallback. El
+  checkpoint se valida desde un checkout limpio del tag o su paquete
+  content-addressed, nunca contra los docs vivos, y no cuenta como
+  evidencia de requisitos añadidos. La línea viva fija el hash actual de cada
+  spec, clasifica requisitos todavía pendientes sin presentarlos como pass y
+  acepta nuevos cases únicamente junto al slice que implementan. Cada
+  actualización produce un hash nuevo y conserva el anterior como artefacto de
+  CI; exponer una operación de sellado que todavía no se ejecuta. Añadir tests
+  que demuestren selección explícita, rechazo de mezcla de manifests,
+  reproducibilidad y que el gate estricto puede permanecer verde sin falsear
+  conformidad del draft incompleto.
+
+- [ ] **CONF-RATCHET-001 — Hacer incremental la evidencia nueva.** Definir el
+  mini-gate común que cada wave meta, testing y stdlib ejecuta antes de
+  integrarse: inventario regenerado, matriz sin entradas omitidas, casos
+  positivos/negativos de la nueva superficie, coverage aplicable sin regresión,
+  mutation scope cuando corresponda y manifest vivo actualizado. `META-CONF`,
+  `UTEST-CONF` y los gates estándar son cierres acumulativos, no la primera vez
+  que se crea evidencia.
+
+- [ ] **CONF-SEAL-001 — Sellar una única conformidad Tondo 0.1.** Después de
+  `META-CONF-001`, `UTEST-CONF-001` y Gate T0, exigir cero requisitos
+  pendientes, fijar hashes actuales de specs/cases/adaptador, reconstruir desde
+  un workspace limpio y promover atómicamente el último draft vivo a la
+  distribución inmutable `tondo-conformance-0.1`. Probar que no mezcla
+  artifacts de otro linaje ni muta el checkpoint; Gate G5 verifica este
+  resultado y no vuelve a generarlo.
+
 ---
 
-## 17. M10.6 — Testing de usuario y edición 0.2
+## 17. M10.6 — Testing de usuario Tondo 0.1
 
-**Objetivo:** implementar la extensión
-[`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) como la primera ampliación
-de lenguaje posterior a Tondo 0.1. El resultado es una declaración
+**Objetivo:** implementar
+[`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) como parte de la primera
+versión de Tondo. El resultado es una declaración
 `test name { ... }` para cada hoja y una declaración `suite name { ... }` para
 jerarquía y lifecycle compartido, unit tests con acceso privado controlado,
 integration tests contra API pública, control y metadata sellados de
@@ -2389,22 +2560,56 @@ producción, inputs públicos/secretos explícitos, interrupción fiable y repor
 JSON/JUnit desde una sola invocación. El runner resultante puede utilizarse para
 completar y validar la stdlib.
 
-**Dependencia:** la implementación comienza únicamente después de Gate H0 y de
+**Dependencia:** M10.6 empieza después de H0, `CONF-LIVE-001` y
+`META-FORMAT-001`, pero no espera a que M10.7 esté completo. Plan,
+discovery/dev-dependencies, lexer/CST/formatter, árbol estático, algoritmos
+puros de selección y `defer await` pueden avanzar en lanes independientes.
+`PARSER-STACK-001` debe cerrarse antes de `UTEST-CST-001`, para que la nueva
+sintaxis no amplíe la ruta recursiva temporal.
+`UTEST-CHECK-001` y la ruta de attachments esperan
+`STD-BYTES-SPEC-001`, `STD-BYTES-IMPL-001` y `STD-BYTES-CONF-001`; el checker
+espera también la identidad implementada de `Duration` y `Instant` del
+time-base;
+la lectura de inputs declarados espera `STD-ENV-SPEC-001`,
+`STD-ENV-IMPL-001` y `STD-ENV-CONF-001`;
+`UTEST-VTIME-001`, lifecycle temporal y Gate T0 esperan
 `STD-TIME-BASE-SPEC-001`, `STD-TIME-BASE-IMPL-001` y
-`STD-TIME-BASE-CONF-001`. El diseño queda fijado antes para que inventario,
-matriz normativa y CI conozcan el próximo contrato, pero no se añade token,
-parser path, feature flag ni extensión privada mientras H0 permanezca abierto.
-El slice temporal es API de producción de STD-0.1, no un shim privado del
-runner. La edición consolidada 0.2 debe cerrar además `defer await` mediante
-`ASYNC-DEFER-SPEC-001` y `ASYNC-DEFER-IMPL-001` antes de ejecutar lifecycle de
-suite; testing no puede sustituirlo por un hook.
+`STD-TIME-BASE-CONF-001`. Son APIs de producción de STD-0.1A, nunca shims
+privados del runner. `ASYNC-DEFER-IMPL-001` debe cerrar antes de conducir
+teardown de suite; testing no puede sustituirlo por un hook.
 
-**Compatibilidad:** `TONDO_LANGUAGE_SPEC.md`, su hash normativo y
-`tondo-conformance-0.1` permanecen inmutables. Ningún binario puede aceptar
-`test` ni `suite` bajo `--edition 0.1`; la nueva superficie se anuncia solo al
-seleccionar la edición 0.2.
+**Compatibilidad:** el tag interno `v0.1.0`, sus hashes y resultados permanecen
+inmutables como checkpoint anterior. El borrador vivo
+`TONDO_LANGUAGE_SPEC.md`, su hash y `tondo-conformance-0.1` se amplían de forma
+explícita; no se mantiene un segundo parser o dialecto. Hasta cerrar M10.6, un
+binario declara testing como componente pendiente y no anuncia conformidad
+completa Tondo 0.1.
 
-### 17.1 Spec, edición y plan cerrado
+**Orden interno por lanes:**
+
+1. **Plan:** `UTEST-PLAN` → contrato de inputs
+   (`UTEST-INPUTS-PLAN`)/discovery/owners/dev-dependencies →
+   `UTEST-CLI-PARSE`. La materialización de inputs queda en la lane de
+   ejecución, después de crear el worker.
+2. **Lenguaje:** lexer → CST → formatter; tras unir source classes,
+   discovery y dev-dependencies del plan → árbol/capturas →
+   overlays/integration. `ASYNC-DEFER-IMPL-001` avanza en paralelo sobre la
+   ruta async existente.
+3. **Ejecución:** check → lowering y modelo de resultados en paralelo →
+   envelope → worker → inputs/lifecycle/límites.
+4. **Algoritmos puros:** glob → shard → order/scheduler, después de identidad y
+   plan pero sin esperar I/O de artifacts o reporters.
+5. **Features sobre el worker estable:** tiempo virtual, retry/repeat,
+   attachments y snapshots.
+6. **Cierre:** JSON → JUnit → transacción de interrupción → wiring completo de
+   CLI → proyectos/plataformas/dogfooding → Gate T0.
+
+Plan y frontend se unen antes de `UTEST-ID-001`; la semántica estática completa
+se une antes de `UTEST-CHECK-001`. Ejecución y algoritmos se unen antes de
+retry/repeat; todos los productores de outcomes se unen antes de congelar los
+reporters.
+
+### 17.1 Spec 0.1 y plan cerrado
 
 - [x] **UTEST-SPEC-001 — Fijar el contrato normativo de testing.**
   `TONDO_TESTING_SPEC.md` define keywords, grammar, árbol suite/test, formato,
@@ -2418,43 +2623,69 @@ seleccionar la edición 0.2.
   explícito, CLI, JSON/JUnit, stdlib boundary, diagnósticos y conformidad sin
   depender de una implementación provisional.
 
-- [ ] **ASYNC-DEFER-SPEC-001 — Cerrar `defer await` como efecto general de
-  Tondo 0.2.** Especificar grammar, inferencia async solo en
+- [x] **ASYNC-DEFER-SPEC-001 — Cerrar `defer await` como efecto general de
+  Tondo 0.1.** Especificar grammar, inferencia async solo en
   test/setup/script, requisito `async` explícito en funciones, métodos y cierres,
   única llamada infallible `Unit`, reserva de un operando afín, liveness/`Send`,
   LIFO, no cancelación cooperativa durante unwind, pánico/suprimidos,
   timeout/resource/interrupt y rechazo por capability. No admitir bloque async,
-  error propagado, hook de testing ni await oculto. Añadir sus casos a la
-  especificación consolidada antes de implementar suites.
+  error propagado, hook de testing ni await oculto. Sus reglas ya están
+  incorporadas a la especificación consolidada; implementación y conformidad
+  permanecen pendientes.
 
-- [ ] **UTEST-EDITION-001 — Materializar Tondo 0.2 como edición separada.**
-  Consolidar la especificación de lenguaje 0.2 después de
-  `ASYNC-DEFER-SPEC-001`, añadir `suite` y `test` a su registry de keywords,
-  incorporar el efecto general `defer await` sin nueva keyword y versionar
-  grammar/diagnósticos/formatos afectados. La edición 0.1 debe seguir
-  seleccionable y byte-compatible; tests de migración prueban que identificadores
-  `suite`/`test` válidos en 0.1 reciben `E1005` únicamente bajo 0.2 y que un
-  cleanup async continúa recibiendo `E1608` bajo 0.1.
+- [x] **UTEST-EDITION-001 — Consolidar testing en Tondo 0.1.** Añadir `suite`
+  y `test` al registry de keywords de la especificación viva, incorporar
+  `defer await`, grammar y diagnósticos y renombrar los formatos de tooling a la
+  línea 0.1. Preservar `v0.1.0` como checkpoint interno por hash, no como
+  edición seleccionable alternativa. La implementación y los tests de
+  compilación se ejecutan en las tareas siguientes.
 
 - [ ] **UTEST-PLAN-001 — Extender el project plan con source classes de test.**
   Representar exactamente `production`, `unit-test` e `integration-test`,
-  dev-dependencies, roots, paths lógicos, raíz de repositorio, inputs
-  CODEOWNERS, perfiles públicos/secretos, selector, shard, orden, seed, policy,
-  retry/repeat, reporters, artifact store, snapshot stores, target,
-  capabilities, catálogo temporal estándar y límites. El plan fija bytes/hash
-  de cada input público, solo descriptors/versiones de secretos y hashes
-  canónicos de stores; el hash de un artefacto de producción no puede depender
-  de metadata ni fuentes test-only.
+  dev-dependencies, roots físicos/lógicos explícitos, paths lógicos, raíz de
+  repositorio, referencias a inputs y CODEOWNERS, selector, shard, orden, seed,
+  policy, retry/repeat, reporters, artifact store, snapshot stores, target,
+  capabilities, catálogo temporal estándar y límites. La forma canónica y la
+  participación en hashes de los inputs se cierran en
+  `UTEST-INPUTS-PLAN-001`; el hash de un artefacto de producción no puede
+  depender de metadata ni fuentes test-only. No existe un “source root”
+  inferido por common-prefix: discovery solo enumera roots declarados y los
+  convierte en entradas cerradas antes del frontend.
+
+- [ ] **UTEST-INPUTS-PLAN-001 — Cerrar inputs sin ejecutar workers.**
+  Normalizar nombres lógicos, source, profile, visibilidad pública/secreta,
+  capability requerida y los tres estados de reproducibilidad dentro del plan.
+  Fijar bytes/hash para cada input público, únicamente descriptor y versión
+  para cada secreto, y su participación exacta en identidad, cachés,
+  invalidación y reportes. Probar canonicalización, colisiones, ausencia de
+  valores secretos y estabilidad del plan; esta tarea no lee el host ni
+  materializa valores.
+
+- [ ] **UTEST-RESULT-MODEL-001 — Fijar el modelo interno de ejecución.**
+  Implementar una única representación validada de árbol, participación de
+  suite, phase, attempt, iteration, retry unit, outcome, causalidad,
+  `blocked_by`, policy y summary que alimente salida humana, JSON y JUnit sin
+  recomputar semántica en cada reporter. Definir además el protocolo versionado
+  coordinator/worker, sus mensajes completos, límites, cancelación y cierre.
+  Esta tarea no ejecuta bodies; proporciona el oracle estructural para runtime,
+  retries, interrupción y reportes.
+
+- [ ] **UTEST-CLI-PARSE-001 — Implementar parsing y normalización de CLI.**
+  Añadir el comando `tondo test`, parsear todas las opciones normativas,
+  defaults, exclusiones, multiplicidad, rangos, paths lógicos y combinaciones
+  inválidas, y convertirlas al plan cerrado sin ejecutar ni prometer todavía
+  una feature no conectada. Probar diagnostics y exit `2` de uso. El wiring de
+  ejecución, outputs y exits finales pertenece a `UTEST-CLI-001`.
 
 - [ ] **UTEST-INPUTS-001 — Materializar inputs públicos y secretos sin
-  filtraciones.** Implementar los tres estados de reproducibilidad, hashes de
-  bytes públicos y descriptor profile secreto, materialización exclusiva dentro
-  del worker y revocación al terminar. Probar que valores secretos no entran en
-  plan serializado, cache key de compilación, diagnostics, reportes, snapshots,
-  artifacts o productos salvo copia explícita del programa, y documentar que el
-  runner no realiza redacción heurística. Un fallo de materialización termina
-  con exit `1` sin reporte parcial; un fallo de revocación pierde aislamiento y
-  usa exit `3`.
+  filtraciones.** Después de `UTEST-INPUTS-PLAN-001`,
+  `UTEST-RUNTIME-001` y `STD-ENV-CONF-001`, resolver los descriptors del plan,
+  materializarlos exclusivamente dentro del worker y revocarlos al terminar.
+  Probar que valores secretos no entran en plan serializado, cache key de
+  compilación, diagnostics, reportes, snapshots, artifacts o productos salvo
+  copia explícita del programa, y documentar que el runner no realiza redacción
+  heurística. Un fallo de materialización termina con exit `1` sin reporte
+  parcial; un fallo de revocación pierde aislamiento y usa exit `3`.
 
 - [ ] **UTEST-DISC-001 — Implementar descubrimiento convencional y explícito.**
   Soportar `_test.to` dentro de production roots y `.to` bajo `tests/`, con la
@@ -2478,31 +2709,35 @@ seleccionar la edición 0.2.
 
 ### 17.2 Frontend y semántica estática
 
-- [ ] **UTEST-LEX-001 — Añadir `suite` y `test` a las keywords de edición
-  0.2.** Lexer, token registry, Unicode/NFC, diagnostics y reconstrucción CST
-  deben continuar dependiendo de la edición declarada, nunca de un path físico
-  o del comando que invoca el parser.
+- [ ] **UTEST-LEX-001 — Añadir `suite` y `test` a las keywords Tondo 0.1.**
+  Lexer, token registry, Unicode/NFC, diagnostics y reconstrucción CST deben
+  reconocerlas siempre que la edición declarada sea 0.1, nunca por un path
+  físico, source class o por el comando que invoca el parser. No existe un modo
+  0.1 anterior seleccionable.
 
 - [ ] **UTEST-CST-001 — Parsear `test` y `suite` sin pérdida.** Añadir
   `test identifier block` y `suite identifier suite-block` a CST/AST y
   recovery. El suite-block admite setup ordinario seguido solo de miembros
   estáticos; se rechazan modifiers, parámetros, firmas, nodos bajo control de
   flujo, sentencias posteriores al primer miembro y todas las alternativas
-  ausentes. Edición 0.1 conserva su parseo anterior.
+  ausentes. El checkpoint anterior conserva sus bytes; el parser vivo adopta el
+  contrato consolidado.
 
 - [ ] **UTEST-FMT-001 — Formatear suites y tests canónicamente.** Cubrir bodies
   y setups vacíos/multiline, nesting, comentarios, documentación, separación
-  setup-members, declaraciones adyacentes, recovery e idempotencia en ambas
-  ediciones. `fmt` no depende de discovery runtime.
+  setup-members, declaraciones adyacentes, recovery e idempotencia en la
+  grammar consolidada 0.1. `fmt` no depende de discovery runtime.
 
 - [ ] **ASYNC-DEFER-IMPL-001 — Implementar y verificar `defer await`.** Añadir
-  la forma edition-gated al CST/formatter, checks de firma/efecto/ownership,
+  la forma 0.1 al CST/formatter sin feature gate, checks de
+  firma/efecto/ownership,
   guards async en HIR/MIR/bytecode y conducción LIFO en el executor. Probar
   inferencia de entradas/script, `E1610` en función no async, retorno, error
   exterior, pánico, cancelación, cleanup suprimido, timeout, resource limit,
   interrupción, un owner afín, `Send` y rechazo de bloque/llamada
-  fallible/capability mediante `E1608`/`E14xx`; Tondo 0.1 y sus bytes permanecen
-  inmutables.
+  fallible/capability mediante `E1608`/`E14xx`. La inmutabilidad se demuestra
+  reproduciendo el checkpoint por sus hashes, no manteniendo dos gramáticas en
+  el compilador vivo.
 
 - [ ] **UTEST-ID-001 — Construir el árbol estático suite/test.** La identidad
   interna usa PackageId + source class + module path + ordered node path + kind;
@@ -2583,8 +2818,10 @@ seleccionar la edición 0.2.
   procesos/recursos de host hasta revocarlos, sin serializar heap, roots ni
   handles como snapshot reutilizable. El executor recibe el proveedor monotónico
   real o virtual mediante una frontera interna única; el bytecode de usuario y
-  las llamadas de `std.time` no cambian entre ambos. Cada worker recibe solo los
-  inputs públicos/secretos declarados y revoca secretos y recursos al cerrarse.
+  las llamadas de `std.time` no cambian entre ambos. El protocolo de worker
+  expone una única fase sellada de inicialización/revocación y ejecuta primero
+  con snapshot de environment vacío; `UTEST-INPUTS-001` conecta después las
+  fuentes declaradas sin cambiar el protocolo ni serializar valores de vuelta.
 
 - [ ] **UTEST-SUITE-001 — Implementar lifecycle jerárquico de suite.** Ejecutar
   setup una vez por participación y solo si existe una hoja seleccionada,
@@ -2610,19 +2847,6 @@ seleccionar la edición 0.2.
   CPU/instrucciones, memoria y output siempre usan recursos reales aunque el
   intento abra tiempo virtual. OOM, abort o pérdida de aislamiento nunca se
   presentan como assertion failure ordinario.
-
-- [ ] **UTEST-CLI-001 — Añadir `tondo test`.** Implementar manifest/default
-  discovery, `--filter`, `--glob`, `--exact`, `--list`, `--jobs`, `--timeout`,
-  `--retry`, `--repeat`, `--artifacts`, `--update-snapshots`, `--test-format`,
-  `--show-output`, `--deny-skips`,
-  `--allow-flaky`, `--allow-empty`, `--codeowners`, `--shard`, `--order`,
-  `--seed` y `--report`, incluidas exclusiones, multiplicidad, compatibilidad
-  de modos, parsing estricto, colisiones de output y exit codes 0/1/2/3/4.
-  Primero compila toda la suite y el selector solo limita ejecución. `--filter`
-  compara hojas; glob/exact aceptan hoja o suite y esta última selecciona su
-  subárbol. Rechazar repeat/retry/allow-flaky/artifacts/update con list y las
-  combinaciones inseguras de snapshot update antes de compilar. No implementar
-  `--tag`, selector regex ni `--fail-fast` bajo este contrato.
 
 - [ ] **UTEST-GLOB-001 — Implementar el selector glob portable.** Parsear
   componentes `::`, `*`, `?` y `**` con la gramática cerrada de la spec,
@@ -2711,7 +2935,7 @@ seleccionar la edición 0.2.
 - [ ] **UTEST-ARTIFACT-001 — Persistir attachments por intento.** Implementar
   `testing.attach` con copia exacta y linealizada de `std.bytes.Bytes`, gramática
   cerrada de nombre/media type, unicidad por intento, límites y `P2006`. Calcular
-  descriptors SHA-256 y escribir `tondo-test-artifacts-0.2/1` con objects
+  descriptors SHA-256 y escribir `tondo-test-artifacts-0.1/1` con objects
   content-addressed inmutables, deduplicación, manifest canónico y publicación
   atómica. Rechazar symlinks, paths derivados incorrectos, duplicados y
   colisiones; no incluir Base64, upload, ejecución, timestamps ni paths físicos.
@@ -2719,7 +2943,7 @@ seleccionar la edición 0.2.
   su recolección segura.
 
 - [ ] **UTEST-SNAPSHOT-001 — Implementar snapshots textuales explícitos.**
-  Resolver `(node_id, name)` contra `tondo-snapshot-store-0.2/1`, comparar el
+  Resolver `(node_id, name)` contra `tondo-snapshot-store-0.1/1`, comparar el
   `String` exacto, registrar `matched/missing/mismatched` y producir
   `P2007`/`P2008` con diffs humanos acotados. Parsear, validar, ordenar y
   hashear el store canónico; preservar entries stale y stores de paquetes no
@@ -2739,10 +2963,13 @@ seleccionar la edición 0.2.
   cada output final conserva sus bytes anteriores o permanece ausente. Permitir
   únicamente blobs content-addressed huérfanos y una salida humana marcada
   `interrupted`, nunca un resultado machine-readable presentado como completo.
+  La tarea implementa y prueba la transacción coordinator/worker mediante un
+  evento de interrupción inyectable después de cerrar stores y reporters; el
+  mapping de señales del SO y su prueba pública quedan en `UTEST-CLI-001`.
 
 - [ ] **UTEST-REPORT-001 — Implementar los formatos machine-readable.**
   Implementar una sola vez `tondo-test-json-v1` y serializar con ella
-  `tondo-test-report-0.2/7` y `tondo-test-list-0.2/6`, con arrays separados de
+  `tondo-test-report-0.1/7` y `tondo-test-list-0.1/6`, con arrays separados de
   suites/tests, parents, source, owners, paths, estado agregado,
   intento decisivo e historial por intento de phase, `blocked_by` causal,
   iteración/ronda/unidad, `failure`, `skip`, tags, artifacts, snapshots,
@@ -2762,7 +2989,7 @@ seleccionar la edición 0.2.
   estructurados, no consumen intentos y no ejecutan setup ni bodies.
 
 - [ ] **UTEST-JUNIT-001 — Exportar JUnit desde el resultado normativo.**
-  Proyectar la misma ejecución como `tondo-junit-report-0.2/4`, XML 1.0 UTF-8,
+  Proyectar la misma ejecución como `tondo-junit-report-0.1/4`, XML 1.0 UTF-8,
   con un testcase agregado por hoja, testcases sintéticos únicos para fallos de
   lifecycle y flaky suite, y
   `tondo.retry/repeat/decisive_attempt/attempts`. Mapear `flaky-pass` a failure
@@ -2776,12 +3003,23 @@ seleccionar la edición 0.2.
   snapshot. Publicar cada path atómicamente, rechazar colisiones y mantener JSON
   como representación canónica y sin pérdida.
 
+- [ ] **UTEST-CLI-001 — Conectar `tondo test` end-to-end.** Después de cerrar
+  plan, lifecycle, algoritmos, stores y reporters, conectar las opciones ya
+  parseadas por `UTEST-CLI-PARSE-001` con discovery, compilación completa,
+  selección, ejecución, output, publicación atómica y señales del SO sobre la
+  transacción de `UTEST-INTERRUPT-001`. `--filter` compara hojas; glob/exact
+  aceptan hoja o suite y esta última selecciona su subárbol.
+  Verificar colisiones, combinaciones inseguras y exits 0/1/2/3/4 contra el
+  modelo único de resultados; ninguna rama de CLI vuelve a implementar
+  glob/shard/order/retry/repeat/artifacts/snapshots/reporting. No implementar
+  `--tag`, selector regex ni `--fail-fast` bajo este contrato.
+
 ### 17.4 Evidencia, conformidad y dogfooding
 
-- [ ] **UTEST-CONF-001 — Crear una suite de conformidad Tondo 0.2 nueva.** No
-  mutar manifests, cases, hashes ni observations de 0.1. La suite 0.2 cubre los
-  cincuenta y dos grupos mínimos enumerados por la spec de testing y tiene
-  adaptador público para VM y futuros backends.
+- [ ] **UTEST-CONF-001 — Ampliar la conformidad viva Tondo 0.1.** No mutar los
+  manifests, cases, hashes ni observations del checkpoint interno. El
+  manifiesto vivo añade los cincuenta y dos grupos mínimos enumerados por la
+  spec de testing y mantiene adaptador público para VM y futuros backends.
 
 - [ ] **UTEST-PROJECTS-001 — Añadir proyectos de aceptación completos.**
   Incluir package unitario, integration roots, dev-dependency, suites anidadas,
@@ -2799,7 +3037,7 @@ seleccionar la edición 0.2.
   desde una copia en otro path físico con observaciones canónicas iguales salvo
   duración JUnit y material secreto deliberadamente externo.
 
-- [ ] **UTEST-PLATFORM-001 — Validar la matriz publicada.** Linux ejecuta el
+- [ ] **UTEST-PLATFORM-001 — Validar la matriz declarada.** Linux ejecuta el
   gate canónico completo; Linux ARM64, macOS Intel/ARM64 y Windows ejecutan
   discovery, paths jerárquicos, substring/glob/exact de suite/test, lifecycle,
   envelopes, tags/logs/skips, CODEOWNERS, sharding, orden/seed, workers nuevos
@@ -2817,7 +3055,11 @@ seleccionar la edición 0.2.
   timing y con cleanup final verificable. Debe ejecutar además una campaña
   repeat determinista, adjuntar al menos un artifact, comprobar y actualizar un
   snapshot textual en un fixture aislado, y levantar/cerrar mediante
-  `defer await` un servicio de integración. Debe probar una API de producción
+  `defer await` un servicio de integración. Antes de estabilizar
+  `std.process`/`std.net`, ese servicio se implementa enteramente en Tondo sobre
+  tasks y la API pública del paquete probado; el dogfood hosted con proceso o
+  red reales se añade en STD-0.1A/B y no autoriza un shim de testing. Debe
+  probar una API de producción
   con backoff o deadline mediante `withVirtualTime`, sin pausas reales, y
   producir reportes JSON/JUnit con inputs, stores y tiempo virtual separado de
   duración operacional. No sustituye los tests Rust ni la conformidad;
@@ -2825,11 +3067,11 @@ seleccionar la edición 0.2.
 
 ### Gate T0 — Testing first-class conforme
 
-- [ ] Tondo 0.1, su spec, suite, diagnostics y comportamiento permanecen
-  inmutables y pasan Gate H0.
-- [ ] La edición 0.2 consolidada incorpora el contrato de testing, reserva solo
-  en ella `suite` y `test`, y define `defer await` como cleanup general,
-  infallible y verificable sin añadir hooks de testing.
+- [ ] El checkpoint interno `v0.1.0`, sus manifests, hashes y observations
+  permanecen inmutables y verificables como evidencia histórica.
+- [ ] El borrador consolidado Tondo 0.1 incorpora el contrato de testing,
+  reserva `suite` y `test` y define `defer await` como cleanup general,
+  infallible y verificable sin añadir hooks de testing ni un segundo dialecto.
 - [ ] Lexer, CST, parser, formatter, HIR, MIR, bytecode y VM recorren la ruta
   común y sus verifiers aceptan o rechazan árboles suite/test con diagnostics
   exactos.
@@ -2882,15 +3124,170 @@ seleccionar la edición 0.2.
   ejecución y policy con duración operacional real y tiempo virtual separado.
   La salida humana no intercala suites/tests o intentos y muestra owners, tags,
   evidence, tiempo virtual, logs, razones y fallos accionables.
-- [ ] La suite Tondo 0.2 pasa en la VM y la matriz de plataformas aplicable está
-  verde.
+- [ ] El grupo de testing de `tondo-conformance-0.1` pasa en la VM y la matriz
+  de plataformas aplicable está verde.
 - [ ] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
   registration APIs, `TestContext`, annotations, reflection, subtests dinámicos
   ni hooks ocultos.
 
+Al cerrar T0 se vuelve a ejecutar la suite completa —incluida
+metaprogramación—, `CONF-SEAL-001` promueve la línea viva verificada y solo
+entonces puede cerrarse Gate G5 para el draft consolidado Tondo 0.1.
+
 ---
 
-## 18. STD-0.1 — Core + Hosted Standard Library
+## 18. M10.7 — Metaprogramación estática y reflection
+
+**Objetivo:** implementar la superficie añadida al draft Tondo 0.1 sin abrir el
+frontend a ejecución arbitraria. El resultado debe soportar `derive`, generators
+de manifest y metadata reflection con código estático, reproducible e
+inspeccionable.
+
+**Dependencia:** Gate H0, `CONF-LIVE-001` y el checkpoint M10 existente.
+`META-FORMAT-001` abre el trabajo compartido. Syntax y modelo pueden avanzar
+mientras se cierra `STD-META-SPEC-001`. `META-VM-001` crea después el target
+cerrado necesario para ejecutar `STD-META-IMPL-001`; esta implementación espera
+también a `META-MODEL-001`. Providers y generators no pueden comenzar hasta
+cerrar además `STD-META-CONF-001`.
+`PARSER-STACK-001` precede a `META-SYNTAX-001`, para no construir las nuevas
+formas sobre la recursión temporal del bootstrap.
+`STD-REFLECT-001` precede obligatoriamente a `REFLECT-IMPL-001`. Ninguno de
+estos contratos espera al resto de STD-0.1A ni introduce un shim provisional.
+La contribución de M10.7 a Gate G5 permanece pendiente hasta incorporar
+requisitos, diagnostics y casos en la conformidad viva; el Gate G5 final exige
+además M10.6/T0.
+
+**Orden interno:**
+
+1. `META-FORMAT-001` y el linaje vivo.
+2. En paralelo: `META-SYNTAX → META-SEM → META-MODEL`,
+   `STD-META-SPEC-001 → META-VM-001` y `STD-REFLECT-001`.
+3. Bootstrap meta: `(META-MODEL-001 + META-VM-001) →
+   STD-META-IMPL-001 → STD-META-CONF-001`.
+4. Unión: `META-DERIVE-001` y `META-GEN-001`.
+5. Integración: `META-ATOMIC-001`, `META-QUERY-001` y `REFLECT-IMPL-001`.
+6. Evidencia incremental y cierre: diagnostics, reproducibilidad, robustez y
+   `META-CONF-001`.
+
+Cada unión ejecuta `CONF-RATCHET-001`; la tarea final no descubre por primera
+vez los errores de los slices anteriores.
+
+### 18.1 Contrato y formatos
+
+- [x] **META-SPEC-001 — Fijar el modelo del lenguaje.** Reservar `derive`,
+  gramática, ownership del target, providers exactos, autorización privada
+  limitada, una ronda, `tondo-meta-model-0.1/1`, sandbox, presupuestos,
+  identidad/cache, diagnostics `E2101`–`E2109` y frontera de reflection.
+
+- [x] **META-TOOLCHAIN-SPEC-001 — Fijar el plan de generación.** Versionar
+  manifest, lockfile, interface y artifact `/2`; separar frontend puro de
+  orquestador; separar los grafos runtime/meta; declarar programs, inputs,
+  roots, outputs, límites, hashes, target `tondo-meta`, fusión atómica y
+  ausencia de outputs parciales.
+
+- [x] **REFLECT-ARCH-001 — Fijar reflection metadata-only.** `std.reflect`
+  retiene `TypeInfo`/`TypeId` solo por solicitud estática, expone únicamente
+  estructura pública y no ofrece `Any`, value access, constructors, invocation,
+  private members, layout ni enumeración global.
+
+- [ ] **META-FORMAT-001 — Implementar formatos toolchain `/2`.** Parsear,
+  validar y canonicalizar los nuevos records y el descriptor estándar `/1`;
+  rechazar campos, providers, meta packages, roots, límites, paths, outputs y
+  hashes inconsistentes antes de ejecutar código.
+  Mantener un lector explícito del checkpoint `/1` solo si la migración lo
+  necesita; nunca reinterpretarlo como `/2`.
+
+### 18.2 Frontend y modelo semántico
+
+- [ ] **META-SYNTAX-001 — Implementar `derive` end-to-end en syntax.** Lexer,
+  CST sin pérdida, parser, recuperación, formatter canónico, documentación y
+  AST/HIR soportan una única declaración sin attributes ni body.
+
+- [ ] **META-SEM-001 — Validar solicitudes derive.** Resolver identidades
+  exactas de traits/providers, owner nominal, binders, duplicados, superficie
+  permitida, bounds generados, coherencia y conflictos con impls manuales.
+
+- [ ] **META-MODEL-001 — Construir el snapshot meta inmutable.** Serializar de
+  forma canónica únicamente la clausura de roots autorizada: módulos,
+  declaraciones, tipos, bounds, fields/variants públicos, spans y docs; entregar
+  al derive solo la vista privada del target autorizado. Excluir bodies,
+  valores, layout, direcciones y estado del GC; diagnosticar `E2109` si una
+  clausura requiere una salida de la misma ronda.
+
+- [ ] **META-QUERY-001 — Exponer expansiones y procedencia.** Tooling devuelve
+  fuente formateada, provider, request/output hashes, bounds introducidos y
+  source map sin revelar símbolos privados ajenos al target.
+
+### 18.3 Ejecución hermética
+
+- [ ] **META-VM-001 — Implementar el sustrato target/VM `tondo-meta`.**
+  Registrar target, loader y sandbox capaces de ejecutar un programa Tondo
+  mínimo con heap nuevo por run, cero capabilities y contadores deterministas
+  de steps, memoria viva y output. Esta tarea no embebe una API provisional:
+  `STD-META-IMPL-001` compila después el companion especificado sobre este
+  sustrato, y solo entonces se habilitan providers.
+
+- [ ] **META-DERIVE-001 — Ejecutar providers derive.** Pasar requests tipados,
+  limitar outputs al impl autorizado, validar y formatear fuente, y fusionarla
+  solo cuando todos los providers terminan correctamente.
+
+- [ ] **META-GEN-001 — Ejecutar generators de manifest.** Entregar únicamente
+  inputs declarados por valor y la clausura pública de roots explícitos, exigir
+  todos y solo los outputs cerrados, impedir lectura ambiental, generación
+  multi-round y observación de outputs hermanos.
+
+- [ ] **META-ATOMIC-001 — Integrar identidad, cache y productos.** Incluir
+  model/provider/request/output hashes en interfaces y artifacts; reutilizar
+  cache solo con identidad completa y no publicar fuente, interface o artifact
+  parcial ante fallo.
+
+- [ ] **REFLECT-IMPL-001 — Implementar metadata runtime alcanzable.** Generar
+  metadata de `typeInfo[T]()` estáticamente, eliminar la no alcanzable y
+  demostrar que `TypeId` no escapa como identidad de wire ni habilita value
+  reflection.
+
+### 18.4 Evidencia y contribución a Gate G5
+
+- [ ] **META-DIAG-001 — Cubrir `E2101`–`E2109`.** Cada error tiene vecino
+  positivo, precedencia, span/ubicación nula correcta, JSON estable y
+  diagnostics de provider asociados a inputs o fields relevantes.
+
+- [ ] **META-REPRO-001 — Probar hermeticidad y determinismo.** Variar cwd,
+  environment, filesystem order, core count y scheduling; repetir builds,
+  comparar outputs byte a byte y demostrar denegación de filesystem, red,
+  process, clock, entropy, threads, async, FFI y unsafe.
+
+- [ ] **META-ROBUST-001 — Añadir properties, fuzzing y límites.** Fuzzear
+  schemas `/2`, modelo meta, outputs y source maps; probar cycles imposibles,
+  roots que cruzan la frontera de ronda, colisiones, pánicos, budget exhaustion,
+  UTF-8 inválido y generadores hostiles sin panic del compilador ni publicación
+  parcial.
+
+- [ ] **META-CONF-001 — Extender `tondo-conformance-0.1`.** Añadir syntax,
+  semantic, tooling, runtime metadata, toolchain y reproducibility cases en la
+  línea viva creada por `CONF-LIVE-001`, sin eliminar ni reescribir la suite del
+  checkpoint. Ratchetear su contribución acumulada solo después de actualizar
+  inventario, trazabilidad, coverage y mutation evidence para la superficie
+  nueva; el sellado conjunto pertenece a `CONF-SEAL-001`.
+
+### Gate G5 — Primera versión del lenguaje publicable
+
+- [ ] Todo el draft Tondo 0.1, incluidos M10.7 y M10.6, está implementado y
+  tiene conformidad aplicable sobre `tondo-vm-hosted`.
+- [ ] Gate T0 está cerrado y el grupo de testing forma parte de
+  `tondo-conformance-0.1`, no de una edición o suite paralela.
+- [ ] `CONF-SEAL-001` ha promovido exactamente la línea viva verificada, sin
+  mezclarla con el checkpoint ni dejar requisitos pendientes.
+- [ ] La suite y sus manifests fijan el hash actual de la spec, no el
+  checkpoint anterior.
+- [ ] No existe una ruta de ejecución ambiental dentro del frontend ni del VM
+  meta.
+- [ ] La distribución puede describirse como candidata a publicación; este gate
+  por sí solo no realiza ni afirma una publicación.
+
+---
+
+## 19. STD-0.1A — Foundation + Hosted Standard Library
 
 **Objetivo:** especificar e implementar la primera API estándar utilizable
 sobre la VM antes de fijar decisiones del runtime nativo. La especificación de
@@ -2902,19 +3299,75 @@ La arquitectura, identidad, catálogo y reglas comunes están fijadas en
 base no cierra ninguna firma de módulo salvo el núcleo sellado que ya pertenece
 a la especificación de testing.
 
-**Dependencia:** tras Gate H0 se ejecutan únicamente
-`STD-TIME-BASE-SPEC-001`, `STD-TIME-BASE-IMPL-001` y
-`STD-TIME-BASE-CONF-001`, porque Gate T0 necesita probar la API temporal real.
-El resto de la implementación pública comienza después de T0. Ninguna firma se
-congela ni distribuye como estable sin modelos, tests y contrato de capability.
-El otro slice temprano es el núcleo test-only
+La fase A contiene métodos intrínsecos, `std.bytes`, `std.io`, `std.math`,
+`std.format`, `std.serialization`, `std.reflect`, `std.meta`, JSON,
+MessagePack, Protobuf, el sustrato monotónico de `std.time`, `std.path`,
+`std.console`, `std.env`, `std.fs`, `std.process` y `std.testing`. La fase B
+completa el mismo catálogo 0.1 con calendario civil, encodings y codecs
+adicionales, regex, UUID, canales, sincronización, executors, logging y red.
+
+**Dependencia:** tras H0 y `CONF-LIVE-001` se adelantan cinco slices exactos,
+sin abrir el resto de la stdlib:
+
+- `STD-META-SPEC-001` antes de `META-VM-001`, y su implementación/conformidad
+  antes de providers o generators;
+- `STD-REFLECT-001` antes de `REFLECT-IMPL-001`;
+- `STD-BYTES-SPEC-001 → STD-BYTES-IMPL-001 → STD-BYTES-CONF-001` antes de
+  typecheck y artifacts de testing;
+- `STD-TIME-BASE-SPEC-001 → STD-TIME-BASE-IMPL-001 →
+  STD-TIME-BASE-CONF-001` antes de tiempo virtual;
+- `STD-ENV-SPEC-001 → STD-ENV-IMPL-001 → STD-ENV-CONF-001` antes de
+  materializar y leer inputs declarados.
+
+El resto de la implementación pública comienza después de T0, aunque sus specs
+pueden avanzar por layers cuando sus owners anteriores estén cerrados. Ninguna
+firma se congela ni distribuye como estable sin modelos, tests y contrato de
+capability. Junto a esos slices, M10.6 implementa el núcleo test-only
 `std.testing.log/tags/failNow/skip/attach/snapshot/withVirtualTime`, cuyas firmas
 y bridge quedan fijados y ejecutables en T0 porque forman parte del contrato del
-runner. `defer await` es semántica general de la edición 0.2, no una API de ese
-módulo. STD-0.1 completa esos mismos módulos; no crea reloj, snapshot engine,
-artifact store ni harness paralelos.
+runner; no constituye un sexto módulo estándar adelantado. `defer await` es
+semántica general de Tondo 0.1, no una API de ese módulo. STD-0.1A completa esos
+mismos módulos; no crea reloj, snapshot engine, artifact store ni harness
+paralelos.
 
-### 18.1 Contrato y distribución
+**Layers de implementación:**
+
+1. **A0 — Prerrequisitos:** meta, contrato reflect, bytes, time-base y acceso
+   environment de solo lectura necesario para inputs declarados.
+2. **A1 — Valores y protocolos:** core, texto, colecciones, iteradores, math,
+   format e I/O.
+3. **A2 — Host:** path → console/env → filesystem/process.
+4. **A3 — Datos:** serialization → JSON/MessagePack; Protobuf añade además meta
+   schema-first.
+5. **A4 — Experiencia de test:** helpers portables de `std.testing` sobre T0.
+6. **A5 — Cierre:** performance, conformidad, documentación y distribución.
+
+Cada módulo atraviesa `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF → DOC`
+antes de considerarse listo. Las tareas umbrella de 19.4 coordinan y verifican
+esos micro-gates; no sustituyen el estado individual de un módulo. Un owner
+solo bloquea a sus consumidores explícitos: owners independientes de una misma
+layer pueden avanzar en paralelo.
+
+| Orden A | Owners | Dependencias duras | Desbloquea |
+|---|---|---|---|
+| A0.1 | `std.meta` | formatos `/2`, modelo meta normativo y target meta bootstrap | derive y generators |
+| A0.2 | `std.reflect` contract | modelo de tipos público | metadata runtime |
+| A0.3 | `std.bytes` | tipos intrínsecos existentes | attachments, I/O y codecs |
+| A0.4 | `std.time` monotónico | async/executor VM existente | tiempo virtual y deadlines |
+| A0.5 | `std.env` read-only | `String` intrínseco + `std.bytes` + capability `environment` | inputs públicos/secretos de workers |
+| A1.1 | core, text, collections, iterator, math | lenguaje ya conforme | protocolos portables |
+| A1.2 | format | `Display`, core/text | diagnostics, log y serializers |
+| A1.3 | I/O | bytes + error/async contracts | console, fs, process y streaming |
+| A2.1 | path | text/bytes | filesystem y paths host |
+| A2.2 | console + resto de env | format + I/O; path donde aplique | programas hosted |
+| A2.3 | filesystem/process | bytes + I/O + path + time-base | corpus real y dogfooding |
+| A3.1 | serialization | core + format + I/O contracts | codecs tipados |
+| A3.2 | JSON/MessagePack | serialization + bytes + I/O | datos runtime |
+| A3.3 | Protobuf | serialization + bytes + I/O + meta | schema-first generado |
+| A4 | helpers `std.testing` | T0 + owners anteriores que use cada helper | dogfooding completo |
+| A5 | integración | todos los micro-gates | S1A y corpus de M11 |
+
+### 19.1 Contrato y distribución
 
 - [x] **STD-FOUNDATION-SPEC-001 — Crear la especificación base de la stdlib.**
   Fijar relación con lenguaje/toolchain/testing, versionado, PackageId,
@@ -2932,16 +3385,15 @@ artifact store ni harness paralelos.
   puntos de suspensión, capability y disponibilidad por target. Versionar los
   módulos/bytes mínimos y su hash dentro del plan cerrado para que M10.6 no
   dependa de un bridge ambiental o no distribuible.
-  Separar estrictamente calendario/reloj civil y dejarlo para STD-0.2. Esta tarea
-  se ejecuta tras H0 y antes de M10.6 para que testing virtualice producción, no
-  una API provisional.
+  Separar estrictamente calendario/reloj civil y secuenciarlo en STD-0.1B. Esta
+  tarea se ejecuta tras H0 y antes de M10.6 para que testing virtualice
+  producción, no una API provisional.
 
-- [ ] **STD-SPEC-001 — Completar `TONDO_STANDARD_LIBRARY_SPEC.md`.** Fijar las
-  firmas y contratos concretos de todas las superficies del catálogo, incluidos
-  tipos de error, ownership, complejidad, orden, Unicode,
-  bloqueo/suspensión, cancelación, capabilities, disponibilidad por target y
-  ejemplos verificables, preservando la arquitectura y el sustrato temporal ya
-  cerrados.
+- [ ] **STD-SPEC-001 — Cerrar la integración de
+  `TONDO_STANDARD_LIBRARY_SPEC.md`.** Después de los specs por owner, comprobar
+  que todas las superficies de STD-0.1A forman un único contrato sin firmas
+  duplicadas, huecos de capability ni ciclos. Esta tarea es un cierre agregado,
+  no el lugar donde se inventan por primera vez las APIs de cada módulo.
 
 - [x] **STD-MOD-001 — Definir módulos y prelude mínimo.** El contrato base fija
   el catálogo cerrado, un propietario canónico por declaración, `std` único y
@@ -2949,9 +3401,9 @@ artifact store ni harness paralelos.
   implícito adicional ni extensión global de métodos.
 
 - [x] **STD-CAP-001 — Versionar la matriz de capabilities.** El contrato base
-  clasifica cada superficie como Core, capability-gated, test-only o
+  clasifica cada superficie como Core, capability-gated, test-only, build-only o
   target-specific, fija `tondo-capabilities/1`, exige ausencia estática `E1008`
-  y conserva sin reescritura la release `tondo-vm-hosted` 0.1.0 con
+  y conserva como evidencia el checkpoint `tondo-vm-hosted` 0.1.0 con
   `[console, process]`. Cada módulo pendiente deberá completar su matriz por
   target antes de publicarse.
 
@@ -2962,11 +3414,12 @@ artifact store ni harness paralelos.
 
 - [x] **STD-DIST-001 — Definir distribución reproducible.** El contrato base
   fija versión, PackageId, content/API hashes, fuentes Tondo, source sets,
-  interfaces, unidades privilegiadas, conformidad y documentación como una
-  distribución inmutable, canónica, cerrada y sin red ni búsqueda ambiental
-  durante compilación. Sus bytes finales se materializan al cerrar S1.
+  interfaces, providers/generators, unidades privilegiadas, oracles,
+  conformidad y documentación como una distribución inmutable, canónica,
+  cerrada y sin red ni búsqueda ambiental durante compilación. Sus bytes finales
+  se materializan al cerrar S1.
 
-### 18.2 Core Standard Library
+### 19.2 Core Standard Library
 
 - [ ] **STD-CORE-001 — Fijar protocolos y operaciones fundamentales.**
   `Option`, `Result`, `Display`, comparación, `Key` y utilidades de
@@ -2976,7 +3429,7 @@ artifact store ni harness paralelos.
   sus operaciones fijan construcción, búsqueda, transformación, Unicode,
   límites y costes sin confundir scalar, grapheme ni byte.
 
-- [ ] **STD-BYTES-001 — Especificar `std.bytes`.** `Bytes`, builders,
+- [ ] **STD-BYTES-SPEC-001 — Especificar `std.bytes`.** `Bytes`, builders,
   conversión con `Array[Byte]`, encoding/decoding, UTF-8 inválido, slicing,
   igualdad, hashing y límites tienen una única identidad binaria reutilizada por
   console, filesystem, procesos y testing.
@@ -3004,6 +3457,46 @@ artifact store ni harness paralelos.
   builders y formato estructurado deben reutilizar el protocolo estático sin
   introducir reflection, vtables, lookup abierto ni una segunda interpolación.
 
+- [ ] **STD-SER-001 — Especificar `std.serialization`.** Cerrar las firmas de
+  `Serialize`, `Deserialize`, `Serializer[E]` y `Deserializer[E]`, su máquina
+  de eventos, derive format-neutral, bounds genéricos, construcción atómica,
+  ownership, errores y personalización mediante impl/DTO explícito.
+
+- [ ] **STD-REFLECT-001 — Especificar el contrato exacto de `std.reflect`.**
+  Cerrar antes de `REFLECT-IMPL-001` `TypeInfo`, `TypeId`, kinds,
+  descriptores, ownership y errores públicos; fijar los oracles de retención
+  opt-in, DCE y ausencia de value access, private access, layout, global
+  registry o identidad portable. La implementación y su evidencia runtime
+  permanecen en M10.7.
+
+- [ ] **STD-META-SPEC-001 — Especificar `std.meta`.** Cerrar request/response,
+  modelo inmutable, recorrido canónico, renderizado seguro, source builder,
+  ownership, errores y ausencia de capabilities/callbacks antes de construir el
+  target `tondo-meta`. Los providers de formatos concretos continúan en sus
+  módulos posteriores.
+
+- [ ] **STD-JSON-001 — Especificar JSON out of the box.** Ruta
+  typed directa, `JsonValue`/`JsonNumber`, reader/writer/eventos incrementales,
+  UTF-8, duplicados, unknown fields, orden/canonical output, límites, errors con
+  path y corpus interoperable; nunca materializar DOM para typed decode.
+
+- [ ] **STD-MSGPACK-001 — Especificar MessagePack out of the
+  box.** Cubrir todo el data model y extension values, representación mínima,
+  maps con keys arbitrarias, streaming, canonical mode, límites y
+  interoperabilidad sin reflection.
+
+- [ ] **STD-PROTOBUF-001 — Especificar Protobuf schema-first.**
+  Generar desde `.proto` declarado tipos/codecs para proto3, presence, repeated,
+  packed, maps, open enums con `Int32` preservado, nested y oneof; preservar
+  unknown fields, comprobar evolución y ofrecer encoding determinista sin
+  presentarlo como canonical universal. Services/gRPC quedan fuera.
+
+- [ ] **STD-PERF-001 — Fijar contratos de rendimiento.** Cada hot path tiene
+  oracle escalar, streaming/bytes-first, límites de allocation/memoria,
+  workloads y gates de throughput, latencia, startup, code size y compile time.
+  SIMD, word-at-a-time y target multiversioning se permiten solo con
+  equivalencia exacta y fallback portable.
+
 - [ ] **STD-TESTING-SPEC-001 — Especificar `std.testing`.** Fijar assertions de
   igualdad, diffs de texto, comparación float con tolerancia, consumo explícito
   de Option/Result, recursos temporales y datos generados que entren realmente
@@ -3015,7 +3508,7 @@ artifact store ni harness paralelos.
   snapshot format, no registran tests, no interpretan tags runtime como
   selectores ni capturan pánicos como excepciones recuperables.
 
-### 18.3 Hosted Standard Library
+### 19.3 Hosted Standard Library
 
 - [ ] **STD-TIME-BASE-IMPL-001 — Implementar el proveedor monotónico
   intercambiable.** `std.time` usa una única frontera interna para proveedor real
@@ -3034,9 +3527,10 @@ artifact store ni harness paralelos.
   léxicas de acceso al host, preservar bytes no Unicode cuando el target lo
   admita y no prometer una representación común falsa.
 
-- [ ] **STD-ENV-001 — Definir argumentos y environment.** Acceso explícito,
-  snapshots, Unicode/bytes, ausencia y mutación quedan capability-gated; no son
-  inputs implícitos de compilación.
+- [ ] **STD-ENV-SPEC-001 — Definir argumentos y environment.** Cerrar primero
+  lectura/snapshot de entradas declaradas, Unicode/bytes, ausencia, ownership y
+  capability; ninguna entrada es input implícito de compilación. La mutación,
+  si se conserva, queda separada y no es necesaria para T0.
 
 - [ ] **STD-FS-001 — Definir filesystem.** Archivos, directorios, metadata,
   enlaces, permisos, atomicidad, iteración y operaciones async declaran
@@ -3046,7 +3540,49 @@ artifact store ni harness paralelos.
   de `Command`, `Pipeline`, `ProcessHandle`, status, output, pipes, shell
   explícito y cancelación a una API versionada que preserve argv exacto.
 
-### 18.4 Implementación y evidencia
+### 19.4 Implementación y evidencia
+
+- [ ] **STD-META-IMPL-001 — Implementar `std.meta` sobre el target cerrado.**
+  Después de `META-VM-001`, materializar el companion meta dentro de la
+  distribución candidata, implementar requests, recorrido, renderizado y
+  builder en Tondo cuando sea posible y validar su descriptor/content hash. No
+  incorpora providers de serialization ni formatos.
+
+- [ ] **STD-META-CONF-001 — Cerrar la evidencia build-only.** Ejecutar
+  round-trips canónicos, source maps, errores, límites, budgets y ausencia
+  efectiva de filesystem, environment, process, clock, entropy, network,
+  threads, FFI y unsafe. Debe pasar antes de `META-DERIVE-001` o
+  `META-GEN-001`.
+
+- [ ] **STD-BYTES-IMPL-001 — Implementar la identidad binaria común.**
+  Implementar sobre la VM toda la superficie cerrada por
+  `STD-BYTES-SPEC-001`: `Bytes`, builders, conversiones, codecs y slicing con
+  semántica de valor, UTF-8 explícito, límites y cero alias mutable. Migrar
+  únicamente los bridges que M10.6 necesita sin publicar todavía
+  console/filesystem/process como APIs estables.
+
+- [ ] **STD-BYTES-CONF-001 — Cerrar la evidencia temprana de bytes.** Cubrir
+  vacío, builders, límites, slicing, equality/hash, conversión
+  `Array[Byte]`, codecs, UTF-8 inválido, moves/copies, allocation bounds y paso
+  por funciones públicas sin alias mutable. Comparar productos para demostrar
+  propietario único y ausencia de la identidad binaria bootstrap antes de
+  cerrar `UTEST-CHECK-001`; el bridge de attachments se prueba después en
+  `UTEST-ARTIFACT-001`.
+
+- [ ] **STD-ENV-IMPL-001 — Implementar el acceso declarado de environment.**
+  Exponer al programa solo el snapshot entregado por el adaptador de ejecución
+  mediante la API y capability normales; distinguir ausencia, texto y bytes sin
+  globals ni consulta ambiental fuera del plan. El adaptador acepta primero un
+  snapshot vacío y `UTEST-INPUTS-001` conecta después su materialización por
+  worker; argumentos continúan vacíos en test.
+
+- [ ] **STD-ENV-CONF-001 — Cerrar la evidencia temprana de environment.** Probar
+  snapshots vacío y declarado, ausencia, Unicode/bytes, ownership, capability y
+  rechazo de consulta ambiental fuera del adaptador; sin snapshot explícito no
+  aparece ninguna entrada del host. Clasificación production/test-only,
+  materialización/revocación por worker, perfiles secretos y ausencia de
+  filtraciones pertenecen a `UTEST-DEPS-001`, `UTEST-INPUTS-001` y Gate T0, no
+  a este micro-gate previo al runner.
 
 - [ ] **STD-TIME-BASE-CONF-001 — Cerrar la evidencia del sustrato temporal.**
   Añadir modelos de suma/comparación/overflow de `Duration` e `Instant`, tests de
@@ -3055,15 +3591,18 @@ artifact store ni harness paralelos.
   proveedor real con tolerancias operacionales explícitas y proveedor virtual
   con observaciones exactas; no usar sleeps reales para verificar el segundo.
   Antes de T0 usa el harness/adaptador público existente; después se vuelve a
-  ejecutar mediante `tondo test` como parte de S1. Debe pasar antes de Gate T0.
+  ejecutar mediante `tondo test` como parte de S1A. Debe pasar antes de Gate T0.
 
-- [ ] **STD-IMPL-001 — Implementar Core en Tondo cuando sea posible.** Solo las
-  operaciones intrínsecas o dependientes del host permanecen privilegiadas;
-  duplicar lógica portable en Rust requiere justificación.
+- [ ] **STD-IMPL-001 — Coordinar implementación Core por owner.** Instanciar y
+  cerrar un subtask `IMPL` por cada módulo de A1/A3, implementando en Tondo
+  cuando sea posible. Solo operaciones intrínsecas o dependientes del host
+  permanecen privilegiadas; duplicar lógica portable en Rust requiere
+  justificación. El checkbox agregado no se cierra mientras falte un owner.
 
-- [ ] **STD-IMPL-002 — Implementar Hosted sobre adaptadores capability-gated.**
-  El runtime VM no expone una syscall o handle que la API estándar no haya
-  validado y tipado.
+- [ ] **STD-IMPL-002 — Coordinar Hosted por owner.** Instanciar y cerrar un
+  subtask `HOST` por cada módulo A2 sobre adaptadores capability-gated. El
+  runtime VM no expone una syscall o handle que la API estándar no haya
+  validado y tipado; el checkbox agregado no sustituye esos subtasks.
 
 - [ ] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** Escribir en
   Tondo toda utilidad portable y reutilizar el bridge privilegiado de T0 sin
@@ -3073,30 +3612,60 @@ artifact store ni harness paralelos.
   producen mensajes accionables sin reflection privada y se prueban mediante
   `tondo test`, no mediante registro interno.
 
-- [ ] **STD-TEST-001 — Añadir modelos y properties por módulo.** Cada API prueba
-  valores normales, vacíos, límites, errores, composición, ownership,
-  determinismo y secuencias generadas. Los ejemplos del spec estándar son
-  ejecutables.
+- [ ] **STD-TEST-001 — Coordinar modelos y properties por owner.** Cada módulo
+  registra y cierra su subtask `MODEL/TEST/FUZZ` con valores normales, vacíos,
+  límites, errores, composición, ownership, determinismo y secuencias
+  generadas. Los ejemplos del spec estándar son ejecutables; el agregado no
+  oculta owners pendientes.
 
-- [ ] **STD-CONF-001 — Versionar la conformidad de stdlib.** Extender mediante
-  una suite o manifiesto nuevo sin mutar `tondo-conformance-0.1`; otro
-  implementador debe poder ejecutar los casos mediante un adaptador público.
+- [ ] **STD-CODEC-CONF-001 — Cerrar evidencia de serialization y formatos.**
+  Ejecutar vectores oficiales, interoperabilidad con dos implementaciones
+  independientes cuando existan, fuzzing diferencial, round trips, streaming
+  con cada boundary, inputs truncados/adversarios, límites, unknown/duplicate
+  policies y typed/dynamic equivalence para JSON y MessagePack. Protobuf añade
+  wire compatibility, schema evolution y preservación de unknown fields.
 
-- [ ] **STD-DOC-001 — Entregar programas representativos.** Como mínimo,
-  transformación de texto, procesamiento de colecciones, copia segura de
-  archivos y pipeline de procesos deben usar únicamente APIs publicadas y
-  actuar como aceptación y corpus de benchmarks.
+- [ ] **STD-PERF-CONF-001 — Coordinar performance por owner.** Cada módulo con
+  hot path cierra su subtask `PERF`: comparar scalar/optimized byte a byte y por
+  errors; medir allocations, memoria, throughput, tail latency, startup, code
+  size y compile-time en hardware y corpora registrados. Rechazar regressions
+  materiales no justificadas y conservar resultados versionados.
 
-### Gate S1 — Standard Library 0.1
+- [ ] **STD-CONF-001 — Coordinar conformidad por owner.** Cada módulo cierra su
+  subtask `CONF`; el agregado extiende el linaje vivo o un manifiesto estándar
+  enlazado de forma explícita, sin mutar el manifest del checkpoint. Otro
+  implementador debe poder ejecutar los casos mediante un adaptador público y
+  distinguir lenguaje de stdlib.
+
+- [ ] **STD-DOC-001 — Cerrar documentación por owner y programas
+  representativos.** Cada módulo cierra su subtask `DOC`. Como aceptación
+  integrada, transformación de texto, procesamiento de colecciones, JSON
+  tipado, MessagePack streaming, Protobuf generado, copia segura de archivos y
+  pipeline de procesos usan únicamente APIs especificadas y forman corpus de
+  benchmarks.
+
+### Gate S1A — Standard Library 0.1 foundation
 
 - [ ] La spec estándar fija todas las firmas de su catálogo Core + Hosted
-  incluidas en 0.1 y clasifica explícitamente lo diferido a STD-0.2.
+  incluidas en STD-0.1A y mantiene cerrado el catálogo posterior de STD-0.1B.
+- [ ] Los slices tempranos de meta, reflect, bytes, time-base y env read-only
+  conservan las mismas identidades y contratos usados por M10.7/M10.6; S1A no
+  sustituye un shim ni mantiene dos propietarios públicos.
+- [ ] Cada owner A registra por separado spec, implementación/host, tests/model,
+  performance aplicable, conformidad y docs; ninguna tarea umbrella oculta una
+  celda pendiente.
 - [ ] El sustrato monotónico de `Duration`, `Instant`, suspensión, timers y
   deadlines es único para producción/testing, está modelado y funciona con
   proveedor real o virtual sin cambiar bytecode de usuario.
 - [ ] Core se ejecuta sobre la VM sin depender de una ABI nativa.
 - [ ] Cada API hosted exige la capability correcta y conserva los claims del
-  target Tondo 0.1.0 ya publicado.
+  target candidato Tondo 0.1.
+- [ ] `derive` de serialization, JSON, MessagePack y Protobuf schema-first se
+  ejecutan sin reflection runtime, DOM intermedio obligatorio ni inputs
+  ambientales.
+- [ ] Los codecs pasan interoperabilidad, fuzzing, streaming, límites,
+  preservación y gates de rendimiento sobre oracle escalar y kernels
+  optimizados.
 - [ ] Modelos, properties, ejemplos y conformidad estándar cubren sus contratos
   positivos, negativos, límites y composición.
 - [ ] La distribución es reproducible, cerrada y versionada.
@@ -3110,34 +3679,68 @@ artifact store ni harness paralelos.
 
 ---
 
-## 19. M11 — Backend nativo y optimización
+## 20. M11 — Backend nativo y optimización
 
 **Objetivo:** añadir una implementación nativa de producción sin introducir una
-segunda semántica. Comienza únicamente después de Gates H0, T0 y S1; la VM, la
-conformidad del lenguaje —incluidos test targets— y la conformidad de stdlib son
-sus oracles.
+segunda semántica. Comienza únicamente después de Gates H0, T0, G5 y S1A y de
+cerrar los contratos runtime-facing `STD-CONC-001`, `STD-SYNC-001`,
+`STD-EXEC-001` y la frontera host/cancelación de `STD-NET-001`. Esos módulos no
+se implementan todavía, pero sus requisitos alimentan elección de backend,
+memoria y ABI. La VM, la conformidad del lenguaje —incluidos test targets— y la
+conformidad de STD-0.1A son los oracles.
 
-### 19.1 Selección y contrato del backend
+**Orden obligatorio:** baseline → selección → memoria/ABI → lowering mínimo →
+ARC/ciclos correctos → frontera STD-0.1A → diferencial/targets/empaquetado →
+Gate N1. Eliminación de retains, COW, escape analysis, incrementalidad y LSP son
+trabajo posterior a N1 y no pueden retrasar el primer backend correcto.
+
+### 20.1 Selección y contrato del backend
+
+- [ ] **PERF-001 — Definir benchmarks y presupuestos antes de implementar.**
+  Incluir compilación, tamaño, programas STD-0.1A, throughput, latencia, memoria,
+  retain/release, pausas y workloads adversarios; registrar hardware y entorno.
+  La evaluación de backend y cada optimización posterior reutilizan esta
+  baseline en lugar de cambiar el workload para justificar una decisión.
 
 - [ ] **NATIVE-001 — Elegir backend nativo con una evaluación separada.**
   Comparar Cranelift, LLVM y generación propia usando el MIR real, el corpus de
-  conformidad y los programas STD-0.1. Medir soporte de targets, corrección,
+  conformidad y los programas STD-0.1A. Medir soporte de targets, corrección,
   latencia de compilación, rendimiento, memoria, tamaño, debugging,
   distribución, mantenimiento y licencias; registrar la elección en un ADR.
 
-- [ ] **NATIVE-002 — Definir lowering desde MIR sin introducir una segunda
-  semántica.** Calls, pánicos, cleanup, ownership, préstamos, async, source maps
-  y operaciones checked conservan identidad verificable hasta código nativo.
+- [ ] **NATIVE-MEM-ADR-001 — Cerrar DEC-014 antes de la ABI.** Fijar ownership
+  runtime, contadores atómicos/no atómicos, `Send`/`Share`, weak refs,
+  recolección de ciclos, interacción con async, COW y threads, estrategia de
+  pánico/cancelación y oracles de verificación. Prototipar las rutas de riesgo
+  necesarias para demostrar que el modelo soporta los contratos runtime-facing
+  de STD-0.1B; no prometer layout público.
 
 - [ ] **NATIVE-ABI-001 — Definir una ABI runtime interna y versionada.** Fijar
-  únicamente la frontera compilador/runtime necesaria para el backend elegido;
-  no prometer todavía ABI FFI, layout de usuario ni name mangling estables.
+  después de `NATIVE-MEM-ADR-001` la frontera compilador/runtime necesaria para
+  el backend elegido: calls, unwind, frames async, retain/release, roots,
+  atomics, wakeups y handles host internos. Esta tarea cierra DEC-013; no
+  promete ABI FFI, layout de usuario ni name mangling estables.
 
-- [ ] **NATIVE-STD-001 — Implementar la frontera de STD-0.1.** Core y Hosted
+- [ ] **NATIVE-002 — Definir y ejecutar un lowering mínimo desde MIR.** Calls,
+  pánicos, cleanup, ownership, préstamos, async, source maps y operaciones
+  checked conservan identidad verificable hasta código nativo. El primer
+  vertical slice ejecuta un programa real antes de ampliar targets u optimizar.
+
+### 20.2 Runtime correcto y frontera estándar
+
+- [ ] **ARC-001 — Implementar ARC correcto en el runtime nativo.** Cubrir
+  ownership local/cross-thread, pánicos, cleanup, frames async y terminales
+  antes de aplicar eliminación de retains.
+
+- [ ] **ARC-002 — Implementar recolección diferida de ciclos y weak refs
+  linealizables.** Validar ciclos independientes, races aplicables, teardown y
+  ausencia de resurrección antes de ejecutar conformidad completa.
+
+- [ ] **NATIVE-STD-001 — Implementar la frontera de STD-0.1A.** Core y Hosted
   observan la misma API, capabilities, errores y cleanup que en la VM; ninguna
   optimización puede añadir una ruta pública específica del backend.
 
-### 19.2 Oracle diferencial y targets
+### 20.3 Oracle diferencial, targets y empaquetado
 
 - [ ] **NATIVE-CONF-001 — Crear el adaptador nativo de conformidad.** Ejecutar
   lenguaje, test targets y stdlib contra VM y nativo, comparar observaciones
@@ -3155,45 +3758,19 @@ sus oracles.
   smoke test sobre la arquitectura destino.
 
 - [ ] **NATIVE-REL-001 — Empaquetar builds reproducibles.** Binarios, runtime,
-  stdlib y metadatos declaran versiones y checksums; la release no depende de
-  paths, reloj ni entorno no declarado.
-
-### 19.3 Runtime y optimización medida
-
-- [ ] **PERF-001 — Definir benchmarks y presupuestos antes de optimizar.**
-  Incluir compilación, tamaño, programas STD-0.1, throughput, latencia, memoria,
-  retain/release, pausas y workloads adversarios; registrar hardware y entorno.
-
-- [ ] **ARC-001 — Implementar ARC en el runtime nativo.**
-
-- [ ] **ARC-002 — Implementar recolección diferida de ciclos y weak refs
-  linealizables.**
-
-- [ ] **ARC-003 — Implementar eliminación de retain/release mediante análisis
-  de último uso.**
-
-- [ ] **COW-NATIVE-001 — Portar al runtime nativo la política COW ya validada.**
-  Reevaluar con perfiles nativos si conviene ampliar las formas compartibles;
-  no duplicar una semántica ni asumir que el layout de la VM será definitivo.
-
-- [ ] **ESCAPE-001 — Implementar escape analysis y stack allocation.**
-
-### 19.4 Tooling posterior al gate nativo
-
-- [ ] **INCR-001 — Añadir compilación incremental conservando resultados
-  deterministas.** Una compilación limpia y un cache hit deben producir
-  productos y diagnósticos observacionalmente idénticos.
-
-- [ ] **LSP-001 — Construir LSP sobre las consultas semánticas existentes, no
-  sobre un segundo frontend.**
+  STD-0.1A y metadatos declaran versiones y checksums; el paquete candidato no
+  depende de paths, reloj ni entorno no declarado. No es todavía el paquete
+  final STD 0.1.0, que incorpora STD-0.1B en `REL-0.1-RC-001`.
 
 ### Gate N1 — Backend nativo conforme
 
 - [ ] El backend elegido tiene ADR, targets soportados y ABI runtime interna
   explícitos.
+- [ ] DEC-014 está cerrado y ARC/ciclos correctos satisfacen los contratos de
+  concurrencia ya especificados sin layout público accidental.
 - [ ] Todos los programas admitidos atraviesan el MIR verificado común; no
   existe frontend, type checker ni semántica paralela.
-- [ ] El adaptador nativo supera lenguaje y STD-0.1 con observaciones
+- [ ] El adaptador nativo supera lenguaje y STD-0.1A con observaciones
   compatibles con la VM, incluidos los estados y reportes de `tondo test`.
 - [ ] Properties, fuzzing diferencial, GC/ARC/ciclos, async, pánicos y cleanup
   pasan bajo stress y sanitización aplicable.
@@ -3204,61 +3781,140 @@ sus oracles.
 - [ ] Los paquetes nativos son reproducibles y no prometen una ABI pública no
   especificada.
 
+### 20.4 Trabajo posterior a Gate N1
+
+Estas tareas no pertenecen al camino de corrección de N1. Se priorizan por
+medición y pueden avanzar junto a la implementación de STD-0.1B sin alterar su
+semántica:
+
+- [ ] **ARC-003 — Implementar eliminación de retain/release mediante análisis
+  de último uso.**
+
+- [ ] **COW-NATIVE-001 — Portar al runtime nativo la política COW ya validada.**
+  Reevaluar con perfiles nativos si conviene ampliar las formas compartibles;
+  no duplicar una semántica ni asumir que el layout de la VM será definitivo.
+
+- [ ] **ESCAPE-001 — Implementar escape analysis y stack allocation.**
+
+- [ ] **INCR-001 — Añadir compilación incremental conservando resultados
+  deterministas.** Una compilación limpia y un cache hit deben producir
+  productos y diagnósticos observacionalmente idénticos.
+
+- [ ] **LSP-001 — Construir LSP sobre las consultas semánticas existentes, no
+  sobre un segundo frontend.**
+
 ---
 
-## 20. STD-0.2 — Concurrency + Application Standard Library
+## 21. STD-0.1B — Concurrency + Application Standard Library
 
-**Objetivo:** ampliar la stdlib después del backend nativo conforme, sin
-convertir un conjunto de utilidades conveniente en nueva semántica del
-lenguaje. Cada módulo puede publicarse de forma incremental solo tras superar
-su mini-gate de spec, implementación portable/host, models, properties,
-capabilities, documentación y conformidad.
+**Objetivo:** completar la primera stdlib sin convertir APIs de aplicación en
+nueva semántica del lenguaje. La fase tiene dos momentos:
 
-### 20.1 Concurrencia y tiempo
+1. Antes de M11 se cierran `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001` y la
+   frontera runtime/host de `STD-NET-001`; son inputs de DEC-013/014 y de la
+   elección de backend, no una autorización para implementarlos.
+2. Tras N1 se implementan y conforman todos los módulos B sobre VM y backend
+   nativo. Los demás specs B pueden prepararse durante M11 cuando sus
+   dependencias A estén estables.
 
-- [ ] **STD-CONC-001 — Especificar canales y selección cancelable.** Tipos,
-  cierre, backpressure, fairness declarada, ownership de `T: Send`, cancelación
-  y ausencia de una keyword `select` implícita quedan fijados por API.
+Esta fase no crea una segunda versión: cada módulo pertenece al catálogo cerrado
+de STD-0.1 y solo puede considerarse listo tras superar su mini-gate
+`SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF → DOC`. STD 0.1.0 no se
+publica hasta cerrar el gate final.
 
-- [ ] **STD-SYNC-001 — Especificar sincronización compartida.** Mutexes, rwlocks,
-  condvars, semáforos y atomics declaran `Send`/`Share`, poisoning si existe,
-  orden de memoria y prohibiciones dentro del scheduler.
+| Orden B | Owners | Dependencias duras | Momento |
+|---|---|---|---|
+| B0 | sync, channel, executor y frontera net | async/memoria/I/O/time A | contratos antes de M11 |
+| B1 | `std.sync` | DEC-014 + backend/VM schedulers | implementación tras N1 |
+| B2 | `std.channel` | sync + scheduler + ownership `Send` | tras B1 |
+| B3 | `std.executor` | sync/channel + bridge bloqueante | tras B2 |
+| B4 | civil time | time-base + timezone data versionada | paralelo a B1–B3 |
+| B5 | encoding/YAML/TOML/CBOR | bytes + I/O + serialization | paralelo tras N1 |
+| B6 | regex/UUID | text; UUID añade clock/entropy | paralelo tras N1 |
+| B7 | net | I/O + time + executor/cancelación | después de B3 |
+| B8 | log | format + time + I/O y sinks aplicables | después de owners de sinks |
+| B9 | integración/distribución | todos los micro-gates | `REL-0.1-RC-001` y S1 |
 
-- [ ] **STD-EXEC-001 — Especificar pools, actores y bridging bloqueante.** La API
-  no crea un segundo modelo async ni permite que trabajo host bloquee el
-  progreso de tasks Tondo.
+### 21.1 Concurrencia y tiempo
 
-- [ ] **STD-CIVIL-TIME-001 — Ampliar tiempo con calendario civil.** Añadir
+- [ ] **STD-CONC-001 — Especificar `std.channel`.** Tipos, cierre,
+  backpressure, selección cancelable, fairness declarada, ownership de
+  `T: Send`, cancelación y ausencia de una keyword `select` implícita quedan
+  fijados por API.
+
+- [ ] **STD-SYNC-001 — Especificar `std.sync`.** Mutexes, rwlocks, condvars,
+  semáforos y atomics declaran `Send`/`Share`, poisoning si existe, orden de
+  memoria y prohibiciones dentro del scheduler.
+
+- [ ] **STD-EXEC-001 — Especificar `std.executor`.** Pools, actores y bridging
+  bloqueante no crean un segundo modelo async ni permiten que trabajo host
+  bloquee el progreso de tasks Tondo.
+
+- [ ] **STD-CIVIL-TIME-001 — Completar `std.time` con calendario civil.** Añadir
   `Date`, `Time`, `DateTime`, zonas horarias, reglas/versionado de timezone data
-  y conversión explícita respecto al sustrato monotónico ya publicado. No
+  y conversión explícita respecto al sustrato monotónico ya fijado. No
   duplicar `Duration`, `Instant`, suspensión, timers ni deadlines y no hacer que
   compilación consulte reloj.
 
-### 20.2 Aplicación y datos
+### 21.2 Aplicación y datos
 
-- [ ] **STD-NET-001 — Especificar networking capability-gated.** Direcciones,
-  DNS, sockets, streams, datagrams, TLS boundary, timeouts y cancelación exponen
-  errores portables y no realizan I/O implícito.
+- [ ] **STD-NET-001 — Especificar `std.net` capability-gated.** Direcciones,
+  DNS, sockets, streams, datagrams, TLS boundary, timeouts y cancelación
+  exponen errores portables y no realizan I/O implícito.
 
-- [ ] **STD-CODEC-001 — Especificar codecs y texto estructurado.** Encodings,
-  Base64 y formatos binarios fijan streaming, límites y tratamiento de input no
-  confiable.
+- [ ] **STD-CODEC-002 — Especificar `std.encoding`, `std.yaml`, `std.toml` y
+  `std.cbor`.** Base64, hexadecimal, YAML, TOML y CBOR fijan owner, streaming,
+  límites y tratamiento de input no confiable sin duplicar
+  `std.serialization`, JSON, MessagePack ni Protobuf de STD-0.1A.
 
-- [ ] **STD-JSON-001 — Especificar JSON.** Árbol, parser/serializer, streaming,
-  números, duplicados, orden y límites tienen oracle diferencial y corpus de
-  interoperabilidad.
+- [ ] **STD-REGEX-001 — Especificar `std.regex`.** Sintaxis, Unicode,
+  complejidad y límites evitan comportamiento exponencial no declarado.
 
-- [ ] **STD-REGEX-001 — Especificar regex.** Sintaxis, Unicode, complejidad y
-  límites evitan comportamiento exponencial no declarado.
+- [ ] **STD-ID-001 — Especificar `std.uuid`.** Entropía, reloj,
+  representación y versión de generador se solicitan mediante capabilities
+  explícitas.
 
-- [ ] **STD-ID-001 — Especificar UUID y generación de identidad.** Entropía,
-  reloj y representación se solicitan mediante capabilities explícitas.
+- [ ] **STD-LOG-001 — Especificar `std.log`.** Niveles, fields, formato, sinks,
+  backpressure, concurrencia y fallos no alteran el control del programa de
+  forma oculta.
 
-- [ ] **STD-LOG-001 — Especificar logging estructurado.** Niveles, fields,
-  formato, sinks, backpressure, concurrencia y fallos no alteran el control del
-  programa de forma oculta.
+### 21.3 Implementación y evidencia
 
-### Gate S2 — Standard Library ampliada
+- [ ] **STD-B-IMPL-001 — Coordinar implementación portable por owner.** Cada
+  módulo B cierra un subtask `IMPL` reutilizando traits, ownership, async y
+  módulos de STD-0.1A; cualquier intrinsic o unidad privilegiada nueva requiere
+  contrato y justificación explícitos.
+
+- [ ] **STD-B-HOST-001 — Coordinar adaptadores por owner.** Cada módulo
+  aplicable cierra un subtask `HOST`; VM y backend nativo enlazan `clock`,
+  `network`, `threads`, `entropy` y capabilities de sinks sin stubs que fallen
+  siempre ni efectos concedidos por import.
+
+- [ ] **STD-B-TEST-001 — Coordinar evidencia funcional por owner.** Cada módulo
+  cierra `MODEL/TEST/FUZZ`; cubrir cierre y backpressure, memory ordering,
+  wakeups, calendario y zonas versionadas, parsers hostiles, regex acotado,
+  UUID, logging concurrente, networking parcial/cancelado y límites.
+
+- [ ] **STD-B-PERF-001 — Coordinar rendimiento por owner.** Cada hot path
+  cierra `PERF` con throughput, tail latency, memoria, allocations, startup,
+  code size y compile time; kernels SIMD o especializados conservan un oracle
+  portable byte/error exacto y fallback por target.
+
+- [ ] **STD-B-CONF-001 — Coordinar conformidad y docs por owner.** Cada módulo
+  cierra `CONF` y `DOC`; el agregado publica casos portables/capability-gated y
+  programas reales en VM/nativo sin mutar evidencia histórica ni crear un
+  segundo PackageId de stdlib.
+
+- [ ] **REL-0.1-RC-001 — Construir el candidato completo de primera
+  publicación.** Después de todos los micro-gates A/B, reconstruir toolchain,
+  VM, backend, runtime, stdlib runtime y companion meta desde inputs cerrados;
+  fijar PackageId, content/API hashes, manifests, checksums y matriz de targets
+  finales. Ejecutar conjuntamente G5, H0, T0, N1, todos los checks que componen
+  S1, conformidad VM/nativa, programas representativos y reproducibilidad desde
+  dos workspaces limpios. Gate S1 se cierra después de verificar este resultado;
+  la tarea crea un candidato, pero no publica por sí misma.
+
+### Gate S1 — Standard Library 0.1 completa
 
 - [ ] Cada módulo publicado tiene spec, capability matrix, implementación,
   modelos, properties, fuzzing, ejemplos y conformidad versionada.
@@ -3268,12 +3924,19 @@ capabilities, documentación y conformidad.
   probados.
 - [ ] Los módulos diferidos permanecen ausentes o experimentales de forma
   explícita; ningún nombre ilustrativo se anuncia como estable.
+- [ ] La distribución STD 0.1.0 reúne STD-0.1A y STD-0.1B con un único PackageId,
+  content/API hashes finales y matriz de targets reproducible.
+- [ ] Tondo 0.1, `tondo test`, VM, backend nativo y los programas
+  representativos pasan juntos el gate estricto antes de cualquier publicación.
+- [ ] `REL-0.1-RC-001` reproduce exactamente el candidato completo y no
+  reutiliza el paquete parcial de `NATIVE-REL-001` como si ya incluyera
+  STD-0.1B.
 
 ---
 
-## 21. Trabajo transversal
+## 22. Trabajo transversal
 
-### 21.1 Diagnósticos
+### 22.1 Diagnósticos
 
 Todo milestone debe:
 
@@ -3285,7 +3948,7 @@ Todo milestone debe:
 - Ordenar diagnostics, related y fixes según el apartado 22.6.
 - Añadir códigos propios solo bajo un prefijo distinto al registro normativo.
 
-### 21.2 Determinismo
+### 22.2 Determinismo
 
 Desde M0:
 
@@ -3296,7 +3959,7 @@ Desde M0:
 - Sembrar aleatoriedad de tests de forma reproducible y registrar la seed al
   fallar.
 
-### 21.3 Testing
+### 22.3 Testing
 
 La pirámide prevista:
 
@@ -3311,10 +3974,10 @@ La pirámide prevista:
 Cada bug semántico debe terminar con un programa Tondo mínimo que habría fallado
 antes de la corrección. Gate H0 convierte los puntos 5 y 6 en infraestructura
 ejecutable para el toolchain. M10.6 añade después el runner público para
-programas Tondo; STD-0.1, M11 y STD-0.2 deben extender ambas fronteras, no crear
-harnesses paralelos.
+programas Tondo; STD-0.1A, M11 y STD-0.1B deben extender ambas fronteras, no
+crear harnesses paralelos.
 
-### 21.4 Seguridad y robustez
+### 22.4 Seguridad y robustez
 
 - Tratar fuente, bytecode, interfaces y manifiestos como inputs no confiables.
 - Validar bytecode aunque lo haya producido el propio compilador.
@@ -3325,7 +3988,7 @@ harnesses paralelos.
 - Mantener shell explícito y separado de argumentos.
 - Probar parser, loader y JSON con fuzzing.
 
-### 21.5 Rendimiento
+### 22.5 Rendimiento
 
 Antes de G3, priorizar corrección y claridad. No introducir:
 
@@ -3349,12 +4012,12 @@ Después de G3, medir como mínimo:
 Una optimización solo se acepta si conserva los mismos tests observables y aporta
 una mejora medida.
 
-### 21.6 Disciplina de librería estándar
+### 22.6 Disciplina de librería estándar
 
 La stdlib continúa siendo una especificación separada. El compilador solo debe
-anticipar lo que el lenguaje ya declara intrínseco. STD-0.1 y STD-0.2 convierten
-el siguiente orden en milestones con gates; esta sección conserva las reglas
-que se aplican a ambos.
+anticipar lo que el lenguaje ya declara intrínseco. STD-0.1A y STD-0.1B
+convierten el siguiente orden en milestones con gates de una misma versión; esta
+sección conserva las reglas que se aplican a ambas fases.
 
 Orden recomendado:
 
@@ -3364,18 +4027,19 @@ Orden recomendado:
    deadlines compartidos por producción y testing.
 3. **Core stdlib spec:** métodos exactos de `String`, `Array`, `Map`, `Set`,
    `Range`, iterators, `Bytes`, protocolos de I/O, matemática, formatting y
-   helpers portables de testing.
+   helpers portables de testing, más serialization, JSON, MessagePack y
+   Protobuf.
 4. **Hosted stdlib spec:** consola, environment, paths, filesystem y procesos.
 5. **Concurrency stdlib spec:** channels, mutexes, atomics, actors y pools.
-6. **Application stdlib:** calendario civil, networking, codecs, JSON, regex,
-   UUID y logging.
+6. **Application stdlib:** calendario civil, networking, encodings,
+   YAML/TOML/CBOR, regex, UUID y logging.
 
 Los nombres ilustrativos del spec del lenguaje no deben implementarse como API
 pública definitiva hasta ser fijados por la especificación estándar.
 
 ---
 
-## 22. Registro de riesgos
+## 23. Registro de riesgos
 
 | ID | Riesgo | Efecto | Mitigación |
 |---|---|---|---|
@@ -3396,9 +4060,9 @@ pública definitiva hasta ser fijados por la especificación estándar.
 | `R-015` | Considerar terminado lo que solo compila | Falsa sensación de soporte | Estados separados de implementación, validación y conformidad |
 | `R-016` | Medir calidad por cantidad bruta de tests | Duplicados y ejemplos grandes ocultan reglas sin oracle | Inventario por fuente única, requisito, property, modelo y mutación |
 | `R-017` | Empezar el backend nativo antes de Gate H0 | Dos runtimes divergen sin poder localizar la causa | CI, fuzzing, modelos y oracle VM antes de NATIVE-001 |
-| `R-018` | Diseñar runtime/ABI antes de STD-0.1 | Host calls y layouts condicionan una API todavía provisional | Spec estándar y corpus real antes de seleccionar backend |
-| `R-019` | Convertir la stdlib 0.1 en un proyecto ilimitado | El backend queda bloqueado por APIs de aplicación no esenciales | STD-0.1 contiene solo Core + Hosted; Concurrency/Application quedan en STD-0.2 |
-| `R-020` | Añadir `suite`/`test` retroactivamente a la edición publicada | Rompe identificadores válidos, hashes y conformidad 0.1 | Keywords exclusivas de 0.2, spec y conformidad nuevas; 0.1 permanece inmutable |
+| `R-018` | Diseñar runtime/ABI antes de conocer memoria y concurrencia 0.1 | Atomicidad, wakeups, bloqueo y layouts obligan a rehacer el backend o limitan la API | S1A y contratos runtime-facing de channel/sync/executor/net antes de NATIVE-001; DEC-014 antes de ABI/lowering |
+| `R-019` | Convertir la stdlib 0.1 en un proyecto ilimitado | El backend queda bloqueado por APIs de aplicación no esenciales | Catálogo cerrado, cinco slices tempranos estrictos, S1A antes de M11 y solo contratos B runtime-facing antes de N1; ninguna fase amplía scope sin revisar spec y tracker |
+| `R-020` | Confundir el checkpoint interno con el contrato 0.1 vivo | Se reescribe evidencia histórica o se anuncia soporte inexistente | `v0.1.0` permanece fijado por hash; spec, parser y conformidad vivos incorporan suite/test como trabajo pendiente de la misma 0.1 |
 | `R-021` | Permitir que unit tests cambien la compilación de producción | Código solo correcto bajo test y artefactos distintos | Unidad production sellada antes del overlay y comparación exacta de productos |
 | `R-022` | Ocultar flakiness mediante paralelismo o retries | Suites verdes no reproducibles | Tiempo virtual para causalidad temporal; una ejecución por default; retries explícitos, historial completo y `flaky-pass` rojo salvo `--allow-flaky`; orden/seed/paralelismo reportados |
 | `R-023` | Convertir testing en attributes, reflection, context parameters y hooks especiales | Segundo sublenguaje con boilerplate y semántica oculta | Dos roles canónicos: `suite` contenedor y `test` hoja; envelope sellado sin valor visible; helpers, fixtures y doubles como Tondo/stdlib ordinarios |
@@ -3414,18 +4078,30 @@ pública definitiva hasta ser fijados por la especificación estándar.
 | `R-033` | Crear un reloj o `Duration` exclusivo de testing | Los tests validan otra API y la semántica diverge de producción | Time-base de STD-0.1 antes de T0; mismo bytecode y frontera monotónica con proveedor real o virtual |
 | `R-034` | Tratar I/O externo o timeout del runner como tiempo virtualizable | Saltos prematuros, hangs o tests instantáneos que fallan en producción | Catálogo cerrado de bloqueo durable; I/O/civil continúan reales y timeout/límites siempre usan recursos reales |
 | `R-035` | Publicar un resultado parcial tras interrupción | CI consume una ejecución incompleta como evidencia válida o acepta snapshots a medias | Stop dispatch, cleanup/revocación acotados, exits `4`/`3` y publicación atómica solo tras completar |
-| `R-036` | Añadir hooks async exclusivos del runner o esperar cleanup de forma oculta | Segundo lifecycle, orden sorprendente y código distinto entre test y producción | `defer await` general, edition-gated, infallible y verificable; suites reutilizan exactamente esa semántica |
+| `R-036` | Añadir hooks async exclusivos del runner o esperar cleanup de forma oculta | Segundo lifecycle, orden sorprendente y código distinto entre test y producción | `defer await` general de Tondo 0.1, infallible y verificable; suites reutilizan exactamente esa semántica |
 | `R-037` | Embeber, subir o dejar crecer artifacts sin contrato | Filtración de datos, reportes enormes y almacenamiento no reproducible | `attach` explícito, límites, descriptors SHA-256 y store content-addressed local sin Base64 ni upload |
 | `R-038` | Hashear, reportar o redactor heurísticamente secretos | El secreto se filtra o la reproducibilidad declarada es falsa | Descriptors/versiones solamente, materialización/revocación por worker y responsabilidad explícita si el programa copia el valor |
 | `R-039` | Confundir repeat con retry o solapar iteraciones | Una campaña deja de reproducir el plan y comparte estado entre oportunidades | Modos incompatibles, iteraciones completas secuenciales en workers nuevos, count uno como no-op y cualquier non-pass rojo con count mayor |
 | `R-040` | Actualizar o borrar snapshots de forma automática o parcial | CI acepta cambios accidentales y el store queda incoherente tras fallos | Texto exacto, update explícito y restringido, staging total, reemplazo atómico y preservación de entries no alcanzadas |
+| `R-041` | Convertir metaprogramación en ejecución arbitraria del compilador | Builds ambientales, no cacheables y con acceso a datos del host | Frontend puro, target `tondo-meta` sin capabilities, una ronda, inputs/outputs/límites/hashes cerrados y VM nueva por run |
+| `R-042` | Usar reflection runtime para serializers | Lookup, boxing, metadata global, acceso privado y hot paths difíciles de optimizar | Traits estáticos, derive/codegen directo y `std.reflect` descriptivo sin valores |
+| `R-043` | Permitir que código generado eluda coherencia o visibilidad | Impls imposibles de escribir manualmente y APIs con privilegios ocultos | Output Tondo ordinario, owner exacto, vista privada limitada, mismo typecheck y consulta de expansión/source map |
+| `R-044` | Optimizar codecs solo para benchmarks felices | Regresiones de allocation/latencia, DoS por inputs hostiles o semántica distinta entre SIMD/scalar | Oracle escalar, gates multidimensionales, corpus adversario, límites y equivalencia byte/error exacta por kernel |
+| `R-045` | Inferir Protobuf desde records o reflection | Field numbers inestables, presencia perdida y evolución wire incompatible | Schema-first desde `.proto` fijado, unknown fields preservados y checks de evolución en build time |
+| `R-046` | Usar el manifest inmutable del checkpoint como evidencia del draft vivo | El gate queda roto durante meses o se atribuyen casos antiguos a reglas nuevas | `CONF-LIVE-001`, selección explícita de linaje, requisitos pendientes honestos, ratchet por wave y `CONF-SEAL-001` después de T0/meta |
+| `R-047` | Cerrar bloques enormes con una sola tarea umbrella | No se conoce el estado real por módulo y los fallos aparecen al final | Micro-gates verticales, modelo único de resultados y estado SPEC/IMPL/TEST/PERF/CONF/DOC por owner |
+| `R-048` | Usar la recursión del host como pila del parser | Un input válido o malicioso aborta antes del límite tipado en targets con stacks pequeños | Guarda portable temporal; `PARSER-STACK-001` migra toda profundidad controlada por fuente a frames explícitos y conserva solo presupuestos configurables |
 
 ---
 
-## 23. Cola inmediata
+## 24. Cola inmediata
 
-Estas son las siguientes acciones históricas en orden; G2 ya habilita avanzar a
-M4 sin adelantar trabajo de ownership o async.
+Los puntos 1–19 conservan la secuencia ya completada. A partir del 20 la unidad
+de integración es una **wave vertical**. Una tarea puede empezar tan pronto
+como estén cerrados sus prerequisitos duros; la wave posterior no se integra ni
+se declara terminada antes del mini-gate anterior. Así, specs, algoritmos puros
+y spikes explícitamente independientes pueden avanzar sin convertir el orden de
+gates en una barrera artificial.
 
 1. [x] Crear el repositorio y workspace Rust mínimo.
 2. [x] Escribir `architecture.md` y los ADR de partida.
@@ -3450,39 +4126,196 @@ M4 sin adelantar trabajo de ownership o async.
 18. [x] Medir coverage y mutation score, cerrar huecos críticos y superar H0.
 19. [x] Ejecutar **STD-FOUNDATION-SPEC-001** y cerrar **DEC-012** sin fingir
     que las APIs de módulo o STD-0.1 completa ya están publicadas.
-20. [ ] Ejecutar **STD-TIME-BASE-SPEC-001**, **STD-TIME-BASE-IMPL-001** y
-    **STD-TIME-BASE-CONF-001** como único slice temprano de STD-0.1.
-21. [ ] Implementar M10.6 empezando por **ASYNC-DEFER-SPEC-001**,
-    **UTEST-EDITION-001** y **ASYNC-DEFER-IMPL-001**, continuar hasta
-    **UTEST-DOGFOOD-001** y superar T0 sin mutar Tondo 0.1.
-22. [ ] Completar STD-0.1 por **STD-SPEC-001**, incluida la definición exacta
-    del resto de `std.testing`, nunca por implementación ad hoc.
-23. [ ] Cerrar S1 y comenzar M11 por **NATIVE-001**.
-24. [ ] Cerrar N1 antes de iniciar los módulos de STD-0.2.
+20. [ ] **Wave 0 — Evidencia viva.** `CONF-LIVE-001` está cerrado; ejecutar
+    ahora `CONF-RATCHET-001`. Mini-gate: checkpoint reproducible, draft
+    seleccionable, inventario regenerable y CI verde sin atribuir pendientes
+    como pass.
+21. [ ] **Wave 1 — Formatos compartidos.** Implementar `META-FORMAT-001` con
+    parse/canonicalización/round-trip/rechazo de `/2`. Mini-gate: manifest,
+    lockfile, interface, artifact y descriptor estándar pueden evolucionar en
+    la línea viva sin tocar `/1`.
+22. [ ] **Wave 2 — Prerrequisitos y frontends, en paralelo.**
+    - Base portable: cerrar `PARSER-STACK-001`; lexer y planes que no modifican
+      descenso sintáctico pueden avanzar en paralelo, pero
+      `META-SYNTAX-001` y `UTEST-CST-001` esperan la pila explícita.
+    - Lane meta: `STD-META-SPEC-001 → META-VM-001`,
+      `META-SYNTAX-001 → META-SEM-001 → META-MODEL-001` y
+      `STD-REFLECT-001` avanzan en paralelo; después
+      `(META-VM-001 + META-MODEL-001) → STD-META-IMPL-001 →
+      STD-META-CONF-001`.
+    - Lane testing estándar: `STD-BYTES-SPEC-001 →
+      STD-BYTES-IMPL-001 → STD-BYTES-CONF-001`; desde el spec de bytes puede
+      avanzar `STD-ENV-SPEC-001`, pero
+      `(STD-BYTES-CONF-001 + STD-ENV-SPEC-001) → STD-ENV-IMPL-001 →
+      STD-ENV-CONF-001`. En paralelo,
+      `STD-TIME-BASE-SPEC-001 → STD-TIME-BASE-IMPL-001 →
+      STD-TIME-BASE-CONF-001`.
+    - Lane testing plan: `UTEST-PLAN-001 →
+      (UTEST-INPUTS-PLAN-001 + UTEST-DISC-001 + UTEST-OWNERS-001 +
+      UTEST-DEPS-001) → UTEST-CLI-PARSE-001`.
+    - Lane lenguaje: `UTEST-LEX-001 → UTEST-CST-001 → UTEST-FMT-001`; tras
+      unir formatter con plan/discovery/dev-dependencies,
+      `UTEST-ID-001 → UTEST-CAPTURE-001`, y después
+      `UTEST-OVERLAY-001` y `UTEST-INTEG-001` cierran en paralelo.
+      `ASYNC-DEFER-IMPL-001` avanza en paralelo y se une antes del lowering.
+    Mini-gate: cada frontend baja hasta su primer IR verificable, los cinco
+    slices tempranos tienen owner definitivo y la conformidad viva ratchetea.
+23. [ ] **Wave 3 — Vertical slices ejecutables.**
+    - Meta: `META-DERIVE-001 + META-GEN-001 → META-ATOMIC-001`, seguido de
+      `META-QUERY-001` y `REFLECT-IMPL-001`.
+    - Testing core: `UTEST-CHECK-001 → UTEST-LOWER-001` y
+      `UTEST-RESULT-MODEL-001` avanzan en paralelo; su unión alimenta
+      `UTEST-CONTROL-001 → UTEST-RUNTIME-001`. Desde ahí,
+      `UTEST-INPUTS-001` avanza en paralelo con
+      `UTEST-SUITE-001 → UTEST-LIMIT-001`, y los tres cierran el worker estable.
+    - Testing puro: `UTEST-GLOB-001 → UTEST-SHARD-001 →
+      UTEST-SCHED-001`, después de plan e identidad.
+    Mini-gate: derive y un test mínimo recorren rutas públicas end-to-end; no
+    existen shims, productos parciales ni estado cruzado entre workers.
+24. [ ] **Wave 4 — Features y cierre del lenguaje.**
+    - Meta: diagnostics, reproducibilidad, robustez y `META-CONF-001`.
+    - Testing sobre worker estable: `UTEST-VTIME-001`, `UTEST-RETRY-001`,
+      `UTEST-REPEAT-001`, `UTEST-ARTIFACT-001` y `UTEST-SNAPSHOT-001`
+      avanzan en paralelo; su unión alimenta `UTEST-REPORT-001 →
+      UTEST-JUNIT-001 → UTEST-INTERRUPT-001 → UTEST-CLI-001`.
+    - Aceptación testing: `UTEST-CONF-001`, `UTEST-PROJECTS-001`,
+      `UTEST-PLATFORM-001` y `UTEST-DOGFOOD-001`; después se cierra T0.
+    - Unión final: `(META-CONF-001 + UTEST-CONF-001 + T0) →
+      CONF-SEAL-001 → G5`.
+    Mini-gate: T0 y después G5 verdes sobre hashes actuales; el checkpoint
+    continúa idéntico.
+25. [ ] **Wave 5 — STD-0.1A por layers.** Cerrar `STD-PERF-001` y el spec de
+    cada owner antes de su implementación; ejecutar A1 valores/protocolos, A2
+    host, A3 serialization/codecs y A4 helpers de testing, cerrando el
+    micro-gate de cada owner antes de sus consumidores. Owners independientes
+    avanzan en paralelo. `STD-SPEC-001`, `STD-TEST-001`,
+    `STD-CODEC-CONF-001`, `STD-PERF-CONF-001`, `STD-CONF-001` y
+    `STD-DOC-001` cierran A5 y Gate S1A.
+26. [ ] **Wave 6 — Contratos que condicionan el backend.** Cerrar
+    `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001` y la frontera runtime de
+    `STD-NET-001`. Mini-gate: DEC-013/014 reciben requisitos completos sin
+    implementar todavía STD-0.1B.
+27. [ ] **Wave 7 — M11 correcto antes que optimizado.** Ejecutar
+    `PERF-001 → NATIVE-001 → NATIVE-MEM-ADR-001 → NATIVE-ABI-001 →
+    NATIVE-002 → ARC-001 → ARC-002 → NATIVE-STD-001 → NATIVE-CONF-001 /
+    NATIVE-DIFF-001 → targets → NATIVE-REL-001`. Cerrar Gate N1.
+28. [ ] **Wave 8 — Completar STD-0.1B y candidato 0.1.** Terminar specs B,
+    implementar cada módulo sobre VM/nativo, ejecutar models/fuzz/perf/conf/doc
+    y `REL-0.1-RC-001`; cerrar Gate S1. Optimizaciones post-N1 avanzan solo por
+    evidencia y no bloquean el candidato salvo que un presupuesto publicado lo
+    exija.
 
-La ruta autorizada siguiente es:
+Resumen topológico:
 
 ~~~text
-STD-TIME-BASE-SPEC-001
-  -> STD-TIME-BASE-IMPL-001
-  -> STD-TIME-BASE-CONF-001
-  -> ASYNC-DEFER-SPEC-001 + UTEST-EDITION-001 + ASYNC-DEFER-IMPL-001
-  -> UTEST-PLAN-001..UTEST-DOGFOOD-001
-  -> Gate T0
-  -> STD-SPEC-001
-  -> Gate S1
-  -> NATIVE-001
+CONF-LIVE
+  -> FORMAT /2
+  -> {PARSER-STACK -> meta/test syntax
+      meta prerequisites + meta frontend
+      bytes + env + time + test plan/frontend + defer-await}
+  -> {meta runtime
+      test runtime + algorithms}
+  -> {META-CONF + T0} -> CONF-SEAL -> G5
+  -> STD-0.1A / S1A
+  -> STD-0.1B runtime contracts
+  -> native correctness / N1
+  -> STD-0.1B implementation + REL-0.1-RC / S1
 ~~~
 
-M4, M5, M6, M7, M8, M9, M10, M10.5, M10.5b y Gates G4/G5/H0 quedan
-cerrados.
-`STD-TIME-BASE-SPEC-001` pasa a ser la acción inmediata; M10.6 continúa
-bloqueado por ese time-base y M11 por T0 y S1. No se inicia STD-0.2 antes de
-Gate N1.
+M4, M5, M6, M7, M8, M9, el checkpoint M10, M10.5, M10.5b y Gates G4/H0
+quedan cerrados. Gate G5 está abierto únicamente por M10.7 y M10.6 dentro del
+draft no publicado. `CONF-LIVE-001` está cerrado; la acción inmediata es
+`CONF-RATCHET-001` y después `META-FORMAT-001`. `PARSER-STACK-001` se cierra en
+Wave 2 antes de añadir formas sintácticas. Ninguna tarea posterior necesita
+volver a decidir el orden global: sus prerequisitos están en 4.1.1 y en la wave
+correspondiente.
 
 ---
 
-## 24. Historial del tracker
+## 25. Historial del tracker
+
+### 0.99 — 2026-07-30
+
+- Se cierra `CONF-LIVE-001` con selección obligatoria
+  `checkpoint`/`live`, snapshot verificable del tag `v0.1.0`, manifest vivo
+  content-addressed y preflight de sellado no mutante.
+- Reliability hereda evidencia histórica solo cuando coinciden el ID estable y
+  el hash exacto del requisito; las 27 reglas nuevas o modificadas permanecen
+  `draft-pending` y una declaración de layer sin evidencia ejecutable no puede
+  convertirlas en `covered`.
+- El gate valida ambos linajes sin fallback, conserva cada manifest vivo como
+  artefacto CI y prueba que la reproducción y ejecución de los 205 casos del
+  checkpoint no leen el spec vivo.
+- `CONF-RATCHET-001` pasa a ser el siguiente nodo antes de
+  `META-FORMAT-001`.
+
+### 0.98 — 2026-07-30
+
+- El límite interno del parser recursivo baja temporalmente a 128 para que ARM64
+  y hosts con stacks pequeños produzcan `T0002` en lugar de abortar, conservando
+  256 como presupuesto lógico configurado.
+- `PARSER-STACK-001` programa la solución estructural antes de ampliar la
+  gramática: pila explícita para toda profundidad controlada por fuente,
+  equivalencia del CST y diagnostics, pruebas con stacks pequeños y eliminación
+  posterior de la guarda interna sin retirar límites de recursos configurables.
+
+### 0.97 — 2026-07-29
+
+- Se reemplaza la cola serial por un DAG de ocho waves con prerequisitos,
+  lanes paralelas y mini-gate de evidencia al finalizar cada unión.
+- `CONF-LIVE-001`/`CONF-RATCHET-001` separan el checkpoint inmutable de la
+  conformidad viva antes de tocar M10.7 o M10.6; `CONF-SEAL-001` queda como
+  unión explícita posterior a T0/META-CONF, evitando cerrar una tarea temprana
+  con trabajo diferido hasta G5.
+- STD-0.1 adelanta únicamente `std.meta`, el contrato de `std.reflect`,
+  `std.bytes`, el time-base y la lectura declarada de `std.env`; así elimina los
+  ciclos que obligaban a meta y testing a consumir APIs programadas después de
+  T0.
+- M10.6 separa parsing de CLI, modelo de resultados y wiring final; elimina los
+  restos de dos ediciones, divide contrato/materialización de inputs y ordena
+  plan, frontend, runtime, algoritmos, features, reporters, interrupción y CLI.
+- M11 pasa a corrección antes que optimización: contratos de
+  channel/sync/executor/net y DEC-014 preceden ABI/lowering; ARC/ciclos preceden
+  conformidad, la baseline precede la selección de backend y ARC
+  optimization/COW/escape/incremental/LSP quedan post-N1.
+- STD-0.1A/B usan micro-gates por owner y `REL-0.1-RC-001` reconstruye el
+  candidato completo después de ambas fases sin confundirlo con el paquete
+  parcial de N1.
+
+### 0.96 — 2026-07-29
+
+- Se elimina la frontera editorial 0.2 antes de la primera publicación:
+  `suite`, `test`, `defer await`, sus diagnósticos y los formatos de testing
+  pasan al único contrato Tondo 0.1. El checkpoint interno `v0.1.0` conserva sus
+  hashes y resultados como evidencia histórica, sin convertirse en dialecto.
+- M10.6 amplía `tondo-conformance-0.1`; Gate G5 requiere ahora M10.7 y T0. Los
+  formatos vivos son `tondo-test-report-0.1/7`,
+  `tondo-test-list-0.1/6`, `tondo-junit-report-0.1/4`,
+  `tondo-test-artifacts-0.1/1` y `tondo-snapshot-store-0.1/1`.
+- Toda la Standard Library prevista se consolida en 0.1.0. STD-0.1A cierra la
+  foundation necesaria para M11 y STD-0.1B completa concurrency/application
+  después de N1; Gate S1 exige ambas fases antes de publicar. Las menciones 0.2
+  de entradas históricas inferiores describen borradores ya superados y no
+  forman parte de la ruta activa.
+
+### 0.95 — 2026-07-29
+
+- Se corrige el estado del producto: Tondo 0.1 continúa en desarrollo y no ha
+  sido publicado. El tag/checkpoint 0.1.0 conserva evidencia histórica, pero no
+  constituye una release pública ni congela el draft.
+- Se cierra DEC-016 y se añade M10.7 para `derive`, modelo semántico meta,
+  generators de manifest, VM hermético, formatos toolchain `/2`, expansión
+  inspeccionable y reflection metadata-only. Gate G5 vuelve a estar pendiente
+  hasta implementar y validar esa superficie.
+- STD-0.1 incorpora `std.serialization`, `std.reflect`, `std.meta`, `std.json`,
+  `std.messagepack` y `std.protobuf`. Los codecs tipados usan código generado
+  directo; Protobuf es schema-first y ningún formato depende de reflection de
+  valores.
+- Se fijan oracles escalares, kernels SIMD/word-at-a-time opcionales,
+  multiversioning, streaming, límites y gates multidimensionales de rendimiento
+  junto a interoperabilidad, fuzzing y corpus adversario.
+- La ruta inmediata comienza en META-FORMAT-001 y termina M10.7 antes de volver
+  al sustrato temporal, T0, S1 y el backend nativo.
 
 ### 0.94 — 2026-07-29
 
@@ -3522,7 +4355,7 @@ Gate N1.
 ### 0.92 — 2026-07-29
 
 - Se completa M10.5b con 1.445 casos lógicos y 1.664 repeticiones. La
-  conformidad publicada completa se ejecuta dentro de la misma instrumentación
+  conformidad versionada completa se ejecuta dentro de la misma instrumentación
   y se añaden contratos cerrados para CLI, artefactos, manifiestos, adaptador,
   semántica, bytecode, runtime y tooling de fiabilidad.
 - La baseline revisada sube a 86,11 % de líneas, 83,62 % de funciones y
@@ -3555,7 +4388,7 @@ Gate N1.
 
 - La extensión de testing sube a `0.2-draft.7`. Tondo 0.2 incorpora
   `defer await` como cleanup general e infallible, sin crear hooks async de
-  testing; Tondo 0.1 permanece inmutable.
+  testing; el documento fija el snapshot exacto de Tondo 0.1 que consume.
 - Se fijan inputs públicos por bytes/hash y secretos únicamente por
   descriptor/version, los tres estados de reproducibilidad y la respuesta
   transaccional a interrupciones con exits `4`/`3`.
@@ -3709,14 +4542,15 @@ Gate N1.
   la superficie pública.
 - Se crea STD-0.1 para Core + Hosted Standard Library con spec independiente,
   capabilities, distribución reproducible, implementación VM, modelos y
-  conformidad. La release Tondo 0.1.0 existente no se reescribe.
+  conformidad. El checkpoint Tondo 0.1.0 existente no se reescribe.
 - M11 conserva su ID histórico, pero NATIVE-001 depende ahora de H0 y S1. La VM
   y STD-0.1 se convierten en oracle y corpus diferencial del backend nativo.
 - Concurrency + Application Standard Library se separa como STD-0.2 después de
   Gate N1 para impedir que APIs no esenciales bloqueen la implementación
   nativa.
 - La cola inmediata comienza en TEST-001; este cambio reorganiza trabajo y no
-  modifica semántica, compilador, runtime ni claims de conformidad publicados.
+  modifica semántica, compilador, runtime ni la evidencia de conformidad
+  registrada.
 
 ### 0.82 — 2026-07-28
 
@@ -3742,8 +4576,8 @@ Gate N1.
   el spec queda anclado a la raíz real del workspace, con una regresión que
   impide aceptar copias externas accidentales.
 - Formatter, check, Clippy con warnings denegados, 685 tests y Rustdoc pasan con
-  Rust/Cargo 1.93.0. La release se publica como `v0.1.0`; M11 queda fuera de
-  esta entrega.
+  Rust/Cargo 1.93.0. El estado se etiqueta internamente como `v0.1.0`; no es una
+  publicación de Tondo y M11 queda fuera de ese checkpoint.
 
 ### 0.81 — 2026-07-28
 

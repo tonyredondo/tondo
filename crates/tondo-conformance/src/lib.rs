@@ -1,6 +1,7 @@
 #![doc = "Portable runner and data contract for `tondo-conformance-0.1`."]
 
 pub mod document;
+pub mod lineage;
 pub mod manifest;
 pub mod protocol;
 pub mod runner;

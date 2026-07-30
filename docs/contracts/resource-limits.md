@@ -1,6 +1,6 @@
 # Bootstrap resource limits
 
-**Status:** released defaults for implementation version 0.1.0
+**Status:** defaults pinned by the internal implementation checkpoint 0.1.0
 
 These limits defend the compiler from untrusted inputs. They are implementation
 budgets, not Tondo language semantics. Embedding hosts may construct a request
@@ -12,7 +12,7 @@ with different explicit limits; the CLI uses the defaults.
 | Source files per request | 65,536 |
 | Lossless syntax tokens per request | 2,000,000 |
 | Lossless syntax nodes per request | 4,000,000 |
-| Syntax nesting depth | 256 |
+| Configured syntax nesting budget | 256 |
 | Interned type nodes | 4,000,000 |
 | Typed HIR expression and pattern nodes | 4,000,000 |
 | Pattern-analysis matrix work | 4,000,000 |
@@ -67,7 +67,8 @@ already topological HIR arenas and does not add recursive source traversal.
 Ownership availability traverses those same bounded arenas; each loop state
 grows monotonically over the finite local table and therefore reaches a fixed
 point without an open-ended runtime heuristic. Source nesting remains bounded
-by the parser's process-safety ceiling.
+by the configured budget and, while the bootstrap parser still uses
+input-driven host recursion, by its temporary portable process-safety ceiling.
 
 MIR and bytecode construction bound every request-local table before growth;
 their initialization, lifetime, and tag-refinement analyses share independent
@@ -87,6 +88,10 @@ It performs at most one such pre-exhaustion pass per allocation or replacement,
 then either publishes atomically once or leaves the pending operation
 unpublished. Bootstrap resource exhaustion uses diagnostic code `T0002`.
 
-The handwritten parser also clamps an embedding host's requested nesting depth
-to 256. This is a process-safety ceiling for the recursive bootstrap parser,
-not a semantic nesting rule of the Tondo language.
+The handwritten parser temporarily clamps an embedding host's requested
+nesting depth to 128 even though the configured default budget remains 256.
+This conservative ceiling prevents the recursive bootstrap parser from
+exhausting smaller host stacks. It is not a semantic nesting rule of the Tondo
+language. `PARSER-STACK-001` replaces input-driven host recursion with explicit
+parser frames and removes this additional clamp while retaining the configured
+resource budget.
