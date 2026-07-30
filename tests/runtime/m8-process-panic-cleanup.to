@@ -5,8 +5,9 @@ async fn failChild() {
 }
 
 async fn main(): !process.ProcessError {
+    let hostCommands = process.args()
     scope {
-        let running = spawn process.shell("exec sleep 30").output()
+        let running = spawn process.shell(hostCommands[0]).output()
         let failing = spawn failChild()
         let _ = await failing
         let _ = await running?

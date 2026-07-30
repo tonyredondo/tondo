@@ -1,14 +1,15 @@
 import std.console
 import std.process
 
-async fn cancelProcess(): !process.ProcessError {
+async fn cancelProcess(command: String): !process.ProcessError {
     scope {
-        let pending = spawn process.shell("exec sleep 30").output()
+        let pending = spawn process.shell(command).output()
         return
     }
 }
 
 async fn main(): !process.ProcessError {
-    await cancelProcess()?
+    let hostCommands = process.args()
+    await cancelProcess(hostCommands[0])?
     console.print("process-cancelled\n")
 }

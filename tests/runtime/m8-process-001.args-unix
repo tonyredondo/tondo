@@ -1,0 +1,2 @@
+printf stdout; printf stderr >&2
+while :; do :; done

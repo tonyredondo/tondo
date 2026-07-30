@@ -7,25 +7,41 @@ async fn pipelineText(pipeline: Pipeline): String ! (process.ProcessError | proc
 }
 
 async fn main(): !(process.ProcessError | process.Utf8Error) {
-    assert(process.args() == [])
+    let hostCommands = process.args()
 
-    let source = process.cmd("/usr/bin/printf", "pipe")
-    let first = process.cmd("/usr/bin/cat")
-    let second = process.cmd("/usr/bin/cat")
-    let third = process.cmd("/usr/bin/cat")
+    let source = process.cmd(
+        "git",
+        "show",
+        "HEAD:tests/runtime/m8-process-001.stdout",
+    )
+    let first = process.cmd("git", "hash-object", "--stdin")
+    let second = process.cmd("git", "hash-object", "--stdin")
+    let third = process.cmd("git", "hash-object", "--stdin")
 
-    assert(await pipelineText(source | first)? == "pipe")
-    assert(await pipelineText(source | (first | second))? == "pipe")
-    assert(await pipelineText((source | first) | second)? == "pipe")
-    assert(await pipelineText((source | first) | (second | third))? == "pipe")
+    assert(
+        await pipelineText(source | first)? ==
+        "a6cb097452c125b4e95c1964d6d3af7a1b819186\n"
+    )
+    assert(
+        await pipelineText(source | (first | second))? ==
+        "c9a7fc312cf6d2cca8fc70ad6078da85147a433d\n"
+    )
+    assert(
+        await pipelineText((source | first) | second)? ==
+        "c9a7fc312cf6d2cca8fc70ad6078da85147a433d\n"
+    )
+    assert(
+        await pipelineText((source | first) | (second | third))? ==
+        "03337a02c790a62bb4cde612fd39894a8d1f797a\n"
+    )
 
     let exact = await process
-        .cmd("/usr/bin/printf", "[%s][%s][%s]", "two words", "*", "$HOME")
+        .cmd("git", "rev-parse", "--sq-quote", "two words", "*", "$HOME")
         .output()?
-    assert(exact.stdout.text()? == "[two words][*][$HOME]")
+    assert(exact.stdout.text()? == " 'two words' '*' '$HOME'\n")
 
     let streams = await process
-        .shell("printf stdout; printf stderr >&2")
+        .shell(hostCommands[0])
         .output()?
     assert(streams.stdout.text()? == "stdout")
     assert(streams.stderr.text()? == "stderr")
@@ -40,17 +56,24 @@ async fn main(): !(process.ProcessError | process.Utf8Error) {
         err(process.ProcessExitError(_)) => ()
     }
 
-    let ran = await process.cmd("/usr/bin/true").run()?
+    let ran = await process.cmd("git", "--version").run()?
     assert(ran[0].success)
 
     let handle = (
-        process.cmd("/usr/bin/printf", "handle") |
-        process.cmd("/usr/bin/cat")
+        process.cmd(
+            "git",
+            "show",
+            "HEAD:tests/runtime/m8-process-001.stdout",
+        ) |
+        process.cmd("git", "hash-object", "--stdin")
     ).start()?
     let handled = await handle.output()?
-    assert(handled.stdout.text()? == "handle")
+    assert(
+        handled.stdout.text()? ==
+        "a6cb097452c125b4e95c1964d6d3af7a1b819186\n"
+    )
 
-    let sleeping = process.shell("exec sleep 30").start()?
+    let sleeping = process.shell(hostCommands[1]).start()?
     let cancelled = await sleeping.cancel()?
     assert(not cancelled[0].success)
 

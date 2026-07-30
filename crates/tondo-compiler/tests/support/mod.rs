@@ -92,7 +92,8 @@ impl Fixture {
             root,
         )
         .map_err(|error| error.to_string())?
-        .with_warning_profiles(read_warning_profiles(&self.sidecar("profiles"))?);
+        .with_warning_profiles(read_warning_profiles(&self.sidecar("profiles"))?)
+        .with_program_arguments(read_program_arguments(self)?);
         let output = execute(request).map_err(|error| error.to_string())?;
         let codes = output
             .diagnostics()
@@ -263,6 +264,78 @@ fn read_warning_profiles(path: &Path) -> Result<Vec<WarningProfile>, String> {
     Ok(profiles.into_iter().collect())
 }
 
+fn read_program_arguments(fixture: &Fixture) -> Result<Vec<String>, String> {
+    let unix = fixture.sidecar("args-unix");
+    let windows = fixture.sidecar("args-windows");
+    match (unix.is_file(), windows.is_file()) {
+        (false, false) => return Ok(Vec::new()),
+        (true, true) => {}
+        _ => {
+            return Err(format!(
+                "{} must declare both `.args-unix` and `.args-windows` sidecars",
+                fixture.source.display()
+            ));
+        }
+    }
+    if fixture.kind != FixtureKind::Runtime {
+        return Err(format!(
+            "{} declares platform arguments outside a runtime fixture",
+            fixture.source.display()
+        ));
+    }
+
+    #[cfg(unix)]
+    {
+        read_argument_lines(&windows)?;
+        read_argument_lines(&unix)
+    }
+    #[cfg(windows)]
+    {
+        read_argument_lines(&unix)?;
+        read_argument_lines(&windows)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        read_argument_lines(&unix)?;
+        read_argument_lines(&windows)?;
+        Err(format!(
+            "{} has no argument sidecar for this host platform",
+            fixture.source.display()
+        ))
+    }
+}
+
+fn read_argument_lines(path: &Path) -> Result<Vec<String>, String> {
+    let bytes = fs::read(path).map_err(|error| error.to_string())?;
+    if bytes.is_empty() || !bytes.ends_with(b"\n") || bytes.contains(&b'\r') {
+        return Err(format!(
+            "{} must use non-empty, LF-terminated canonical text",
+            path.display()
+        ));
+    }
+    let contents = std::str::from_utf8(&bytes)
+        .map_err(|error| format!("{} is not valid UTF-8: {error}", path.display()))?;
+    let mut arguments = Vec::new();
+    for (index, argument) in contents.split_terminator('\n').enumerate() {
+        if argument.is_empty() {
+            return Err(format!(
+                "{} contains an empty argument on line {}",
+                path.display(),
+                index + 1
+            ));
+        }
+        if argument.contains('\0') {
+            return Err(format!(
+                "{} contains a null byte on line {}",
+                path.display(),
+                index + 1
+            ));
+        }
+        arguments.push(argument.to_owned());
+    }
+    Ok(arguments)
+}
+
 fn compare_optional_text(path: &Path, actual: &str) -> Result<(), String> {
     if !path.exists() {
         return Ok(());
@@ -338,4 +411,95 @@ pub fn inline_request(operation: Operation, source_name: &str, bytes: &[u8]) -> 
         root,
     )
     .unwrap()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn temporary_fixture(kind: FixtureKind) -> Fixture {
+        let directory = std::env::temp_dir().join(format!(
+            "tondo-fixture-arguments-{}-{}",
+            std::process::id(),
+            TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        Fixture {
+            kind,
+            source: directory.join("case.to"),
+        }
+    }
+
+    fn remove_fixture(fixture: &Fixture) {
+        fs::remove_dir_all(fixture.source.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn fixtures_without_platform_arguments_receive_an_empty_argument_list() {
+        let fixture = temporary_fixture(FixtureKind::Runtime);
+        assert_eq!(
+            read_program_arguments(&fixture).unwrap(),
+            Vec::<String>::new()
+        );
+        remove_fixture(&fixture);
+    }
+
+    #[test]
+    fn platform_arguments_are_paired_and_select_only_the_current_host() {
+        let fixture = temporary_fixture(FixtureKind::Runtime);
+        fs::write(fixture.sidecar("args-unix"), b"unix first\nunix second\n").unwrap();
+        assert!(
+            read_program_arguments(&fixture)
+                .unwrap_err()
+                .contains("both")
+        );
+        fs::write(
+            fixture.sidecar("args-windows"),
+            b"windows first\nwindows second\n",
+        )
+        .unwrap();
+
+        #[cfg(unix)]
+        assert_eq!(
+            read_program_arguments(&fixture).unwrap(),
+            ["unix first", "unix second"]
+        );
+        #[cfg(windows)]
+        assert_eq!(
+            read_program_arguments(&fixture).unwrap(),
+            ["windows first", "windows second"]
+        );
+        remove_fixture(&fixture);
+    }
+
+    #[test]
+    fn platform_arguments_are_runtime_only_and_canonical() {
+        let fixture = temporary_fixture(FixtureKind::CompilePass);
+        fs::write(fixture.sidecar("args-unix"), b"unix\n").unwrap();
+        fs::write(fixture.sidecar("args-windows"), b"windows\n").unwrap();
+        assert!(
+            read_program_arguments(&fixture)
+                .unwrap_err()
+                .contains("outside a runtime fixture")
+        );
+
+        let runtime = Fixture {
+            kind: FixtureKind::Runtime,
+            source: fixture.source.clone(),
+        };
+        #[cfg(unix)]
+        fs::write(runtime.sidecar("args-windows"), b"missing terminator").unwrap();
+        #[cfg(windows)]
+        fs::write(runtime.sidecar("args-unix"), b"missing terminator").unwrap();
+        assert!(
+            read_program_arguments(&runtime)
+                .unwrap_err()
+                .contains("LF-terminated")
+        );
+        remove_fixture(&fixture);
+    }
 }

@@ -29,6 +29,9 @@ One logical test is not necessarily one source file or one execution:
 
 - Rust `#[test]` functions are discovered from every workspace crate.
 - `.to` fixtures are paired with their adjacent sidecars.
+- Runtime fixtures that need host shell text declare both `.args-unix` and
+  `.args-windows`; the harness forwards exactly one selected file through
+  `std.process.args()`.
 - Conformance cases retain their declared repetitions, target, oracle, group,
   requirements, and pinned source hashes.
 - Every Tondo fence in the normative language specification is recorded.
@@ -37,8 +40,8 @@ One logical test is not necessarily one source file or one execution:
   They are contracts within Tondo 0.1, but are never counted as executable
   coverage before their implementation and live evidence exist.
 
-The current live inventory contains 1,521 logical tests and 1,740 repetitions.
-Of those, 1,471 are executable, 38 are draft-pending contracts, three are fuzz
+The current live inventory contains 1,526 logical tests and 1,745 repetitions.
+Of those, 1,476 are executable, 38 are draft-pending contracts, three are fuzz
 campaigns, and nine are non-executable fences. Counts are derived from entries
 and cannot be edited independently.
 
@@ -49,6 +52,8 @@ The inventory rejects:
 - fixture sidecars without a source;
 - repository sources absent from the conformance manifest;
 - unknown sidecar extensions;
+- unpaired platform-argument sidecars or platform arguments attached to a
+  non-runtime fixture;
 - incomplete metadata;
 - unsorted or duplicated requirements and sidecars; and
 - manifest or source-hash drift.
@@ -112,7 +117,10 @@ runs:
 11. byte-for-byte comparison with the versioned result.
 
 Linux ARM64, macOS Intel, macOS Apple Silicon, and Windows run the portable
-workspace tests plus a native CLI hello-world smoke test.
+workspace tests plus a native CLI hello-world smoke test. They hash-validate the
+immutable checkpoint, but do not re-execute its Linux-specific hosted process
+payloads; equivalent current process behavior is exercised by the portable
+runtime fixtures.
 
 The PR fuzz tier uses fixed seeds and a fixed run count. Nightly jobs extend the
 same targets by time and run coverage plus mutation testing. Moving a costly

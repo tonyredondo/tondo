@@ -22,6 +22,14 @@ sorted and unique. Paths are logical, relative and portable. Loading the suite
 checks every referenced byte string before an adapter is started. A missing
 expectation never means success.
 
+The checkpoint's hosted process cases themselves preserve Linux command paths
+and POSIX shell payloads from the internal `v0.1.0` run. Consequently, every
+host can load and validate the checkpoint identity, but reproducing its exact
+reference result is Linux-only. The immutable case bytes are not translated or
+silently skipped by the runner. Current cross-platform behavior is exercised
+by the live repository fixtures, whose paired `.args-unix` and `.args-windows`
+sidecars provide explicit host commands without changing Tondo source.
+
 ## Checkpoint and live lineage
 
 `conformance/0.1/manifest.json` is the immutable checkpoint identity. Its
@@ -158,7 +166,9 @@ internals. The checkpoint result uses
 description, target declaration, per-case repetition count, and canonical
 observation hashes.
 
-From the current checkout, the portable checkpoint verification commands are:
+From the current checkout, checkpoint identity validation is portable. The
+exact reference execution commands below require Linux because the historical
+hosted process payloads are Linux-specific:
 
 ~~~text
 bash scripts/materialize-checkpoint-spec.sh --check

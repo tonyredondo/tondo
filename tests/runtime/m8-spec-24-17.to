@@ -5,7 +5,7 @@ import std.process
 
 let pipeline = (
     process.cmd("git", "log", "--oneline") |
-    process.cmd("head", "-n", "5")
+    process.cmd("git", "hash-object", "--stdin")
 )
 
 let output = await pipeline.check()?

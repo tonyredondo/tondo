@@ -503,14 +503,25 @@ fn validate_repository_sidecars(root: &Path, suite: &LoadedSuite) -> Result<(), 
 }
 
 fn validate_fixture_sidecars(root: &Path) -> Result<(), String> {
-    for path in collect_files(root, &root.join("tests"))? {
+    let tests = root.join("tests");
+    for path in collect_files(root, &tests)? {
         let extension = path.extension().and_then(|value| value.to_str());
         if matches!(extension, Some("md" | "to")) {
             continue;
         }
         if !matches!(
             extension,
-            Some("codes" | "jsonl" | "stderr" | "stdout" | "runtime-stderr" | "exit" | "profiles")
+            Some(
+                "args-unix"
+                    | "args-windows"
+                    | "codes"
+                    | "jsonl"
+                    | "stderr"
+                    | "stdout"
+                    | "runtime-stderr"
+                    | "exit"
+                    | "profiles"
+            )
         ) {
             return Err(format!("unknown fixture sidecar `{}`", path.display()));
         }
@@ -521,6 +532,29 @@ fn validate_fixture_sidecars(root: &Path) -> Result<(), String> {
                 path.display(),
                 source.display()
             ));
+        }
+        if matches!(extension, Some("args-unix" | "args-windows")) {
+            let counterpart = match extension {
+                Some("args-unix") => source.with_extension("args-windows"),
+                Some("args-windows") => source.with_extension("args-unix"),
+                _ => unreachable!(),
+            };
+            if !counterpart.is_file() {
+                return Err(format!(
+                    "platform argument sidecar `{}` has no `{}`",
+                    path.display(),
+                    counterpart.display()
+                ));
+            }
+            let relative = source
+                .strip_prefix(&tests)
+                .map_err(|error| error.to_string())?;
+            if !relative.starts_with("runtime") {
+                return Err(format!(
+                    "platform argument sidecar `{}` belongs to a non-runtime fixture",
+                    path.display()
+                ));
+            }
         }
     }
     Ok(())
@@ -890,6 +924,33 @@ ignored
         fs::write(tests.join("orphan.codes"), b"E0001\n").unwrap();
         let error = validate_fixture_sidecars(&path).unwrap_err();
         assert!(error.contains("orphan fixture sidecar"));
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
+    fn platform_argument_sidecars_must_be_paired_and_runtime_scoped() {
+        let path = std::env::temp_dir().join(format!(
+            "tondo-inventory-{}-{}",
+            std::process::id(),
+            TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let runtime = path.join("tests/runtime");
+        fs::create_dir_all(&runtime).unwrap();
+        fs::write(runtime.join("case.to"), b"fn main() {}\n").unwrap();
+        fs::write(runtime.join("case.args-unix"), b"unix\n").unwrap();
+        let error = validate_fixture_sidecars(&path).unwrap_err();
+        assert!(error.contains("has no"));
+
+        fs::write(runtime.join("case.args-windows"), b"windows\n").unwrap();
+        validate_fixture_sidecars(&path).unwrap();
+
+        let compile_pass = path.join("tests/compile-pass");
+        fs::create_dir_all(&compile_pass).unwrap();
+        fs::write(compile_pass.join("case.to"), b"fn main() {}\n").unwrap();
+        fs::write(compile_pass.join("case.args-unix"), b"unix\n").unwrap();
+        fs::write(compile_pass.join("case.args-windows"), b"windows\n").unwrap();
+        let error = validate_fixture_sidecars(&path).unwrap_err();
+        assert!(error.contains("non-runtime fixture"));
         fs::remove_dir_all(path).unwrap();
     }
 }
