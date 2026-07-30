@@ -1,2 +1,2 @@
-powershell.exe -NoLogo -NoProfile -NonInteractive -Command "[Console]::Out.Write('stdout'); [Console]::Error.Write('stderr')"
+powershell.exe -NoLogo -NoProfile -NonInteractive -EncodedCommand WwBDAG8AbgBzAG8AbABlAF0AOgA6AE8AdQB0AC4AVwByAGkAdABlACgAJwBzAHQAZABvAHUAdAAnACkAOwBbAEMAbwBuAHMAbwBsAGUAXQA6ADoARQByAHIAbwByAC4AVwByAGkAdABlACgAJwBzAHQAZABlAHIAcgAnACkA
 for /L %i in (1,1,2147483647) do @rem
