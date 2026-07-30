@@ -1,10 +1,10 @@
-//! Incremental evidence gate shared by every live-conformance wave.
+//! Incremental evidence gate shared by every draft-conformance wave.
 
 use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tondo_conformance::lineage::{LIVE_LINEAGE_NAME, LIVE_LINEAGE_PATH, LiveLineage};
+use tondo_conformance::lineage::{DRAFT_LINEAGE_NAME, DRAFT_LINEAGE_PATH, DraftLineage};
 
 use crate::inventory;
 use crate::matrix;
@@ -24,7 +24,7 @@ pub struct RatchetRecord {
     pub inventory: EvidenceFile,
     pub matrix: EvidenceFile,
     pub quality_baseline: EvidenceFile,
-    pub live_case_layers: u64,
+    pub draft_case_layers: u64,
     pub pending_tasks: Vec<String>,
     pub coverage: ScopeEvidence,
     pub mutation: ScopeEvidence,
@@ -50,8 +50,8 @@ pub fn build(
     coverage_path: Option<&Path>,
     mutants_path: Option<&Path>,
 ) -> Result<RatchetRecord, String> {
-    let lineage =
-        LiveLineage::load(root, Path::new(LIVE_LINEAGE_PATH)).map_err(|error| error.to_string())?;
+    let lineage = DraftLineage::load(root, Path::new(DRAFT_LINEAGE_PATH))
+        .map_err(|error| error.to_string())?;
     let inventory = inventory::build(root)?;
     inventory::validate(&inventory)?;
     check_bytes(
@@ -90,13 +90,13 @@ pub fn build(
         lineage: lineage.manifest().lineage.clone(),
         revision: lineage.manifest().revision,
         manifest: EvidenceFile {
-            path: LIVE_LINEAGE_PATH.into(),
+            path: DRAFT_LINEAGE_PATH.into(),
             sha256: lineage.manifest_sha256(),
         },
         inventory: file_evidence(root, crate::INVENTORY_PATH)?,
         matrix: file_evidence(root, MATRIX_PATH)?,
         quality_baseline: file_evidence(root, QUALITY_BASELINE_PATH)?,
-        live_case_layers: lineage.manifest().case_layers.len() as u64,
+        draft_case_layers: lineage.manifest().case_layers.len() as u64,
         pending_tasks: lineage.manifest().pending_tasks.clone(),
         coverage,
         mutation,
@@ -106,11 +106,11 @@ pub fn build(
 }
 
 pub fn validate(record: &RatchetRecord) -> Result<(), String> {
-    if record.format != FORMAT || record.lineage != LIVE_LINEAGE_NAME || record.revision == 0 {
+    if record.format != FORMAT || record.lineage != DRAFT_LINEAGE_NAME || record.revision == 0 {
         return Err("ratchet record has an unsupported format, lineage, or revision".into());
     }
     for evidence in [
-        (&record.manifest, LIVE_LINEAGE_PATH),
+        (&record.manifest, DRAFT_LINEAGE_PATH),
         (&record.inventory, crate::INVENTORY_PATH),
         (&record.matrix, MATRIX_PATH),
         (&record.quality_baseline, QUALITY_BASELINE_PATH),
@@ -160,12 +160,12 @@ fn scope_evidence(
     let Some(path) = report_path else {
         if required {
             return Err(format!(
-                "{name} report is required when live case layers exist"
+                "{name} report is required when draft case layers exist"
             ));
         }
         return Ok(ScopeEvidence {
             status: "not-applicable".into(),
-            reason: format!("no executable live case layer requires a {name} report"),
+            reason: format!("no executable draft case layer requires a {name} report"),
             report_sha256: None,
         });
     };
@@ -214,7 +214,7 @@ mod tests {
     fn repository_ratchet_is_current_and_does_not_claim_new_scope() {
         let root = repository_root();
         let record = build(&root, None, None).unwrap();
-        assert_eq!(record.live_case_layers, 0);
+        assert_eq!(record.draft_case_layers, 0);
         assert_eq!(record.coverage.status, "not-applicable");
         assert_eq!(record.mutation.status, "not-applicable");
         validate(&record).unwrap();

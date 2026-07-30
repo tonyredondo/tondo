@@ -287,10 +287,10 @@ fn generate_ratchet(root: &Path, arguments: &Arguments) -> Result<String, String
     )?;
     let changed = write_if_changed(&root.join(ratchet::PATH), &canonical_json(&record)?)?;
     Ok(format!(
-        "ratchet {}: revision {}, {} live case layers",
+        "ratchet {}: revision {}, {} draft case layers",
         change(changed),
         record.revision,
-        record.live_case_layers
+        record.draft_case_layers
     ))
 }
 
@@ -302,8 +302,8 @@ fn check_ratchet(root: &Path, arguments: &Arguments) -> Result<String, String> {
     )?;
     check_bytes(&root.join(ratchet::PATH), &canonical_json(&expected)?)?;
     Ok(format!(
-        "ratchet is current: revision {}, {} live case layers",
-        expected.revision, expected.live_case_layers
+        "ratchet is current: revision {}, {} draft case layers",
+        expected.revision, expected.draft_case_layers
     ))
 }
 

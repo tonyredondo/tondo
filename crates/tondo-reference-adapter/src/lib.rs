@@ -97,7 +97,7 @@ fn describe() -> Observation {
         data: json!({
             "implementation": "tondo-reference",
             "compiler": tondo_compiler::artifact::COMPILER_ID,
-            "compiler_version": env!("CARGO_PKG_VERSION"),
+            "compiler_version": tondo_compiler::artifact::COMPILER_VERSION,
             "language_edition": tondo_compiler::LANGUAGE_EDITION,
             "backend": tondo_vm::BACKEND_NAME,
             "adapter_protocol": tondo_conformance::ADAPTER_PROTOCOL,

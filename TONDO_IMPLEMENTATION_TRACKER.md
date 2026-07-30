@@ -1,13 +1,13 @@
 # Tondo: tracker de implementación
 
-**Estado:** M10.5b, Gate H0 y `META-FORMAT-001` están cerrados sobre el checkpoint previo; Tondo
-0.1 sigue en desarrollo y las superficies consolidadas de metaprogramación,
-testing y Standard Library deben implementarse y añadirse a conformidad antes
-de publicar la primera versión
+**Estado:** M10.5b, Gate H0 y `META-FORMAT-001` están cerrados sobre el draft
+actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
+metaprogramación, testing y Standard Library deben implementarse y añadirse a
+la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.01
+**Versión del tracker:** 1.02
 
-**Última actualización:** 2026-07-30
+**Última actualización:** 2026-07-31
 
 **Especificaciones normativas:**
 
@@ -16,16 +16,16 @@ de publicar la primera versión
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
 **Objetivo inmediato:** cerrar `PARSER-STACK-001`, el siguiente prerrequisito
-portable de Wave 2. `META-FORMAT-001` ya dejó aislados los formatos `/2` y el
-descriptor estándar para que las lanes de metaprogramación y testing puedan
-avanzar sin reinterpretar el checkpoint `/1`. A partir de aquí avanzan dos lanes:
+portable de Wave 2. `META-FORMAT-001` ya consolidó los formatos del toolchain
+con el marcador único `draft`; no existe una lane `/1` frente a otra `/2`.
+A partir de aquí avanzan dos lanes:
 M10.7 sobre los slices tempranos de `std.meta`/`std.reflect`, y M10.6 sobre
 `std.bytes`, `std.env` read-only, el time-base monotónico y `defer await`. Gate
 G5 solo vuelve a cerrarse cuando ambas lanes forman parte de la conformidad
 vigente. Después se completa STD-0.1A, se fijan antes del backend los contratos
 runtime-facing de STD-0.1B, comienza M11 y, tras Gate N1, se implementa el resto
 de STD-0.1B y se cierra S1. Todo ello pertenece a la primera Standard Library
-0.1.0; los slices y fases son orden de implementación, no versiones públicas.
+0.1; los slices y fases son orden de implementación, no versiones públicas.
 La VM permanece como implementación de referencia y oracle diferencial del
 backend nativo.
 
@@ -61,8 +61,8 @@ tondo run <archivo>
 ~~~
 
 El primer compilador podrá llamarse **bootstrap** o **experimental**, pero no
-podrá anunciar conformidad completa Tondo 0.1 hasta superar
-`tondo-conformance-0.1`.
+podrá anunciar conformidad completa del draft hasta superar
+`tondo-conformance-draft`.
 
 ### 1.1 Definición del primer compilador
 
@@ -239,7 +239,7 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   sola distribución `std` por grafo, versionado conservador incluso antes de
   1.0, PackageId y hashes exactos, prelude mínimo, catálogo cerrado,
   capabilities, actualización explícita y coexistencia verificable con el
-  checkpoint bootstrap interno Tondo 0.1.0.
+  corpus bootstrap de regresión interno; no es una versión ni un release.
 
 - [ ] **DEC-013 — Backend nativo y ABI runtime interna.** `NATIVE-001` elige
   backend y registra targets, debug info, toolchain y portabilidad;
@@ -255,8 +255,8 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
   [`TONDO_TESTING_SPEC.md`](./TONDO_TESTING_SPEC.md) forma parte del mismo
   contrato Tondo 0.1 y reserva `suite` y `test`: `suite` es un contenedor
   estático con setup léxico y teardown por `defer`/`defer await`; `test` es
-  siempre una hoja. El tag interno `v0.1.0` permanece como evidencia anterior,
-  no como edición o release pública. El contrato separa unit overlays de
+  siempre una hoja. El corpus bootstrap permanece como evidencia de regresión,
+  no como edición, release ni dialecto seleccionable. El contrato separa unit overlays de
   integration roots y fija árbol/identidad, capturas `Copy + Send + Share`,
   envelope estructurado,
   `std.testing.log/tags/failNow/skip/attach/snapshot/withVirtualTime`, inferencia
@@ -336,9 +336,9 @@ necesaria; la fragmentación del workspace no.
 | **M7 — Async y concurrencia estructurada** | Tasks conformes | Completado |
 | **M8 — Scripts y procesos** | Experiencia de scripting | Completado |
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
-| **M10 — Conformidad del checkpoint previo** | Baseline ejecutable pre-`derive` | Completado |
+| **M10 — Bootstrap regression corpus** | Baseline ejecutable pre-`derive` | Completado |
 | **M10.5 — Reliability y testing** | Infraestructura y hardening continuo de evidencia | Completado |
-| **M10.5c — Conformidad viva** | Linaje separado y sellado final del draft 0.1 | Ratchet Wave 0 cerrado; sellado pendiente en Wave 4 |
+| **M10.5c — Conformidad del draft** | Una línea de draft y ratchet incremental | Wave 0 cerrado; sellado pendiente en Wave 4 |
 | **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Especificado; implementación pendiente |
 | **M10.6 — Testing de usuario Tondo 0.1** | Gate T0 y contribución testing a G5 | Especificado; implementación pendiente |
 | **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura base cerrada; slices tempranos y APIs pendientes |
@@ -354,14 +354,14 @@ Estado observado del workspace:
   `tondo-reference-adapter`, `tondo-reliability` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
-- Última validación del checkpoint implementado, anterior a la ampliación actual
+- Última validación del corpus bootstrap implementado, anterior a la ampliación actual
   del draft: 2026-07-29, con formatter check, `cargo check` de todos los
-  targets, Clippy con warnings denegados, 830 tests Rust inventariados, Rustdoc
+  targets, Clippy con warnings denegados, 848 tests Rust inventariados, Rustdoc
   con warnings denegados y metadatos locked. La suite oficial pasa 205 casos y
-  424 repeticiones byte-estables; el inventario completo registra 1.530 casos
-  lógicos y 1.749 repeticiones.
-- La línea viva separada registra 1.530 tests lógicos y 1.749 repeticiones:
-  1.480 ejecutables, 38 contratos `draft-pending`, tres campañas y nueve fences
+  424 repeticiones byte-estables; el inventario completo registra 1.533 casos
+  lógicos y 1.752 repeticiones.
+- La línea única de draft registra 1.533 tests lógicos y 1.752 repeticiones:
+  1.483 ejecutables, 38 contratos `draft-pending`, tres campañas y nueve fences
   no ejecutables. Su matriz conserva 17 requisitos cubiertos y expone
   explícitamente 27 requisitos nuevos o modificados como `draft-pending`.
 
@@ -369,7 +369,7 @@ Estado observado del workspace:
 
 ~~~text
 M0 -> M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10
-  -> M10.5 -> M10.5b -> CONF-LIVE-001 -> CONF-RATCHET-001
+  -> M10.5 -> M10.5b -> CONF-DRAFT-001 -> CONF-RATCHET-001
                                                 |
                                                 v
                                          META-FORMAT-001
@@ -409,12 +409,12 @@ incompatible con ownership.
 M10.5 y su hardening M10.5b son fases acotadas de infraestructura,
 clasificación y cierre de huecos reales, no una pausa
 indefinida para perseguir un número arbitrario de tests. Su gate debe existir
-antes de ampliar sintaxis. `CONF-LIVE-001` separa la evidencia inmutable del
-checkpoint de la línea incremental del draft; ningún slice nuevo trabaja con el
-gate permanentemente roto ni cuenta el checkpoint como prueba de reglas nuevas.
+antes de ampliar sintaxis. `CONF-DRAFT-001` mantiene el corpus bootstrap como
+regresión explícita y el draft como única línea activa; ningún slice nuevo trabaja con el
+  gate permanentemente roto ni atribuye esa regresión a reglas nuevas sin evidencia.
 
 `META-FORMAT-001` es el primer cambio de código porque materializa los formatos
-`/2` compartidos. Después no existe una dependencia serial entre M10.7 completo
+`draft` compartidos. Después no existe una dependencia serial entre M10.7 completo
 y M10.6 completo. La lane meta requiere la API build-only exacta de `std.meta`
 y el contrato de `std.reflect`; la lane testing requiere la identidad estable de
 `std.bytes`, el snapshot read-only de `std.env` y el time-base de producción.
@@ -443,9 +443,9 @@ el trabajo.
 
 | Consumidor | Prerrequisito obligatorio | No necesita esperar |
 |---|---|---|
-| Cualquier cambio del draft vivo | `CONF-LIVE-001` y H0 verde | Un nuevo Gate G5 |
+| Cualquier cambio del draft | `CONF-DRAFT-001` y H0 verde | Un nuevo Gate G5 |
 | Nuevas formas de parser de M10.7/M10.6 | `PARSER-STACK-001` | Resto de meta o testing runtime |
-| Plan `/2`, meta y testing de proyecto | `META-FORMAT-001` | Meta VM completa |
+| Plan draft, meta y testing de proyecto | `META-FORMAT-001` | Meta VM completa |
 | `META-VM-001` | contrato exacto de `std.meta` | Su implementación completa |
 | `STD-META-IMPL-001` | meta VM y `META-MODEL-001` | Derive/generators |
 | Derive y generators | meta VM + implementación/conformidad de `std.meta` | JSON/MessagePack/Protobuf |
@@ -1601,7 +1601,7 @@ lifetimes escritos por el usuario.
   `Copy`. Toda salida normal pendiente produce `E1404`; una escritura que
   perdería el owner anterior —incluidos captura, préstamo y `with`— produce
   `E1408`. El admission verifier reconstruye registro y dataflow antes de MIR;
-  en este checkpoint todavía no existían guards, cleanup ni fallback
+  en el corpus bootstrap todavía no existían guards, cleanup ni fallback
   ejecutable.
 
 - [x] **TERM-003 — Implementar `defer` LIFO y desarme al registrar guards
@@ -2190,7 +2190,7 @@ Evidencia de cierre:
   fijan compilador, edición, PackageIds, target, perfil, capacidades, features,
   módulos, source sets y dependencias transitivas. El artefacto vuelve a derivar
   su propio `build_hash` al decodificarse y rechaza cualquier manipulación.
-- La CLI del checkpoint carga exactamente el plan cerrado, todavía no ejecuta
+- La CLI del corpus bootstrap carga exactamente el plan cerrado, todavía no ejecuta
   generadores ni busca
   dependencias, emite productos solo tras éxito y evita que estos sobrescriban
   inputs o se solapen entre sí, incluidos aliases de path.
@@ -2200,12 +2200,12 @@ Evidencia de cierre:
 
 ---
 
-## 15. M10 — Suite de conformidad del checkpoint 0.1
+## 15. M10 — Corpus bootstrap de regresión
 
 **Objetivo:** convertir la afirmación “implementamos Tondo” en evidencia
 versionada y reproducible.
 
-### 15.1 Construcción de `tondo-conformance-0.1`
+### 15.1 Construcción de `tondo-conformance-draft`
 
 - [x] **CONF-001 — Crear un manifiesto versionado y machine-readable de casos.**
 
@@ -2251,11 +2251,12 @@ versionada y reproducible.
 
 - [x] **CONC-CONF-001 — Repetir litmus tests con límites calibrados.**
 
-### 15.3 Checkpoint reproducible
+### 15.3 Corpus bootstrap reproducible
 
 - [x] **REL-001 — Registrar matriz exacta de target, perfil y capacidades.**
 
-- [x] **REL-002 — Fijar versión de compilador, formatter, edición y suite.**
+- [x] **REL-002 — Fijar la identidad del compilador, formatter, edición y
+  manifest del draft.**
 
 - [x] **REL-003 — Registrar resultados reproducibles de conformidad.**
 
@@ -2266,36 +2267,36 @@ versionada y reproducible.
 
 - [x] **REL-006 — Congelar el formato público de diagnostics JSON 0.1.**
 
-- [x] **REL-007 — Etiquetar el checkpoint interno únicamente después de superar
-  todos los grupos aplicables del snapshot.**
+- [x] **REL-007 — Registrar el corpus bootstrap únicamente después de superar
+  todos los grupos aplicables de su manifest histórico.**
 
-### Gate G5 del snapshot pre-M10.7
+### Gate M10 del corpus bootstrap pre-M10.7
 
-- [x] La versión exacta del toolchain pasa `tondo-conformance-0.1`.
+- [x] La identidad exacta del toolchain pasa `tondo-conformance-draft`.
 - [x] El target y sus capacidades están declarados.
 - [x] No hay exclusiones sin justificar por capacidad.
 
-Este cierre es evidencia histórica del checkpoint. La ampliación M10.7 reabre el
-Gate G5 de la primera versión completa, definido en 18.4.
+Este cierre es evidencia histórica del corpus bootstrap. La ampliación M10.7
+mantiene abierto el Gate G5 de la primera versión publicable, definido en 18.4.
 - [x] Los artefactos, resultados y versiones pueden reproducirse.
 - [x] La documentación no afirma soporte más amplio que la evidencia.
 
 Evidencia de cierre:
 
 ~~~text
-suite            = tondo-conformance-0.1 0.1.0
-manifest_sha256  = 67f12434001d5d9d17b0f2181afe3ec38cb07d6207e431cca164ec4854f0148b
-result_sha256    = d44e8eb853ccdc208b8a8ea044ddd2222a7e5ef148e91edc7c08ebec17425693
+suite            = tondo-conformance-draft draft
+manifest_sha256  = 6bb8fe5b151ef73f1d49b3d432a51ec18c7a634cf4c9d014eea81d6a351c6ffb
+result_sha256    = f07d818482f6d709c4281c2117d432db17019420e6421d81c9ba10c14f48d089
 cases            = 205
 repetitions      = 424
-workspace_tests  = 685
+workspace_tests  = 1533 logical
 target           = tondo-vm-hosted
 profile          = hosted
 capabilities     = [console, process]
 ~~~
 
-El resultado estructurado se conserva en
-`conformance/0.1/results/tondo-reference-0.1.0-tondo-vm-hosted.json`.
+El resultado estructurado del draft se conserva en
+`conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json`.
 
 ---
 
@@ -2303,7 +2304,7 @@ El resultado estructurado se conserva en
 
 **Objetivo:** instalar una infraestructura de evidencia continua antes de
 ampliar la API pública o duplicar la ejecución en un backend nativo. Este
-milestone no cambió la semántica del snapshot Tondo 0.1 ni reabrió entonces
+milestone no cambió la semántica del corpus bootstrap ni reabrió entonces
 Gate G5: clasifica la
 cobertura actual, automatiza el gate existente y crea las herramientas con las
 que cada milestone posterior multiplicará casos reproducibles.
@@ -2330,7 +2331,7 @@ de M10.6, STD-0.1A, M11 y STD-0.1B.
   manifiesto y el repositorio. También registra documento, edición y estado:
   los ejemplos de `TONDO_TESTING_SPEC.md` se registran como contrato 0.1
   pendiente, pero no cuentan como tests ejecutables ni cobertura del
-  checkpoint.
+  corpus bootstrap.
 
 - [x] **TEST-002 — Crear la matriz normativa de cobertura.** Cada requisito
   `debe`/`no puede` de Tondo 0.1 recibe una identidad estable. La matriz conserva
@@ -2472,7 +2473,7 @@ de M10.6, STD-0.1A, M11 y STD-0.1B.
 
 - [x] El gate completo de Tondo 0.1 se ejecuta automáticamente en PR y `main`.
 - [x] El inventario y la matriz normativa se validan sin entradas sin
-  clasificar para el target del checkpoint; el contrato de testing todavía
+  clasificar para el target del corpus bootstrap; el contrato de testing todavía
   pendiente queda clasificado, no omitido ni contado como evidencia verde.
 - [x] Existen generadores con seed reproducible y reducción de fallos.
 - [x] Frontend, protocolos y admission verifiers tienen fuzz targets
@@ -2486,18 +2487,18 @@ de M10.6, STD-0.1A, M11 y STD-0.1B.
 - [x] El gate estricto y la conformidad continúan verdes después de integrar la
   infraestructura.
 
-### 16.6 M10.5c — Preparación portable y linaje del draft vivo
+### 16.6 M10.5c — Preparación portable y linaje único del draft
 
-H0 permanece cerrado para el checkpoint que lo demostró, pero cada ampliación
-del draft necesita un frontend portable y evidencia activa sin reescribir esos
-bytes. Antes de ampliar la gramática de M10.7 o M10.6:
+H0 permanece cerrado para el corpus bootstrap que lo demostró, pero cada
+ampliación del mismo draft necesita un frontend portable y evidencia activa.
+Antes de ampliar la gramática de M10.7 o M10.6:
 
 - [ ] **PARSER-STACK-001 — Eliminar la dependencia del stack nativo.**
   Reemplazar toda recursión cuya profundidad controle la fuente por una máquina
   iterativa con una pila explícita de frames: Pratt de expresiones y sus
   prefix/postfix/infix, grupos, tuples, arrays, records, interpolaciones, tipos,
   patterns y cualquier descenso anidado restante. Cada frame debe conservar el
-  estado mínimo de continuación, checkpoint CST, binding power, política de
+  estado mínimo de continuación, CST, binding power, política de
   recuperación y span necesarios; no se crea un segundo AST ni se cambia la
   gramática, precedencia o shape del CST. `ParseLimits.max_nesting_depth`
   permanece como presupuesto lógico configurable y se carga contra la pila
@@ -2511,24 +2512,20 @@ bytes. Antes de ampliar la gramática de M10.7 o M10.6:
   Windows. Actualizar ADR-004 y los contratos de límites solo cuando la ruta
   iterativa sea la implementación efectiva.
 
-- [x] **CONF-LIVE-001 — Separar checkpoint y conformidad viva.** Conservar
-  byte a byte `conformance/0.1/manifest.json`, sus cases, observations y
-  resultados como evidencia del tag interno `v0.1.0`; crear una identidad y
-  path explícitos para el manifest no sellado del draft 0.1 actual; enseñar a
-  reliability, matriz, scripts y CI a seleccionar ambos sin fallback. El
-  checkpoint se valida desde un checkout limpio del tag o su paquete
-  content-addressed, nunca contra los docs vivos, y no cuenta como
-  evidencia de requisitos añadidos. La línea viva fija el hash actual de cada
-  spec, clasifica requisitos todavía pendientes sin presentarlos como pass y
-  acepta nuevos cases únicamente junto al slice que implementan. Cada
-  actualización produce un hash nuevo y conserva el anterior como artefacto de
-  CI; exponer una operación de sellado que todavía no se ejecuta. Añadir tests
-  que demuestren selección explícita, rechazo de mezcla de manifests,
-  reproducibilidad y que el gate estricto puede permanecer verde sin falsear
-  conformidad del draft incompleto.
+- [x] **CONF-DRAFT-001 — Consolidar una única conformidad de draft.** Mantener
+  `conformance/draft/manifest.json` como única identidad activa, usar el corpus
+  bootstrap solo como regresión explícita y clasificar los requisitos nuevos o
+  modificados como pendientes hasta que sus propios layers tengan evidencia.
+  El runner, reliability, matriz, scripts y CI ya no ofrecen selección
+  identidades históricas ni fallback entre manifests. El manifest de draft fija los
+  hashes de los cuatro specs, el estado abierto, las tareas pendientes y los
+  layers futuros; el preflight de sellado sigue siendo no mutante. Añadir tests
+  que demuestren selección única, rechazo de nombres de linaje antiguos,
+  reproducibilidad y que el gate estricto no presenta la regresión bootstrap
+  como conformidad completa.
 
 - [x] **CONF-RATCHET-001 — Hacer incremental la evidencia nueva.** El comando
-  `tondo-reliability ratchet check` valida el linaje vivo y su historial,
+  `tondo-reliability ratchet check` valida el linaje único de draft y su historial,
   inventario, matriz, baseline de quality y el registro canónico de hashes.
   `ratchet generate` solo escribe el registro después de comprobar todos esos
   bytes; si existen case layers exige reports de coverage y mutation que pasen
@@ -2540,9 +2537,9 @@ bytes. Antes de ampliar la gramática de M10.7 o M10.6:
 - [ ] **CONF-SEAL-001 — Sellar una única conformidad Tondo 0.1.** Después de
   `META-CONF-001`, `UTEST-CONF-001` y Gate T0, exigir cero requisitos
   pendientes, fijar hashes actuales de specs/cases/adaptador, reconstruir desde
-  un workspace limpio y promover atómicamente el último draft vivo a la
-  distribución inmutable `tondo-conformance-0.1`. Probar que no mezcla
-  artifacts de otro linaje ni muta el checkpoint; Gate G5 verifica este
+  un workspace limpio y promover atómicamente el último draft verificado a la
+  distribución inmutable del primer release. Probar que no mezcla artefactos
+  de otra historia; Gate G5 verifica este
   resultado y no vuelve a generarlo.
 
 ---
@@ -2563,7 +2560,7 @@ producción, inputs públicos/secretos explícitos, interrupción fiable y repor
 JSON/JUnit desde una sola invocación. El runner resultante puede utilizarse para
 completar y validar la stdlib.
 
-**Dependencia:** M10.6 empieza después de H0, `CONF-LIVE-001` y
+**Dependencia:** M10.6 empieza después de H0, `CONF-DRAFT-001` y
 `META-FORMAT-001`, pero no espera a que M10.7 esté completo. Plan,
 discovery/dev-dependencies, lexer/CST/formatter, árbol estático, algoritmos
 puros de selección y `defer await` pueden avanzar en lanes independientes.
@@ -2581,10 +2578,10 @@ la lectura de inputs declarados espera `STD-ENV-SPEC-001`,
 privados del runner. `ASYNC-DEFER-IMPL-001` debe cerrar antes de conducir
 teardown de suite; testing no puede sustituirlo por un hook.
 
-**Compatibilidad:** el tag interno `v0.1.0`, sus hashes y resultados permanecen
-inmutables como checkpoint anterior. El borrador vivo
-`TONDO_LANGUAGE_SPEC.md`, su hash y `tondo-conformance-0.1` se amplían de forma
-explícita; no se mantiene un segundo parser o dialecto. Hasta cerrar M10.6, un
+**Compatibilidad:** el corpus bootstrap y sus hashes se conservan únicamente
+como regresión reproducible. El borrador actual `TONDO_LANGUAGE_SPEC.md`, su
+hash y `tondo-conformance-draft` se amplían de forma explícita; no se mantiene
+un segundo parser o dialecto. Hasta cerrar M10.6, un
 binario declara testing como componente pendiente y no anuncia conformidad
 completa Tondo 0.1.
 
@@ -2639,8 +2636,8 @@ reporters.
 - [x] **UTEST-EDITION-001 — Consolidar testing en Tondo 0.1.** Añadir `suite`
   y `test` al registry de keywords de la especificación viva, incorporar
   `defer await`, grammar y diagnósticos y renombrar los formatos de tooling a la
-  línea 0.1. Preservar `v0.1.0` como checkpoint interno por hash, no como
-  edición seleccionable alternativa. La implementación y los tests de
+  línea única `draft`. Preservar los bytes del corpus bootstrap únicamente como
+  regresión por hash, no como edición seleccionable alternativa. La implementación y los tests de
   compilación se ejecutan en las tareas siguientes.
 
 - [ ] **UTEST-PLAN-001 — Extender el project plan con source classes de test.**
@@ -2723,8 +2720,8 @@ reporters.
   recovery. El suite-block admite setup ordinario seguido solo de miembros
   estáticos; se rechazan modifiers, parámetros, firmas, nodos bajo control de
   flujo, sentencias posteriores al primer miembro y todas las alternativas
-  ausentes. El checkpoint anterior conserva sus bytes; el parser vivo adopta el
-  contrato consolidado.
+  ausentes. El corpus bootstrap conserva sus bytes; el parser del draft adopta
+  el contrato consolidado.
 
 - [ ] **UTEST-FMT-001 — Formatear suites y tests canónicamente.** Cubrir bodies
   y setups vacíos/multiline, nesting, comentarios, documentación, separación
@@ -2739,8 +2736,8 @@ reporters.
   exterior, pánico, cancelación, cleanup suprimido, timeout, resource limit,
   interrupción, un owner afín, `Send` y rechazo de bloque/llamada
   fallible/capability mediante `E1608`/`E14xx`. La inmutabilidad se demuestra
-  reproduciendo el checkpoint por sus hashes, no manteniendo dos gramáticas en
-  el compilador vivo.
+  reproduciendo el corpus bootstrap por sus hashes, no manteniendo dos
+  gramáticas en el compilador del draft.
 
 - [ ] **UTEST-ID-001 — Construir el árbol estático suite/test.** La identidad
   interna usa PackageId + source class + module path + ordered node path + kind;
@@ -3019,9 +3016,9 @@ reporters.
 
 ### 17.4 Evidencia, conformidad y dogfooding
 
-- [ ] **UTEST-CONF-001 — Ampliar la conformidad viva Tondo 0.1.** No mutar los
-  manifests, cases, hashes ni observations del checkpoint interno. El
-  manifiesto vivo añade los cincuenta y dos grupos mínimos enumerados por la
+- [ ] **UTEST-CONF-001 — Ampliar la conformidad del draft Tondo 0.1.** No
+  presentar el corpus bootstrap como evidencia de requisitos nuevos. El
+  manifiesto draft añade los cincuenta y dos grupos mínimos enumerados por la
   spec de testing y mantiene adaptador público para VM y futuros backends.
 
 - [ ] **UTEST-PROJECTS-001 — Añadir proyectos de aceptación completos.**
@@ -3070,8 +3067,8 @@ reporters.
 
 ### Gate T0 — Testing first-class conforme
 
-- [ ] El checkpoint interno `v0.1.0`, sus manifests, hashes y observations
-  permanecen inmutables y verificables como evidencia histórica.
+- [ ] El corpus bootstrap, sus manifests, hashes y observations permanece
+  verificable como regresión histórica, fuera de los requisitos nuevos.
 - [ ] El borrador consolidado Tondo 0.1 incorpora el contrato de testing,
   reserva `suite` y `test` y define `defer await` como cleanup general,
   infallible y verificable sin añadir hooks de testing ni un segundo dialecto.
@@ -3127,14 +3124,14 @@ reporters.
   ejecución y policy con duración operacional real y tiempo virtual separado.
   La salida humana no intercala suites/tests o intentos y muestra owners, tags,
   evidence, tiempo virtual, logs, razones y fallos accionables.
-- [ ] El grupo de testing de `tondo-conformance-0.1` pasa en la VM y la matriz
+- [ ] El grupo de testing de `tondo-conformance-draft` pasa en la VM y la matriz
   de plataformas aplicable está verde.
 - [ ] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
   registration APIs, `TestContext`, annotations, reflection, subtests dinámicos
   ni hooks ocultos.
 
 Al cerrar T0 se vuelve a ejecutar la suite completa —incluida
-metaprogramación—, `CONF-SEAL-001` promueve la línea viva verificada y solo
+metaprogramación—, `CONF-SEAL-001` promueve el draft verificado y solo
 entonces puede cerrarse Gate G5 para el draft consolidado Tondo 0.1.
 
 ---
@@ -3146,7 +3143,7 @@ frontend a ejecución arbitraria. El resultado debe soportar `derive`, generator
 de manifest y metadata reflection con código estático, reproducible e
 inspeccionable.
 
-**Dependencia:** Gate H0, `CONF-LIVE-001` y el checkpoint M10 existente.
+**Dependencia:** Gate H0, `CONF-DRAFT-001` y el corpus bootstrap de M10.
 `META-FORMAT-001` abre el trabajo compartido. Syntax y modelo pueden avanzar
 mientras se cierra `STD-META-SPEC-001`. `META-VM-001` crea después el target
 cerrado necesario para ejecutar `STD-META-IMPL-001`; esta implementación espera
@@ -3162,7 +3159,7 @@ además M10.6/T0.
 
 **Orden interno:**
 
-1. `META-FORMAT-001` y el linaje vivo.
+1. `META-FORMAT-001` y el linaje único del draft.
 2. En paralelo: `META-SYNTAX → META-SEM → META-MODEL`,
    `STD-META-SPEC-001 → META-VM-001` y `STD-REFLECT-001`.
 3. Bootstrap meta: `(META-MODEL-001 + META-VM-001) →
@@ -3182,8 +3179,8 @@ vez los errores de los slices anteriores.
   limitada, una ronda, `tondo-meta-model-0.1/1`, sandbox, presupuestos,
   identidad/cache, diagnostics `E2101`–`E2109` y frontera de reflection.
 
-- [x] **META-TOOLCHAIN-SPEC-001 — Fijar el plan de generación.** Versionar
-  manifest, lockfile, interface y artifact `/2`; separar frontend puro de
+- [x] **META-TOOLCHAIN-SPEC-001 — Fijar el plan de generación.** Fijar los
+  formatos draft de manifest, lockfile, interface y artifact; separar frontend puro de
   orquestador; separar los grafos runtime/meta; declarar programs, inputs,
   roots, outputs, límites, hashes, target `tondo-meta`, fusión atómica y
   ausencia de outputs parciales.
@@ -3193,15 +3190,15 @@ vez los errores de los slices anteriores.
   estructura pública y no ofrece `Any`, value access, constructors, invocation,
   private members, layout ni enumeración global.
 
-- [x] **META-FORMAT-001 — Implementar formatos toolchain `/2`.** Parsear,
-  validar y canonicalizar los nuevos records y el descriptor estándar `/1`;
+- [x] **META-FORMAT-001 — Implementar formatos toolchain draft.** Parsear,
+  validar y canonicalizar los records draft y el descriptor estándar draft;
   rechazar campos, providers, meta packages, roots, límites, paths, outputs y
   hashes inconsistentes antes de ejecutar código.
-  Mantener un lector explícito del checkpoint `/1` solo si la migración lo
-  necesita; nunca reinterpretarlo como `/2`. Cerrado con
-  `crates/tondo-compiler/src/toolchain.rs`, `ProjectPlan::parse_v2`, contrato
-  `docs/contracts/toolchain-formats-v2.md` y tests de round-trip, canonicalidad,
-  grafos, hashes, outputs y separación `/1`/`/2`.
+  El lector actual acepta solo estos records; el corpus bootstrap se mantiene
+  fuera de esta frontera como regresión. Cerrado con
+  `crates/tondo-compiler/src/toolchain.rs`, `ProjectPlanDraft::parse`, contrato
+  `docs/contracts/toolchain-formats-draft.md` y tests de round-trip, canonicalidad,
+  grafos, hashes y outputs.
 
 ### 18.2 Frontend y modelo semántico
 
@@ -3264,15 +3261,15 @@ vez los errores de los slices anteriores.
   process, clock, entropy, threads, async, FFI y unsafe.
 
 - [ ] **META-ROBUST-001 — Añadir properties, fuzzing y límites.** Fuzzear
-  schemas `/2`, modelo meta, outputs y source maps; probar cycles imposibles,
+  records draft y revisiones de schema, modelo meta, outputs y source maps; probar cycles imposibles,
   roots que cruzan la frontera de ronda, colisiones, pánicos, budget exhaustion,
   UTF-8 inválido y generadores hostiles sin panic del compilador ni publicación
   parcial.
 
-- [ ] **META-CONF-001 — Extender `tondo-conformance-0.1`.** Añadir syntax,
+- [ ] **META-CONF-001 — Extender `tondo-conformance-draft`.** Añadir syntax,
   semantic, tooling, runtime metadata, toolchain y reproducibility cases en la
-  línea viva creada por `CONF-LIVE-001`, sin eliminar ni reescribir la suite del
-  checkpoint. Ratchetear su contribución acumulada solo después de actualizar
+  línea draft creada por `CONF-DRAFT-001`, sin presentar la regresión bootstrap
+  como conformidad completa. Ratchetear su contribución acumulada solo después de actualizar
   inventario, trazabilidad, coverage y mutation evidence para la superficie
   nueva; el sellado conjunto pertenece a `CONF-SEAL-001`.
 
@@ -3281,11 +3278,11 @@ vez los errores de los slices anteriores.
 - [ ] Todo el draft Tondo 0.1, incluidos M10.7 y M10.6, está implementado y
   tiene conformidad aplicable sobre `tondo-vm-hosted`.
 - [ ] Gate T0 está cerrado y el grupo de testing forma parte de
-  `tondo-conformance-0.1`, no de una edición o suite paralela.
-- [ ] `CONF-SEAL-001` ha promovido exactamente la línea viva verificada, sin
-  mezclarla con el checkpoint ni dejar requisitos pendientes.
-- [ ] La suite y sus manifests fijan el hash actual de la spec, no el
-  checkpoint anterior.
+  `tondo-conformance-draft`, no de una edición o suite paralela.
+- [ ] `CONF-SEAL-001` ha promovido exactamente el draft verificado, sin
+  presentar la regresión bootstrap como requisitos nuevos ni dejar pendientes.
+- [ ] La suite y sus manifests fijan el hash actual de la spec, no el snapshot
+  bootstrap de regresión.
 - [ ] No existe una ruta de ejecución ambiental dentro del frontend ni del VM
   meta.
 - [ ] La distribución puede describirse como candidata a publicación; este gate
@@ -3312,7 +3309,7 @@ MessagePack, Protobuf, el sustrato monotónico de `std.time`, `std.path`,
 completa el mismo catálogo 0.1 con calendario civil, encodings y codecs
 adicionales, regex, UUID, canales, sincronización, executors, logging y red.
 
-**Dependencia:** tras H0 y `CONF-LIVE-001` se adelantan cinco slices exactos,
+**Dependencia:** tras H0 y `CONF-DRAFT-001` se adelantan cinco slices exactos,
 sin abrir el resto de la stdlib:
 
 - `STD-META-SPEC-001` antes de `META-VM-001`, y su implementación/conformidad
@@ -3356,7 +3353,7 @@ layer pueden avanzar en paralelo.
 
 | Orden A | Owners | Dependencias duras | Desbloquea |
 |---|---|---|---|
-| A0.1 | `std.meta` | formatos `/2`, modelo meta normativo y target meta bootstrap | derive y generators |
+| A0.1 | `std.meta` | formatos draft, modelo meta normativo y target meta bootstrap | derive y generators |
 | A0.2 | `std.reflect` contract | modelo de tipos público | metadata runtime |
 | A0.3 | `std.bytes` | tipos intrínsecos existentes | attachments, I/O y codecs |
 | A0.4 | `std.time` monotónico | async/executor VM existente | tiempo virtual y deadlines |
@@ -3406,10 +3403,10 @@ layer pueden avanzar en paralelo.
   reservado, imports ordinarios, cero inicialización global y ningún nombre
   implícito adicional ni extensión global de métodos.
 
-- [x] **STD-CAP-001 — Versionar la matriz de capabilities.** El contrato base
+- [x] **STD-CAP-001 — Fijar la matriz de capabilities.** El contrato base
   clasifica cada superficie como Core, capability-gated, test-only, build-only o
-  target-specific, fija `tondo-capabilities/1`, exige ausencia estática `E1008`
-  y conserva como evidencia el checkpoint `tondo-vm-hosted` 0.1.0 con
+  target-specific, fija `tondo-capabilities-draft`, exige ausencia estática
+  `E1008` y conserva el corpus bootstrap de `tondo-vm-hosted` como regresión con
   `[console, process]`. Cada módulo pendiente deberá completar su matriz por
   target antes de publicarse.
 
@@ -3638,8 +3635,8 @@ layer pueden avanzar en paralelo.
   materiales no justificadas y conservar resultados versionados.
 
 - [ ] **STD-CONF-001 — Coordinar conformidad por owner.** Cada módulo cierra su
-  subtask `CONF`; el agregado extiende el linaje vivo o un manifiesto estándar
-  enlazado de forma explícita, sin mutar el manifest del checkpoint. Otro
+  subtask `CONF`; el agregado extiende el linaje único del draft o un manifiesto
+  estándar enlazado de forma explícita, sin mutar el manifest bootstrap. Otro
   implementador debe poder ejecutar los casos mediante un adaptador público y
   distinguir lenguaje de stdlib.
 
@@ -4068,7 +4065,7 @@ pública definitiva hasta ser fijados por la especificación estándar.
 | `R-017` | Empezar el backend nativo antes de Gate H0 | Dos runtimes divergen sin poder localizar la causa | CI, fuzzing, modelos y oracle VM antes de NATIVE-001 |
 | `R-018` | Diseñar runtime/ABI antes de conocer memoria y concurrencia 0.1 | Atomicidad, wakeups, bloqueo y layouts obligan a rehacer el backend o limitan la API | S1A y contratos runtime-facing de channel/sync/executor/net antes de NATIVE-001; DEC-014 antes de ABI/lowering |
 | `R-019` | Convertir la stdlib 0.1 en un proyecto ilimitado | El backend queda bloqueado por APIs de aplicación no esenciales | Catálogo cerrado, cinco slices tempranos estrictos, S1A antes de M11 y solo contratos B runtime-facing antes de N1; ninguna fase amplía scope sin revisar spec y tracker |
-| `R-020` | Confundir el checkpoint interno con el contrato 0.1 vivo | Se reescribe evidencia histórica o se anuncia soporte inexistente | `v0.1.0` permanece fijado por hash; spec, parser y conformidad vivos incorporan suite/test como trabajo pendiente de la misma 0.1 |
+| `R-020` | Confundir el corpus bootstrap con el contrato del draft | Se reescribe evidencia histórica o se anuncia soporte inexistente | El corpus bootstrap permanece fijado por hash; spec, parser y conformidad del draft incorporan suite/test como trabajo pendiente |
 | `R-021` | Permitir que unit tests cambien la compilación de producción | Código solo correcto bajo test y artefactos distintos | Unidad production sellada antes del overlay y comparación exacta de productos |
 | `R-022` | Ocultar flakiness mediante paralelismo o retries | Suites verdes no reproducibles | Tiempo virtual para causalidad temporal; una ejecución por default; retries explícitos, historial completo y `flaky-pass` rojo salvo `--allow-flaky`; orden/seed/paralelismo reportados |
 | `R-023` | Convertir testing en attributes, reflection, context parameters y hooks especiales | Segundo sublenguaje con boilerplate y semántica oculta | Dos roles canónicos: `suite` contenedor y `test` hoja; envelope sellado sin valor visible; helpers, fixtures y doubles como Tondo/stdlib ordinarios |
@@ -4094,7 +4091,7 @@ pública definitiva hasta ser fijados por la especificación estándar.
 | `R-043` | Permitir que código generado eluda coherencia o visibilidad | Impls imposibles de escribir manualmente y APIs con privilegios ocultos | Output Tondo ordinario, owner exacto, vista privada limitada, mismo typecheck y consulta de expansión/source map |
 | `R-044` | Optimizar codecs solo para benchmarks felices | Regresiones de allocation/latencia, DoS por inputs hostiles o semántica distinta entre SIMD/scalar | Oracle escalar, gates multidimensionales, corpus adversario, límites y equivalencia byte/error exacta por kernel |
 | `R-045` | Inferir Protobuf desde records o reflection | Field numbers inestables, presencia perdida y evolución wire incompatible | Schema-first desde `.proto` fijado, unknown fields preservados y checks de evolución en build time |
-| `R-046` | Usar el manifest inmutable del checkpoint como evidencia del draft vivo | El gate queda roto durante meses o se atribuyen casos antiguos a reglas nuevas | `CONF-LIVE-001`, selección explícita de linaje, requisitos pendientes honestos, ratchet por wave y `CONF-SEAL-001` después de T0/meta |
+| `R-046` | Usar el manifest bootstrap como evidencia del draft | El gate queda roto durante meses o se atribuyen casos antiguos a reglas nuevas | `CONF-DRAFT-001`, selección explícita del linaje draft, requisitos pendientes honestos, ratchet por wave y `CONF-SEAL-001` después de T0/meta |
 | `R-047` | Cerrar bloques enormes con una sola tarea umbrella | No se conoce el estado real por módulo y los fallos aparecen al final | Micro-gates verticales, modelo único de resultados y estado SPEC/IMPL/TEST/PERF/CONF/DOC por owner |
 | `R-048` | Usar la recursión del host como pila del parser | Un input válido o malicioso aborta antes del límite tipado en targets con stacks pequeños | Guarda portable temporal; `PARSER-STACK-001` migra toda profundidad controlada por fuente a frames explícitos y conserva solo presupuestos configurables |
 
@@ -4132,17 +4129,16 @@ gates en una barrera artificial.
 18. [x] Medir coverage y mutation score, cerrar huecos críticos y superar H0.
 19. [x] Ejecutar **STD-FOUNDATION-SPEC-001** y cerrar **DEC-012** sin fingir
     que las APIs de módulo o STD-0.1 completa ya están publicadas.
-20. [x] **Wave 0 — Evidencia viva.** `CONF-LIVE-001` y
-    `CONF-RATCHET-001` están cerrados; la revisión 2 del manifest vivo conserva
-    la revisión 1 bajo un parent content-addressed. El registro
+20. [x] **Wave 0 — Evidencia del draft.** `CONF-DRAFT-001` y
+    `CONF-RATCHET-001` están cerrados; el manifest draft es la única identidad
+    activa. El registro
     `testing/conformance-ratchet.json` fija hashes de manifest, inventario,
     matriz y quality baseline; no atribuye las capas pendientes como pass y el
     gate estricto lo valida en cada ejecución.
-21. [x] **Wave 1 — Formatos compartidos.** Implementar `META-FORMAT-001` con
-    parse/canonicalización/round-trip/rechazo de `/2`. El mini-gate queda
-    cerrado: manifest, lockfile, interface, artifact y descriptor estándar
-    evolucionan mediante un lector explícito sin tocar `/1`; los hashes del
-    checkpoint histórico permanecen intactos.
+21. [x] **Wave 1 — Formatos draft.** Implementar `META-FORMAT-001` con
+    parse/canonicalización/round-trip y rechazo de records no draft. El mini-gate
+    queda cerrado: manifest, lockfile, interface, artifact y descriptor estándar
+    usan una única forma draft; el corpus bootstrap permanece como regresión.
 22. [ ] **Wave 2 — Prerrequisitos y frontends, en paralelo.**
     - Base portable: cerrar `PARSER-STACK-001`; lexer y planes que no modifican
       descenso sintáctico pueden avanzar en paralelo, pero
@@ -4191,8 +4187,8 @@ gates en una barrera artificial.
       `UTEST-PLATFORM-001` y `UTEST-DOGFOOD-001`; después se cierra T0.
     - Unión final: `(META-CONF-001 + UTEST-CONF-001 + T0) →
       CONF-SEAL-001 → G5`.
-    Mini-gate: T0 y después G5 verdes sobre hashes actuales; el checkpoint
-    continúa idéntico.
+    Mini-gate: T0 y después G5 verdes sobre hashes actuales; la regresión
+    bootstrap queda separada de la conformidad del draft.
 25. [ ] **Wave 5 — STD-0.1A por layers.** Cerrar `STD-PERF-001` y el spec de
     cada owner antes de su implementación; ejecutar A1 valores/protocolos, A2
     host, A3 serialization/codecs y A4 helpers de testing, cerrando el
@@ -4217,8 +4213,8 @@ gates en una barrera artificial.
 Resumen topológico:
 
 ~~~text
-CONF-LIVE
-  -> FORMAT /2
+CONF-DRAFT
+  -> FORMAT draft
   -> {PARSER-STACK -> meta/test syntax
       meta prerequisites + meta frontend
       bytes + env + time + test plan/frontend + defer-await}
@@ -4231,9 +4227,9 @@ CONF-LIVE
   -> STD-0.1B implementation + REL-0.1-RC / S1
 ~~~
 
-M4, M5, M6, M7, M8, M9, el checkpoint M10, M10.5, M10.5b y Gates G4/H0
+M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
 quedan cerrados. Gate G5 está abierto únicamente por M10.7 y M10.6 dentro del
-draft no publicado. `CONF-LIVE-001` y `CONF-RATCHET-001` están cerrados; la
+draft no publicado. `CONF-DRAFT-001` y `CONF-RATCHET-001` están cerrados; la
 acción inmediata es `META-FORMAT-001`. `PARSER-STACK-001` se cierra en
 Wave 2 antes de añadir formas sintácticas. Ninguna tarea posterior necesita
 volver a decidir el orden global: sus prerequisitos están en 4.1.1 y en la wave
@@ -4243,6 +4239,19 @@ correspondiente.
 
 ## 25. Historial del tracker
 
+### 1.02 — 2026-07-31
+
+- Se elimina la confusión entre una línea de desarrollo y una versión publicada.
+  Tondo tiene un único draft activo; no existe una lane `/1` frente a otra
+  `/2`, ni un selector `checkpoint`/`live`, ni un segundo parser.
+- Los formatos actuales del toolchain, la identidad del compilador, el runner
+  de conformidad, la matriz y el ratchet usan el marcador `draft`. El corpus
+  bootstrap anterior queda solo como regresión reproducible y los documentos
+  históricos se conservan como arqueología, no como contratos seleccionables.
+- El inventario, el resultado del adaptador y el ratchet se regeneran contra
+  `conformance/draft/manifest.json`; la publicación de una primera versión
+  futura será una decisión posterior y no forma parte de este estado.
+
 ### 1.01 — 2026-07-30
 
 - Se cierra `META-FORMAT-001`. El nuevo módulo puro `toolchain` valida y
@@ -4250,9 +4259,9 @@ correspondiente.
   descriptor estándar `/1`; comprueba grafos runtime/meta, providers,
   generators, límites, paths, colisiones, hashes de contenido y
   `build_hash` antes de enumerar entradas.
-- `ProjectPlan::parse_v2` expone la frontera explícita sin modificar los
+- `ProjectPlanDraft::parse` expone la frontera explícita sin modificar los
   lectores `/1` ni el oráculo histórico. Se añade el contrato
-  `docs/contracts/toolchain-formats-v2.md` y cobertura unitaria de rechazo y
+  `docs/contracts/toolchain-formats-draft.md` y cobertura unitaria de rechazo y
   round-trip.
 - Wave 1 queda cerrada. La siguiente acción es `PARSER-STACK-001` en Wave 2;
   la sintaxis `derive` sigue bloqueada hasta disponer de una pila de parser
@@ -4266,24 +4275,25 @@ correspondiente.
 - El mini-gate valida inventario, matriz, quality baseline, linaje vivo e
   historial content-addressed; exige reports de coverage/mutation cuando hay
   case layers y registra `not-applicable` explícito en Wave 0.
-- La revisión 2 de `conformance/live/manifest.json` conserva la revisión 1
-  bajo `conformance/live/history/` y retira únicamente
-  `CONF-RATCHET-001` de las tareas pendientes.
+- La revisión 2 del antiguo manifest que entonces se denominaba `live` conserva
+  la revisión 1 bajo su directorio histórico y retira únicamente
+  `CONF-RATCHET-001` de las tareas pendientes. Es arqueología del tracker, no
+  una ruta que el toolchain actual pueda seleccionar.
 - El gate estricto ejecuta el ratchet en cada validación y la siguiente tarea
   pasa a ser `META-FORMAT-001`.
 
 ### 0.99 — 2026-07-30
 
-- Se cierra `CONF-LIVE-001` con selección obligatoria
-  `checkpoint`/`live`, snapshot verificable del tag `v0.1.0`, manifest vivo
+- Se cierra `CONF-DRAFT-001` con selección obligatoria entre el corpus
+  bootstrap y el draft, snapshot verificable del tag `v0.1.0`, manifest draft
   content-addressed y preflight de sellado no mutante.
 - Reliability hereda evidencia histórica solo cuando coinciden el ID estable y
   el hash exacto del requisito; las 27 reglas nuevas o modificadas permanecen
   `draft-pending` y una declaración de layer sin evidencia ejecutable no puede
   convertirlas en `covered`.
-- El gate valida ambos linajes sin fallback, conserva cada manifest vivo como
-  artefacto CI y prueba que la reproducción y ejecución de los 205 casos del
-  checkpoint no leen el spec vivo.
+- El gate validaba entonces ambos linajes sin fallback, conservaba cada
+  manifest como artefacto CI y probaba que la reproducción y ejecución de los
+  205 casos del corpus bootstrap no leían el spec draft.
 - `CONF-RATCHET-001` pasa a ser el siguiente nodo antes de
   `META-FORMAT-001`.
 
@@ -4301,8 +4311,8 @@ correspondiente.
 
 - Se reemplaza la cola serial por un DAG de ocho waves con prerequisitos,
   lanes paralelas y mini-gate de evidencia al finalizar cada unión.
-- `CONF-LIVE-001`/`CONF-RATCHET-001` separan el checkpoint inmutable de la
-  conformidad viva antes de tocar M10.7 o M10.6; `CONF-SEAL-001` queda como
+- `CONF-DRAFT-001`/`CONF-RATCHET-001` separan el corpus bootstrap inmutable de
+  la conformidad del draft antes de tocar M10.7 o M10.6; `CONF-SEAL-001` queda como
   unión explícita posterior a T0/META-CONF, evitando cerrar una tarea temprana
   con trabajo diferido hasta G5.
 - STD-0.1 adelanta únicamente `std.meta`, el contrato de `std.reflect`,

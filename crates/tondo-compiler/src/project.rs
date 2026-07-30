@@ -27,9 +27,9 @@ use crate::source::{
     SourceOrigin,
 };
 
-pub const MANIFEST_FORMAT: &str = "tondo-manifest-0.1/1";
-pub const LOCKFILE_FORMAT: &str = "tondo-lock-0.1/1";
-pub const PRIVILEGED_UNIT_FORMAT: &str = "tondo-privileged-unit-0.1/1";
+pub const MANIFEST_FORMAT: &str = "tondo-manifest-draft";
+pub const LOCKFILE_FORMAT: &str = "tondo-lock-draft";
+pub const PRIVILEGED_UNIT_FORMAT: &str = "tondo-privileged-unit-draft";
 pub const BOOTSTRAP_STANDARD_PACKAGE: &str = "toolchain:std:0.1-bootstrap";
 
 const BOOTSTRAP_STANDARD_FINGERPRINT: &[u8] =
@@ -240,15 +240,14 @@ impl ProjectPlan {
         Self::from_wire(manifest_bytes, lockfile_bytes, manifest, lockfile)
     }
 
-    /// Parses the explicit toolchain `/2` records without changing the
-    /// historical bootstrap `/1` plan above.  The returned plan is still
-    /// pure: it only validates supplied bytes and enumerates required inputs.
-    pub fn parse_v2(
+    /// Parses the current draft toolchain records. The returned plan is pure:
+    /// it only validates supplied bytes and enumerates required inputs.
+    pub fn parse_draft(
         manifest_bytes: &[u8],
         lockfile_bytes: &[u8],
         descriptor_bytes: &[u8],
-    ) -> Result<crate::toolchain::ProjectPlanV2, crate::toolchain::FormatError> {
-        crate::toolchain::ProjectPlanV2::parse(manifest_bytes, lockfile_bytes, descriptor_bytes)
+    ) -> Result<crate::toolchain::ProjectPlanDraft, crate::toolchain::FormatError> {
+        crate::toolchain::ProjectPlanDraft::parse(manifest_bytes, lockfile_bytes, descriptor_bytes)
     }
 
     pub fn manifest_hash(&self) -> &str {

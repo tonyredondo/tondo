@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tondo_conformance::lineage::{LIVE_LINEAGE_PATH, LiveLineage};
+use tondo_conformance::lineage::{DRAFT_LINEAGE_PATH, DraftLineage};
 use tondo_conformance::manifest::{ConformanceCase, LoadedSuite};
 
 use crate::inventory::Inventory;
@@ -119,14 +119,12 @@ pub fn build(root: &Path, inventory: &Inventory) -> Result<CoverageMatrix, Strin
         .map_err(|error| format!("TONDO_LANGUAGE_SPEC.md is not valid UTF-8: {error}"))?;
     let document_sha256 = sha256(&document_bytes);
     let inventory_sha256 = sha256(&canonical_json(inventory)?);
-    let lineage =
-        LiveLineage::load(root, Path::new(LIVE_LINEAGE_PATH)).map_err(|error| error.to_string())?;
-    let suite = lineage.checkpoint_suite();
-    let checkpoint_document =
-        std::str::from_utf8(lineage.checkpoint_specification()).map_err(|error| {
-            format!("checkpoint language specification is not valid UTF-8: {error}")
-        })?;
-    let checkpoint_requirements = extract_requirements(checkpoint_document)?
+    let lineage = DraftLineage::load(root, Path::new(DRAFT_LINEAGE_PATH))
+        .map_err(|error| error.to_string())?;
+    let suite = lineage.baseline_suite();
+    let baseline_document = std::str::from_utf8(lineage.baseline_specification())
+        .map_err(|error| format!("baseline language specification is not valid UTF-8: {error}"))?;
+    let baseline_requirements = extract_requirements(baseline_document)?
         .into_iter()
         .map(|requirement| (requirement.id, sha256(requirement.text.as_bytes())))
         .collect::<BTreeMap<_, _>>();
@@ -142,24 +140,24 @@ pub fn build(root: &Path, inventory: &Inventory) -> Result<CoverageMatrix, Strin
         .find(|requirement| !current_ids.contains(**requirement))
     {
         return Err(format!(
-            "live case layer names unknown requirement `{requirement}`"
+            "draft case layer names unknown requirement `{requirement}`"
         ));
     }
     let mut requirements = extracted
         .into_iter()
         .map(|item| {
             let claim = evidence.get(&item.id);
-            let inherited_unchanged = checkpoint_requirements
+            let inherited_unchanged = baseline_requirements
                 .get(&item.id)
                 .is_some_and(|hash| *hash == sha256(item.text.as_bytes()));
-            let implemented_live = implemented_requirements.contains(item.id.as_str());
+            let implemented_draft = implemented_requirements.contains(item.id.as_str());
             classify(
                 item,
                 &document_sha256,
                 suite,
                 claim,
                 inherited_unchanged,
-                implemented_live,
+                implemented_draft,
             )
         })
         .collect::<Vec<_>>();
@@ -408,7 +406,7 @@ fn classify(
     suite: &LoadedSuite,
     claim: Option<&EvidenceClaim>,
     inherited_unchanged: bool,
-    implemented_live: bool,
+    implemented_draft: bool,
 ) -> Requirement {
     let codes = diagnostic_codes(&extracted.text);
     let failure_cases = matching_cases(&suite.manifest().cases, &codes, false);
@@ -424,8 +422,8 @@ fn classify(
         extracted.line_start, extracted.heading_anchor
     );
     let (status, reason, evidence, dimensions) = if !inherited_unchanged {
-        if !implemented_live {
-            let reason = "The requirement is new or changed since the immutable checkpoint and no live case layer claims its implementation.";
+        if !implemented_draft {
+            let reason = "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.";
             (
                 "draft-pending",
                 reason,
@@ -435,12 +433,12 @@ fn classify(
         } else if let Some(claim) = claim {
             (
                 "covered",
-                "A live case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
+                "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
                 claim_evidence(claim),
                 claim.dimensions.clone(),
             )
         } else {
-            let reason = "A live case layer names this new or changed requirement, but no reviewed executable evidence claim covers it.";
+            let reason = "A draft case layer names this new or changed requirement, but no reviewed executable evidence claim covers it.";
             (
                 "toolchain-limit",
                 reason,
@@ -981,16 +979,16 @@ El compilador debe aceptar el caso.
     }
 
     #[test]
-    fn changed_live_requirements_cannot_inherit_checkpoint_evidence() {
+    fn changed_draft_requirements_cannot_inherit_baseline_evidence() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
             .unwrap();
-        let lineage = LiveLineage::load(root, LIVE_LINEAGE_PATH).unwrap();
+        let lineage = DraftLineage::load(root, DRAFT_LINEAGE_PATH).unwrap();
         let extracted = || ExtractedRequirement {
             id: "TL01-LIVE-R001".into(),
-            heading: "Live requirement".into(),
-            heading_anchor: "live-requirement".into(),
+            heading: "Draft requirement".into(),
+            heading_anchor: "draft-requirement".into(),
             line_start: 1,
             line_end: 1,
             text: "El compilador debe aceptar la forma viva.".into(),
@@ -1001,7 +999,7 @@ El compilador debe aceptar el caso.
         let pending = classify(
             extracted(),
             &document_sha256,
-            lineage.checkpoint_suite(),
+            lineage.baseline_suite(),
             None,
             false,
             false,
@@ -1011,7 +1009,7 @@ El compilador debe aceptar el caso.
         let declared_without_evidence = classify(
             extracted(),
             &document_sha256,
-            lineage.checkpoint_suite(),
+            lineage.baseline_suite(),
             None,
             false,
             true,
@@ -1030,7 +1028,7 @@ El compilador debe aceptar el caso.
         let covered = classify(
             extracted(),
             &document_sha256,
-            lineage.checkpoint_suite(),
+            lineage.baseline_suite(),
             Some(&claim),
             false,
             true,

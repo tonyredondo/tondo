@@ -9,10 +9,11 @@
 *.args-unix text eol=lf
 *.args-windows text eol=lf
 
-# Historical conformance packages and canonical manifests are byte-exact.
+# Bootstrap corpus, historical snapshots, and the active draft manifest are
+# byte-exact. The bootstrap path is retained only as regression evidence; it
+# is not a second language or release line.
 /TONDO_*_SPEC.md -text
 /conformance/0.1/** -text
-/conformance/checkpoints/** -text
-/conformance/live/*.json -text
-/conformance/live/history/** -text
+/conformance/baseline/** -text
+/conformance/draft/** -text
 /testing/*.json -text

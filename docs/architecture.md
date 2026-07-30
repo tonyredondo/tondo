@@ -1,9 +1,9 @@
 # Tondo compiler architecture
 
-**Status:** internal Tondo 0.1 implementation checkpoint
+**Status:** active architecture for the current unpublished Tondo 0.1 draft
 **Language baseline:** Tondo 0.1
 
-**Implementation version:** 0.1.0
+**Implementation line:** draft
 
 This document defines implementation boundaries and phase invariants. It is not
 a source-language specification. If this document and the language

@@ -1,10 +1,10 @@
-//! Validated toolchain format `0.1/2`.
+//! Validated toolchain records for the unpublished Tondo draft.
 //!
-//! The bootstrap compiler still owns the historical `/1` reader in
-//! [`crate::project`] and [`crate::artifact`].  This module is the explicit
-//! reader for the draft `/2` contracts: it has no filesystem, process, or
-//! generation side effects and can therefore be used by a closed orchestrator
-//! before any source is lexed.
+//! This module is the single current reader for the draft contracts. It has no
+//! filesystem, process, or generation side effects and can therefore be used by
+//! a closed orchestrator before any source is lexed. Git history preserves old
+//! record shapes when they are useful for regression archaeology; they are not
+//! accepted as a second active language or toolchain version.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -17,13 +17,13 @@ use crate::artifact::{CAPABILITY_REGISTRY, COMPILER_ID, validate_sha256};
 use crate::package::{Name, PackageId};
 use crate::source::{LogicalPath, ModulePath};
 
-pub const MANIFEST_FORMAT: &str = "tondo-manifest-0.1/2";
-pub const LOCKFILE_FORMAT: &str = "tondo-lock-0.1/2";
-pub const INTERFACE_FORMAT: &str = "tondo-interface-0.1/2";
-pub const ARTIFACT_FORMAT: &str = "tondo-artifact-0.1/2";
-pub const STANDARD_DESCRIPTOR_FORMAT: &str = "tondo-standard-descriptor-0.1/1";
-pub const PRIVILEGED_UNIT_FORMAT: &str = "tondo-privileged-unit-0.1/1";
-pub const META_MODEL: &str = "tondo-meta-model-0.1/1";
+pub const MANIFEST_FORMAT: &str = "tondo-manifest-draft";
+pub const LOCKFILE_FORMAT: &str = "tondo-lock-draft";
+pub const INTERFACE_FORMAT: &str = "tondo-interface-draft";
+pub const ARTIFACT_FORMAT: &str = "tondo-artifact-draft";
+pub const STANDARD_DESCRIPTOR_FORMAT: &str = "tondo-standard-descriptor-draft";
+pub const PRIVILEGED_UNIT_FORMAT: &str = "tondo-privileged-unit-draft";
+pub const META_MODEL: &str = "tondo-meta-model-draft";
 pub const META_TARGET: &str = "tondo-meta";
 pub const META_PROFILE: &str = "meta";
 
@@ -2507,13 +2507,13 @@ impl RequiredInputKind {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct RequiredInputV2 {
+pub struct RequiredInput {
     path: String,
     kind: RequiredInputKind,
     sha256: String,
 }
 
-impl RequiredInputV2 {
+impl RequiredInput {
     pub fn path(&self) -> &str {
         &self.path
     }
@@ -2525,19 +2525,19 @@ impl RequiredInputV2 {
     }
 }
 
-/// Pure result of parsing the three `/2` project records.  It deliberately
+/// Pure result of parsing the three current draft project records. It deliberately
 /// does not open paths, compile providers, or perform generation.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectPlanV2 {
+pub struct ProjectPlanDraft {
     manifest_hash: String,
     lockfile_hash: String,
     manifest: Manifest,
     lockfile: Lockfile,
     descriptor: StandardDescriptor,
-    required_inputs: Vec<RequiredInputV2>,
+    required_inputs: Vec<RequiredInput>,
 }
 
-impl ProjectPlanV2 {
+impl ProjectPlanDraft {
     pub fn parse(
         manifest_bytes: &[u8],
         lockfile_bytes: &[u8],
@@ -2571,7 +2571,7 @@ impl ProjectPlanV2 {
                         source.physical_path
                     ))
                 })?;
-            required_inputs.push(RequiredInputV2 {
+            required_inputs.push(RequiredInput {
                 path: source.physical_path,
                 kind: RequiredInputKind::Source,
                 sha256: locked.sha256.clone(),
@@ -2582,7 +2582,7 @@ impl ProjectPlanV2 {
         // missing packages, so all declared meta sources are deterministic.
         for package in &lockfile.meta_packages {
             for source in &package.sources {
-                required_inputs.push(RequiredInputV2 {
+                required_inputs.push(RequiredInput {
                     path: source.physical_path.clone(),
                     kind: RequiredInputKind::MetaSource,
                     sha256: source.sha256.clone(),
@@ -2595,7 +2595,7 @@ impl ProjectPlanV2 {
                 .iter()
                 .find(|v| v.name == input.name)
                 .unwrap();
-            required_inputs.push(RequiredInputV2 {
+            required_inputs.push(RequiredInput {
                 path: input.path.clone(),
                 kind: RequiredInputKind::GeneratorInput,
                 sha256: locked.sha256.clone(),
@@ -2607,7 +2607,7 @@ impl ProjectPlanV2 {
                 .iter()
                 .find(|v| v.name == input.name)
                 .unwrap();
-            required_inputs.push(RequiredInputV2 {
+            required_inputs.push(RequiredInput {
                 path: input.path.clone(),
                 kind: RequiredInputKind::PrivilegedUnit,
                 sha256: locked.sha256.clone(),
@@ -2649,7 +2649,7 @@ impl ProjectPlanV2 {
     pub fn descriptor(&self) -> &StandardDescriptor {
         &self.descriptor
     }
-    pub fn required_inputs(&self) -> &[RequiredInputV2] {
+    pub fn required_inputs(&self) -> &[RequiredInput] {
         &self.required_inputs
     }
 }
@@ -2688,7 +2688,7 @@ mod tests {
                 source: "app/src/main.to".into(),
                 form: "module".into(),
             },
-            standard: "toolchain:std:0.1.0".into(),
+            standard: "toolchain:std:draft".into(),
             meta_packages: vec![],
             packages: vec![Package {
                 id: "workspace:app@1".into(),
@@ -2716,11 +2716,11 @@ mod tests {
         StandardDescriptor {
             format: STANDARD_DESCRIPTOR_FORMAT.into(),
             runtime: StandardRef {
-                package_id: "toolchain:std:0.1.0".into(),
+                package_id: "toolchain:std:draft".into(),
                 content_hash: sha256(b"std"),
             },
             meta: StandardRef {
-                package_id: "toolchain:std-meta:0.1.0".into(),
+                package_id: "toolchain:std-meta:draft".into(),
                 content_hash: sha256(b"meta"),
             },
             derive_providers: vec![],
@@ -2763,14 +2763,15 @@ mod tests {
     }
 
     #[test]
-    fn v2_plan_round_trips_without_touching_v1() {
+    fn draft_plan_round_trips() {
         let manifest = manifest();
         let manifest_bytes = manifest.encode().unwrap();
         let lock = lock(&manifest_bytes);
         let lock_bytes = lock.encode().unwrap();
         let descriptor = descriptor();
         let descriptor_bytes = descriptor.encode().unwrap();
-        let plan = ProjectPlanV2::parse(&manifest_bytes, &lock_bytes, &descriptor_bytes).unwrap();
+        let plan =
+            ProjectPlanDraft::parse(&manifest_bytes, &lock_bytes, &descriptor_bytes).unwrap();
         assert_eq!(plan.required_inputs()[0].path(), "app/src/main.to");
         assert_eq!(plan.required_inputs()[0].kind(), RequiredInputKind::Source);
         assert_eq!(Manifest::decode(&manifest_bytes).unwrap(), manifest);

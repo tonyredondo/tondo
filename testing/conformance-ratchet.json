@@ -1,24 +1,24 @@
 {
   "format": "tondo-conformance-ratchet/1",
-  "lineage": "tondo-0.1-live",
-  "revision": 3,
+  "lineage": "tondo-draft",
+  "revision": 1,
   "manifest": {
-    "path": "conformance/live/manifest.json",
-    "sha256": "ecbcefb0b38ee41c323bbbe09c6ef7225db35009b607c254cdf191af1194eae9"
+    "path": "conformance/draft/manifest.json",
+    "sha256": "ae376bfa0eac9036342f9af548af0348c55dc1d315ac703c817bbdf1bd8b2bc9"
   },
   "inventory": {
     "path": "testing/inventory.json",
-    "sha256": "6efdb8ee7b1e0df04cd3b40d4c55530a45829cffa9672921d80eed7709a9a757"
+    "sha256": "3417818959e807bc7c9d4523816ef20f0cadf6f696542d270923d1481f66e3df"
   },
   "matrix": {
     "path": "testing/coverage-matrix.json",
-    "sha256": "a83e5a810cad9709f89612f542f9ce73721bef1f457840ef5d7635eed7adc420"
+    "sha256": "bf480d72feeb3a9653abb164b4079a26a914c7780acf028f7b32e9023f64c06e"
   },
   "quality_baseline": {
     "path": "testing/quality-baseline.json",
     "sha256": "0066620771c25f3f374a24efadb386c40d44321d2fa70a9c783f9f404bb07490"
   },
-  "live_case_layers": 0,
+  "draft_case_layers": 0,
   "pending_tasks": [
     "M10.6",
     "M10.7",
@@ -26,12 +26,12 @@
   ],
   "coverage": {
     "status": "not-applicable",
-    "reason": "no executable live case layer requires a coverage report",
+    "reason": "no executable draft case layer requires a coverage report",
     "report_sha256": null
   },
   "mutation": {
     "status": "not-applicable",
-    "reason": "no executable live case layer requires a mutation report",
+    "reason": "no executable draft case layer requires a mutation report",
     "report_sha256": null
   }
 }

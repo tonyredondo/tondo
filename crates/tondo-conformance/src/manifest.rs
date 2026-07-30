@@ -362,8 +362,8 @@ fn validate_manifest(manifest: &SuiteManifest) -> Result<(), ManifestError> {
     if manifest.suite != SUITE_NAME {
         return invalid(format!("unsupported suite `{}`", manifest.suite));
     }
-    if manifest.version != "0.1.0" {
-        return invalid(format!("unsupported suite version `{}`", manifest.version));
+    if manifest.version != "draft" {
+        return invalid(format!("unsupported suite state `{}`", manifest.version));
     }
     if manifest.edition != "0.1" {
         return invalid(format!(
@@ -405,13 +405,13 @@ fn validate_manifest(manifest: &SuiteManifest) -> Result<(), ManifestError> {
     for case in &manifest.cases {
         validate_case(case, &manifest.registry, &target_profiles)?;
     }
-    validate_release_contract(manifest)?;
+    validate_draft_contract(manifest)?;
     Ok(())
 }
 
-fn validate_release_contract(manifest: &SuiteManifest) -> Result<(), ManifestError> {
+fn validate_draft_contract(manifest: &SuiteManifest) -> Result<(), ManifestError> {
     let [target] = manifest.targets.as_slice() else {
-        return invalid("Tondo 0.1 must declare exactly one release target");
+        return invalid("the draft must declare exactly one conformance target");
     };
     if target.name != "tondo-vm-hosted"
         || target.profile != "hosted"
@@ -421,9 +421,7 @@ fn validate_release_contract(manifest: &SuiteManifest) -> Result<(), ManifestErr
             .map(String::as_str)
             .ne(["console", "process"])
     {
-        return invalid(
-            "Tondo 0.1 release target must be tondo-vm-hosted/hosted with [console, process]",
-        );
+        return invalid("the draft target must be tondo-vm-hosted/hosted with [console, process]");
     }
 
     let groups = manifest
@@ -444,7 +442,7 @@ fn validate_release_contract(manifest: &SuiteManifest) -> Result<(), ManifestErr
         CaseGroup::Documentation,
     ] {
         if !groups.contains(&group) {
-            return invalid(format!("release suite has no {group:?} cases"));
+            return invalid(format!("draft suite has no {group:?} cases"));
         }
     }
 
@@ -471,7 +469,7 @@ fn validate_release_contract(manifest: &SuiteManifest) -> Result<(), ManifestErr
     ] {
         if !requirements.contains(requirement) {
             return invalid(format!(
-                "release suite has no case for requirement `{requirement}`"
+                "draft suite has no case for requirement `{requirement}`"
             ));
         }
     }
@@ -488,17 +486,15 @@ fn validate_release_contract(manifest: &SuiteManifest) -> Result<(), ManifestErr
         .collect::<BTreeSet<_>>();
     for code in &manifest.registry.errors {
         if !covered.contains(code.as_str()) {
-            return invalid(format!("release suite does not cover `{code}`"));
+            return invalid(format!("draft suite does not cover `{code}`"));
         }
         if !positive.contains(code.as_str()) {
-            return invalid(format!(
-                "release suite has no positive neighbor for `{code}`"
-            ));
+            return invalid(format!("draft suite has no positive neighbor for `{code}`"));
         }
     }
     for code in &manifest.registry.panics {
         if !covered.contains(code.as_str()) {
-            return invalid(format!("release suite does not cover `{code}`"));
+            return invalid(format!("draft suite does not cover `{code}`"));
         }
     }
 
@@ -611,7 +607,7 @@ fn validate_release_contract(manifest: &SuiteManifest) -> Result<(), ManifestErr
         }
     }
     if omitted_capabilities != target.capabilities.iter().cloned().collect::<BTreeSet<_>>() {
-        return invalid("release suite does not prove every absent capability boundary");
+        return invalid("draft suite does not prove every absent capability boundary");
     }
     if memory_scenarios
         != [
@@ -629,13 +625,13 @@ fn validate_release_contract(manifest: &SuiteManifest) -> Result<(), ManifestErr
             .count()
             != 4
     {
-        return invalid("release suite must contain each private memory scenario exactly once");
+        return invalid("draft suite must contain each private memory scenario exactly once");
     }
     if determinism_cases != 1 {
-        return invalid("release suite must contain exactly one closed-project determinism case");
+        return invalid("draft suite must contain exactly one closed-project determinism case");
     }
     if documentation_cases != 1 {
-        return invalid("release suite must contain exactly one normative documentation case");
+        return invalid("draft suite must contain exactly one normative documentation case");
     }
     if !manifest.cases.iter().any(|case| {
         case.group == CaseGroup::LexParseFormat
@@ -647,7 +643,7 @@ fn validate_release_contract(manifest: &SuiteManifest) -> Result<(), ManifestErr
                 })
             )
     }) {
-        return invalid("release suite has no formatter case");
+        return invalid("draft suite has no formatter case");
     }
     Ok(())
 }
@@ -1060,7 +1056,7 @@ mod tests {
         SuiteManifest {
             format: SUITE_FORMAT.into(),
             suite: SUITE_NAME.into(),
-            version: "0.1.0".into(),
+            version: "draft".into(),
             edition: "0.1".into(),
             adapter_protocol: ADAPTER_PROTOCOL.into(),
             specification: pinned("spec.md"),
@@ -1362,15 +1358,15 @@ mod tests {
     }
 
     #[test]
-    fn checkpoint_suite_accessors_preserve_loaded_identity() {
-        use crate::lineage::LiveLineage;
+    fn baseline_suite_accessors_preserve_loaded_identity() {
+        use crate::lineage::DraftLineage;
 
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()
             .and_then(Path::parent)
             .unwrap();
-        let lineage = LiveLineage::load(root, "conformance/live/manifest.json").unwrap();
-        let suite = lineage.checkpoint_suite();
+        let lineage = DraftLineage::load(root, "conformance/draft/manifest.json").unwrap();
+        let suite = lineage.baseline_suite();
         assert_eq!(suite.root(), root);
         assert_eq!(
             suite.manifest_path(),
@@ -1389,7 +1385,7 @@ mod tests {
         let overrides = BTreeMap::from([
             (
                 "TONDO_LANGUAGE_SPEC.md".into(),
-                lineage.checkpoint_specification().to_vec(),
+                lineage.baseline_specification().to_vec(),
             ),
             ("unreferenced.txt".into(), b"not part of the suite".to_vec()),
         ]);

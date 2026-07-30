@@ -3,17 +3,17 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use tondo_conformance::lineage::LiveLineage;
+use tondo_conformance::lineage::DraftLineage;
 use tondo_conformance::manifest::CaseGroup;
 use tondo_conformance::runner::{ProcessAdapter, run_suite};
 
 const USAGE: &str = "\
-Tondo 0.1 conformance runner
+Tondo draft conformance runner
 
 Usage:
-  tondo-conformance validate --root <directory> --manifest <live-path> --lineage <checkpoint|live>
-  tondo-conformance run --root <directory> --manifest <live-path> --lineage checkpoint --adapter <executable> [--group <group>] [--output <path>]
-  tondo-conformance seal --root <directory> --manifest <live-path> --lineage live
+  tondo-conformance validate --root <directory> --manifest <draft-path> --lineage draft
+  tondo-conformance run --root <directory> --manifest <draft-path> --lineage draft --adapter <executable> [--group <group>] [--output <path>]
+  tondo-conformance seal --root <directory> --manifest <draft-path> --lineage draft
 
 Groups:
   lex-parse-format, compile-pass, compile-fail, semantic-queries, runtime,
@@ -60,45 +60,28 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
     let root = root.ok_or_else(|| "`--root` is required".to_owned())?;
     let manifest = manifest.ok_or_else(|| "`--manifest` is required".to_owned())?;
     let selection = lineage.ok_or_else(|| "`--lineage` is required".to_owned())?;
-    let lineage = LiveLineage::load(root, manifest).map_err(|error| error.to_string())?;
+    let lineage = DraftLineage::load(root, manifest).map_err(|error| error.to_string())?;
     match command.as_str() {
         "validate" => {
             if adapter.is_some() || group.is_some() || output.is_some() {
                 return Err("validate accepts only --root, --manifest, and --lineage".into());
             }
-            match selection {
-                LineageSelection::Checkpoint => {
-                    let suite = lineage.checkpoint_suite();
-                    println!(
-                        "{} {} {}",
-                        suite.manifest().suite,
-                        suite.manifest().version,
-                        suite.manifest_sha256()
-                    );
-                }
-                LineageSelection::Live => {
-                    println!(
-                        "{} {} {} {} {}",
-                        lineage.manifest().lineage,
-                        lineage.manifest().edition,
-                        lineage.manifest().state,
-                        lineage.manifest().revision,
-                        lineage.manifest_sha256()
-                    );
-                }
-            }
+            let _ = selection;
+            println!(
+                "{} {} {} {} {}",
+                lineage.manifest().lineage,
+                lineage.manifest().edition,
+                lineage.manifest().state,
+                lineage.manifest().revision,
+                lineage.manifest_sha256()
+            );
             Ok(())
         }
         "run" => {
-            if selection != LineageSelection::Checkpoint {
-                return Err(
-                    "run accepts only the checkpoint lineage until a live case layer exists".into(),
-                );
-            }
             let adapter =
                 adapter.ok_or_else(|| "`--adapter` is required for the run command".to_owned())?;
             let mut adapter = ProcessAdapter::spawn(adapter)?;
-            let result = run_suite(lineage.checkpoint_suite(), &mut adapter, group)
+            let result = run_suite(lineage.baseline_suite(), &mut adapter, group)
                 .map_err(|error| error.to_string())?;
             let encoded = serde_json::to_vec(&result)
                 .map_err(|error| format!("cannot encode result: {error}"))?;
@@ -111,9 +94,6 @@ fn run(arguments: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         "seal" => {
-            if selection != LineageSelection::Live {
-                return Err("seal requires `--lineage live`".into());
-            }
             if adapter.is_some() || group.is_some() || output.is_some() {
                 return Err("seal accepts only --root, --manifest, and --lineage".into());
             }
@@ -141,14 +121,12 @@ fn set_once<T>(slot: &mut Option<T>, value: T, name: &str) -> Result<(), String>
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LineageSelection {
-    Checkpoint,
-    Live,
+    Draft,
 }
 
 fn parse_lineage(value: &str) -> Result<LineageSelection, String> {
     match value {
-        "checkpoint" => Ok(LineageSelection::Checkpoint),
-        "live" => Ok(LineageSelection::Live),
+        "draft" => Ok(LineageSelection::Draft),
         _ => Err(format!("unknown lineage `{value}`")),
     }
 }
@@ -182,9 +160,9 @@ mod tests {
                 .display()
                 .to_string(),
             "--manifest".into(),
-            "conformance/live/manifest.json".into(),
+            "conformance/draft/manifest.json".into(),
             "--lineage".into(),
-            "checkpoint".into(),
+            "draft".into(),
         ]
     }
 
@@ -253,12 +231,7 @@ mod tests {
                 .contains("unknown command `other`")
         );
 
-        let mut live = suite_arguments("validate");
-        *live.last_mut().unwrap() = "live".into();
-        assert!(run(live).is_ok());
-
-        let mut seal = suite_arguments("seal");
-        *seal.last_mut().unwrap() = "live".into();
+        let seal = suite_arguments("seal");
         assert!(
             run(seal)
                 .unwrap_err()

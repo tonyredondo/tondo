@@ -1,9 +1,8 @@
 # Tondo Toolchain 0.1
 
-**Estado:** borrador normativo de la primera versión; el perfil bootstrap
-implementado es un checkpoint interno, no una publicación
+**Estado:** borrador normativo en desarrollo; Tondo todavía no se ha publicado
 
-**Versión:** `tondo-toolchain-0.1/2`
+**Versión:** `tondo-toolchain-draft`
 
 **Especificación de lenguaje:** [Tondo 0.1](./TONDO_LANGUAGE_SPEC.md)
 
@@ -15,10 +14,11 @@ compiladas, metadatos de artefacto y unidades privilegiadas. No modifica la
 sintaxis ni la semántica de un archivo `.to`.
 
 Las palabras **debe**, **no debe**, **puede** y **error** son normativas para el
-toolchain de la primera versión. La resolución de versiones, descarga de
+toolchain del draft. La resolución de versiones, descarga de
 paquetes y una ABI nativa general permanecen fuera de este contrato. La
 generación hermética en compile time sí forma parte de él; su implementación se
-rastrea separadamente del checkpoint bootstrap ya disponible.
+rastrea dentro de la misma línea de desarrollo; no existe todavía una promesa
+de compatibilidad entre releases.
 
 ## 1. Objetivos
 
@@ -49,12 +49,12 @@ archivos, y `check`/`run` no adquieren esta excepción acotada.
 
 Los formatos persistentes de este documento utilizan UTF-8 JSON:
 
-- manifiesto: `tondo-manifest-0.1/2`;
-- lockfile: `tondo-lock-0.1/2`;
-- interfaz: `tondo-interface-0.1/2`;
-- artefacto: `tondo-artifact-0.1/2`;
-- descriptor estándar: `tondo-standard-descriptor-0.1/1`;
-- unidad privilegiada: `tondo-privileged-unit-0.1/1`.
+- manifiesto: `tondo-manifest-draft`;
+- lockfile: `tondo-lock-draft`;
+- interfaz: `tondo-interface-draft`;
+- artefacto: `tondo-artifact-draft`;
+- descriptor estándar: `tondo-standard-descriptor-draft`;
+- unidad privilegiada: `tondo-privileged-unit-draft`.
 
 Un lector rechaza campos desconocidos. El manifiesto y el lockfile no necesitan
 una representación JSON canónica, pero sus bytes exactos participan en los
@@ -126,11 +126,11 @@ con su nombre local y resuelven a un `PackageId` exacto.
 
 ~~~json
 {
-  "format": "tondo-manifest-0.1/2",
+  "format": "tondo-manifest-draft",
   "target": {
     "name": "tondo-vm-hosted",
     "profile": "hosted",
-    "capability_registry": "tondo-capabilities/1",
+    "capability_registry": "tondo-capabilities-draft",
     "capabilities": ["console", "process"],
     "features": ["fast"]
   },
@@ -139,7 +139,7 @@ con su nombre local y resuelven a un `PackageId` exacto.
     "source": "app/src/main.to",
     "form": "module"
   },
-  "standard": "toolchain:std:0.1.0",
+  "standard": "toolchain:std:draft",
   "meta_packages": [],
   "packages": [
     {
@@ -173,10 +173,10 @@ con su nombre local y resuelven a un `PackageId` exacto.
       "id": "models",
       "owner_package": "workspace:app@1",
       "provider": {
-        "package": "toolchain:std-meta:0.1.0",
+        "package": "toolchain:std-meta:draft",
         "entry": "schema.generateModels"
       },
-      "meta_model": "tondo-meta-model-0.1/1",
+      "meta_model": "tondo-meta-model-draft",
       "inputs": ["schema"],
       "model_roots": [],
       "outputs": [
@@ -245,7 +245,7 @@ Su forma es:
     "package": "workspace:domain-meta@1",
     "entry": "validation.expand"
   },
-  "meta_model": "tondo-meta-model-0.1/1",
+  "meta_model": "tondo-meta-model-draft",
   "limits": {
     "steps": 1000000,
     "memory_bytes": 16777216,
@@ -264,7 +264,7 @@ el request conserva por separado los argumentos concretos escritos.
 
 ### 3.2 Target
 
-El registro inicial es `tondo-capabilities/1` y contiene exactamente:
+El registro inicial es `tondo-capabilities-draft` y contiene exactamente:
 
 ~~~text
 clock
@@ -324,15 +324,15 @@ Cada paquete declara:
 - uno o más source sets.
 
 El paquete estándar es propiedad del toolchain y no aparece en `packages`. La
-distribución de referencia candidata para la primera versión utiliza:
+distribución actual del draft utiliza:
 
 ~~~text
-PackageId = toolchain:std:0.1.0
+PackageId = toolchain:std:draft
 ~~~
 
-El checkpoint de manifest `/1` utilizaba
-`toolchain:std:0.1-bootstrap`; esos bytes siguen siendo reproducibles, pero un
-lector `/2` no los reinterpreta como la identidad anterior.
+El corpus bootstrap de regresión utiliza `toolchain:std:0.1-bootstrap`. Es una
+entrada de prueba heredada y no una segunda edición del toolchain; el lector
+actual nunca acepta un formato alternativo por compatibilidad implícita.
 
 El grafo resultante debe ser cerrado y acíclico. Toda dependencia debe existir
 en `packages`; no hay búsqueda por nombre, directorio ni registry durante la
@@ -355,13 +355,13 @@ inaccesible desde algún `provider.package` se rechaza como input sobrante.
 
 La distribución runtime seleccionada por `standard` declara en su descriptor un
 único paquete estándar meta compatible. Para
-`toolchain:std:0.1.0` es:
+`toolchain:std:draft` es:
 
 ~~~text
-PackageId = toolchain:std-meta:0.1.0
+PackageId = toolchain:std-meta:draft
 ~~~
 
-El descriptor `tondo-standard-descriptor-0.1/1` forma parte de los bytes
+El descriptor `tondo-standard-descriptor-draft` forma parte de los bytes
 cubiertos por el `content_hash` runtime. Contiene exactamente el PackageId y
 content hash del companion meta y el registro ordenado de providers estándar;
 cada entrada conserva identidad de trait, PackageId/entry del provider, versión
@@ -377,13 +377,13 @@ La codificación concreta del descriptor es compacta y con campos en este orden:
 
 ~~~json
 {
-  "format": "tondo-standard-descriptor-0.1/1",
+  "format": "tondo-standard-descriptor-draft",
   "runtime": {
-    "package_id": "toolchain:std:0.1.0",
+    "package_id": "toolchain:std:draft",
     "content_hash": "sha256:..."
   },
   "meta": {
-    "package_id": "toolchain:std-meta:0.1.0",
+    "package_id": "toolchain:std-meta:draft",
     "content_hash": "sha256:..."
   },
   "derive_providers": []
@@ -391,8 +391,8 @@ La codificación concreta del descriptor es compacta y con campos en este orden:
 ~~~
 
 Cada elemento de `derive_providers` usa la misma forma expandida del lockfile y
-debe llevar `origin: "standard"`. El lector `/2` expone este contrato como
-`StandardDescriptor`; `ProjectPlanV2::parse` exige que `standard`, `meta_standard`
+debe llevar `origin: "standard"`. El lector actual expone este contrato como
+`StandardDescriptor`; `ProjectPlanDraft::parse` exige que `standard`, `meta_standard`
 y todos los providers estándar del lockfile coincidan con él antes de enumerar
 fuentes.
 
@@ -457,14 +457,14 @@ lógicos distintos y sus declaraciones no colisionan.
 
 ~~~json
 {
-  "format": "tondo-lock-0.1/2",
+  "format": "tondo-lock-draft",
   "manifest_hash": "sha256:...",
   "standard": {
-    "package_id": "toolchain:std:0.1.0",
+    "package_id": "toolchain:std:draft",
     "content_hash": "sha256:..."
   },
   "meta_standard": {
-    "package_id": "toolchain:std-meta:0.1.0",
+    "package_id": "toolchain:std-meta:draft",
     "content_hash": "sha256:..."
   },
   "packages": [
@@ -495,9 +495,9 @@ lógicos distintos y sus declaraciones no colisionan.
     {
       "id": "models",
       "owner_package": "workspace:app@1",
-      "provider_package": "toolchain:std-meta:0.1.0",
+      "provider_package": "toolchain:std-meta:draft",
       "entry": "schema.generateModels",
-      "meta_model": "tondo-meta-model-0.1/1",
+      "meta_model": "tondo-meta-model-draft",
       "provider_hash": "sha256:...",
       "inputs": ["schema"],
       "model_roots": [],
@@ -517,12 +517,12 @@ lógicos distintos y sus declaraciones no colisionan.
   "derive_providers": [
     {
       "origin": "standard",
-      "trait_package": "toolchain:std:0.1.0",
+      "trait_package": "toolchain:std:draft",
       "trait_module": "serialization",
       "trait_name": "Serialize",
-      "provider_package": "toolchain:std-meta:0.1.0",
+      "provider_package": "toolchain:std-meta:draft",
       "entry": "serialization.deriveSerialize",
-      "meta_model": "tondo-meta-model-0.1/1",
+      "meta_model": "tondo-meta-model-draft",
       "provider_hash": "sha256:...",
       "limits": {
         "steps": 1000000,
@@ -532,12 +532,12 @@ lógicos distintos y sus declaraciones no colisionan.
     },
     {
       "origin": "standard",
-      "trait_package": "toolchain:std:0.1.0",
+      "trait_package": "toolchain:std:draft",
       "trait_module": "serialization",
       "trait_name": "Deserialize",
-      "provider_package": "toolchain:std-meta:0.1.0",
+      "provider_package": "toolchain:std-meta:draft",
       "entry": "serialization.deriveDeserialize",
-      "meta_model": "tondo-meta-model-0.1/1",
+      "meta_model": "tondo-meta-model-draft",
       "provider_hash": "sha256:...",
       "limits": {
         "steps": 1000000,
@@ -618,7 +618,7 @@ conservan `physical_path`, `logical_path`, `module`, `sha256`. Runtime y meta no
 comparten un hash aunque sus bytes fuente coincidieran.
 
 Los paquetes estándar runtime y meta utilizan los fingerprints fijados por la
-distribución candidata seleccionada. Un hash distinto en cualquiera se rechaza.
+distribución actual del draft. Un hash distinto en cualquiera se rechaza.
 
 `provider_hash` identifica el programa meta exacto que se ejecutará. Para un
 provider compilado desde un paquete del grafo es el hash canónico de su artefacto
@@ -689,7 +689,7 @@ fn expandDerive(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error
 ~~~
 
 `GenerateRequest` contiene la clausura pública de `model_roots` codificada como
-`tondo-meta-model-0.1/1`, los inputs declarados por nombre, la lista cerrada de
+`tondo-meta-model-draft`, los inputs declarados por nombre, la lista cerrada de
 outputs y los límites. Una lista de roots vacía no incluye declaraciones.
 `DeriveRequest` contiene los roots implícitos del trait y target, la declaración
 `derive` y la vista privada limitada del único target autorizado. Los tipos son
@@ -775,16 +775,16 @@ layout, no fija name mangling y no promete una ABI.
 
 ~~~json
 {
-  "format": "tondo-interface-0.1/2",
-  "compiler": "tondo-bootstrap/0.1.0",
+  "format": "tondo-interface-draft",
+  "compiler": "tondo-bootstrap/draft",
   "edition": "0.1",
   "package_id": "registry:util@2#sha256-content",
   "target": "tondo-vm-hosted",
   "profile": "hosted",
-  "capability_registry": "tondo-capabilities/1",
+  "capability_registry": "tondo-capabilities-draft",
   "capabilities": ["console", "process"],
   "features": ["fast"],
-  "meta_model": "tondo-meta-model-0.1/1",
+  "meta_model": "tondo-meta-model-draft",
   "source_sets": ["@30:registry:util@2#sha256-content#common"],
   "modules": ["util"],
   "generation_hash": "sha256:...",
@@ -844,17 +844,17 @@ Una discrepancia nunca intenta enlazar “por parecido” ni cae a búsqueda nom
 
 ~~~json
 {
-  "format": "tondo-artifact-0.1/2",
-  "compiler": "tondo-bootstrap/0.1.0",
+  "format": "tondo-artifact-draft",
+  "compiler": "tondo-bootstrap/draft",
   "edition": "0.1",
   "source_form": "module",
   "package_id": "workspace:app@1",
   "target": "tondo-vm-hosted",
   "profile": "hosted",
-  "capability_registry": "tondo-capabilities/1",
+  "capability_registry": "tondo-capabilities-draft",
   "capabilities": ["console", "process"],
   "features": ["fast"],
-  "meta_model": "tondo-meta-model-0.1/1",
+  "meta_model": "tondo-meta-model-draft",
   "source_sets": [
     "@15:workspace:app@1#common"
   ],
@@ -868,7 +868,7 @@ Una discrepancia nunca intenta enlazar “por parecido” ni cae a búsqueda nom
     {
       "kind": "generator",
       "id": "models",
-      "provider_package": "toolchain:std-meta:0.1.0",
+      "provider_package": "toolchain:std-meta:draft",
       "provider_hash": "sha256:...",
       "entry": "schema.generateModels",
       "model_roots": [],
@@ -939,13 +939,13 @@ roots, threads y unwind.
 
 ~~~json
 {
-  "format": "tondo-privileged-unit-0.1/1",
+  "format": "tondo-privileged-unit-draft",
   "id": "vendor.native",
   "provider": "registry:vendor-native@1#sha256-content",
-  "compiler": "tondo-bootstrap/0.1.0",
+  "compiler": "tondo-bootstrap/draft",
   "target": "tondo-vm-hosted",
   "profile": "hosted",
-  "capability_registry": "tondo-capabilities/1",
+  "capability_registry": "tondo-capabilities-draft",
   "required_capabilities": ["process"],
   "bindings": [
     {

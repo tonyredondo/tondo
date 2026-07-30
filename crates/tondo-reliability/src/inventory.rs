@@ -6,7 +6,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tondo_conformance::document::extract_fences;
-use tondo_conformance::lineage::{LIVE_LINEAGE_PATH, LiveLineage};
+use tondo_conformance::lineage::{DRAFT_LINEAGE_PATH, DraftLineage};
 use tondo_conformance::manifest::{
     CaseAction, CaseGroup, ConformanceCase, Expectation, LoadedSuite, PinnedFile,
 };
@@ -69,9 +69,9 @@ pub struct TestEntry {
 }
 
 pub fn build(root: &Path) -> Result<Inventory, String> {
-    let lineage =
-        LiveLineage::load(root, Path::new(LIVE_LINEAGE_PATH)).map_err(|error| error.to_string())?;
-    let suite = lineage.checkpoint_suite();
+    let lineage = DraftLineage::load(root, Path::new(DRAFT_LINEAGE_PATH))
+        .map_err(|error| error.to_string())?;
+    let suite = lineage.baseline_suite();
     validate_repository_sidecars(root, suite)?;
 
     let mut tests = Vec::new();
@@ -85,11 +85,11 @@ pub fn build(root: &Path) -> Result<Inventory, String> {
     require_unique_ids(&tests)?;
 
     let documents = [
-        ("TONDO_LANGUAGE_SPEC.md", "0.1", "normative-live"),
+        ("TONDO_LANGUAGE_SPEC.md", "0.1", "draft-normative"),
         ("TONDO_STANDARD_LIBRARY_SPEC.md", "0.1", "draft-pending"),
         ("TONDO_TESTING_SPEC.md", "0.1", "draft-pending"),
-        ("TONDO_TOOLCHAIN_SPEC.md", "0.1", "normative-live"),
-        (LIVE_LINEAGE_PATH, "0.1", "lineage-open"),
+        ("TONDO_TOOLCHAIN_SPEC.md", "0.1", "draft-normative"),
+        (DRAFT_LINEAGE_PATH, "0.1", "draft-open"),
     ]
     .into_iter()
     .map(|(path, edition, status)| {

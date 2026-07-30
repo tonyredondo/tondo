@@ -1,14 +1,14 @@
-# Toolchain formats `/2` contract
+# Current draft toolchain format contract
 
-`tondo-compiler::toolchain` is the pure reader for the draft toolchain
-contracts `tondo-manifest-0.1/2`, `tondo-lock-0.1/2`,
-`tondo-interface-0.1/2`, `tondo-artifact-0.1/2` and
-`tondo-standard-descriptor-0.1/1`.
+`tondo-compiler::toolchain` is the pure reader for the one unpublished draft
+contract: `tondo-manifest-draft`, `tondo-lock-draft`,
+`tondo-interface-draft`, `tondo-artifact-draft`,
+`tondo-standard-descriptor-draft`, and the matching privileged-unit and
+meta-model records.
 
-The historical bootstrap readers remain in `project` and `artifact`. They
-continue to accept only their `/1` records, which keeps the checkpoint hashes
-and conformance evidence stable. `/2` is not silently selected by a `/1`
-reader and `/1` is never reinterpreted as `/2`.
+The bootstrap regression corpus is kept as evidence for already implemented
+behavior. It is not a second parser, language edition, or compatibility lane;
+the current reader accepts only the draft markers above.
 
 ## Boundary
 
@@ -17,7 +17,7 @@ bytes, reject unknown fields and return validated records. They do not read
 the filesystem, environment, clock, network or process state and they never
 execute generators or derive providers.
 
-`ProjectPlanV2::parse` validates the manifest, lockfile and canonical standard
+`ProjectPlanDraft::parse` validates the manifest, lockfile and canonical standard
 descriptor together, checks exact manifest and package hashes, checks runtime
 and meta graphs, verifies providers and generator declarations, and returns
 the deterministic list of source, meta-source, generator-input and
@@ -54,4 +54,5 @@ non-canonical identity lists. `encode` always emits the canonical field order.
 
 The focused tests live beside the implementation in
 `crates/tondo-compiler/src/toolchain.rs` and cover canonical round-trips,
-unknown-field rejection, graph cycles, hash failures and the `/1` separation.
+unknown-field rejection, graph cycles, hash failures and rejection of
+non-draft records.

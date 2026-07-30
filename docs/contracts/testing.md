@@ -235,5 +235,5 @@ collision rejection, and canonical interface/artifact emission.
 ## Conformance separation
 
 Implementation fixtures may test private invariants and `T` diagnostics. The
-future `tondo-conformance-0.1` suite contains only normative behavior and can run
+active `tondo-conformance-draft` suite contains only normative behavior and can run
 against another implementation through adapters.

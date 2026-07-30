@@ -123,6 +123,6 @@ Optional values sort before present values. Severity order is `error`, then
 message. Edits sort by their complete serialized content. Fixes sort by
 applicability, title, and edits. Exact duplicates are removed.
 
-This ordering and the schema above are part of
-`tondo-conformance-0.1`. A later incompatible public format must use a new
-explicit version; it cannot silently change the 0.1 stream.
+This ordering and the schema above are part of the active
+`tondo-conformance-draft`. A later incompatible public format must use a new
+explicit schema identity; it cannot silently change the draft stream.

@@ -20,10 +20,11 @@ use crate::resolve::{MemberId, MemberOwner, ResolvedProgram, SymbolId, SymbolKin
 use crate::source::SourceDatabase;
 use crate::types::TypeError;
 
-pub const INTERFACE_FORMAT: &str = "tondo-interface-0.1/1";
-pub const ARTIFACT_FORMAT: &str = "tondo-artifact-0.1/1";
-pub const CAPABILITY_REGISTRY: &str = "tondo-capabilities/1";
-pub const COMPILER_ID: &str = concat!("tondo-bootstrap/", env!("CARGO_PKG_VERSION"));
+pub const INTERFACE_FORMAT: &str = "tondo-interface-draft";
+pub const ARTIFACT_FORMAT: &str = "tondo-artifact-draft";
+pub const CAPABILITY_REGISTRY: &str = "tondo-capabilities-draft";
+pub const COMPILER_ID: &str = "tondo-bootstrap/draft";
+pub const COMPILER_VERSION: &str = "draft";
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FeatureName(String);

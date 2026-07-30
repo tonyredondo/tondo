@@ -1,0 +1,42 @@
+{
+  "format": "tondo-conformance-draft-lineage",
+  "lineage": "tondo-draft",
+  "edition": "0.1",
+  "revision": 1,
+  "state": "open",
+  "parent": null,
+  "baseline": {
+    "manifest": {
+      "path": "conformance/0.1/manifest.json",
+      "sha256": "6bb8fe5b151ef73f1d49b3d432a51ec18c7a634cf4c9d014eea81d6a351c6ffb"
+    },
+    "specification_snapshot": {
+      "path": "conformance/baseline/TONDO_LANGUAGE_SPEC.md",
+      "sha256": "ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084"
+    }
+  },
+  "specifications": [
+    {
+      "path": "TONDO_LANGUAGE_SPEC.md",
+      "sha256": "d6005c8389dc29560c01c8ca0437e3c7c7a60842bf7ffff4e5109051e8e92273"
+    },
+    {
+      "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
+      "sha256": "643bb5dd315c356fc97b209fea87a6d863fd68ec6b2834b16902121ae46db01f"
+    },
+    {
+      "path": "TONDO_TESTING_SPEC.md",
+      "sha256": "e6c6af9af4027f04ae0fa45a4f4a98579523e9b5f195d172a77292b73ff4383d"
+    },
+    {
+      "path": "TONDO_TOOLCHAIN_SPEC.md",
+      "sha256": "42651be24b002edaf5d2eea70543eb5668a9105deeaf9c33184f28fba9356ca6"
+    }
+  ],
+  "case_layers": [],
+  "pending_tasks": [
+    "M10.6",
+    "M10.7",
+    "PARSER-STACK-001"
+  ]
+}

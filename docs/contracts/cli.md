@@ -1,6 +1,6 @@
 # Bootstrap CLI contract
 
-**Status:** pinned by the internal implementation checkpoint 0.1.0
+**Status:** active contract for the current unpublished Tondo 0.1 draft
 
 ## Commands
 

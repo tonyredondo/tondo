@@ -1,6 +1,6 @@
 # Bootstrap target contract
 
-**Status:** pinned by the internal Tondo 0.1 checkpoint
+**Status:** active target contract for the current unpublished Tondo 0.1 draft
 
 The initial target is:
 
@@ -25,7 +25,7 @@ machine. Adding a capability changes build identity and applicable conformance
 cases. A missing capability must eventually reject the API during compilation;
 it cannot install a runtime stub that always fails.
 
-The versioned registry is `tondo-capabilities/1` and recognizes exactly
+The current draft registry is `tondo-capabilities-draft` and recognizes exactly
 `process`, `threads`, `filesystem`, `network`, `console`, `environment`,
 `clock`, `entropy`, and `dynamic-linking`. Recognition is distinct from target
 support: `tondo-vm-hosted` supports only `console` and `process`, so requesting

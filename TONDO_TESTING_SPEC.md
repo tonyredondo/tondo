@@ -31,7 +31,7 @@ principal incorpora las keywords, grammar, semántica general y diagnósticos; e
 documento fija el contrato especializado del runner y sus formatos. El tracker
 es únicamente el plan de implementación. Un compilador no puede anunciar
 conformidad completa Tondo 0.1 hasta implementar ambos contratos y pasar el
-grupo de testing de `tondo-conformance-0.1`.
+grupo de testing de `tondo-conformance-draft`.
 
 En este documento, **debe** expresa un requisito de conformidad, **no puede**
 expresa una prohibición, **puede** expresa una capacidad permitida y **se
@@ -141,9 +141,9 @@ Este documento identifica mediante SHA-256 el snapshot exacto de la
 especificación principal que complementa. Cambiarlo obliga a revisar
 referencias, compatibilidad y evidencia antes de actualizar el hash.
 
-El tag interno `v0.1.0` conserva un checkpoint anterior a esta integración; no es
+El corpus bootstrap conserva la evidencia anterior a esta integración; no es
 una versión pública ni un segundo dialecto. La grammar, formatter, diagnostics y
-suite de conformidad vivos deben converger en el único contrato Tondo 0.1. Una
+suite de conformidad del draft deben converger en el único contrato Tondo 0.1. Una
 implementación solo puede anunciar soporte parcial si declara expresamente los
 componentes que todavía no implementa.
 
@@ -155,7 +155,7 @@ Tondo 0.1 reserva `test` y `suite`. Por tanto:
 - Una función, variable, tipo, módulo o parámetro de usuario no puede llamarse
   `test` ni `suite`.
 - La API estándar utiliza el nombre de módulo `std.testing`, no `std.test`.
-- Fuente escrita contra un checkpoint interno anterior que utilizara cualquiera
+- Fuente escrita contra el corpus bootstrap anterior que utilizara cualquiera
   de ambos nombres como identificador debe renombrarlo antes de conformar con el
   borrador final.
 
@@ -3536,7 +3536,7 @@ no ejecuta contenido y no interpreta media types.
 ## 16. Conformidad
 
 Una implementación conforme incorpora estos casos como el grupo de testing de
-`tondo-conformance-0.1`, con manifiesto y hashes propios dentro de la misma suite
+`tondo-conformance-draft`, con manifiesto y hashes propios dentro de la misma suite
 versionada. El grupo cubre como mínimo:
 
 1. Tokens, CST lossless, parser y formatter de `suite_decl` y `test_decl`.

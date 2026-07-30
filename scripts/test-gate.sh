@@ -29,11 +29,10 @@ jq -n \
     '{format:$format,target:$target,rustc:$rustc,cargo:$cargo,seed:$seed}' \
     > "$evidence/metadata.json"
 
-live_manifest_hash="$(sha256sum conformance/live/manifest.json | cut -d ' ' -f 1)"
-cp conformance/live/manifest.json \
-    "$evidence/live-manifest-$live_manifest_hash.json"
+draft_manifest_hash="$(sha256sum conformance/draft/manifest.json | cut -d ' ' -f 1)"
+cp conformance/draft/manifest.json \
+    "$evidence/draft-manifest-$draft_manifest_hash.json"
 
-run_step checkpoint-provenance bash scripts/materialize-checkpoint-spec.sh --check
 run_step fmt cargo fmt --all -- --check
 run_step check cargo check --workspace --all-targets --locked
 run_step clippy cargo clippy --workspace --all-targets --locked -- -D warnings
@@ -45,23 +44,18 @@ run_step reliability \
     cargo run -p tondo-reliability --locked -- check --root .
 run_step ratchet \
     cargo run -p tondo-reliability --locked -- ratchet check --root .
-run_step conformance-validate \
+run_step draft-lineage-validate \
     cargo run -p tondo-conformance --locked -- validate \
     --root . \
-    --manifest conformance/live/manifest.json \
-    --lineage checkpoint
-run_step live-lineage-validate \
-    cargo run -p tondo-conformance --locked -- validate \
-    --root . \
-    --manifest conformance/live/manifest.json \
-    --lineage live
+    --manifest conformance/draft/manifest.json \
+    --lineage draft
 run_step conformance-run \
     cargo run -p tondo-conformance --locked -- run \
     --root . \
-    --manifest conformance/live/manifest.json \
-    --lineage checkpoint \
+    --manifest conformance/draft/manifest.json \
+    --lineage draft \
     --adapter target/debug/tondo-reference-adapter \
     --output "$evidence/conformance-result.json"
 run_step conformance-compare \
     cmp "$evidence/conformance-result.json" \
-    conformance/0.1/results/tondo-reference-0.1.0-tondo-vm-hosted.json
+    conformance/0.1/results/tondo-reference-draft-tondo-vm-hosted.json

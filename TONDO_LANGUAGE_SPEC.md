@@ -8105,8 +8105,8 @@ del target. Un modo estricto puede promoverlos, pero conserva el código `W`.
 
 ### 22.9 Conformidad ejecutable
 
-La conformidad completa de la edición 0.1 requiere una suite versionada denominada
-`tondo-conformance-0.1`. Los ejemplos y doc-tests de esta especificación ayudan a
+La conformidad del draft requiere la suite activa denominada
+`tondo-conformance-draft`. Los ejemplos y doc-tests de esta especificación ayudan a
 detectar inconsistencias editoriales, pero no sustituyen esa suite. Antes de
 publicar Tondo 0.1, su distribución oficial deberá incluir un manifiesto portátil
 de la suite y una versión pública de conformidad con:
@@ -10238,9 +10238,9 @@ la sintaxis, tipos, ownership y semántica general. La
 para discovery, lifecycle completo, aislamiento, CLI, selección, retries,
 tiempo virtual, artefactos, snapshots y formatos de reporte.
 
-El tag interno `v0.1.0` y su suite de conformidad conservan la evidencia del
-checkpoint que existía antes de integrar esta superficie. No constituyen una
-versión pública ni una edición alternativa: la primera publicación de Tondo 0.1
+El corpus bootstrap y su suite de regresión conservan la evidencia que existía
+antes de integrar esta superficie. No constituyen una versión pública ni una
+edición alternativa: la primera publicación de Tondo 0.1
 debe implementar el contrato consolidado y publicar nuevos hashes de
 conformidad.
 

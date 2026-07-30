@@ -1,10 +1,10 @@
 # Tondo Standard Library: especificación base
 
-**Versión objetivo de la librería:** 0.1.0
+**Línea de desarrollo de la librería:** `draft`
 
-**Revisión del documento:** 0.1-draft.3
+**Revisión del documento:** `draft`
 
-**Estado:** borrador normativo de la primera versión; Tondo y STD-0.1 todavía no
+**Estado:** borrador normativo; Tondo y STD-0.1 todavía no
 se han publicado
 
 **Edición de lenguaje compatible:** Tondo 0.1
@@ -57,7 +57,7 @@ Este documento fija de forma normativa:
   determinismo, coste y portabilidad.
 - La distribución cerrada, reproducible y fijada por hashes.
 - Los requisitos de documentación, tests y conformidad de cada API.
-- La coexistencia temporal con el checkpoint bootstrap interno de Tondo 0.1.0.
+- La coexistencia temporal con el corpus bootstrap de regresión.
 
 Esta revisión no fija todavía:
 
@@ -124,9 +124,10 @@ En este documento:
 - **No puede** expresa una prohibición.
 - **Puede** expresa una libertad de implementación que no altera observables.
 - **STD-0.1** nombra el milestone de producto.
-- **0.1.0** nombra la primera versión pública completa de la stdlib.
-- **Bootstrap** nombra la superficie provisional implementada como checkpoint
-  interno durante el desarrollo de Tondo 0.1.
+- **0.1.0** nombra únicamente la futura primera versión pública completa de la
+  stdlib; no identifica el estado actual.
+- **Bootstrap** nombra la superficie provisional usada como corpus de regresión
+  durante el desarrollo de Tondo 0.1.
 
 ### 1.4 Inspiraciones aplicadas
 
@@ -249,11 +250,11 @@ Un cambio normativo incompatible nunca se disfraza de corrección `PATCH`.
 
 ### 3.3 PackageId estándar
 
-Cada build selecciona exactamente un `PackageId` estándar. La distribución de
-referencia 0.1.0 utilizará:
+Cada build selecciona exactamente un `PackageId` estándar. La distribución
+actual del draft utiliza:
 
 ~~~text
-toolchain:std:0.1.0
+toolchain:std:draft
 ~~~
 
 El identificador es inmutable: esos bytes no pueden republicarse con otro
@@ -269,7 +270,7 @@ El descriptor de la distribución runtime selecciona además, para el grafo meta
 separado, su paquete build-only compatible:
 
 ~~~text
-toolchain:std-meta:0.1.0
+toolchain:std-meta:draft
 ~~~
 
 Ese paquete contiene `std.meta` y los providers estándar. El proyecto no repite
@@ -457,7 +458,7 @@ claramente documentado o se difiere; no se hace pasar por portable.
 
 ### 5.2 Capabilities
 
-STD-0.1 utiliza el registro `tondo-capabilities/1` definido por el toolchain:
+STD-0.1 utiliza el registro `tondo-capabilities-draft` definido por el toolchain:
 
 ~~~text
 clock
@@ -1791,7 +1792,7 @@ La suite estándar:
 - Tiene versión y manifest propios.
 - Fija la especificación y distribución por hash.
 - Se ejecuta mediante un adaptador público.
-- Conserva el checkpoint Tondo 0.1 bootstrap sin mutarlo.
+- Conserva el corpus bootstrap Tondo 0.1 sin mutarlo.
 - Ejecuta el mismo corpus contra VM y futuro backend nativo.
 - Distingue limitación de target de fallo de implementación.
 
@@ -1878,7 +1879,7 @@ No forman parte de STD-0.1:
 - Package manager y acceso a registries.
 
 La presencia de la capability correspondiente en
-`tondo-capabilities/1` no adelanta estas APIs.
+`tondo-capabilities-draft` no adelanta estas APIs.
 
 La división siguiente es solo una secuencia de implementación; ambas fases
 pertenecen al mismo contrato y deben cerrarse antes de publicar 0.1.0:
@@ -1897,7 +1898,7 @@ tracker y de esta especificación, no mediante implementación ad hoc.
 
 ## 19. Migración desde el bootstrap
 
-El checkpoint bootstrap interno utiliza:
+El corpus bootstrap de regresión utiliza:
 
 ~~~text
 PackageId = toolchain:std:0.1-bootstrap
@@ -1907,7 +1908,8 @@ caps      = [console, process]
 ~~~
 
 Esos bytes y su suite de conformidad se conservan como evidencia reproducible
-del desarrollo, pero no constituyen una release pública de Tondo.
+del desarrollo, pero no constituyen una release pública de Tondo ni una segunda
+línea de la librería.
 
 ### 19.1 `std.console`
 
@@ -1936,7 +1938,7 @@ El bootstrap expone una superficie cerrada de procesos, `Bytes` opaco y
 - Sustituye errores y tipos provisionales por propietarios canónicos.
 - Mantiene argv exacto, shell explícito, pipes, backpressure y cleanup.
 
-El checkpoint bootstrap no se reescribe. Un proyecto adopta STD-0.1
+El corpus bootstrap no se reescribe. Un proyecto adopta STD-0.1
 seleccionando el nuevo PackageId y lockfile.
 
 ### 19.3 Implementación transitoria
@@ -1974,7 +1976,7 @@ STD-0.1 puede publicarse como 0.1.0 únicamente cuando:
       límites.
 - [ ] Cada hot path tiene oracle escalar, equivalencia de kernels y gate de
       rendimiento multidimensional.
-- [ ] El checkpoint bootstrap Tondo 0.1.0 permanece verificable sin cambios.
+- [ ] El corpus bootstrap Tondo 0.1 permanece verificable sin cambios.
 - [ ] Todo lo diferido está ausente o identificado fuera de `std`.
 
 Hasta cerrar esta lista, el documento puede ser normativo para las reglas base

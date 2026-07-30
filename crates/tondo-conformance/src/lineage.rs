@@ -1,4 +1,4 @@
-//! Explicit separation between the immutable checkpoint and the live Tondo 0.1 draft.
+//! The single current conformance draft plus its bootstrap regression corpus.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -11,15 +11,13 @@ use serde::{Deserialize, Serialize};
 use crate::manifest::{LoadedSuite, ManifestError, PinnedFile};
 use crate::sha256;
 
-pub const LIVE_LINEAGE_FORMAT: &str = "tondo-conformance-live-lineage-0.1/1";
-pub const LIVE_LINEAGE_NAME: &str = "tondo-0.1-live";
-pub const LIVE_LINEAGE_PATH: &str = "conformance/live/manifest.json";
+pub const DRAFT_LINEAGE_FORMAT: &str = "tondo-conformance-draft-lineage";
+pub const DRAFT_LINEAGE_NAME: &str = "tondo-draft";
+pub const DRAFT_LINEAGE_PATH: &str = "conformance/draft/manifest.json";
 
-const CHECKPOINT_TAG: &str = "v0.1.0";
-const CHECKPOINT_COMMIT: &str = "2aec7e845ef62582015673c677c2884b97b0b8f9";
-const CHECKPOINT_MANIFEST_PATH: &str = "conformance/0.1/manifest.json";
-const CHECKPOINT_SPECIFICATION_PATH: &str = "conformance/checkpoints/v0.1.0/TONDO_LANGUAGE_SPEC.md";
-const LIVE_SPECIFICATIONS: [&str; 4] = [
+const BASELINE_MANIFEST_PATH: &str = "conformance/0.1/manifest.json";
+const BASELINE_SPECIFICATION_PATH: &str = "conformance/baseline/TONDO_LANGUAGE_SPEC.md";
+const DRAFT_SPECIFICATIONS: [&str; 4] = [
     "TONDO_LANGUAGE_SPEC.md",
     "TONDO_STANDARD_LIBRARY_SPEC.md",
     "TONDO_TESTING_SPEC.md",
@@ -28,14 +26,14 @@ const LIVE_SPECIFICATIONS: [&str; 4] = [
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct LiveLineageManifest {
+pub struct DraftLineageManifest {
     pub format: String,
     pub lineage: String,
     pub edition: String,
     pub revision: u32,
     pub state: String,
     pub parent: Option<PinnedFile>,
-    pub checkpoint: CheckpointReference,
+    pub baseline: BaselineReference,
     pub specifications: Vec<PinnedFile>,
     pub case_layers: Vec<CaseLayer>,
     pub pending_tasks: Vec<String>,
@@ -43,9 +41,7 @@ pub struct LiveLineageManifest {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CheckpointReference {
-    pub tag: String,
-    pub commit: String,
+pub struct BaselineReference {
     pub manifest: PinnedFile,
     pub specification_snapshot: PinnedFile,
 }
@@ -72,7 +68,7 @@ pub enum LineageError {
         expected: String,
         actual: String,
     },
-    Checkpoint(ManifestError),
+    Baseline(ManifestError),
 }
 
 impl fmt::Display for LineageError {
@@ -81,17 +77,17 @@ impl fmt::Display for LineageError {
             Self::Io { path, message } => {
                 write!(formatter, "cannot read `{}`: {message}", path.display())
             }
-            Self::Json(message) => write!(formatter, "invalid live lineage JSON: {message}"),
-            Self::Invalid(message) => write!(formatter, "invalid live lineage: {message}"),
+            Self::Json(message) => write!(formatter, "invalid draft lineage JSON: {message}"),
+            Self::Invalid(message) => write!(formatter, "invalid draft lineage: {message}"),
             Self::HashMismatch {
                 path,
                 expected,
                 actual,
             } => write!(
                 formatter,
-                "live lineage file `{path}` has SHA-256 `{actual}`, expected `{expected}`"
+                "draft lineage file `{path}` has SHA-256 `{actual}`, expected `{expected}`"
             ),
-            Self::Checkpoint(error) => write!(formatter, "invalid checkpoint lineage: {error}"),
+            Self::Baseline(error) => write!(formatter, "invalid baseline lineage: {error}"),
         }
     }
 }
@@ -100,22 +96,22 @@ impl Error for LineageError {}
 
 impl From<ManifestError> for LineageError {
     fn from(error: ManifestError) -> Self {
-        Self::Checkpoint(error)
+        Self::Baseline(error)
     }
 }
 
 #[derive(Debug)]
-pub struct LiveLineage {
+pub struct DraftLineage {
     root: PathBuf,
     manifest_path: PathBuf,
     manifest_bytes: Vec<u8>,
-    manifest: LiveLineageManifest,
-    checkpoint_specification: Vec<u8>,
-    checkpoint_suite: LoadedSuite,
+    manifest: DraftLineageManifest,
+    baseline_specification: Vec<u8>,
+    baseline_suite: LoadedSuite,
     specifications: BTreeMap<String, Vec<u8>>,
 }
 
-impl LiveLineage {
+impl DraftLineage {
     pub fn load(
         root: impl Into<PathBuf>,
         manifest_path: impl AsRef<Path>,
@@ -127,7 +123,7 @@ impl LiveLineage {
             path: absolute_manifest,
             message: error.to_string(),
         })?;
-        let manifest: LiveLineageManifest = serde_json::from_slice(&manifest_bytes)
+        let manifest: DraftLineageManifest = serde_json::from_slice(&manifest_bytes)
             .map_err(|error| LineageError::Json(error.to_string()))?;
         validate_manifest(&manifest)?;
 
@@ -136,36 +132,35 @@ impl LiveLineage {
         canonical.push(b'\n');
         if canonical != manifest_bytes {
             return Err(LineageError::Invalid(
-                "the live manifest is not in canonical pretty JSON encoding".into(),
+                "the draft manifest is not in canonical pretty JSON encoding".into(),
             ));
         }
 
-        let checkpoint_manifest_bytes = read_pinned(&root, &manifest.checkpoint.manifest)?;
-        let checkpoint_specification =
-            read_pinned(&root, &manifest.checkpoint.specification_snapshot)?;
+        let baseline_manifest_bytes = read_pinned(&root, &manifest.baseline.manifest)?;
+        let baseline_specification = read_pinned(&root, &manifest.baseline.specification_snapshot)?;
         let mut overrides = BTreeMap::new();
         overrides.insert(
             "TONDO_LANGUAGE_SPEC.md".into(),
-            checkpoint_specification.clone(),
+            baseline_specification.clone(),
         );
-        let checkpoint_suite =
-            LoadedSuite::load_with_overrides(&root, &manifest.checkpoint.manifest.path, overrides)?;
-        if checkpoint_suite.manifest_sha256() != manifest.checkpoint.manifest.sha256 {
+        let baseline_suite =
+            LoadedSuite::load_with_overrides(&root, &manifest.baseline.manifest.path, overrides)?;
+        if baseline_suite.manifest_sha256() != manifest.baseline.manifest.sha256 {
             return Err(LineageError::Invalid(
-                "checkpoint suite identity differs from the pinned manifest".into(),
+                "baseline suite identity differs from the pinned manifest".into(),
             ));
         }
-        if checkpoint_suite.manifest().specification.path != "TONDO_LANGUAGE_SPEC.md"
-            || checkpoint_suite.manifest().specification.sha256
-                != manifest.checkpoint.specification_snapshot.sha256
+        if baseline_suite.manifest().specification.path != "TONDO_LANGUAGE_SPEC.md"
+            || baseline_suite.manifest().specification.sha256
+                != manifest.baseline.specification_snapshot.sha256
         {
             return Err(LineageError::Invalid(
-                "checkpoint specification snapshot does not match the suite manifest".into(),
+                "baseline specification snapshot does not match the suite manifest".into(),
             ));
         }
-        if sha256(&checkpoint_manifest_bytes) != checkpoint_suite.manifest_sha256() {
+        if sha256(&baseline_manifest_bytes) != baseline_suite.manifest_sha256() {
             return Err(LineageError::Invalid(
-                "checkpoint manifest bytes changed while loading the suite".into(),
+                "baseline manifest bytes changed while loading the suite".into(),
             ));
         }
 
@@ -186,8 +181,8 @@ impl LiveLineage {
             manifest_path,
             manifest_bytes,
             manifest,
-            checkpoint_specification,
-            checkpoint_suite,
+            baseline_specification,
+            baseline_suite,
             specifications,
         })
     }
@@ -200,7 +195,7 @@ impl LiveLineage {
         &self.manifest_path
     }
 
-    pub fn manifest(&self) -> &LiveLineageManifest {
+    pub fn manifest(&self) -> &DraftLineageManifest {
         &self.manifest
     }
 
@@ -208,12 +203,12 @@ impl LiveLineage {
         sha256(&self.manifest_bytes)
     }
 
-    pub fn checkpoint_suite(&self) -> &LoadedSuite {
-        &self.checkpoint_suite
+    pub fn baseline_suite(&self) -> &LoadedSuite {
+        &self.baseline_suite
     }
 
-    pub fn checkpoint_specification(&self) -> &[u8] {
-        &self.checkpoint_specification
+    pub fn baseline_specification(&self) -> &[u8] {
+        &self.baseline_specification
     }
 
     pub fn specification(&self, path: &str) -> Option<&[u8]> {
@@ -237,7 +232,7 @@ impl LiveLineage {
         }
         if !self.manifest.pending_tasks.is_empty() {
             return Err(LineageError::Invalid(format!(
-                "the live lineage still has pending tasks: {}",
+                "the draft still has pending tasks: {}",
                 self.manifest.pending_tasks.join(", ")
             )));
         }
@@ -245,9 +240,9 @@ impl LiveLineage {
     }
 }
 
-fn validate_manifest(manifest: &LiveLineageManifest) -> Result<(), LineageError> {
-    if manifest.format != LIVE_LINEAGE_FORMAT
-        || manifest.lineage != LIVE_LINEAGE_NAME
+fn validate_manifest(manifest: &DraftLineageManifest) -> Result<(), LineageError> {
+    if manifest.format != DRAFT_LINEAGE_FORMAT
+        || manifest.lineage != DRAFT_LINEAGE_NAME
         || manifest.edition != "0.1"
         || manifest.revision == 0
         || manifest.state != "open"
@@ -256,20 +251,16 @@ fn validate_manifest(manifest: &LiveLineageManifest) -> Result<(), LineageError>
             "format, lineage, edition, revision, and state must identify the open Tondo 0.1 draft",
         );
     }
-    if manifest.checkpoint.tag != CHECKPOINT_TAG
-        || manifest.checkpoint.commit != CHECKPOINT_COMMIT
-        || manifest.checkpoint.manifest.path != CHECKPOINT_MANIFEST_PATH
-        || manifest.checkpoint.specification_snapshot.path != CHECKPOINT_SPECIFICATION_PATH
+    if manifest.baseline.manifest.path != BASELINE_MANIFEST_PATH
+        || manifest.baseline.specification_snapshot.path != BASELINE_SPECIFICATION_PATH
     {
-        return invalid(
-            "checkpoint tag, commit, manifest, or snapshot path is not the pinned 0.1 baseline",
-        );
+        return invalid("baseline manifest or snapshot path is not the pinned bootstrap corpus");
     }
-    validate_pinned(&manifest.checkpoint.manifest)?;
-    validate_pinned(&manifest.checkpoint.specification_snapshot)?;
+    validate_pinned(&manifest.baseline.manifest)?;
+    validate_pinned(&manifest.baseline.specification_snapshot)?;
 
     require_sorted_unique(
-        "live specification paths",
+        "draft specification paths",
         manifest
             .specifications
             .iter()
@@ -280,9 +271,9 @@ fn validate_manifest(manifest: &LiveLineageManifest) -> Result<(), LineageError>
         .iter()
         .map(|specification| specification.path.as_str())
         .collect::<Vec<_>>()
-        != LIVE_SPECIFICATIONS
+        != DRAFT_SPECIFICATIONS
     {
-        return invalid("live specifications must contain the closed four-document set");
+        return invalid("draft specifications must contain the closed four-document set");
     }
     for specification in &manifest.specifications {
         validate_pinned(specification)?;
@@ -301,8 +292,8 @@ fn validate_manifest(manifest: &LiveLineageManifest) -> Result<(), LineageError>
         {
             return invalid("case layer IDs must use lowercase ASCII, digits, and hyphens");
         }
-        if !layer.manifest.path.starts_with("conformance/live/layers/") {
-            return invalid("case layer manifests must live below conformance/live/layers");
+        if !layer.manifest.path.starts_with("conformance/draft/layers/") {
+            return invalid("case layer manifests must be below conformance/draft/layers");
         }
         validate_pinned(&layer.manifest)?;
         require_sorted_unique(
@@ -327,12 +318,12 @@ fn validate_manifest(manifest: &LiveLineageManifest) -> Result<(), LineageError>
     )?;
     if let Some(parent) = &manifest.parent {
         validate_pinned(parent)?;
-        let expected = format!("conformance/live/history/{}.json", parent.sha256);
+        let expected = format!("conformance/draft/history/{}.json", parent.sha256);
         if parent.path != expected {
-            return invalid("a parent manifest path must be content-addressed by its SHA-256");
+            return invalid("a draft parent path must be content-addressed by its SHA-256");
         }
     } else if manifest.revision != 1 {
-        return invalid("only live lineage revision 1 may omit a parent manifest");
+        return invalid("only draft revision 1 may omit a parent manifest");
     }
     Ok(())
 }
@@ -355,32 +346,32 @@ fn read_pinned(root: &Path, pinned: &PinnedFile) -> Result<Vec<u8>, LineageError
     Ok(bytes)
 }
 
-fn validate_history(root: &Path, manifest: &LiveLineageManifest) -> Result<(), LineageError> {
+fn validate_history(root: &Path, manifest: &DraftLineageManifest) -> Result<(), LineageError> {
     let mut child = manifest.clone();
     while let Some(parent_file) = &child.parent {
         let parent_bytes = read_pinned(root, parent_file)?;
-        let parent: LiveLineageManifest = serde_json::from_slice(&parent_bytes)
+        let parent: DraftLineageManifest = serde_json::from_slice(&parent_bytes)
             .map_err(|error| LineageError::Json(error.to_string()))?;
         validate_manifest(&parent)?;
         let mut canonical = serde_json::to_vec_pretty(&parent)
             .map_err(|error| LineageError::Json(error.to_string()))?;
         canonical.push(b'\n');
         if canonical != parent_bytes {
-            return invalid("a parent live manifest is not canonical pretty JSON");
+            return invalid("a parent draft manifest is not canonical pretty JSON");
         }
         if parent.revision.checked_add(1) != Some(child.revision)
             || parent.lineage != child.lineage
             || parent.edition != child.edition
-            || parent.checkpoint != child.checkpoint
+            || parent.baseline != child.baseline
         {
             return invalid(
-                "live history must link the immediately preceding revision in the same checkpoint lineage",
+                "draft history must link the immediately preceding revision in the same baseline lineage",
             );
         }
         child = parent;
     }
     if child.revision != 1 {
-        return invalid("live history must terminate at revision 1");
+        return invalid("draft history must terminate at revision 1");
     }
     Ok(())
 }
@@ -440,26 +431,26 @@ mod tests {
     }
 
     #[test]
-    fn repository_lineage_separates_checkpoint_and_live_specifications() {
-        let first = LiveLineage::load(repository_root(), LIVE_LINEAGE_PATH).unwrap();
-        let second = LiveLineage::load(repository_root(), LIVE_LINEAGE_PATH).unwrap();
+    fn repository_draft_keeps_baseline_only_as_regression_input() {
+        let first = DraftLineage::load(repository_root(), DRAFT_LINEAGE_PATH).unwrap();
+        let second = DraftLineage::load(repository_root(), DRAFT_LINEAGE_PATH).unwrap();
 
         assert_eq!(first.manifest_sha256(), second.manifest_sha256());
         assert_eq!(
-            sha256(first.checkpoint_specification()),
+            sha256(first.baseline_specification()),
             "ded4e17ab57836d032e5fb9e5be5dba03fc83ac6ff74cee90ab1bb7f8e5c7084"
         );
         assert_eq!(
             sha256(first.specification("TONDO_LANGUAGE_SPEC.md").unwrap()),
-            "e24f1fd09b9d9096d0ade955e84ebc5dc89a4f2544ad517f5e01ab8eb0966266"
+            "d6005c8389dc29560c01c8ca0437e3c7c7a60842bf7ffff4e5109051e8e92273"
         );
         assert_ne!(
-            first.checkpoint_specification(),
+            first.baseline_specification(),
             first.specification("TONDO_LANGUAGE_SPEC.md").unwrap()
         );
         assert_eq!(
-            first.checkpoint_suite().manifest_sha256(),
-            "67f12434001d5d9d17b0f2181afe3ec38cb07d6207e431cca164ec4854f0148b"
+            first.baseline_suite().manifest_sha256(),
+            "6bb8fe5b151ef73f1d49b3d432a51ec18c7a634cf4c9d014eea81d6a351c6ffb"
         );
         assert!(first.implemented_requirements().is_empty());
         assert!(
@@ -473,7 +464,7 @@ mod tests {
 
     #[test]
     fn manifest_validation_rejects_implicit_or_incomplete_layers() {
-        let lineage = LiveLineage::load(repository_root(), LIVE_LINEAGE_PATH).unwrap();
+        let lineage = DraftLineage::load(repository_root(), DRAFT_LINEAGE_PATH).unwrap();
         let mut unsorted = lineage.manifest().clone();
         unsorted.specifications.swap(0, 1);
         assert!(validate_manifest(&unsorted).is_err());
@@ -482,7 +473,7 @@ mod tests {
         incomplete.case_layers.push(CaseLayer {
             id: "meta".into(),
             manifest: PinnedFile {
-                path: "conformance/live/layers/meta.json".into(),
+                path: "conformance/draft/layers/meta.json".into(),
                 sha256: "a".repeat(64),
             },
             tasks: Vec::new(),
@@ -498,14 +489,14 @@ mod tests {
 
     #[test]
     fn history_links_exactly_the_previous_canonical_revision() {
-        let lineage = LiveLineage::load(repository_root(), LIVE_LINEAGE_PATH).unwrap();
+        let lineage = DraftLineage::load(repository_root(), DRAFT_LINEAGE_PATH).unwrap();
         let mut parent = lineage.manifest().clone();
         parent.revision = 1;
         parent.parent = None;
         let mut parent_bytes = serde_json::to_vec_pretty(&parent).unwrap();
         parent_bytes.push(b'\n');
         let parent_hash = sha256(&parent_bytes);
-        let relative_path = format!("conformance/live/history/{parent_hash}.json");
+        let relative_path = format!("conformance/draft/history/{parent_hash}.json");
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -525,7 +516,6 @@ mod tests {
             path: relative_path,
             sha256: parent_hash,
         });
-        validate_manifest(&child).unwrap();
         validate_history(&root, &child).unwrap();
 
         child.revision = parent_revision + 2;

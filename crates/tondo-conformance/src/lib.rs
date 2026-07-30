@@ -1,4 +1,4 @@
-#![doc = "Portable runner and data contract for `tondo-conformance-0.1`."]
+#![doc = "Portable runner and data contract for the unpublished Tondo draft."]
 
 pub mod document;
 pub mod lineage;
@@ -10,10 +10,10 @@ use std::fmt::Write as _;
 
 use sha2::{Digest, Sha256};
 
-pub const SUITE_NAME: &str = "tondo-conformance-0.1";
-pub const SUITE_FORMAT: &str = "tondo-conformance-manifest-0.1/1";
-pub const ADAPTER_PROTOCOL: &str = "tondo-conformance-adapter-0.1/1";
-pub const RESULT_FORMAT: &str = "tondo-conformance-result-0.1/1";
+pub const SUITE_NAME: &str = "tondo-conformance-draft";
+pub const SUITE_FORMAT: &str = "tondo-conformance-manifest-draft";
+pub const ADAPTER_PROTOCOL: &str = "tondo-conformance-adapter-draft";
+pub const RESULT_FORMAT: &str = "tondo-conformance-result-draft";
 
 pub fn sha256(bytes: &[u8]) -> String {
     let digest = Sha256::digest(bytes);
