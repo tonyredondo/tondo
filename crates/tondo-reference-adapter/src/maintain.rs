@@ -1081,6 +1081,7 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn blessing_is_a_reproducible_source_tree_transformation() {
         let source = workspace_root();
