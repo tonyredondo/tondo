@@ -260,9 +260,9 @@ mod tests {
         let mut seal = suite_arguments("seal");
         *seal.last_mut().unwrap() = "live".into();
         assert!(
-            run(seal).unwrap_err().contains(
-                "still has pending tasks: CONF-RATCHET-001, M10.6, M10.7, PARSER-STACK-001",
-            )
+            run(seal)
+                .unwrap_err()
+                .contains("still has pending tasks: M10.6, M10.7, PARSER-STACK-001",)
         );
     }
 }

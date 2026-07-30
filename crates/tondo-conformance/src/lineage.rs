@@ -492,13 +492,16 @@ mod tests {
 
         let mut broken_history = lineage.manifest().clone();
         broken_history.revision = 2;
+        broken_history.parent = None;
         assert!(validate_manifest(&broken_history).is_err());
     }
 
     #[test]
     fn history_links_exactly_the_previous_canonical_revision() {
         let lineage = LiveLineage::load(repository_root(), LIVE_LINEAGE_PATH).unwrap();
-        let parent = lineage.manifest().clone();
+        let mut parent = lineage.manifest().clone();
+        parent.revision = 1;
+        parent.parent = None;
         let mut parent_bytes = serde_json::to_vec_pretty(&parent).unwrap();
         parent_bytes.push(b'\n');
         let parent_hash = sha256(&parent_bytes);
@@ -515,8 +518,9 @@ mod tests {
         fs::create_dir_all(physical.parent().unwrap()).unwrap();
         fs::write(&physical, &parent_bytes).unwrap();
 
+        let parent_revision = parent.revision;
         let mut child = parent;
-        child.revision = 2;
+        child.revision = parent_revision + 1;
         child.parent = Some(PinnedFile {
             path: relative_path,
             sha256: parent_hash,
@@ -524,7 +528,7 @@ mod tests {
         validate_manifest(&child).unwrap();
         validate_history(&root, &child).unwrap();
 
-        child.revision = 3;
+        child.revision = parent_revision + 2;
         assert!(
             validate_history(&root, &child)
                 .unwrap_err()

@@ -1,0 +1,37 @@
+{
+  "format": "tondo-conformance-ratchet/1",
+  "lineage": "tondo-0.1-live",
+  "revision": 2,
+  "manifest": {
+    "path": "conformance/live/manifest.json",
+    "sha256": "7df0bafeecddc23b254b5b5e9969c8500ba1e22b83990d85493b6f8a5a0a34c2"
+  },
+  "inventory": {
+    "path": "testing/inventory.json",
+    "sha256": "8708e105b6e61fcdb5d25d8abbca4164349ee3b2ddce0f8df73cd4ea6ae0a958"
+  },
+  "matrix": {
+    "path": "testing/coverage-matrix.json",
+    "sha256": "08f19e000ab21bd0a2edac2e38b2007c97a8edb149b5acc86b857e3585c3c2f3"
+  },
+  "quality_baseline": {
+    "path": "testing/quality-baseline.json",
+    "sha256": "0066620771c25f3f374a24efadb386c40d44321d2fa70a9c783f9f404bb07490"
+  },
+  "live_case_layers": 0,
+  "pending_tasks": [
+    "M10.6",
+    "M10.7",
+    "PARSER-STACK-001"
+  ],
+  "coverage": {
+    "status": "not-applicable",
+    "reason": "no executable live case layer requires a coverage report",
+    "report_sha256": null
+  },
+  "mutation": {
+    "status": "not-applicable",
+    "reason": "no executable live case layer requires a mutation report",
+    "report_sha256": null
+  }
+}

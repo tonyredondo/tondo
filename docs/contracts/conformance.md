@@ -61,11 +61,10 @@ changed requirement.
 
 A live case layer is admissible only in the same change as the implementation
 slice it names. Its ID, tasks and requirement IDs are sorted and unique, and
-its manifest is pinned below `conformance/live/layers/`. Until the incremental
-case runner and evidence ratchet are activated by `CONF-RATCHET-001`, the
-current revision contains no live layers and only the checkpoint lineage can be
-executed. Merely listing a task or requirement can never make the coverage
-matrix green.
+its manifest is pinned below `conformance/live/layers/`. The incremental
+evidence ratchet is activated by `CONF-RATCHET-001`; the current revision has
+no live layers yet, so only the checkpoint lineage can be executed. Merely
+listing a task or requirement can never make the coverage matrix green.
 
 Each accepted live revision changes the manifest hash. CI copies the exact
 manifest to

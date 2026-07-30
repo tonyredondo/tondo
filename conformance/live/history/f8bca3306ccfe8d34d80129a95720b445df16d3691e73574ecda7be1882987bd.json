@@ -2,12 +2,9 @@
   "format": "tondo-conformance-live-lineage-0.1/1",
   "lineage": "tondo-0.1-live",
   "edition": "0.1",
-  "revision": 2,
+  "revision": 1,
   "state": "open",
-  "parent": {
-    "path": "conformance/live/history/f8bca3306ccfe8d34d80129a95720b445df16d3691e73574ecda7be1882987bd.json",
-    "sha256": "f8bca3306ccfe8d34d80129a95720b445df16d3691e73574ecda7be1882987bd"
-  },
+  "parent": null,
   "checkpoint": {
     "tag": "v0.1.0",
     "commit": "2aec7e845ef62582015673c677c2884b97b0b8f9",
@@ -40,6 +37,7 @@
   ],
   "case_layers": [],
   "pending_tasks": [
+    "CONF-RATCHET-001",
     "M10.6",
     "M10.7",
     "PARSER-STACK-001"

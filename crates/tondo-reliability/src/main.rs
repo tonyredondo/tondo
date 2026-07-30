@@ -5,6 +5,7 @@ use std::process::ExitCode;
 use tondo_reliability::inventory;
 use tondo_reliability::matrix;
 use tondo_reliability::quality::{QualityBaseline, capture, parse_llvm_cov, parse_mutation_report};
+use tondo_reliability::ratchet;
 use tondo_reliability::regression::RegressionLedger;
 use tondo_reliability::{
     INVENTORY_PATH, MATRIX_PATH, QUALITY_BASELINE_PATH, REGRESSION_LEDGER_PATH, canonical_json,
@@ -19,6 +20,7 @@ Usage:
   tondo-reliability check [--root <directory>]
   tondo-reliability inventory <generate|check> [--root <directory>]
   tondo-reliability matrix <generate|check> [--root <directory>]
+  tondo-reliability ratchet <generate|check> [--coverage <json>] [--mutants <json>] [--root <directory>]
   tondo-reliability quality check [--root <directory>]
   tondo-reliability quality capture --coverage <json> --mutants <json> --revision <id> [--root <directory>]
   tondo-reliability quality verify --coverage <json> [--mutants <json>] [--root <directory>]";
@@ -39,7 +41,10 @@ fn main() -> ExitCode {
 fn run(arguments: Vec<String>) -> Result<String, String> {
     let arguments = parse_arguments(arguments)?;
     let root = workspace_root(&arguments.root)?;
-    if arguments.positionals.first().map(String::as_str) != Some("quality") {
+    if !matches!(
+        arguments.positionals.first().map(String::as_str),
+        Some("quality" | "ratchet")
+    ) {
         reject_quality_options(&arguments)?;
     }
     match arguments.positionals.as_slice() {
@@ -51,6 +56,15 @@ fn run(arguments: Vec<String>) -> Result<String, String> {
         [area, command] if area == "inventory" && command == "check" => check_inventory(&root),
         [area, command] if area == "matrix" && command == "generate" => generate_matrix(&root),
         [area, command] if area == "matrix" && command == "check" => check_matrix(&root),
+        [area, command] if area == "ratchet" && command == "generate" => {
+            reject_ratchet_options(&arguments)?;
+            generate_all(&root)?;
+            generate_ratchet(&root, &arguments)
+        }
+        [area, command] if area == "ratchet" && command == "check" => {
+            reject_ratchet_options(&arguments)?;
+            check_ratchet(&root, &arguments)
+        }
         [area, command] if area == "quality" && command == "check" => {
             reject_quality_options(&arguments)?;
             let path = root.join(QUALITY_BASELINE_PATH);
@@ -174,6 +188,13 @@ fn reject_quality_options(arguments: &Arguments) -> Result<(), String> {
     }
 }
 
+fn reject_ratchet_options(arguments: &Arguments) -> Result<(), String> {
+    if arguments.revision.is_some() {
+        return Err("ratchet does not accept revision".into());
+    }
+    Ok(())
+}
+
 fn required_path<'a>(value: &'a Option<PathBuf>, name: &str) -> Result<&'a Path, String> {
     value
         .as_deref()
@@ -258,6 +279,34 @@ fn check_matrix(root: &Path) -> Result<String, String> {
     ))
 }
 
+fn generate_ratchet(root: &Path, arguments: &Arguments) -> Result<String, String> {
+    let record = ratchet::build(
+        root,
+        arguments.coverage.as_deref(),
+        arguments.mutants.as_deref(),
+    )?;
+    let changed = write_if_changed(&root.join(ratchet::PATH), &canonical_json(&record)?)?;
+    Ok(format!(
+        "ratchet {}: revision {}, {} live case layers",
+        change(changed),
+        record.revision,
+        record.live_case_layers
+    ))
+}
+
+fn check_ratchet(root: &Path, arguments: &Arguments) -> Result<String, String> {
+    let expected = ratchet::build(
+        root,
+        arguments.coverage.as_deref(),
+        arguments.mutants.as_deref(),
+    )?;
+    check_bytes(&root.join(ratchet::PATH), &canonical_json(&expected)?)?;
+    Ok(format!(
+        "ratchet is current: revision {}, {} live case layers",
+        expected.revision, expected.live_case_layers
+    ))
+}
+
 fn change(changed: bool) -> &'static str {
     if changed { "updated" } else { "unchanged" }
 }
@@ -303,6 +352,29 @@ mod tests {
                 "b".into(),
             ])
             .is_err()
+        );
+    }
+
+    #[test]
+    fn ratchet_accepts_quality_reports_but_not_capture_revision() {
+        let arguments = parse_arguments(vec![
+            "ratchet".into(),
+            "check".into(),
+            "--coverage".into(),
+            "coverage.json".into(),
+            "--mutants".into(),
+            "mutants.json".into(),
+        ])
+        .unwrap();
+        assert_eq!(arguments.coverage, Some(PathBuf::from("coverage.json")));
+        assert_eq!(arguments.mutants, Some(PathBuf::from("mutants.json")));
+        assert!(reject_ratchet_options(&arguments).is_ok());
+
+        let mut invalid = arguments;
+        invalid.revision = Some("capture".into());
+        assert_eq!(
+            reject_ratchet_options(&invalid).unwrap_err(),
+            "ratchet does not accept revision"
         );
     }
 }

@@ -5,7 +5,7 @@
 testing y Standard Library deben implementarse y añadirse a conformidad antes
 de publicar la primera versión
 
-**Versión del tracker:** 0.99
+**Versión del tracker:** 1.00
 
 **Última actualización:** 2026-07-30
 
@@ -15,8 +15,7 @@ de publicar la primera versión
 - [Arquitectura base de Standard Library 0.1](./TONDO_STANDARD_LIBRARY_SPEC.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
-**Objetivo inmediato:** cerrar `CONF-RATCHET-001` sobre la línea viva ya
-separada y después implementar `META-FORMAT-001`, primer nodo compartido por
+**Objetivo inmediato:** implementar `META-FORMAT-001`, primer nodo compartido por
 metaprogramación y el nuevo plan de testing. A partir de ahí avanzan dos lanes:
 M10.7 sobre los slices tempranos de `std.meta`/`std.reflect`, y M10.6 sobre
 `std.bytes`, `std.env` read-only, el time-base monotónico y `defer await`. Gate
@@ -337,7 +336,7 @@ necesaria; la fragmentación del workspace no.
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Conformidad del checkpoint previo** | Baseline ejecutable pre-`derive` | Completado |
 | **M10.5 — Reliability y testing** | Infraestructura y hardening continuo de evidencia | Completado |
-| **M10.5c — Conformidad viva** | Linaje separado y sellado final del draft 0.1 | Lineage cerrado; ratchet pendiente en Wave 0 y sellado en Wave 4 |
+| **M10.5c — Conformidad viva** | Linaje separado y sellado final del draft 0.1 | Ratchet Wave 0 cerrado; sellado pendiente en Wave 4 |
 | **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Especificado; implementación pendiente |
 | **M10.6 — Testing de usuario Tondo 0.1** | Gate T0 y contribución testing a G5 | Especificado; implementación pendiente |
 | **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura base cerrada; slices tempranos y APIs pendientes |
@@ -357,10 +356,10 @@ Estado observado del workspace:
   del draft: 2026-07-29, con formatter check, `cargo check` de todos los
   targets, Clippy con warnings denegados, 830 tests Rust inventariados, Rustdoc
   con warnings denegados y metadatos locked. La suite oficial pasa 205 casos y
-  424 repeticiones byte-estables; el inventario completo registra 1.507 casos
-  lógicos y 1.726 repeticiones.
-- La línea viva separada registra 1.521 tests lógicos y 1.740 repeticiones:
-  1.471 ejecutables, 38 contratos `draft-pending`, tres campañas y nueve fences
+  424 repeticiones byte-estables; el inventario completo registra 1.530 casos
+  lógicos y 1.749 repeticiones.
+- La línea viva separada registra 1.530 tests lógicos y 1.749 repeticiones:
+  1.480 ejecutables, 38 contratos `draft-pending`, tres campañas y nueve fences
   no ejecutables. Su matriz conserva 17 requisitos cubiertos y expone
   explícitamente 27 requisitos nuevos o modificados como `draft-pending`.
 
@@ -2526,13 +2525,15 @@ bytes. Antes de ampliar la gramática de M10.7 o M10.6:
   reproducibilidad y que el gate estricto puede permanecer verde sin falsear
   conformidad del draft incompleto.
 
-- [ ] **CONF-RATCHET-001 — Hacer incremental la evidencia nueva.** Definir el
-  mini-gate común que cada wave meta, testing y stdlib ejecuta antes de
-  integrarse: inventario regenerado, matriz sin entradas omitidas, casos
-  positivos/negativos de la nueva superficie, coverage aplicable sin regresión,
-  mutation scope cuando corresponda y manifest vivo actualizado. `META-CONF`,
-  `UTEST-CONF` y los gates estándar son cierres acumulativos, no la primera vez
-  que se crea evidencia.
+- [x] **CONF-RATCHET-001 — Hacer incremental la evidencia nueva.** El comando
+  `tondo-reliability ratchet check` valida el linaje vivo y su historial,
+  inventario, matriz, baseline de quality y el registro canónico de hashes.
+  `ratchet generate` solo escribe el registro después de comprobar todos esos
+  bytes; si existen case layers exige reports de coverage y mutation que pasen
+  la no-regresión. La Wave 0 no tiene capas ejecutables y registra ambos scopes
+  como `not-applicable` con razón explícita. Cada wave futura debe ejecutar este
+  mini-gate antes de integrarse; `META-CONF`, `UTEST-CONF` y los gates
+  estándar siguen siendo cierres acumulativos.
 
 - [ ] **CONF-SEAL-001 — Sellar una única conformidad Tondo 0.1.** Después de
   `META-CONF-001`, `UTEST-CONF-001` y Gate T0, exigir cero requisitos
@@ -4126,10 +4127,12 @@ gates en una barrera artificial.
 18. [x] Medir coverage y mutation score, cerrar huecos críticos y superar H0.
 19. [x] Ejecutar **STD-FOUNDATION-SPEC-001** y cerrar **DEC-012** sin fingir
     que las APIs de módulo o STD-0.1 completa ya están publicadas.
-20. [ ] **Wave 0 — Evidencia viva.** `CONF-LIVE-001` está cerrado; ejecutar
-    ahora `CONF-RATCHET-001`. Mini-gate: checkpoint reproducible, draft
-    seleccionable, inventario regenerable y CI verde sin atribuir pendientes
-    como pass.
+20. [x] **Wave 0 — Evidencia viva.** `CONF-LIVE-001` y
+    `CONF-RATCHET-001` están cerrados; la revisión 2 del manifest vivo conserva
+    la revisión 1 bajo un parent content-addressed. El registro
+    `testing/conformance-ratchet.json` fija hashes de manifest, inventario,
+    matriz y quality baseline; no atribuye las capas pendientes como pass y el
+    gate estricto lo valida en cada ejecución.
 21. [ ] **Wave 1 — Formatos compartidos.** Implementar `META-FORMAT-001` con
     parse/canonicalización/round-trip/rechazo de `/2`. Mini-gate: manifest,
     lockfile, interface, artifact y descriptor estándar pueden evolucionar en
@@ -4224,8 +4227,8 @@ CONF-LIVE
 
 M4, M5, M6, M7, M8, M9, el checkpoint M10, M10.5, M10.5b y Gates G4/H0
 quedan cerrados. Gate G5 está abierto únicamente por M10.7 y M10.6 dentro del
-draft no publicado. `CONF-LIVE-001` está cerrado; la acción inmediata es
-`CONF-RATCHET-001` y después `META-FORMAT-001`. `PARSER-STACK-001` se cierra en
+draft no publicado. `CONF-LIVE-001` y `CONF-RATCHET-001` están cerrados; la
+acción inmediata es `META-FORMAT-001`. `PARSER-STACK-001` se cierra en
 Wave 2 antes de añadir formas sintácticas. Ninguna tarea posterior necesita
 volver a decidir el orden global: sus prerequisitos están en 4.1.1 y en la wave
 correspondiente.
@@ -4233,6 +4236,20 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.00 — 2026-07-30
+
+- Se implementa `CONF-RATCHET-001` con los comandos
+  `tondo-reliability ratchet generate/check` y el registro canónico
+  `testing/conformance-ratchet.json`.
+- El mini-gate valida inventario, matriz, quality baseline, linaje vivo e
+  historial content-addressed; exige reports de coverage/mutation cuando hay
+  case layers y registra `not-applicable` explícito en Wave 0.
+- La revisión 2 de `conformance/live/manifest.json` conserva la revisión 1
+  bajo `conformance/live/history/` y retira únicamente
+  `CONF-RATCHET-001` de las tareas pendientes.
+- El gate estricto ejecuta el ratchet en cada validación y la siguiente tarea
+  pasa a ser `META-FORMAT-001`.
 
 ### 0.99 — 2026-07-30
 

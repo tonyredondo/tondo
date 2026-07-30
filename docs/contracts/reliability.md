@@ -8,7 +8,7 @@ preserves the M10.5b checkpoint while describing pending Tondo 0.1 `test`,
 
 ## Versioned evidence
 
-The repository owns five machine-readable records:
+The repository owns six machine-readable records:
 
 | Record | Contract |
 | --- | --- |
@@ -17,11 +17,23 @@ The repository owns five machine-readable records:
 | `testing/coverage-matrix.json` | Every extracted normative Tondo 0.1 requirement, its stable identity, checkpoint relationship, classification, dimensions, and evidence or waiver. |
 | `testing/quality-baseline.json` | Reviewed line/function/region coverage and the bounded mutation selection with non-regression thresholds. |
 | `testing/regressions.json` | Confirmed defects tied to the lowest executable public boundary that would have detected them. |
+| `testing/conformance-ratchet.json` | The exact live-lineage revision and evidence hashes accepted by the incremental conformance gate. |
 
 `tondo-reliability generate` deterministically rebuilds the inventory and
 matrix. `tondo-reliability check` rebuilds them in memory, compares exact bytes,
 validates the regression ledger, and validates the quality baseline. A stale,
 missing, duplicated, orphaned, or incomplete record is a test failure.
+
+The command tondo-reliability ratchet check is the common mini-gate for every
+live conformance wave. It validates the current live lineage and its revision
+history, regenerates the inventory and coverage matrix in memory, checks their
+canonical bytes, validates the quality baseline, and verifies the ratchet
+record hashes. A wave with live case layers must also provide coverage and
+mutation reports that pass the baseline non-regression gates; a wave without
+executable live layers records both scopes as not-applicable with an explicit
+reason. ratchet generate writes the canonical record only after all those
+checks pass. The record never contains physical paths or report contents, only
+portable logical paths and SHA-256 identities.
 
 ## Inventory semantics
 
@@ -40,8 +52,8 @@ One logical test is not necessarily one source file or one execution:
   They are contracts within Tondo 0.1, but are never counted as executable
   coverage before their implementation and live evidence exist.
 
-The current live inventory contains 1,527 logical tests and 1,746 repetitions.
-Of those, 1,477 are executable, 38 are draft-pending contracts, three are fuzz
+The current live inventory contains 1,530 logical tests and 1,749 repetitions.
+Of those, 1,480 are executable, 38 are draft-pending contracts, three are fuzz
 campaigns, and nine are non-executable fences. Counts are derived from entries
 and cannot be edited independently.
 
@@ -112,9 +124,10 @@ runs:
 6. exact checkpoint snapshot provenance from tag, commit and SHA-256;
 7. locked conformance runner and adapter builds;
 8. exact reliability-record validation;
-9. explicit checkpoint and live-lineage validation;
-10. the complete reference checkpoint run; and
-11. byte-for-byte comparison with the versioned result.
+9. the incremental conformance ratchet and its content-addressed evidence;
+10. explicit checkpoint and live-lineage validation;
+11. the complete reference checkpoint run; and
+12. byte-for-byte comparison with the versioned result.
 
 Linux ARM64, macOS Intel, macOS Apple Silicon, and Windows run the portable
 workspace tests plus a native CLI hello-world smoke test. They hash-validate the
@@ -277,6 +290,7 @@ The ordinary local commands are:
 bash scripts/test-gate.sh
 TONDO_FUZZ_RUNS=128 bash scripts/fuzz-smoke.sh
 bash scripts/quality-gate.sh
+cargo run -p tondo-reliability -- ratchet check --root .
 ~~~
 
 Updating a quality threshold is a reviewed baseline change, not an automatic

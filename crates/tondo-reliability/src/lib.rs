@@ -5,6 +5,7 @@ pub mod harness;
 pub mod inventory;
 pub mod matrix;
 pub mod quality;
+pub mod ratchet;
 pub mod regression;
 
 use std::fmt::Write as _;

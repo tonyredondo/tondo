@@ -54,7 +54,7 @@ fn validate_command_reports_the_live_draft_identity() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).expect("identity must be UTF-8");
-    assert!(stdout.starts_with("tondo-0.1-live 0.1 open 1 "));
+    assert!(stdout.starts_with("tondo-0.1-live 0.1 open 2 "));
     assert_eq!(stdout.trim_end().rsplit(' ').next().unwrap().len(), 64);
 }
 
@@ -78,10 +78,7 @@ fn seal_is_a_non_mutating_preflight_and_rejects_pending_work() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("error must be UTF-8");
-    assert!(
-        stderr
-            .contains("still has pending tasks: CONF-RATCHET-001, M10.6, M10.7, PARSER-STACK-001")
-    );
+    assert!(stderr.contains("still has pending tasks: M10.6, M10.7, PARSER-STACK-001"));
 }
 
 #[test]
