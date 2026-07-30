@@ -1,6 +1,10 @@
 # Runtime stdout sidecars are exact byte snapshots on every host.
 *.stdout -text
 
+# Platform argument sidecars are canonical LF text consumed byte-for-byte.
+*.args-unix text eol=lf
+*.args-windows text eol=lf
+
 # Historical conformance packages and canonical manifests are byte-exact.
 /conformance/checkpoints/** -text
 /conformance/live/*.json -text

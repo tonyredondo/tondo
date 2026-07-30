@@ -193,7 +193,10 @@ mod tests {
         .unwrap();
         let nested = directory.0.join("nested/deeper");
         fs::create_dir_all(&nested).unwrap();
-        assert_eq!(workspace_root(&nested).unwrap(), directory.0);
+        assert_eq!(
+            workspace_root(&nested).unwrap(),
+            directory.0.canonicalize().unwrap()
+        );
 
         let absent = TemporaryDirectory::new("no-workspace");
         assert!(
