@@ -27597,7 +27597,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "d3693ab01043ef39d0cb8e06f909fc073c6e3984fdb9d0f1101709c04a4174c9",
+      "source_sha256": "0882d547900ae06a7da77bade010b95608bf3f3801ed28e34283a7b2429f3fcf",
       "target": "host-rust",
       "document": null,
       "edition": "host",

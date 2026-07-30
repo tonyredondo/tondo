@@ -98,8 +98,12 @@ impl RegressionLedger {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
+
     use super::*;
     use crate::inventory::{InventorySummary, TestEntry};
+
+    static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
     fn inventory() -> Inventory {
         let test = TestEntry {
@@ -168,7 +172,7 @@ mod tests {
         let path = std::env::temp_dir().join(format!(
             "tondo-regression-ledger-{}-{}",
             std::process::id(),
-            std::thread::current().name().unwrap_or("test")
+            TEMPORARY_ID.fetch_add(1, Ordering::Relaxed)
         ));
         let _ = std::fs::remove_dir_all(&path);
         path
