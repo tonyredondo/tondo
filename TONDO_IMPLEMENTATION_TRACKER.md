@@ -7,13 +7,14 @@ read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001`,
 `UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001`, `UTEST-CAPTURE-001` y
 `UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001`, `UTEST-LOWER-001` y
-`UTEST-CONTROL-001`, `UTEST-RUNTIME-001` y `UTEST-SUITE-001` están
+`UTEST-CONTROL-001`, `UTEST-RUNTIME-001`, `UTEST-SUITE-001`,
+`UTEST-LIMIT-001` y `UTEST-INPUTS-001` están
 cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.30
+**Versión del tracker:** 1.31
 
 **Última actualización:** 2026-07-31
 
@@ -2702,7 +2703,7 @@ reporters.
   Evidencia: `docs/contracts/test-cli-plan.md`, cinco tests unitarios del parser
   y un test CLI de ambos límites.
 
-- [ ] **UTEST-INPUTS-001 — Materializar inputs públicos y secretos sin
+- [x] **UTEST-INPUTS-001 — Materializar inputs públicos y secretos sin
   filtraciones.** Después de `UTEST-INPUTS-PLAN-001`,
   `UTEST-RUNTIME-001` y `STD-ENV-CONF-001`, resolver los descriptors del plan,
   materializarlos exclusivamente dentro del worker y revocarlos al terminar.
@@ -2710,7 +2711,11 @@ reporters.
   compilación, diagnostics, reportes, snapshots, artifacts o productos salvo
   copia explícita del programa, y documentar que el runner no realiza redacción
   heurística. Un fallo de materialización termina con exit `1` sin reporte
-  parcial; un fallo de revocación pierde aislamiento y usa exit `3`.
+  parcial; un fallo de revocación pierde aislamiento y usa exit `3`. Evidencia:
+  `docs/contracts/test-input-runtime.md` y siete tests unitarios sobre selección
+  build/runtime, hash público, errores de proveedor, contención de pánicos,
+  revocación idempotente, metadata sin secretos y acceso a inputs no
+  materializados.
 
 - [x] **UTEST-DISC-001 — Implementar descubrimiento convencional y explícito.**
   `tondo_compiler::test_discovery` recibe entradas enumeradas por el host y

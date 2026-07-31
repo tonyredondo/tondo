@@ -18,6 +18,7 @@ pub mod test_check;
 pub mod test_control;
 pub mod test_dependencies;
 pub mod test_discovery;
+pub mod test_input_runtime;
 pub mod test_inputs;
 pub mod test_integration;
 pub mod test_limits;
