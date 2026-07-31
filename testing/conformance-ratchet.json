@@ -8,11 +8,11 @@
   },
   "inventory": {
     "path": "testing/inventory.json",
-    "sha256": "85ba8a0824b19ab94ddad1ab0e3ab5be5090e4b7d63a85746a3760d2de89b554"
+    "sha256": "f9e4c0dda35808e82b23f0cf4b0a2ab4e34866fea37bf36bde514f991acc8968"
   },
   "matrix": {
     "path": "testing/coverage-matrix.json",
-    "sha256": "8a8a1a8f944745c7fa1224c4d228f3ef2c39077c28c60362813e58dbbe7beb6c"
+    "sha256": "27472394c6e3f7e27a72f9b102f1c696447f3449f9a50854a557ed2ea7f4e945"
   },
   "quality_baseline": {
     "path": "testing/quality-baseline.json",

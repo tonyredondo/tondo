@@ -6,13 +6,13 @@ read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-INPUTS-PLAN-001`, `UTEST-RESULT-MODEL-001`, `UTEST-CLI-PARSE-001` y
 `UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001`,
 `UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001`, `UTEST-CAPTURE-001` y
-`UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001` están
+`UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001` y `UTEST-LOWER-001` están
 cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.25
+**Versión del tracker:** 1.26
 
 **Última actualización:** 2026-07-31
 
@@ -2850,13 +2850,16 @@ reporters.
 
 ### 17.3 Lowering, runtime y CLI
 
-- [ ] **UTEST-LOWER-001 — Bajar entradas de test por el pipeline común.** HIR,
+- [x] **UTEST-LOWER-001 — Bajar entradas de test por el pipeline común.** HIR,
   MIR, bytecode y sus admission verifiers representan árbol/parent, entradas de
   setup, snapshots de entorno, identidad, source span, error, async, cleanup,
   `TestLog`, `TestTags`, `TestFailNow`, `TestSkip`, `TestAttach`,
   `TestSnapshot`, entrada/salida de dominio, `VirtualTimeSettle` y
   `VirtualTimeAdvance` sin crear un segundo frontend o una ruta de ejecución no
-  verificada. `main` nunca se ejecuta en un test target.
+  verificada. `main` nunca se ejecuta en un test target. `test_lower::lower`
+  ordena por span, conserva snapshots/cleanup y `test_lower::verify` exige
+  streams HIR/MIR/bytecode idénticos, identidad canónica y hash de artefacto.
+  Evidencia: `docs/contracts/test-lower.md` y nueve tests unitarios.
 
 - [ ] **UTEST-CONTROL-001 — Implementar el envelope sellado de ejecución.** Cada
   suite/test recibe node ID, tag/log/artifact/snapshot/stdout/stderr sinks,
@@ -4327,6 +4330,16 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.26 — 2026-07-31
+
+- Se completa `UTEST-LOWER-001` con `tondo_compiler::test_lower` y el
+  contrato `docs/contracts/test-lower.md`. El lowering consume exclusivamente
+  contratos ya comprobados, ordena el árbol por spans, conserva parent,
+  snapshots de entorno, identidad, dominios, async y cleanup, y copia la
+  operación sellada a HIR/MIR/bytecode con un admission verifier común.
+  `main` queda fuera del target, las identidades y hashes son canónicos y
+  nueve tests cubren operaciones, orden, metadatos, límites y tampering.
 
 ### 1.25 — 2026-07-31
 
