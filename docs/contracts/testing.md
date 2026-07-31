@@ -12,6 +12,12 @@ Suite environment capture is implemented in
 `Copy + Send + Share` snapshots before lowering and keeps loans, moves and
 terminal owners out of descendant environments.
 
+Unit companion overlays are implemented in
+[`test-overlay.md`](./test-overlay.md). They seal the already checked
+production unit before admitting private helpers and private production
+access, while preserving the production interface, capabilities, coherence
+and artifact identity.
+
 ## Fixture classes
 
 The repository reserves these roots:

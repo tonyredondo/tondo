@@ -5,13 +5,14 @@ tempranos `std.bytes`, el time-base de `std.time`, el contrato/implementación
 read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-INPUTS-PLAN-001`, `UTEST-RESULT-MODEL-001`, `UTEST-CLI-PARSE-001` y
 `UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001`,
-`UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001` y `UTEST-CAPTURE-001` están
+`UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001`, `UTEST-CAPTURE-001` y
+`UTEST-OVERLAY-001` están
 cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.22
+**Versión del tracker:** 1.23
 
 **Última actualización:** 2026-07-31
 
@@ -2807,11 +2808,20 @@ reporters.
   snapshots válidos, nesting, modos de binding/uso, capabilities, terminales,
   diagnósticos y entradas inválidas.
 
-- [ ] **UTEST-OVERLAY-001 — Implementar el overlay unitario sellado.** Resolver
+- [x] **UTEST-OVERLAY-001 — Implementar el overlay unitario sellado.** Resolver
   y comprobar producción primero, después permitir lectura privada y helpers
   privados sin reabrir bodies, añadir exports ni cambiar interfaces. Casos
-  negativos deben demostrar que un overlay no repara producción inválida,
-  altera coherence o entra en el grafo production.
+  negativos demuestran que un overlay no repara producción inválida, altera
+  coherence ni entra en el grafo production. `test_overlay::ProductionSeal`
+  exige resolución, comprobación semántica y coherencia completas más hashes
+  de interfaz/capabilities/coherence/artefacto; `from_resolved` filtra un
+  conjunto explícito de fuentes de producción. `test_overlay::build` solo
+  acepta `UnitTest`, ordena imports/helpers/referencias de forma determinista,
+  conserva el árbol de tests separado y rechaza exports públicos, colisiones,
+  self-imports, visibilidad privada importada, mutaciones de coherence y
+  referencias desconocidas. Evidencia: `docs/contracts/test-overlay.md` y
+  once tests unitarios, incluidos el adapter del resolver y la invariancia de
+  los hashes de producción.
 
 - [ ] **UTEST-INTEG-001 — Implementar integration roots aislados.** Cada root
   recibe PackageId sintético de consumidor, imports explícitos y únicamente
@@ -4312,6 +4322,18 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.23 — 2026-07-31
+
+- Se completa `UTEST-OVERLAY-001` con `tondo_compiler::test_overlay`. La fase
+  de producción queda sellada con su prueba de resolución/semántica/coherencia,
+  fuentes exactas y hashes de interfaz, capabilities, coherence y artefacto.
+- El overlay unitario admite únicamente la companion del mismo paquete y
+  módulo, acceso privado a producción, helpers privados, imports públicos
+  explícitos y el árbol suite/test separado. No reabre bodies, no modifica el
+  producto de producción ni puede publicar, importar su companion, cambiar
+  coherence o acceder a privados externos. Se añaden once tests deterministas
+  y `docs/contracts/test-overlay.md`.
 
 ### 1.21 — 2026-07-31
 
