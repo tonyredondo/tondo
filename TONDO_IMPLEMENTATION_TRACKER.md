@@ -7,13 +7,13 @@ read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001`,
 `UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001`, `UTEST-CAPTURE-001` y
 `UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001`, `UTEST-LOWER-001` y
-`UTEST-CONTROL-001` y `UTEST-RUNTIME-001` están
+`UTEST-CONTROL-001`, `UTEST-RUNTIME-001` y `UTEST-SUITE-001` están
 cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.28
+**Versión del tracker:** 1.29
 
 **Última actualización:** 2026-07-31
 
@@ -2904,7 +2904,7 @@ reporters.
   revoca todos los recursos antes de devolver resultados ordenados por ID.
   Evidencia: `docs/contracts/test-runtime.md` y catorce tests unitarios.
 
-- [ ] **UTEST-SUITE-001 — Implementar lifecycle jerárquico de suite.** Ejecutar
+- [x] **UTEST-SUITE-001 — Implementar lifecycle jerárquico de suite.** Ejecutar
   setup una vez por participación y solo si existe una hoja seleccionada,
   conservar su entorno y guards, entrar de fuera hacia dentro y hacer teardown
   de dentro hacia fuera después de todos los descendientes. Un fallo de setup
@@ -2914,7 +2914,10 @@ reporters.
   prevalece y convierte descendientes en `blocked-setup`. La misma máquina de
   lifecycle debe admitir una participación posterior en un worker de retry sin
   reutilizar el entorno ni sus snapshots. Conducir `defer await` hasta completar
-  dentro de teardown, sin bloquear el worker ni inventar `afterAll`.
+  dentro de teardown, sin bloquear el worker ni inventar `afterAll`. Evidencia:
+  `docs/contracts/test-suite.md` y ocho tests unitarios sobre participación,
+  orden exterior-interior, cleanup LIFO, bloqueo causal, skip, continuidad de
+  hermanos, teardown y retry con contexto fresco.
 
 - [ ] **UTEST-LIMIT-001 — Hacer límites y timeout terminales reales.** Publicar
   defaults finitos, aplicar `--timeout` por hoja y por fase setup/teardown sin
