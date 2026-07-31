@@ -2,6 +2,11 @@
 
 **Status:** accepted for bootstrap
 
+The static declaration boundary is implemented in
+[`test-tree.md`](./test-tree.md). It is intentionally separate from this
+runtime harness contract: tree construction is compile-time and host-free,
+while workers, lifecycle and reporters consume its descriptors later.
+
 ## Fixture classes
 
 The repository reserves these roots:

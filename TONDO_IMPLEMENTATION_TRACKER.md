@@ -4,12 +4,13 @@
 tempranos `std.bytes`, el time-base de `std.time`, el contrato/implementación
 read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-INPUTS-PLAN-001`, `UTEST-RESULT-MODEL-001`, `UTEST-CLI-PARSE-001` y
-`UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001` y
-`UTEST-CST-001` y `UTEST-FMT-001` están cerrados sobre el draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
+`UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001`,
+`UTEST-CST-001`, `UTEST-FMT-001` y `UTEST-ID-001` están cerrados sobre el
+draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.20
+**Versión del tracker:** 1.21
 
 **Última actualización:** 2026-07-31
 
@@ -2782,12 +2783,17 @@ reporters.
   La inmutabilidad se demuestra reproduciendo el corpus bootstrap por sus
   hashes, no manteniendo dos gramáticas en el compilador del draft.
 
-- [ ] **UTEST-ID-001 — Construir el árbol estático suite/test.** La identidad
+- [x] **UTEST-ID-001 — Construir el árbol estático suite/test.** La identidad
   interna usa PackageId + source class + module path + ordered node path + kind;
   la visible usa `package::unit|integration::path::suite...::test`. Registrar
   parents, rechazar suites vacías `E2004`, nombres hermanos duplicados `E2002`
   y cualquier intento de reabrir/mezclar suites. Orden, warnings y source
-  ranges deben ser deterministas entre archivos permutados.
+  ranges son deterministas entre archivos permutados. `test_tree::build`
+  conserva el parent identity, spans de declaración/nombre y warnings `W1004`,
+  y devuelve diagnósticos ordenados de forma estable para `E2001`, `E2002` y
+  `E2004`. Evidencia: `docs/contracts/test-tree.md` y doce tests unitarios
+  sobre nesting, IDs unit/integration, duplicados cross-file, suites vacías,
+  producción, permutación, descarte y spans.
 
 - [ ] **UTEST-CAPTURE-001 — Comprobar entornos de suite.** Un descendiente solo
   captura bindings ancestrales `let: Copy + Send + Share` mediante snapshot.
@@ -4300,6 +4306,18 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.21 — 2026-07-31
+
+- Se completa `UTEST-ID-001` con `tondo_compiler::test_tree`, un builder
+  compile-time y host-free que consume CST y metadata cerrada, ordena las
+  fuentes por identidad estable y expone el árbol pre-order con identidad
+  interna, ID visible, parent y spans.
+- Se implementan `E2001`, `E2002`, `E2004` y warnings `W1004`, incluidos
+  duplicados de hermanos entre archivos, rechazo de reapertura/mezcla, suites
+  vacías y nombres `_`. La permutación de entradas conserva nodos,
+  diagnostics y rangos; `docs/contracts/test-tree.md` fija el contrato y
+  doce tests nuevos lo cubren.
 
 ### 1.20 — 2026-07-31
 

@@ -19,6 +19,7 @@ pub mod test_inputs;
 pub mod test_owners;
 pub mod test_plan;
 pub mod test_result;
+pub mod test_tree;
 pub mod toolchain;
 pub mod types;
 

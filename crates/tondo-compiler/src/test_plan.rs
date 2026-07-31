@@ -21,7 +21,7 @@ const TIME_CATALOG_MODULE: &str = "time";
 const TIME_CATALOG_API: &str = "monotonic-v1";
 
 /// The only source classes admitted by the 0.1 test plan.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TestSourceClass {
     Production,
     UnitTest,
