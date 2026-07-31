@@ -6,13 +6,13 @@ read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-INPUTS-PLAN-001`, `UTEST-RESULT-MODEL-001`, `UTEST-CLI-PARSE-001` y
 `UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001`,
 `UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001`, `UTEST-CAPTURE-001` y
-`UTEST-OVERLAY-001`, `UTEST-INTEG-001` están
+`UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001` están
 cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.24
+**Versión del tracker:** 1.25
 
 **Última actualización:** 2026-07-31
 
@@ -2835,20 +2835,18 @@ reporters.
   rechaza roots duplicados. Evidencia: `docs/contracts/test-integration.md` y
   ocho tests unitarios deterministas.
 
-- [ ] **UTEST-CHECK-001 — Inferir el contrato exacto del body.** Comprobar cada
-  test como entrada privada `async? fn(): Unit ! E` y cada setup de suite como
-  otra entrada privada `async? fn(): Unit ! E` sin `return`; inferir una unión
-  cerrada `E: Discard`, admitir `fail`, `?`, `await` y `scope` donde corresponda
-  y reutilizar todos los checks ordinarios de tipos, ownership, préstamos,
-  terminales, `defer`, `Send`, `Share` y `unsafe`. Resolver el módulo test-only
-  `std.testing` con las seis operaciones monomórficas exactas de
-  control/metadata/evidencia, incluidos `tags(Map[String, String])`,
-  `attach(String, String, bytes.Bytes)` y `snapshot(String, String)`, y el
-  núcleo temporal con
-  `withVirtualTime[E, F: Send + CallOnce[async fn(ref VirtualTime): Unit ! E]]`,
-  `settle` y `advance(Duration)`. Comprobar propagación de `E`, `Unit`/`Never`,
-  opacidad/no escape/no `Share` de `VirtualTime`, nombres/media types,
-  `P2006`-`P2008` y `E2003` al cruzar a producción.
+- [x] **UTEST-CHECK-001 — Inferir el contrato exacto del body.**
+  `test_check::check` cierra las entradas privadas `async? fn(): Unit ! E` de
+  tests y setups, permite `Unit`/`Never`, prohíbe valores retornados y
+  `return` en setup, normaliza la unión de errores y exige `Discard`. Consume
+  las pruebas de ownership, préstamos, terminales, `Send`, `Share` y `unsafe`
+  sin relajarlas, infiere async desde `await` y tiempo virtual y rechaza
+  `std.testing` desde producción con `E2003`. Valida las formas monomórficas de
+  `log`, `tags`, `failNow`, `skip`, `attach`, `snapshot`, `withVirtualTime`,
+  `settle` y `advance`, incluyendo nombres/media types, duplicados de
+  evidencia, `P2005`/`P2006` y la clausura
+  `Send + CallOnce[async fn(ref VirtualTime): Unit ! E]`. Evidencia:
+  `docs/contracts/test-check.md` y diez tests unitarios deterministas.
 
 ### 17.3 Lowering, runtime y CLI
 
@@ -4329,6 +4327,15 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.25 — 2026-07-31
+
+- Se completa `UTEST-CHECK-001` con `tondo_compiler::test_check` y el contrato
+  `docs/contracts/test-check.md`. El checker adapta los facts ordinarios sin
+  rebajar ownership/capabilities, infiere el contrato Unit/Never y la unión
+  `Discard`, sella las operaciones de `std.testing`, valida virtual time y
+  mantiene `E2003` para producción. Diez tests cubren formas válidas,
+  diagnósticos, evidencia, async y opacidad del controlador.
 
 ### 1.24 — 2026-07-31
 
