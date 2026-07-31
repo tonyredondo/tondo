@@ -25,6 +25,7 @@ pub mod test_overlay;
 pub mod test_owners;
 pub mod test_plan;
 pub mod test_result;
+pub mod test_runtime;
 pub mod test_tree;
 pub mod toolchain;
 pub mod types;

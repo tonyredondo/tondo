@@ -7,13 +7,13 @@ read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001`,
 `UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001`, `UTEST-CAPTURE-001` y
 `UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001`, `UTEST-LOWER-001` y
-`UTEST-CONTROL-001` están
+`UTEST-CONTROL-001` y `UTEST-RUNTIME-001` están
 cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.27
+**Versión del tracker:** 1.28
 
 **Última actualización:** 2026-07-31
 
@@ -2883,7 +2883,7 @@ reporters.
   reporte conserva evidencia ordenada sin paths ni contexto observable.
   Evidencia: `docs/contracts/test-control.md` y dieciséis tests unitarios.
 
-- [ ] **UTEST-RUNTIME-001 — Ejecutar cada hoja en una raíz aislada.** Estado,
+- [x] **UTEST-RUNTIME-001 — Ejecutar cada hoja en una raíz aislada.** Estado,
   roots, heap observable, tasks, handles, pánicos, tags, logs, attachments,
   comprobaciones de snapshot, stdout, stderr, envelopes y presupuestos no cruzan
   hojas salvo snapshots de entorno de suite comprobados.
@@ -2899,6 +2899,10 @@ reporters.
   expone una única fase sellada de inicialización/revocación y ejecuta primero
   con snapshot de environment vacío; `UTEST-INPUTS-001` conecta después las
   fuentes declaradas sin cambiar el protocolo ni serializar valores de vuelta.
+  `test_runtime::RuntimeRunner` crea bootstrap/envelope/registry nuevos por
+  hoja, captura pánicos y proyecta estados terminales, ejecuta cleanup LIFO y
+  revoca todos los recursos antes de devolver resultados ordenados por ID.
+  Evidencia: `docs/contracts/test-runtime.md` y catorce tests unitarios.
 
 - [ ] **UTEST-SUITE-001 — Implementar lifecycle jerárquico de suite.** Ejecutar
   setup una vez por participación y solo si existe una hoja seleccionada,
@@ -4334,6 +4338,17 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.28 — 2026-07-31
+
+- Se completa `UTEST-RUNTIME-001` con `tondo_compiler::test_runtime` y el
+  contrato `docs/contracts/test-runtime.md`. El runner crea un bootstrap,
+  worker/heap/executor, envelope y registro de recursos nuevos por hoja,
+  captura pánicos, ejecuta cleanup LIFO, revoca handles aunque sobrevivan
+  referencias obsoletas y ordena los resultados por ID. Se fijan los estados
+  de retorno, skip, error, pánico, límite, timeout e infraestructura, junto a
+  la frontera de reloj monotónico/virtual. Catorce tests cubren aislamiento,
+  revocación, terminales, cleanup, snapshots, paralelismo y retries.
 
 ### 1.27 — 2026-07-31
 
