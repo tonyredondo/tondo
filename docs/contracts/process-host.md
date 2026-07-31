@@ -6,7 +6,9 @@ target.
 ## Boundary
 
 `Command` and `Pipeline` are language intrinsics. `std.process` is the only
-bootstrap standard module that can construct or execute them. The module is
+bootstrap standard module that can construct or execute them. `std.bytes` owns
+the canonical immutable `Bytes` value; process output exposes that type and
+decodes it through the language-level `String(Bytes)` conversion. The module is
 present only when the selected target advertises the registered `process`
 capability; importing it without that capability is rejected with `E1008`
 before HIR construction or runtime execution.
@@ -14,8 +16,6 @@ before HIR construction or runtime execution.
 The bootstrap surface is:
 
 ```tondo
-opaque Bytes
-opaque Utf8Error
 opaque ExitStatus
 opaque ProcessOutput
 opaque ProcessError
@@ -25,8 +25,6 @@ opaque terminal ProcessHandle
 fn args(): Array[String]
 fn cmd(program: String, arguments: ...String): Command
 fn shell(text: String): Command
-
-fn Bytes.text(self): String ! Utf8Error
 
 fn Command.start(self): ProcessHandle ! ProcessError
 async fn Command.status(self): Array[ExitStatus] ! ProcessError
@@ -52,11 +50,11 @@ async fn ProcessHandle.cancel(self): Array[ExitStatus] ! ProcessError
 `code: Int?` and `success: Bool`. These are opaque standard-library values at
 the host boundary even though their observable field contract is record-like.
 
-`ProcessError`, `ProcessExitError`, and `Utf8Error` are distinct nominal
+`ProcessError` and `ProcessExitError` are distinct nominal
 standard-library errors. `ProcessError` represents spawn, pipe, read, and wait
 failures. `ProcessExitError` represents a completed `check` for which at least
 one stage was unsuccessful and retains the complete `ProcessOutput`.
-`Utf8Error` represents strict UTF-8 decoding failure.
+`std.bytes.Utf8Error` represents strict UTF-8 decoding failure.
 
 Source annotations qualify these source-less bootstrap types through the
 module, for example `process.ProcessError`. A `check` result is a normal
@@ -130,7 +128,7 @@ read on its worker. Host work runs independently and completion is polled
 between runnable Tondo tasks; the executor may block for a host completion only
 when it has no runnable language task.
 
-`Bytes.text()` uses strict UTF-8 and never performs replacement decoding.
+`String(Bytes)` uses strict UTF-8 and never performs replacement decoding.
 
 ## Cancellation and cleanup
 

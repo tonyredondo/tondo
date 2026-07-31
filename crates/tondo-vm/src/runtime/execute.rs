@@ -1975,6 +1975,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::Command
                     | BytecodeIntrinsicType::Pipeline
                     | BytecodeIntrinsicType::Bytes
+                    | BytecodeIntrinsicType::BytesBuilder
+                    | BytecodeIntrinsicType::BytesError
                     | BytecodeIntrinsicType::ExitStatus
                     | BytecodeIntrinsicType::ProcessOutput
                     | BytecodeIntrinsicType::ProcessError
@@ -3348,6 +3350,8 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::Command => RuntimeHostValueKind::Command,
         BytecodeIntrinsicType::Pipeline => RuntimeHostValueKind::Pipeline,
         BytecodeIntrinsicType::Bytes => RuntimeHostValueKind::Bytes,
+        BytecodeIntrinsicType::BytesBuilder => RuntimeHostValueKind::BytesBuilder,
+        BytecodeIntrinsicType::BytesError => RuntimeHostValueKind::BytesError,
         BytecodeIntrinsicType::ExitStatus => RuntimeHostValueKind::ExitStatus,
         BytecodeIntrinsicType::ProcessOutput => RuntimeHostValueKind::ProcessOutput,
         BytecodeIntrinsicType::ProcessHandle => RuntimeHostValueKind::ProcessHandle,
@@ -7067,11 +7071,15 @@ impl Engine<'_, '_> {
                 if metadata.closure.is_some() {
                     return Err(VmError::invariant("closure callable has no implementation"));
                 }
-                if values.iter().any(|value| matches!(value, Value::Loan(_))) {
-                    return Err(VmError::invariant(
-                        "host callables cannot receive borrowed parameters",
-                    ));
-                }
+                let values = values
+                    .into_iter()
+                    .map(|value| match value {
+                        Value::Loan(loan) => {
+                            self.read_task_place(loan.task, loan.frame, &loan.place)
+                        }
+                        value => Ok(value),
+                    })
+                    .collect::<Result<Vec<_>, VmError>>()?;
                 let snapshots = values
                     .iter()
                     .map(|value| {
@@ -8933,6 +8941,14 @@ mod tests {
                 RuntimeHostValueKind::Pipeline,
             ),
             (BytecodeIntrinsicType::Bytes, RuntimeHostValueKind::Bytes),
+            (
+                BytecodeIntrinsicType::BytesBuilder,
+                RuntimeHostValueKind::BytesBuilder,
+            ),
+            (
+                BytecodeIntrinsicType::BytesError,
+                RuntimeHostValueKind::BytesError,
+            ),
             (
                 BytecodeIntrinsicType::ExitStatus,
                 RuntimeHostValueKind::ExitStatus,

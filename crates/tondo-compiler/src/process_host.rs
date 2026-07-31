@@ -46,6 +46,8 @@ enum HostValue {
     ProcessError { _message: String },
     ProcessExitError { _output: ProcessOutput },
     Utf8Error { _message: String },
+    BytesBuilder(Vec<u8>),
+    BytesError { _message: String },
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -71,10 +73,15 @@ pub(crate) struct BootstrapHost {
     jobs: BTreeMap<u64, AsyncJob>,
     next_value: u64,
     next_job: u64,
+    max_bytes: u64,
 }
 
 impl BootstrapHost {
     pub(crate) fn new(arguments: Vec<String>) -> Self {
+        Self::with_max_bytes(arguments, u64::MAX)
+    }
+
+    pub(crate) fn with_max_bytes(arguments: Vec<String>, max_bytes: u64) -> Self {
         Self {
             stdout: Vec::new(),
             arguments,
@@ -82,6 +89,7 @@ impl BootstrapHost {
             jobs: BTreeMap::new(),
             next_value: 0,
             next_job: 0,
+            max_bytes,
         }
     }
 
@@ -112,6 +120,30 @@ impl BootstrapHost {
         RuntimeValue::ResultErr(Box::new(self.process_error(message)))
     }
 
+    fn bytes_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::BytesError,
+            HostValue::BytesError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn bytes_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.bytes_error(message)))
+    }
+
+    fn ensure_bytes_len(&self, length: usize) -> Result<(), String> {
+        if u64::try_from(length).is_ok_and(|length| length <= self.max_bytes) {
+            Ok(())
+        } else {
+            Err(format!(
+                "byte buffer length {length} exceeds the configured limit {}",
+                self.max_bytes
+            ))
+        }
+    }
+
     fn plan(&self, value: &RuntimeValue) -> Result<ProcessPlan, VmError> {
         let RuntimeValue::Host { kind, id } = value else {
             return Err(VmError::Host("process plan is not a host value".into()));
@@ -135,6 +167,51 @@ impl BootstrapHost {
             Some(HostValue::Bytes(bytes)) => Ok(bytes),
             _ => Err(VmError::Host("Bytes token is stale".into())),
         }
+    }
+
+    fn builder(&self, value: &RuntimeValue) -> Result<&[u8], VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::BytesBuilder,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("BytesBuilder receiver is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::BytesBuilder(bytes)) => Ok(bytes),
+            _ => Err(VmError::Host("BytesBuilder token is stale".into())),
+        }
+    }
+
+    fn builder_mut(&mut self, value: &RuntimeValue) -> Result<&mut Vec<u8>, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::BytesBuilder,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("BytesBuilder receiver is invalid".into()));
+        };
+        match self.values.get_mut(id) {
+            Some(HostValue::BytesBuilder(bytes)) => Ok(bytes),
+            _ => Err(VmError::Host("BytesBuilder token is stale".into())),
+        }
+    }
+
+    fn array_bytes(value: &RuntimeValue) -> Result<Vec<u8>, VmError> {
+        let RuntimeValue::Array(values) = value else {
+            return Err(VmError::Host("expected Array[Byte]".into()));
+        };
+        values
+            .iter()
+            .map(|value| match value {
+                RuntimeValue::Byte(value) => Ok(*value),
+                _ => Err(VmError::Host("expected Array[Byte] element".into())),
+            })
+            .collect()
+    }
+
+    fn bytes_array(bytes: &[u8]) -> RuntimeValue {
+        RuntimeValue::Array(bytes.iter().copied().map(RuntimeValue::Byte).collect())
     }
 
     fn output(&self, value: &RuntimeValue) -> Result<ProcessOutput, VmError> {
@@ -188,6 +265,12 @@ impl BootstrapHost {
             Ok(output) => output,
             Err(message) => return self.result_error(message),
         };
+        if let Err(message) = self.ensure_bytes_len(output.stdout.len()) {
+            return self.result_error(format!("process stdout exceeds byte limit: {message}"));
+        }
+        if let Err(message) = self.ensure_bytes_len(output.stderr.len()) {
+            return self.result_error(format!("process stderr exceeds byte limit: {message}"));
+        }
         match mode {
             CompletionMode::Status | CompletionMode::Run | CompletionMode::Cancel => {
                 RuntimeValue::ResultOk(Box::new(self.allocate_statuses(output.statuses)))
@@ -300,6 +383,151 @@ impl VmHost for BootstrapHost {
                 self.stdout.extend_from_slice(text.as_bytes());
                 Ok(RuntimeValue::Unit)
             }
+            ("std.bytes.empty", []) => Ok(RuntimeValue::ResultOk(Box::new(
+                self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(Vec::new())),
+            ))),
+            ("intrinsic.Bytes.fromString", [RuntimeValue::String(text)]) => {
+                if let Err(message) = self.ensure_bytes_len(text.len()) {
+                    return Ok(self.bytes_result_error(message));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::Bytes,
+                    HostValue::Bytes(text.as_bytes().to_vec()),
+                ))))
+            }
+            ("std.bytes.fromArray", [array]) => {
+                let bytes = Self::array_bytes(array)?;
+                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
+                    return Ok(self.bytes_result_error(message));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::Bytes,
+                    HostValue::Bytes(bytes),
+                ))))
+            }
+            ("std.bytes.builder", []) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                RuntimeHostValueKind::BytesBuilder,
+                HostValue::BytesBuilder(Vec::new()),
+            )))),
+            ("std.bytes.Bytes.length", [receiver]) => Ok(RuntimeValue::Integer(
+                i128::try_from(self.bytes(receiver)?.len())
+                    .map_err(|_| VmError::Host("Bytes length does not fit in Int".into()))?,
+            )),
+            ("std.bytes.Bytes.get", [receiver, RuntimeValue::Integer(index)]) => {
+                let bytes = self.bytes(receiver)?;
+                let Some(index) = usize::try_from(*index).ok() else {
+                    return Ok(RuntimeValue::OptionNone);
+                };
+                Ok(bytes
+                    .get(index)
+                    .copied()
+                    .map(|byte| RuntimeValue::OptionSome(Box::new(RuntimeValue::Byte(byte))))
+                    .unwrap_or(RuntimeValue::OptionNone))
+            }
+            (
+                "std.bytes.Bytes.slice",
+                [
+                    receiver,
+                    RuntimeValue::Integer(start),
+                    RuntimeValue::Integer(end),
+                ],
+            ) => {
+                let bytes = self.bytes(receiver)?.to_vec();
+                let Some(start) = usize::try_from(*start).ok() else {
+                    return Ok(self.bytes_result_error("slice start must be non-negative"));
+                };
+                let Some(end) = usize::try_from(*end).ok() else {
+                    return Ok(self.bytes_result_error("slice end must be non-negative"));
+                };
+                if start > end || end > bytes.len() {
+                    return Ok(self.bytes_result_error(format!(
+                        "slice [{start}, {end}) is outside a buffer of length {}",
+                        bytes.len()
+                    )));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::Bytes,
+                    HostValue::Bytes(bytes[start..end].to_vec()),
+                ))))
+            }
+            ("std.bytes.Bytes.toArray", [receiver]) => {
+                let bytes = self.bytes(receiver)?.to_vec();
+                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
+                    return Ok(self.bytes_result_error(message));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(Self::bytes_array(&bytes))))
+            }
+            ("intrinsic.String.fromBytes", [receiver]) => {
+                match String::from_utf8(self.bytes(receiver)?.to_vec()) {
+                    Ok(text) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::String(text)))),
+                    Err(error) => {
+                        let error = self.allocate(
+                            RuntimeHostValueKind::Utf8Error,
+                            HostValue::Utf8Error {
+                                _message: error.to_string(),
+                            },
+                        );
+                        Ok(RuntimeValue::ResultErr(Box::new(error)))
+                    }
+                }
+            }
+            ("std.bytes.Bytes.equal", [left, right]) => {
+                Ok(RuntimeValue::Bool(self.bytes(left)? == self.bytes(right)?))
+            }
+            ("std.bytes.Bytes.hash", [receiver]) => {
+                let mut hash = 14_695_981_039_346_656_037_u64;
+                for byte in self.bytes(receiver)? {
+                    hash ^= u64::from(*byte);
+                    hash = hash.wrapping_mul(1_099_511_628_211);
+                }
+                Ok(RuntimeValue::Integer(i128::from(hash)))
+            }
+            ("std.bytes.BytesBuilder.length", [receiver]) => Ok(RuntimeValue::Integer(
+                i128::try_from(self.builder(receiver)?.len())
+                    .map_err(|_| VmError::Host("BytesBuilder length does not fit in Int".into()))?,
+            )),
+            ("std.bytes.BytesBuilder.appendByte", [receiver, RuntimeValue::Byte(byte)]) => {
+                let current = self.builder(receiver)?.len();
+                let Some(length) = current.checked_add(1) else {
+                    return Ok(self.bytes_result_error("BytesBuilder length overflow"));
+                };
+                if let Err(message) = self.ensure_bytes_len(length) {
+                    return Ok(self.bytes_result_error(message));
+                }
+                self.builder_mut(receiver)?.push(*byte);
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+            }
+            ("std.bytes.BytesBuilder.append", [receiver, bytes]) => {
+                let appended = self.bytes(bytes)?.to_vec();
+                let current = self.builder(receiver)?.len();
+                let Some(length) = current.checked_add(appended.len()) else {
+                    return Ok(self.bytes_result_error("BytesBuilder length overflow"));
+                };
+                if let Err(message) = self.ensure_bytes_len(length) {
+                    return Ok(self.bytes_result_error(message));
+                }
+                self.builder_mut(receiver)?.extend_from_slice(&appended);
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+            }
+            ("std.bytes.BytesBuilder.appendArray", [receiver, array]) => {
+                let appended = Self::array_bytes(array)?;
+                let current = self.builder(receiver)?.len();
+                let Some(length) = current.checked_add(appended.len()) else {
+                    return Ok(self.bytes_result_error("BytesBuilder length overflow"));
+                };
+                if let Err(message) = self.ensure_bytes_len(length) {
+                    return Ok(self.bytes_result_error(message));
+                }
+                self.builder_mut(receiver)?.extend_from_slice(&appended);
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+            }
+            ("std.bytes.BytesBuilder.finish", [receiver]) => {
+                let bytes = self.builder(receiver)?.to_vec();
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::Bytes,
+                    HostValue::Bytes(bytes),
+                ))))
+            }
             ("std.process.args", []) => Ok(RuntimeValue::Array(
                 self.arguments
                     .iter()
@@ -354,20 +582,6 @@ impl VmHost for BootstrapHost {
                         Ok(RuntimeValue::ResultOk(Box::new(handle)))
                     }
                     Err(message) => Ok(self.result_error(message)),
-                }
-            }
-            ("std.process.Bytes.text", [receiver]) => {
-                match String::from_utf8(self.bytes(receiver)?.to_vec()) {
-                    Ok(text) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::String(text)))),
-                    Err(error) => {
-                        let error = self.allocate(
-                            RuntimeHostValueKind::Utf8Error,
-                            HostValue::Utf8Error {
-                                _message: error.to_string(),
-                            },
-                        );
-                        Ok(RuntimeValue::ResultErr(Box::new(error)))
-                    }
                 }
             }
             ("std.process.ProcessOutput.stdout", [receiver]) => {
@@ -805,7 +1019,7 @@ mod tests {
         let bytes = host
             .invoke("std.process.ProcessOutput.stdout", &[output])
             .unwrap();
-        let text = host.invoke("std.process.Bytes.text", &[bytes]).unwrap();
+        let text = host.invoke("intrinsic.String.fromBytes", &[bytes]).unwrap();
         let RuntimeValue::String(text) = ok(text) else {
             panic!("expected decoded process output");
         };
@@ -816,11 +1030,188 @@ mod tests {
         let bytes = host
             .invoke("std.process.ProcessOutput.stderr", &[output])
             .unwrap();
-        let text = host.invoke("std.process.Bytes.text", &[bytes]).unwrap();
+        let text = host.invoke("intrinsic.String.fromBytes", &[bytes]).unwrap();
         let RuntimeValue::String(text) = ok(text) else {
             panic!("expected decoded process stderr");
         };
         text
+    }
+
+    fn bytes_ok(value: RuntimeValue) -> RuntimeValue {
+        let RuntimeValue::ResultOk(value) = value else {
+            panic!("expected successful bytes result");
+        };
+        *value
+    }
+
+    #[test]
+    fn bytes_are_immutable_values_with_copying_boundaries_and_stable_hashes() {
+        let mut host = BootstrapHost::default();
+        let source = bytes_ok(
+            host.invoke(
+                "intrinsic.Bytes.fromString",
+                &[RuntimeValue::String("abc".into())],
+            )
+            .unwrap(),
+        );
+        let copy = bytes_ok(
+            host.invoke("std.bytes.Bytes.toArray", std::slice::from_ref(&source))
+                .unwrap(),
+        );
+        assert_eq!(
+            copy,
+            RuntimeValue::Array(vec![
+                RuntimeValue::Byte(b'a'),
+                RuntimeValue::Byte(b'b'),
+                RuntimeValue::Byte(b'c'),
+            ])
+        );
+        let round_trip = bytes_ok(
+            host.invoke("std.bytes.fromArray", std::slice::from_ref(&copy))
+                .unwrap(),
+        );
+        assert!(matches!(
+            host.invoke(
+                "std.bytes.Bytes.equal",
+                &[source.clone(), round_trip.clone()]
+            )
+            .unwrap(),
+            RuntimeValue::Bool(true)
+        ));
+        assert_eq!(
+            host.invoke("std.bytes.Bytes.hash", std::slice::from_ref(&source))
+                .unwrap(),
+            host.invoke("std.bytes.Bytes.hash", std::slice::from_ref(&round_trip))
+                .unwrap()
+        );
+        let slice = bytes_ok(
+            host.invoke(
+                "std.bytes.Bytes.slice",
+                &[
+                    source.clone(),
+                    RuntimeValue::Integer(1),
+                    RuntimeValue::Integer(3),
+                ],
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            ok(host.invoke("intrinsic.String.fromBytes", &[slice]).unwrap()),
+            RuntimeValue::String("bc".into())
+        );
+        assert!(matches!(
+            host.invoke(
+                "std.bytes.Bytes.get",
+                &[source.clone(), RuntimeValue::Integer(-1)]
+            )
+            .unwrap(),
+            RuntimeValue::OptionNone
+        ));
+        assert!(matches!(
+            host.invoke(
+                "std.bytes.Bytes.get",
+                &[source.clone(), RuntimeValue::Integer(99)]
+            )
+            .unwrap(),
+            RuntimeValue::OptionNone
+        ));
+    }
+
+    #[test]
+    fn bytes_reject_invalid_utf8_and_ranges_without_partial_values() {
+        let mut host = BootstrapHost::default();
+        let invalid = bytes_ok(
+            host.invoke(
+                "std.bytes.fromArray",
+                &[RuntimeValue::Array(vec![RuntimeValue::Byte(0xff)])],
+            )
+            .unwrap(),
+        );
+        let text = host
+            .invoke("intrinsic.String.fromBytes", std::slice::from_ref(&invalid))
+            .unwrap();
+        assert!(matches!(text, RuntimeValue::ResultErr(value) if matches!(
+            *value,
+            RuntimeValue::Host { kind: RuntimeHostValueKind::Utf8Error, .. }
+        )));
+        for (start, end) in [(-1, 0), (2, 1), (0, 4)] {
+            let result = host
+                .invoke(
+                    "std.bytes.Bytes.slice",
+                    &[
+                        invalid.clone(),
+                        RuntimeValue::Integer(start),
+                        RuntimeValue::Integer(end),
+                    ],
+                )
+                .unwrap();
+            assert!(matches!(result, RuntimeValue::ResultErr(value) if matches!(
+                *value,
+                RuntimeValue::Host { kind: RuntimeHostValueKind::BytesError, .. }
+            )));
+        }
+    }
+
+    #[test]
+    fn bytes_builder_is_mutable_only_through_its_host_token_and_obeys_limits() {
+        let mut host = BootstrapHost::with_max_bytes(Vec::new(), 3);
+        let builder = bytes_ok(host.invoke("std.bytes.builder", &[]).unwrap());
+        assert!(matches!(
+            host.invoke(
+                "std.bytes.BytesBuilder.appendArray",
+                &[
+                    builder.clone(),
+                    RuntimeValue::Array(vec![
+                        RuntimeValue::Byte(1),
+                        RuntimeValue::Byte(2),
+                        RuntimeValue::Byte(3),
+                    ])
+                ]
+            )
+            .unwrap(),
+            RuntimeValue::ResultOk(value) if *value == RuntimeValue::Unit
+        ));
+        let rejected = host
+            .invoke(
+                "std.bytes.BytesBuilder.appendByte",
+                &[builder.clone(), RuntimeValue::Byte(4)],
+            )
+            .unwrap();
+        assert!(
+            matches!(rejected, RuntimeValue::ResultErr(value) if matches!(
+                *value,
+                RuntimeValue::Host { kind: RuntimeHostValueKind::BytesError, .. }
+            ))
+        );
+        assert_eq!(
+            host.invoke(
+                "std.bytes.BytesBuilder.length",
+                std::slice::from_ref(&builder),
+            )
+            .unwrap(),
+            RuntimeValue::Integer(3)
+        );
+        let finished = bytes_ok(
+            host.invoke("std.bytes.BytesBuilder.finish", &[builder])
+                .unwrap(),
+        );
+        assert!(matches!(
+            host.invoke("std.bytes.Bytes.length", &[finished]).unwrap(),
+            RuntimeValue::Integer(3)
+        ));
+        let mut limited = BootstrapHost::with_max_bytes(Vec::new(), 2);
+        let rejected = limited
+            .invoke(
+                "intrinsic.Bytes.fromString",
+                &[RuntimeValue::String("abc".into())],
+            )
+            .unwrap();
+        assert!(
+            matches!(rejected, RuntimeValue::ResultErr(value) if matches!(
+                *value,
+                RuntimeValue::Host { kind: RuntimeHostValueKind::BytesError, .. }
+            ))
+        );
     }
 
     #[test]
@@ -989,13 +1380,13 @@ mod tests {
     }
 
     #[test]
-    fn bytes_text_rejects_invalid_utf8_without_replacement() {
+    fn bytes_to_string_rejects_invalid_utf8_without_replacement() {
         let mut host = BootstrapHost::default();
         let bytes = host.allocate(
             RuntimeHostValueKind::Bytes,
             HostValue::Bytes(vec![0xf0, 0x28, 0x8c, 0x28]),
         );
-        let decoded = host.invoke("std.process.Bytes.text", &[bytes]).unwrap();
+        let decoded = host.invoke("intrinsic.String.fromBytes", &[bytes]).unwrap();
         assert!(matches!(
             decoded,
             RuntimeValue::ResultErr(value)

@@ -381,9 +381,19 @@ impl Cst {
     }
 
     fn walk_tokens(&self, node: NodeId, visitor: &mut impl FnMut(&Token)) {
-        for child in self.node(node).children() {
-            match *child {
-                SyntaxElement::Node(child) => self.walk_tokens(child, visitor),
+        // CST depth is source-controlled. Keep traversal on an explicit heap
+        // stack so lossless reconstruction and token partition checks remain
+        // safe for the same deeply nested inputs accepted by the parser.
+        let mut stack = vec![(node, 0_usize)];
+        while let Some((current, child_index)) = stack.last_mut() {
+            let children = self.node(*current).children();
+            let Some(child) = children.get(*child_index).copied() else {
+                stack.pop();
+                continue;
+            };
+            *child_index += 1;
+            match child {
+                SyntaxElement::Node(child) => stack.push((child, 0)),
                 SyntaxElement::Token(token) => visitor(self.token(token)),
             }
         }

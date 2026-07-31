@@ -661,6 +661,7 @@ fn intrinsic_node(
             }
         }
         IntrinsicType::Bytes
+        | IntrinsicType::BytesError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
         | IntrinsicType::ProcessError
@@ -673,6 +674,13 @@ fn intrinsic_node(
                     | HirCapability::Send
                     | HirCapability::Share
             ) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
+        IntrinsicType::BytesBuilder => {
+            if matches!(capability, HirCapability::Discard | HirCapability::Send) {
                 satisfied(Vec::new())
             } else {
                 fixed(HirCapabilityStatus::Unsatisfied)

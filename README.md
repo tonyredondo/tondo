@@ -125,8 +125,8 @@ contraction. Immutable strings retain valid UTF-8, exact scalar equality and
 ordering, linear Unicode-scalar iteration, negative indexing to `Char`, and
 array-compatible scalar slicing back to `String`; `String`, `Char`, `Byte`, and
 `Array[Byte]` remain distinct. Opaque `Bytes` values cross only the
-capability-gated process boundary and require an explicit fallible `.text()`
-decode. Normal and multiline interpolation now decodes escapes
+std.bytes and cross the capability-gated process boundary using the explicit
+fallible `String(bytes)` decode. Normal and multiline interpolation now decodes escapes
 once, evaluates holes from left to right, and resolves the predeclared
 `Display` trait statically. Scalar and `String` display use a closed bootstrap
 intrinsic; user values call their selected implementation through a shared

@@ -870,6 +870,20 @@ mod tests {
     }
 
     #[test]
+    fn mutation_identity_search_handles_nested_names_and_hashed_fallbacks() {
+        let nested = serde_json::json!({
+            "metadata": {"details": [{"id": "nested-survivor"}]}
+        });
+        assert_eq!(find_string_field(&nested, "id"), Some("nested-survivor"));
+        assert_eq!(mutation_id(&nested).unwrap(), "nested-survivor");
+
+        let unnamed = serde_json::json!({"metadata": {"details": [1, true]}});
+        let identity = mutation_id(&unnamed).unwrap();
+        assert!(identity.starts_with("mutant:"));
+        assert_eq!(identity.len(), "mutant:".len() + 20);
+    }
+
+    #[test]
     fn baseline_validation_rejects_every_inconsistent_dimension() {
         let mut invalid = baseline();
         invalid.format = "quality/9".into();

@@ -3,7 +3,7 @@ import std.process
 
 async fn pipelineText(pipeline: Pipeline): String ! (process.ProcessError | process.Utf8Error) {
     let output = await pipeline.output()?
-    output.stdout.text()?
+    String(output.stdout)?
 }
 
 async fn main(): !(process.ProcessError | process.Utf8Error) {
@@ -38,13 +38,13 @@ async fn main(): !(process.ProcessError | process.Utf8Error) {
     let exact = await process
         .cmd("git", "rev-parse", "--sq-quote", "two words", "*", "$HOME")
         .output()?
-    assert(exact.stdout.text()? == " 'two words' '*' '$HOME'\n")
+    assert(String(exact.stdout)? == " 'two words' '*' '$HOME'\n")
 
     let streams = await process
         .shell(hostCommands[0])
         .output()?
-    assert(streams.stdout.text()? == "stdout")
-    assert(streams.stderr.text()? == "stderr")
+    assert(String(streams.stdout)? == "stdout")
+    assert(String(streams.stderr)? == "stderr")
 
     let status = await process.shell("exit 7").status()?
     assert(status[0].code == some(7))
@@ -69,7 +69,7 @@ async fn main(): !(process.ProcessError | process.Utf8Error) {
     ).start()?
     let handled = await handle.output()?
     assert(
-        handled.stdout.text()? ==
+        String(handled.stdout)? ==
         "a6cb097452c125b4e95c1964d6d3af7a1b819186\n"
     )
 

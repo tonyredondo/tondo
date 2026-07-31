@@ -2806,4 +2806,1201 @@ mod tests {
         descriptor.runtime.content_hash = "sha256:not-a-hash".into();
         assert!(descriptor.encode().is_err());
     }
+
+    #[track_caller]
+    fn assert_error<T>(result: Result<T, FormatError>) {
+        assert!(result.is_err(), "expected a format validation error");
+    }
+
+    #[test]
+    fn primitive_contract_validators_cover_success_and_rejection_edges() {
+        assert!(require_nonempty("field", "value").is_ok());
+        assert_error(require_nonempty("field", ""));
+        assert_error(require_nonempty("field", "line\nbreak"));
+        assert!(require_sorted_unique("items", &[1, 2, 3]).is_ok());
+        assert_error(require_sorted_unique("items", &[1, 1]));
+        assert_error(require_sorted_unique("items", &[2, 1]));
+        assert!(require_unique("items", &[1, 2, 1]).is_err());
+        assert!(require_unique("items", &[1, 2, 3]).is_ok());
+        assert!(require_kebab("id", "feature-1").is_ok());
+        for value in ["", "Feature", "feature_1", "feature-"] {
+            assert_error(require_kebab("id", value));
+        }
+        assert!(require_unit_id("unit", "team.build-1").is_ok());
+        for value in ["", ".unit", "unit.", "unit-", "unit_Name"] {
+            assert_error(require_unit_id("unit", value));
+        }
+        assert!(require_package_id("package", "workspace:app@1").is_ok());
+        assert_error(require_package_id("package", ""));
+        assert!(require_name("name", "value").is_ok());
+        assert_error(require_name("name", "not a name"));
+        assert!(require_module("module", "main").is_ok());
+        assert_error(require_module("module", "bad/module"));
+        assert!(require_path("source", "src/main.to", true).is_ok());
+        assert!(require_path("path", "generated/output", false).is_ok());
+        assert_error(require_path("source", "src/main", true));
+        assert_error(require_path("path", "@generated/output", false));
+        assert!(require_generated_path("generated", "generated/output.to").is_ok());
+        assert_error(require_generated_path("generated", "generated/output"));
+        assert!(require_generated_path("generated", "@generated/output.to").is_ok());
+
+        let capabilities = vec!["console".into(), "process".into()];
+        assert!(require_capabilities(&capabilities).is_ok());
+        assert_error(require_capabilities(&["process".into(), "console".into()]));
+        assert_error(require_capabilities(&["unknown".into()]));
+        let lists = Lists {
+            capabilities,
+            features: vec!["feature-a".into()],
+            source_sets: vec!["common".into()],
+            modules: vec!["main".into()],
+        };
+        assert!(require_identity_lists(&lists).is_ok());
+        assert_error(validate_compilation_target(
+            "tondo-vm-hosted",
+            "hosted",
+            &["network".into()],
+        ));
+        assert_error(validate_compilation_target(
+            META_TARGET,
+            META_PROFILE,
+            &["console".into()],
+        ));
+        assert_error(validate_compilation_target("other", "profile", &[]));
+        assert_eq!(
+            standard_meta_id("toolchain:std:draft"),
+            "toolchain:std-meta:draft"
+        );
+    }
+
+    #[test]
+    fn codec_and_error_boundaries_cover_generic_failure_paths() {
+        struct FailingSerialize;
+        impl Serialize for FailingSerialize {
+            fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                Err(serde::ser::Error::custom("encode failure"))
+            }
+        }
+
+        struct FailingDeserialize;
+        impl<'de> Deserialize<'de> for FailingDeserialize {
+            fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                Err(serde::de::Error::custom("decode failure"))
+            }
+        }
+
+        assert!(matches!(
+            encode(&FailingSerialize),
+            Err(FormatError::Json(message)) if message.contains("encode failure")
+        ));
+        assert!(matches!(
+            decode::<FailingDeserialize>(b"null"),
+            Err(FormatError::Json(message)) if message.contains("decode failure")
+        ));
+        assert_eq!(
+            FormatError::Json("bad JSON".into()).to_string(),
+            "invalid toolchain JSON: bad JSON"
+        );
+        assert_eq!(
+            FormatError::UnsupportedFormat {
+                expected: MANIFEST_FORMAT,
+                actual: "other".into(),
+            }
+            .to_string(),
+            "expected format `tondo-manifest-draft`, found `other`"
+        );
+        assert_eq!(
+            FormatError::Invalid("bad record".into()).to_string(),
+            "bad record"
+        );
+        assert_eq!(
+            FormatError::NonCanonical("manifest").to_string(),
+            "manifest is not canonically encoded"
+        );
+        assert_error(require_sorted_unique(
+            "names",
+            &["z".to_string(), "a".to_string()],
+        ));
+        assert_error(require_sorted_unique(
+            "names",
+            &["a".to_string(), "a".to_string()],
+        ));
+        assert_error(require_unique("names", &["a".to_string(), "a".to_string()]));
+        assert!(decode_canonical::<serde_json::Value>(br#"{"b":1,"a":2}"#, "value").is_err());
+    }
+
+    #[test]
+    fn record_validators_cover_nested_contracts_and_errors() {
+        let base = manifest();
+        assert!(base.target.validate().is_ok());
+        let mut target = base.target.clone();
+        target.capability_registry = "other".into();
+        assert_error(target.validate());
+        target = base.target.clone();
+        target.features = vec!["bad_feature".into()];
+        assert_error(target.validate());
+
+        assert!(base.root.validate().is_ok());
+        let mut root = base.root.clone();
+        root.form = "unknown".into();
+        assert_error(root.validate());
+        let dependency = Dependency {
+            alias: "dep".into(),
+            package: "workspace:dep@1".into(),
+        };
+        assert!(dependency.validate().is_ok());
+        assert_error(
+            Dependency {
+                alias: "not an alias".into(),
+                ..dependency.clone()
+            }
+            .validate(),
+        );
+
+        let condition = SourceSetCondition {
+            targets: vec!["tondo-vm-hosted".into()],
+            profiles: vec!["hosted".into()],
+            requires_capabilities: vec!["console".into()],
+            excludes_capabilities: vec!["network".into()],
+            requires_features: vec!["feature-a".into()],
+            excludes_features: vec!["feature-b".into()],
+        };
+        assert!(condition.validate().is_ok());
+        let mut target = base.target.clone();
+        target.capabilities = vec!["console".into()];
+        target.features = vec!["feature-a".into()];
+        assert!(condition.matches(&target));
+        target.features = vec!["feature-b".into()];
+        assert!(!condition.matches(&target));
+        let mut bad_condition = condition.clone();
+        bad_condition.requires_capabilities = vec!["missing".into()];
+        assert_error(bad_condition.validate());
+        bad_condition = condition.clone();
+        bad_condition.excludes_capabilities = vec!["console".into()];
+        assert_error(bad_condition.validate());
+        bad_condition = condition.clone();
+        bad_condition.targets = vec!["other".into()];
+        assert_error(bad_condition.validate());
+
+        let source = base.packages[0].source_sets[0].sources[0].clone();
+        assert!(source.validate("source").is_ok());
+        let source_set = base.packages[0].source_sets[0].clone();
+        assert!(source_set.validate("workspace:app@1").is_ok());
+        assert!(base.packages[0].validate().is_ok());
+        let mut package = base.packages[0].clone();
+        package.source_sets.clear();
+        assert_error(package.validate());
+        let meta = MetaPackage {
+            id: "toolchain:std-meta:draft".into(),
+            local_name: "std_meta".into(),
+            edition: "0.1".into(),
+            dependencies: vec![],
+            sources: vec![source.clone()],
+        };
+        assert!(meta.validate().is_ok());
+        let mut empty_meta = meta.clone();
+        empty_meta.sources.clear();
+        assert_error(empty_meta.validate());
+
+        let named = NamedPath {
+            name: "schema".into(),
+            path: "inputs/schema.json".into(),
+        };
+        assert!(named.validate("input").is_ok());
+        assert_error(
+            NamedPath {
+                name: "privileged:bad".into(),
+                ..named.clone()
+            }
+            .validate("input"),
+        );
+        let provider = Provider {
+            package: "toolchain:std-meta:draft".into(),
+            entry: "main".into(),
+        };
+        assert!(provider.validate("provider").is_ok());
+        assert!(
+            ModelRoot {
+                package: "workspace:app@1".into(),
+                module: "main".into(),
+            }
+            .validate()
+            .is_ok()
+        );
+        assert!(
+            Output {
+                logical_path: "generated/output.to".into(),
+                module: "generated".into(),
+            }
+            .validate("output")
+            .is_ok()
+        );
+        let limits = Limits {
+            steps: 1,
+            memory_bytes: 1,
+            output_bytes: 1,
+        };
+        assert!(limits.validate().is_ok());
+        assert_error(Limits { steps: 0, ..limits }.validate());
+        let generator = Generator {
+            id: "generate-schema".into(),
+            owner_package: "workspace:app@1".into(),
+            provider: provider.clone(),
+            meta_model: META_MODEL.into(),
+            inputs: vec!["schema".into()],
+            model_roots: vec![ModelRoot {
+                package: "workspace:app@1".into(),
+                module: "main".into(),
+            }],
+            outputs: vec![Output {
+                logical_path: "generated/output.to".into(),
+                module: "generated".into(),
+            }],
+            limits,
+        };
+        assert!(generator.validate().is_ok());
+        let mut bad_generator = generator.clone();
+        bad_generator.outputs.clear();
+        assert_error(bad_generator.validate());
+        let derive = DeriveProvider {
+            trait_: TraitIdentity {
+                package: "workspace:app@1".into(),
+                module: "main".into(),
+                name: "Equatable".into(),
+            },
+            provider,
+            meta_model: META_MODEL.into(),
+            limits,
+        };
+        assert!(derive.validate().is_ok());
+        let mut bad_derive = derive.clone();
+        bad_derive.meta_model = "other".into();
+        assert_error(bad_derive.validate());
+    }
+
+    #[test]
+    fn manifest_canonicalization_and_active_source_selection_cover_full_draft_shape() {
+        let mut value = manifest();
+        value.target.capabilities = vec!["console".into(), "process".into()];
+        value.target.features = vec!["feature-a".into()];
+        let mut dependency_package = value.packages[0].clone();
+        dependency_package.id = "workspace:dep@1".into();
+        dependency_package.local_name = "dep".into();
+        dependency_package.source_sets[0].when.requires_features = vec!["feature-z".into()];
+        dependency_package.source_sets[0].sources[0].physical_path = "dep/src/main.to".into();
+        dependency_package.source_sets[0].sources[0].module = "dep".into();
+        let mut other_package = dependency_package.clone();
+        other_package.id = "workspace:other@1".into();
+        other_package.local_name = "other".into();
+        other_package.source_sets[0].sources[0].physical_path = "other/src/main.to".into();
+        other_package.source_sets[0].sources[0].module = "other".into();
+        value.packages[0].dependencies = vec![
+            Dependency {
+                alias: "z_dep".into(),
+                package: "workspace:other@1".into(),
+            },
+            Dependency {
+                alias: "a_dep".into(),
+                package: "workspace:dep@1".into(),
+            },
+        ];
+        value.packages[0].source_sets[0].sources.push(Source {
+            physical_path: "app/src/other.to".into(),
+            logical_path: "src/other.to".into(),
+            module: "other".into(),
+        });
+        value.packages.push(dependency_package);
+        value.packages.push(other_package);
+        value.packages[0].source_sets.push(SourceSet {
+            id: "optional".into(),
+            when: SourceSetCondition {
+                requires_features: vec!["feature-b".into()],
+                ..SourceSetCondition::default()
+            },
+            sources: vec![Source {
+                physical_path: "app/src/optional.to".into(),
+                logical_path: "src/optional.to".into(),
+                module: "optional".into(),
+            }],
+        });
+        value.packages[0].source_sets[0].when = SourceSetCondition {
+            targets: vec!["tondo-vm-hosted".into()],
+            profiles: vec!["hosted".into()],
+            requires_capabilities: vec!["console".into()],
+            requires_features: vec!["feature-a".into()],
+            excludes_features: vec!["feature-b".into()],
+            ..SourceSetCondition::default()
+        };
+        let mut standard_meta = MetaPackage {
+            id: "toolchain:std-meta:draft".into(),
+            local_name: "std".into(),
+            edition: "0.1".into(),
+            dependencies: vec![],
+            sources: vec![Source {
+                physical_path: "std-meta/src/main.to".into(),
+                logical_path: "src/main.to".into(),
+                module: "main".into(),
+            }],
+        };
+        standard_meta.sources.push(Source {
+            physical_path: "std-meta/src/other.to".into(),
+            logical_path: "src/other.to".into(),
+            module: "other".into(),
+        });
+        value.meta_packages.push(standard_meta);
+        value.meta_packages.push(MetaPackage {
+            id: "toolchain:extra-meta:draft".into(),
+            local_name: "extra_meta".into(),
+            edition: "0.1".into(),
+            dependencies: vec![],
+            sources: vec![Source {
+                physical_path: "extra-meta/src/main.to".into(),
+                logical_path: "src/main.to".into(),
+                module: "main".into(),
+            }],
+        });
+        value.generator_inputs.push(NamedPath {
+            name: "schema".into(),
+            path: "inputs/schema.json".into(),
+        });
+        value.generator_inputs.push(NamedPath {
+            name: "other-schema".into(),
+            path: "inputs/other.json".into(),
+        });
+        value.generators.push(Generator {
+            id: "generate-schema".into(),
+            owner_package: "workspace:app@1".into(),
+            provider: Provider {
+                package: "toolchain:std-meta:draft".into(),
+                entry: "main".into(),
+            },
+            meta_model: META_MODEL.into(),
+            inputs: vec!["schema".into()],
+            model_roots: vec![ModelRoot {
+                package: "workspace:app@1".into(),
+                module: "main".into(),
+            }],
+            outputs: vec![Output {
+                logical_path: "generated/schema.to".into(),
+                module: "generated".into(),
+            }],
+            limits: Limits {
+                steps: 10,
+                memory_bytes: 1024,
+                output_bytes: 1024,
+            },
+        });
+        value.generators[0].inputs.push("other-schema".into());
+        value.generators[0].model_roots.push(ModelRoot {
+            package: "workspace:dep@1".into(),
+            module: "dep".into(),
+        });
+        value.generators[0].outputs.push(Output {
+            logical_path: "generated/other-schema.to".into(),
+            module: "generated_other".into(),
+        });
+        let mut other_generator = value.generators[0].clone();
+        other_generator.id = "generate-other".into();
+        other_generator.inputs = vec!["other-schema".into()];
+        other_generator.outputs = vec![Output {
+            logical_path: "generated/other.to".into(),
+            module: "generated_other".into(),
+        }];
+        value.generators.push(other_generator);
+        value.derive_providers.push(DeriveProvider {
+            trait_: TraitIdentity {
+                package: "workspace:app@1".into(),
+                module: "main".into(),
+                name: "Equatable".into(),
+            },
+            provider: Provider {
+                package: "toolchain:std-meta:draft".into(),
+                entry: "main".into(),
+            },
+            meta_model: META_MODEL.into(),
+            limits: Limits {
+                steps: 10,
+                memory_bytes: 1024,
+                output_bytes: 1024,
+            },
+        });
+        value.derive_providers.push(DeriveProvider {
+            trait_: TraitIdentity {
+                package: "workspace:app@1".into(),
+                module: "main".into(),
+                name: "Comparable".into(),
+            },
+            provider: Provider {
+                package: "toolchain:std-meta:draft".into(),
+                entry: "main".into(),
+            },
+            meta_model: META_MODEL.into(),
+            limits: Limits {
+                steps: 10,
+                memory_bytes: 1024,
+                output_bytes: 1024,
+            },
+        });
+        value.privileged_units.push(NamedPath {
+            name: "sandbox".into(),
+            path: "units/sandbox".into(),
+        });
+        value.privileged_units.push(NamedPath {
+            name: "sandbox-extra".into(),
+            path: "units/sandbox-extra".into(),
+        });
+        assert!(value.validate().is_ok());
+        let active = value.active_sources();
+        assert_eq!(active.len(), 2);
+        assert_eq!(active[0].1.logical_path, "src/main.to");
+        let canonical = value.canonicalize().unwrap();
+        assert_eq!(canonical.generators[0].id, "generate-other");
+        assert_eq!(canonical.generators[1].id, "generate-schema");
+        assert_eq!(canonical.meta_packages[0].id, "toolchain:extra-meta:draft");
+        assert_eq!(canonical.meta_packages[1].id, "toolchain:std-meta:draft");
+        assert_eq!(
+            canonical.canonical_bytes().unwrap(),
+            canonical.encode().unwrap()
+        );
+    }
+
+    #[test]
+    fn locked_record_validators_cover_hashes_ordering_and_generator_contracts() {
+        let hash = sha256(b"value");
+        let source = LockedSource {
+            source_set: "common".into(),
+            physical_path: "app/src/main.to".into(),
+            logical_path: "src/main.to".into(),
+            module: "main".into(),
+            sha256: hash.clone(),
+        };
+        assert!(source.validate().is_ok());
+        let meta_source = LockedMetaSource {
+            physical_path: "std-meta/src/main.to".into(),
+            logical_path: "src/main.to".into(),
+            module: "main".into(),
+            sha256: hash.clone(),
+        };
+        assert!(meta_source.validate().is_ok());
+        let dependency = Dependency {
+            alias: "dep".into(),
+            package: "workspace:dep@1".into(),
+        };
+        let package = LockedPackage {
+            id: "workspace:app@1".into(),
+            content_hash: hash.clone(),
+            dependencies: vec![dependency.clone()],
+            sources: vec![source.clone()],
+            interface: Some(hash.clone()),
+        };
+        assert!(package.validate().is_ok());
+        let mut bad_package = package.clone();
+        bad_package.dependencies.push(dependency);
+        assert_error(bad_package.validate());
+        let meta_package = LockedMetaPackage {
+            id: "toolchain:std-meta:draft".into(),
+            content_hash: hash.clone(),
+            dependencies: vec![],
+            sources: vec![meta_source],
+        };
+        assert!(meta_package.validate().is_ok());
+        let input = LockedNamedInput {
+            name: "schema".into(),
+            sha256: hash.clone(),
+        };
+        assert!(input.validate("input").is_ok());
+        let limits = Limits {
+            steps: 1,
+            memory_bytes: 1,
+            output_bytes: 1,
+        };
+        let generator = LockedGenerator {
+            id: "generate-schema".into(),
+            owner_package: "workspace:app@1".into(),
+            provider_package: "toolchain:std-meta:draft".into(),
+            entry: "main".into(),
+            meta_model: META_MODEL.into(),
+            provider_hash: hash.clone(),
+            inputs: vec!["schema".into()],
+            model_roots: vec![ModelRoot {
+                package: "workspace:app@1".into(),
+                module: "main".into(),
+            }],
+            outputs: vec![Output {
+                logical_path: "generated/output.to".into(),
+                module: "generated".into(),
+            }],
+            limits,
+        };
+        assert!(generator.validate().is_ok());
+        let mut bad_generator = generator.clone();
+        bad_generator.meta_model = "other".into();
+        assert_error(bad_generator.validate());
+        let derive = LockedDeriveProvider {
+            origin: "standard".into(),
+            trait_package: "workspace:app@1".into(),
+            trait_module: "main".into(),
+            trait_name: "Equatable".into(),
+            provider_package: "toolchain:std-meta:draft".into(),
+            entry: "main".into(),
+            meta_model: META_MODEL.into(),
+            provider_hash: hash.clone(),
+            limits,
+        };
+        assert!(derive.validate().is_ok());
+        assert_eq!(
+            derive.key(),
+            ("workspace:app@1".into(), "main".into(), "Equatable".into())
+        );
+        let mut bad_derive = derive.clone();
+        bad_derive.origin = "other".into();
+        assert_error(bad_derive.validate());
+        assert!(
+            StandardRef {
+                package_id: "toolchain:std:draft".into(),
+                content_hash: hash.clone(),
+            }
+            .validate("standard")
+            .is_ok()
+        );
+
+        let lockfile = Lockfile {
+            format: LOCKFILE_FORMAT.into(),
+            manifest_hash: hash.clone(),
+            standard: StandardRef {
+                package_id: "toolchain:std:draft".into(),
+                content_hash: hash.clone(),
+            },
+            meta_standard: StandardRef {
+                package_id: "toolchain:std-meta:draft".into(),
+                content_hash: hash.clone(),
+            },
+            packages: vec![package],
+            meta_packages: vec![meta_package],
+            generator_inputs: vec![input],
+            generators: vec![generator],
+            derive_providers: vec![derive],
+            privileged_units: vec![LockedNamedInput {
+                name: "sandbox".into(),
+                sha256: hash,
+            }],
+        };
+        assert!(lockfile.validate().is_ok());
+        let canonical = lockfile.canonicalize().unwrap();
+        assert_eq!(
+            canonical.canonical_bytes().unwrap(),
+            canonical.encode().unwrap()
+        );
+    }
+
+    #[test]
+    fn project_plan_validates_runtime_meta_and_generation_inputs() {
+        let mut manifest = manifest();
+        manifest.target.capabilities = vec!["console".into(), "process".into()];
+        manifest.target.features = vec!["feature-a".into()];
+        manifest.packages[0].source_sets.push(SourceSet {
+            id: "optional".into(),
+            when: SourceSetCondition {
+                requires_features: vec!["feature-b".into()],
+                ..SourceSetCondition::default()
+            },
+            sources: vec![Source {
+                physical_path: "app/src/optional.to".into(),
+                logical_path: "src/optional.to".into(),
+                module: "optional".into(),
+            }],
+        });
+        manifest.packages[0].source_sets[0].when = SourceSetCondition {
+            targets: vec!["tondo-vm-hosted".into()],
+            profiles: vec!["hosted".into()],
+            requires_capabilities: vec!["console".into()],
+            requires_features: vec!["feature-a".into()],
+            ..SourceSetCondition::default()
+        };
+        manifest.meta_packages.push(MetaPackage {
+            id: "toolchain:std-meta:draft".into(),
+            local_name: "std".into(),
+            edition: "0.1".into(),
+            dependencies: vec![],
+            sources: vec![Source {
+                physical_path: "std-meta/src/main.to".into(),
+                logical_path: "src/main.to".into(),
+                module: "main".into(),
+            }],
+        });
+        manifest.generator_inputs.push(NamedPath {
+            name: "schema".into(),
+            path: "inputs/schema.json".into(),
+        });
+        manifest.generators.push(Generator {
+            id: "generate-schema".into(),
+            owner_package: "workspace:app@1".into(),
+            provider: Provider {
+                package: "toolchain:std-meta:draft".into(),
+                entry: "main".into(),
+            },
+            meta_model: META_MODEL.into(),
+            inputs: vec!["schema".into()],
+            model_roots: vec![],
+            outputs: vec![Output {
+                logical_path: "generated/schema.to".into(),
+                module: "generated".into(),
+            }],
+            limits: Limits {
+                steps: 10,
+                memory_bytes: 1024,
+                output_bytes: 1024,
+            },
+        });
+        manifest.derive_providers.push(DeriveProvider {
+            trait_: TraitIdentity {
+                package: "workspace:app@1".into(),
+                module: "main".into(),
+                name: "Equatable".into(),
+            },
+            provider: Provider {
+                package: "toolchain:std-meta:draft".into(),
+                entry: "main".into(),
+            },
+            meta_model: META_MODEL.into(),
+            limits: Limits {
+                steps: 10,
+                memory_bytes: 1024,
+                output_bytes: 1024,
+            },
+        });
+        manifest.privileged_units.push(NamedPath {
+            name: "sandbox".into(),
+            path: "units/sandbox".into(),
+        });
+        let manifest_bytes = manifest.encode().unwrap();
+        let hash = sha256(b"value");
+        let mut app_sources = vec![
+            LockedSource {
+                source_set: "common".into(),
+                physical_path: "app/src/main.to".into(),
+                logical_path: "src/main.to".into(),
+                module: "main".into(),
+                sha256: hash.clone(),
+            },
+            LockedSource {
+                source_set: "optional".into(),
+                physical_path: "app/src/optional.to".into(),
+                logical_path: "src/optional.to".into(),
+                module: "optional".into(),
+                sha256: hash.clone(),
+            },
+        ];
+        app_sources.sort_by(|a, b| a.physical_path.cmp(&b.physical_path));
+        let app_content =
+            runtime_content_bytes("workspace:app@1", &[], &app_sources, None).unwrap();
+        let meta_sources = vec![LockedMetaSource {
+            physical_path: "std-meta/src/main.to".into(),
+            logical_path: "src/main.to".into(),
+            module: "main".into(),
+            sha256: hash.clone(),
+        }];
+        let meta_content =
+            meta_content_bytes("toolchain:std-meta:draft", &[], &meta_sources).unwrap();
+        let generator = &manifest.generators[0];
+        let descriptor = descriptor();
+        let lock = Lockfile {
+            format: LOCKFILE_FORMAT.into(),
+            manifest_hash: sha256(&manifest_bytes),
+            standard: descriptor.runtime.clone(),
+            meta_standard: descriptor.meta.clone(),
+            packages: vec![LockedPackage {
+                id: "workspace:app@1".into(),
+                content_hash: sha256(&app_content),
+                dependencies: vec![],
+                sources: app_sources,
+                interface: None,
+            }],
+            meta_packages: vec![LockedMetaPackage {
+                id: "toolchain:std-meta:draft".into(),
+                content_hash: sha256(&meta_content),
+                dependencies: vec![],
+                sources: meta_sources,
+            }],
+            generator_inputs: vec![LockedNamedInput {
+                name: "schema".into(),
+                sha256: hash.clone(),
+            }],
+            generators: vec![LockedGenerator {
+                id: generator.id.clone(),
+                owner_package: generator.owner_package.clone(),
+                provider_package: generator.provider.package.clone(),
+                entry: generator.provider.entry.clone(),
+                meta_model: generator.meta_model.clone(),
+                provider_hash: hash.clone(),
+                inputs: generator.inputs.clone(),
+                model_roots: generator.model_roots.clone(),
+                outputs: generator.outputs.clone(),
+                limits: generator.limits,
+            }],
+            derive_providers: vec![LockedDeriveProvider {
+                origin: "manifest".into(),
+                trait_package: "workspace:app@1".into(),
+                trait_module: "main".into(),
+                trait_name: "Equatable".into(),
+                provider_package: "toolchain:std-meta:draft".into(),
+                entry: "main".into(),
+                meta_model: META_MODEL.into(),
+                provider_hash: hash.clone(),
+                limits: manifest.derive_providers[0].limits,
+            }],
+            privileged_units: vec![LockedNamedInput {
+                name: "sandbox".into(),
+                sha256: hash,
+            }],
+        };
+        let lock_bytes = lock.encode().unwrap();
+        let descriptor_bytes = descriptor.encode().unwrap();
+        let plan =
+            ProjectPlanDraft::parse(&manifest_bytes, &lock_bytes, &descriptor_bytes).unwrap();
+        assert_eq!(plan.required_inputs().len(), 4);
+        assert_eq!(plan.required_inputs()[0].kind(), RequiredInputKind::Source);
+        assert_eq!(plan.manifest_hash(), sha256(&manifest_bytes));
+        assert_eq!(plan.lockfile_hash(), sha256(&lock_bytes));
+        assert_eq!(plan.manifest().active_sources().len(), 1);
+        assert_eq!(plan.descriptor().runtime.package_id, "toolchain:std:draft");
+        assert_eq!(plan.lockfile().packages.len(), 1);
+    }
+
+    #[test]
+    fn manifest_rejections_cover_structural_and_cross_record_guards() {
+        let base = manifest();
+        let mut value = base.clone();
+        value.format = "other".into();
+        assert_error(value.validate());
+        let mut value = base.clone();
+        value.target.capability_registry = "other".into();
+        assert_error(value.validate());
+        let mut value = base.clone();
+        value.root.form = "other".into();
+        assert_error(value.validate());
+        let mut value = base.clone();
+        value.standard = "".into();
+        assert_error(value.validate());
+        let mut value = base.clone();
+        value.packages.clear();
+        assert_error(value.validate());
+        let mut value = base.clone();
+        value.packages.push(value.packages[0].clone());
+        assert_error(value.validate());
+        let mut value = base.clone();
+        value.meta_packages.push(MetaPackage {
+            id: "workspace:app@1".into(),
+            local_name: "meta".into(),
+            edition: "0.1".into(),
+            dependencies: vec![],
+            sources: vec![Source {
+                physical_path: "meta/src/main.to".into(),
+                logical_path: "src/main.to".into(),
+                module: "main".into(),
+            }],
+        });
+        assert_error(value.validate());
+        let mut value = base.clone();
+        value.packages[0].id = value.standard.clone();
+        assert_error(value.validate());
+        let mut value = base.clone();
+        value.root.package = "workspace:missing@1".into();
+        assert_error(value.validate());
+        let mut value = base.clone();
+        value.root.source = "app/src/missing.to".into();
+        assert_error(value.validate());
+        let mut value = base.clone();
+        value.packages[0].dependencies.push(Dependency {
+            alias: "missing".into(),
+            package: "workspace:missing@1".into(),
+        });
+        assert_error(value.validate());
+
+        let mut rich = base.clone();
+        rich.target.capabilities = vec!["console".into(), "process".into()];
+        rich.generator_inputs.push(NamedPath {
+            name: "schema".into(),
+            path: "inputs/schema.json".into(),
+        });
+        rich.meta_packages.push(MetaPackage {
+            id: "toolchain:std-meta:draft".into(),
+            local_name: "std".into(),
+            edition: "0.1".into(),
+            dependencies: vec![],
+            sources: vec![Source {
+                physical_path: "std-meta/src/main.to".into(),
+                logical_path: "src/main.to".into(),
+                module: "main".into(),
+            }],
+        });
+        rich.generators.push(Generator {
+            id: "generate-schema".into(),
+            owner_package: "workspace:app@1".into(),
+            provider: Provider {
+                package: "toolchain:std-meta:draft".into(),
+                entry: "main".into(),
+            },
+            meta_model: META_MODEL.into(),
+            inputs: vec!["schema".into()],
+            model_roots: vec![],
+            outputs: vec![Output {
+                logical_path: "generated/schema.to".into(),
+                module: "generated".into(),
+            }],
+            limits: Limits {
+                steps: 1,
+                memory_bytes: 1,
+                output_bytes: 1,
+            },
+        });
+        let mut value = rich.clone();
+        value.generator_inputs.push(NamedPath {
+            name: "schema".into(),
+            path: "inputs/other.json".into(),
+        });
+        assert_error(value.validate());
+        let mut value = rich.clone();
+        value.generators[0].owner_package = "workspace:missing@1".into();
+        assert_error(value.validate());
+        let mut value = rich.clone();
+        value.generators[0].provider.package = "workspace:app@1".into();
+        assert_error(value.validate());
+        let mut value = rich.clone();
+        value.generators[0].inputs = vec!["missing".into()];
+        assert_error(value.validate());
+        let mut value = rich.clone();
+        value.generators[0].outputs[0].logical_path = "src/main.to".into();
+        assert_error(value.validate());
+        let mut value = rich.clone();
+        value.generators.push(value.generators[0].clone());
+        assert_error(value.validate());
+
+        let derive = DeriveProvider {
+            trait_: TraitIdentity {
+                package: "workspace:app@1".into(),
+                module: "main".into(),
+                name: "Equatable".into(),
+            },
+            provider: Provider {
+                package: "toolchain:std-meta:draft".into(),
+                entry: "main".into(),
+            },
+            meta_model: META_MODEL.into(),
+            limits: Limits {
+                steps: 1,
+                memory_bytes: 1,
+                output_bytes: 1,
+            },
+        };
+        rich.derive_providers.push(derive.clone());
+        let mut value = rich.clone();
+        value.derive_providers.push(derive.clone());
+        assert_error(value.validate());
+        let mut value = rich.clone();
+        value.derive_providers[0].trait_.package = "workspace:missing@1".into();
+        assert_error(value.validate());
+        let mut value = rich.clone();
+        value.derive_providers[0].provider.package = "workspace:app@1".into();
+        assert_error(value.validate());
+        let mut value = rich;
+        value.privileged_units.push(NamedPath {
+            name: "sandbox".into(),
+            path: "units/sandbox".into(),
+        });
+        value.privileged_units.push(NamedPath {
+            name: "sandbox".into(),
+            path: "units/other".into(),
+        });
+        assert_error(value.validate());
+    }
+
+    #[test]
+    fn interface_generation_and_artifact_records_round_trip() {
+        let hash = sha256(b"value");
+        let package_id = "workspace:app@1";
+        let source_set = format!("@{}:{}#common", package_id.len(), package_id);
+        assert!(require_source_set_identity(&source_set, package_id).is_ok());
+        assert_error(require_source_set_identity("common", package_id));
+        assert_error(require_source_set_identity("@1:other#common", package_id));
+
+        let interface = Interface {
+            format: INTERFACE_FORMAT.into(),
+            compiler: COMPILER_ID.into(),
+            edition: "0.1".into(),
+            package_id: package_id.into(),
+            target: "tondo-vm-hosted".into(),
+            profile: "hosted".into(),
+            capability_registry: CAPABILITY_REGISTRY.into(),
+            capabilities: vec!["console".into(), "process".into()],
+            features: vec!["feature-a".into()],
+            meta_model: Some(META_MODEL.into()),
+            source_sets: vec![source_set.clone()],
+            modules: vec!["main".into()],
+            generation_hash: hash.clone(),
+            api_hash: hash.clone(),
+            dependencies: vec![InterfaceDependency {
+                alias: "dep".into(),
+                package_id: "workspace:dep@1".into(),
+                api_hash: hash.clone(),
+            }],
+        };
+        let interface_bytes = interface.encode().unwrap();
+        assert_eq!(Interface::decode(&interface_bytes).unwrap(), interface);
+        assert_eq!(interface.content_hash().unwrap(), sha256(&interface_bytes));
+        for (index, bad) in [
+            {
+                let mut value = interface.clone();
+                value.format = "other".into();
+                value
+            },
+            {
+                let mut value = interface.clone();
+                value.compiler = "other".into();
+                value
+            },
+            {
+                let mut value = interface.clone();
+                value.edition.clear();
+                value
+            },
+            {
+                let mut value = interface.clone();
+                value.target.clear();
+                value
+            },
+            {
+                let mut value = interface.clone();
+                value.profile.clear();
+                value
+            },
+            {
+                let mut value = interface.clone();
+                value.capability_registry = "other".into();
+                value
+            },
+            {
+                let mut value = interface.clone();
+                value.capabilities = vec!["unknown".into()];
+                value
+            },
+            {
+                let mut value = interface.clone();
+                value.features = vec!["feature-b".into(), "feature-a".into()];
+                value
+            },
+            {
+                let mut value = interface.clone();
+                value.source_sets = vec!["common".into()];
+                value
+            },
+            {
+                let mut value = interface.clone();
+                value.meta_model = Some("other".into());
+                value
+            },
+            {
+                let mut value = interface.clone();
+                value.generation_hash = "bad".into();
+                value
+            },
+            {
+                let mut value = interface.clone();
+                value.api_hash = "bad".into();
+                value
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert!(bad.encode().is_err(), "interface invalid case {index}");
+        }
+        let mut bad = interface.clone();
+        bad.dependencies.push(bad.dependencies[0].clone());
+        assert_error(bad.encode());
+        bad = interface.clone();
+        bad.meta_model = None;
+        assert_error(bad.encode());
+
+        let output = GenerationOutput {
+            source_id: "generate-schema".into(),
+            module: "generated".into(),
+            path: "generated/schema.to".into(),
+            sha256: hash.clone(),
+        };
+        assert!(output.validate().is_ok());
+        let model_root = ModelRoot {
+            package: package_id.into(),
+            module: "main".into(),
+        };
+        let generator_record = GenerationRecord {
+            kind: "generator".into(),
+            id: "generate-schema".into(),
+            provider_package: "toolchain:std-meta:draft".into(),
+            provider_hash: hash.clone(),
+            entry: "main".into(),
+            model_roots: vec![model_root.clone()],
+            model_hash: hash.clone(),
+            request_hash: hash.clone(),
+            outputs: vec![output.clone()],
+        };
+        assert!(generator_record.validate().is_ok());
+        let derive_record = GenerationRecord {
+            kind: "derive".into(),
+            id: format!("derive:{}", "a".repeat(64)),
+            provider_package: "toolchain:std-meta:draft".into(),
+            provider_hash: hash.clone(),
+            entry: "main".into(),
+            model_roots: vec![model_root],
+            model_hash: hash.clone(),
+            request_hash: hash.clone(),
+            outputs: vec![],
+        };
+        assert!(derive_record.validate().is_ok());
+        assert_error(
+            GenerationRecord {
+                kind: "derive".into(),
+                id: "derive:ABC".into(),
+                ..derive_record.clone()
+            }
+            .validate(),
+        );
+        let source_hash = SourceHash {
+            source_id: "generate-schema".into(),
+            module: "generated".into(),
+            path: "generated/schema.to".into(),
+            sha256: hash.clone(),
+        };
+        assert!(source_hash.validate().is_ok());
+
+        let mut artifact = Artifact {
+            format: ARTIFACT_FORMAT.into(),
+            compiler: COMPILER_ID.into(),
+            edition: "0.1".into(),
+            source_form: "module".into(),
+            package_id: package_id.into(),
+            target: "tondo-vm-hosted".into(),
+            profile: "hosted".into(),
+            capability_registry: CAPABILITY_REGISTRY.into(),
+            capabilities: vec!["console".into(), "process".into()],
+            features: vec!["feature-a".into()],
+            meta_model: Some(META_MODEL.into()),
+            source_sets: vec![source_set],
+            manifest_hash: hash.clone(),
+            lockfile_hash: hash.clone(),
+            generator_inputs: [("schema".into(), hash.clone())].into_iter().collect(),
+            generation: vec![derive_record.clone(), generator_record],
+            source_hashes: vec![source_hash],
+            interface_hash: hash.clone(),
+            build_hash: String::new(),
+            reproducible: true,
+        };
+        artifact.build_hash = artifact.calculated_build_hash().unwrap();
+        let artifact_bytes = artifact.encode().unwrap();
+        assert_eq!(Artifact::decode(&artifact_bytes).unwrap(), artifact);
+        assert_eq!(artifact.content_hash().unwrap(), sha256(&artifact_bytes));
+        for (index, bad) in [
+            {
+                let mut value = artifact.clone();
+                value.format = "other".into();
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.compiler = "other".into();
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.edition.clear();
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.source_form = "other".into();
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.target.clear();
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.profile.clear();
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.capability_registry = "other".into();
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.capabilities = vec!["unknown".into()];
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.source_sets = vec!["common".into()];
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.meta_model = Some("other".into());
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.manifest_hash = "bad".into();
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.lockfile_hash = "bad".into();
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.interface_hash = "bad".into();
+                value
+            },
+            {
+                let mut value = artifact.clone();
+                value.build_hash = "bad".into();
+                value
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            assert!(bad.encode().is_err(), "artifact invalid case {index}");
+        }
+        let mut bad_artifact = artifact.clone();
+        bad_artifact.meta_model = None;
+        assert_error(bad_artifact.encode());
+
+        let required = RequiredInput {
+            path: "app/src/main.to".into(),
+            kind: RequiredInputKind::Source,
+            sha256: hash,
+        };
+        assert_eq!(required.path(), "app/src/main.to");
+        assert_eq!(required.sha256(), required.sha256);
+        assert_eq!(RequiredInputKind::Source.as_str(), "source");
+        assert_eq!(RequiredInputKind::MetaSource.as_str(), "meta-source");
+        assert_eq!(
+            RequiredInputKind::GeneratorInput.as_str(),
+            "generator-input"
+        );
+        assert_eq!(
+            RequiredInputKind::PrivilegedUnit.as_str(),
+            "privileged-unit"
+        );
+    }
 }

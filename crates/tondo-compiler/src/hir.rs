@@ -46,23 +46,33 @@ pub use terminal::{
 };
 
 fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<IntrinsicType> {
-    if module.package().as_str() != "toolchain:std:0.1-bootstrap"
-        || module.path().as_str() != "process"
-    {
+    if module.package().as_str() != "toolchain:std:0.1-bootstrap" {
         return None;
     }
-    Some(match name.as_str() {
-        "Command" => IntrinsicType::Command,
-        "Pipeline" => IntrinsicType::Pipeline,
-        "Bytes" => IntrinsicType::Bytes,
-        "ExitStatus" => IntrinsicType::ExitStatus,
-        "ProcessOutput" => IntrinsicType::ProcessOutput,
-        "ProcessHandle" => IntrinsicType::ProcessHandle,
-        "ProcessError" => IntrinsicType::ProcessError,
-        "ProcessExitError" => IntrinsicType::ProcessExitError,
-        "Utf8Error" => IntrinsicType::Utf8Error,
-        _ => return None,
-    })
+    match module.path().as_str() {
+        "bytes" => Some(match name.as_str() {
+            "Bytes" => IntrinsicType::Bytes,
+            "BytesBuilder" => IntrinsicType::BytesBuilder,
+            "BytesError" => IntrinsicType::BytesError,
+            "Utf8Error" => IntrinsicType::Utf8Error,
+            _ => return None,
+        }),
+        "process" => Some(match name.as_str() {
+            "Command" => IntrinsicType::Command,
+            "Pipeline" => IntrinsicType::Pipeline,
+            // Kept as a source-compatibility bridge for the bootstrap process
+            // contract. The canonical owner is now std.bytes.Bytes.
+            "Bytes" => IntrinsicType::Bytes,
+            "ExitStatus" => IntrinsicType::ExitStatus,
+            "ProcessOutput" => IntrinsicType::ProcessOutput,
+            "ProcessHandle" => IntrinsicType::ProcessHandle,
+            "ProcessError" => IntrinsicType::ProcessError,
+            "ProcessExitError" => IntrinsicType::ProcessExitError,
+            "Utf8Error" => IntrinsicType::Utf8Error,
+            _ => return None,
+        }),
+        _ => None,
+    }
 }
 pub(crate) use traits::{TraitQuery, TraitSelectionError, select_implementation};
 pub use verify::HirInvariantError;
@@ -1985,7 +1995,22 @@ pub enum HirBootstrapHostFunction {
     ProcessHandleRun,
     ProcessHandleCheck,
     ProcessHandleCancel,
-    BytesText,
+    BytesFromString,
+    BytesToString,
+    BytesEmpty,
+    BytesFromArray,
+    BytesBuilder,
+    BytesLen,
+    BytesGet,
+    BytesSlice,
+    BytesToArray,
+    BytesEqual,
+    BytesHash,
+    BytesBuilderLen,
+    BytesBuilderAppendByte,
+    BytesBuilderAppend,
+    BytesBuilderAppendArray,
+    BytesBuilderFinish,
     ProcessOutputStdout,
     ProcessOutputStderr,
     ProcessOutputStatuses,
@@ -2022,7 +2047,22 @@ impl HirBootstrapHostFunction {
             Self::ProcessHandleRun => "std.process.ProcessHandle.run",
             Self::ProcessHandleCheck => "std.process.ProcessHandle.check",
             Self::ProcessHandleCancel => "std.process.ProcessHandle.cancel",
-            Self::BytesText => "std.process.Bytes.text",
+            Self::BytesFromString => "intrinsic.Bytes.fromString",
+            Self::BytesToString => "intrinsic.String.fromBytes",
+            Self::BytesEmpty => "std.bytes.empty",
+            Self::BytesFromArray => "std.bytes.fromArray",
+            Self::BytesBuilder => "std.bytes.builder",
+            Self::BytesLen => "std.bytes.Bytes.length",
+            Self::BytesGet => "std.bytes.Bytes.get",
+            Self::BytesSlice => "std.bytes.Bytes.slice",
+            Self::BytesToArray => "std.bytes.Bytes.toArray",
+            Self::BytesEqual => "std.bytes.Bytes.equal",
+            Self::BytesHash => "std.bytes.Bytes.hash",
+            Self::BytesBuilderLen => "std.bytes.BytesBuilder.length",
+            Self::BytesBuilderAppendByte => "std.bytes.BytesBuilder.appendByte",
+            Self::BytesBuilderAppend => "std.bytes.BytesBuilder.append",
+            Self::BytesBuilderAppendArray => "std.bytes.BytesBuilder.appendArray",
+            Self::BytesBuilderFinish => "std.bytes.BytesBuilder.finish",
             Self::ProcessOutputStdout => "std.process.ProcessOutput.stdout",
             Self::ProcessOutputStderr => "std.process.ProcessOutput.stderr",
             Self::ProcessOutputStatuses => "std.process.ProcessOutput.statuses",

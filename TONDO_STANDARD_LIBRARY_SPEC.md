@@ -2,14 +2,14 @@
 
 **Línea de desarrollo de la librería:** `draft`
 
-**Revisión del documento:** `draft`
+**Revisión del documento:** `draft.2`
 
 **Estado:** borrador normativo; Tondo y STD-0.1 todavía no
 se han publicado
 
 **Edición de lenguaje compatible:** Tondo 0.1
 
-**Última actualización:** 2026-07-29
+**Última actualización:** 2026-07-31
 
 ---
 
@@ -889,12 +889,77 @@ Texto y datos binarios no se convierten implícitamente:
 - `std.io` define los protocolos portables de lectura/escritura y sus errores;
   importar esos contratos no realiza I/O ni concede una capability.
 
-Decodificar bytes exige encoding explícito y devuelve error ante input inválido.
-No se realiza replacement decoding por defecto. Codificar texto produce bytes
-exactos del encoding nombrado.
+La frontera general de decodificación exige un encoding explícito y devuelve
+error ante input inválido. `String(Bytes)` es la conversión explícita y
+canónica del encoding UTF-8; tampoco realiza replacement decoding. Los demás
+encodings se seleccionan por nombre en `std.encoding` y codificar texto produce
+los bytes exactos del encoding elegido.
 
 `Bytes` tiene un único propietario canónico en `std.bytes`; I/O, console,
 filesystem, process y testing lo reutilizan.
+
+#### 10.2.1 Contrato cerrado de `std.bytes`
+
+`std.bytes` es la única identidad binaria de STD-0.1. El módulo no es un alias de
+`Array[Byte]`: `Bytes` es un valor opaco inmutable, copiable y transferible. Cada
+conversión que materializa almacenamiento devuelve una copia independiente y
+ninguna operación expone el buffer interno. El builder es el único estado mutable
+de esta API y solo puede cambiar mediante un receptor `var self`.
+
+La superficie mínima y canónica es:
+
+```tondo
+import std.bytes
+
+fn bytes.empty(): Bytes ! BytesError
+fn bytes.fromArray(value: Array[Byte]): Bytes ! BytesError
+fn bytes.builder(): BytesBuilder ! BytesError
+
+// Conversiones explícitas del lenguaje; el tipo `Bytes` pertenece a este módulo.
+fn Bytes(value: String): Bytes ! BytesError
+fn String(value: Bytes): String ! Utf8Error
+
+fn Bytes.length(self): Int
+fn Bytes.get(self, index: Int): Byte?
+fn Bytes.slice(self, start: Int, end: Int): Bytes ! BytesError
+fn Bytes.toArray(self): Array[Byte] ! BytesError
+fn Bytes.equal(self, other: Bytes): Bool
+fn Bytes.hash(self): UInt64
+
+fn BytesBuilder.length(self): Int
+fn BytesBuilder.appendByte(var self, value: Byte): Unit ! BytesError
+fn BytesBuilder.append(var self, value: Bytes): Unit ! BytesError
+fn BytesBuilder.appendArray(var self, value: Array[Byte]): Unit ! BytesError
+fn BytesBuilder.finish(var self): Bytes ! BytesError
+```
+
+`Bytes(value)` codifica los bytes UTF-8 ya válidos de `String`; no hace una
+segunda validación ni reemplaza caracteres. `String(value)` valida siempre y
+devuelve `Utf8Error` sin producir un `String` parcial. `get` es total y devuelve `none`
+fuera de rango; `slice` usa el intervalo semiabierto `[start, end)` y devuelve
+`BytesError` si los límites no son no negativos o no satisfacen
+`start <= end <= length`. `toArray` copia cada elemento. `equal` compara bytes
+en orden y `hash` usa FNV-1a de 64 bits, fijado por esta edición para que dos
+valores iguales tengan siempre el mismo hash.
+
+`BytesBuilder` comienza vacío. `appendByte`, `append` y `appendArray` son
+atómicos: si el límite de bytes del run se excedería, devuelven `BytesError` y
+no cambian el builder. `finish` toma una instantánea independiente; el builder
+puede seguir utilizándose. El límite publicado por el host se aplica a cada
+buffer materializado y nunca permite una reserva silenciosa por encima de
+`ResourceLimits.max_vm_heap_bytes`.
+
+`BytesError` es opaco y pertenece a `std.bytes`; sus variantes internas (límite,
+rango o elemento inválido) no forman parte de la identidad binaria y pueden
+ampliarse sin romper código que solo propaga el error. La API no define
+conversiones implícitas, `replacement decoding`, alias mutables ni una segunda
+implementación de bytes en `std.process`. `Bytes(value)` y `String(value)` son
+las únicas conversiones públicas entre texto y bytes.
+
+La implementación de referencia mantiene una ruta escalar que sirve de oracle.
+Una ruta SIMD, de palabra ancha o específica del target puede acelerar copias,
+comparación y hashing siempre que preserve exactamente el resultado, el orden,
+los errores, los límites y el número observable de operaciones de ownership.
 
 ### 10.3 Protocolos de I/O
 
@@ -1280,7 +1345,7 @@ actualizar esta especificación y el tracker antes de implementar.
 | `std.yaml` | Core | — | 0.1 | YAML seguro, tipado y streaming sobre `std.serialization`, con límites explícitos |
 | `std.toml` | Core | — | 0.1 | TOML tipado y árbol dinámico explícito, preservando errores con spans |
 | `std.cbor` | Core | — | 0.1 | CBOR tipado, streaming y modo determinista explícito |
-| `std.time` | Core + gated | `clock` para proveedor | 0.1 | Duration, Instant, timers, deadlines, calendario civil y zonas horarias versionadas |
+| `std.time` | Core + gated | `clock` para proveedor | 0.1 | Time-base monotónico en STD-0.1A; calendario civil y zonas horarias versionadas en STD-0.1B |
 | `std.path` | Core | — | 0.1 | Paths nativos y operaciones puramente léxicas |
 | `std.regex` | Core | — | 0.1 | Expresiones regulares Unicode con complejidad y límites declarados |
 | `std.uuid` | Core + gated | `entropy` y/o `clock` para generación | 0.1 | UUID, parsing, formatting y generadores explícitos por versión |
@@ -1320,9 +1385,10 @@ actualizar esta especificación y el tracker antes de implementar.
 - `std.channel`, `std.sync` y `std.executor` reutilizan el único modelo async,
   de ownership y de memoria del lenguaje; ninguna API crea tasks desligadas o
   un segundo tipo de future.
-- `std.time` separa estrictamente el reloj monotónico del calendario civil. Los
-  datos de zona horaria son inputs versionados de la distribución, nunca una
-  consulta ambiental durante compilación.
+- `std.time` separa estrictamente el reloj monotónico del calendario civil. El
+  time-base de `Duration`, `Instant`, timers y deadlines pertenece a STD-0.1A;
+  los datos de zona horaria son inputs versionados de la distribución en
+  STD-0.1B, nunca una consulta ambiental durante compilación.
 - `std.net` no concede red por import: cada target debe seleccionar `network` y
   cada operación conserva I/O, timeout y cancelación en su firma.
 - `std.uuid` separa representación y parsing core de cualquier generador que
@@ -1339,8 +1405,9 @@ actualizar esta especificación y el tracker antes de implementar.
 
 El catálogo y sus propietarios son normativos. Las declaraciones exhaustivas de
 las veintinueve superficies permanecen pendientes, salvo el núcleo sellado que
-`TONDO_TESTING_SPEC.md` ya fija para `std.testing`. El bootstrap conserva su
-propio contrato separado hasta completar la migración de la sección 19.
+`TONDO_TESTING_SPEC.md` ya fija para `std.testing`, `std.bytes` y el sustrato
+monotónico de `std.time`. El bootstrap conserva su propio contrato separado
+hasta completar la migración de la sección 19.
 
 La implementación usa dos gates internos sin crear versiones distintas:
 
@@ -1358,7 +1425,196 @@ S1A no es una release ni permite publicar una stdlib incompleta como 0.1.0.
 Todos los módulos de ambas fases comparten una distribución, PackageId y
 política de compatibilidad; Gate S1 fija sus hashes finales.
 
-### 14.3 Arquitectura común de serialización
+### 14.3 `std.time`: sustrato monotónico de STD-0.1A
+
+Esta sección cierra únicamente el time-base necesario para producción y
+testing. El calendario civil, las zonas horarias, el reloj de pared y las
+conversiones a fechas pertenecen a STD-0.1B y no pueden introducirse como una
+dependencia implícita de este contrato.
+
+#### 14.3.1 Valores portables
+
+`Duration` es un valor inmutable cuyo quantum semántico es exactamente un
+nanosegundo. Su dominio es un contador firmado de 64 bits con los mismos límites
+matemáticos que `Int`; el layout físico no forma parte de la API. Puede ser
+negativo, representa cero y no contiene identidad de reloj, epoch, locale ni
+zona horaria.
+
+La superficie mínima y canónica es:
+
+~~~tondo pseudocode
+pub type Duration
+
+pub enum DurationError {
+    Overflow
+}
+
+pub fn Duration.fromNanoseconds(value: Int): Duration
+pub fn Duration.fromMicroseconds(value: Int): Duration ! DurationError
+pub fn Duration.fromMilliseconds(value: Int): Duration ! DurationError
+pub fn Duration.fromSeconds(value: Int): Duration ! DurationError
+
+pub fn Duration.toNanoseconds(self): Int
+pub fn Duration.add(self, other: Duration): Duration ! DurationError
+pub fn Duration.subtract(self, other: Duration): Duration ! DurationError
+pub fn Duration.multiply(self, factor: Int): Duration ! DurationError
+pub fn Duration.negate(self): Duration ! DurationError
+pub fn Duration.isZero(self): Bool
+pub fn Duration.isNegative(self): Bool
+pub fn Duration.isLessThan(self, other: Duration): Bool
+~~~
+
+`DurationError` cumple `Copy`, `Discard`, `Equatable`, `Key`, `Send` y
+`Share`. `ClockError` tiene las mismas capacidades; sus variantes no contienen
+datos del host ni mensajes localizados.
+
+`fromNanoseconds` y `toNanoseconds` son totales porque `Int` ya tiene el mismo
+dominio. Las demás operaciones comprueban el resultado completo antes de
+publicarlo y devuelven `DurationError.Overflow`; nunca hacen wrapping,
+saturación, truncado silencioso ni pánico. Las conversiones de unidades
+multiplican por un factor exacto y no redondean. Un target no puede cambiar el
+quantum por usar un reloj con otra resolución.
+
+`Duration` cumple `Copy`, `Discard`, `Equatable`, `Key`, `Send` y `Share`. Sus
+operaciones son puras, no requieren `clock`, no asignan y no consultan al host.
+La igualdad y el hash observan únicamente el contador de nanosegundos.
+
+#### 14.3.2 Instantes y proveedor
+
+`Instant` es un valor opaco producido por un proveedor monotónico. No tiene
+epoch ni conversión implícita a `String`, fecha civil o número. Cada valor
+conserva internamente la identidad del proveedor y del dominio que lo creó;
+ninguno de esos identificadores es observable desde fuente.
+
+~~~tondo pseudocode
+pub type Instant
+
+pub enum ClockError {
+    Unavailable
+    DomainMismatch
+    InvalidDelay
+    OutOfRange
+    ResourceLimit
+}
+
+pub fn now(): Instant ! ClockError
+pub fn resolution(): Duration ! ClockError
+pub fn deadline(after: Duration): Instant ! ClockError
+
+pub fn Instant.add(self, delta: Duration): Instant ! ClockError
+pub fn Instant.subtract(self, delta: Duration): Instant ! ClockError
+pub fn Instant.durationSince(self, other: Instant): Duration ! ClockError
+pub fn Instant.isBefore(self, other: Instant): Bool ! ClockError
+pub fn Instant.isAfter(self, other: Instant): Bool ! ClockError
+~~~
+
+`now` es síncrona, no suspende y devuelve instantes no decrecientes. El
+proveedor puede devolver dos veces el mismo valor cuando su resolución es más
+gruesa que un nanosegundo. `resolution` devuelve una duración positiva y
+estable para el proveedor activo; la resolución efectiva y su método de
+redondeo se declaran en la matriz del target. La representación sigue siendo
+nanosegundos aunque el host use ticks, ciclos u otra unidad.
+
+`durationSince` devuelve la diferencia firmada `self - other`. Todas las
+operaciones entre dos `Instant` comprueban que pertenecen al mismo proveedor y
+dominio; si no, devuelven `ClockError.DomainMismatch` y nunca comparan por
+accidente sus contadores internos. El overflow de `add`, `subtract` o
+`deadline` devuelve `ClockError.OutOfRange`. Un `Instant` cumple `Copy`,
+`Discard`, `Send` y `Share`, pero no `Equatable` ni `Key`: la igualdad entre
+dominios no es una operación booleana válida y debe expresarse mediante las
+consultas anteriores.
+
+La capability `clock` garantiza un proveedor monotónico que cumple este
+contrato; no habilita reloj de pared ni calendario. Si el proveedor no puede
+consultarse, la operación devuelve `ClockError.Unavailable`, nunca usa un
+fallback wall-clock y nunca produce un pánico. Consultar el instante no
+bloquea ni crea una task.
+
+#### 14.3.3 Suspensión, timers y deadlines
+
+Un deadline es un `Instant` del proveedor activo; STD-0.1 no introduce un
+wrapper `Deadline` adicional. `deadline(after)` permite duraciones firmadas
+para representar también un deadline ya vencido. Las esperas y timers solo
+aceptan retrasos no negativos:
+
+~~~tondo pseudocode
+pub async fn sleep(delay: Duration): Unit ! ClockError
+
+pub type Timer
+
+pub fn Timer.after(delay: Duration): Timer ! ClockError
+pub fn Timer.at(deadline: Instant): Timer ! ClockError
+pub async fn Timer.wait(self): Unit ! ClockError
+pub fn Timer.cancel(self): Unit
+~~~
+
+`sleep` es la comodidad sin ownership visible; `Timer` es la forma explícita
+cuando el programa necesita armar, transferir o cancelar un timer. No son dos
+semánticas de reloj: ambas registran un único evento one-shot en el mismo
+proveedor. Un retraso negativo produce `ClockError.InvalidDelay`; cero es válido
+y conserva un punto de suspensión async. Un deadline vencido hace que `wait`
+termine sin esperar.
+
+`Timer` es afín, no es `Copy`, `Share`, `Equatable` ni `Key`, y puede moverse
+entre tasks que cumplan `Send`. `after` y `at` reservan el descriptor de forma
+atómica y devuelven `ClockError.ResourceLimit` sin dejar un timer parcial.
+`wait` consume el timer, espera hasta que el proveedor observe su deadline y
+constituye un punto cooperativo de cancelación. No se despierta antes del
+deadline; el proveedor real puede completar después por latencia del target.
+`cancel` también consume el timer, es síncrono y completa la desregistración
+antes de retornar. Un timer no tiene
+reset, repetición ni finalizador de usuario; `wait` o `cancel` son sus únicas
+operaciones terminales. Si una cancelación estructurada interrumpe `wait`, el
+runtime desregistra el timer antes de propagar la cancelación y no la convierte
+en una variante añadida a `ClockError`.
+
+Un timer creado con `Timer.at` rechaza con `DomainMismatch` un instante de otro
+proveedor o dominio. La carrera entre expiración y cancelación se resuelve por
+el orden de linealización del proveedor; nunca se entregan dos outcomes. Un
+timer real no garantiza despertar exactamente en el deadline: no despierta
+antes de él y su latencia posterior pertenece al target. El proveedor virtual
+de `std.testing` sí observa los deadlines exactamente y conserva el orden
+estable de creación fijado en `TONDO_TESTING_SPEC.md`.
+
+#### 14.3.4 Sustitución virtual y separación civil
+
+`testing.withVirtualTime` sustituye únicamente el proveedor monotónico durante
+su dominio sellado. El código probado continúa llamando a `std.time.now`,
+`deadline`, `sleep` y `Timer` con las firmas anteriores; no recibe un reloj de
+test ni una capability adicional. Un `Duration` puede pasar entre dominios,
+pero un `Instant` o `Timer` no. Los instantes creados antes de entrar al dominio
+virtual se rechazan dentro de él por `DomainMismatch`.
+
+El time-base no consulta `TZ`, locale, epoch Unix, hora civil ni red. `Date`,
+`Time`, `DateTime`, zonas horarias, resolución de calendario y conversiones
+entre calendario e instante se especificarán e implementarán en STD-0.1B con
+datos versionados. Ninguna API de STD-0.1A puede aceptar un `Instant` donde
+espere una fecha civil o viceversa.
+
+#### 14.3.5 Plan cerrado, hashes y disponibilidad
+
+El slice se versiona como `std.time.monotonic-0.1` dentro de la única
+distribución `toolchain:std:draft`. El plan cerrado debe contener, cada uno con
+su SHA-256 lowercase, los bytes de:
+
+1. el source set core que define `Duration` y `DurationError`;
+2. el source set gated `clock` que define `Instant`, `ClockError`, `Timer` y
+   sus firmas;
+3. la interfaz pública `std.time` resultante;
+4. la unidad privilegiada del proveedor monotónico real, con sus hashes de
+   firma, contrato de seguridad e implementación; y
+5. el descriptor y corpus del proveedor virtual usado por la conformidad,
+   que pertenece al artefacto de test y no a un bridge ambiental del frontend.
+
+Estas entradas utilizan las categorías existentes de `tondo-toolchain` (`source`,
+`dependency-interface` y `privileged-unit`); no se añade un path físico ni una
+segunda identidad de `std.time`. El `content_hash` de la distribución y su
+`api_hash` cubren el slice completo. Mientras no existan esos bytes y hashes,
+el plan conserva `STD-TIME-BASE-IMPL-001` y `STD-TIME-BASE-CONF-001` pendientes;
+la presente revisión cierra únicamente el contrato semántico y no anuncia
+disponibilidad en `tondo-vm-hosted`.
+
+### 14.4 Arquitectura común de serialización
 
 Hay dos rutas deliberadamente distintas:
 
@@ -1389,7 +1645,7 @@ materializados. Los defaults estándar son finitos y versionados. Alcanzar un
 límite devuelve un error nominal con clase, offset y path estructural; no
 produce un pánico ni un valor parcial.
 
-### 14.4 `std.serialization`
+### 14.5 `std.serialization`
 
 `std.serialization` posee los protocolos estáticos compartidos. Su shape lógico
 es:
@@ -1442,7 +1698,7 @@ Renombrar, omitir, aplanar o transformar fields cambia un contrato de wire y no
 se esconde en attributes generales. Se expresa con un `impl` manual o con un
 tipo DTO explícito. Protobuf no utiliza este derive para inferir field numbers.
 
-### 14.5 `std.reflect`
+### 14.6 `std.reflect`
 
 `std.reflect` implementa la reflection conservada de 27.10. Su núcleo lógico es:
 
@@ -1480,7 +1736,7 @@ Los usos previstos son diagnostics de aplicación, documentación y herramientas
 que necesitan describir un tipo conocido estáticamente. JSON, MessagePack y
 Protobuf no dependen de este módulo.
 
-### 14.6 `std.meta`
+### 14.7 `std.meta`
 
 `std.meta` solo está presente en `target = tondo-meta`. Define los valores
 inmutables de `GenerateRequest`, `DeriveRequest`, `GenerateResponse`,
@@ -1500,7 +1756,7 @@ callbacks ni mutación del AST que produjo el modelo. Crear un documento fuente
 es construir un valor nuevo; el toolchain decide si lo admite, lo formatea y lo
 compila.
 
-### 14.7 `std.json`
+### 14.8 `std.json`
 
 `std.json` implementa JSON UTF-8 conforme a
 [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259.html). Su superficie contiene:
@@ -1531,7 +1787,7 @@ Un error contiene clase estable, byte offset, línea/columna cuando puedan
 calcularse y path estructural. No copia automáticamente el documento, el valor
 de un field ni datos potencialmente secretos dentro de su mensaje.
 
-### 14.8 `std.messagepack`
+### 14.9 `std.messagepack`
 
 `std.messagepack` implementa la
 [especificación MessagePack](https://github.com/msgpack/msgpack/blob/master/spec.md)
@@ -1567,7 +1823,7 @@ segundos Unix y nanosegundos; no adelanta calendario civil ni se convierte en
 `Instant`. Una extensión desconocida no se pierde ni se interpreta por
 reflection.
 
-### 14.9 `std.protobuf`
+### 14.10 `std.protobuf`
 
 [Protobuf](https://protobuf.dev/programming-guides/encoding/) es schema-first.
 Un `.proto` entra al build como generator input y el programa estándar fijado
@@ -1606,7 +1862,7 @@ cambiar wire-incompatible types o romper una reserva produce diagnostics
 asociados al schema. El runtime no descubre schemas, carga descriptors
 ambientales ni genera código en la primera petición.
 
-### 14.10 Reglas de rendimiento de codecs
+### 14.11 Reglas de rendimiento de codecs
 
 Los tres codecs:
 

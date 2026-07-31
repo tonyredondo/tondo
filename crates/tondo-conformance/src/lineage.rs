@@ -442,7 +442,7 @@ mod tests {
         );
         assert_eq!(
             sha256(first.specification("TONDO_LANGUAGE_SPEC.md").unwrap()),
-            "d6005c8389dc29560c01c8ca0437e3c7c7a60842bf7ffff4e5109051e8e92273"
+            "68bdf171a1f9be7cf542166415c97223f54aae60fa2733183255553b73afc7ef"
         );
         assert_ne!(
             first.baseline_specification(),
@@ -460,6 +460,110 @@ mod tests {
                 .to_string()
                 .contains("pending tasks")
         );
+    }
+
+    #[test]
+    fn lineage_errors_and_accessors_have_stable_contracts() {
+        assert_eq!(
+            LineageError::Io {
+                path: PathBuf::from("missing.json"),
+                message: "not found".into(),
+            }
+            .to_string(),
+            "cannot read `missing.json`: not found"
+        );
+        assert_eq!(
+            LineageError::Json("broken".into()).to_string(),
+            "invalid draft lineage JSON: broken"
+        );
+        assert_eq!(
+            LineageError::Invalid("bad state".into()).to_string(),
+            "invalid draft lineage: bad state"
+        );
+        assert_eq!(
+            LineageError::HashMismatch {
+                path: "manifest.json".into(),
+                expected: "a".repeat(64),
+                actual: "b".repeat(64),
+            }
+            .to_string(),
+            format!(
+                "draft lineage file `manifest.json` has SHA-256 `{}`, expected `{}`",
+                "b".repeat(64),
+                "a".repeat(64)
+            )
+        );
+        let baseline = LineageError::from(ManifestError::Invalid("bad suite".into()));
+        assert_eq!(
+            baseline.to_string(),
+            "invalid baseline lineage: invalid suite manifest: bad suite"
+        );
+
+        let lineage = DraftLineage::load(repository_root(), DRAFT_LINEAGE_PATH).unwrap();
+        assert_eq!(lineage.root(), repository_root());
+        assert_eq!(lineage.manifest_path(), Path::new(DRAFT_LINEAGE_PATH));
+        assert!(lineage.specification("missing.md").is_none());
+        let missing =
+            DraftLineage::load(repository_root(), "conformance/draft/missing.json").unwrap_err();
+        assert!(missing.to_string().contains("cannot read"));
+    }
+
+    #[test]
+    fn manifest_validation_closes_identity_paths_layers_and_parents() {
+        let lineage = DraftLineage::load(repository_root(), DRAFT_LINEAGE_PATH).unwrap();
+        let assert_invalid = |manifest: DraftLineageManifest| {
+            assert!(validate_manifest(&manifest).is_err(), "{manifest:?}");
+        };
+
+        for mutate in [
+            |manifest: &mut DraftLineageManifest| manifest.format = "future".into(),
+            |manifest: &mut DraftLineageManifest| manifest.lineage = "other".into(),
+            |manifest: &mut DraftLineageManifest| manifest.edition = "0.2".into(),
+            |manifest: &mut DraftLineageManifest| manifest.revision = 0,
+            |manifest: &mut DraftLineageManifest| manifest.state = "sealed".into(),
+            |manifest: &mut DraftLineageManifest| {
+                manifest.baseline.manifest.path = "other.json".into()
+            },
+            |manifest: &mut DraftLineageManifest| {
+                let _ = manifest.specifications.pop();
+            },
+        ] {
+            let mut invalid = lineage.manifest().clone();
+            mutate(&mut invalid);
+            assert_invalid(invalid);
+        }
+
+        let mut invalid_layer = lineage.manifest().clone();
+        invalid_layer.case_layers.push(CaseLayer {
+            id: "Meta".into(),
+            manifest: PinnedFile {
+                path: "conformance/draft/layers/meta.json".into(),
+                sha256: "a".repeat(64),
+            },
+            tasks: vec!["M".into()],
+            requirements: vec!["R".into()],
+        });
+        assert_invalid(invalid_layer);
+
+        let mut invalid_layer_path = lineage.manifest().clone();
+        invalid_layer_path.case_layers.push(CaseLayer {
+            id: "meta".into(),
+            manifest: PinnedFile {
+                path: "conformance/other/meta.json".into(),
+                sha256: "a".repeat(64),
+            },
+            tasks: vec!["M".into()],
+            requirements: vec!["R".into()],
+        });
+        assert_invalid(invalid_layer_path);
+
+        let mut invalid_parent = lineage.manifest().clone();
+        invalid_parent.revision = 2;
+        invalid_parent.parent = Some(PinnedFile {
+            path: "conformance/draft/history/not-content-addressed.json".into(),
+            sha256: "a".repeat(64),
+        });
+        assert_invalid(invalid_parent);
     }
 
     #[test]

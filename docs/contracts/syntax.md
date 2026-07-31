@@ -46,9 +46,15 @@ The representation is a flat immutable arena:
 ## Parsing strategy
 
 Declarations, types, statements, and patterns use handwritten recursive
-descent. Expressions use Pratt parsing with the binding powers fixed by spec
-section 23.19. Equality, comparison, and range families are non-associative and
-produce `E0005` when chained without grouping.
+descent for the bounded shallow path. Expressions use Pratt parsing with the
+binding powers fixed by spec section 23.19. Equality, comparison, and range
+families are non-associative and produce `E0005` when chained without grouping.
+Once a source-controlled descent reaches the fixed implementation spill depth,
+the parser continues with explicit heap-backed frames. The frame machines cover
+Pratt prefix/postfix/infix continuations, delimiter chains, blocks and loops,
+constructors, calls, records, types, patterns, and recovery. This keeps the
+grammar and CST shape unchanged while making host stack size irrelevant to
+accepted source depth.
 
 Logical-newline insertion follows the innermost open delimiter. Parentheses and
 brackets suppress `NL`; a brace nested inside either restores significant
@@ -90,14 +96,16 @@ construct a second syntax tree.
 
 ## Defensive limits
 
-The parser enforces request-wide node and diagnostic budgets. While the
-bootstrap implementation still uses input-driven host recursion, recursive CST
-and expression nesting is temporarily capped at 128 even if an embedding host
-requests a larger value. Exceeding that portable process-safety ceiling yields
-`ParseResource::NestingDepth`/`T0002`, never an aborted process. This is an
-implementation safety limit, not Tondo language semantics. `PARSER-STACK-001`
-replaces the native recursion with explicit parser frames and removes the
-temporary clamp without removing the configured nesting budget.
+The parser enforces request-wide node, diagnostic, and logical nesting budgets.
+`ParseLimits.max_nesting_depth` is the only depth budget exposed to an embedding
+host: every explicit parser frame and source nesting category charges that
+budget, and exhaustion yields `ParseResource::NestingDepth`/`T0002`. There is no
+second ceiling derived from the worker's native stack and no fixed clamp at 128.
+The shallow recursive path is an implementation detail bounded by a constant;
+all further source-controlled continuation state lives in explicit `Vec`-backed
+frames. CST token walking and lossless reconstruction use the same iterative
+discipline. Frame memory is O(depth), and malformed input follows the same
+bounded recovery path instead of aborting the process.
 
 ## Validation
 
@@ -109,8 +117,12 @@ The maintained tests cover:
 - precedence, contextual brackets, records, closures, `for`, patterns, and
   multiple assignment;
 - local recovery that preserves later methods and declarations;
-- every one-byte input, 2,048 deterministic arbitrary byte sequences, and a
-  nesting input immediately beyond the safe recursion ceiling;
+- every one-byte input, 2,048 deterministic arbitrary byte sequences, and
+  valid/invalid nesting inputs on 64 KiB worker stacks across expressions,
+  blocks, loops, calls, records, types, and patterns;
+- deep CST token partition/reconstruction and formatter round-trips, including
+  synthetic missing-delimiter recovery, with significant-token shape
+  equivalence;
 - 512 deterministic grammar-generated valid programs whose formatted output is
   reparsed and formatted to the same fixed point;
 - propagation of syntax diagnostics and resource rejection through the public

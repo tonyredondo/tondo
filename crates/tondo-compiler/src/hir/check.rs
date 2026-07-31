@@ -818,6 +818,8 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::Command
                         | IntrinsicType::Pipeline
                         | IntrinsicType::Bytes
+                        | IntrinsicType::BytesBuilder
+                        | IntrinsicType::BytesError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle
@@ -13412,16 +13414,25 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(None);
         }
         let function_name = function_token.token().normalized_identifier();
+        if module.path().as_str() == "bytes" && function_name == Some("Bytes") {
+            // `bytes.Bytes(value)` is a type conversion, not a stdlib function
+            // call. Leave it for the nominal-constructor checker below.
+            return Ok(None);
+        }
         let host_function = match (module.path().as_str(), function_name) {
             ("console", Some("print")) => HirBootstrapHostFunction::ConsolePrint,
             ("process", Some("args")) => HirBootstrapHostFunction::ProcessArgs,
             ("process", Some("cmd")) => HirBootstrapHostFunction::ProcessCmd,
             ("process", Some("shell")) => HirBootstrapHostFunction::ProcessShell,
-            ("process", Some(name)) => {
+            ("bytes", Some("empty")) => HirBootstrapHostFunction::BytesEmpty,
+            ("bytes", Some("fromArray")) => HirBootstrapHostFunction::BytesFromArray,
+            ("bytes", Some("builder")) => HirBootstrapHostFunction::BytesBuilder,
+            ("process", Some(name)) | ("bytes", Some(name)) => {
+                let module_name = module.path().as_str();
                 self.emit(
                     self.sources.span(file, function_token.range())?,
                     "E1102",
-                    format!("`std.process` has no function named `{name}`"),
+                    format!("`std.{module_name}` has no function named `{name}`"),
                     Vec::new(),
                     None,
                 )?;
@@ -15939,7 +15950,21 @@ impl<'a> ExpressionChecker<'a> {
             (IntrinsicType::ProcessHandle, "cancel") => {
                 HirBootstrapHostFunction::ProcessHandleCancel
             }
-            (IntrinsicType::Bytes, "text") => HirBootstrapHostFunction::BytesText,
+            (IntrinsicType::Bytes, "length") => HirBootstrapHostFunction::BytesLen,
+            (IntrinsicType::Bytes, "get") => HirBootstrapHostFunction::BytesGet,
+            (IntrinsicType::Bytes, "slice") => HirBootstrapHostFunction::BytesSlice,
+            (IntrinsicType::Bytes, "toArray") => HirBootstrapHostFunction::BytesToArray,
+            (IntrinsicType::Bytes, "equal") => HirBootstrapHostFunction::BytesEqual,
+            (IntrinsicType::Bytes, "hash") => HirBootstrapHostFunction::BytesHash,
+            (IntrinsicType::BytesBuilder, "length") => HirBootstrapHostFunction::BytesBuilderLen,
+            (IntrinsicType::BytesBuilder, "appendByte") => {
+                HirBootstrapHostFunction::BytesBuilderAppendByte
+            }
+            (IntrinsicType::BytesBuilder, "append") => HirBootstrapHostFunction::BytesBuilderAppend,
+            (IntrinsicType::BytesBuilder, "appendArray") => {
+                HirBootstrapHostFunction::BytesBuilderAppendArray
+            }
+            (IntrinsicType::BytesBuilder, "finish") => HirBootstrapHostFunction::BytesBuilderFinish,
             _ => return Ok(None),
         };
         if self
@@ -15949,11 +15974,20 @@ impl<'a> ExpressionChecker<'a> {
         {
             return Ok(None);
         }
+        if matches!(
+            function,
+            HirBootstrapHostFunction::BytesBuilderAppendByte
+                | HirBootstrapHostFunction::BytesBuilderAppend
+                | HirBootstrapHostFunction::BytesBuilderAppendArray
+                | HirBootstrapHostFunction::BytesBuilderFinish
+        ) {
+            self.check_method_receiver(receiver, ParameterMode::Var, Some(receiver_type), context)?;
+        }
         if let Some(bracket) = explicit_bracket {
             self.emit(
                 self.sources.span(file, bracket.range())?,
                 "E1104",
-                "process operations do not declare generic parameters",
+                "standard-library operations do not declare generic parameters",
                 Vec::new(),
                 None,
             )?;
@@ -16302,9 +16336,41 @@ impl<'a> ExpressionChecker<'a> {
         let Some(ty) = self.construction_type(file, base_node.range(), &path, expected)? else {
             return Ok(Some(self.recovery_expression(file, range)?));
         };
+        if path.suffix.is_empty()
+            && matches!(
+                self.program.interner.kind(ty)?,
+                TypeKind::Intrinsic {
+                    constructor: IntrinsicType::Bytes,
+                    arguments
+                } if arguments.is_empty()
+            )
+        {
+            return self
+                .check_bytes_conversion(
+                    file,
+                    range,
+                    suffix,
+                    HirBootstrapHostFunction::BytesFromString,
+                    expected,
+                    context,
+                )
+                .map(Some);
+        }
         if let TypeKind::Scalar(target) = self.program.interner.kind(ty)?.clone() {
             if !path.suffix.is_empty() {
                 return Ok(None);
+            }
+            if target == ScalarType::String {
+                return self
+                    .check_bytes_conversion(
+                        file,
+                        range,
+                        suffix,
+                        HirBootstrapHostFunction::BytesToString,
+                        expected,
+                        context,
+                    )
+                    .map(Some);
             }
             return self
                 .check_numeric_conversion(file, range, base_node, suffix, target, context)
@@ -16425,6 +16491,31 @@ impl<'a> ExpressionChecker<'a> {
                 Ok(Some(self.recovery_expression(file, range)?))
             }
         }
+    }
+
+    fn check_bytes_conversion(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        suffix: SyntaxNodeRef<'_>,
+        function: HirBootstrapHostFunction,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<HirExpressionId, HirError> {
+        let callee =
+            self.bootstrap_host_callee(function, self.sources.span(file, suffix.range())?)?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            None,
+            None,
+            context,
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -22556,6 +22647,51 @@ mod tests {
     }
 
     #[test]
+    fn bytes_and_strings_use_only_explicit_type_conversions() {
+        let (_, _, valid) = check(
+            "import std.bytes\n\
+             fn round_trip(value: String): String ! (bytes.BytesError | bytes.Utf8Error) {\n\
+                 let raw = bytes.Bytes(value)?\n\
+                 String(raw)?\n\
+             }\n",
+        );
+        assert!(valid.diagnostics().is_empty(), "{:#?}", valid.diagnostics());
+        assert!(valid.is_complete());
+        let hosts = valid
+            .program()
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::Call { callee, .. } => {
+                    let callee = valid.program().expression(*callee)?;
+                    match callee.kind() {
+                        HirExpressionKind::Function(HirCallableId::Host(function)) => {
+                            Some(*function)
+                        }
+                        _ => None,
+                    }
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            hosts.contains(&HirBootstrapHostFunction::BytesFromString),
+            "{hosts:?}"
+        );
+        assert!(
+            hosts.contains(&HirBootstrapHostFunction::BytesToString),
+            "{hosts:?}"
+        );
+
+        for source in [
+            "import std.bytes\nfn invalid(value: String) { bytes.fromText(value) }\n",
+            "import std.bytes\nfn invalid(value: bytes.Bytes) { value.text() }\n",
+        ] {
+            let (_, _, output) = check(source);
+            assert_eq!(codes(&output), ["E1102"], "{source}");
+        }
+    }
+
+    #[test]
     fn mismatches_missing_context_and_uninitialized_bindings_are_specific() {
         let (_, _, mismatch) = check("fn invalid(): Int { \"text\" }\n");
         assert_eq!(codes(&mismatch), ["E1102"]);
@@ -22933,7 +23069,8 @@ mod tests {
     #[test]
     fn closed_capability_matrix_covers_intrinsics_and_structural_values() {
         let (_, _, output) = check(
-            "fn inspect(\n\
+            "import std.bytes\n\
+             fn inspect(\n\
                  integer: Int,\n\
                  float: Float,\n\
                  function: fn(Int): Int,\n\
@@ -22946,6 +23083,7 @@ mod tests {
                  join: ref Join[Int, Never],\n\
                  command: Command,\n\
                  pipeline: Pipeline,\n\
+                 builder: bytes.BytesBuilder,\n\
              ) {}\n",
         );
         assert!(
@@ -23012,6 +23150,10 @@ mod tests {
         satisfied("Join[Int, Never]", &[]);
         satisfied("Command", &transferable);
         satisfied("Pipeline", &transferable);
+        satisfied(
+            "BytesBuilder",
+            &[HirCapability::Discard, HirCapability::Send],
+        );
     }
 
     #[test]
@@ -27626,6 +27768,7 @@ mod tests {
             "import std.console\nfn invalid() { console.print(1) }\n",
             "import std.console\nfn invalid() { console.print(value: \"named\") }\n",
             "import std.console\nfn invalid(parts: Array[String]) { console.print(...parts) }\n",
+            "import std.bytes\nfn invalid() { bytes.missing() }\n",
         ] {
             let (_, _, output) = check(source);
             assert!(

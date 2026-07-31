@@ -468,7 +468,11 @@ impl ProjectPlan {
             package_source_id(&self.standard)?,
             PackageAlias::new("tondoStd")?,
             Edition::V0_1,
-            [ModulePath::new("console")?, ModulePath::new("process")?],
+            [
+                ModulePath::new("bytes")?,
+                ModulePath::new("console")?,
+                ModulePath::new("process")?,
+            ],
             [],
         )?);
         let packages = PackageGraph::new(self.root.package.clone(), self.standard.clone(), nodes)?;
@@ -1729,6 +1733,31 @@ mod tests {
         .unwrap();
         let supplied = BTreeMap::from([("app/src/main.to".into(), Arc::<[u8]>::from(source))]);
         (manifest, lockfile, supplied)
+    }
+
+    #[test]
+    fn root_forms_and_privileged_unit_ids_use_closed_parsers() {
+        assert_eq!(parse_edition("0.1").unwrap(), Edition::V0_1);
+        assert_eq!(parse_profile("hosted").unwrap(), HostProfile::Hosted);
+        assert!(parse_edition("0.2").is_err());
+        assert!(parse_profile("embedded").is_err());
+
+        assert_eq!(parse_source_form("module").unwrap(), SourceForm::Module);
+        assert_eq!(parse_source_form("script").unwrap(), SourceForm::Script);
+        assert_eq!(parse_source_form("fragment").unwrap(), SourceForm::Fragment);
+        assert!(parse_source_form("unknown").is_err());
+
+        require_tondo_source_extension("src/main.to").unwrap();
+        assert!(require_tondo_source_extension("src/main.txt").is_err());
+        validate_identity_field("name", "stable").unwrap();
+        assert!(validate_identity_field("name", "bad\nname").is_err());
+        assert_eq!(validate_source_set_name("fast").unwrap(), "fast");
+        assert!(validate_source_set_name("Fast").is_err());
+
+        validate_unit_id("services.console").unwrap();
+        assert!(validate_unit_id("").is_err());
+        assert!(validate_unit_id("Services.console").is_err());
+        assert!(validate_unit_id("services\nconsole").is_err());
     }
 
     #[test]

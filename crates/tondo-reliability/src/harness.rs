@@ -154,6 +154,7 @@ mod tests {
     fn hex_codec_round_trips_binary_output() {
         let bytes = [0, 1, 15, 16, 127, 128, 255];
         assert_eq!(decode_hex(&encode_hex(&bytes)).unwrap(), bytes);
+        assert_eq!(decode_hex("aBcD").unwrap(), [0xab, 0xcd]);
         assert!(decode_hex("0").is_err());
         assert!(decode_hex("gg").is_err());
     }

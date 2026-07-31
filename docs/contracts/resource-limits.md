@@ -67,8 +67,9 @@ already topological HIR arenas and does not add recursive source traversal.
 Ownership availability traverses those same bounded arenas; each loop state
 grows monotonically over the finite local table and therefore reaches a fixed
 point without an open-ended runtime heuristic. Source nesting remains bounded
-by the configured budget and, while the bootstrap parser still uses
-input-driven host recursion, by its temporary portable process-safety ceiling.
+by the configured budget. The bootstrap parser keeps only a shallow fixed
+recursive path and represents source-controlled continuations with explicit
+frames, so process safety does not depend on the worker's native stack.
 
 MIR and bytecode construction bound every request-local table before growth;
 their initialization, lifetime, and tag-refinement analyses share independent
@@ -88,10 +89,12 @@ It performs at most one such pre-exhaustion pass per allocation or replacement,
 then either publishes atomically once or leaves the pending operation
 unpublished. Bootstrap resource exhaustion uses diagnostic code `T0002`.
 
-The handwritten parser temporarily clamps an embedding host's requested
-nesting depth to 128 even though the configured default budget remains 256.
-This conservative ceiling prevents the recursive bootstrap parser from
-exhausting smaller host stacks. It is not a semantic nesting rule of the Tondo
-language. `PARSER-STACK-001` replaces input-driven host recursion with explicit
-parser frames and removes this additional clamp while retaining the configured
-resource budget.
+The handwritten parser keeps only a fixed shallow recursive bootstrap path.
+Once that path reaches its implementation spill depth, source-controlled
+continuations move to explicit heap-backed frames. `ParseLimits.max_nesting_depth`
+remains the sole logical nesting budget; it is charged by the frame machines and
+is not clamped to 128 or to any other host-stack-derived value. CST traversal,
+lossless reconstruction, and delimiter recovery also use explicit stacks, so a
+64 KiB worker stack exercises the same accepted and rejected inputs as a normal
+host stack. Frame memory is O(depth), and exhaustion is reported as the typed
+`ParseResource::NestingDepth`/`T0002` result rather than a process abort.

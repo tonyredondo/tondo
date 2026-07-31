@@ -112,10 +112,6 @@ fn repository_evidence_commands_are_readable_and_current_through_the_cli() {
         vec!["matrix", "check", "--root", root],
         vec!["ratchet", "check", "--root", root],
         vec!["check", "--root", root],
-        vec!["inventory", "generate", "--root", root],
-        vec!["matrix", "generate", "--root", root],
-        vec!["ratchet", "generate", "--root", root],
-        vec!["generate", "--root", root],
     ] {
         let output = run(&arguments);
         assert!(

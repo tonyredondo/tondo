@@ -9,4 +9,4 @@ let pipeline = (
 )
 
 let output = await pipeline.check()?
-console.print(output.stdout.text()?)
+console.print(String(output.stdout)?)

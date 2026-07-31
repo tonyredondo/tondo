@@ -4,15 +4,15 @@
   "revision": 1,
   "manifest": {
     "path": "conformance/draft/manifest.json",
-    "sha256": "ae376bfa0eac9036342f9af548af0348c55dc1d315ac703c817bbdf1bd8b2bc9"
+    "sha256": "7592dfd27dc90363e30a04baca34e1eecf7bde1965975ac4f59a15faf16f9a4c"
   },
   "inventory": {
     "path": "testing/inventory.json",
-    "sha256": "3417818959e807bc7c9d4523816ef20f0cadf6f696542d270923d1481f66e3df"
+    "sha256": "3fa70445cfafa90469c5761cc1ada02cb7cf8a4f6b6ff9334f486c1dabc8558a"
   },
   "matrix": {
     "path": "testing/coverage-matrix.json",
-    "sha256": "bf480d72feeb3a9653abb164b4079a26a914c7780acf028f7b32e9023f64c06e"
+    "sha256": "98ed18a5574f93b66ded4acf77515341c45f8a5236b02366697d6b30ca82e71d"
   },
   "quality_baseline": {
     "path": "testing/quality-baseline.json",

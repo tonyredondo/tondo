@@ -44,8 +44,10 @@ future native ABI.
 ## Values and identity
 
 The interpreter uses an explicit `Value` enum. `Unit`, booleans, integers,
-floats, bytes, characters, function identities, and structured `Join` handles
-are immediate values. A managed value is a generational handle into a
+floats, individual `Byte` values, characters, function identities, and
+structured `Join` handles are immediate values. The canonical `std.bytes.Bytes`
+and `BytesBuilder` values are typed opaque host tokens; their payload never
+crosses the source-visible runtime boundary. A managed value is a generational handle into a
 non-moving heap slot; source code cannot observe the slot index, generation,
 address, or collection schedule.
 The enum also has one VM-internal `Loan` carrier containing a lender frame,

@@ -28,8 +28,8 @@ fn {name}(value: Int): Int {{
         let observation = check(&format!("typed-{seed}"), &source).unwrap();
         assert!(
             observation.accepted,
-            "seed {seed} produced {:?}\n{source}",
-            observation.diagnostic_codes
+            "seed {seed} produced {:?}: {}\n{source}",
+            observation.diagnostic_codes, observation.diagnostics_jsonl
         );
 
         for (candidate_index, candidate) in expression.shrink().into_iter().enumerate() {

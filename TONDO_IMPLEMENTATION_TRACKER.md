@@ -1,11 +1,11 @@
 # Tondo: tracker de implementación
 
-**Estado:** M10.5b, Gate H0 y `META-FORMAT-001` están cerrados sobre el draft
-actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
+**Estado:** M10.5b, Gate H0, `META-FORMAT-001`, `PARSER-STACK-001`, el slice
+temprano `std.bytes` y `STD-TIME-BASE-SPEC-001` están cerrados sobre el draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.02
+**Versión del tracker:** 1.06
 
 **Última actualización:** 2026-07-31
 
@@ -15,12 +15,13 @@ la conformidad del mismo draft antes de publicar la primera versión
 - [Arquitectura base de Standard Library 0.1](./TONDO_STANDARD_LIBRARY_SPEC.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
-**Objetivo inmediato:** cerrar `PARSER-STACK-001`, el siguiente prerrequisito
-portable de Wave 2. `META-FORMAT-001` ya consolidó los formatos del toolchain
+**Objetivo inmediato:** ejecutar las lanes restantes de Wave 2 después de cerrar
+`PARSER-STACK-001`, el prerrequisito portable de sintaxis. `META-FORMAT-001` ya consolidó los formatos del toolchain
 con el marcador único `draft`; no existe una lane `/1` frente a otra `/2`.
 A partir de aquí avanzan dos lanes:
 M10.7 sobre los slices tempranos de `std.meta`/`std.reflect`, y M10.6 sobre
-`std.bytes`, `std.env` read-only, el time-base monotónico y `defer await`. Gate
+`std.env` read-only, la implementación del time-base monotónico y `defer await`;
+los slices de `std.bytes` y el contrato de `std.time` ya están cerrados. Gate
 G5 solo vuelve a cerrarse cuando ambas lanes forman parte de la conformidad
 vigente. Después se completa STD-0.1A, se fijan antes del backend los contratos
 runtime-facing de STD-0.1B, comienza M11 y, tras Gate N1, se implementa el resto
@@ -648,9 +649,10 @@ Evidencia observada el 2026-07-21:
   deterministas y el límite profundo se resuelven sin crash ni pérdida de
   fuente.
 - El límite request-wide de nodos, diagnostics y nesting produce rechazo
-  tipado. Mientras el bootstrap dependa de recursión del host, una guarda
-  portable temporal lo detiene a 128 niveles aunque el presupuesto configurado
-  siga siendo 256; `PARSER-STACK-001` elimina esta restricción interna.
+  tipado. `PARSER-STACK-001` eliminó la guarda interna de 128 niveles: el
+  presupuesto configurado es ahora el único límite lógico y se carga contra
+  frames explícitos, con recuperación y reconstrucción lossless seguras en
+  stacks pequeños.
 
 ### 6.3 Formatter
 
@@ -2493,24 +2495,19 @@ H0 permanece cerrado para el corpus bootstrap que lo demostró, pero cada
 ampliación del mismo draft necesita un frontend portable y evidencia activa.
 Antes de ampliar la gramática de M10.7 o M10.6:
 
-- [ ] **PARSER-STACK-001 — Eliminar la dependencia del stack nativo.**
-  Reemplazar toda recursión cuya profundidad controle la fuente por una máquina
-  iterativa con una pila explícita de frames: Pratt de expresiones y sus
-  prefix/postfix/infix, grupos, tuples, arrays, records, interpolaciones, tipos,
-  patterns y cualquier descenso anidado restante. Cada frame debe conservar el
-  estado mínimo de continuación, CST, binding power, política de
-  recuperación y span necesarios; no se crea un segundo AST ni se cambia la
-  gramática, precedencia o shape del CST. `ParseLimits.max_nesting_depth`
-  permanece como presupuesto lógico configurable y se carga contra la pila
-  explícita; al cerrar la tarea se elimina
-  `MAX_SAFE_RECURSIVE_PARSER_DEPTH`, de modo que no exista un segundo límite
-  oculto dependiente del tamaño de stack del thread. Validar equivalencia byte a
-  byte de CST, diagnostics, recuperación y formatter sobre el corpus actual;
-  añadir casos válidos e inválidos profundamente anidados que alcancen un
-  presupuesto elevado en un thread de stack pequeño, properties de
-  terminación/memoria `O(depth)`, fuzzing y la matriz Linux ARM64, macOS y
-  Windows. Actualizar ADR-004 y los contratos de límites solo cuando la ruta
-  iterativa sea la implementación efectiva.
+- [x] **PARSER-STACK-001 — Eliminar la dependencia del stack nativo.**
+  La ruta efectiva mantiene solo un descenso recursivo fijo y pasa a frames
+  explícitos para Pratt prefix/postfix/infix, grupos, arrays, bloques, loops,
+  constructores, llamadas, records, tipos, patterns, recuperación de cierres
+  ausentes y traversal lossless del CST. No se crea un segundo AST ni cambia la
+  gramática, precedencia o shape del CST; se eliminó
+  `MAX_SAFE_RECURSIVE_PARSER_DEPTH` y `ParseLimits.max_nesting_depth` es ahora
+  el único presupuesto lógico, cargado contra los frames. La batería cubre
+  casos válidos e inválidos de profundidad 1.000–4.000 en workers de 64 KiB,
+  equivalencia de partición/reconstrucción y token shape tras formatter, además
+  de los 2.048 inputs arbitrarios y fuzz targets existentes. La evidencia
+  observada en Linux x86_64 pasa; la matriz Linux ARM64/macOS/Windows queda
+  como ejecución CI de targets, no como una afirmación local no verificada.
 
 - [x] **CONF-DRAFT-001 — Consolidar una única conformidad de draft.** Mantener
   `conformance/draft/manifest.json` como única identidad activa, usar el corpus
@@ -2566,10 +2563,9 @@ discovery/dev-dependencies, lexer/CST/formatter, árbol estático, algoritmos
 puros de selección y `defer await` pueden avanzar en lanes independientes.
 `PARSER-STACK-001` debe cerrarse antes de `UTEST-CST-001`, para que la nueva
 sintaxis no amplíe la ruta recursiva temporal.
-`UTEST-CHECK-001` y la ruta de attachments esperan
-`STD-BYTES-SPEC-001`, `STD-BYTES-IMPL-001` y `STD-BYTES-CONF-001`; el checker
-espera también la identidad implementada de `Duration` y `Instant` del
-time-base;
+`UTEST-CHECK-001` y la ruta de attachments ya tienen la identidad binaria de
+`std.bytes`; el checker espera ahora la identidad implementada de `Duration` y
+`Instant` del time-base;
 la lectura de inputs declarados espera `STD-ENV-SPEC-001`,
 `STD-ENV-IMPL-001` y `STD-ENV-CONF-001`;
 `UTEST-VTIME-001`, lifecycle temporal y Gate T0 esperan
@@ -3315,8 +3311,8 @@ sin abrir el resto de la stdlib:
 - `STD-META-SPEC-001` antes de `META-VM-001`, y su implementación/conformidad
   antes de providers o generators;
 - `STD-REFLECT-001` antes de `REFLECT-IMPL-001`;
-- `STD-BYTES-SPEC-001 → STD-BYTES-IMPL-001 → STD-BYTES-CONF-001` antes de
-  typecheck y artifacts de testing;
+- `STD-BYTES-SPEC-001 → STD-BYTES-IMPL-001 → STD-BYTES-CONF-001` ya está cerrado;
+  su identidad se reutiliza en typecheck y artifacts de testing;
 - `STD-TIME-BASE-SPEC-001 → STD-TIME-BASE-IMPL-001 →
   STD-TIME-BASE-CONF-001` antes de tiempo virtual;
 - `STD-ENV-SPEC-001 → STD-ENV-IMPL-001 → STD-ENV-CONF-001` antes de
@@ -3380,17 +3376,19 @@ layer pueden avanzar en paralelo.
   reproducible, conformidad y checklist de publicación. Mantener pendientes las
   firmas concretas de módulos y no anunciar STD-0.1 como publicada.
 
-- [ ] **STD-TIME-BASE-SPEC-001 — Extender la especificación estándar con el
-  sustrato temporal mínimo.** Fijar `Duration` portable con quantum de
-  nanosegundo y overflow explícito, `Instant` monotónico, consulta del instante,
-  suspensión, timer one-shot y deadline; declarar ownership, resolución,
-  identidad opaca de proveedor, rechazo de mezcla entre dominios, cancelación,
-  puntos de suspensión, capability y disponibilidad por target. Versionar los
-  módulos/bytes mínimos y su hash dentro del plan cerrado para que M10.6 no
-  dependa de un bridge ambiental o no distribuible.
-  Separar estrictamente calendario/reloj civil y secuenciarlo en STD-0.1B. Esta
-  tarea se ejecuta tras H0 y antes de M10.6 para que testing virtualice
-  producción, no una API provisional.
+- [x] **STD-TIME-BASE-SPEC-001 — Extender la especificación estándar con el
+  sustrato temporal mínimo.** `std.time` fija en STD-0.1A `Duration` firmado con
+  quantum de nanosegundo y overflow explícito, `Instant` monotónico, consulta
+  síncrona, `sleep`, timer one-shot y deadlines representados por `Instant`.
+  El contrato declara ownership (`Copy`/`Send`/`Share` para valores y handles
+  afines para timers), resolución, identidad opaca de proveedor y dominio,
+  rechazo de mezcla, cancelación cooperativa, puntos de suspensión, capability
+  `clock`, errores y disponibilidad por target. El plan cerrado debe fijar con
+  SHA-256 los source sets, interfaz, unidad privilegiada real y descriptor del
+  proveedor virtual; no existe bridge ambiental ni segunda API de testing.
+  Calendario/reloj civil queda separado en STD-0.1B. La implementación y la
+  conformidad permanecen pendientes y esta tarea habilita M10.6 sin anunciar
+  disponibilidad en `tondo-vm-hosted`.
 
 - [ ] **STD-SPEC-001 — Cerrar la integración de
   `TONDO_STANDARD_LIBRARY_SPEC.md`.** Después de los specs por owner, comprobar
@@ -3432,10 +3430,12 @@ layer pueden avanzar en paralelo.
   sus operaciones fijan construcción, búsqueda, transformación, Unicode,
   límites y costes sin confundir scalar, grapheme ni byte.
 
-- [ ] **STD-BYTES-SPEC-001 — Especificar `std.bytes`.** `Bytes`, builders,
-  conversión con `Array[Byte]`, encoding/decoding, UTF-8 inválido, slicing,
-  igualdad, hashing y límites tienen una única identidad binaria reutilizada por
-  console, filesystem, procesos y testing.
+- [x] **STD-BYTES-SPEC-001 — Especificar `std.bytes`.** `Bytes`, builders,
+  conversiones explícitas `Bytes(String)`/`String(Bytes)` y `Array[Byte]`,
+  UTF-8 estricto, slicing, igualdad, hashing y límites tienen una única
+  identidad binaria reutilizada por console,
+  filesystem, procesos y testing. Base64, hexadecimal y codecs wire-format
+  permanecen bajo sus módulos propietarios posteriores.
 
 - [ ] **STD-IO-001 — Especificar `std.io`.** Fijar protocolos estáticos de
   lectura/escritura, buffers, EOF, partial I/O, errores portables, ownership,
@@ -3557,20 +3557,18 @@ layer pueden avanzar en paralelo.
   threads, FFI y unsafe. Debe pasar antes de `META-DERIVE-001` o
   `META-GEN-001`.
 
-- [ ] **STD-BYTES-IMPL-001 — Implementar la identidad binaria común.**
-  Implementar sobre la VM toda la superficie cerrada por
-  `STD-BYTES-SPEC-001`: `Bytes`, builders, conversiones, codecs y slicing con
-  semántica de valor, UTF-8 explícito, límites y cero alias mutable. Migrar
-  únicamente los bridges que M10.6 necesita sin publicar todavía
-  console/filesystem/process como APIs estables.
+- [x] **STD-BYTES-IMPL-001 — Implementar la identidad binaria común.**
+  La VM hosted implementa `Bytes`, `BytesBuilder`, conversiones, UTF-8, slicing,
+  equality/hash y límites con semántica de valor y sin alias mutable. El owner
+  canónico es `std.bytes`; texto y bytes usan las conversiones explícitas del
+  lenguaje `Bytes(String)` y `String(Bytes)`.
 
-- [ ] **STD-BYTES-CONF-001 — Cerrar la evidencia temprana de bytes.** Cubrir
-  vacío, builders, límites, slicing, equality/hash, conversión
-  `Array[Byte]`, codecs, UTF-8 inválido, moves/copies, allocation bounds y paso
-  por funciones públicas sin alias mutable. Comparar productos para demostrar
-  propietario único y ausencia de la identidad binaria bootstrap antes de
-  cerrar `UTEST-CHECK-001`; el bridge de attachments se prueba después en
-  `UTEST-ARTIFACT-001`.
+- [x] **STD-BYTES-CONF-001 — Cerrar la evidencia temprana de bytes.** El fixture
+  runtime `m10-std-bytes-001`, los tests directos del host y la suite completa de
+  `tondo-compiler` cubren vacío, builders, límites, slicing, equality/hash,
+  conversión `String`/`Array[Byte]`, UTF-8 inválido, moves/copies y paso por
+  funciones públicas sin alias mutable. La evidencia no muta el manifest
+  histórico; el bridge de attachments se prueba después en `UTEST-ARTIFACT-001`.
 
 - [ ] **STD-ENV-IMPL-001 — Implementar el acceso declarado de environment.**
   Exponer al programa solo el snapshot entregado por el adaptador de ejecución
@@ -4140,8 +4138,8 @@ gates en una barrera artificial.
     queda cerrado: manifest, lockfile, interface, artifact y descriptor estándar
     usan una única forma draft; el corpus bootstrap permanece como regresión.
 22. [ ] **Wave 2 — Prerrequisitos y frontends, en paralelo.**
-    - Base portable: cerrar `PARSER-STACK-001`; lexer y planes que no modifican
-      descenso sintáctico pueden avanzar en paralelo, pero
+    - [x] Base portable: cerrar `PARSER-STACK-001`; lexer y planes que no modifican
+      descenso sintáctico pueden avanzar en paralelo, y
       `META-SYNTAX-001` y `UTEST-CST-001` esperan la pila explícita.
     - Lane meta: `STD-META-SPEC-001 → META-VM-001`,
       `META-SYNTAX-001 → META-SEM-001 → META-MODEL-001` y
@@ -4149,11 +4147,12 @@ gates en una barrera artificial.
       `(META-VM-001 + META-MODEL-001) → STD-META-IMPL-001 →
       STD-META-CONF-001`.
     - Lane testing estándar: `STD-BYTES-SPEC-001 →
-      STD-BYTES-IMPL-001 → STD-BYTES-CONF-001`; desde el spec de bytes puede
-      avanzar `STD-ENV-SPEC-001`, pero
+      STD-BYTES-IMPL-001 → STD-BYTES-CONF-001` está cerrada; `STD-TIME-BASE-SPEC-001`
+      también está cerrado y sus tareas `IMPL → CONF` avanzan en paralelo con
+      `STD-ENV-SPEC-001`; desde el spec de bytes puede avanzar `STD-ENV-SPEC-001`, pero
       `(STD-BYTES-CONF-001 + STD-ENV-SPEC-001) → STD-ENV-IMPL-001 →
       STD-ENV-CONF-001`. En paralelo,
-      `STD-TIME-BASE-SPEC-001 → STD-TIME-BASE-IMPL-001 →
+      `STD-TIME-BASE-IMPL-001 →
       STD-TIME-BASE-CONF-001`.
     - Lane testing plan: `UTEST-PLAN-001 →
       (UTEST-INPUTS-PLAN-001 + UTEST-DISC-001 + UTEST-OWNERS-001 +
@@ -4230,14 +4229,68 @@ CONF-DRAFT
 M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
 quedan cerrados. Gate G5 está abierto únicamente por M10.7 y M10.6 dentro del
 draft no publicado. `CONF-DRAFT-001` y `CONF-RATCHET-001` están cerrados; la
-acción inmediata es `META-FORMAT-001`. `PARSER-STACK-001` se cierra en
-Wave 2 antes de añadir formas sintácticas. Ninguna tarea posterior necesita
+acción inmediata es completar las lanes pendientes de Wave 2. `PARSER-STACK-001`
+ya está cerrado antes de añadir formas sintácticas. Ninguna tarea posterior necesita
 volver a decidir el orden global: sus prerequisitos están en 4.1.1 y en la wave
 correspondiente.
 
 ---
 
 ## 25. Historial del tracker
+
+### 1.06 — 2026-07-31
+
+- Se cierra `STD-TIME-BASE-SPEC-001` dentro del mismo draft Tondo 0.1.
+- `std.time` separa el time-base monotónico de STD-0.1A del calendario civil de
+  STD-0.1B y fija `Duration`, `Instant`, `sleep`, timers one-shot y deadlines
+  sin introducir un `Clock` de testing ni un wrapper `Deadline` duplicado.
+- Se fijan overflow comprobado, resolución declarada, identidad opaca de
+  proveedor/dominio, mismatch determinista, ownership de `Timer`, cancelación y
+  puntos de suspensión, además de las entradas source/interface/privileged-unit
+  y hashes que debe materializar el plan cerrado.
+- `STD-TIME-BASE-IMPL-001` y `STD-TIME-BASE-CONF-001` continúan pendientes; la
+  siguiente acción es implementar el proveedor monotónico intercambiable.
+
+### 1.05 — 2026-07-31
+
+- Se elimina la duplicidad pública entre texto y bytes. `Bytes(String)` y
+  `String(Bytes)` son ahora las únicas conversiones explícitas; la primera usa
+  directamente el UTF-8 válido de `String` y la segunda valida UTF-8 de forma
+  estricta.
+- Se retiran las funciones y métodos de conversión con nombres alternativos de
+  `std.bytes`; `Array[Byte]`, builders, slicing y observación binaria conservan
+  sus operaciones específicas.
+- Compiler, VM hosted, proceso, fixtures, documentación y tests validan la
+  nueva superficie sin modificar la conformidad histórica `conformance/0.1`.
+
+### 1.04 — 2026-07-31
+
+- Se cierra la lane temprana `STD-BYTES-SPEC-001 → STD-BYTES-IMPL-001 →
+  STD-BYTES-CONF-001` sin alterar el manifest histórico `conformance/0.1`.
+- `std.bytes` incorpora `Bytes`, `BytesBuilder`, `BytesError`, constructores,
+  conversiones copiadas, UTF-8 estricto, slicing totalizado, igualdad, FNV-1a
+  estable y builders con receptor `var` verificado en la frontera host.
+- La VM aplica `max_vm_heap_bytes` por buffer, hace atómicos los appends y
+  usa `Bytes(String)`/`String(Bytes)` como conversiones canónicas. El fixture
+  `m10-std-bytes-001` y los tests directos del host cubren límites, moves/copies,
+  errores y ausencia de alias mutable; attachments continúan esperando T0.
+- Se añade `docs/contracts/stdlib-bytes.md` y el catálogo normativo de firmas a
+  ambas especificaciones. La siguiente lane es `STD-TIME-BASE-SPEC-001` o
+  `STD-ENV-SPEC-001`, según el consumidor que se priorice.
+
+### 1.03 — 2026-07-31
+
+- Se cierra `PARSER-STACK-001`. El parser conserva un camino recursivo fijo y
+  usa continuaciones explícitas para expresiones, delimitadores, bloques,
+  loops, llamadas, records, tipos, patterns y recuperación profunda; el CST
+  también recorre tokens con una pila explícita.
+- Se elimina la guarda interna dependiente del stack. El único límite lógico
+  restante es `ParseLimits.max_nesting_depth`; la documentación y ADR-004
+  describen memoria O(depth), equivalencia de CST/formatter y el comportamiento
+  portable en stacks pequeños.
+- Se añaden pruebas de profundidad válida e inválida, límites lógicos,
+  recuperación de cierres ausentes y round-trip del formatter. La siguiente
+  integración es la lane pendiente de Wave 2, no una nueva versión del lenguaje.
 
 ### 1.02 — 2026-07-31
 

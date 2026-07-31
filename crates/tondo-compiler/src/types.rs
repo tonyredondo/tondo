@@ -109,6 +109,8 @@ pub enum IntrinsicType {
     Command,
     Pipeline,
     Bytes,
+    BytesBuilder,
+    BytesError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -131,6 +133,8 @@ impl IntrinsicType {
             Self::Command => "Command",
             Self::Pipeline => "Pipeline",
             Self::Bytes => "Bytes",
+            Self::BytesBuilder => "BytesBuilder",
+            Self::BytesError => "BytesError",
             Self::ExitStatus => "ExitStatus",
             Self::ProcessOutput => "ProcessOutput",
             Self::ProcessHandle => "ProcessHandle",
@@ -148,6 +152,8 @@ impl IntrinsicType {
             Self::Command
             | Self::Pipeline
             | Self::Bytes
+            | Self::BytesBuilder
+            | Self::BytesError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle

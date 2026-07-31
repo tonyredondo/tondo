@@ -2,7 +2,7 @@
 
 **Estado:** borrador normativo de la primera versión de Tondo; todavía no publicado
 
-**Revisión del Markdown:** 0.1-draft.10 — 2026-07-29
+**Revisión del Markdown:** 0.1-draft.11 — 2026-07-31
 **Nombre:** Tondo  
 **Extensión:** `.to`  
 **Lema:** **Pequeño por diseño, completo en la práctica.**
@@ -1430,7 +1430,8 @@ let value = if valid {
 
 ### 8.6 Conversiones
 
-No existen conversiones implícitas entre tipos numéricos, strings, enums o newtypes.
+No existen conversiones implícitas entre tipos numéricos, strings, bytes, enums o
+newtypes.
 
 La forma de conversión explícita es el constructor del tipo:
 
@@ -6702,9 +6703,19 @@ Texto y binario permanecen separados:
 - `String`: Unicode válido.
 - `Byte`: unidad binaria.
 - `Array[Byte]`: secuencia numérica de bytes.
-- `Bytes`: futuro tipo nominal de librería para blobs inmutables.
+- `Bytes`: valor nominal inmutable de `std.bytes` para blobs binarios.
 
-Decodificar bytes a string puede fallar y debe devolver `String ! TextDecodeError`. Codificar un string a UTF-8 es total.
+Las conversiones explícitas entre texto y bytes son:
+
+~~~tondo
+let bytes = Bytes(text)?
+let text = String(bytes)?
+~~~
+
+`Bytes(text)` toma directamente los bytes UTF-8 válidos de `String` y solo puede
+fallar por el límite de recursos (`BytesError`). `String(bytes)` valida UTF-8
+estricto y puede devolver `Utf8Error`; nunca inserta caracteres de reemplazo.
+No existen conversiones implícitas entre `String` y `Bytes`.
 
 ---
 
@@ -6800,7 +6811,7 @@ let pipeline = (
 )
 
 let output = await pipeline.output()?
-console.print(output.stdout.text()?)
+console.print(String(output.stdout)?)
 ~~~
 
 En un script raíz:
@@ -6900,7 +6911,7 @@ Decodificar texto o datos estructurados es visible y puede fallar:
 
 ~~~tondo
 let output = await pipeline.output()?
-let text = output.stdout.text()?
+let text = String(output.stdout)?
 let values = decodeRecords(text)?
 ~~~
 
@@ -9521,7 +9532,7 @@ let pipeline = (
 )
 
 let output = await pipeline.check()?
-console.print(output.stdout.text()?)
+console.print(String(output.stdout)?)
 ~~~
 
 El `await` convierte el `main` implícito en async. Construir el pipeline no ejecuta nada hasta alcanzar `check()`.
@@ -10537,7 +10548,7 @@ import std.process
 
 let pipeline = process.cmd("producer") | process.cmd("consumer")
 let output = await pipeline.output()?
-console.print(output.stdout.text()?)
+console.print(String(output.stdout)?)
 ~~~
 
 Las sentencias top-level existen solo en el archivo raíz de un script y forman un `main` implícito.
@@ -10644,7 +10655,7 @@ fn Resource.status(self): Status
 fn consume[T: Discard](value: T)
 
 fn String.isEmpty(self): Bool
-fn Bytes.text(self): String ! Utf8Error
+fn String(value: Bytes): String ! Utf8Error
 fn Array[T].length(self): Int
 fn Array[T].isEmpty(self): Bool
 fn Array[T: Copy].getOr(self, index: Int, fallback: T): T
@@ -10664,6 +10675,28 @@ El universo de módulos contiene:
 ~~~text
 module std.console
     fn print(value: String)
+
+module std.bytes
+    opaque Bytes
+    opaque BytesBuilder
+    opaque BytesError
+    opaque Utf8Error
+    fn empty(): Bytes ! BytesError
+    fn Bytes(value: String): Bytes ! BytesError
+    fn fromArray(value: Array[Byte]): Bytes ! BytesError
+    fn builder(): BytesBuilder ! BytesError
+    fn Bytes.length(self): Int
+    fn Bytes.get(self, index: Int): Byte?
+    fn Bytes.slice(self, start: Int, end: Int): Bytes ! BytesError
+    fn Bytes.toArray(self): Array[Byte] ! BytesError
+    fn String(value: Bytes): String ! Utf8Error
+    fn Bytes.equal(self, other: Bytes): Bool
+    fn Bytes.hash(self): UInt64
+    fn BytesBuilder.length(self): Int
+    fn BytesBuilder.appendByte(var self, value: Byte): Unit ! BytesError
+    fn BytesBuilder.append(var self, value: Bytes): Unit ! BytesError
+    fn BytesBuilder.appendArray(var self, value: Array[Byte]): Unit ! BytesError
+    fn BytesBuilder.finish(var self): Bytes ! BytesError
 
 module std.fs
     opaque Path
@@ -10854,7 +10887,7 @@ decl spec.core fn Resource.release(resource: Resource)
 decl spec.core fn Resource.status(self): Status
 decl spec.core fn consume[T: Discard](value: T)
 decl spec.core fn String.isEmpty(self): Bool
-decl spec.core fn Bytes.text(self): String ! Utf8Error
+decl spec.core fn String(value: Bytes): String ! Utf8Error
 decl spec.core fn Array[T].length(self): Int
 decl spec.core fn Array[T].isEmpty(self): Bool
 decl spec.core fn Array[T: Copy].getOr(self, index: Int, fallback: T): T
@@ -10925,7 +10958,7 @@ end
 ~~~
 
 El SHA-256 esperado de esos bytes es
-`1b6ab9f853b7ef4b94b4b9aaff6297e20556f81e8d99c322bed03854453d76c2`. Un cambio de una firma, capability, requirement, binding,
+`762aa519d74966cebf4888a3ddcb4799f25e90015129c0eafe5c835495be633b`. Un cambio de una firma, capability, requirement, binding,
 orden o byte exige publicar un hash nuevo y una nueva revisión del Markdown. De
 este modo dos runners no pueden usar stubs distintos y afirmar que comprobaron el
 mismo ejemplo.

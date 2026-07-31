@@ -452,6 +452,8 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::Command
                 | BytecodeIntrinsicType::Pipeline
                 | BytecodeIntrinsicType::Bytes
+                | BytecodeIntrinsicType::BytesBuilder
+                | BytecodeIntrinsicType::BytesError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -1033,6 +1035,7 @@ fn intrinsic_capability(
             fixed_capability(capability == ClosedCapability::Send)
         }
         BytecodeIntrinsicType::Bytes
+        | BytecodeIntrinsicType::BytesError
         | BytecodeIntrinsicType::ExitStatus
         | BytecodeIntrinsicType::ProcessOutput
         | BytecodeIntrinsicType::ProcessError
@@ -1043,6 +1046,10 @@ fn intrinsic_capability(
                 | ClosedCapability::Discard
                 | ClosedCapability::Send
                 | ClosedCapability::Share
+        )),
+        BytecodeIntrinsicType::BytesBuilder => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Discard | ClosedCapability::Send
         )),
         BytecodeIntrinsicType::NumericConversionError => fixed_capability(true),
     }
@@ -1345,6 +1352,8 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::Command
         | BytecodeIntrinsicType::Pipeline
         | BytecodeIntrinsicType::Bytes
+        | BytecodeIntrinsicType::BytesBuilder
+        | BytecodeIntrinsicType::BytesError
         | BytecodeIntrinsicType::ExitStatus
         | BytecodeIntrinsicType::ProcessOutput
         | BytecodeIntrinsicType::ProcessError
@@ -1484,6 +1493,8 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::Command
                 | BytecodeIntrinsicType::Pipeline
                 | BytecodeIntrinsicType::Bytes
+                | BytecodeIntrinsicType::BytesBuilder
+                | BytecodeIntrinsicType::BytesError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -1948,6 +1959,7 @@ impl Verifier<'_> {
                     .parameters
                     .iter()
                     .any(|parameter| parameter.mode != BytecodeParameterMode::Value)
+                && !callable.name.starts_with("std.bytes.BytesBuilder.")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,
@@ -13674,6 +13686,7 @@ mod tests {
             BytecodeIntrinsicType::Command,
             BytecodeIntrinsicType::Pipeline,
             BytecodeIntrinsicType::Bytes,
+            BytecodeIntrinsicType::BytesBuilder,
             BytecodeIntrinsicType::ExitStatus,
             BytecodeIntrinsicType::ProcessOutput,
             BytecodeIntrinsicType::ProcessHandle,
@@ -13742,11 +13755,13 @@ mod tests {
                 BytecodeIntrinsicType::Command
                 | BytecodeIntrinsicType::Pipeline
                 | BytecodeIntrinsicType::Bytes
+                | BytecodeIntrinsicType::BytesError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessError
                 | BytecodeIntrinsicType::ProcessExitError
                 | BytecodeIntrinsicType::Utf8Error => [true, true, false, false, true, true],
+                BytecodeIntrinsicType::BytesBuilder => [false, true, false, false, true, false],
                 BytecodeIntrinsicType::ProcessHandle => [false, false, false, false, true, false],
             };
             assert_eq!(statuses(ty), expected, "{constructor:?}");

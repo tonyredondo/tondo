@@ -943,6 +943,12 @@ El compilador debe aceptar el caso.
     }
 
     #[test]
+    fn extraction_rejects_an_unclosed_code_fence() {
+        let error = extract_requirements("~~~tondo\nlet value = 1\n").unwrap_err();
+        assert!(error.contains("unclosed fence"));
+    }
+
+    #[test]
     fn diagnostic_extraction_is_closed_and_deduplicated() {
         assert_eq!(
             diagnostic_codes("`E0001`, E0001, P0011 and W1002; not XE0001"),
@@ -975,6 +981,118 @@ El compilador debe aceptar el caso.
                 },
             )
             .is_err()
+        );
+    }
+
+    fn valid_matrix() -> CoverageMatrix {
+        let requirement = Requirement {
+            id: "TL01-1-R001".into(),
+            revision: "0.1@test".into(),
+            heading: "Core".into(),
+            heading_anchor: "core".into(),
+            line_start: 1,
+            line_end: 1,
+            text: "El compilador debe aceptar el caso.".into(),
+            text_sha256: "a".repeat(64),
+            phase: "frontend".into(),
+            risk: "low".into(),
+            status: "covered".into(),
+            classification_reason: "covered by the public case".into(),
+            evidence: vec!["conformance:case".into()],
+            dimensions: evidence_dimensions("conformance:case"),
+        };
+        CoverageMatrix {
+            format: FORMAT.into(),
+            document: "TONDO_LANGUAGE_SPEC.md".into(),
+            edition: "0.1".into(),
+            document_sha256: "b".repeat(64),
+            inventory_sha256: "c".repeat(64),
+            target: "tondo-vm-hosted".into(),
+            summary: summarize(std::slice::from_ref(&requirement)),
+            requirements: vec![requirement],
+        }
+    }
+
+    #[test]
+    fn matrix_validation_rejects_each_structural_boundary() {
+        let mut matrix = valid_matrix();
+        matrix.format = "future-format".into();
+        assert!(
+            validate(&matrix)
+                .unwrap_err()
+                .contains("unsupported coverage matrix")
+        );
+
+        let mut matrix = valid_matrix();
+        matrix.edition = "0.2".into();
+        assert!(
+            validate(&matrix)
+                .unwrap_err()
+                .contains("unsupported edition")
+        );
+
+        let mut matrix = valid_matrix();
+        matrix.document_sha256 = "not-a-hash".into();
+        assert!(
+            validate(&matrix)
+                .unwrap_err()
+                .contains("invalid source hash")
+        );
+
+        let mut matrix = valid_matrix();
+        matrix.requirements.clear();
+        assert!(
+            validate(&matrix)
+                .unwrap_err()
+                .contains("contains no requirements")
+        );
+
+        let mut matrix = valid_matrix();
+        matrix.requirements[0].line_start = 0;
+        assert!(
+            validate(&matrix)
+                .unwrap_err()
+                .contains("incomplete metadata")
+        );
+
+        let mut matrix = valid_matrix();
+        matrix.requirements[0].status = "future".into();
+        assert!(validate(&matrix).unwrap_err().contains("unknown status"));
+
+        let mut matrix = valid_matrix();
+        matrix.requirements[0].risk = "future".into();
+        assert!(validate(&matrix).unwrap_err().contains("unknown risk"));
+
+        let mut matrix = valid_matrix();
+        matrix.requirements[0].evidence.clear();
+        assert!(
+            validate(&matrix)
+                .unwrap_err()
+                .contains("lacks executable evidence")
+        );
+
+        let mut matrix = valid_matrix();
+        matrix.requirements[0].dimensions.positive.evidence = vec!["b".into(), "a".into()];
+        assert!(
+            validate(&matrix)
+                .unwrap_err()
+                .contains("must be sorted and unique")
+        );
+
+        let mut matrix = valid_matrix();
+        matrix.requirements.push(matrix.requirements[0].clone());
+        assert!(
+            validate(&matrix)
+                .unwrap_err()
+                .contains("duplicate coverage requirement")
+        );
+
+        let mut matrix = valid_matrix();
+        matrix.summary.total = 0;
+        assert!(
+            validate(&matrix)
+                .unwrap_err()
+                .contains("summary does not match")
         );
     }
 
@@ -1076,6 +1194,22 @@ El compilador debe aceptar el caso.
         );
         evidence.document_sha256 = document_sha256.clone();
 
+        evidence.format = "future-evidence".into();
+        assert!(
+            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+                .unwrap_err()
+                .contains("unsupported format")
+        );
+        evidence.format = EVIDENCE_FORMAT.into();
+
+        evidence.claims[0].requirements.clear();
+        assert!(
+            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+                .unwrap_err()
+                .contains("require requirements")
+        );
+        evidence.claims[0].requirements = vec![requirement.into()];
+
         evidence.claims[0].requirements = vec!["TL01-UNKNOWN".into()];
         assert!(
             validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
@@ -1101,6 +1235,24 @@ El compilador debe aceptar el caso.
         evidence.claims[0].dimensions.boundary.waiver =
             Some("The rule has no material boundary.".into());
         validate_evidence(&evidence, &document_sha256, &inventory, &requirements).unwrap();
+
+        evidence.claims[0].dimensions.oracle.evidence.clear();
+        evidence.claims[0].dimensions.oracle.waiver =
+            Some("The oracle is supplied by the adapter.".into());
+        assert!(
+            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+                .unwrap_err()
+                .contains("requires executable oracle")
+        );
+        evidence.claims[0].dimensions.oracle = Dimension::evidence(["conformance:case".into()]);
+
+        evidence.claims.push(evidence.claims[0].clone());
+        assert!(
+            validate_evidence(&evidence, &document_sha256, &inventory, &requirements)
+                .unwrap_err()
+                .contains("globally sorted and unique")
+        );
+        evidence.claims.pop();
 
         let internal = evidence_inventory("executable", "host-rust", "rust-test");
         assert!(

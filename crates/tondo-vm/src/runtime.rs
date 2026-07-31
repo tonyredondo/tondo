@@ -120,6 +120,8 @@ pub enum RuntimeHostValueKind {
     Command,
     Pipeline,
     Bytes,
+    BytesBuilder,
+    BytesError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,

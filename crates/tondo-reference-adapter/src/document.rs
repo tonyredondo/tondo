@@ -32,11 +32,15 @@ pub(crate) fn observe_document_fence(
         &action.fixture_manifest_sha256,
     )?;
     let source = decode_hex(&action.source_hex)?;
+    let migrated_source = crate::migrate_frozen_0_1_source(
+        &format!("doc:{}:{}", action.file, action.fence_byte),
+        source.clone(),
+    )?;
     match action.category {
         DocCategory::Syntax => observe_syntax(action, &source),
         DocCategory::Pseudocode => Err("pseudocode must not reach the adapter".into()),
         DocCategory::Fragment | DocCategory::Script | DocCategory::CompileFail => {
-            observe_typed(request, action, &source)
+            observe_typed(request, action, &source, &migrated_source)
         }
     }
 }
@@ -101,6 +105,7 @@ fn observe_typed(
     request: &AdapterRequest,
     action: &WireDocumentFenceAction,
     source: &[u8],
+    compile_source: &[u8],
 ) -> Result<Observation, String> {
     let fixture = action
         .fixture
@@ -155,7 +160,7 @@ fn observe_typed(
     // E1802 mixing rules remain active.
     let synthetic_entry =
         action.category != DocCategory::Script && !has_main && !has_script_statements;
-    let combined = crate::document::fixture::inject(fixture, source, synthetic_entry)?;
+    let combined = crate::document::fixture::inject(fixture, compile_source, synthetic_entry)?;
 
     let (sources, root, packages) = fixture_sources(action, &combined)?;
     let capabilities = request

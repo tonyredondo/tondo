@@ -237,6 +237,8 @@ pub enum BytecodeIntrinsicType {
     Command,
     Pipeline,
     Bytes,
+    BytesBuilder,
+    BytesError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -356,6 +358,8 @@ impl BytecodeIntrinsicType {
             Self::Command
             | Self::Pipeline
             | Self::Bytes
+            | Self::BytesBuilder
+            | Self::BytesError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle
@@ -391,6 +395,8 @@ impl BytecodeIntrinsicType {
             | Self::Command
             | Self::Pipeline
             | Self::Bytes
+            | Self::BytesBuilder
+            | Self::BytesError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessError
@@ -1293,6 +1299,8 @@ mod tests {
             BytecodeIntrinsicType::Command,
             BytecodeIntrinsicType::Pipeline,
             BytecodeIntrinsicType::Bytes,
+            BytecodeIntrinsicType::BytesBuilder,
+            BytecodeIntrinsicType::BytesError,
             BytecodeIntrinsicType::ExitStatus,
             BytecodeIntrinsicType::ProcessOutput,
             BytecodeIntrinsicType::ProcessHandle,

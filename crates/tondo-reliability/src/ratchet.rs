@@ -227,4 +227,84 @@ mod tests {
         record.coverage.status = "validated".into();
         assert!(validate(&record).is_err());
     }
+
+    #[test]
+    fn ratchet_validation_rejects_each_identity_and_scope_boundary() {
+        let root = repository_root();
+        let base = build(&root, None, None).unwrap();
+
+        let mut record = base.clone();
+        record.format = "future-ratchet".into();
+        assert!(validate(&record).is_err());
+
+        let mut record = base.clone();
+        record.lineage = "other-lineage".into();
+        assert!(validate(&record).is_err());
+
+        let mut record = base.clone();
+        record.revision = 0;
+        assert!(validate(&record).is_err());
+
+        let mut record = base.clone();
+        record.manifest.path = "wrong.json".into();
+        assert!(validate(&record).is_err());
+
+        let mut record = base.clone();
+        record.inventory.sha256 = "bad".into();
+        assert!(validate(&record).is_err());
+
+        let mut record = base.clone();
+        record.pending_tasks = vec!["B".into(), "A".into()];
+        assert!(validate(&record).is_err());
+
+        let mut record = base.clone();
+        record.coverage.report_sha256 = Some("a".repeat(64));
+        assert!(validate(&record).is_err());
+
+        let mut record = base.clone();
+        record.mutation.report_sha256 = Some("a".repeat(64));
+        assert!(validate(&record).is_err());
+
+        let mut record = base.clone();
+        record.coverage.status = "future".into();
+        assert!(validate(&record).is_err());
+
+        let mut record = base.clone();
+        record.coverage.reason.clear();
+        assert!(validate(&record).is_err());
+
+        let mut record = base.clone();
+        record.coverage.status = "validated".into();
+        record.coverage.report_sha256 = Some("bad".into());
+        assert!(validate(&record).is_err());
+
+        let mut record = base;
+        record.mutation.status = "validated".into();
+        record.mutation.report_sha256 = Some("bad".into());
+        assert!(validate(&record).is_err());
+    }
+
+    #[test]
+    fn scope_evidence_distinguishes_required_and_optional_reports() {
+        let root = repository_root();
+        assert!(scope_evidence(&root, "coverage", None, true, |_, _| Ok(())).is_err());
+        let evidence = scope_evidence(&root, "coverage", None, false, |_, _| Ok(())).unwrap();
+        assert_eq!(evidence.status, "not-applicable");
+        assert!(evidence.report_sha256.is_none());
+
+        let report = std::env::temp_dir().join(format!(
+            "tondo-ratchet-report-{}-{}",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("test")
+        ));
+        std::fs::write(&report, b"validated report").unwrap();
+        let evidence = scope_evidence(&root, "coverage", Some(&report), false, |bytes, _| {
+            assert_eq!(bytes, b"validated report");
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(evidence.status, "validated");
+        assert_eq!(evidence.report_sha256, Some(sha256(b"validated report")));
+        std::fs::remove_file(report).unwrap();
+    }
 }

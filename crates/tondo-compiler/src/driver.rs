@@ -1045,7 +1045,10 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                             "selected main has no lowered bytecode implementation".into(),
                         )
                     })?;
-                let mut host = BootstrapHost::new(request.program_arguments.clone());
+                let mut host = BootstrapHost::with_max_bytes(
+                    request.program_arguments.clone(),
+                    request.limits.max_vm_heap_bytes,
+                );
                 let execution = match execute_with_limits(
                     &bytecode,
                     function,

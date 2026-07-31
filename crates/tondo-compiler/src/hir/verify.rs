@@ -513,6 +513,8 @@ impl Verifier<'_> {
                         | IntrinsicType::Command
                         | IntrinsicType::Pipeline
                         | IntrinsicType::Bytes
+                        | IntrinsicType::BytesBuilder
+                        | IntrinsicType::BytesError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle

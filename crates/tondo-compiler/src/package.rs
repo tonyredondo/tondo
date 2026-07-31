@@ -452,7 +452,11 @@ impl PackageGraph {
             SourceId::new("toolchain:std:0.1-bootstrap")?,
             PackageAlias::new("tondoStd")?,
             Edition::V0_1,
-            [ModulePath::new("console")?, ModulePath::new("process")?],
+            [
+                ModulePath::new("bytes")?,
+                ModulePath::new("console")?,
+                ModulePath::new("process")?,
+            ],
             [],
         )?);
         Self::new(root_id, standard_id, nodes)

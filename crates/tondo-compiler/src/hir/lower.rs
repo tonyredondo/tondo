@@ -181,16 +181,29 @@ struct TypeLowerer<'a> {
 
 impl<'a> TypeLowerer<'a> {
     fn lower_bootstrap_host_contracts(&mut self) -> Result<(), HirError> {
+        let bytes_module = ModulePath::new("bytes")?;
         let process = ModulePath::new("process")?;
-        let Some(process_module) = self.packages.module(self.packages.standard(), &process) else {
-            return Ok(());
-        };
-        if !self.resolved.references().any(|reference| {
-            matches!(
-                reference.entity(),
-                ResolvedEntity::Module(module) if module == &process_module
-            )
-        }) {
+        let bytes_module = self
+            .packages
+            .module(self.packages.standard(), &bytes_module);
+        let process_module = self.packages.module(self.packages.standard(), &process);
+        let bytes_referenced = bytes_module.as_ref().is_some_and(|bytes_module| {
+            self.resolved.references().any(|reference| {
+                matches!(
+                    reference.entity(),
+                    ResolvedEntity::Module(module) if module == bytes_module
+                )
+            })
+        });
+        let process_referenced = process_module.as_ref().is_some_and(|process_module| {
+            self.resolved.references().any(|reference| {
+                matches!(
+                    reference.entity(),
+                    ResolvedEntity::Module(module) if module == process_module
+                )
+            })
+        });
+        if !bytes_referenced && !process_referenced {
             return Ok(());
         }
         let file = *self
@@ -209,6 +222,12 @@ impl<'a> TypeLowerer<'a> {
             .interner
             .intrinsic(IntrinsicType::Pipeline, Vec::new())?;
         let bytes = self.interner.intrinsic(IntrinsicType::Bytes, Vec::new())?;
+        let bytes_builder = self
+            .interner
+            .intrinsic(IntrinsicType::BytesBuilder, Vec::new())?;
+        let bytes_error = self
+            .interner
+            .intrinsic(IntrinsicType::BytesError, Vec::new())?;
         let exit_status = self
             .interner
             .intrinsic(IntrinsicType::ExitStatus, Vec::new())?;
@@ -239,53 +258,220 @@ impl<'a> TypeLowerer<'a> {
         let output_outcome = self.interner.result(output, process_error)?;
         let check_error = self.interner.union([process_error, process_exit_error])?;
         let check_outcome = self.interner.result(output, check_error)?;
-        let text_outcome = self.interner.result(string, utf8_error)?;
+        let string_from_bytes_outcome = self.interner.result(string, utf8_error)?;
 
-        self.push_bootstrap_host_callable(
-            span,
-            HirBootstrapHostFunction::ProcessArgs,
-            Vec::new(),
-            None,
-            strings,
-        )?;
-        self.push_bootstrap_host_callable(
-            span,
-            HirBootstrapHostFunction::ProcessCmd,
-            vec![(string, false)],
-            Some(string),
-            command,
-        )?;
-        self.push_bootstrap_host_callable(
-            span,
-            HirBootstrapHostFunction::ProcessShell,
-            vec![(string, false)],
-            None,
-            command,
-        )?;
+        if bytes_referenced {
+            let byte = self.interner.scalar(ScalarType::Byte);
+            let uint64 = self.interner.scalar(ScalarType::UInt64);
+            let unit = self.interner.scalar(ScalarType::Unit);
+            let byte_array = self.interner.intrinsic(IntrinsicType::Array, vec![byte])?;
+            let optional_byte = self.interner.option(byte)?;
+            let bytes_outcome = self.interner.result(bytes, bytes_error)?;
+            let builder_outcome = self.interner.result(bytes_builder, bytes_error)?;
+            let unit_outcome = self.interner.result(unit, bytes_error)?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::BytesEmpty,
+                Vec::new(),
+                None,
+                bytes_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::BytesFromString,
+                vec![(string, false)],
+                None,
+                bytes_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::BytesFromArray,
+                vec![(byte_array, false)],
+                None,
+                bytes_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::BytesBuilder,
+                Vec::new(),
+                None,
+                builder_outcome,
+            )?;
+            for (function, outcome) in [
+                (HirBootstrapHostFunction::BytesLen, int),
+                (HirBootstrapHostFunction::BytesGet, optional_byte),
+                (HirBootstrapHostFunction::BytesSlice, bytes_outcome),
+                (
+                    HirBootstrapHostFunction::BytesToArray,
+                    self.interner.result(byte_array, bytes_error)?,
+                ),
+                (HirBootstrapHostFunction::BytesEqual, bool_type),
+                (HirBootstrapHostFunction::BytesHash, uint64),
+            ] {
+                let fixed = match function {
+                    HirBootstrapHostFunction::BytesGet => vec![(bytes, true), (int, false)],
+                    HirBootstrapHostFunction::BytesSlice => {
+                        vec![(bytes, true), (int, false), (int, false)]
+                    }
+                    HirBootstrapHostFunction::BytesEqual => vec![(bytes, true), (bytes, false)],
+                    _ => vec![(bytes, true)],
+                };
+                self.push_bootstrap_host_callable(span, function, fixed, None, outcome)?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::BytesBuilderLen,
+                vec![(bytes_builder, true)],
+                None,
+                int,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::BytesBuilderAppendByte,
+                vec![
+                    (bytes_builder, ParameterMode::Var, true),
+                    (byte, ParameterMode::Value, false),
+                ],
+                None,
+                unit_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::BytesBuilderAppend,
+                vec![
+                    (bytes_builder, ParameterMode::Var, true),
+                    (bytes, ParameterMode::Value, false),
+                ],
+                None,
+                unit_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::BytesBuilderAppendArray,
+                vec![
+                    (bytes_builder, ParameterMode::Var, true),
+                    (byte_array, ParameterMode::Value, false),
+                ],
+                None,
+                unit_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::BytesBuilderFinish,
+                vec![(bytes_builder, ParameterMode::Var, true)],
+                None,
+                bytes_outcome,
+            )?;
+        }
 
-        for (owner, functions) in [
-            (
+        if bytes_referenced || process_referenced {
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::BytesToString,
+                vec![(bytes, true)],
+                None,
+                string_from_bytes_outcome,
+            )?;
+        }
+
+        if process_referenced {
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::ProcessArgs,
+                Vec::new(),
+                None,
+                strings,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::ProcessCmd,
+                vec![(string, false)],
+                Some(string),
                 command,
-                [
-                    (HirBootstrapHostFunction::CommandStart, start_outcome),
-                    (HirBootstrapHostFunction::CommandStatus, status_outcome),
-                    (HirBootstrapHostFunction::CommandOutput, output_outcome),
-                    (HirBootstrapHostFunction::CommandRun, status_outcome),
-                    (HirBootstrapHostFunction::CommandCheck, check_outcome),
-                ],
-            ),
-            (
-                pipeline,
-                [
-                    (HirBootstrapHostFunction::PipelineStart, start_outcome),
-                    (HirBootstrapHostFunction::PipelineStatus, status_outcome),
-                    (HirBootstrapHostFunction::PipelineOutput, output_outcome),
-                    (HirBootstrapHostFunction::PipelineRun, status_outcome),
-                    (HirBootstrapHostFunction::PipelineCheck, check_outcome),
-                ],
-            ),
-        ] {
-            for (function, outcome) in functions {
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::ProcessShell,
+                vec![(string, false)],
+                None,
+                command,
+            )?;
+
+            for (owner, functions) in [
+                (
+                    command,
+                    [
+                        (HirBootstrapHostFunction::CommandStart, start_outcome),
+                        (HirBootstrapHostFunction::CommandStatus, status_outcome),
+                        (HirBootstrapHostFunction::CommandOutput, output_outcome),
+                        (HirBootstrapHostFunction::CommandRun, status_outcome),
+                        (HirBootstrapHostFunction::CommandCheck, check_outcome),
+                    ],
+                ),
+                (
+                    pipeline,
+                    [
+                        (HirBootstrapHostFunction::PipelineStart, start_outcome),
+                        (HirBootstrapHostFunction::PipelineStatus, status_outcome),
+                        (HirBootstrapHostFunction::PipelineOutput, output_outcome),
+                        (HirBootstrapHostFunction::PipelineRun, status_outcome),
+                        (HirBootstrapHostFunction::PipelineCheck, check_outcome),
+                    ],
+                ),
+            ] {
+                for (function, outcome) in functions {
+                    self.push_bootstrap_host_callable(
+                        span,
+                        function,
+                        vec![(owner, true)],
+                        None,
+                        outcome,
+                    )?;
+                }
+            }
+            for (function, outcome) in [
+                (
+                    HirBootstrapHostFunction::ProcessHandleStatus,
+                    status_outcome,
+                ),
+                (
+                    HirBootstrapHostFunction::ProcessHandleOutput,
+                    output_outcome,
+                ),
+                (HirBootstrapHostFunction::ProcessHandleRun, status_outcome),
+                (HirBootstrapHostFunction::ProcessHandleCheck, check_outcome),
+                (
+                    HirBootstrapHostFunction::ProcessHandleCancel,
+                    status_outcome,
+                ),
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(handle, true)],
+                    None,
+                    outcome,
+                )?;
+            }
+            for (function, owner, outcome) in [
+                (HirBootstrapHostFunction::ProcessOutputStdout, output, bytes),
+                (HirBootstrapHostFunction::ProcessOutputStderr, output, bytes),
+                (
+                    HirBootstrapHostFunction::ProcessOutputStatuses,
+                    output,
+                    statuses,
+                ),
+                (
+                    HirBootstrapHostFunction::ExitStatusCode,
+                    exit_status,
+                    optional_int,
+                ),
+                (
+                    HirBootstrapHostFunction::ExitStatusSuccess,
+                    exit_status,
+                    bool_type,
+                ),
+            ] {
                 self.push_bootstrap_host_callable(
                     span,
                     function,
@@ -294,46 +480,6 @@ impl<'a> TypeLowerer<'a> {
                     outcome,
                 )?;
             }
-        }
-        for (function, outcome) in [
-            (
-                HirBootstrapHostFunction::ProcessHandleStatus,
-                status_outcome,
-            ),
-            (
-                HirBootstrapHostFunction::ProcessHandleOutput,
-                output_outcome,
-            ),
-            (HirBootstrapHostFunction::ProcessHandleRun, status_outcome),
-            (HirBootstrapHostFunction::ProcessHandleCheck, check_outcome),
-            (
-                HirBootstrapHostFunction::ProcessHandleCancel,
-                status_outcome,
-            ),
-        ] {
-            self.push_bootstrap_host_callable(span, function, vec![(handle, true)], None, outcome)?;
-        }
-        for (function, owner, outcome) in [
-            (HirBootstrapHostFunction::BytesText, bytes, text_outcome),
-            (HirBootstrapHostFunction::ProcessOutputStdout, output, bytes),
-            (HirBootstrapHostFunction::ProcessOutputStderr, output, bytes),
-            (
-                HirBootstrapHostFunction::ProcessOutputStatuses,
-                output,
-                statuses,
-            ),
-            (
-                HirBootstrapHostFunction::ExitStatusCode,
-                exit_status,
-                optional_int,
-            ),
-            (
-                HirBootstrapHostFunction::ExitStatusSuccess,
-                exit_status,
-                bool_type,
-            ),
-        ] {
-            self.push_bootstrap_host_callable(span, function, vec![(owner, true)], None, outcome)?;
         }
         Ok(())
     }
@@ -346,16 +492,31 @@ impl<'a> TypeLowerer<'a> {
         variadic: Option<TypeId>,
         outcome: TypeId,
     ) -> Result<(), HirError> {
+        let fixed = fixed
+            .into_iter()
+            .map(|(ty, receiver)| (ty, ParameterMode::Value, receiver))
+            .collect();
+        self.push_bootstrap_host_callable_with_modes(span, function, fixed, variadic, outcome)
+    }
+
+    fn push_bootstrap_host_callable_with_modes(
+        &mut self,
+        span: Span,
+        function: HirBootstrapHostFunction,
+        fixed: Vec<(TypeId, ParameterMode, bool)>,
+        variadic: Option<TypeId>,
+        outcome: TypeId,
+    ) -> Result<(), HirError> {
         let function_parameters = fixed
             .iter()
-            .map(|(ty, _)| FunctionParameter::new(ParameterMode::Value, *ty))
+            .map(|(ty, mode, _)| FunctionParameter::new(*mode, *ty))
             .collect::<Vec<_>>();
         let mut parameters = fixed
             .into_iter()
-            .map(|(ty, receiver)| HirParameter {
+            .map(|(ty, mode, receiver)| HirParameter {
                 span,
                 local: None,
-                mode: ParameterMode::Value,
+                mode,
                 ty,
                 variadic_element: None,
                 receiver,
@@ -3562,6 +3723,8 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::Command
                         | IntrinsicType::Pipeline
                         | IntrinsicType::Bytes
+                        | IntrinsicType::BytesBuilder
+                        | IntrinsicType::BytesError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle
