@@ -1,0 +1,22 @@
+import std.console
+
+async fn tick() {}
+
+async fn cleanup() {
+    console.print("cleanup\n")
+}
+
+async fn child() {
+    defer await cleanup()
+    for {
+        await tick()
+    }
+}
+
+async fn main() {
+    scope {
+        let pending = spawn child()
+        return
+    }
+    console.print("parent\n")
+}

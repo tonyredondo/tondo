@@ -271,6 +271,11 @@ struct RuntimeDefer {
     span: BytecodeSpan,
     operation: DeferredOperation,
     guard: Option<BytecodePlace>,
+    /// `true` only for a verified `defer await` call.  The bit is derived from
+    /// the call signature rather than carried as syntax metadata, keeping the
+    /// bytecode representation stable while making cleanup scheduling explicit
+    /// at runtime.
+    async_cleanup: bool,
 }
 
 impl RuntimeDefer {
@@ -397,6 +402,15 @@ enum TaskWait {
         destination: BytecodePlace,
         target: BytecodeBlockId,
         unwind: BytecodeBlockId,
+        completion: Option<RuntimeValue>,
+    },
+    /// A host operation started by `defer await`.  Cleanup must be allowed to
+    /// finish even when the surrounding task is already unwinding, so it has
+    /// its own wait state instead of reusing the cancellable ordinary await.
+    DeferredHostCall {
+        call: u64,
+        outcome: BytecodeTypeId,
+        target: BytecodeBlockId,
         completion: Option<RuntimeValue>,
     },
     HostTask {
@@ -600,6 +614,29 @@ impl<'program, 'host> Engine<'program, 'host> {
                 self.jump(frame, target);
                 Ok(true)
             }
+            TaskWait::DeferredHostCall {
+                call,
+                outcome,
+                target,
+                completion,
+            } => {
+                let frame = self.frames.len().checked_sub(1).ok_or_else(|| {
+                    VmError::invariant("a resumed deferred host cleanup has no frame")
+                })?;
+                let Some(completion) = completion else {
+                    return Err(VmError::invariant(format!(
+                        "deferred host call #{call} resumed before completion"
+                    )));
+                };
+                let value = self.materialize_host_value(outcome, completion)?;
+                if value != Value::Unit {
+                    return Err(VmError::invariant(
+                        "deferred async host call returned a non-Unit value",
+                    ));
+                }
+                self.jump(frame, target);
+                Ok(true)
+            }
             TaskWait::Join {
                 child,
                 owner,
@@ -721,6 +758,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                     completion: None,
                     ..
                 })
+                | TaskStatus::Waiting(TaskWait::DeferredHostCall {
+                    call,
+                    completion: None,
+                    ..
+                })
                 | TaskStatus::Waiting(TaskWait::HostTask { call, .. }) => Some(*call),
                 _ => None,
             })
@@ -747,7 +789,13 @@ impl<'program, 'host> Engine<'program, 'host> {
                         call: pending,
                         completion: None,
                         ..
-                    }) | TaskStatus::Waiting(TaskWait::HostTask { call: pending, .. })
+                    })
+                        | TaskStatus::Waiting(TaskWait::DeferredHostCall {
+                            call: pending,
+                            completion: None,
+                            ..
+                        })
+                        | TaskStatus::Waiting(TaskWait::HostTask { call: pending, .. })
                         if *pending == call
                 )
             })
@@ -755,7 +803,8 @@ impl<'program, 'host> Engine<'program, 'host> {
 
         let host_task = match &self.tasks[task].status {
             TaskStatus::Waiting(TaskWait::HostTask { outcome, .. }) => Some(*outcome),
-            TaskStatus::Waiting(TaskWait::HostCall { .. }) => None,
+            TaskStatus::Waiting(TaskWait::HostCall { .. })
+            | TaskStatus::Waiting(TaskWait::DeferredHostCall { .. }) => None,
             _ => {
                 return Err(VmError::invariant(
                     "async host completion target changed status",
@@ -771,12 +820,13 @@ impl<'program, 'host> Engine<'program, 'host> {
                 self.complete_task(task, TaskCompletion::Returned(value))
             }
         } else {
-            let TaskStatus::Waiting(TaskWait::HostCall { completion, .. }) =
-                &mut self.tasks[task].status
-            else {
-                unreachable!("host task shape was checked");
-            };
-            *completion = Some(value);
+            match &mut self.tasks[task].status {
+                TaskStatus::Waiting(TaskWait::HostCall { completion, .. })
+                | TaskStatus::Waiting(TaskWait::DeferredHostCall { completion, .. }) => {
+                    *completion = Some(value);
+                }
+                _ => unreachable!("host call shape was checked"),
+            }
             self.wake_task(task)
         }
     }
@@ -891,6 +941,9 @@ impl<'program, 'host> Engine<'program, 'host> {
         let host_call = match &record.status {
             TaskStatus::Waiting(TaskWait::HostCall { call, .. })
             | TaskStatus::Waiting(TaskWait::HostTask { call, .. }) => Some(*call),
+            // A cleanup that is already in flight is not cooperatively
+            // cancelled by the unwind which initiated it.
+            TaskStatus::Waiting(TaskWait::DeferredHostCall { .. }) => return Ok(()),
             _ => None,
         };
         if let Some(call) = host_call {
@@ -1601,6 +1654,14 @@ impl<'program, 'host> Engine<'program, 'host> {
             span,
             operation,
             guard: guard.cloned(),
+            async_cleanup: matches!(
+                &action.kind,
+                BytecodeOperationKind::Call { signature, .. }
+                    if self
+                        .program
+                        .ty(*signature)
+                        .is_some_and(|ty| matches!(&ty.kind, BytecodeTypeKind::Function(function) if function.is_async))
+            ),
         })
     }
 
@@ -1982,11 +2043,27 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::ProcessError
                     | BytecodeIntrinsicType::ProcessExitError
                     | BytecodeIntrinsicType::Utf8Error
-                    | BytecodeIntrinsicType::NumericConversionError => {}
+                    | BytecodeIntrinsicType::NumericConversionError
+                    | BytecodeIntrinsicType::Duration
+                    | BytecodeIntrinsicType::Instant
+                    | BytecodeIntrinsicType::DurationError
+                    | BytecodeIntrinsicType::ClockError
+                    | BytecodeIntrinsicType::EnvSnapshot
+                    | BytecodeIntrinsicType::EnvName
+                    | BytecodeIntrinsicType::EnvValue
+                    | BytecodeIntrinsicType::EnvError => {}
                     BytecodeIntrinsicType::ProcessHandle => {
                         let Value::Host(value) = value else {
                             return Err(VmError::invariant(
                                 "ProcessHandle fallback found a non-host value",
+                            ));
+                        };
+                        self.host.cleanup(&value)?;
+                    }
+                    BytecodeIntrinsicType::Timer => {
+                        let Value::Host(value) = value else {
+                            return Err(VmError::invariant(
+                                "Timer fallback found a non-host value",
                             ));
                         };
                         self.host.cleanup(&value)?;
@@ -2860,6 +2937,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 match cleanup {
                     RuntimeCleanup::Explicit(deferred) => {
                         let span = deferred.span;
+                        let async_cleanup = deferred.async_cleanup;
                         match self.evaluate_deferred_operation(frame, deferred)? {
                             OperationResult::Value(Value::Unit) => {
                                 self.jump(frame, continuation);
@@ -2884,10 +2962,26 @@ impl<'program, 'host> Engine<'program, 'host> {
                                     }),
                                 )?;
                             }
-                            OperationResult::HostAsync { .. } => {
-                                return Err(VmError::invariant(
-                                    "a deferred operation attempted an async host call",
-                                ));
+                            OperationResult::HostAsync {
+                                name,
+                                arguments,
+                                outcome,
+                            } => {
+                                if !async_cleanup {
+                                    return Err(VmError::invariant(
+                                        "a synchronous defer attempted an async host call",
+                                    ));
+                                }
+                                let call = self.host.start_async(&name, &arguments)?;
+                                self.park_current(
+                                    TaskWait::DeferredHostCall {
+                                        call,
+                                        outcome,
+                                        target: continuation,
+                                        completion: None,
+                                    },
+                                    &[],
+                                )?;
                             }
                             OperationResult::Panic(code, message) => {
                                 self.begin_panic(frame, code, message, span, continuation)?;
@@ -3000,6 +3094,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                 unreachable!("normal defer drains select explicit entries");
             };
             let span = deferred.span;
+            let async_cleanup = deferred.async_cleanup;
             match self.evaluate_deferred_operation(frame, deferred)? {
                 OperationResult::Value(Value::Unit) => {
                     self.jump(frame, continuation);
@@ -3024,10 +3119,26 @@ impl<'program, 'host> Engine<'program, 'host> {
                         }),
                     )?;
                 }
-                OperationResult::HostAsync { .. } => {
-                    return Err(VmError::invariant(
-                        "a deferred operation attempted an async host call",
-                    ));
+                OperationResult::HostAsync {
+                    name,
+                    arguments,
+                    outcome,
+                } => {
+                    if !async_cleanup {
+                        return Err(VmError::invariant(
+                            "a synchronous defer attempted an async host call",
+                        ));
+                    }
+                    let call = self.host.start_async(&name, &arguments)?;
+                    self.park_current(
+                        TaskWait::DeferredHostCall {
+                            call,
+                            outcome,
+                            target: continuation,
+                            completion: None,
+                        },
+                        &[],
+                    )?;
                 }
                 OperationResult::Panic(code, message) => {
                     self.begin_panic(frame, code, message, span, continuation)?;
@@ -3358,6 +3469,14 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::ProcessError => RuntimeHostValueKind::ProcessError,
         BytecodeIntrinsicType::ProcessExitError => RuntimeHostValueKind::ProcessExitError,
         BytecodeIntrinsicType::Utf8Error => RuntimeHostValueKind::Utf8Error,
+        BytecodeIntrinsicType::Instant => RuntimeHostValueKind::Instant,
+        BytecodeIntrinsicType::Timer => RuntimeHostValueKind::Timer,
+        BytecodeIntrinsicType::DurationError => RuntimeHostValueKind::DurationError,
+        BytecodeIntrinsicType::ClockError => RuntimeHostValueKind::ClockError,
+        BytecodeIntrinsicType::EnvSnapshot => RuntimeHostValueKind::EnvSnapshot,
+        BytecodeIntrinsicType::EnvName => RuntimeHostValueKind::EnvName,
+        BytecodeIntrinsicType::EnvValue => RuntimeHostValueKind::EnvValue,
+        BytecodeIntrinsicType::EnvError => RuntimeHostValueKind::EnvError,
         BytecodeIntrinsicType::Array
         | BytecodeIntrinsicType::Map
         | BytecodeIntrinsicType::Set
@@ -3365,6 +3484,7 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         | BytecodeIntrinsicType::Ref
         | BytecodeIntrinsicType::Pointer
         | BytecodeIntrinsicType::Join
+        | BytecodeIntrinsicType::Duration
         | BytecodeIntrinsicType::NumericConversionError => return None,
     })
 }
@@ -7204,6 +7324,15 @@ impl Engine<'_, '_> {
             {
                 Ok(Value::Host(RuntimeValue::Host { kind, id }))
             }
+            (
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Duration,
+                    ..
+                },
+                RuntimeValue::Integer(value),
+            ) if (i64::MIN as i128..=i64::MAX as i128).contains(&value) => {
+                Ok(Value::Integer(value))
+            }
             (BytecodeTypeKind::Option(_), RuntimeValue::OptionNone) => {
                 self.allocate(descriptor, HeapObject::OptionNone, &[])
             }
@@ -8973,6 +9102,35 @@ mod tests {
                 BytecodeIntrinsicType::Utf8Error,
                 RuntimeHostValueKind::Utf8Error,
             ),
+            (
+                BytecodeIntrinsicType::Instant,
+                RuntimeHostValueKind::Instant,
+            ),
+            (BytecodeIntrinsicType::Timer, RuntimeHostValueKind::Timer),
+            (
+                BytecodeIntrinsicType::DurationError,
+                RuntimeHostValueKind::DurationError,
+            ),
+            (
+                BytecodeIntrinsicType::ClockError,
+                RuntimeHostValueKind::ClockError,
+            ),
+            (
+                BytecodeIntrinsicType::EnvSnapshot,
+                RuntimeHostValueKind::EnvSnapshot,
+            ),
+            (
+                BytecodeIntrinsicType::EnvName,
+                RuntimeHostValueKind::EnvName,
+            ),
+            (
+                BytecodeIntrinsicType::EnvValue,
+                RuntimeHostValueKind::EnvValue,
+            ),
+            (
+                BytecodeIntrinsicType::EnvError,
+                RuntimeHostValueKind::EnvError,
+            ),
         ] {
             assert_eq!(runtime_host_kind(constructor), Some(expected));
         }
@@ -8984,6 +9142,7 @@ mod tests {
             BytecodeIntrinsicType::Ref,
             BytecodeIntrinsicType::Pointer,
             BytecodeIntrinsicType::Join,
+            BytecodeIntrinsicType::Duration,
             BytecodeIntrinsicType::NumericConversionError,
         ] {
             assert_eq!(runtime_host_kind(constructor), None);

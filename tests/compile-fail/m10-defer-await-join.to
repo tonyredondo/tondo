@@ -1,0 +1,9 @@
+async fn cleanup() {}
+
+async fn invalid() {
+    scope {
+        let pending = spawn cleanup()
+        defer await pending
+        await pending
+    }
+}

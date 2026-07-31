@@ -451,6 +451,173 @@ declarado es único en todo el manifiesto, activo o no.
 Varios archivos activos pueden contribuir al mismo módulo si conservan paths
 lógicos distintos y sus declaraciones no colisionan.
 
+### 4.3 Plan cerrado de testing
+
+Una invocación `tondo test` añade un record independiente
+`tondo-test-plan-draft`. No cambia el manifiesto de producción ni crea un
+segundo parser. El record se valida contra el `manifest_hash` y
+`lockfile_hash` exactos de un `ProjectPlan` ya cerrado, y todos sus campos son
+inputs del plan de test:
+
+~~~json
+{
+  "format": "tondo-test-plan-draft",
+  "project": {
+    "manifest_hash": "sha256:...",
+    "lockfile_hash": "sha256:..."
+  },
+  "repository_root": "",
+  "roots": [
+    {"class":"production", "physical_path":"app/src", "logical_path":"src"},
+    {"class":"unit-test", "physical_path":"app/src", "logical_path":"src"},
+    {"class":"integration-test", "physical_path":"tests", "logical_path":"tests"}
+  ],
+  "sources": [
+    {
+      "class":"production", "package":"workspace:app@1",
+      "physical_path":"app/src/main.to", "logical_path":"src/main.to",
+      "module":"main", "input":"source:production:app/src/main.to"
+    }
+  ],
+  "dev_dependencies": [],
+  "codeowners": {"mode":"auto"},
+  "selector": {"kind":"none"},
+  "shard": null,
+  "order": {"kind":"canonical"},
+  "policy": {"jobs":1, "allow_empty":false, "fail_fast":false,
+              "retry":0, "repeat":1},
+  "reporters": ["human", "json"],
+  "artifact_store": {"path":"target/test-artifacts",
+                      "content_addressed":true, "max_bytes":1048576},
+  "snapshot_stores": [],
+  "target": {"name":"tondo-vm-hosted", "profile":"hosted",
+              "capability_registry":"tondo-capabilities-draft",
+              "capabilities":["console", "process"], "features":[]},
+  "time_catalog": {"package":"std", "module":"time", "api":"monotonic-v1"},
+  "limits": {"timeout_ms":1000, "setup_timeout_ms":1000,
+             "teardown_timeout_ms":1000, "output_bytes":65536,
+             "artifact_bytes":1048576, "snapshot_bytes":1048576,
+             "memory_bytes":67108864, "instructions":1000000,
+             "virtual_timers":1024}
+}
+~~~
+
+`class` es exactamente `production`, `unit-test` o `integration-test`. Cada
+fuente pertenece a una única clase, tiene un nombre de input único y debe estar
+cubierta por una raíz explícita de la misma clase; nunca se deduce una raíz por
+common-prefix. Las fuentes `production` deben coincidir byte a byte en path
+físico con los source sets activos del `ProjectPlan`. Una fuente de integración
+puede usar un `PackageId` sintético; las demás deben pertenecer al grafo cerrado.
+Los paths del record son lógicos, relativos, slash-separated y no pueden
+escapar de la raíz del repositorio. El valor canónico de `repository_root` es
+la cadena vacía, que representa la raíz; `.` se acepta solo como entrada y se
+normaliza a `""`.
+
+Las dependencias de desarrollo contienen `alias`, `PackageId`, path de interfaz
+y SHA-256. Son una lista separada de las dependencias de producción y no pueden
+aparecer en el artefacto de producción. Su materialización y la clasificación
+de inputs públicos o secretos pertenecen a `UTEST-INPUTS-PLAN-001`; el plan
+solo fija sus nombres y referencias.
+
+`codeowners.mode` es `auto`, `none` o `path` (este último exige `path`). El
+runner no abre el archivo durante esta fase. `selector.kind` es `none`,
+`filter`, `glob` o `exact`; solo los tres últimos llevan `value` y son
+mutuamente excluyentes. `shard` es `null` o `{index,count}` con
+`1 <= index <= count`. `order` es `canonical` o `random`; una seed solo es
+válida para `random`, se normaliza a dieciséis dígitos hexadecimales y puede
+estar ausente para solicitar entropía explícita durante la materialización.
+
+La política fija `jobs > 0`, `repeat > 0`, `retry >= 0`, `allow_empty` y
+`fail_fast`. Reporters son un conjunto no vacío de `human`, `json` y `junit`.
+El artifact store es siempre content-addressed; snapshot stores tienen nombre,
+path, flag de actualización y límite independiente. El target, capabilities y
+features deben coincidir exactamente con el proyecto y el catálogo temporal
+único de esta edición es `std.time@monotonic-v1`. Todos los límites de trabajo,
+memoria, output, artifacts, snapshots y timers son enteros positivos.
+
+El lector puro normaliza listas y seeds, rechaza campos desconocidos,
+duplicados, hashes inválidos, roots ausentes, deriva de producción,
+capabilities/target/time-base incompatibles y presupuestos cero. Su salida
+canónica no contiene bytes de fuentes, valores de inputs ni datos de
+CODEOWNERS. `TestProjectPlan::parse` implementa exactamente esta frontera;
+discovery, inputs, ownership, compilación y workers son tareas posteriores.
+
+### 4.4 Plan de inputs sin materialización
+
+El plan de proyecto puede referenciar inputs mediante `source.input`, pero esos
+nombres solo quedan cerrados cuando se valida un record independiente
+`tondo-test-input-plan-draft`. La validación recibe el `TestProjectPlan` ya
+normalizado y nunca abre un archivo, consulta el host, resuelve un provider ni
+materializa un valor. Su forma canónica es:
+
+~~~json
+{
+  "format": "tondo-test-input-plan-draft",
+  "test_plan_sha256": "sha256:...",
+  "inputs": [
+    {
+      "name": "source:production:app/src/main.to",
+      "source": "app/src/main.to",
+      "profile": "build",
+      "visibility": "public",
+      "sha256": "sha256:...",
+      "provider": null,
+      "descriptor": null,
+      "version": null,
+      "capability": null
+    },
+    {
+      "name": "host:token",
+      "source": "environment:TOKEN",
+      "profile": "runtime",
+      "visibility": "secret",
+      "sha256": null,
+      "provider": "ci",
+      "descriptor": "TOKEN",
+      "version": "v1",
+      "capability": "environment"
+    }
+  ],
+  "public_sha256": "...",
+  "secret_profile_sha256": "...",
+  "secret_count": 1,
+  "reproducibility": "secret-dependent-versioned"
+}
+~~~
+
+`test_plan_sha256` es el SHA-256 con prefijo `sha256:` de los bytes JSON
+compactos y canónicos de `TestProjectPlan`. `inputs` se ordena por `name` y
+cada nombre es único, no vacío y no contiene saltos de línea ni barras
+invertidas. Toda referencia `source.input` del plan de proyecto debe tener
+exactamente un descriptor; no se aceptan descriptores huérfanos o duplicados.
+
+Un input `public` debe proporcionar `sha256` válido y no puede proporcionar
+`provider`, `descriptor` ni `version`. Ese hash es la identidad pública del
+contenido y participa en `public_sha256`, calculado sobre la lista canónica de
+`(name, source, profile, sha256, capability)`. Un input `secret` debe dejar
+`sha256` en `null` y proporcionar `provider` y `descriptor` no vacíos; `version`
+es opcional. La descripción secreta participa en
+`secret_profile_sha256`, calculado sobre
+`(name, source, profile, provider, descriptor, version, capability)`, pero el
+valor nunca aparece en el plan ni en ningún hash derivado de contenido. Una
+capability, si se declara, debe pertenecer al registro y estar habilitada por
+el target del plan de test.
+
+`secret_count` debe coincidir con el número de inputs secretos. La
+reproducibilidad es `closed` cuando no hay secretos,
+`secret-dependent-versioned` cuando todos los secretos tienen versión y
+`secret-dependent-unversioned` en cualquier otro caso. Los dos digests
+secundarios se expresan como 64 dígitos hexadecimales sin el prefijo
+`sha256:`; el digest secreto es `null` cuando no existen secretos.
+
+`TestInputPlan::parse` rechaza campos desconocidos, hashes inválidos, deriva
+del plan, capability no habilitada, mezcla de metadatos públicos y secretos,
+conteos/digests incorrectos y estados de reproducibilidad falsos.
+`canonical_bytes()` vuelve a emitir únicamente esta forma normalizada. No
+contiene valores de inputs, secretos, paths de host, CODEOWNERS ni resultados.
+La materialización, revocación y aislamiento de valores pertenecen a
+`UTEST-INPUTS-001` y deben ocurrir exclusivamente dentro del worker.
+
 ## 5. Lockfile
 
 ### 5.1 Forma completa

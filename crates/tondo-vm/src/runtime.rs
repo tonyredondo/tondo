@@ -128,6 +128,14 @@ pub enum RuntimeHostValueKind {
     ProcessError,
     ProcessExitError,
     Utf8Error,
+    Instant,
+    Timer,
+    DurationError,
+    ClockError,
+    EnvSnapshot,
+    EnvName,
+    EnvValue,
+    EnvError,
 }
 
 /// Per-run counters useful for testing limits and collector behavior.

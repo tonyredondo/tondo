@@ -1,11 +1,15 @@
 # Tondo: tracker de implementación
 
-**Estado:** M10.5b, Gate H0, `META-FORMAT-001`, `PARSER-STACK-001`, el slice
-temprano `std.bytes` y `STD-TIME-BASE-SPEC-001` están cerrados sobre el draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
+**Estado:** M10.5b, Gate H0, `META-FORMAT-001`, `PARSER-STACK-001`, los slices
+tempranos `std.bytes`, el time-base de `std.time`, el contrato/implementación
+read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
+`UTEST-INPUTS-PLAN-001`, `UTEST-RESULT-MODEL-001`, `UTEST-CLI-PARSE-001` y
+`UTEST-DISC-001`, `UTEST-OWNERS-001` y `UTEST-DEPS-001`
+están cerrados sobre el draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.06
+**Versión del tracker:** 1.17
 
 **Última actualización:** 2026-07-31
 
@@ -20,7 +24,8 @@ la conformidad del mismo draft antes de publicar la primera versión
 con el marcador único `draft`; no existe una lane `/1` frente a otra `/2`.
 A partir de aquí avanzan dos lanes:
 M10.7 sobre los slices tempranos de `std.meta`/`std.reflect`, y M10.6 sobre
-`std.env` read-only, la implementación del time-base monotónico y `defer await`;
+`defer await` y el runner de testing; el slice read-only de `std.env` ya está
+implementado;
 los slices de `std.bytes` y el contrato de `std.time` ya están cerrados. Gate
 G5 solo vuelve a cerrarse cuando ambas lanes forman parte de la conformidad
 vigente. Después se completa STD-0.1A, se fijan antes del backend los contratos
@@ -2585,7 +2590,7 @@ completa Tondo 0.1.
 
 1. **Plan:** `UTEST-PLAN` → contrato de inputs
    (`UTEST-INPUTS-PLAN`)/discovery/owners/dev-dependencies →
-   `UTEST-CLI-PARSE`. La materialización de inputs queda en la lane de
+   `UTEST-RESULT-MODEL` → `UTEST-CLI-PARSE`. La materialización de inputs queda en la lane de
    ejecución, después de crear el worker.
 2. **Lenguaje:** lexer → CST → formatter; tras unir source classes,
    discovery y dev-dependencies del plan → árbol/capturas →
@@ -2636,42 +2641,62 @@ reporters.
   regresión por hash, no como edición seleccionable alternativa. La implementación y los tests de
   compilación se ejecutan en las tareas siguientes.
 
-- [ ] **UTEST-PLAN-001 — Extender el project plan con source classes de test.**
-  Representar exactamente `production`, `unit-test` e `integration-test`,
-  dev-dependencies, roots físicos/lógicos explícitos, paths lógicos, raíz de
-  repositorio, referencias a inputs y CODEOWNERS, selector, shard, orden, seed,
-  policy, retry/repeat, reporters, artifact store, snapshot stores, target,
-  capabilities, catálogo temporal estándar y límites. La forma canónica y la
-  participación en hashes de los inputs se cierran en
-  `UTEST-INPUTS-PLAN-001`; el hash de un artefacto de producción no puede
-  depender de metadata ni fuentes test-only. No existe un “source root”
-  inferido por common-prefix: discovery solo enumera roots declarados y los
-  convierte en entradas cerradas antes del frontend.
+- [x] **UTEST-PLAN-001 — Extender el project plan con source classes de test.**
+  `tondo-test-plan-draft` y `TestProjectPlan` representan exactamente
+  `production`, `unit-test` e `integration-test`, dev-dependencies, roots
+  físicos/lógicos explícitos, paths lógicos, raíz de repositorio, referencias a
+  inputs y CODEOWNERS, selector, shard, orden, seed, policy, retry/repeat,
+  reporters, artifact store, snapshot stores, target, capabilities, catálogo
+  temporal estándar y límites. El parser es puro: valida hashes de manifest y
+  lockfile, exige que production coincida con el proyecto activo, normaliza la
+  forma canónica y no lee fuentes, inputs, CODEOWNERS ni el host. La
+  participación exacta de inputs se cierra en `UTEST-INPUTS-PLAN-001`; el hash de
+  un artefacto de producción continúa independiente de metadata o fuentes
+  test-only. No existe un “source root” inferido por common-prefix: discovery
+  solo enumerará roots declarados y los convertirá en entradas cerradas antes
+  del frontend.
 
-- [ ] **UTEST-INPUTS-PLAN-001 — Cerrar inputs sin ejecutar workers.**
-  Normalizar nombres lógicos, source, profile, visibilidad pública/secreta,
-  capability requerida y los tres estados de reproducibilidad dentro del plan.
-  Fijar bytes/hash para cada input público, únicamente descriptor y versión
-  para cada secreto, y su participación exacta en identidad, cachés,
-  invalidación y reportes. Probar canonicalización, colisiones, ausencia de
-  valores secretos y estabilidad del plan; esta tarea no lee el host ni
-  materializa valores.
+- [x] **UTEST-INPUTS-PLAN-001 — Cerrar inputs sin ejecutar workers.**
+  `tondo-test-input-plan-draft` y `TestInputPlan` validan, contra el hash del
+  `TestProjectPlan`, nombres de input únicos, source, profile
+  (`build`/`runtime`/`both`), visibilidad pública/secreta, capability habilitada
+  y los estados `closed`, `secret-dependent-versioned` y
+  `secret-dependent-unversioned`. Los inputs públicos fijan un SHA-256 de
+  contenido; los secretos fijan únicamente provider, descriptor y versión
+  opcional. `public_sha256`, `secret_profile_sha256`, `secret_count` y la
+  reproducibilidad se calculan sobre listas canónicas y no contienen valores.
+  La frontera es pura, rechaza campos desconocidos, colisiones, deriva del
+  plan, hashes/capabilities inválidos y mezclas público/secreto, y no lee el
+  host ni materializa valores. Evidencia: `docs/contracts/test-input-plan.md`
+  y cinco tests unitarios en `tondo-compiler`.
 
-- [ ] **UTEST-RESULT-MODEL-001 — Fijar el modelo interno de ejecución.**
-  Implementar una única representación validada de árbol, participación de
-  suite, phase, attempt, iteration, retry unit, outcome, causalidad,
-  `blocked_by`, policy y summary que alimente salida humana, JSON y JUnit sin
-  recomputar semántica en cada reporter. Definir además el protocolo versionado
-  coordinator/worker, sus mensajes completos, límites, cancelación y cierre.
-  Esta tarea no ejecuta bodies; proporciona el oracle estructural para runtime,
-  retries, interrupción y reportes.
+- [x] **UTEST-RESULT-MODEL-001 — Fijar el modelo interno de ejecución.**
+  `TestResultTree` implementa el report format `tondo-test-report-0.1/7` como
+  una única representación validada de nodes, participation, phase, attempt,
+  iteration, retry unit, outcome agregado, causalidad, `blocked_by`, policy y
+  summary. `assemble` deriva status/decisive attempt/counts una sola vez y
+  `parse` rechaza IDs/parents/causas rotas, fases incompatibles, payloads
+  incoherentes, hashes inválidos, schema drift y summary inconsistente.
+  `CoordinatorFrame`/`WorkerFrame` y `ProtocolSession` fijan
+  `tondo-test-worker-0.1/1`, handshake, secuencias por dirección, límites
+  positivos, run units, cancelación con ACK, shutdown/closed y errores fatales.
+  El módulo es puro: no ejecuta bodies, consulta host ni transporta valores
+  secretos. Evidencia: `docs/contracts/test-result-model.md` y siete tests
+  unitarios que cubren agregados/flaky, summary, causalidad, canonicalización,
+  handshake, secuencias, límites, cancelación, cierre y schema desconocido.
 
-- [ ] **UTEST-CLI-PARSE-001 — Implementar parsing y normalización de CLI.**
-  Añadir el comando `tondo test`, parsear todas las opciones normativas,
-  defaults, exclusiones, multiplicidad, rangos, paths lógicos y combinaciones
-  inválidas, y convertirlas al plan cerrado sin ejecutar ni prometer todavía
-  una feature no conectada. Probar diagnostics y exit `2` de uso. El wiring de
-  ejecución, outputs y exits finales pertenece a `UTEST-CLI-001`.
+- [x] **UTEST-CLI-PARSE-001 — Implementar parsing y normalización de CLI.**
+  `tondo_cli::test_cli::parse` añade `tondo test` y convierte su vector de
+  argumentos a `TestCliPlan` sin discovery, I/O, compilación ni workers.
+  Cierra selectores filter/glob/exact, CODEOWNERS, shard, order/seed, list,
+  jobs, timeout, retry/repeat, artifacts, formats/reports y policies; conserva
+  la presencia explícita de retry/repeat para aplicar las incompatibilidades
+  de los valores cero/uno. Valida paths, globs, ranges, overflow, duplicados,
+  report collisions y combinaciones de list/update antes de compilar.
+  Diagnostics de uso terminan en exit `2`; una forma válida termina
+  explícitamente en exit `3` porque `UTEST-CLI-001` aún no conecta la ejecución.
+  Evidencia: `docs/contracts/test-cli-plan.md`, cinco tests unitarios del parser
+  y un test CLI de ambos límites.
 
 - [ ] **UTEST-INPUTS-001 — Materializar inputs públicos y secretos sin
   filtraciones.** Después de `UTEST-INPUTS-PLAN-001`,
@@ -2683,25 +2708,32 @@ reporters.
   heurística. Un fallo de materialización termina con exit `1` sin reporte
   parcial; un fallo de revocación pierde aislamiento y usa exit `3`.
 
-- [ ] **UTEST-DISC-001 — Implementar descubrimiento convencional y explícito.**
-  Soportar `_test.to` dentro de production roots y `.to` bajo `tests/`, con la
-  precedencia, case-sensitivity, orden y overrides cerrados del spec. Detectar
-  colisiones, fuentes sin clasificar, symlink escapes y deriva entre discovery
-  y plan materializado antes de compilar.
+- [x] **UTEST-DISC-001 — Implementar descubrimiento convencional y explícito.**
+  `tondo_compiler::test_discovery` recibe entradas enumeradas por el host y
+  aplica, sin I/O, la precedencia de `tests/`, `_test.to` y roots explícitos,
+  con paths slash-separated canónicos y comparación case-sensitive. Ordena por
+  bytes UTF-8 del path físico, rechaza fuentes no regulares, symlink escapes,
+  colisiones físicas o de nodo lógico y asigna inputs estables
+  `source:<class>:<physical-path>`. `reconcile_plan` exige igualdad exacta con
+  la identidad cerrada del plan antes de compilar. Evidencia:
+  `docs/contracts/test-discovery.md` y ocho tests unitarios del compilador.
 
-- [ ] **UTEST-OWNERS-001 — Resolver ownership de tests desde CODEOWNERS.**
-  Implementar `auto`, `none` y path explícito; precedencia de ubicaciones,
-  gramática cerrada, errores estrictos, case-sensitivity, última regla
-  aplicable y matching sobre el source path lógico de cada declaración. Tratar
-  owners como strings opacos, no consultar red ni permisos y reportar
-  source/hash. Fuentes generadas usan origen declarado o owners vacíos.
+- [x] **UTEST-OWNERS-001 — Resolver ownership de tests desde CODEOWNERS.**
+  `tondo_compiler::test_owners` implementa `auto`, `none` y path explícito sin
+  I/O, con precedencia estricta, paths canónicos, guards de regular/readable y
+  symlink, UTF-8 sin BOM, gramática portable, glob case-sensitive y última
+  regla aplicable. Conserva owners opacos y duplicados, devuelve source/hash,
+  resuelve por path lógico y deja `[]` para una fuente generada sin origin.
+  Evidencia: `docs/contracts/test-owners.md` y nueve tests unitarios del
+  compilador.
 
-- [ ] **UTEST-DEPS-001 — Separar dev-dependencies del grafo de producción.**
-  Fijarlas por PackageId/hash en lockfile, impedir imports desde producción y
-  demostrar mediante interfaces y artefactos comparados que añadir o cambiar
-  una dev-dependency no altera el producto publicable. `std.testing` y cualquier
-  operación de control deben quedar ausentes de interfaces y productos de
-  producción.
+- [x] **UTEST-DEPS-001 — Separar dev-dependencies del grafo de producción.**
+  `tondo_compiler::test_dependencies` valida records de interfaz por alias,
+  PackageId, path y hash exactos; limita edges transitivos al subgrafo de test
+  o `toolchain:std:0.1-bootstrap`, rechaza ciclos/overlap con producción y
+  expone aliases solo a unit/integration. `production_identity` deja explícita
+  la huella de inputs productivos sin plan ni records de test. Evidencia:
+  `docs/contracts/test-dependencies.md` y nueve tests unitarios del compilador.
 
 ### 17.2 Frontend y semántica estática
 
@@ -2724,16 +2756,21 @@ reporters.
   setup-members, declaraciones adyacentes, recovery e idempotencia en la
   grammar consolidada 0.1. `fmt` no depende de discovery runtime.
 
-- [ ] **ASYNC-DEFER-IMPL-001 — Implementar y verificar `defer await`.** Añadir
+- [x] **ASYNC-DEFER-IMPL-001 — Implementar y verificar `defer await`.** Añadir
   la forma 0.1 al CST/formatter sin feature gate, checks de
   firma/efecto/ownership,
   guards async en HIR/MIR/bytecode y conducción LIFO en el executor. Probar
   inferencia de entradas/script, `E1610` en función no async, retorno, error
   exterior, pánico, cancelación, cleanup suprimido, timeout, resource limit,
   interrupción, un owner afín, `Send` y rechazo de bloque/llamada
-  fallible/capability mediante `E1608`/`E14xx`. La inmutabilidad se demuestra
-  reproduciendo el corpus bootstrap por sus hashes, no manteniendo dos
-  gramáticas en el compilador del draft.
+  fallible/capability mediante `E1608`/`E14xx`. La forma se conecta al parser
+  existente; HIR conserva `Await -> AsyncCall`, MIR/bytecode validan el contexto
+  `DeferredAsync` y la VM conduce llamadas async de bytecode y resultados async
+  de host sin cancelar el cleanup que inició el unwind. Evidencia ejecutable:
+  `m10-async-defer-await`, `m10-async-defer-lifo` y `m10-async-defer-cancel`, más
+  negativos para función no async, `Join`, awaits anidados y llamada fallible.
+  La inmutabilidad se demuestra reproduciendo el corpus bootstrap por sus
+  hashes, no manteniendo dos gramáticas en el compilador del draft.
 
 - [ ] **UTEST-ID-001 — Construir el árbol estático suite/test.** La identidad
   interna usa PackageId + source class + module path + ordered node path + kind;
@@ -3513,14 +3550,20 @@ layer pueden avanzar en paralelo.
 
 ### 19.3 Hosted Standard Library
 
-- [ ] **STD-TIME-BASE-IMPL-001 — Implementar el proveedor monotónico
+- [x] **STD-TIME-BASE-IMPL-001 — Implementar el proveedor monotónico
   intercambiable.** `std.time` usa una única frontera interna para proveedor real
   y virtual; la VM implementa consulta, suspensión, timer y deadline sin que el
   bytecode de usuario conozca cuál se seleccionó. El proveedor real usa reloj
   monotónico del target, respeta cancelación y nunca consulta calendario. El
   virtual solo puede seleccionarlo el dominio sellado de testing y no concede
-  capabilities adicionales. Esta tarea se ejecuta tras
-  `STD-TIME-BASE-SPEC-001` y antes de `UTEST-VTIME-001`.
+  capabilities adicionales. La implementación actual cubre `Duration`,
+  `Instant`, `Timer`, `now`, `resolution`, `deadline`, `sleep`, operaciones
+  aritméticas y comparativas, cancelación cooperativa y límites atómicos de
+  recursos. La cobertura directa está en `process_host` y el fixture
+  `tests/runtime/m10-std-time-001.to`; el corpus común real/virtual, los
+  dominios extranjeros, empates de deadline, límites y capability `clock` se
+  validan en `process_host` y `driver`; la evidencia de distribución y
+  conformance queda en `STD-TIME-BASE-CONF-001`.
 
 - [ ] **STD-CONSOLE-001 — Consolidar consola sobre `std.io`.** Fijar stdout,
   stderr, entrada, flushing, texto/binario, errores y comportamiento async sin
@@ -3530,10 +3573,15 @@ layer pueden avanzar en paralelo.
   léxicas de acceso al host, preservar bytes no Unicode cuando el target lo
   admita y no prometer una representación común falsa.
 
-- [ ] **STD-ENV-SPEC-001 — Definir argumentos y environment.** Cerrar primero
-  lectura/snapshot de entradas declaradas, Unicode/bytes, ausencia, ownership y
-  capability; ninguna entrada es input implícito de compilación. La mutación,
-  si se conserva, queda separada y no es necesaria para T0.
+- [x] **STD-ENV-SPEC-001 — Definir argumentos y environment.** `std.env` queda
+  como una API read-only capability-gated por `environment`, con un
+  `Snapshot` sellado por invocación, `Name`/`Value` explícitos para texto y
+  bytes, argv ordenado, ausencia mediante `Option`, validación de nombres,
+  límites y errores `Unavailable`/`ResourceLimit`. No hay lectura durante
+  compilación, input ambiental implícito ni mutación global; el plan de testing
+  materializa públicos por hash y secretos por descriptor/version dentro del
+  worker. El contrato vivo está en `docs/contracts/stdlib-env.md` y en la
+  sección 14.3.5 de la especificación estándar.
 
 - [ ] **STD-FS-001 — Definir filesystem.** Archivos, directorios, metadata,
   enlaces, permisos, atomicidad, iteración y operaciones async declaran
@@ -3570,12 +3618,17 @@ layer pueden avanzar en paralelo.
   funciones públicas sin alias mutable. La evidencia no muta el manifest
   histórico; el bridge de attachments se prueba después en `UTEST-ARTIFACT-001`.
 
-- [ ] **STD-ENV-IMPL-001 — Implementar el acceso declarado de environment.**
-  Exponer al programa solo el snapshot entregado por el adaptador de ejecución
-  mediante la API y capability normales; distinguir ausencia, texto y bytes sin
-  globals ni consulta ambiental fuera del plan. El adaptador acepta primero un
-  snapshot vacío y `UTEST-INPUTS-001` conecta después su materialización por
-  worker; argumentos continúan vacíos en test.
+- [x] **STD-ENV-IMPL-001 — Implementar el acceso declarado de environment.**
+  La VM hosted expone únicamente el snapshot entregado por el adaptador mediante
+  la API y capability normales; distingue ausencia, texto UTF-8 y bytes sin
+  globals ni consulta ambiental implícita. El snapshot se cachea por invocación,
+  conserva argv y orden de entradas, valida `Name.fromText`/`Name.fromBytes`,
+  aplica límites atómicos y publica `EnvError` tipados. El adaptador acepta el
+  snapshot vacío como caso base; `UTEST-INPUTS-001` conectará después su
+  materialización por worker. La evidencia ejecutable está en
+  `process_host` (snapshot sellado, Unicode/raw bytes, ausencia, unavailable,
+  nombres inválidos, límites sin publicación parcial), el fixture
+  `m10-std-env-001` y la capability test del driver.
 
 - [ ] **STD-ENV-CONF-001 — Cerrar la evidencia temprana de environment.** Probar
   snapshots vacío y declarado, ausencia, Unicode/bytes, ownership, capability y
@@ -4237,6 +4290,172 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.17 — 2026-07-31
+
+- Se completa `UTEST-DEPS-001` con un grafo puro de interfaces de
+  dev-dependencies. El record exige `PackageId`, path y SHA-256 exactos del
+  plan; faltantes, adicionales, duplicados, targets de producción y ciclos
+  terminan antes de materializar el grafo.
+- Los aliases de test solo resuelven desde fuentes unit/integration. El lookup
+  de producción falla explícitamente y no consulta ni mezcla el subgrafo.
+  `production_identity` usa exclusivamente inputs de producción para conservar
+  la independencia del artefacto publicable.
+- Se añade `docs/contracts/test-dependencies.md` y nueve pruebas de compilador
+  para metadata, orden, edges, ciclos, visibilidad y no interferencia.
+
+### 1.16 — 2026-07-31
+
+- Se completa `UTEST-OWNERS-001` con la resolución pura de CODEOWNERS. La
+  selección `auto` respeta `.github/CODEOWNERS`, `CODEOWNERS` y
+  `docs/CODEOWNERS`; `none` y paths explícitos conservan sus fronteras y un
+  candidato inválido no cae silenciosamente a otro archivo.
+- Se implementan UTF-8 sin BOM, CRLF, comentarios, owners opacos, el subset
+  portable de `*`, `?`, `**`, anclaje, segment matching, trailing `/`, última
+  regla, source/hash y guards de filesystem. No hay red, permisos ni consultas
+  externas.
+- Se añade `docs/contracts/test-owners.md` y nueve pruebas de compilador para
+  selección, parsing, matching, hashing, errores y fuentes generadas.
+
+### 1.15 — 2026-07-31
+
+- Se completa `UTEST-DISC-001` con una frontera pura de discovery. La
+  enumeración del host aporta solo paths, módulo y atestaciones de archivo;
+  el clasificador no abre ni sigue paths y falla cerrado ante entradas no
+  regulares, escapes por symlink, paths no canónicos y colisiones.
+- Se fijan la precedencia convencional `tests/` → integration,
+  `_test.to` → unit y roots explícitos, el orden por bytes UTF-8 y los inputs
+  `source:<class>:<physical-path>`. La reconciliación compara la identidad
+  completa contra el plan y reporta faltantes/adicionales antes de compilar.
+- Se añade `docs/contracts/test-discovery.md` y ocho pruebas de compilador para
+  precedencia, determinismo, guards de filesystem, identidades de módulo,
+  duplicados y deriva de plan.
+
+### 1.14 — 2026-07-31
+
+- Se completa `UTEST-CLI-PARSE-001`: el binario reconoce `tondo test` y su
+  parser puro normaliza la superficie completa del comando sin ejecutar fuentes
+  ni workers. Se validan selectores exclusivos, paths lógicos, CODEOWNERS,
+  shard/order/seed, límites y duración, retry/repeat explícitos, reports,
+  artifacts, snapshot update y flags de policy.
+- Las incompatibilidades y la deriva de sintaxis son errores de uso exit `2`.
+  Una invocación válida deja claro que el runner todavía no está conectado y
+  usa exit `3`, sin generar un resultado falso. Se añaden
+  `docs/contracts/test-cli-plan.md` y evidencia unit/integration.
+
+### 1.13 — 2026-07-31
+
+- Se completa `UTEST-RESULT-MODEL-001` con `TestResultTree`, que concentra
+  attempts, outcomes, causalidad, policy y summary en una única forma validada
+  para todos los reporters. La derivación de `passed`, `flaky-pass`, fallos,
+  bloqueos y contadores se hace una vez; el parser rechaza schema drift y
+  referencias o estados inconsistentes.
+- Se añade el protocolo puro `tondo-test-worker-0.1/1` con frames de hello/run,
+  cancel/shutdown y ready/started/attempt/finished/cancelled/closed/error.
+  `ProtocolSession` comprueba handshake, secuencias independientes, límites,
+  cancelación, cleanup/closure y errores fatales sin ejecutar cuerpos ni tocar
+  el host.
+- Se documentan las fronteras en `TONDO_TESTING_SPEC.md` y
+  `docs/contracts/test-result-model.md`, con siete tests de compilador.
+
+### 1.12 — 2026-07-31
+
+- Se completa `UTEST-INPUTS-PLAN-001` con el record value-free
+  `tondo-test-input-plan-draft` y el parser puro `TestInputPlan`. Cada input
+  queda ligado a un source y profile; los públicos solo llevan hash, los
+  secretos solo metadata de provider/descriptor/versión y una capability
+  habilitada opcional.
+- El parser exige cobertura exacta de referencias, orden canónico, hash del
+  plan, digests separados para contenido público y perfil secreto, conteo y
+  estado de reproducibilidad. Nunca acepta ni serializa valores de inputs.
+- Se añaden `docs/contracts/test-input-plan.md`, la sección 4.4 del toolchain
+  spec y cinco pruebas de canonicalización, colisiones, deriva, capabilities,
+  secretos y ausencia de canal de valores. La materialización/revocación queda
+  explícitamente para `UTEST-INPUTS-001` dentro del worker.
+
+### 1.11 — 2026-07-31
+
+- Se completa `UTEST-PLAN-001` con el record puro
+  `tondo-test-plan-draft` y `TestProjectPlan`. El plan liga hashes exactos de
+  manifest/lockfile y cierra las tres source classes, roots físico-lógicos,
+  inputs nombrados, dependencias de desarrollo y PackageIds, sin inferir roots
+  por common-prefix ni leer el host.
+- La misma frontera normaliza selector, shard, orden/seed, policy,
+  reporters, stores de artifacts/snapshots, target/capabilities, el catálogo
+  `std.time@monotonic-v1` y límites positivos. Rechaza campos desconocidos,
+  duplicados, deriva de producción, hashes inválidos, configuraciones
+  incompatibles y datos de fuente; discovery, inputs, CODEOWNERS y workers
+  quedan explícitamente para sus tareas consumidoras.
+- Se añade `docs/contracts/test-plan.md` y cobertura unitaria para clases,
+  canonicalización, identidad, límites, stores, ausencia de bytes y todos los
+  rechazos de forma material.
+
+### 1.10 — 2026-07-31
+
+- Se completa `ASYNC-DEFER-IMPL-001`. El parser ya admitía `defer` seguido de
+  una expresión; el frontend ahora permite únicamente la forma especial
+  `defer await <async-call>` dentro de una función async, conserva la llamada
+  async en HIR y rechaza `Join`, bloques, awaits anidados, efectos fallibles y
+  funciones no async con los diagnósticos normativos.
+- MIR y bytecode introducen el contexto de admisión `DeferredAsync` sin crear
+  un segundo mecanismo de cleanup. Los operandos siguen capturándose al
+  registrar y el guard afín mantiene las mismas reglas `Copy`/`CallOnce`/`Send`.
+- La VM drena ambas formas en LIFO. Una llamada async de bytecode reutiliza la
+  continuación de frame; una llamada async de host tiene un estado de espera
+  dedicado que no se cancela por el unwind que inició el cleanup y vuelve al
+  mismo bloque de drain al completar. Retorno, pánico y cancelación conservan
+  precedencia y cleanup suprimido.
+- Se añaden fixtures de compilación/runtime para orden LIFO, retorno por
+  cancelación y diagnósticos negativos; la puerta del bootstrap y la ejecución
+  hosted cubren la ruta fuente→HIR→MIR→bytecode→VM.
+
+### 1.09 — 2026-07-31
+
+- Se implementa `STD-ENV-IMPL-001` en el compilador, bytecode, VM y
+  `BootstrapHost`: `std.env.snapshot` devuelve un snapshot inmutable y
+  cacheado por invocación; `Name.fromText`/`fromBytes`, `Snapshot.arguments`,
+  `Snapshot.get`, `Value.asText` y `Value.asBytes` tienen firmas y fronteras
+  tipadas. No se consulta `std::env` ni se introduce input ambiental implícito.
+- Se añaden pruebas directas de proveedor para argv ordenado, UTF-8 válido,
+  bytes inválidos, ausencia, nombres inválidos, host unavailable, límites
+  atómicos y recuperación tras un rechazo; el fixture `m10-std-env-001` cubre
+  la ruta compilador→VM y la capability `environment` queda cerrada en el
+  target hosted. `STD-ENV-CONF-001` sigue pendiente para la evidencia de
+  distribución/runner.
+
+### 1.08 — 2026-07-31
+
+- Se amplía la evidencia de `STD-TIME-BASE-IMPL-001`: un corpus común ejecuta
+  la misma semántica contra proveedores real y virtual, y añade rechazo de
+  dominios extranjeros, deadlines empatados, cancelación, límites atómicos y
+  ausencia de la capability `clock`.
+- Se cierra `STD-ENV-SPEC-001`. `std.env` queda definido como snapshot runtime
+  read-only y sellado por invocación, con `Name`/`Value` explícitos para UTF-8 y
+  bytes, argv ordenado, ausencia mediante `Option`, límites y errores
+  portables. No hay lectura en compilación, mutación global ni capability
+  ambiental implícita en tests.
+- Se incorpora `docs/contracts/stdlib-env.md`. `STD-ENV-IMPL-001` y
+  `STD-TIME-BASE-CONF-001` siguen pendientes y conservan sus gates de
+  implementación/distribución reproducible.
+
+### 1.07 — 2026-07-31
+
+- Se implementa `STD-TIME-BASE-IMPL-001` sobre la frontera async existente de la
+  VM. El proveedor real usa `std::time::Instant`; el proveedor virtual queda
+  sellado para testing y ambos comparten identidad de operaciones, dominios y
+  cleanup.
+- Se añaden `Duration`, `Instant`, `Timer`, `DurationError` y `ClockError` al
+  catálogo de tipos, capacidades, terminalidad, snapshot y verificación del
+  compilador/VM. `Timer` tiene cleanup terminal afín y no puede escapar sin
+  `wait`, `cancel` o desregistro estructurado.
+- `sleep` y `Timer.wait` son jobs cooperativos; deadlines, mismatch de dominio,
+  overflow, retrasos negativos y `ClockError.ResourceLimit` tienen resultados
+  tipados. Timers y jobs comparten un límite atómico que se libera en
+  cancelación, completion y cleanup.
+- Se incorpora el contrato vivo `docs/contracts/stdlib-time.md`, el capability
+  `clock` al target hosted y el fixture end-to-end `m10-std-time-001`.
+- `STD-TIME-BASE-CONF-001` permanece pendiente hasta cerrar source sets,
+  interfaces, unidad privilegiada y hashes reproducibles del slice.
 
 ### 1.06 — 2026-07-31
 

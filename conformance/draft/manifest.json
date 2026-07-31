@@ -22,15 +22,15 @@
     },
     {
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
-      "sha256": "4945b45746d4819549ce837ca6269ffcf1e49d401d141cb046d37244057b9fcb"
+      "sha256": "162ca532e1b8bc5dd3e0fda48ef4400b08f12ab7b4443f557f2482cf8f8f9506"
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
-      "sha256": "e6c6af9af4027f04ae0fa45a4f4a98579523e9b5f195d172a77292b73ff4383d"
+      "sha256": "db78ef9b1b88f5ab5e2e7b78f1e5495668be491cd83b23bacc4161874a9e342e"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "42651be24b002edaf5d2eea70543eb5668a9105deeaf9c33184f28fba9356ca6"
+      "sha256": "d80fd112f967d4e7f7f2de1ab7ba5fed49d35dd57de399323fc29a627190155d"
     }
   ],
   "case_layers": [],

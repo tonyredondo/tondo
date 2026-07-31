@@ -2678,6 +2678,7 @@ fn terminal_operation_name(operation: HirTerminalOperation) -> &'static str {
     match operation {
         HirTerminalOperation::JoinAwait => "join-await",
         HirTerminalOperation::ProcessFinish => "process-finish",
+        HirTerminalOperation::TimerFinish => "timer-finish",
     }
 }
 
@@ -2685,6 +2686,7 @@ fn terminal_unwind_name(action: HirTerminalUnwindAction) -> &'static str {
     match action {
         HirTerminalUnwindAction::JoinTeardown => "join-teardown",
         HirTerminalUnwindAction::ProcessCleanup => "process-cleanup",
+        HirTerminalUnwindAction::TimerCleanup => "timer-cleanup",
     }
 }
 
@@ -2891,17 +2893,19 @@ mod tests {
             [
                 HirTerminalOperation::JoinAwait,
                 HirTerminalOperation::ProcessFinish,
+                HirTerminalOperation::TimerFinish,
             ]
             .map(terminal_operation_name),
-            ["join-await", "process-finish"]
+            ["join-await", "process-finish", "timer-finish"]
         );
         assert_eq!(
             [
                 HirTerminalUnwindAction::JoinTeardown,
                 HirTerminalUnwindAction::ProcessCleanup,
+                HirTerminalUnwindAction::TimerCleanup,
             ]
             .map(terminal_unwind_name),
-            ["join-teardown", "process-cleanup"]
+            ["join-teardown", "process-cleanup", "timer-cleanup"]
         );
         assert_eq!(
             [

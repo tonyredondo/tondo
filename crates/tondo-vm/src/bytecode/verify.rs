@@ -459,7 +459,16 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::ProcessHandle
                 | BytecodeIntrinsicType::ProcessError
                 | BytecodeIntrinsicType::ProcessExitError
-                | BytecodeIntrinsicType::Utf8Error => BytecodeTraceDescriptor::Inline,
+                | BytecodeIntrinsicType::Utf8Error
+                | BytecodeIntrinsicType::Duration
+                | BytecodeIntrinsicType::Instant
+                | BytecodeIntrinsicType::Timer
+                | BytecodeIntrinsicType::DurationError
+                | BytecodeIntrinsicType::ClockError
+                | BytecodeIntrinsicType::EnvSnapshot
+                | BytecodeIntrinsicType::EnvName
+                | BytecodeIntrinsicType::EnvValue
+                | BytecodeIntrinsicType::EnvError => BytecodeTraceDescriptor::Inline,
             },
             BytecodeTypeKind::OpaqueResult { witness, .. } => self.opaque_descriptor(witness)?,
             BytecodeTypeKind::Generated { .. } => self
@@ -545,13 +554,18 @@ struct CallVerification<'a> {
 enum OperationContext {
     Immediate,
     Deferred,
+    DeferredAsync,
     Await,
     Spawn,
 }
 
 impl OperationContext {
     fn expects_async(self) -> bool {
-        matches!(self, Self::Await | Self::Spawn)
+        matches!(self, Self::DeferredAsync | Self::Await | Self::Spawn)
+    }
+
+    fn is_deferred(self) -> bool {
+        matches!(self, Self::Deferred | Self::DeferredAsync)
     }
 }
 
@@ -1052,6 +1066,47 @@ fn intrinsic_capability(
             ClosedCapability::Discard | ClosedCapability::Send
         )),
         BytecodeIntrinsicType::NumericConversionError => fixed_capability(true),
+        BytecodeIntrinsicType::Duration
+        | BytecodeIntrinsicType::DurationError
+        | BytecodeIntrinsicType::ClockError => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Copy
+                | ClosedCapability::Discard
+                | ClosedCapability::Equatable
+                | ClosedCapability::Key
+                | ClosedCapability::Send
+                | ClosedCapability::Share
+        )),
+        BytecodeIntrinsicType::Instant => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Copy
+                | ClosedCapability::Discard
+                | ClosedCapability::Send
+                | ClosedCapability::Share
+        )),
+        BytecodeIntrinsicType::Timer => fixed_capability(capability == ClosedCapability::Send),
+        BytecodeIntrinsicType::EnvSnapshot => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Discard | ClosedCapability::Send | ClosedCapability::Share
+        )),
+        BytecodeIntrinsicType::EnvName | BytecodeIntrinsicType::EnvError => {
+            fixed_capability(matches!(
+                capability,
+                ClosedCapability::Copy
+                    | ClosedCapability::Discard
+                    | ClosedCapability::Equatable
+                    | ClosedCapability::Key
+                    | ClosedCapability::Send
+                    | ClosedCapability::Share
+            ))
+        }
+        BytecodeIntrinsicType::EnvValue => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Copy
+                | ClosedCapability::Discard
+                | ClosedCapability::Send
+                | ClosedCapability::Share
+        )),
     }
 }
 
@@ -1362,6 +1417,17 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::NumericConversionError => {
             fixed_terminal(BytecodeTerminalStatus::Absent)
         }
+        BytecodeIntrinsicType::Duration
+        | BytecodeIntrinsicType::Instant
+        | BytecodeIntrinsicType::DurationError
+        | BytecodeIntrinsicType::ClockError
+        | BytecodeIntrinsicType::EnvSnapshot
+        | BytecodeIntrinsicType::EnvName
+        | BytecodeIntrinsicType::EnvValue
+        | BytecodeIntrinsicType::EnvError => fixed_terminal(BytecodeTerminalStatus::Absent),
+        BytecodeIntrinsicType::Timer => {
+            unreachable!("registered bytecode terminal roots return above")
+        }
         BytecodeIntrinsicType::Join | BytecodeIntrinsicType::ProcessHandle => {
             unreachable!("registered bytecode terminal roots return above")
         }
@@ -1501,7 +1567,16 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::ProcessError
                 | BytecodeIntrinsicType::ProcessExitError
                 | BytecodeIntrinsicType::Utf8Error
-                | BytecodeIntrinsicType::NumericConversionError => None,
+                | BytecodeIntrinsicType::NumericConversionError
+                | BytecodeIntrinsicType::Duration
+                | BytecodeIntrinsicType::Instant
+                | BytecodeIntrinsicType::Timer
+                | BytecodeIntrinsicType::DurationError
+                | BytecodeIntrinsicType::ClockError
+                | BytecodeIntrinsicType::EnvSnapshot
+                | BytecodeIntrinsicType::EnvName
+                | BytecodeIntrinsicType::EnvValue
+                | BytecodeIntrinsicType::EnvError => None,
             };
             if let Some((required, capability, label)) = requirement {
                 let context = format!("type#{index}");
@@ -1960,6 +2035,7 @@ impl Verifier<'_> {
                     .iter()
                     .any(|parameter| parameter.mode != BytecodeParameterMode::Value)
                 && !callable.name.starts_with("std.bytes.BytesBuilder.")
+                && !callable.name.starts_with("std.env.")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,
@@ -3143,7 +3219,18 @@ impl Verifier<'_> {
                         "a non-Copy deferred callee does not use CallOnce",
                     ));
                 }
-                self.verify_operation(function, action, OperationContext::Deferred, context)?;
+                let operation_context = match &action.kind {
+                    BytecodeOperationKind::Call { signature, .. }
+                        if matches!(
+                            &self.ty(*signature, context)?.kind,
+                            BytecodeTypeKind::Function(function) if function.is_async
+                        ) =>
+                    {
+                        OperationContext::DeferredAsync
+                    }
+                    _ => OperationContext::Deferred,
+                };
+                self.verify_operation(function, action, operation_context, context)?;
                 if !self.is_scalar(action.ty, BytecodeScalarType::Unit)
                     || !matches!(
                         action.kind,
@@ -5090,6 +5177,22 @@ impl Verifier<'_> {
                     operation_context,
                     context,
                 )?;
+                if operation_context == OperationContext::DeferredAsync {
+                    if !self.capability(callee.ty, ClosedCapability::Send, context)? {
+                        return Err(BytecodeVerificationError::new(
+                            context,
+                            "async deferred callee is not Send",
+                        ));
+                    }
+                    for argument in arguments {
+                        if !self.capability(argument.value.ty, ClosedCapability::Send, context)? {
+                            return Err(BytecodeVerificationError::new(
+                                context,
+                                "async deferred argument is not Send",
+                            ));
+                        }
+                    }
+                }
             }
             BytecodeOperationKind::Display { argument } => {
                 self.verify_operand(function, &argument.value, context)?;
@@ -5306,7 +5409,7 @@ impl Verifier<'_> {
                         Some(BytecodeCallProtocol::CallOnce)
                     }
                     Some(closure)
-                        if operation_context == OperationContext::Deferred
+                        if operation_context.is_deferred()
                             && !self.capability(callee.ty, ClosedCapability::Copy, context)?
                             && closure.protocols.call_once
                             && !matches!(callee.kind, BytecodeOperandKind::Borrow(_)) =>
@@ -13687,6 +13790,7 @@ mod tests {
             BytecodeIntrinsicType::Pipeline,
             BytecodeIntrinsicType::Bytes,
             BytecodeIntrinsicType::BytesBuilder,
+            BytecodeIntrinsicType::BytesError,
             BytecodeIntrinsicType::ExitStatus,
             BytecodeIntrinsicType::ProcessOutput,
             BytecodeIntrinsicType::ProcessHandle,
@@ -13694,6 +13798,11 @@ mod tests {
             BytecodeIntrinsicType::ProcessExitError,
             BytecodeIntrinsicType::Utf8Error,
             BytecodeIntrinsicType::NumericConversionError,
+            BytecodeIntrinsicType::Duration,
+            BytecodeIntrinsicType::Instant,
+            BytecodeIntrinsicType::Timer,
+            BytecodeIntrinsicType::DurationError,
+            BytecodeIntrinsicType::ClockError,
         ] {
             let arguments = match constructor.arity() {
                 0 => Vec::new(),
@@ -13763,6 +13872,14 @@ mod tests {
                 | BytecodeIntrinsicType::Utf8Error => [true, true, false, false, true, true],
                 BytecodeIntrinsicType::BytesBuilder => [false, true, false, false, true, false],
                 BytecodeIntrinsicType::ProcessHandle => [false, false, false, false, true, false],
+                BytecodeIntrinsicType::Duration
+                | BytecodeIntrinsicType::DurationError
+                | BytecodeIntrinsicType::ClockError => all,
+                BytecodeIntrinsicType::Instant => [true, true, false, false, true, true],
+                BytecodeIntrinsicType::Timer => [false, false, false, false, true, false],
+                BytecodeIntrinsicType::EnvName | BytecodeIntrinsicType::EnvError => all,
+                BytecodeIntrinsicType::EnvValue => [true, true, false, false, true, true],
+                BytecodeIntrinsicType::EnvSnapshot => [false, true, false, false, true, true],
             };
             assert_eq!(statuses(ty), expected, "{constructor:?}");
         }

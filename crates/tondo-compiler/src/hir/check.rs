@@ -305,6 +305,10 @@ struct BodyContext {
     structured_scope_depth: u32,
     async_initiation: Option<AsyncInitiation>,
     in_defer_body: bool,
+    /// Allows the single leading `await` in `defer await call(...)`.
+    /// `check_await` clears it while checking the operand so nested awaits
+    /// remain rejected by the ordinary defer rules.
+    defer_async_root: bool,
     defer_control_boundary: bool,
     script_errors: Option<Rc<RefCell<BTreeSet<TypeId>>>>,
 }
@@ -826,7 +830,16 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::ProcessError
                         | IntrinsicType::ProcessExitError
                         | IntrinsicType::Utf8Error
-                        | IntrinsicType::NumericConversionError => None,
+                        | IntrinsicType::NumericConversionError
+                        | IntrinsicType::Duration
+                        | IntrinsicType::Instant
+                        | IntrinsicType::Timer
+                        | IntrinsicType::DurationError
+                        | IntrinsicType::ClockError
+                        | IntrinsicType::EnvSnapshot
+                        | IntrinsicType::EnvName
+                        | IntrinsicType::EnvValue
+                        | IntrinsicType::EnvError => None,
                     };
                     if let Some((required, capability, context)) = requirement {
                         let _ = self.require_capability_with_generics(
@@ -2529,10 +2542,10 @@ impl<'a> ExpressionChecker<'a> {
             return self.recovery_expression(file, node.range());
         };
         if context.in_defer_body
-            && matches!(
+            && (matches!(
                 expression,
-                AstExpression::Await(_) | AstExpression::Spawn(_) | AstExpression::Scope(_)
-            )
+                AstExpression::Spawn(_) | AstExpression::Scope(_)
+            ) || (matches!(expression, AstExpression::Await(_)) && !context.defer_async_root))
         {
             self.emit(
                 self.sources.span(file, node.range())?,
@@ -3039,7 +3052,10 @@ impl<'a> ExpressionChecker<'a> {
             .any(|child| child.kind() == SyntaxKind::CallSuffix)
             .then_some(expected)
             .flatten();
+        let defer_async_root = context.defer_async_root;
+        context.defer_async_root = false;
         let checked = self.check_expression(file, operand_node, operand_expected, context);
+        context.defer_async_root = defer_async_root;
         context.async_initiation = previous;
         let operation = checked?;
         let operation_type = self.expression_type(operation);
@@ -6909,6 +6925,10 @@ impl<'a> ExpressionChecker<'a> {
             let mut defer_context = context.clone();
             defer_context.loops.clear();
             defer_context.in_defer_body = true;
+            defer_context.defer_async_root = matches!(
+                AstExpression::cast(expression),
+                Some(AstExpression::Await(_))
+            );
             defer_context.defer_control_boundary = true;
             defer_context.script_errors = None;
             self.check_expression(file, expression, None, &mut defer_context)?
@@ -7137,9 +7157,41 @@ impl<'a> ExpressionChecker<'a> {
             .expect("checked defer invocation remains indexed");
         let invocation_type = expression.ty();
         let invocation_kind = expression.kind().clone();
+        // `defer await` is represented as the ordinary `await` expression in
+        // HIR.  Only its single async-call operand is deferred; a Join or any
+        // other awaitable would make cleanup ownership ambiguous.
+        let invocation_kind = match invocation_kind {
+            HirExpressionKind::Await { operation } => {
+                if !matches!(
+                    self.program.expression(operation).map(HirExpression::kind),
+                    Some(HirExpressionKind::AsyncCall { .. })
+                ) {
+                    self.emit(
+                        span,
+                        "E1608",
+                        "`defer await` requires one async call, not a Join or block",
+                        Vec::new(),
+                        None,
+                    )?;
+                    return Ok(None);
+                }
+                self.program
+                    .expression(operation)
+                    .expect("deferred async call remains indexed")
+                    .kind()
+                    .clone()
+            }
+            kind => kind,
+        };
         let mut borrowed = Vec::new();
         let operands = match &invocation_kind {
             HirExpressionKind::Call {
+                callee,
+                arguments,
+                protocol,
+                ..
+            }
+            | HirExpressionKind::AsyncCall {
                 callee,
                 arguments,
                 protocol,
@@ -13427,7 +13479,12 @@ impl<'a> ExpressionChecker<'a> {
             ("bytes", Some("empty")) => HirBootstrapHostFunction::BytesEmpty,
             ("bytes", Some("fromArray")) => HirBootstrapHostFunction::BytesFromArray,
             ("bytes", Some("builder")) => HirBootstrapHostFunction::BytesBuilder,
-            ("process", Some(name)) | ("bytes", Some(name)) => {
+            ("time", Some("now")) => HirBootstrapHostFunction::TimeNow,
+            ("time", Some("resolution")) => HirBootstrapHostFunction::TimeResolution,
+            ("time", Some("deadline")) => HirBootstrapHostFunction::TimeDeadline,
+            ("time", Some("sleep")) => HirBootstrapHostFunction::TimeSleep,
+            ("env", Some("snapshot")) => HirBootstrapHostFunction::EnvSnapshot,
+            ("process", Some(name)) | ("bytes", Some(name)) | ("env", Some(name)) => {
                 let module_name = module.path().as_str();
                 self.emit(
                     self.sources.span(file, function_token.range())?,
@@ -14153,6 +14210,32 @@ impl<'a> ExpressionChecker<'a> {
                 )? {
                     return Ok(Some(call));
                 }
+                if let Some(call) = self.check_qualified_time_call(
+                    file,
+                    range,
+                    suffix,
+                    explicit_bracket,
+                    &tokens,
+                    resolved_index,
+                    &resolved,
+                    expected,
+                    context,
+                )? {
+                    return Ok(Some(call));
+                }
+                if let Some(call) = self.check_qualified_env_call(
+                    file,
+                    range,
+                    suffix,
+                    explicit_bracket,
+                    &tokens,
+                    resolved_index,
+                    &resolved,
+                    expected,
+                    context,
+                )? {
+                    return Ok(Some(call));
+                }
                 let resolved_is_type = match &resolved {
                     ResolvedName::Symbol(symbol) => {
                         self.resolved.symbol(*symbol).is_some_and(|symbol| {
@@ -14258,6 +14341,142 @@ impl<'a> ExpressionChecker<'a> {
             );
         }
         Ok(None)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_qualified_time_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        tokens: &[SyntaxTokenRef<'_>],
+        resolved_index: usize,
+        resolved: &ResolvedName,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let ResolvedName::External {
+            module,
+            namespace: Namespace::Type,
+            name,
+        } = resolved
+        else {
+            return Ok(None);
+        };
+        if module.package().as_str() != "toolchain:std:0.1-bootstrap"
+            || module.path().as_str() != "time"
+            || resolved_index + 2 != tokens.len()
+        {
+            return Ok(None);
+        }
+        let member_token = *tokens
+            .last()
+            .expect("a qualified time operation has a member token");
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?);
+        let function = match (name.as_str(), member) {
+            ("Duration", "fromNanoseconds") => HirBootstrapHostFunction::DurationFromNanoseconds,
+            ("Duration", "fromMicroseconds") => HirBootstrapHostFunction::DurationFromMicroseconds,
+            ("Duration", "fromMilliseconds") => HirBootstrapHostFunction::DurationFromMilliseconds,
+            ("Duration", "fromSeconds") => HirBootstrapHostFunction::DurationFromSeconds,
+            ("Timer", "after") => HirBootstrapHostFunction::TimerAfter,
+            ("Timer", "at") => HirBootstrapHostFunction::TimerAt,
+            _ => return Ok(None),
+        };
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "std.time operations do not declare generic parameters",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let callee =
+            self.bootstrap_host_callee(function, self.sources.span(file, member_token.range())?)?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            None,
+            None,
+            context,
+        )
+        .map(Some)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn check_qualified_env_call(
+        &mut self,
+        file: FileId,
+        range: TextRange,
+        suffix: SyntaxNodeRef<'_>,
+        explicit_bracket: Option<SyntaxNodeRef<'_>>,
+        tokens: &[SyntaxTokenRef<'_>],
+        resolved_index: usize,
+        resolved: &ResolvedName,
+        expected: Option<ExpressionExpectation>,
+        context: &mut BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        let ResolvedName::External {
+            module,
+            namespace: Namespace::Type,
+            name,
+        } = resolved
+        else {
+            return Ok(None);
+        };
+        if module.package().as_str() != "toolchain:std:0.1-bootstrap"
+            || module.path().as_str() != "env"
+            || resolved_index + 2 != tokens.len()
+        {
+            return Ok(None);
+        }
+        let member_token = *tokens
+            .last()
+            .expect("a qualified environment operation has a member token");
+        let member = member_token
+            .token()
+            .normalized_identifier()
+            .unwrap_or(self.token_text(file, member_token)?);
+        let function = match (name.as_str(), member) {
+            ("Name", "fromText") => HirBootstrapHostFunction::EnvNameFromText,
+            ("Name", "fromBytes") => HirBootstrapHostFunction::EnvNameFromBytes,
+            _ => return Ok(None),
+        };
+        if let Some(bracket) = explicit_bracket {
+            self.emit(
+                self.sources.span(file, bracket.range())?,
+                "E1104",
+                "std.env operations do not declare generic parameters",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range).map(Some);
+        }
+        let callee =
+            self.bootstrap_host_callee(function, self.sources.span(file, member_token.range())?)?;
+        self.check_call(
+            CallSite {
+                file,
+                range,
+                suffix,
+                expected,
+            },
+            callee,
+            None,
+            None,
+            context,
+        )
+        .map(Some)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -15965,6 +16184,31 @@ impl<'a> ExpressionChecker<'a> {
                 HirBootstrapHostFunction::BytesBuilderAppendArray
             }
             (IntrinsicType::BytesBuilder, "finish") => HirBootstrapHostFunction::BytesBuilderFinish,
+            (IntrinsicType::Duration, "toNanoseconds") => {
+                HirBootstrapHostFunction::DurationToNanoseconds
+            }
+            (IntrinsicType::Duration, "add") => HirBootstrapHostFunction::DurationAdd,
+            (IntrinsicType::Duration, "subtract") => HirBootstrapHostFunction::DurationSubtract,
+            (IntrinsicType::Duration, "multiply") => HirBootstrapHostFunction::DurationMultiply,
+            (IntrinsicType::Duration, "negate") => HirBootstrapHostFunction::DurationNegate,
+            (IntrinsicType::Duration, "isZero") => HirBootstrapHostFunction::DurationIsZero,
+            (IntrinsicType::Duration, "isNegative") => HirBootstrapHostFunction::DurationIsNegative,
+            (IntrinsicType::Duration, "isLessThan") => HirBootstrapHostFunction::DurationIsLessThan,
+            (IntrinsicType::Instant, "add") => HirBootstrapHostFunction::InstantAdd,
+            (IntrinsicType::Instant, "subtract") => HirBootstrapHostFunction::InstantSubtract,
+            (IntrinsicType::Instant, "durationSince") => {
+                HirBootstrapHostFunction::InstantDurationSince
+            }
+            (IntrinsicType::Instant, "isBefore") => HirBootstrapHostFunction::InstantIsBefore,
+            (IntrinsicType::Instant, "isAfter") => HirBootstrapHostFunction::InstantIsAfter,
+            (IntrinsicType::Timer, "wait") => HirBootstrapHostFunction::TimerWait,
+            (IntrinsicType::Timer, "cancel") => HirBootstrapHostFunction::TimerCancel,
+            (IntrinsicType::EnvSnapshot, "arguments") => {
+                HirBootstrapHostFunction::EnvSnapshotArguments
+            }
+            (IntrinsicType::EnvSnapshot, "get") => HirBootstrapHostFunction::EnvSnapshotGet,
+            (IntrinsicType::EnvValue, "asText") => HirBootstrapHostFunction::EnvValueAsText,
+            (IntrinsicType::EnvValue, "asBytes") => HirBootstrapHostFunction::EnvValueAsBytes,
             _ => return Ok(None),
         };
         if self
@@ -17107,7 +17351,15 @@ impl<'a> ExpressionChecker<'a> {
             return self.recovery_expression(file, range);
         }
         if contract.function.is_async() {
-            if context.in_defer_body {
+            if context.in_defer_body
+                && !matches!(
+                    async_initiation,
+                    Some(AsyncInitiation {
+                        kind: AsyncInitiationKind::Await,
+                        ..
+                    })
+                )
+            {
                 self.emit(
                     call_span,
                     "E1608",

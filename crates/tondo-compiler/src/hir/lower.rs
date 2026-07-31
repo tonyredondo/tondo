@@ -187,6 +187,10 @@ impl<'a> TypeLowerer<'a> {
             .packages
             .module(self.packages.standard(), &bytes_module);
         let process_module = self.packages.module(self.packages.standard(), &process);
+        let time = ModulePath::new("time")?;
+        let time_module = self.packages.module(self.packages.standard(), &time);
+        let env = ModulePath::new("env")?;
+        let env_module = self.packages.module(self.packages.standard(), &env);
         let bytes_referenced = bytes_module.as_ref().is_some_and(|bytes_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -203,7 +207,23 @@ impl<'a> TypeLowerer<'a> {
                 )
             })
         });
-        if !bytes_referenced && !process_referenced {
+        let time_referenced = time_module.as_ref().is_some_and(|time_module| {
+            self.resolved.references().any(|reference| {
+                matches!(
+                    reference.entity(),
+                    ResolvedEntity::Module(module) if module == time_module
+                )
+            })
+        });
+        let env_referenced = env_module.as_ref().is_some_and(|env_module| {
+            self.resolved.references().any(|reference| {
+                matches!(
+                    reference.entity(),
+                    ResolvedEntity::Module(module) if module == env_module
+                )
+            })
+        });
+        if !bytes_referenced && !process_referenced && !time_referenced && !env_referenced {
             return Ok(());
         }
         let file = *self
@@ -215,6 +235,7 @@ impl<'a> TypeLowerer<'a> {
         let string = self.interner.scalar(ScalarType::String);
         let bool_type = self.interner.scalar(ScalarType::Bool);
         let int = self.interner.scalar(ScalarType::Int);
+        let unit = self.interner.scalar(ScalarType::Unit);
         let command = self
             .interner
             .intrinsic(IntrinsicType::Command, Vec::new())?;
@@ -259,6 +280,283 @@ impl<'a> TypeLowerer<'a> {
         let check_error = self.interner.union([process_error, process_exit_error])?;
         let check_outcome = self.interner.result(output, check_error)?;
         let string_from_bytes_outcome = self.interner.result(string, utf8_error)?;
+
+        if time_referenced {
+            let duration = self
+                .interner
+                .intrinsic(IntrinsicType::Duration, Vec::new())?;
+            let instant = self
+                .interner
+                .intrinsic(IntrinsicType::Instant, Vec::new())?;
+            let timer = self.interner.intrinsic(IntrinsicType::Timer, Vec::new())?;
+            let duration_error = self
+                .interner
+                .intrinsic(IntrinsicType::DurationError, Vec::new())?;
+            let clock_error = self
+                .interner
+                .intrinsic(IntrinsicType::ClockError, Vec::new())?;
+            let duration_outcome = self.interner.result(duration, duration_error)?;
+            let duration_clock_outcome = self.interner.result(duration, clock_error)?;
+            let instant_outcome = self.interner.result(instant, clock_error)?;
+            let timer_outcome = self.interner.result(timer, clock_error)?;
+            let unit_clock_outcome = self.interner.result(unit, clock_error)?;
+            let bool_clock_outcome = self.interner.result(bool_type, clock_error)?;
+
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TimeNow,
+                Vec::new(),
+                None,
+                instant_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TimeResolution,
+                Vec::new(),
+                None,
+                duration_clock_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TimeDeadline,
+                vec![(duration, false)],
+                None,
+                instant_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TimeSleep,
+                vec![(duration, false)],
+                None,
+                unit_clock_outcome,
+            )?;
+
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::DurationFromNanoseconds,
+                vec![(int, false)],
+                None,
+                duration,
+            )?;
+            for (function, outcome) in [
+                (
+                    HirBootstrapHostFunction::DurationFromMicroseconds,
+                    duration_outcome,
+                ),
+                (
+                    HirBootstrapHostFunction::DurationFromMilliseconds,
+                    duration_outcome,
+                ),
+                (
+                    HirBootstrapHostFunction::DurationFromSeconds,
+                    duration_outcome,
+                ),
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(int, false)],
+                    None,
+                    outcome,
+                )?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::DurationToNanoseconds,
+                vec![(duration, true)],
+                None,
+                int,
+            )?;
+            for (function, outcome, argument) in [
+                (
+                    HirBootstrapHostFunction::DurationAdd,
+                    duration_outcome,
+                    duration,
+                ),
+                (
+                    HirBootstrapHostFunction::DurationSubtract,
+                    duration_outcome,
+                    duration,
+                ),
+                (
+                    HirBootstrapHostFunction::DurationMultiply,
+                    duration_outcome,
+                    int,
+                ),
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(duration, true), (argument, false)],
+                    None,
+                    outcome,
+                )?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::DurationNegate,
+                vec![(duration, true)],
+                None,
+                duration_outcome,
+            )?;
+            for function in [
+                HirBootstrapHostFunction::DurationIsZero,
+                HirBootstrapHostFunction::DurationIsNegative,
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(duration, true)],
+                    None,
+                    bool_type,
+                )?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::DurationIsLessThan,
+                vec![(duration, true), (duration, false)],
+                None,
+                bool_type,
+            )?;
+
+            for (function, outcome, argument) in [
+                (
+                    HirBootstrapHostFunction::InstantAdd,
+                    instant_outcome,
+                    duration,
+                ),
+                (
+                    HirBootstrapHostFunction::InstantSubtract,
+                    instant_outcome,
+                    duration,
+                ),
+                (
+                    HirBootstrapHostFunction::InstantDurationSince,
+                    duration_clock_outcome,
+                    instant,
+                ),
+                (
+                    HirBootstrapHostFunction::InstantIsBefore,
+                    bool_clock_outcome,
+                    instant,
+                ),
+                (
+                    HirBootstrapHostFunction::InstantIsAfter,
+                    bool_clock_outcome,
+                    instant,
+                ),
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(instant, true), (argument, false)],
+                    None,
+                    outcome,
+                )?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TimerAfter,
+                vec![(duration, false)],
+                None,
+                timer_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TimerAt,
+                vec![(instant, false)],
+                None,
+                timer_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TimerWait,
+                vec![(timer, true)],
+                None,
+                unit_clock_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TimerCancel,
+                vec![(timer, true)],
+                None,
+                unit,
+            )?;
+        }
+
+        if env_referenced {
+            let snapshot = self
+                .interner
+                .intrinsic(IntrinsicType::EnvSnapshot, Vec::new())?;
+            let name = self
+                .interner
+                .intrinsic(IntrinsicType::EnvName, Vec::new())?;
+            let value = self
+                .interner
+                .intrinsic(IntrinsicType::EnvValue, Vec::new())?;
+            let env_error = self
+                .interner
+                .intrinsic(IntrinsicType::EnvError, Vec::new())?;
+            let value_array = self.interner.intrinsic(IntrinsicType::Array, vec![value])?;
+            let optional_value = self.interner.option(value)?;
+            let optional_string = self.interner.option(string)?;
+            let snapshot_outcome = self.interner.result(snapshot, env_error)?;
+            let name_outcome = self.interner.result(name, env_error)?;
+            let lookup_outcome = self.interner.result(optional_value, env_error)?;
+
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::EnvSnapshot,
+                Vec::new(),
+                None,
+                snapshot_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::EnvNameFromText,
+                vec![(string, false)],
+                None,
+                name_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::EnvNameFromBytes,
+                vec![(bytes, false)],
+                None,
+                name_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::EnvSnapshotArguments,
+                vec![(snapshot, ParameterMode::Ref, true)],
+                None,
+                value_array,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::EnvSnapshotGet,
+                vec![
+                    (snapshot, ParameterMode::Ref, true),
+                    (name, ParameterMode::Value, false),
+                ],
+                None,
+                lookup_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::EnvValueAsText,
+                vec![(value, ParameterMode::Ref, true)],
+                None,
+                optional_string,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::EnvValueAsBytes,
+                vec![(value, ParameterMode::Ref, true)],
+                None,
+                bytes,
+            )?;
+        }
 
         if bytes_referenced {
             let byte = self.interner.scalar(ScalarType::Byte);
@@ -3731,7 +4029,16 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::ProcessError
                         | IntrinsicType::ProcessExitError
                         | IntrinsicType::Utf8Error
-                        | IntrinsicType::NumericConversionError => values.push(true),
+                        | IntrinsicType::NumericConversionError
+                        | IntrinsicType::Duration
+                        | IntrinsicType::Instant
+                        | IntrinsicType::Timer
+                        | IntrinsicType::DurationError
+                        | IntrinsicType::ClockError
+                        | IntrinsicType::EnvSnapshot
+                        | IntrinsicType::EnvName
+                        | IntrinsicType::EnvValue
+                        | IntrinsicType::EnvError => values.push(true),
                     },
                 },
                 ProductivityTask::Nominal(symbol, arguments) => {

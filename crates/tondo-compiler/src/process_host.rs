@@ -1,15 +1,23 @@
 use std::collections::BTreeMap;
 use std::io::{self, Read};
 use std::process::{Child, ChildStderr, ChildStdout, Command as OsCommand, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant as StdInstant};
 
 #[cfg(unix)]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 use tondo_vm::runtime::{RuntimeHostValueKind, RuntimeValue, VmError, VmHost};
+
+const INT_MIN: i128 = i64::MIN as i128;
+const INT_MAX: i128 = i64::MAX as i128;
+const NANOS_PER_MICROSECOND: i128 = 1_000;
+const NANOS_PER_MILLISECOND: i128 = 1_000_000;
+const NANOS_PER_SECOND: i128 = 1_000_000_000;
+const DEFAULT_MAX_TIME_RESOURCES: usize = 1_048_576;
+static NEXT_CLOCK_DOMAIN: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 struct ProcessStage {
@@ -36,6 +44,12 @@ struct ProcessOutput {
     statuses: Vec<ExitStatus>,
 }
 
+#[derive(Debug, Clone)]
+struct EnvSnapshot {
+    arguments: Vec<Vec<u8>>,
+    entries: BTreeMap<Vec<u8>, Vec<u8>>,
+}
+
 enum HostValue {
     Command(ProcessPlan),
     Pipeline(ProcessPlan),
@@ -48,6 +62,66 @@ enum HostValue {
     Utf8Error { _message: String },
     BytesBuilder(Vec<u8>),
     BytesError { _message: String },
+    Instant { domain: u64, nanos: i128 },
+    Timer { domain: u64, deadline: i128 },
+    DurationError { _message: String },
+    ClockError { _message: String },
+    EnvSnapshot(EnvSnapshot),
+    EnvName(Vec<u8>),
+    EnvValue(Vec<u8>),
+    EnvError { _message: String },
+}
+
+enum ClockProvider {
+    Real { origin: StdInstant },
+    Virtual { now: i128, resolution: i128 },
+}
+
+impl ClockProvider {
+    fn real() -> Self {
+        Self::Real {
+            origin: StdInstant::now(),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn virtual_time(resolution: i128) -> Result<Self, VmError> {
+        if resolution <= 0 {
+            return Err(VmError::Host(
+                "virtual clock resolution must be positive".into(),
+            ));
+        }
+        Ok(Self::Virtual { now: 0, resolution })
+    }
+
+    fn now(&self) -> Result<i128, VmError> {
+        match self {
+            Self::Real { origin } => i128::try_from(origin.elapsed().as_nanos())
+                .map_err(|_| VmError::Host("monotonic clock value exceeds Int domain".into())),
+            Self::Virtual { now, .. } => Ok(*now),
+        }
+    }
+
+    fn resolution(&self) -> i128 {
+        match self {
+            Self::Real { .. } => 1,
+            Self::Virtual { resolution, .. } => *resolution,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn advance_virtual(&mut self, delta: i128) -> Result<(), VmError> {
+        let Self::Virtual { now, .. } = self else {
+            return Err(VmError::Host("cannot advance the real clock".into()));
+        };
+        if delta < 0 {
+            return Err(VmError::Host("virtual clock cannot move backwards".into()));
+        }
+        *now = now
+            .checked_add(delta)
+            .ok_or_else(|| VmError::Host("virtual clock value overflow".into()))?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -66,14 +140,29 @@ struct AsyncJob {
     mode: CompletionMode,
 }
 
+struct TimeJob {
+    deadline: i128,
+    cancellation: bool,
+    completion: Option<RuntimeValue>,
+    counts_resource: bool,
+}
+
 pub(crate) struct BootstrapHost {
     pub(crate) stdout: Vec<u8>,
     arguments: Vec<String>,
+    environment: BTreeMap<Vec<u8>, Vec<u8>>,
+    environment_available: bool,
+    env_snapshot_id: Option<u64>,
     values: BTreeMap<u64, HostValue>,
     jobs: BTreeMap<u64, AsyncJob>,
+    time_jobs: BTreeMap<u64, TimeJob>,
+    clock: ClockProvider,
+    clock_domain: u64,
     next_value: u64,
     next_job: u64,
     max_bytes: u64,
+    max_time_resources: usize,
+    time_resources: usize,
 }
 
 impl BootstrapHost {
@@ -82,15 +171,91 @@ impl BootstrapHost {
     }
 
     pub(crate) fn with_max_bytes(arguments: Vec<String>, max_bytes: u64) -> Self {
+        Self::with_limits(arguments, max_bytes, DEFAULT_MAX_TIME_RESOURCES)
+    }
+
+    fn with_limits(arguments: Vec<String>, max_bytes: u64, max_time_resources: usize) -> Self {
+        Self::with_environment_limits(
+            arguments,
+            BTreeMap::new(),
+            true,
+            max_bytes,
+            max_time_resources,
+        )
+    }
+
+    fn with_environment_limits(
+        arguments: Vec<String>,
+        environment: BTreeMap<Vec<u8>, Vec<u8>>,
+        environment_available: bool,
+        max_bytes: u64,
+        max_time_resources: usize,
+    ) -> Self {
         Self {
             stdout: Vec::new(),
             arguments,
+            environment,
+            environment_available,
+            env_snapshot_id: None,
             values: BTreeMap::new(),
             jobs: BTreeMap::new(),
+            time_jobs: BTreeMap::new(),
+            clock: ClockProvider::real(),
+            clock_domain: NEXT_CLOCK_DOMAIN.fetch_add(1, Ordering::Relaxed),
             next_value: 0,
             next_job: 0,
             max_bytes,
+            max_time_resources,
+            time_resources: 0,
         }
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn with_environment(
+        arguments: Vec<String>,
+        environment: impl IntoIterator<Item = (Vec<u8>, Vec<u8>)>,
+    ) -> Self {
+        Self::with_environment_limits(
+            arguments,
+            environment.into_iter().collect(),
+            true,
+            u64::MAX,
+            DEFAULT_MAX_TIME_RESOURCES,
+        )
+    }
+
+    #[allow(dead_code)]
+    fn with_unavailable_environment(arguments: Vec<String>) -> Self {
+        Self::with_environment_limits(
+            arguments,
+            BTreeMap::new(),
+            false,
+            u64::MAX,
+            DEFAULT_MAX_TIME_RESOURCES,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn with_max_time_resources(
+        arguments: Vec<String>,
+        max_time_resources: usize,
+    ) -> Self {
+        Self::with_limits(arguments, u64::MAX, max_time_resources)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn with_virtual_time(
+        arguments: Vec<String>,
+        resolution: i128,
+    ) -> Result<Self, VmError> {
+        let mut host = Self::with_max_bytes(arguments, u64::MAX);
+        host.clock = ClockProvider::virtual_time(resolution)?;
+        Ok(host)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn advance_virtual_time(&mut self, delta: i128) -> Result<(), VmError> {
+        self.clock.advance_virtual(delta)
     }
 
     pub(crate) fn take_stdout(&mut self) -> Vec<u8> {
@@ -131,6 +296,257 @@ impl BootstrapHost {
 
     fn bytes_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
         RuntimeValue::ResultErr(Box::new(self.bytes_error(message)))
+    }
+
+    fn duration_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::DurationError,
+            HostValue::DurationError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn duration_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.duration_error(message)))
+    }
+
+    fn clock_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::ClockError,
+            HostValue::ClockError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn clock_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.clock_error(message)))
+    }
+
+    fn env_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::EnvError,
+            HostValue::EnvError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn env_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.env_error(message)))
+    }
+
+    fn valid_environment_name(bytes: &[u8]) -> bool {
+        !bytes.is_empty() && !bytes.iter().any(|byte| *byte == 0 || *byte == b'=')
+    }
+
+    fn environment_name(&self, value: &RuntimeValue) -> Result<Vec<u8>, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::EnvName,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("std.env.Name receiver is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::EnvName(bytes)) => Ok(bytes.clone()),
+            _ => Err(VmError::Host("std.env.Name token is stale".into())),
+        }
+    }
+
+    fn environment_value(&self, value: &RuntimeValue) -> Result<Vec<u8>, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::EnvValue,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("std.env.Value receiver is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::EnvValue(bytes)) => Ok(bytes.clone()),
+            _ => Err(VmError::Host("std.env.Value token is stale".into())),
+        }
+    }
+
+    fn environment_snapshot(&mut self) -> Result<RuntimeValue, RuntimeValue> {
+        if !self.environment_available {
+            return Err(self.env_result_error("environment snapshot is unavailable"));
+        }
+        if let Some(id) = self.env_snapshot_id {
+            if matches!(self.values.get(&id), Some(HostValue::EnvSnapshot(_))) {
+                return Ok(RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::EnvSnapshot,
+                    id,
+                });
+            }
+            self.env_snapshot_id = None;
+        }
+
+        let host_arguments = self.arguments.clone();
+        let host_environment = self.environment.clone();
+        let mut total = 0_u64;
+        let mut arguments = Vec::with_capacity(host_arguments.len());
+        for argument in host_arguments {
+            let bytes = argument.into_bytes();
+            let length = u64::try_from(bytes.len()).map_err(|_| {
+                self.env_result_error("environment argument length is not representable")
+            })?;
+            total = total
+                .checked_add(length)
+                .ok_or_else(|| self.env_result_error("environment snapshot byte count overflow"))?;
+            arguments.push(bytes);
+        }
+        for (name, value) in &host_environment {
+            if !Self::valid_environment_name(name) {
+                return Err(self.env_result_error("environment contains an invalid name"));
+            }
+            for bytes in [name, value] {
+                let length = u64::try_from(bytes.len()).map_err(|_| {
+                    self.env_result_error("environment entry length is not representable")
+                })?;
+                total = total.checked_add(length).ok_or_else(|| {
+                    self.env_result_error("environment snapshot byte count overflow")
+                })?;
+            }
+        }
+        if total > self.max_bytes {
+            return Err(self.env_result_error("environment snapshot exceeds byte limit"));
+        }
+
+        let snapshot = self.allocate(
+            RuntimeHostValueKind::EnvSnapshot,
+            HostValue::EnvSnapshot(EnvSnapshot {
+                arguments,
+                entries: host_environment,
+            }),
+        );
+        let RuntimeValue::Host { id, .. } = snapshot else {
+            unreachable!("environment snapshots are host values")
+        };
+        self.env_snapshot_id = Some(id);
+        Ok(snapshot)
+    }
+
+    fn environment_snapshot_data(&self, value: &RuntimeValue) -> Result<EnvSnapshot, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::EnvSnapshot,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("std.env.Snapshot receiver is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::EnvSnapshot(snapshot)) => Ok(snapshot.clone()),
+            _ => Err(VmError::Host("std.env.Snapshot token is stale".into())),
+        }
+    }
+
+    fn duration(value: &RuntimeValue) -> Result<i128, VmError> {
+        let RuntimeValue::Integer(value) = value else {
+            return Err(VmError::Host("Duration is represented by an Int".into()));
+        };
+        if (INT_MIN..=INT_MAX).contains(value) {
+            Ok(*value)
+        } else {
+            Err(VmError::Host("Duration is outside the Int domain".into()))
+        }
+    }
+
+    fn instant(&self, value: &RuntimeValue) -> Result<(u64, i128), VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Instant,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("Instant receiver is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::Instant { domain, nanos }) => Ok((*domain, *nanos)),
+            _ => Err(VmError::Host("Instant token is stale".into())),
+        }
+    }
+
+    fn timer(&self, value: &RuntimeValue) -> Result<(u64, i128), VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Timer,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("Timer receiver is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::Timer { domain, deadline }) => Ok((*domain, *deadline)),
+            _ => Err(VmError::Host("Timer token is stale".into())),
+        }
+    }
+
+    fn allocate_instant(&mut self, nanos: i128) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::Instant,
+            HostValue::Instant {
+                domain: self.clock_domain,
+                nanos,
+            },
+        )
+    }
+
+    fn allocate_timer(&mut self, deadline: i128) -> Result<RuntimeValue, RuntimeValue> {
+        self.reserve_time_resource()?;
+        Ok(self.allocate(
+            RuntimeHostValueKind::Timer,
+            HostValue::Timer {
+                domain: self.clock_domain,
+                deadline,
+            },
+        ))
+    }
+
+    fn reserve_time_resource(&mut self) -> Result<(), RuntimeValue> {
+        if self.time_resources >= self.max_time_resources {
+            return Err(self.clock_result_error("time resource limit reached"));
+        }
+        self.time_resources += 1;
+        Ok(())
+    }
+
+    fn release_time_resource(&mut self) {
+        self.time_resources = self
+            .time_resources
+            .checked_sub(1)
+            .expect("time resource accounting underflow");
+    }
+
+    fn validate_delay(&mut self, value: &RuntimeValue) -> Result<i128, RuntimeValue> {
+        let delay =
+            Self::duration(value).map_err(|_| self.clock_result_error("invalid duration"))?;
+        if delay < 0 {
+            return Err(self.clock_result_error("delay must not be negative"));
+        }
+        Ok(delay)
+    }
+
+    fn deadline_value(&mut self, delay: &RuntimeValue) -> Result<RuntimeValue, RuntimeValue> {
+        let delay =
+            Self::duration(delay).map_err(|_| self.clock_result_error("invalid duration"))?;
+        let now = self
+            .clock
+            .now()
+            .map_err(|_| self.clock_result_error("monotonic clock is unavailable"))?;
+        let deadline = now
+            .checked_add(delay)
+            .ok_or_else(|| self.clock_result_error("deadline exceeds the clock range"))?;
+        Ok(self.allocate_instant(deadline))
+    }
+
+    fn timer_deadline_value(&mut self, delay: &RuntimeValue) -> Result<i128, RuntimeValue> {
+        let delay = self.validate_delay(delay)?;
+        let now = self
+            .clock
+            .now()
+            .map_err(|_| self.clock_result_error("monotonic clock is unavailable"))?;
+        now.checked_add(delay)
+            .ok_or_else(|| self.clock_result_error("deadline exceeds the clock range"))
     }
 
     fn ensure_bytes_len(&self, length: usize) -> Result<(), String> {
@@ -368,6 +784,67 @@ impl BootstrapHost {
             _ => return None,
         })
     }
+
+    fn next_job_id(&mut self) -> Result<u64, VmError> {
+        let id = self.next_job;
+        self.next_job = self
+            .next_job
+            .checked_add(1)
+            .ok_or_else(|| VmError::Host("async host identity space exhausted".into()))?;
+        Ok(id)
+    }
+
+    fn start_time_job(
+        &mut self,
+        deadline: i128,
+        completion: Option<RuntimeValue>,
+        already_reserved: bool,
+    ) -> Result<u64, VmError> {
+        let mut completion = completion;
+        let counts_resource = if already_reserved {
+            true
+        } else if completion.is_some() {
+            false
+        } else if self.time_resources < self.max_time_resources {
+            self.time_resources += 1;
+            true
+        } else {
+            completion = Some(self.clock_result_error("time resource limit reached"));
+            false
+        };
+        let id = match self.next_job_id() {
+            Ok(id) => id,
+            Err(error) => {
+                if counts_resource {
+                    self.release_time_resource();
+                }
+                return Err(error);
+            }
+        };
+        self.time_jobs.insert(
+            id,
+            TimeJob {
+                deadline,
+                cancellation: false,
+                completion,
+                counts_resource,
+            },
+        );
+        Ok(id)
+    }
+
+    fn finish_time_job(&mut self, id: u64) -> Result<RuntimeValue, VmError> {
+        let job = self
+            .time_jobs
+            .remove(&id)
+            .ok_or_else(|| VmError::Host(format!("unknown async time call #{id}")))?;
+        if job.counts_resource {
+            self.release_time_resource();
+        }
+        Ok(job
+            .completion
+            .unwrap_or(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))))
+    }
 }
 
 impl Default for BootstrapHost {
@@ -382,6 +859,243 @@ impl VmHost for BootstrapHost {
             ("std.console.print", [RuntimeValue::String(text)]) => {
                 self.stdout.extend_from_slice(text.as_bytes());
                 Ok(RuntimeValue::Unit)
+            }
+            ("std.time.now", []) => match self.clock.now() {
+                Ok(nanos) => Ok(RuntimeValue::ResultOk(Box::new(
+                    self.allocate_instant(nanos),
+                ))),
+                Err(_) => Ok(self.clock_result_error("monotonic clock is unavailable")),
+            },
+            ("std.time.resolution", []) => {
+                let resolution = self.clock.resolution();
+                if (INT_MIN..=INT_MAX).contains(&resolution) && resolution > 0 {
+                    Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
+                        resolution,
+                    ))))
+                } else {
+                    Ok(self.clock_result_error("clock resolution is outside the Int range"))
+                }
+            }
+            ("std.time.deadline", [delay]) => match self.deadline_value(delay) {
+                Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(value))),
+                Err(error) => Ok(error),
+            },
+            ("std.time.Duration.fromNanoseconds", [RuntimeValue::Integer(value)]) => {
+                if (INT_MIN..=INT_MAX).contains(value) {
+                    Ok(RuntimeValue::Integer(*value))
+                } else {
+                    Err(VmError::Host("nanoseconds exceed the Int range".into()))
+                }
+            }
+            ("std.time.Duration.fromMicroseconds", [RuntimeValue::Integer(value)])
+            | ("std.time.Duration.fromMilliseconds", [RuntimeValue::Integer(value)])
+            | ("std.time.Duration.fromSeconds", [RuntimeValue::Integer(value)]) => {
+                let factor = match name {
+                    "std.time.Duration.fromMicroseconds" => NANOS_PER_MICROSECOND,
+                    "std.time.Duration.fromMilliseconds" => NANOS_PER_MILLISECOND,
+                    _ => NANOS_PER_SECOND,
+                };
+                match value.checked_mul(factor) {
+                    Some(value) if (INT_MIN..=INT_MAX).contains(&value) => Ok(
+                        RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(value))),
+                    ),
+                    _ => Ok(self.duration_result_error("duration exceeds the Int range")),
+                }
+            }
+            ("std.time.Duration.toNanoseconds", [value]) => {
+                Ok(RuntimeValue::Integer(Self::duration(value)?))
+            }
+            ("std.time.Duration.add", [left, right])
+            | ("std.time.Duration.subtract", [left, right])
+            | ("std.time.Duration.multiply", [left, right]) => {
+                let left = Self::duration(left)?;
+                let right = Self::duration(right)?;
+                let result = match name {
+                    "std.time.Duration.add" => left.checked_add(right),
+                    "std.time.Duration.subtract" => left.checked_sub(right),
+                    _ => left.checked_mul(right),
+                };
+                match result {
+                    Some(value) if (INT_MIN..=INT_MAX).contains(&value) => Ok(
+                        RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(value))),
+                    ),
+                    _ => Ok(self.duration_result_error("duration arithmetic overflow")),
+                }
+            }
+            ("std.time.Duration.negate", [value]) => {
+                let value = Self::duration(value)?;
+                match value.checked_neg() {
+                    Some(value) if (INT_MIN..=INT_MAX).contains(&value) => Ok(
+                        RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(value))),
+                    ),
+                    _ => Ok(self.duration_result_error("duration arithmetic overflow")),
+                }
+            }
+            ("std.time.Duration.isZero", [value]) => {
+                Ok(RuntimeValue::Bool(Self::duration(value)? == 0))
+            }
+            ("std.time.Duration.isNegative", [value]) => {
+                Ok(RuntimeValue::Bool(Self::duration(value)? < 0))
+            }
+            ("std.time.Duration.isLessThan", [left, right]) => Ok(RuntimeValue::Bool(
+                Self::duration(left)? < Self::duration(right)?,
+            )),
+            ("std.time.Instant.add", [receiver, duration])
+            | ("std.time.Instant.subtract", [receiver, duration]) => {
+                let (domain, instant) = self.instant(receiver)?;
+                if domain != self.clock_domain {
+                    return Ok(self.clock_result_error("instant belongs to another clock domain"));
+                }
+                let duration = Self::duration(duration)?;
+                let value = if name.ends_with(".add") {
+                    instant.checked_add(duration)
+                } else {
+                    instant.checked_sub(duration)
+                };
+                match value {
+                    Some(value) => Ok(RuntimeValue::ResultOk(Box::new(
+                        self.allocate_instant(value),
+                    ))),
+                    None => Ok(self.clock_result_error("instant arithmetic overflow")),
+                }
+            }
+            ("std.time.Instant.durationSince", [receiver, other]) => {
+                let (domain, instant) = self.instant(receiver)?;
+                let (other_domain, other) = self.instant(other)?;
+                if domain != self.clock_domain
+                    || other_domain != self.clock_domain
+                    || domain != other_domain
+                {
+                    return Ok(self.clock_result_error("instant belongs to another clock domain"));
+                }
+                match instant.checked_sub(other) {
+                    Some(value) if (INT_MIN..=INT_MAX).contains(&value) => Ok(
+                        RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(value))),
+                    ),
+                    _ => Ok(
+                        self.clock_result_error("instant difference exceeds the Duration range")
+                    ),
+                }
+            }
+            ("std.time.Instant.isBefore", [receiver, other])
+            | ("std.time.Instant.isAfter", [receiver, other]) => {
+                let (domain, instant) = self.instant(receiver)?;
+                let (other_domain, other) = self.instant(other)?;
+                if domain != self.clock_domain
+                    || other_domain != self.clock_domain
+                    || domain != other_domain
+                {
+                    return Ok(self.clock_result_error("instant belongs to another clock domain"));
+                }
+                let before = instant < other;
+                let value = if name.ends_with(".isBefore") {
+                    before
+                } else {
+                    !before && instant != other
+                };
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Bool(value))))
+            }
+            ("std.time.Timer.after", [delay]) => match self.timer_deadline_value(delay) {
+                Ok(deadline) => match self.allocate_timer(deadline) {
+                    Ok(timer) => Ok(RuntimeValue::ResultOk(Box::new(timer))),
+                    Err(error) => Ok(error),
+                },
+                Err(error) => Ok(error),
+            },
+            ("std.time.Timer.at", [instant]) => {
+                let (domain, deadline) = self.instant(instant)?;
+                if domain != self.clock_domain {
+                    return Ok(self.clock_result_error("instant belongs to another clock domain"));
+                }
+                match self.allocate_timer(deadline) {
+                    Ok(timer) => Ok(RuntimeValue::ResultOk(Box::new(timer))),
+                    Err(error) => Ok(error),
+                }
+            }
+            ("std.time.Timer.cancel", [timer]) => {
+                let (domain, _) = self.timer(timer)?;
+                if domain != self.clock_domain {
+                    return Err(VmError::Host(
+                        "timer belongs to another clock domain".into(),
+                    ));
+                }
+                let RuntimeValue::Host { id, .. } = timer else {
+                    unreachable!("timer() validated the token")
+                };
+                self.values.remove(id);
+                self.release_time_resource();
+                Ok(RuntimeValue::Unit)
+            }
+            ("std.env.snapshot", []) => match self.environment_snapshot() {
+                Ok(snapshot) => Ok(RuntimeValue::ResultOk(Box::new(snapshot))),
+                Err(error) => Ok(error),
+            },
+            ("std.env.Name.fromText", [RuntimeValue::String(text)]) => {
+                let bytes = text.as_bytes().to_vec();
+                if !Self::valid_environment_name(&bytes) {
+                    return Ok(self.env_result_error("environment name is invalid"));
+                }
+                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
+                    return Ok(self.env_result_error(message));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::EnvName,
+                    HostValue::EnvName(bytes),
+                ))))
+            }
+            ("std.env.Name.fromBytes", [bytes]) => {
+                let bytes = self.bytes(bytes)?.to_vec();
+                if !Self::valid_environment_name(&bytes) {
+                    return Ok(self.env_result_error("environment name is invalid"));
+                }
+                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
+                    return Ok(self.env_result_error(message));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::EnvName,
+                    HostValue::EnvName(bytes),
+                ))))
+            }
+            ("std.env.Snapshot.arguments", [snapshot]) => {
+                let snapshot = self.environment_snapshot_data(snapshot)?;
+                Ok(RuntimeValue::Array(
+                    snapshot
+                        .arguments
+                        .into_iter()
+                        .map(|bytes| {
+                            self.allocate(
+                                RuntimeHostValueKind::EnvValue,
+                                HostValue::EnvValue(bytes),
+                            )
+                        })
+                        .collect(),
+                ))
+            }
+            ("std.env.Snapshot.get", [snapshot, name]) => {
+                let snapshot = self.environment_snapshot_data(snapshot)?;
+                let name = self.environment_name(name)?;
+                match snapshot.entries.get(&name) {
+                    Some(bytes) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
+                        Box::new(self.allocate(
+                            RuntimeHostValueKind::EnvValue,
+                            HostValue::EnvValue(bytes.clone()),
+                        )),
+                    )))),
+                    None => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))),
+                }
+            }
+            ("std.env.Value.asText", [value]) => {
+                let bytes = self.environment_value(value)?;
+                Ok(String::from_utf8(bytes)
+                    .map(|text| RuntimeValue::OptionSome(Box::new(RuntimeValue::String(text))))
+                    .unwrap_or(RuntimeValue::OptionNone))
+            }
+            ("std.env.Value.asBytes", [value]) => {
+                let bytes = self.environment_value(value)?;
+                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
+                    return Err(VmError::Host(message));
+                }
+                Ok(self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(bytes)))
             }
             ("std.bytes.empty", []) => Ok(RuntimeValue::ResultOk(Box::new(
                 self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(Vec::new())),
@@ -613,6 +1327,39 @@ impl VmHost for BootstrapHost {
     }
 
     fn start_async(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<u64, VmError> {
+        if name == "std.time.sleep" {
+            let [delay] = arguments else {
+                return Err(VmError::Host(
+                    "std.time.sleep received an invalid bootstrap argument list".into(),
+                ));
+            };
+            let completion = match self.validate_delay(delay) {
+                Ok(delay) => {
+                    let now = self.clock.now()?;
+                    let deadline = now
+                        .checked_add(delay)
+                        .ok_or_else(|| VmError::Host("sleep deadline overflow".into()))?;
+                    return self.start_time_job(deadline, None, false);
+                }
+                Err(error) => Some(error),
+            };
+            return self.start_time_job(i128::MIN, completion, false);
+        }
+        if name == "std.time.Timer.wait" {
+            let [receiver] = arguments else {
+                return Err(VmError::Host(
+                    "std.time.Timer.wait received an invalid bootstrap argument list".into(),
+                ));
+            };
+            let (domain, deadline) = self.timer(receiver)?;
+            let RuntimeValue::Host { id, .. } = receiver else {
+                unreachable!("timer() validated the token")
+            };
+            self.values.remove(id);
+            let completion = (domain != self.clock_domain)
+                .then(|| self.clock_result_error("timer belongs to another clock domain"));
+            return self.start_time_job(deadline, completion, true);
+        }
         let mode = Self::mode(name).ok_or_else(|| VmError::UnsupportedHostCall(name.to_owned()))?;
         let [receiver] = arguments else {
             return Err(VmError::Host(format!(
@@ -633,6 +1380,16 @@ impl VmHost for BootstrapHost {
     }
 
     fn poll_async(&mut self, call: u64) -> Result<Option<RuntimeValue>, VmError> {
+        if self.time_jobs.contains_key(&call) {
+            let ready = {
+                let job = self
+                    .time_jobs
+                    .get(&call)
+                    .expect("time job presence was checked");
+                job.completion.is_some() || job.cancellation || self.clock.now()? >= job.deadline
+            };
+            return ready.then(|| self.finish_time_job(call)).transpose();
+        }
         let result = {
             let job = self
                 .jobs
@@ -666,6 +1423,10 @@ impl VmHost for BootstrapHost {
     }
 
     fn cancel_async(&mut self, call: u64) -> Result<(), VmError> {
+        if let Some(job) = self.time_jobs.get_mut(&call) {
+            job.cancellation = true;
+            return Ok(());
+        }
         let job = self
             .jobs
             .get(&call)
@@ -676,13 +1437,17 @@ impl VmHost for BootstrapHost {
 
     fn cleanup(&mut self, value: &RuntimeValue) -> Result<(), VmError> {
         let RuntimeValue::Host {
-            kind: RuntimeHostValueKind::ProcessHandle,
+            kind: kind @ (RuntimeHostValueKind::ProcessHandle | RuntimeHostValueKind::Timer),
             id,
         } = value
         else {
             return Ok(());
         };
-        self.values.remove(id);
+        if matches!(kind, RuntimeHostValueKind::Timer) && self.values.remove(id).is_some() {
+            self.release_time_resource();
+        } else {
+            self.values.remove(id);
+        }
         Ok(())
     }
 }
@@ -1042,6 +1807,613 @@ mod tests {
             panic!("expected successful bytes result");
         };
         *value
+    }
+
+    #[test]
+    fn time_provider_is_monotonic_and_duration_arithmetic_is_checked() {
+        let mut host = BootstrapHost::default();
+        let first = ok(host.invoke("std.time.now", &[]).unwrap());
+        let second = ok(host.invoke("std.time.now", &[]).unwrap());
+        let (
+            RuntimeValue::Host { kind, .. },
+            RuntimeValue::Host {
+                kind: next_kind, ..
+            },
+        ) = (first, second)
+        else {
+            panic!("now must return opaque Instant tokens");
+        };
+        assert_eq!(kind, RuntimeHostValueKind::Instant);
+        assert_eq!(next_kind, RuntimeHostValueKind::Instant);
+        let resolution = ok(host.invoke("std.time.resolution", &[]).unwrap());
+        assert!(matches!(resolution, RuntimeValue::Integer(value) if value > 0));
+
+        let overflow = host
+            .invoke(
+                "std.time.Duration.fromSeconds",
+                &[RuntimeValue::Integer(i128::from(i64::MAX))],
+            )
+            .unwrap();
+        assert!(matches!(
+            overflow,
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::DurationError, .. })
+        ));
+    }
+
+    fn run_time_contract_corpus(host: &mut BootstrapHost, expected_resolution: Option<i128>) {
+        let first = ok(host.invoke("std.time.now", &[]).unwrap());
+        let second = ok(host.invoke("std.time.now", &[]).unwrap());
+        assert!(matches!(
+            host.invoke(
+                "std.time.Instant.durationSince",
+                &[second.clone(), first.clone()],
+            )
+            .unwrap(),
+            RuntimeValue::ResultOk(value)
+                if matches!(value.as_ref(), RuntimeValue::Integer(value) if *value >= 0)
+        ));
+        let resolution = ok(host.invoke("std.time.resolution", &[]).unwrap());
+        assert!(matches!(resolution, RuntimeValue::Integer(value) if value > 0));
+        if let Some(expected) = expected_resolution {
+            assert_eq!(resolution, RuntimeValue::Integer(expected));
+        }
+
+        assert_eq!(
+            host.invoke(
+                "std.time.Duration.fromNanoseconds",
+                &[RuntimeValue::Integer(-7)],
+            )
+            .unwrap(),
+            RuntimeValue::Integer(-7)
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.time.Duration.fromMicroseconds",
+                    &[RuntimeValue::Integer(2)],
+                )
+                .unwrap()),
+            RuntimeValue::Integer(2_000)
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.time.Duration.add",
+                    &[RuntimeValue::Integer(2), RuntimeValue::Integer(3)],
+                )
+                .unwrap()),
+            RuntimeValue::Integer(5)
+        );
+        assert!(matches!(
+            host.invoke(
+                "std.time.Duration.add",
+                &[RuntimeValue::Integer(i64::MAX as i128), RuntimeValue::Integer(1)],
+            )
+            .unwrap(),
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::DurationError, .. })
+        ));
+
+        let deadline = ok(host
+            .invoke("std.time.deadline", &[RuntimeValue::Integer(0)])
+            .unwrap());
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.time.Instant.durationSince",
+                    &[deadline.clone(), deadline.clone()],
+                )
+                .unwrap()),
+            RuntimeValue::Integer(0)
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.time.Instant.isBefore",
+                    &[deadline.clone(), deadline.clone()],
+                )
+                .unwrap()),
+            RuntimeValue::Bool(false)
+        );
+
+        let sleep = host
+            .start_async("std.time.sleep", &[RuntimeValue::Integer(0)])
+            .unwrap();
+        assert!(matches!(
+            host.poll_async(sleep).unwrap(),
+            Some(RuntimeValue::ResultOk(value))
+                if matches!(value.as_ref(), RuntimeValue::Unit)
+        ));
+        let timer = ok(host
+            .invoke("std.time.Timer.after", &[RuntimeValue::Integer(0)])
+            .unwrap());
+        let wait = host.start_async("std.time.Timer.wait", &[timer]).unwrap();
+        assert!(matches!(
+            host.poll_async(wait).unwrap(),
+            Some(RuntimeValue::ResultOk(value))
+                if matches!(value.as_ref(), RuntimeValue::Unit)
+        ));
+        let timer = ok(host
+            .invoke("std.time.Timer.after", &[RuntimeValue::Integer(0)])
+            .unwrap());
+        assert_eq!(
+            host.invoke("std.time.Timer.cancel", &[timer]).unwrap(),
+            RuntimeValue::Unit
+        );
+    }
+
+    #[test]
+    fn identical_time_contract_corpus_passes_on_real_and_virtual_providers() {
+        let mut real = BootstrapHost::default();
+        run_time_contract_corpus(&mut real, None);
+
+        let mut virtual_host = BootstrapHost::with_virtual_time(Vec::new(), 10).unwrap();
+        run_time_contract_corpus(&mut virtual_host, Some(10));
+    }
+
+    #[test]
+    fn time_domains_reject_foreign_instants_and_timers_and_tied_deadlines() {
+        let mut source = BootstrapHost::with_virtual_time(Vec::new(), 10).unwrap();
+        let source_domain = source.clock_domain;
+        let mut host = BootstrapHost::with_virtual_time(Vec::new(), 10).unwrap();
+        let foreign = host.allocate(
+            RuntimeHostValueKind::Instant,
+            HostValue::Instant {
+                domain: source_domain,
+                nanos: 0,
+            },
+        );
+        for name in [
+            "std.time.Instant.add",
+            "std.time.Instant.subtract",
+            "std.time.Instant.durationSince",
+            "std.time.Instant.isBefore",
+            "std.time.Instant.isAfter",
+            "std.time.Timer.at",
+        ] {
+            let arguments = if name.ends_with("durationSince")
+                || name.ends_with("isBefore")
+                || name.ends_with("isAfter")
+            {
+                vec![foreign.clone(), foreign.clone()]
+            } else if name.ends_with("Timer.at") {
+                vec![foreign.clone()]
+            } else {
+                vec![foreign.clone(), RuntimeValue::Integer(1)]
+            };
+            let result = host.invoke(name, &arguments).unwrap();
+            assert!(
+                matches!(
+                    result,
+                    RuntimeValue::ResultErr(value)
+                        if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::ClockError, .. })
+                ),
+                "{name} must reject a foreign clock domain"
+            );
+        }
+
+        let first = ok(host
+            .invoke("std.time.Timer.after", &[RuntimeValue::Integer(100)])
+            .unwrap());
+        let second = ok(host
+            .invoke("std.time.Timer.after", &[RuntimeValue::Integer(100)])
+            .unwrap());
+        let first_wait = host.start_async("std.time.Timer.wait", &[first]).unwrap();
+        let second_wait = host.start_async("std.time.Timer.wait", &[second]).unwrap();
+        assert!(host.poll_async(first_wait).unwrap().is_none());
+        assert!(host.poll_async(second_wait).unwrap().is_none());
+        host.advance_virtual_time(100).unwrap();
+        assert!(host.poll_async(first_wait).unwrap().is_some());
+        assert!(host.poll_async(second_wait).unwrap().is_some());
+        assert!(source.advance_virtual_time(1).is_ok());
+    }
+
+    #[test]
+    fn virtual_time_completes_timers_only_after_the_deadline_and_supports_cancel() {
+        let mut host = BootstrapHost::with_virtual_time(Vec::new(), 10).unwrap();
+        assert!(host.advance_virtual_time(-1).is_err());
+        let delay = RuntimeValue::Integer(100);
+        let timer = ok(host.invoke("std.time.Timer.after", &[delay]).unwrap());
+        let call = host.start_async("std.time.Timer.wait", &[timer]).unwrap();
+        assert_eq!(host.poll_async(call).unwrap(), None);
+        host.advance_virtual_time(99).unwrap();
+        assert_eq!(host.poll_async(call).unwrap(), None);
+        host.advance_virtual_time(1).unwrap();
+        assert_eq!(
+            host.poll_async(call).unwrap(),
+            Some(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+        );
+
+        let timer = ok(host
+            .invoke("std.time.Timer.after", &[RuntimeValue::Integer(1_000)])
+            .unwrap());
+        let call = host.start_async("std.time.Timer.wait", &[timer]).unwrap();
+        host.cancel_async(call).unwrap();
+        assert_eq!(
+            host.poll_async(call).unwrap(),
+            Some(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+        );
+    }
+
+    #[test]
+    fn time_rejects_negative_delays_without_starting_a_real_wait() {
+        let mut host = BootstrapHost::with_virtual_time(Vec::new(), 1).unwrap();
+        let call = host
+            .start_async("std.time.sleep", &[RuntimeValue::Integer(-1)])
+            .unwrap();
+        let result = host.poll_async(call).unwrap().expect("immediate failure");
+        assert!(matches!(
+            result,
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::ClockError, .. })
+        ));
+    }
+
+    #[test]
+    fn time_operations_cover_checked_arithmetic_and_virtual_deadlines() {
+        let mut host = BootstrapHost::with_virtual_time(Vec::new(), 1).unwrap();
+        assert_eq!(
+            host.invoke(
+                "std.time.Duration.fromNanoseconds",
+                &[RuntimeValue::Integer(-4)],
+            )
+            .unwrap(),
+            RuntimeValue::Integer(-4)
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.time.Duration.fromMicroseconds",
+                    &[RuntimeValue::Integer(2)],
+                )
+                .unwrap()),
+            RuntimeValue::Integer(2_000)
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.time.Duration.fromMilliseconds",
+                    &[RuntimeValue::Integer(-2)],
+                )
+                .unwrap()),
+            RuntimeValue::Integer(-2_000_000)
+        );
+        assert_eq!(
+            ok(host
+                .invoke("std.time.Duration.fromSeconds", &[RuntimeValue::Integer(1)],)
+                .unwrap()),
+            RuntimeValue::Integer(NANOS_PER_SECOND)
+        );
+        assert_eq!(
+            host.invoke(
+                "std.time.Duration.toNanoseconds",
+                &[RuntimeValue::Integer(-4)],
+            )
+            .unwrap(),
+            RuntimeValue::Integer(-4)
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.time.Duration.add",
+                    &[RuntimeValue::Integer(2), RuntimeValue::Integer(3)],
+                )
+                .unwrap()),
+            RuntimeValue::Integer(5)
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.time.Duration.subtract",
+                    &[RuntimeValue::Integer(2), RuntimeValue::Integer(3)],
+                )
+                .unwrap()),
+            RuntimeValue::Integer(-1)
+        );
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.time.Duration.multiply",
+                    &[RuntimeValue::Integer(2), RuntimeValue::Integer(-3)],
+                )
+                .unwrap()),
+            RuntimeValue::Integer(-6)
+        );
+        assert_eq!(
+            ok(host
+                .invoke("std.time.Duration.negate", &[RuntimeValue::Integer(-4)])
+                .unwrap()),
+            RuntimeValue::Integer(4)
+        );
+        assert_eq!(
+            host.invoke("std.time.Duration.isZero", &[RuntimeValue::Integer(0)],)
+                .unwrap(),
+            RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            host.invoke("std.time.Duration.isNegative", &[RuntimeValue::Integer(-1)],)
+                .unwrap(),
+            RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            host.invoke(
+                "std.time.Duration.isLessThan",
+                &[RuntimeValue::Integer(-1), RuntimeValue::Integer(0)],
+            )
+            .unwrap(),
+            RuntimeValue::Bool(true)
+        );
+        assert!(matches!(
+            host.invoke(
+                "std.time.Duration.add",
+                &[RuntimeValue::Integer(i64::MAX as i128), RuntimeValue::Integer(1)],
+            )
+            .unwrap(),
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::DurationError, .. })
+        ));
+
+        let start = ok(host.invoke("std.time.now", &[]).unwrap());
+        let past = ok(host
+            .invoke("std.time.deadline", &[RuntimeValue::Integer(-1)])
+            .unwrap());
+        host.advance_virtual_time(10).unwrap();
+        let later = ok(host.invoke("std.time.now", &[]).unwrap());
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.time.Instant.durationSince",
+                    &[later.clone(), start.clone()],
+                )
+                .unwrap()),
+            RuntimeValue::Integer(10)
+        );
+        let added = ok(host
+            .invoke(
+                "std.time.Instant.add",
+                &[start.clone(), RuntimeValue::Integer(5)],
+            )
+            .unwrap());
+        assert_eq!(host.instant(&added).unwrap().1, 5);
+        let subtracted = ok(host
+            .invoke(
+                "std.time.Instant.subtract",
+                &[later.clone(), RuntimeValue::Integer(3)],
+            )
+            .unwrap());
+        assert_eq!(host.instant(&subtracted).unwrap().1, 7);
+        assert_eq!(
+            ok(host
+                .invoke("std.time.Instant.isBefore", &[start.clone(), later.clone()],)
+                .unwrap()),
+            RuntimeValue::Bool(true)
+        );
+        assert_eq!(
+            ok(host
+                .invoke("std.time.Instant.isAfter", &[later.clone(), start.clone()],)
+                .unwrap()),
+            RuntimeValue::Bool(true)
+        );
+        let timer = ok(host.invoke("std.time.Timer.at", &[past]).unwrap());
+        let call = host.start_async("std.time.Timer.wait", &[timer]).unwrap();
+        assert_eq!(
+            host.poll_async(call).unwrap(),
+            Some(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+        );
+        let timer = ok(host
+            .invoke("std.time.Timer.after", &[RuntimeValue::Integer(0)])
+            .unwrap());
+        assert_eq!(
+            host.invoke("std.time.Timer.cancel", &[timer]).unwrap(),
+            RuntimeValue::Unit
+        );
+        assert!(matches!(
+            host.invoke("std.time.Timer.after", &[RuntimeValue::Integer(-1)])
+                .unwrap(),
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::ClockError, .. })
+        ));
+    }
+
+    #[test]
+    fn time_resource_limits_are_atomic_and_released_by_cancel() {
+        let mut host = BootstrapHost::with_max_time_resources(Vec::new(), 1);
+        let first = ok(host
+            .invoke("std.time.Timer.after", &[RuntimeValue::Integer(0)])
+            .unwrap());
+        let second = host
+            .invoke("std.time.Timer.after", &[RuntimeValue::Integer(0)])
+            .unwrap();
+        assert!(matches!(
+            second,
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::ClockError, .. })
+        ));
+        assert_eq!(
+            host.invoke("std.time.Timer.cancel", &[first]).unwrap(),
+            RuntimeValue::Unit
+        );
+        assert!(matches!(
+            host.invoke("std.time.Timer.after", &[RuntimeValue::Integer(0)],)
+                .unwrap(),
+            RuntimeValue::ResultOk(_)
+        ));
+
+        let mut host = BootstrapHost::with_max_time_resources(Vec::new(), 1);
+        let pending = host
+            .start_async("std.time.sleep", &[RuntimeValue::Integer(1_000_000_000)])
+            .unwrap();
+        let limited = host
+            .start_async("std.time.sleep", &[RuntimeValue::Integer(1)])
+            .unwrap();
+        assert_eq!(host.time_resources, 1);
+        assert!(host.time_jobs.get(&limited).unwrap().completion.is_some());
+        assert!(matches!(
+            host.poll_async(limited).unwrap(),
+            Some(RuntimeValue::ResultErr(value))
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::ClockError, .. })
+        ));
+        host.cancel_async(pending).unwrap();
+        assert_eq!(
+            host.poll_async(pending).unwrap(),
+            Some(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+        );
+    }
+
+    #[test]
+    fn environment_snapshot_is_sealed_ordered_and_supports_text_and_raw_bytes() {
+        let mut host = BootstrapHost::with_environment(
+            vec!["program".into(), "á".into()],
+            vec![
+                (b"TEXT".to_vec(), b"hello".to_vec()),
+                (b"RAW".to_vec(), vec![0xff]),
+            ],
+        );
+        let first = ok(host.invoke("std.env.snapshot", &[]).unwrap());
+        let second = ok(host.invoke("std.env.snapshot", &[]).unwrap());
+        assert_eq!(first, second, "snapshot is sealed once per invocation");
+
+        let arguments = host
+            .invoke("std.env.Snapshot.arguments", std::slice::from_ref(&first))
+            .unwrap();
+        let RuntimeValue::Array(arguments) = arguments else {
+            panic!("snapshot arguments must be an Array[Value]");
+        };
+        assert_eq!(arguments.len(), 2);
+        assert_eq!(
+            host.invoke("std.env.Value.asText", &[arguments[0].clone()])
+                .unwrap(),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::String("program".into())))
+        );
+        assert_eq!(
+            host.invoke("std.env.Value.asText", &[arguments[1].clone()])
+                .unwrap(),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::String("á".into())))
+        );
+
+        let text_name = ok(host
+            .invoke(
+                "std.env.Name.fromText",
+                &[RuntimeValue::String("TEXT".into())],
+            )
+            .unwrap());
+        let text_value = host
+            .invoke("std.env.Snapshot.get", &[first.clone(), text_name])
+            .unwrap();
+        let RuntimeValue::ResultOk(value) = text_value else {
+            panic!("present environment entry must not fail");
+        };
+        let RuntimeValue::OptionSome(value) = *value else {
+            panic!("present environment entry must be Some");
+        };
+        assert_eq!(
+            host.invoke("std.env.Value.asText", &[(*value).clone()])
+                .unwrap(),
+            RuntimeValue::OptionSome(Box::new(RuntimeValue::String("hello".into())))
+        );
+        let text_bytes = host
+            .invoke("std.env.Value.asBytes", &[(*value).clone()])
+            .unwrap();
+        assert_eq!(host.bytes(&text_bytes).unwrap(), b"hello");
+
+        let raw_name_bytes = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(b"RAW".to_vec()),
+        );
+        let raw_name = ok(host
+            .invoke("std.env.Name.fromBytes", &[raw_name_bytes])
+            .unwrap());
+        let raw_value = host
+            .invoke("std.env.Snapshot.get", &[first.clone(), raw_name])
+            .unwrap();
+        let RuntimeValue::ResultOk(value) = raw_value else {
+            panic!("raw environment entry must not fail");
+        };
+        let RuntimeValue::OptionSome(value) = *value else {
+            panic!("raw environment entry must be Some");
+        };
+        assert_eq!(
+            host.invoke("std.env.Value.asText", &[(*value).clone()])
+                .unwrap(),
+            RuntimeValue::OptionNone
+        );
+        let raw_bytes = host
+            .invoke("std.env.Value.asBytes", &[(*value).clone()])
+            .unwrap();
+        assert_eq!(host.bytes(&raw_bytes).unwrap(), &[0xff]);
+
+        let missing_name = ok(host
+            .invoke(
+                "std.env.Name.fromText",
+                &[RuntimeValue::String("MISSING".into())],
+            )
+            .unwrap());
+        assert_eq!(
+            host.invoke("std.env.Snapshot.get", &[first, missing_name])
+                .unwrap(),
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))
+        );
+    }
+
+    #[test]
+    fn environment_rejects_invalid_names_unavailable_hosts_and_partial_limits() {
+        let mut host = BootstrapHost::default();
+        for invalid in ["", "A\0B", "A=B"] {
+            let result = host
+                .invoke(
+                    "std.env.Name.fromText",
+                    &[RuntimeValue::String(invalid.into())],
+                )
+                .unwrap();
+            assert!(matches!(
+                result,
+                RuntimeValue::ResultErr(value)
+                    if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::EnvError, .. })
+            ));
+        }
+        let invalid_bytes =
+            host.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(vec![b'A', 0]));
+        assert!(matches!(
+            host.invoke("std.env.Name.fromBytes", &[invalid_bytes]).unwrap(),
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::EnvError, .. })
+        ));
+
+        let mut unavailable = BootstrapHost::with_unavailable_environment(Vec::new());
+        assert!(matches!(
+            unavailable.invoke("std.env.snapshot", &[]).unwrap(),
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::EnvError, .. })
+        ));
+
+        let mut limited = BootstrapHost::with_environment(
+            vec!["program".into()],
+            vec![(b"KEY".to_vec(), b"value".to_vec())],
+        );
+        limited.max_bytes = 2;
+        assert!(matches!(
+            limited.invoke("std.env.snapshot", &[]).unwrap(),
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::EnvError, .. })
+        ));
+        assert!(limited.env_snapshot_id.is_none());
+        limited.max_bytes = 64;
+        assert!(matches!(
+            limited.invoke("std.env.snapshot", &[]).unwrap(),
+            RuntimeValue::ResultOk(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::EnvSnapshot, .. })
+        ));
+
+        let mut invalid_provider = BootstrapHost::with_environment(
+            Vec::new(),
+            vec![(b"BAD=NAME".to_vec(), b"value".to_vec())],
+        );
+        assert!(matches!(
+            invalid_provider.invoke("std.env.snapshot", &[]).unwrap(),
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::EnvError, .. })
+        ));
     }
 
     #[test]

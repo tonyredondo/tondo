@@ -246,6 +246,15 @@ pub enum BytecodeIntrinsicType {
     ProcessExitError,
     Utf8Error,
     NumericConversionError,
+    Duration,
+    Instant,
+    Timer,
+    DurationError,
+    ClockError,
+    EnvSnapshot,
+    EnvName,
+    EnvValue,
+    EnvError,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -335,12 +344,14 @@ pub struct BytecodeTraceMetadata {
 pub enum BytecodeTerminalOperation {
     JoinAwait,
     ProcessFinish,
+    TimerFinish,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BytecodeTerminalUnwindAction {
     JoinTeardown,
     ProcessCleanup,
+    TimerCleanup,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -366,7 +377,16 @@ impl BytecodeIntrinsicType {
             | Self::ProcessError
             | Self::ProcessExitError
             | Self::Utf8Error
-            | Self::NumericConversionError => 0,
+            | Self::NumericConversionError
+            | Self::Duration
+            | Self::Instant
+            | Self::Timer
+            | Self::DurationError
+            | Self::ClockError
+            | Self::EnvSnapshot
+            | Self::EnvName
+            | Self::EnvValue
+            | Self::EnvError => 0,
         }
     }
 
@@ -386,6 +406,11 @@ impl BytecodeIntrinsicType {
                 unwind: BytecodeTerminalUnwindAction::ProcessCleanup,
                 unwind_may_suspend: true,
             }),
+            Self::Timer => Some(BytecodeTerminalContract {
+                operation: BytecodeTerminalOperation::TimerFinish,
+                unwind: BytecodeTerminalUnwindAction::TimerCleanup,
+                unwind_may_suspend: false,
+            }),
             Self::Array
             | Self::Map
             | Self::Set
@@ -402,7 +427,15 @@ impl BytecodeIntrinsicType {
             | Self::ProcessError
             | Self::ProcessExitError
             | Self::Utf8Error
-            | Self::NumericConversionError => None,
+            | Self::NumericConversionError
+            | Self::Duration
+            | Self::Instant
+            | Self::DurationError
+            | Self::ClockError
+            | Self::EnvSnapshot
+            | Self::EnvName
+            | Self::EnvValue
+            | Self::EnvError => None,
         }
     }
 }
@@ -1308,6 +1341,15 @@ mod tests {
             BytecodeIntrinsicType::ProcessExitError,
             BytecodeIntrinsicType::Utf8Error,
             BytecodeIntrinsicType::NumericConversionError,
+            BytecodeIntrinsicType::Duration,
+            BytecodeIntrinsicType::Instant,
+            BytecodeIntrinsicType::Timer,
+            BytecodeIntrinsicType::DurationError,
+            BytecodeIntrinsicType::ClockError,
+            BytecodeIntrinsicType::EnvSnapshot,
+            BytecodeIntrinsicType::EnvName,
+            BytecodeIntrinsicType::EnvValue,
+            BytecodeIntrinsicType::EnvError,
         ];
         let registered = all
             .into_iter()
@@ -1325,6 +1367,11 @@ mod tests {
                     operation: BytecodeTerminalOperation::ProcessFinish,
                     unwind: BytecodeTerminalUnwindAction::ProcessCleanup,
                     unwind_may_suspend: true,
+                },
+                BytecodeTerminalContract {
+                    operation: BytecodeTerminalOperation::TimerFinish,
+                    unwind: BytecodeTerminalUnwindAction::TimerCleanup,
+                    unwind_may_suspend: false,
                 },
             ]
         );

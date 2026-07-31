@@ -968,20 +968,25 @@ second transfer form.
 Every lexical block owns one stable `HirScopeId`. A `defer` statement records
 that scope and one already type-checked invocation-shaped `HirDeferAction`; the
 invocation itself is delayed, but its direct operands remain in source
-evaluation order. The action must return `Unit`, be infallible and synchronous,
-and be a call, `assert`, bootstrap host invocation, or the zero-argument closure
-generated for a defer block. A deferred call cannot retain a `ref`, `mut`, or
-`var` argument, and a defer body cannot register another defer or transfer
-control outside itself. Admission rewalks both registration-time operands and
-the generated cleanup root with lexical loop scopes; nested closure bodies stay
-separate roots, so only a transfer that actually crosses the defer boundary is
-rejected.
+evaluation order. An ordinary action must return `Unit`, be infallible and
+synchronous, and be a call, `assert`, bootstrap host invocation, or the
+zero-argument closure generated for a defer block. `defer await` is represented
+by one `Await` wrapper around one `AsyncCall`: it is still infallible `Unit`,
+but its async signature is retained for lowering and executor scheduling. It
+cannot wrap a `Join`, a block, a fallible call, or a second await. Both forms
+cannot retain a `ref`, `mut`, or `var` argument, and a defer body cannot register
+another defer or transfer control outside itself. Admission rewalks both
+registration-time operands and the generated cleanup root with lexical loop
+scopes; nested closure bodies stay separate roots, so only a transfer that
+actually crosses the defer boundary is rejected.
 
 Every direct operand proven `Copy` is a registration-time snapshot. There may
 be at most one non-`Copy` operand. It must be a complete local binding or a
 temporary value. A deferred callee uses `Call` only when it is both `Copy` and
-repeatable; otherwise it uses `CallOnce`. It never retains the exclusive borrow
-required by `CallMut`, and a non-`Copy` callee must use `CallOnce`. HIR records
+repeatable; otherwise it uses `CallOnce`. This protocol rule is identical for
+`defer await`; the async signature changes suspension, not ownership. It never
+retains the exclusive borrow required by `CallMut`, and a non-`Copy` callee must
+use `CallOnce`. HIR records
 that exact operand as the guard instead of pretending to move it when the
 statement is registered. This protocol override applies only to the invocation
 being registered; calls evaluated inside its operands or cleanup block retain

@@ -1,0 +1,24 @@
+import std.console
+import std.time
+
+fn checked_resolution(): time.Duration ! time.ClockError {
+    time.resolution()?
+}
+
+fn elapsed_between(start: time.Instant, end: time.Instant): time.Duration ! time.ClockError {
+    end.durationSince(start)?
+}
+
+async fn main(): !(time.ClockError | time.DurationError) {
+    let resolution = checked_resolution()?
+    assert(not resolution.isNegative())
+    let start = time.now()?
+    let zero = time.Duration.fromMilliseconds(0)?
+    let deadline = time.deadline(zero)?
+    let elapsed = elapsed_between(start, deadline)?
+    assert(not elapsed.isNegative() or elapsed.isZero())
+    await time.sleep(zero)?
+    let timer = time.Timer.after(zero)?
+    await timer.wait()?
+    console.print("time-ok\n")
+}

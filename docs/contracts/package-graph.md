@@ -56,6 +56,14 @@ The loose-file CLI creates a small closed graph explicitly: one synthetic root
 package for the input plus the bootstrap standard node. This convenience does
 not introduce a second resolution algorithm.
 
+`tondo test` does not mutate this production graph. It validates a separate
+`tondo-test-plan-draft` record against the graph's manifest/lockfile hashes;
+that record adds explicit `production`, `unit-test`, and `integration-test`
+source classes and roots, then carries the test-only policy and output stores.
+`TestProjectPlan` is pure and contains no source bytes or host discovery. Unit
+overlays and integration consumers are admitted by later frontend/runtime
+tasks, after this boundary has closed their identities.
+
 ## Import lookup
 
 An import path is split into normalized Tondo names. Its first segment resolves

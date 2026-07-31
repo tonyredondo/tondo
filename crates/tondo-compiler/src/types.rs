@@ -118,6 +118,15 @@ pub enum IntrinsicType {
     ProcessExitError,
     Utf8Error,
     NumericConversionError,
+    Duration,
+    Instant,
+    Timer,
+    DurationError,
+    ClockError,
+    EnvSnapshot,
+    EnvName,
+    EnvValue,
+    EnvError,
 }
 
 impl IntrinsicType {
@@ -142,6 +151,15 @@ impl IntrinsicType {
             Self::ProcessExitError => "ProcessExitError",
             Self::Utf8Error => "Utf8Error",
             Self::NumericConversionError => "NumericConversionError",
+            Self::Duration => "Duration",
+            Self::Instant => "Instant",
+            Self::Timer => "Timer",
+            Self::DurationError => "DurationError",
+            Self::ClockError => "ClockError",
+            Self::EnvSnapshot => "Snapshot",
+            Self::EnvName => "Name",
+            Self::EnvValue => "Value",
+            Self::EnvError => "EnvError",
         }
     }
 
@@ -160,7 +178,16 @@ impl IntrinsicType {
             | Self::ProcessError
             | Self::ProcessExitError
             | Self::Utf8Error
-            | Self::NumericConversionError => 0,
+            | Self::NumericConversionError
+            | Self::Duration
+            | Self::Instant
+            | Self::Timer
+            | Self::DurationError
+            | Self::ClockError
+            | Self::EnvSnapshot
+            | Self::EnvName
+            | Self::EnvValue
+            | Self::EnvError => 0,
         }
     }
 }

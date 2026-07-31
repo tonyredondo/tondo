@@ -456,6 +456,8 @@ impl PackageGraph {
                 ModulePath::new("bytes")?,
                 ModulePath::new("console")?,
                 ModulePath::new("process")?,
+                ModulePath::new("time")?,
+                ModulePath::new("env")?,
             ],
             [],
         )?);
@@ -484,6 +486,8 @@ impl PackageGraph {
         standard.modules.retain(|module| match module.as_str() {
             "console" => has_capability("console"),
             "process" => has_capability("process"),
+            "time" => has_capability("clock"),
+            "env" => has_capability("environment"),
             // A custom pinned standard package may contain capability-free
             // modules in addition to the compiler-owned bootstrap pair.
             _ => true,
@@ -594,6 +598,8 @@ impl PackageGraph {
                 let capability = match module.path().as_str() {
                     "console" => Some("console"),
                     "process" => Some("process"),
+                    "time" => Some("clock"),
+                    "env" => Some("environment"),
                     _ => None,
                 };
                 if let Some(capability) = capability {

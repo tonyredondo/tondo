@@ -521,7 +521,16 @@ impl Verifier<'_> {
                         | IntrinsicType::ProcessError
                         | IntrinsicType::ProcessExitError
                         | IntrinsicType::Utf8Error
-                        | IntrinsicType::NumericConversionError => None,
+                        | IntrinsicType::NumericConversionError
+                        | IntrinsicType::Duration
+                        | IntrinsicType::Instant
+                        | IntrinsicType::Timer
+                        | IntrinsicType::DurationError
+                        | IntrinsicType::ClockError
+                        | IntrinsicType::EnvSnapshot
+                        | IntrinsicType::EnvName
+                        | IntrinsicType::EnvValue
+                        | IntrinsicType::EnvError => None,
                     };
                     if let Some((required, capability, reason)) = requirement {
                         self.verify_capability_requirement(
@@ -4512,8 +4521,18 @@ impl Verifier<'_> {
                 ));
             }
             let operands = defer_registration_children(self.program, action);
-            match &expression.kind {
+            let invocation = match &expression.kind {
+                HirExpressionKind::Await { operation } => self.expression(*operation, context)?,
+                _ => expression,
+            };
+            match &invocation.kind {
                 HirExpressionKind::Call {
+                    arguments,
+                    protocol,
+                    signature,
+                    ..
+                }
+                | HirExpressionKind::AsyncCall {
                     arguments,
                     protocol,
                     signature,
@@ -4545,7 +4564,9 @@ impl Verifier<'_> {
                             "deferred call signature is not a function",
                         ));
                     };
-                    if function.is_async()
+                    let is_async_defer =
+                        matches!(&invocation.kind, HirExpressionKind::AsyncCall { .. });
+                    if function.is_async() != is_async_defer
                         || function.is_unsafe()
                         || function.outcome() != self.program.interner.scalar(ScalarType::Unit)
                     {
@@ -5960,8 +5981,18 @@ fn defer_registration_children(
     let Some(expression) = program.expression(action.expression()) else {
         return Vec::new();
     };
+    let expression = match expression.kind() {
+        HirExpressionKind::Await { operation } => program.expression(*operation),
+        _ => Some(expression),
+    };
+    let Some(expression) = expression else {
+        return Vec::new();
+    };
     match expression.kind() {
         HirExpressionKind::Call {
+            callee, arguments, ..
+        }
+        | HirExpressionKind::AsyncCall {
             callee, arguments, ..
         } => std::iter::once(*callee)
             .chain(arguments.iter().map(|argument| argument.value()))

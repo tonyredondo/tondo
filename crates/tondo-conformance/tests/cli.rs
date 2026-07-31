@@ -30,7 +30,7 @@ fn validate_command_reports_the_single_draft_identity() {
     assert!(output.stderr.is_empty());
     assert_eq!(
         String::from_utf8(output.stdout).expect("identity must be UTF-8"),
-        "tondo-draft 0.1 open 1 7592dfd27dc90363e30a04baca34e1eecf7bde1965975ac4f59a15faf16f9a4c\n"
+        "tondo-draft 0.1 open 1 5875482aedae3832354d9133bf03e77f759f1d1cd341c7d404236df2b810913a\n"
     );
 }
 

@@ -91,13 +91,18 @@ struct MirCallVerification<'a> {
 enum MirOperationContext {
     Immediate,
     Deferred,
+    DeferredAsync,
     Await,
     Spawn,
 }
 
 impl MirOperationContext {
     fn expects_async(self) -> bool {
-        matches!(self, Self::Await | Self::Spawn)
+        matches!(self, Self::DeferredAsync | Self::Await | Self::Spawn)
+    }
+
+    fn is_deferred(self) -> bool {
+        matches!(self, Self::Deferred | Self::DeferredAsync)
     }
 }
 
@@ -1518,12 +1523,18 @@ impl Verifier<'_> {
                             "a non-Copy deferred callee does not use CallOnce",
                         ));
                     }
-                    self.verify_operation(
-                        function,
-                        action,
-                        MirOperationContext::Deferred,
-                        &context,
-                    )?;
+                    let operation_context = match &action.kind {
+                        MirOperationKind::Call { signature, .. }
+                            if matches!(
+                                self.kind(*signature, &context)?,
+                                TypeKind::Function(function) if function.is_async()
+                            ) =>
+                        {
+                            MirOperationContext::DeferredAsync
+                        }
+                        _ => MirOperationContext::Deferred,
+                    };
+                    self.verify_operation(function, action, operation_context, &context)?;
                     if action.ty != self.hir.interner().scalar(ScalarType::Unit)
                         || !matches!(
                             action.kind,
@@ -2623,6 +2634,17 @@ impl Verifier<'_> {
                     operation_context,
                     context,
                 )?;
+                if operation_context == MirOperationContext::DeferredAsync {
+                    self.require_capability(function.id, callee.ty, HirCapability::Send, context)?;
+                    for argument in arguments {
+                        self.require_capability(
+                            function.id,
+                            argument.value.ty,
+                            HirCapability::Send,
+                            context,
+                        )?;
+                    }
+                }
             }
             MirOperationKind::ExplicitPanic { message } => {
                 self.verify_operand(function, message, context)?;
@@ -4986,7 +5008,7 @@ impl Verifier<'_> {
             available
                 .supports(HirCallProtocol::CallOnce)
                 .then_some(HirCallProtocol::CallOnce)
-        } else if operation_context == MirOperationContext::Deferred
+        } else if operation_context.is_deferred()
             && matches!(callee.kind, MirOperandKind::Move(_))
             && available.supports(HirCallProtocol::CallOnce)
         {

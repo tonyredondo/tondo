@@ -504,6 +504,17 @@ remaining `Join` fallback recursively before marking the scope closed. Root
 completion defensively requires every non-root task to be consumed, so no child
 can survive its owner even if malformed bytecode passed an earlier check.
 
+Explicit cleanup entries are drained from the same runtime LIFO ledger. A
+`defer await` entry is captured before the scope continues, then its async call
+is started only when that entry reaches the drain. A bytecode callee reuses the
+ordinary frame continuation; an async host call parks the current task in a
+dedicated deferred-host wait state. That wait is not cancelled by the unwind
+which started the cleanup, and completion resumes the same drain block so later
+entries and the original panic/cancellation retain their precedence. Ordinary
+`defer` entries still reject async host results defensively. A cleanup panic
+continues through the remaining LIFO entries and is recorded as primary or
+suppressed according to the existing unwind rules.
+
 ## Control flow, calls, and panic
 
 The VM executes verified branches, tag dispatch, loops, iterators, calls,

@@ -22,12 +22,15 @@ newline.
 
 ## Target admission
 
-`std.console` and `std.process` are present only when the closed target
-capability set contains `console` and `process`, respectively. The built-in
-`tondo-vm-hosted` CLI target declares both. A request without either capability
-removes that module from the selected bootstrap standard package; importing it
-produces `E1008` and names the missing capability. There is no runtime stub
-that always fails.
+`std.console`, `std.process`, `std.time`, and `std.env` are present only when the
+closed target capability set contains `console`, `process`, `clock`, and
+`environment`, respectively. The built-in `tondo-vm-hosted` CLI target declares
+all four. A request without
+the relevant capability removes that module from the selected bootstrap
+standard package; importing it produces `E1008` and names the missing
+capability. There is no runtime stub that always fails. The monotonic time
+boundary is documented in [`stdlib-time.md`](./stdlib-time.md); the environment
+snapshot boundary is documented in [`stdlib-env.md`](./stdlib-env.md).
 
 The module is source-less and belongs to package
 `toolchain:std:0.1-bootstrap`. Resolution may expose only the exact `print`

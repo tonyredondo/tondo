@@ -651,10 +651,11 @@ Before execution, the verifier proves:
 - every `Await` has one valid async call or affine `Join` operand, writes its
   logical result only on the normal edge, and admits only `Send` live values
   plus the current scope's sealed join exception;
-- every `RegisterDefer` contains one synchronous infallible `Unit` operation,
-  snapshots all closed `Copy` operands, retains at most one complete affine
-  guard in a local or closure-capture owner slot, and belongs to a live lexical
-  scope;
+- every `RegisterDefer` contains one infallible `Unit` operation. Synchronous
+  entries use the `Deferred` call context; `defer await` entries use
+  `DeferredAsync` and therefore retain exactly one async call signature. Both
+  snapshot all closed `Copy` operands, retain at most one complete affine guard
+  in a local or closure-capture owner slot, and belong to a live lexical scope;
 - every concrete terminal entry parameter/capture and every terminal store,
   successful invocation result, and iterator-value edge has an immediate
   fallback or cleanup retarget;

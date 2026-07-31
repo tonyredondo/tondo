@@ -274,6 +274,22 @@ impl ProjectPlan {
         &self.target.features
     }
 
+    /// PackageIds admitted by this closed project graph. Test planning uses
+    /// this read-only view to reject source records that invent a package;
+    /// dependency resolution remains owned by the production project plan.
+    pub fn package_ids(&self) -> impl ExactSizeIterator<Item = &str> {
+        self.packages.keys().map(PackageId::as_str)
+    }
+
+    /// Parse the test-plan extension against this already validated project.
+    /// The extension is pure and does not alter the production resolution.
+    pub fn parse_test_plan(
+        &self,
+        bytes: &[u8],
+    ) -> Result<crate::test_plan::TestProjectPlan, crate::test_plan::TestPlanError> {
+        crate::test_plan::TestProjectPlan::parse(self, bytes)
+    }
+
     pub fn selected_source_sets(&self) -> &BTreeSet<SourceSetId> {
         &self.selected_source_sets
     }
@@ -1222,9 +1238,9 @@ struct ManifestPackageWire {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct DependencyWire {
-    alias: String,
-    package: String,
+pub(crate) struct DependencyWire {
+    pub(crate) alias: String,
+    pub(crate) package: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1359,12 +1375,12 @@ struct LockedPackageWire {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LockedSourceWire {
-    source_set: String,
-    physical_path: String,
-    logical_path: String,
-    module: String,
-    sha256: String,
+pub(crate) struct LockedSourceWire {
+    pub(crate) source_set: String,
+    pub(crate) physical_path: String,
+    pub(crate) logical_path: String,
+    pub(crate) module: String,
+    pub(crate) sha256: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1609,7 +1625,7 @@ fn insert_required_input(
     Ok(())
 }
 
-fn package_content_hash(
+pub(crate) fn package_content_hash(
     package: &PackageId,
     dependencies: &[DependencyWire],
     sources: &[LockedSourceWire],

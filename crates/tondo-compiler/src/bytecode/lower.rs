@@ -4078,6 +4078,15 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::ProcessExitError => bc::BytecodeIntrinsicType::ProcessExitError,
         IntrinsicType::Utf8Error => bc::BytecodeIntrinsicType::Utf8Error,
         IntrinsicType::NumericConversionError => bc::BytecodeIntrinsicType::NumericConversionError,
+        IntrinsicType::Duration => bc::BytecodeIntrinsicType::Duration,
+        IntrinsicType::Instant => bc::BytecodeIntrinsicType::Instant,
+        IntrinsicType::Timer => bc::BytecodeIntrinsicType::Timer,
+        IntrinsicType::DurationError => bc::BytecodeIntrinsicType::DurationError,
+        IntrinsicType::ClockError => bc::BytecodeIntrinsicType::ClockError,
+        IntrinsicType::EnvSnapshot => bc::BytecodeIntrinsicType::EnvSnapshot,
+        IntrinsicType::EnvName => bc::BytecodeIntrinsicType::EnvName,
+        IntrinsicType::EnvValue => bc::BytecodeIntrinsicType::EnvValue,
+        IntrinsicType::EnvError => bc::BytecodeIntrinsicType::EnvError,
     }
 }
 

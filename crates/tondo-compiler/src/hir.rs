@@ -71,6 +71,21 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
             "Utf8Error" => IntrinsicType::Utf8Error,
             _ => return None,
         }),
+        "time" => Some(match name.as_str() {
+            "Duration" => IntrinsicType::Duration,
+            "Instant" => IntrinsicType::Instant,
+            "Timer" => IntrinsicType::Timer,
+            "DurationError" => IntrinsicType::DurationError,
+            "ClockError" => IntrinsicType::ClockError,
+            _ => return None,
+        }),
+        "env" => Some(match name.as_str() {
+            "Snapshot" => IntrinsicType::EnvSnapshot,
+            "Name" => IntrinsicType::EnvName,
+            "Value" => IntrinsicType::EnvValue,
+            "EnvError" => IntrinsicType::EnvError,
+            _ => return None,
+        }),
         _ => None,
     }
 }
@@ -2023,6 +2038,38 @@ pub enum HirBootstrapHostFunction {
     PointerCast,
     PointerAddress,
     PointerFromAddress,
+    TimeNow,
+    TimeResolution,
+    TimeDeadline,
+    TimeSleep,
+    DurationFromNanoseconds,
+    DurationFromMicroseconds,
+    DurationFromMilliseconds,
+    DurationFromSeconds,
+    DurationToNanoseconds,
+    DurationAdd,
+    DurationSubtract,
+    DurationMultiply,
+    DurationNegate,
+    DurationIsZero,
+    DurationIsNegative,
+    DurationIsLessThan,
+    InstantAdd,
+    InstantSubtract,
+    InstantDurationSince,
+    InstantIsBefore,
+    InstantIsAfter,
+    TimerAfter,
+    TimerAt,
+    TimerWait,
+    TimerCancel,
+    EnvSnapshot,
+    EnvNameFromText,
+    EnvNameFromBytes,
+    EnvSnapshotArguments,
+    EnvSnapshotGet,
+    EnvValueAsText,
+    EnvValueAsBytes,
 }
 
 impl HirBootstrapHostFunction {
@@ -2075,6 +2122,38 @@ impl HirBootstrapHostFunction {
             Self::PointerCast => "intrinsic.Pointer.cast",
             Self::PointerAddress => "intrinsic.Pointer.address",
             Self::PointerFromAddress => "intrinsic.UInt64.toPointer",
+            Self::TimeNow => "std.time.now",
+            Self::TimeResolution => "std.time.resolution",
+            Self::TimeDeadline => "std.time.deadline",
+            Self::TimeSleep => "std.time.sleep",
+            Self::DurationFromNanoseconds => "std.time.Duration.fromNanoseconds",
+            Self::DurationFromMicroseconds => "std.time.Duration.fromMicroseconds",
+            Self::DurationFromMilliseconds => "std.time.Duration.fromMilliseconds",
+            Self::DurationFromSeconds => "std.time.Duration.fromSeconds",
+            Self::DurationToNanoseconds => "std.time.Duration.toNanoseconds",
+            Self::DurationAdd => "std.time.Duration.add",
+            Self::DurationSubtract => "std.time.Duration.subtract",
+            Self::DurationMultiply => "std.time.Duration.multiply",
+            Self::DurationNegate => "std.time.Duration.negate",
+            Self::DurationIsZero => "std.time.Duration.isZero",
+            Self::DurationIsNegative => "std.time.Duration.isNegative",
+            Self::DurationIsLessThan => "std.time.Duration.isLessThan",
+            Self::InstantAdd => "std.time.Instant.add",
+            Self::InstantSubtract => "std.time.Instant.subtract",
+            Self::InstantDurationSince => "std.time.Instant.durationSince",
+            Self::InstantIsBefore => "std.time.Instant.isBefore",
+            Self::InstantIsAfter => "std.time.Instant.isAfter",
+            Self::TimerAfter => "std.time.Timer.after",
+            Self::TimerAt => "std.time.Timer.at",
+            Self::TimerWait => "std.time.Timer.wait",
+            Self::TimerCancel => "std.time.Timer.cancel",
+            Self::EnvSnapshot => "std.env.snapshot",
+            Self::EnvNameFromText => "std.env.Name.fromText",
+            Self::EnvNameFromBytes => "std.env.Name.fromBytes",
+            Self::EnvSnapshotArguments => "std.env.Snapshot.arguments",
+            Self::EnvSnapshotGet => "std.env.Snapshot.get",
+            Self::EnvValueAsText => "std.env.Value.asText",
+            Self::EnvValueAsBytes => "std.env.Value.asBytes",
         }
     }
 
@@ -2094,6 +2173,8 @@ impl HirBootstrapHostFunction {
                 | Self::ProcessHandleRun
                 | Self::ProcessHandleCheck
                 | Self::ProcessHandleCancel
+                | Self::TimeSleep
+                | Self::TimerWait
         )
     }
 }

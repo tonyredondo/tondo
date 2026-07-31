@@ -69,6 +69,26 @@ fn help_and_version_are_successful() {
 }
 
 #[test]
+fn test_command_parses_without_starting_a_runner() {
+    let parsed = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args([
+            "test", "--filter", "smoke", "--order", "random", "--seed", "5eed",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(parsed.status.code(), Some(3));
+    assert!(parsed.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&parsed.stderr).contains("execution is not connected"));
+
+    let invalid = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["test", "--shard", "0/2"])
+        .output()
+        .unwrap();
+    assert_eq!(invalid.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("positive"));
+}
+
+#[test]
 fn fmt_writes_canonical_source_to_stdout_without_modifying_the_file() {
     let original = b"fn main(){let values=[1,2]\n}\n";
     let source = source_file_with(original);
@@ -209,7 +229,7 @@ fn project_check_uses_the_default_lockfile_and_emits_canonical_products() {
     let package_id = "workspace:cli@1";
     let source_hash = sha256(source);
     let manifest = format!(
-        "{{\"format\":\"{MANIFEST_FORMAT}\",\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[\"console\",\"process\"],\"features\":[]}},\"root\":{{\"package\":\"{package_id}\",\"source\":\"src/main.to\",\"form\":\"module\"}},\"standard\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"packages\":[{{\"id\":\"{package_id}\",\"local_name\":\"cli\",\"edition\":\"0.1\",\"dependencies\":[],\"source_sets\":[{{\"id\":\"common\",\"sources\":[{{\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\"}}]}}]}}],\"generator_inputs\":[],\"privileged_units\":[]}}"
+        "{{\"format\":\"{MANIFEST_FORMAT}\",\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[\"console\",\"process\",\"clock\",\"environment\"],\"features\":[]}},\"root\":{{\"package\":\"{package_id}\",\"source\":\"src/main.to\",\"form\":\"module\"}},\"standard\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"packages\":[{{\"id\":\"{package_id}\",\"local_name\":\"cli\",\"edition\":\"0.1\",\"dependencies\":[],\"source_sets\":[{{\"id\":\"common\",\"sources\":[{{\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\"}}]}}]}}],\"generator_inputs\":[],\"privileged_units\":[]}}"
     );
     fs::write(directory.join("tondo.json"), &manifest).unwrap();
     let package_fingerprint = format!(

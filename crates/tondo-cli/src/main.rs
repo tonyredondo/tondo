@@ -17,6 +17,8 @@ use tondo_compiler::source::{
     LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput, SourceOrigin,
 };
 
+mod test_cli;
+
 const EXIT_DIAGNOSTIC: u8 = 1;
 const EXIT_USAGE: u8 = 2;
 const EXIT_INTERNAL: u8 = 3;
@@ -35,6 +37,7 @@ Commands:
   fmt      Format one Tondo source file
   check    Analyze one Tondo source file
   run      Compile and run one Tondo script
+  test     Parse a test plan (execution is not connected yet)
 
 Options:
   --diagnostic-format <human|json>  Select diagnostic output
@@ -74,6 +77,10 @@ fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
             return Ok(ExitCode::SUCCESS);
         }
         _ => {}
+    }
+
+    if arguments.first().and_then(|argument| argument.to_str()) == Some("test") {
+        return run_test_command(&arguments);
     }
 
     let invocation = match parse_invocation(&arguments) {
@@ -121,6 +128,19 @@ fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
     } else {
         ExitCode::from(output.exit_code())
     })
+}
+
+fn run_test_command(arguments: &[OsString]) -> Result<ExitCode, String> {
+    match test_cli::parse(arguments) {
+        Ok(_) => {
+            eprintln!("tondo: test options parsed, but test execution is not connected yet");
+            Ok(ExitCode::from(EXIT_INTERNAL))
+        }
+        Err(message) => {
+            eprintln!("tondo: {message}\n\n{USAGE}");
+            Ok(ExitCode::from(EXIT_USAGE))
+        }
+    }
 }
 
 #[derive(Debug)]

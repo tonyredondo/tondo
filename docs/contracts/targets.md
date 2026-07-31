@@ -9,14 +9,16 @@ name                 = tondo-vm-hosted
 diagnostic source ID = target:tondo-vm-hosted
 profile              = hosted
 edition              = 0.1
-capabilities         = [console, process]
+capabilities         = [console, process, clock, environment]
 ~~~
 
 `console` exposes the provisional `std.console.print(String): Unit` shim in
 `bootstrap-host.md`. `process` exposes the closed surface in
-`process-host.md`. Filesystem, network, FFI, and other hosted capabilities
+`process-host.md`. `clock` exposes the monotonic `std.time` surface in
+`stdlib-time.md`. `environment` exposes the sealed read-only `std.env` snapshot
+in `stdlib-env.md`. Filesystem, network, FFI, and other hosted capabilities
 remain absent until their contracts and runtime paths exist. A custom request
-may omit either registered capability; its selected bootstrap standard package
+may omit any registered capability; its selected bootstrap standard package
 then omits the corresponding module, and an import is rejected with `E1008`
 rather than reaching a failing runtime stub.
 
@@ -28,7 +30,8 @@ it cannot install a runtime stub that always fails.
 The current draft registry is `tondo-capabilities-draft` and recognizes exactly
 `process`, `threads`, `filesystem`, `network`, `console`, `environment`,
 `clock`, `entropy`, and `dynamic-linking`. Recognition is distinct from target
-support: `tondo-vm-hosted` supports only `console` and `process`, so requesting
+support: `tondo-vm-hosted` supports only `console`, `process`, `clock`, and
+`environment`, so requesting
 the registered `network` capability is a project error rather than a silently
 ignored feature.
 

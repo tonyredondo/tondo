@@ -483,9 +483,12 @@ reservations as part of panic propagation.
 TERM-003 and TERM-004 populate those blocks with six explicit forms:
 
 - `RegisterDefer { scope, action, guard }` stores one already checked
-  synchronous `Unit` invocation. Copy operands are snapshots; an optional guard
-  names its unique complete affine owner slot, including one environment
-  capture slot while lowering a closure body.
+  infallible `Unit` invocation. A synchronous action uses a sync call signature;
+  `defer await` retains the async call signature and is admitted through the
+  `DeferredAsync` operation context. Copy operands are snapshots; an optional
+  guard names its unique complete affine owner slot, including one environment
+  capture slot while lowering a closure body. No async block or fallible cleanup
+  operation can reach this statement form.
 - `RegisterFallback { scope, owner }` arms the sealed structural unwind action
   for a non-absent terminal owner. Owning parameters register at entry,
   closure environments register each terminal capture independently, and
@@ -547,6 +550,11 @@ terminator remain ordinary typed locals in a frame that the executor may park.
 An exclusive loan may not be live there; the BORROW-006 boundary check is
 reused for the exact active set, and all surviving values must satisfy the
 required `Send` contract before bytecode generation.
+
+An async deferred call does not use an `Await` terminator at registration. Its
+operands are captured by `RegisterDefer`; the cleanup drain later transfers the
+same async operation to the executor, preserving the surrounding unwind edge
+and LIFO position.
 
 `EnterTaskScope` pushes one lexical identity. `Spawn` names the active
 innermost identity, transfers one async operation, and writes the exact

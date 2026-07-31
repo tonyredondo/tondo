@@ -28,6 +28,7 @@ pub enum HirTerminalStatus {
 pub enum HirTerminalOperation {
     JoinAwait,
     ProcessFinish,
+    TimerFinish,
 }
 
 /// The closed fallback used only while unwinding a direct intrinsic root.
@@ -35,6 +36,7 @@ pub enum HirTerminalOperation {
 pub enum HirTerminalUnwindAction {
     JoinTeardown,
     ProcessCleanup,
+    TimerCleanup,
 }
 
 /// The complete language-owned contract for one direct terminal root.
@@ -71,6 +73,12 @@ const PROCESS_HANDLE_CONTRACT: HirTerminalContract = HirTerminalContract {
     unwind_may_suspend: true,
 };
 
+const TIMER_CONTRACT: HirTerminalContract = HirTerminalContract {
+    operation: HirTerminalOperation::TimerFinish,
+    unwind: HirTerminalUnwindAction::TimerCleanup,
+    unwind_may_suspend: false,
+};
+
 /// This match is the language-owned terminal registry. Source declarations
 /// cannot extend it. Privileged opaque library entries will be supplied by the
 /// future standard-library interface catalog rather than by a user trait.
@@ -80,6 +88,7 @@ pub(crate) const fn intrinsic_terminal_contract(
     match constructor {
         IntrinsicType::Join => Some(JOIN_CONTRACT),
         IntrinsicType::ProcessHandle => Some(PROCESS_HANDLE_CONTRACT),
+        IntrinsicType::Timer => Some(TIMER_CONTRACT),
         IntrinsicType::Array
         | IntrinsicType::Map
         | IntrinsicType::Set
@@ -96,7 +105,15 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::ProcessError
         | IntrinsicType::ProcessExitError
         | IntrinsicType::Utf8Error
-        | IntrinsicType::NumericConversionError => None,
+        | IntrinsicType::NumericConversionError
+        | IntrinsicType::Duration
+        | IntrinsicType::Instant
+        | IntrinsicType::DurationError
+        | IntrinsicType::ClockError
+        | IntrinsicType::EnvSnapshot
+        | IntrinsicType::EnvName
+        | IntrinsicType::EnvValue
+        | IntrinsicType::EnvError => None,
     }
 }
 
@@ -426,7 +443,15 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::ProcessExitError
         | IntrinsicType::Utf8Error
         | IntrinsicType::NumericConversionError => fixed(HirTerminalStatus::Absent),
-        IntrinsicType::Join | IntrinsicType::ProcessHandle => {
+        IntrinsicType::Duration
+        | IntrinsicType::Instant
+        | IntrinsicType::DurationError
+        | IntrinsicType::ClockError
+        | IntrinsicType::EnvSnapshot
+        | IntrinsicType::EnvName
+        | IntrinsicType::EnvValue
+        | IntrinsicType::EnvError => fixed(HirTerminalStatus::Absent),
+        IntrinsicType::Join | IntrinsicType::ProcessHandle | IntrinsicType::Timer => {
             unreachable!("registered terminal roots return above")
         }
     }
@@ -489,11 +514,19 @@ mod tests {
             IntrinsicType::ProcessExitError,
             IntrinsicType::Utf8Error,
             IntrinsicType::NumericConversionError,
+            IntrinsicType::Duration,
+            IntrinsicType::Instant,
+            IntrinsicType::Timer,
+            IntrinsicType::DurationError,
+            IntrinsicType::ClockError,
         ];
         let registered = constructors
             .into_iter()
             .filter_map(intrinsic_terminal_contract)
             .collect::<Vec<_>>();
-        assert_eq!(registered, [JOIN_CONTRACT, PROCESS_HANDLE_CONTRACT]);
+        assert_eq!(
+            registered,
+            [JOIN_CONTRACT, PROCESS_HANDLE_CONTRACT, TIMER_CONTRACT]
+        );
     }
 }

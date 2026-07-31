@@ -679,6 +679,23 @@ Un manifiesto puede sustituir esas convenciones mediante source sets cerrados,
 pero debe clasificar cada entrada como unit o integration. No puede cambiar la
 semántica de ambas clases ni inventar una tercera con mayor visibilidad.
 
+La frontera implementada de discovery es pura y host-independent. El host
+enumera candidatos y aporta, para cada uno, `physical_path`, `logical_path`,
+identidad de módulo y dos comprobaciones de filesystem: que sea un archivo
+regular y que la resolución de symlinks no escape de la raíz declarada. El
+clasificador no abre paths ni sigue symlinks. Rechaza paths absolutos,
+backslashes, componentes vacíos, `.`/`..` y saltos de línea, además de cualquier
+entrada no regular, escape por symlink, colisión física o colisión de
+`(class, logical_path, module)`.
+
+La clasificación usa la precedencia anterior y solo roots físicos y lógicos
+explícitos. La entrada se ordena por bytes UTF-8 del path físico canónico y
+recibe el input estable `source:<class>:<physical-path>`. Antes de solicitar
+bytes o crear un worker, el conjunto se reconcilia contra el plan cerrado por
+la identidad completa `(class, physical_path, logical_path, module, input)`.
+Faltantes y adicionales son deriva de plan y terminan la invocación; nunca se
+acepta que discovery cambie silenciosamente el build.
+
 ### 5.3 Unit test companions
 
 Un archivo unitario acompaña al módulo derivado de sus fuentes hermanas:
@@ -733,9 +750,16 @@ explícito, con identidad y hash fijados.
 
 ### 5.5 Dev-dependencies y generación
 
-Las dependencias de test forman un subgrafo cerrado del lockfile. Pueden ser
-usadas por unit e integration tests, pero no quedan disponibles al compilar el
-target de producción.
+Las dependencias de test forman un subgrafo cerrado de interfaces del lockfile,
+identificado por alias, `PackageId`, path de interfaz y hash exactos. Un edge
+transitivo solo puede apuntar a otra dev-dependency del mismo grafo o al
+PackageId de `std` fijado por el compilador; una referencia a producción y los
+ciclos se rechazan antes de materializarlo. Pueden ser usadas por unit e
+integration tests, pero no quedan disponibles al compilar el target de
+producción: el lookup desde `production` falla de forma explícita y nunca hace
+fallback al grafo de test. La identidad del producto se calcula únicamente con
+los inputs de producción, por lo que añadir o cambiar una dev-dependency no
+modifica su interfaz ni su artefacto publicable.
 
 Una fuente generada puede ser test solo si su salida declarada especifica la
 clase correspondiente. Generadores de test conservan las mismas restricciones
@@ -821,6 +845,17 @@ match también produce el array vacío y no falla por defecto.
 El plan registra modo, source path lógico, bytes y SHA-256 del CODEOWNERS
 efectivo. Cambiarlo altera el artefacto y reportes de test, pero nunca la
 interfaz ni el producto de producción.
+
+La implementación mantiene esta resolución en una frontera pura: el host
+entrega los candidatos y sus bytes/atestaciones; el parser no abre archivos,
+consulta red ni verifica identidades o permisos de owners. `auto` usa solo las
+tres ubicaciones y la precedencia indicadas, `none` no selecciona ninguna y un
+path explícito exige un candidato presente y válido. La salida conserva el
+path lógico elegido, el SHA-256 lowercase de sus bytes originales y las reglas
+ya normalizadas. Los owners se obtienen con `owners_for(path)` para cada
+declaración; un origen generado ausente usa `owners_for(null)` y recibe `[]`.
+La falta de un match también produce `[]`, mientras que un archivo existente
+pero inválido termina la resolución sin fallback silencioso.
 
 ## 6. Construcción del target de test
 
@@ -1988,6 +2023,52 @@ heredan entre suites/tests ni se fusionan entre retries o iteraciones. Sus bytes
 y contadores consumen los límites de 7.8. Un valor secreto copiado
 explícitamente por el test deja de estar protegido por el runner.
 
+### 9.8 Modelo interno y protocolo coordinator/worker
+
+El runner mantiene una única representación validada
+`tondo-test-report-0.1/7`: un bosque de descriptors de suite y test, cada uno
+con su lista ordenada de `attempts`, estado agregado y `decisive_attempt`, más
+el `execution_plan`, la policy y el `summary` derivado. Los reporters humano,
+JSON y JUnit consumen este árbol; no pueden volver a inferir estados,
+causalidad, conteos ni retries a partir de logs o completion order.
+
+El modelo interno conserva, por intento, `index`, `iteration`, `round`,
+`unit`, `status`, fase de suite, `blocked_by`, failure/skip, tags, logs,
+stdout/stderr, artifacts, snapshots y observaciones de tiempo virtual. Las
+reglas de 9.1 se aplican antes de publicar el árbol: índices contiguos,
+attempts no vacíos, fases permitidas, payloads mutuamente excluyentes y
+causalidad que apunte a una suite y a un intento existente. `summary` es una
+partición exacta de los nodos y cuenta artifacts/snapshots sin deduplicar
+objetos físicos. Un árbol con schema desconocido, IDs duplicados, referencias
+rotas, status no derivado o summary inconsistente se rechaza completo.
+
+La frontera coordinator/worker usa el record versionado
+`tondo-test-worker-0.1/1`. Cada frame tiene exactamente `format`, `run_id`,
+`sequence` y el payload de dirección correspondiente; hay un contador
+independiente por dirección que empieza en `1` y avanza sin huecos.
+Coordinator puede enviar:
+
+- `hello`: `worker_id`, target, `plan_sha256` y todos los límites positivos
+  (`timeout_ms`, timeouts de setup/teardown, output/artifacts/snapshots,
+  memoria, instrucciones y timers virtuales);
+- `run`: una `RetryUnit` (`test` o `suite`), su lista de hojas, `iteration` y
+  `round`;
+- `cancel`: razón y grace period positivo; y
+- `shutdown`: razón de cierre.
+
+Worker responde con `ready`, `started`, `attempt`, `finished`, `cancelled`,
+`closed` o `error`. `attempt` transporta el mismo record validado que entra en
+el árbol y nunca contiene bodies, valores de inputs secretos, PIDs, paths
+físicos ni timestamps operativos. Un handshake válido es `hello` → `ready`;
+solo después se admite `run`, y `finished` devuelve el worker a idle. Una
+cancelación entra en estado `cancelling`, requiere `cancelled` antes de otro
+run y no se considera completa hasta que el worker haya terminado cleanup y
+revocado recursos. `shutdown` exige `closed`; un error fatal cierra la sesión.
+Frames fuera de orden, con otro `run_id`, secuencia incorrecta, límite cero,
+unit vacía o schema con campos desconocidos invalidan la conversación y no
+producen un reporte parcial. El worker no ejecuta cuerpos como parte de esta
+frontera: solo transporta intentos ya observados por la implementación futura.
+
 ## 10. Contrato de `tondo test`
 
 Interfaz mínima:
@@ -2068,6 +2149,13 @@ Reglas:
   propio; no se insertan como strings ambiguos dentro de resultados de test.
 - Opciones desconocidas, repetidas cuando no son repetibles o combinaciones
   incompatibles terminan con exit `2` sin compilar.
+
+La capa de parsing produce un `TestCliPlan` cerrado antes de leer el manifest.
+Conserva la presencia explícita de `--retry` y `--repeat` incluso cuando sus
+valores son `0` y `1`, normaliza seed/duración/shard/paths y no ejecuta ningún
+body. Hasta cerrar `UTEST-CLI-001`, una invocación sintácticamente válida que
+ya pasó esta frontera termina con el diagnóstico de tooling de runner no
+conectado y exit `3`; no anuncia una ejecución inexistente ni publica reportes.
 
 Un argumento `--codeowners` sintácticamente inválido es uso de CLI y termina con
 exit `2`; un archivo seleccionado que falta, no puede leerse o no cumple 5.7 es

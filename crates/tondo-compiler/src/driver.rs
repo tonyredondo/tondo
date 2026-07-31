@@ -179,6 +179,9 @@ impl BuildTarget {
                 .expect("console is a registered Tondo target capability"),
             CapabilityName::new("process")
                 .expect("process is a registered Tondo target capability"),
+            CapabilityName::new("clock").expect("clock is a registered Tondo target capability"),
+            CapabilityName::new("environment")
+                .expect("environment is a registered Tondo target capability"),
         ])
     }
 }
@@ -1726,6 +1729,63 @@ mod tests {
             CapabilityName::new("made-up-capability"),
             Err(DriverError::InvalidCapability(_))
         ));
+
+        let time_source =
+            b"import std.time\nfn main(): !time.ClockError {\n    let instant = time.now()?\n}\n";
+        let time_rejected = execute(operation_request_with_capabilities(
+            Operation::Check,
+            time_source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(time_rejected.status(), CompilationStatus::Rejected);
+        let diagnostic = &time_rejected.diagnostics().diagnostics()[0];
+        assert_eq!(diagnostic.code(), "E1008");
+        assert!(
+            diagnostic
+                .message()
+                .contains("capability `clock` is missing")
+        );
+
+        let time_accepted = execute(operation_request(
+            Operation::Check,
+            time_source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(time_accepted.status(), CompilationStatus::Success);
+        assert!(time_accepted.diagnostics().diagnostics().is_empty());
+
+        let env_source =
+            b"import std.env\nfn main(): !env.EnvError {\n    let snapshot = env.snapshot()?\n}\n";
+        let env_rejected = execute(operation_request_with_capabilities(
+            Operation::Check,
+            env_source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(env_rejected.status(), CompilationStatus::Rejected);
+        let diagnostic = &env_rejected.diagnostics().diagnostics()[0];
+        assert_eq!(diagnostic.code(), "E1008");
+        assert!(
+            diagnostic
+                .message()
+                .contains("capability `environment` is missing")
+        );
+        let env_accepted = execute(operation_request(
+            Operation::Check,
+            env_source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(env_accepted.status(), CompilationStatus::Success);
+        assert!(env_accepted.diagnostics().diagnostics().is_empty());
 
         let baseline = request(DiagnosticFormat::Json);
         let root = baseline.root;

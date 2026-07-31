@@ -65,7 +65,7 @@ Esta revisión no fija todavía:
 - El conjunto exacto de variantes y payloads de cada error.
 - Los formatos concretos de `std.format`.
 - Los métodos concretos de strings, colecciones e iteradores.
-- Las declaraciones exhaustivas de consola, filesystem, environment, procesos,
+- Las declaraciones exhaustivas de consola, filesystem, procesos,
   networking, concurrencia, calendario civil, codecs adicionales, regex, UUID
   y logging.
 - Las declaraciones exhaustivas de cada operación de JSON, MessagePack y
@@ -1397,6 +1397,8 @@ actualizar esta especificación y el tracker antes de implementar.
   política de backpressure sin alterar silenciosamente el control del programa.
 - Los argumentos de proceso pertenecen a `std.env`; el contrato bootstrap de
   `std.process.args()` se migrará sin compatibilidad implícita.
+- `std.env` solo expone un snapshot runtime explícito; no lee environment durante
+  compilación ni ofrece mutación implícita.
 - `std.testing` solo existe en source sets de test y no forma parte de producción.
 - Streams, canales, red y sincronización solo aparecen bajo sus propietarios
   canónicos; ningún módulo existente los introduce indirectamente.
@@ -1405,9 +1407,10 @@ actualizar esta especificación y el tracker antes de implementar.
 
 El catálogo y sus propietarios son normativos. Las declaraciones exhaustivas de
 las veintinueve superficies permanecen pendientes, salvo el núcleo sellado que
-`TONDO_TESTING_SPEC.md` ya fija para `std.testing`, `std.bytes` y el sustrato
-monotónico de `std.time`. El bootstrap conserva su propio contrato separado
-hasta completar la migración de la sección 19.
+`TONDO_TESTING_SPEC.md` ya fija para `std.testing`, `std.bytes`, el sustrato
+monotónico de `std.time` y el snapshot read-only de `std.env`. El bootstrap
+conserva su propio contrato separado hasta completar la migración de la sección
+19.
 
 La implementación usa dos gates internos sin crear versiones distintas:
 
@@ -1591,7 +1594,84 @@ entre calendario e instante se especificarán e implementarán en STD-0.1B con
 datos versionados. Ninguna API de STD-0.1A puede aceptar un `Instant` donde
 espere una fecha civil o viceversa.
 
-#### 14.3.5 Plan cerrado, hashes y disponibilidad
+#### 14.3.5 `std.env`: snapshot runtime explícito
+
+`std.env` es una superficie capability-gated por `environment`. Su única
+responsabilidad en STD-0.1A es leer un snapshot inmutable de argumentos y
+variables entregado por el adaptador de ejecución. No consulta el host durante
+la compilación, no convierte el environment en input implícito del proyecto y
+no ofrece mutación global. `set`, `remove`, `clear`, herencia ambiental y
+resolución de nombres mediante locale quedan fuera de esta versión.
+
+El proveedor obtiene el snapshot una vez en la frontera de invocación. En un
+target de producción puede construirlo a partir del proceso, mientras que un
+adaptador sellado puede entregarlo desde un plan de inputs; la fuente Tondo ve
+la misma API y nunca distingue esas dos procedencias. Un snapshot vacío es
+válido y no es un error. La ausencia de una entrada se representa con `none`,
+no con una excepción ni con un valor vacío.
+
+~~~tondo pseudocode
+pub enum EnvError {
+    Unavailable
+    InvalidName
+    ResourceLimit
+}
+
+pub type Name
+
+pub enum Value {
+    Text(String)
+    Bytes(bytes.Bytes)
+}
+
+pub type Snapshot
+
+pub fn snapshot(): Snapshot ! EnvError
+pub fn Name.fromText(value: String): Name ! EnvError
+pub fn Name.fromBytes(value: bytes.Bytes): Name ! EnvError
+pub fn Snapshot.arguments(ref self): Array[Value]
+pub fn Snapshot.get(ref self, name: Name): Option[Value] ! EnvError
+pub fn Value.asText(ref self): Option[String]
+pub fn Value.asBytes(ref self): bytes.Bytes
+~~~
+
+`Name.fromText` codifica el nombre en UTF-8 sin normalización Unicode;
+`Name.fromBytes` permite consultar exactamente bytes que no sean UTF-8. Un nombre no puede estar
+vacío ni contener `NUL` o `=`; la validación produce `InvalidName` antes de
+consultar el proveedor. Las dos variantes que representan los mismos bytes
+identifican la misma entrada. El proveedor conserva los bytes originales del
+nombre y del valor, y devuelve `Value.Text` solo cuando los bytes del valor
+son UTF-8 válido; de lo contrario devuelve `Value.Bytes`. `asText` no intenta
+reparar ni reemplazar encoding y `asBytes` siempre devuelve una copia lógica
+independiente.
+
+`Snapshot.arguments` conserva el orden y la cardinalidad del vector de argv.
+Cada elemento usa la misma política `Text`/`Bytes`; no se elimina el elemento
+cero ni se interpreta ningún argumento como una ruta o un comando. El array y
+los bytes devueltos no son vistas mutables del snapshot. `Snapshot` es
+inmutable, `Send` y `Share`, pero no `Copy`; `Name` y `Value` son valores
+copiables cuando sus payloads lo son. Ningún método devuelve un handle al
+almacenamiento del host.
+
+El proveedor aplica un límite de bytes y de entradas antes de construir el
+snapshot. Si no puede capturarlo, devuelve `Unavailable`; si supera el límite,
+devuelve `ResourceLimit` sin publicar un snapshot parcial. Dos llamadas durante
+una misma invocación observan el mismo snapshot sellado y no pueden ver
+cambios externos a mitad de ejecución. La capability `environment` es
+necesaria tanto para `snapshot` como para cualquier operación que consuma un
+snapshot; omitirla produce `E1008` en el límite de módulos. `Duration`, `Bytes`
+y las conversiones de texto siguen siendo APIs independientes y no se importan
+por `std.env`.
+
+El runner de testing materializa únicamente los inputs públicos o secretos
+declarados por el plan. Los públicos se fijan por bytes y hash; los secretos se
+materializan solo dentro del worker y se representan fuera de él por su
+descriptor/version. `std.env` no redacciona copias que el programa escriba
+explícitamente en logs, snapshots, artifacts o salida, y el runner no realiza
+redacción heurística. Un target que no ofrezca `environment` no puede importar
+`std.env`, aunque el programa se ejecute bajo tests.
+
+#### 14.3.6 Plan cerrado, hashes y disponibilidad
 
 El slice se versiona como `std.time.monotonic-0.1` dentro de la única
 distribución `toolchain:std:draft`. El plan cerrado debe contener, cada uno con
@@ -1609,10 +1689,11 @@ su SHA-256 lowercase, los bytes de:
 Estas entradas utilizan las categorías existentes de `tondo-toolchain` (`source`,
 `dependency-interface` y `privileged-unit`); no se añade un path físico ni una
 segunda identidad de `std.time`. El `content_hash` de la distribución y su
-`api_hash` cubren el slice completo. Mientras no existan esos bytes y hashes,
-el plan conserva `STD-TIME-BASE-IMPL-001` y `STD-TIME-BASE-CONF-001` pendientes;
-la presente revisión cierra únicamente el contrato semántico y no anuncia
-disponibilidad en `tondo-vm-hosted`.
+`api_hash` cubren el slice completo. La implementación hosted ya materializa
+el proveedor real/virtual y la frontera async descrita en
+`docs/contracts/stdlib-time.md`; mientras no existan los bytes y hashes
+reproducibles del plan cerrado, `STD-TIME-BASE-CONF-001` permanece pendiente y
+`std.time` no se anuncia como una superficie distribuida estable.
 
 ### 14.4 Arquitectura común de serialización
 

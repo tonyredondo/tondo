@@ -687,5 +687,78 @@ fn intrinsic_node(
             }
         }
         IntrinsicType::NumericConversionError => satisfied(Vec::new()),
+        IntrinsicType::Duration | IntrinsicType::DurationError | IntrinsicType::ClockError => {
+            if matches!(
+                capability,
+                HirCapability::Copy
+                    | HirCapability::Discard
+                    | HirCapability::Equatable
+                    | HirCapability::Key
+                    | HirCapability::Send
+                    | HirCapability::Share
+            ) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
+        IntrinsicType::Instant => {
+            if matches!(
+                capability,
+                HirCapability::Copy
+                    | HirCapability::Discard
+                    | HirCapability::Send
+                    | HirCapability::Share
+            ) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
+        IntrinsicType::Timer => {
+            if capability == HirCapability::Send {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
+        IntrinsicType::EnvSnapshot => {
+            if matches!(
+                capability,
+                HirCapability::Discard | HirCapability::Send | HirCapability::Share
+            ) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
+        IntrinsicType::EnvName | IntrinsicType::EnvError => {
+            if matches!(
+                capability,
+                HirCapability::Copy
+                    | HirCapability::Discard
+                    | HirCapability::Equatable
+                    | HirCapability::Key
+                    | HirCapability::Send
+                    | HirCapability::Share
+            ) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
+        IntrinsicType::EnvValue => {
+            if matches!(
+                capability,
+                HirCapability::Copy
+                    | HirCapability::Discard
+                    | HirCapability::Send
+                    | HirCapability::Share
+            ) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
     }
 }

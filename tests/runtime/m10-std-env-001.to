@@ -1,0 +1,18 @@
+import std.console
+import std.env
+
+fn main(): !env.EnvError {
+    let snapshot = env.snapshot()?
+    let arguments = snapshot.arguments()
+    let missing_name = env.Name.fromText("TONDO_MISSING")?
+    let missing = snapshot.get(missing_name)?
+    match arguments {
+        [] => ()
+        [_, ..] => assert(false)
+    }
+    match missing {
+        none => ()
+        some(_) => assert(false)
+    }
+    console.print("env-ok\n")
+}

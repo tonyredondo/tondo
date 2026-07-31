@@ -1630,10 +1630,62 @@ impl<'a> FunctionBuilder<'a> {
         block: MirBlockId,
     ) -> Result<Option<MirBlockId>, MirError> {
         let expression = self.expression(action.expression())?.clone();
+        // `defer await call(...)` keeps the await wrapper in HIR so the
+        // checker can enforce async/liveness rules.  Cleanup itself starts
+        // from the underlying async call when the scope is drained.
+        let expression = match expression.kind() {
+            HirExpressionKind::Await { operation } => self.expression(*operation)?.clone(),
+            _ => expression,
+        };
         let guarded = action.guarded();
         let mut current = block;
         let (operation, guard) = match expression.kind() {
             HirExpressionKind::Call {
+                callee,
+                arguments,
+                signature,
+                protocol,
+                unsafe_call,
+            } => {
+                let Some((next, callee, callee_guard)) =
+                    self.lower_defer_operand(*callee, guarded, current)?
+                else {
+                    return Ok(None);
+                };
+                current = next;
+                let mut guard = callee_guard;
+                let mut lowered = Vec::with_capacity(arguments.len());
+                for argument in arguments {
+                    let Some((next, value, argument_guard)) =
+                        self.lower_defer_operand(argument.value(), guarded, current)?
+                    else {
+                        return Ok(None);
+                    };
+                    current = next;
+                    if argument_guard.is_some() {
+                        guard = argument_guard;
+                    }
+                    lowered.push(MirCallArgument {
+                        mode: argument.mode(),
+                        target: argument.target(),
+                        value,
+                    });
+                }
+                (
+                    MirOperation {
+                        ty: expression.ty(),
+                        kind: MirOperationKind::Call {
+                            callee,
+                            arguments: lowered,
+                            signature: *signature,
+                            protocol: *protocol,
+                            unsafe_call: *unsafe_call,
+                        },
+                    },
+                    guard,
+                )
+            }
+            HirExpressionKind::AsyncCall {
                 callee,
                 arguments,
                 signature,
