@@ -7,6 +7,11 @@ The static declaration boundary is implemented in
 runtime harness contract: tree construction is compile-time and host-free,
 while workers, lifecycle and reporters consume its descriptors later.
 
+Suite environment capture is implemented in
+[`test-capture.md`](./test-capture.md). It validates immutable
+`Copy + Send + Share` snapshots before lowering and keeps loans, moves and
+terminal owners out of descendant environments.
+
 ## Fixture classes
 
 The repository reserves these roots:

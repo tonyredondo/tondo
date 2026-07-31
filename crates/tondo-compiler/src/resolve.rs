@@ -77,6 +77,11 @@ impl fmt::Display for MemberName {
 pub struct LocalId(u32);
 
 impl LocalId {
+    #[cfg(test)]
+    pub(crate) const fn from_index(index: u32) -> Self {
+        Self(index)
+    }
+
     pub fn index(self) -> u32 {
         self.0
     }

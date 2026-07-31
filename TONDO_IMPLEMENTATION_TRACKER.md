@@ -5,12 +5,13 @@ tempranos `std.bytes`, el time-base de `std.time`, el contrato/implementación
 read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-INPUTS-PLAN-001`, `UTEST-RESULT-MODEL-001`, `UTEST-CLI-PARSE-001` y
 `UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001`,
-`UTEST-CST-001`, `UTEST-FMT-001` y `UTEST-ID-001` están cerrados sobre el
+`UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001` y `UTEST-CAPTURE-001` están
+cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.21
+**Versión del tracker:** 1.22
 
 **Última actualización:** 2026-07-31
 
@@ -2795,11 +2796,16 @@ reporters.
   sobre nesting, IDs unit/integration, duplicados cross-file, suites vacías,
   producción, permutación, descarte y spans.
 
-- [ ] **UTEST-CAPTURE-001 — Comprobar entornos de suite.** Un descendiente solo
+- [x] **UTEST-CAPTURE-001 — Comprobar entornos de suite.** Un descendiente solo
   captura bindings ancestrales `let: Copy + Send + Share` mediante snapshot.
   Rechazar con `E2005` `var`, préstamos, moves, valores afines/terminales y
   cualquier bypass a través de suites anidadas. Constantes y funciones de
-  módulo continúan resolviéndose por nombre.
+  módulo continúan resolviéndose por nombre. `test_capture::build` valida la
+  cadena de padres, facts de capabilities/terminales provenientes de HIR,
+  acceso ordinario por valor y slots de snapshot deterministas por hijo.
+  Evidencia: `docs/contracts/test-capture.md` y nueve tests unitarios sobre
+  snapshots válidos, nesting, modos de binding/uso, capabilities, terminales,
+  diagnósticos y entradas inválidas.
 
 - [ ] **UTEST-OVERLAY-001 — Implementar el overlay unitario sellado.** Resolver
   y comprobar producción primero, después permitir lectura privada y helpers
@@ -4318,6 +4324,17 @@ correspondiente.
   vacías y nombres `_`. La permutación de entradas conserva nodos,
   diagnostics y rangos; `docs/contracts/test-tree.md` fija el contrato y
   doce tests nuevos lo cubren.
+
+### 1.22 — 2026-07-31
+
+- Se completa `UTEST-CAPTURE-001` con `tondo_compiler::test_capture`: la
+  frontera semántica consume bindings y usos ya resueltos, verifica ancestoría
+  estática y exige `let` con `Copy + Send + Share` sin obligación terminal.
+- Cada descendiente recibe una descripción de snapshot inmutable por binding;
+  `var`, préstamos, moves, capabilities no satisfechas, terminales y usos fuera
+  de la cadena de padres emiten `E2005` con el uso primario y la declaración
+  relacionada. La adaptación de facts queda cerrada a los resúmenes HIR y se
+  añaden nueve tests unitarios y el contrato `docs/contracts/test-capture.md`.
 
 ### 1.20 — 2026-07-31
 

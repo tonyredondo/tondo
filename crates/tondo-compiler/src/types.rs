@@ -9,6 +9,11 @@ use crate::source::{LogicalPath, ModulePath, SourceId};
 pub struct TypeId(u32);
 
 impl TypeId {
+    #[cfg(test)]
+    pub(crate) const fn from_index(index: u32) -> Self {
+        Self(index)
+    }
+
     pub fn index(self) -> u32 {
         self.0
     }

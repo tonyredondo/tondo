@@ -13,6 +13,7 @@ pub mod resolve;
 pub mod semantic;
 pub mod source;
 pub mod syntax;
+pub mod test_capture;
 pub mod test_dependencies;
 pub mod test_discovery;
 pub mod test_inputs;
