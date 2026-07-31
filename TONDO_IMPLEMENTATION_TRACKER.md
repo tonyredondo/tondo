@@ -4,12 +4,12 @@
 tempranos `std.bytes`, el time-base de `std.time`, el contrato/implementación
 read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-INPUTS-PLAN-001`, `UTEST-RESULT-MODEL-001`, `UTEST-CLI-PARSE-001` y
-`UTEST-DISC-001`, `UTEST-OWNERS-001` y `UTEST-DEPS-001`
+`UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001` y `UTEST-LEX-001`
 están cerrados sobre el draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.17
+**Versión del tracker:** 1.18
 
 **Última actualización:** 2026-07-31
 
@@ -346,7 +346,7 @@ necesaria; la fragmentación del workspace no.
 | **M10.5 — Reliability y testing** | Infraestructura y hardening continuo de evidencia | Completado |
 | **M10.5c — Conformidad del draft** | Una línea de draft y ratchet incremental | Wave 0 cerrado; sellado pendiente en Wave 4 |
 | **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Especificado; implementación pendiente |
-| **M10.6 — Testing de usuario Tondo 0.1** | Gate T0 y contribución testing a G5 | Especificado; implementación pendiente |
+| **M10.6 — Testing de usuario Tondo 0.1** | Gate T0 y contribución testing a G5 | En curso; lexer de keywords cerrado |
 | **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura base cerrada; slices tempranos y APIs pendientes |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
@@ -2737,11 +2737,14 @@ reporters.
 
 ### 17.2 Frontend y semántica estática
 
-- [ ] **UTEST-LEX-001 — Añadir `suite` y `test` a las keywords Tondo 0.1.**
-  Lexer, token registry, Unicode/NFC, diagnostics y reconstrucción CST deben
-  reconocerlas siempre que la edición declarada sea 0.1, nunca por un path
-  físico, source class o por el comando que invoca el parser. No existe un modo
-  0.1 anterior seleccionable.
+- [x] **UTEST-LEX-001 — Añadir `suite` y `test` a las keywords Tondo 0.1.**
+  `TokenKind` y `from_keyword` las registran como keywords reservadas. El lexer
+  las clasifica en Module, ImportedModule, Script y Fragment, mantiene la
+  normalización NFC de identificadores vecinos, no emite diagnostics y conserva
+  la partición/reconstrucción byte a byte. La misma clasificación es
+  independiente de `SourceId`, ruta lógica y origen físico/virtual; `Name`
+  rechaza ambas como nombres de usuario. Evidencia: tests unitarios de
+  `syntax::lexer` y `package`, además de la suite completa de `tondo-compiler`.
 
 - [ ] **UTEST-CST-001 — Parsear `test` y `suite` sin pérdida.** Añadir
   `test identifier block` y `suite identifier suite-block` a CST/AST y

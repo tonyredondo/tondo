@@ -70,6 +70,8 @@ pub enum TokenKind {
     SelfKw,
     Some,
     Spawn,
+    Suite,
+    Test,
     Trait,
     True,
     Type,
@@ -180,6 +182,8 @@ impl TokenKind {
                 | Self::SelfKw
                 | Self::Some
                 | Self::Spawn
+                | Self::Suite
+                | Self::Test
                 | Self::Trait
                 | Self::True
                 | Self::Type
@@ -226,6 +230,8 @@ impl TokenKind {
             "self" => Self::SelfKw,
             "some" => Self::Some,
             "spawn" => Self::Spawn,
+            "suite" => Self::Suite,
+            "test" => Self::Test,
             "trait" => Self::Trait,
             "true" => Self::True,
             "type" => Self::Type,

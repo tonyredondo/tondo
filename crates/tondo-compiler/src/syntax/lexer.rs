@@ -1633,7 +1633,8 @@ mod tests {
             "alias", "and", "as", "async", "await", "break", "const", "continue", "defer", "else",
             "enum", "err", "fail", "false", "fn", "for", "if", "impl", "import", "in", "let",
             "match", "mut", "none", "not", "ok", "or", "priv", "pub", "ref", "return", "scope",
-            "self", "some", "spawn", "trait", "true", "type", "unsafe", "var", "with",
+            "self", "some", "spawn", "suite", "test", "trait", "true", "type", "unsafe", "var",
+            "with",
         ];
         let input = spellings.join(" ");
         let (_, _, lexed) = lex_bytes(input.as_bytes(), LexMode::Module);
@@ -1648,6 +1649,75 @@ mod tests {
                 .len(),
             spellings.len()
         );
+    }
+
+    #[test]
+    fn testing_keywords_are_classified_in_every_source_form_and_preserve_nfc() {
+        let input = "suite test cafe\u{301} café\n";
+        let expected = [
+            TokenKind::Suite,
+            TokenKind::Test,
+            TokenKind::Identifier,
+            TokenKind::Identifier,
+        ];
+
+        for mode in [
+            LexMode::Module,
+            LexMode::ImportedModule,
+            LexMode::Script,
+            LexMode::Fragment,
+        ] {
+            let (sources, file, lexed) = lex_bytes(input.as_bytes(), mode);
+            assert!(lexed.diagnostics().is_empty(), "{mode:?}");
+            assert_eq!(physical_significant_kinds(&lexed), expected, "{mode:?}");
+            let identifiers = lexed
+                .tokens()
+                .iter()
+                .filter_map(Token::normalized_identifier)
+                .collect::<Vec<_>>();
+            assert_eq!(identifiers, ["café", "café"], "{mode:?}");
+            assert_lossless(&sources, file, &lexed);
+        }
+    }
+
+    #[test]
+    fn testing_keyword_classification_does_not_depend_on_source_path_or_origin() {
+        let input = Arc::<[u8]>::from(&b"suite tests\ntest smoke { }\n"[..]);
+        let mut sources = SourceDatabase::new();
+        let production = sources
+            .add(SourceInput::new(
+                SourceId::new("project:production").unwrap(),
+                ModulePath::new("main").unwrap(),
+                LogicalPath::new("src/main.to").unwrap(),
+                crate::source::SourceOrigin::Physical,
+                input.clone(),
+            ))
+            .unwrap();
+        let unit_test = sources
+            .add(SourceInput::virtual_file(
+                SourceId::new("project:unit-test").unwrap(),
+                ModulePath::new("tests").unwrap(),
+                LogicalPath::new("tests/smoke_test.to").unwrap(),
+                input,
+            ))
+            .unwrap();
+
+        let production_lexed = lex(&sources, production, LexMode::Module).unwrap();
+        let unit_test_lexed = lex(&sources, unit_test, LexMode::Fragment).unwrap();
+        let expected = [
+            TokenKind::Suite,
+            TokenKind::Identifier,
+            TokenKind::Test,
+            TokenKind::Identifier,
+            TokenKind::LBrace,
+            TokenKind::RBrace,
+        ];
+        assert_eq!(physical_significant_kinds(&production_lexed), expected);
+        assert_eq!(physical_significant_kinds(&unit_test_lexed), expected);
+        assert!(production_lexed.diagnostics().is_empty());
+        assert!(unit_test_lexed.diagnostics().is_empty());
+        assert_lossless(&sources, production, &production_lexed);
+        assert_lossless(&sources, unit_test, &unit_test_lexed);
     }
 
     #[test]

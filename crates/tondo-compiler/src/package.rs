@@ -959,6 +959,8 @@ mod tests {
         assert!(matches!(Name::new(""), Err(NameError::Empty)));
         assert!(matches!(Name::new("_"), Err(NameError::Discard)));
         assert!(matches!(Name::new("import"), Err(NameError::Keyword(_))));
+        assert!(matches!(Name::new("suite"), Err(NameError::Keyword(_))));
+        assert!(matches!(Name::new("test"), Err(NameError::Keyword(_))));
         assert!(matches!(
             Name::new("not valid!"),
             Err(NameError::InvalidIdentifier(_))
