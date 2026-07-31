@@ -4294,6 +4294,102 @@ mod tests {
             .unwrap_or_else(|| panic!("missing bytecode body for `{name}`"))
     }
 
+    #[test]
+    fn defer_snapshot_rewrites_each_supported_operation_shape_exactly_once() {
+        let ty = bc::BytecodeTypeId::new(0);
+        let guard = bc::BytecodePlace {
+            slot: bc::BytecodeSlotId::new(1),
+            ty,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let operand = |kind| bc::BytecodeOperand { ty, kind };
+
+        let mut call = bc::BytecodeOperation {
+            ty,
+            kind: bc::BytecodeOperationKind::Call {
+                callee: operand(bc::BytecodeOperandKind::Constant(
+                    bc::BytecodeConstant::Unit,
+                )),
+                arguments: vec![bc::BytecodeCallArgument {
+                    mode: bc::BytecodeParameterMode::Value,
+                    target: bc::BytecodeCallArgumentTarget::Fixed(0),
+                    value: operand(bc::BytecodeOperandKind::Move(guard.clone())),
+                }],
+                signature: ty,
+                protocol: bc::BytecodeCallProtocol::Call,
+                unsafe_call: false,
+            },
+        };
+        specialize_defer_snapshot(&mut call, &guard).unwrap();
+        let bc::BytecodeOperationKind::Call { arguments, .. } = call.kind else {
+            unreachable!()
+        };
+        assert!(matches!(
+            arguments[0].value.kind,
+            bc::BytecodeOperandKind::Copy(_)
+        ));
+
+        let mut assertion = bc::BytecodeOperation {
+            ty,
+            kind: bc::BytecodeOperationKind::Assert {
+                condition: operand(bc::BytecodeOperandKind::Constant(
+                    bc::BytecodeConstant::Bool(true),
+                )),
+                condition_repr: "true".into(),
+                message_parts: vec![bc::BytecodeAssertMessagePart {
+                    value: operand(bc::BytecodeOperandKind::Move(guard.clone())),
+                    spread: false,
+                }],
+            },
+        };
+        specialize_defer_snapshot(&mut assertion, &guard).unwrap();
+        let bc::BytecodeOperationKind::Assert { message_parts, .. } = assertion.kind else {
+            unreachable!()
+        };
+        assert!(matches!(
+            message_parts[0].value.kind,
+            bc::BytecodeOperandKind::Copy(_)
+        ));
+
+        let mut host_call = bc::BytecodeOperation {
+            ty,
+            kind: bc::BytecodeOperationKind::BootstrapHostCall {
+                function: bc::BytecodeBootstrapHostFunction::ConsolePrint,
+                arguments: vec![
+                    operand(bc::BytecodeOperandKind::Move(guard.clone())),
+                    operand(bc::BytecodeOperandKind::Constant(
+                        bc::BytecodeConstant::Unit,
+                    )),
+                ],
+            },
+        };
+        specialize_defer_snapshot(&mut host_call, &guard).unwrap();
+        let bc::BytecodeOperationKind::BootstrapHostCall { arguments, .. } = host_call.kind else {
+            unreachable!()
+        };
+        assert!(matches!(
+            arguments[0].kind,
+            bc::BytecodeOperandKind::Copy(_)
+        ));
+
+        let mut unsupported = bc::BytecodeOperation {
+            ty,
+            kind: bc::BytecodeOperationKind::CheckedPrefix {
+                operator: bc::BytecodePrefixOperator::Negate,
+                operand: operand(bc::BytecodeOperandKind::Constant(
+                    bc::BytecodeConstant::Integer("1".into()),
+                )),
+            },
+        };
+        let error = specialize_defer_snapshot(&mut unsupported, &guard).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("exactly one moved invocation operand")
+        );
+    }
+
     fn execute_function(source: &str, name: &str) -> RuntimeValue {
         match execute_outcome(source, name) {
             VmOutcome::Returned(value) => value,

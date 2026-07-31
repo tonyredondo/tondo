@@ -8242,22 +8242,23 @@ mod tests {
         BytecodeCallableId, BytecodeCapabilitySet, BytecodeClosure, BytecodeClosureProtocols,
         BytecodeConstant, BytecodeConstantValue, BytecodeConstantValueKind,
         BytecodeConstantVariantValue, BytecodeContainmentKind, BytecodeCursorMode, BytecodeField,
-        BytecodeFrameTraceDescriptor, BytecodeFunctionId, BytecodeIndexAccess,
-        BytecodeIntrinsicType, BytecodeLoanId, BytecodeNominal, BytecodeNominalId,
-        BytecodeNominalShape, BytecodeNumericConversionError, BytecodeOperand, BytecodeOperandKind,
-        BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode, BytecodePlace,
-        BytecodePrefixOperator, BytecodeProgram, BytecodeRangeKind, BytecodeScalarType,
-        BytecodeScopeId, BytecodeSliceBounds, BytecodeSlotId, BytecodeTraceDescriptor,
-        BytecodeType, BytecodeTypeId, BytecodeTypeKind, BytecodeVariant, BytecodeVariantPayload,
-        derive_trace_metadata,
+        BytecodeFrameTraceDescriptor, BytecodeFunction, BytecodeFunctionId, BytecodeFunctionType,
+        BytecodeIndexAccess, BytecodeIntrinsicType, BytecodeLoanId, BytecodeNominal,
+        BytecodeNominalId, BytecodeNominalShape, BytecodeNumericConversionError, BytecodeOperand,
+        BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode,
+        BytecodePlace, BytecodePrefixOperator, BytecodeProgram, BytecodeRangeKind,
+        BytecodeScalarType, BytecodeScopeId, BytecodeSliceBounds, BytecodeSlotId, BytecodeSpan,
+        BytecodeTraceDescriptor, BytecodeType, BytecodeTypeId, BytecodeTypeKind, BytecodeVariant,
+        BytecodeVariantPayload, derive_trace_metadata,
     };
 
     use super::{
-        AggregatePayload, Engine, Frame, HeapObject, PanicCode, PlaceComponent, PlaceFailure,
-        RejectingHost, ResolvedPlacePath, RuntimeFallback, RuntimeHostValueKind, RuntimeJoin,
-        RuntimeLoan, RuntimeType, RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus,
-        TaskWait, Value, ValueCopyStrategy, VmError, VmHost, VmLimits, clone_field, clone_index,
-        clone_present, collection_length_fits_int, convert_numeric, integer_bounds, integer_shape,
+        AggregatePayload, DeferredOperation, DeferredValue, Engine, Frame, HeapObject, PanicCode,
+        PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath, RuntimeCleanup,
+        RuntimeDefer, RuntimeFallback, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan, RuntimeType,
+        RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus, TaskWait, Value,
+        ValueCopyStrategy, VmError, VmHost, VmLimits, clone_field, clone_index, clone_present,
+        collection_length_fits_int, convert_numeric, integer_bounds, integer_shape,
         next_unicode_scalar, operand_materialized_slot, operation_access_place, paths_overlap,
         present, queue_object_equality, queue_payload_equality, runtime_host_kind, set_field,
         set_index, slice_indices, snapshot_value, take_field, take_index, take_option,
@@ -8654,6 +8655,200 @@ mod tests {
             join_consumed: true,
             panic_observed: false,
         }
+    }
+
+    #[test]
+    fn entry_and_limit_contracts_reject_each_invalid_boundary() {
+        let mut program = root_pressure_program();
+        let int = BytecodeTypeId::new(5);
+        let function_type = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "fn main()".into(),
+            kind: BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: false,
+                is_unsafe: false,
+                parameters: Vec::new(),
+                variadic: None,
+                outcome: int,
+            }),
+        });
+        program.callables.push(BytecodeCallable {
+            name: "main".into(),
+            generic_arity: 0,
+            parameters: Vec::new(),
+            outcome: int,
+            function_type,
+            implementation: Some(BytecodeFunctionId::new(0)),
+            closure: None,
+        });
+        program.functions.push(BytecodeFunction {
+            callable: BytecodeCallableId::new(0),
+            source: BytecodeSpan {
+                file: 0,
+                start: 0,
+                end: 0,
+            },
+            types: Vec::new(),
+            spans: vec![BytecodeSpan {
+                file: 0,
+                start: 0,
+                end: 0,
+            }],
+            slots: Vec::new(),
+            loans: Vec::new(),
+            parameters: Vec::new(),
+            return_slot: BytecodeSlotId::new(0),
+            entry: BytecodeBlockId::new(0),
+            unwind: BytecodeBlockId::new(0),
+            blocks: Vec::new(),
+        });
+        let entry = BytecodeFunctionId::new(0);
+        super::validate_entry_contract(&program, entry).unwrap();
+
+        let error =
+            super::validate_entry_contract(&program, BytecodeFunctionId::new(99)).unwrap_err();
+        assert!(
+            matches!(error, VmError::InvalidEntry(message) if message.contains("unknown function"))
+        );
+
+        let mut missing_callable = program.clone();
+        missing_callable.functions[0].callable = BytecodeCallableId::new(99);
+        let error = super::validate_entry_contract(&missing_callable, entry).unwrap_err();
+        assert!(matches!(error, VmError::InvalidEntry(message) if message.contains("no callable")));
+
+        let mut missing_signature = program.clone();
+        missing_signature.callables[0].function_type = BytecodeTypeId::new(99);
+        let error = super::validate_entry_contract(&missing_signature, entry).unwrap_err();
+        assert!(
+            matches!(error, VmError::InvalidEntry(message) if message.contains("no function type"))
+        );
+
+        let mut non_function = program.clone();
+        non_function.callables[0].function_type = int;
+        let error = super::validate_entry_contract(&non_function, entry).unwrap_err();
+        assert!(
+            matches!(error, VmError::InvalidEntry(message) if message.contains("not a function"))
+        );
+
+        let mut unsafe_entry = program.clone();
+        let BytecodeTypeKind::Function(signature) =
+            &mut unsafe_entry.types[function_type.index() as usize].kind
+        else {
+            unreachable!()
+        };
+        signature.is_unsafe = true;
+        let error = super::validate_entry_contract(&unsafe_entry, entry).unwrap_err();
+        assert!(matches!(error, VmError::InvalidEntry(message) if message.contains("unsafe")));
+
+        for (name, limits) in [
+            (
+                "max_verification_steps",
+                VmLimits {
+                    max_verification_steps: 0,
+                    ..VmLimits::default()
+                },
+            ),
+            (
+                "max_steps",
+                VmLimits {
+                    max_steps: 0,
+                    ..VmLimits::default()
+                },
+            ),
+            (
+                "max_stack_depth",
+                VmLimits {
+                    max_stack_depth: 0,
+                    ..VmLimits::default()
+                },
+            ),
+            (
+                "max_heap_objects",
+                VmLimits {
+                    max_heap_objects: 0,
+                    ..VmLimits::default()
+                },
+            ),
+            (
+                "max_heap_bytes",
+                VmLimits {
+                    max_heap_bytes: 0,
+                    ..VmLimits::default()
+                },
+            ),
+            (
+                "initial_gc_threshold",
+                VmLimits {
+                    initial_gc_threshold: 0,
+                    ..VmLimits::default()
+                },
+            ),
+        ] {
+            let error = super::validate_limits(limits).unwrap_err();
+            assert!(matches!(error, VmError::InvalidLimits(candidate) if candidate == name));
+        }
+    }
+
+    #[test]
+    fn deferred_operation_and_cleanup_roots_cover_all_runtime_shapes() {
+        let ty = BytecodeTypeId::new(5);
+        let place = BytecodePlace {
+            slot: BytecodeSlotId::new(0),
+            ty,
+            projections: Vec::new(),
+            source_loan: None,
+        };
+        let captured = Value::Integer(7);
+        let mut roots = Vec::new();
+        DeferredValue::Captured(captured.clone()).roots(&mut roots);
+        DeferredValue::Guard.roots(&mut roots);
+        assert_eq!(roots, vec![captured.clone()]);
+
+        let assertion = DeferredOperation::Assert {
+            condition: DeferredValue::Captured(captured.clone()),
+            condition_repr: "value".into(),
+            message_parts: vec![(DeferredValue::Guard, false)],
+        };
+        assertion.roots(&mut roots);
+        assert_eq!(roots, vec![captured.clone(), captured.clone()]);
+
+        let host_call = DeferredOperation::BootstrapHostCall {
+            function: crate::bytecode::BytecodeBootstrapHostFunction::ConsolePrint,
+            arguments: vec![
+                DeferredValue::Captured(captured.clone()),
+                DeferredValue::Guard,
+            ],
+        };
+        host_call.roots(&mut roots);
+        assert_eq!(roots, vec![captured.clone(), captured.clone(), captured]);
+
+        let scope = BytecodeScopeId::new(3);
+        let mut explicit = RuntimeCleanup::Explicit(RuntimeDefer {
+            scope,
+            span: BytecodeSpan {
+                file: 0,
+                start: 0,
+                end: 0,
+            },
+            operation: assertion,
+            guard: Some(place.clone()),
+            async_cleanup: false,
+        });
+        assert_eq!(explicit.scope(), scope);
+        assert_eq!(explicit.guard(), Some(&place));
+        explicit.guard_mut().unwrap().slot = BytecodeSlotId::new(1);
+        explicit.roots(&mut roots);
+
+        let mut fallback = RuntimeCleanup::Fallback(RuntimeFallback {
+            scope,
+            owner: place,
+        });
+        assert_eq!(fallback.scope(), scope);
+        assert!(fallback.guard().is_some());
+        fallback.guard_mut().unwrap().slot = BytecodeSlotId::new(2);
+        let before = roots.len();
+        fallback.roots(&mut roots);
+        assert_eq!(roots.len(), before);
     }
 
     #[test]

@@ -801,4 +801,113 @@ mod tests {
         assert_eq!(first, second);
         assert!(!first.windows(6).any(|window| window == b"value\""));
     }
+
+    #[test]
+    fn input_profiles_accessors_digests_and_error_messages_are_closed() {
+        assert_eq!(TestInputProfile::Build.as_str(), "build");
+        assert_eq!(TestInputProfile::Runtime.as_str(), "runtime");
+        assert_eq!(TestInputProfile::Both.as_str(), "both");
+        assert_eq!(
+            TestInputProfile::parse("runtime").unwrap(),
+            TestInputProfile::Runtime
+        );
+        assert!(TestInputProfile::parse("other").is_err());
+        assert_eq!(TestInputVisibility::Public.as_str(), "public");
+        assert_eq!(TestInputVisibility::Secret.as_str(), "secret");
+        assert_eq!(
+            TestInputVisibility::parse("secret").unwrap(),
+            TestInputVisibility::Secret
+        );
+        assert!(TestInputVisibility::parse("other").is_err());
+        assert_eq!(TestReproducibility::Closed.as_str(), "closed");
+        assert_eq!(
+            TestReproducibility::SecretDependentVersioned.as_str(),
+            "secret-dependent-versioned"
+        );
+        assert_eq!(
+            TestReproducibility::SecretDependentUnversioned.as_str(),
+            "secret-dependent-unversioned"
+        );
+
+        let descriptor = TestInputDescriptor {
+            name: "name".into(),
+            source: "source".into(),
+            profile: TestInputProfile::Both,
+            visibility: TestInputVisibility::Secret,
+            sha256: None,
+            provider: Some("provider".into()),
+            descriptor: Some("descriptor".into()),
+            version: Some("v1".into()),
+            capability: Some("console".into()),
+        };
+        assert_eq!(descriptor.name(), "name");
+        assert_eq!(descriptor.source(), "source");
+        assert_eq!(descriptor.profile(), TestInputProfile::Both);
+        assert_eq!(descriptor.visibility(), TestInputVisibility::Secret);
+        assert_eq!(descriptor.sha256(), None);
+        assert_eq!(descriptor.provider(), Some("provider"));
+        assert_eq!(descriptor.descriptor(), Some("descriptor"));
+        assert_eq!(descriptor.version(), Some("v1"));
+        assert_eq!(descriptor.capability(), Some("console"));
+        assert_eq!(
+            reproducibility(std::slice::from_ref(&descriptor)),
+            TestReproducibility::SecretDependentVersioned
+        );
+        assert_eq!(
+            secret_digest(std::slice::from_ref(&descriptor))
+                .unwrap()
+                .is_some(),
+            true
+        );
+        assert_eq!(
+            public_digest(&[descriptor.clone()]).unwrap(),
+            digest_hex(b"[]").unwrap()
+        );
+        assert!(digest_hex(b"").unwrap().len() == 64);
+        assert!(input_name("name", "bad\\name").is_err());
+        assert!(text("text", "bad\ntext".into()).is_err());
+
+        for error in [
+            TestInputPlanError::InvalidJson("bad".into()),
+            TestInputPlanError::InvalidField {
+                field: "x",
+                message: "bad".into(),
+            },
+            TestInputPlanError::PlanMismatch {
+                expected: "a".into(),
+                actual: "b".into(),
+            },
+            TestInputPlanError::DigestMismatch {
+                field: "x",
+                expected: "a".into(),
+                actual: "b".into(),
+            },
+            TestInputPlanError::CountMismatch {
+                expected: 1,
+                actual: 0,
+            },
+            TestInputPlanError::MissingInput("input".into()),
+            TestInputPlanError::Duplicate {
+                kind: "input",
+                value: "input".into(),
+            },
+            TestInputPlanError::Serialization("bad".into()),
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
+
+        let plan = test_plan_fixture();
+        let mut value = input_json(&plan);
+        value["inputs"][0]["sha256"] = Value::Null;
+        assert!(TestInputPlan::parse(&plan, &serde_json::to_vec(&value).unwrap()).is_err());
+        let mut value = input_json(&plan);
+        value["inputs"][0]["provider"] = json!("ci");
+        assert!(TestInputPlan::parse(&plan, &serde_json::to_vec(&value).unwrap()).is_err());
+        let mut value = input_json(&plan);
+        value["inputs"][0]["profile"] = json!("other");
+        assert!(TestInputPlan::parse(&plan, &serde_json::to_vec(&value).unwrap()).is_err());
+        let mut value = input_json(&plan);
+        value["inputs"][0]["name"] = json!("bad\\name");
+        assert!(TestInputPlan::parse(&plan, &serde_json::to_vec(&value).unwrap()).is_err());
+    }
 }

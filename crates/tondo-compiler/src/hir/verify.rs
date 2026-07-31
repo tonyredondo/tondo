@@ -7949,6 +7949,79 @@ mod tests {
     }
 
     #[test]
+    fn verifier_boundary_diagnostics_and_write_permissions_are_observable() {
+        let error = HirInvariantError::new("boundary", "details");
+        assert_eq!(error.context(), "boundary");
+        assert_eq!(error.message(), "details");
+        assert_eq!(
+            error.to_string(),
+            "typed HIR invariant failed for boundary: details"
+        );
+        assert_eq!(
+            WritePermission::Immutable.projected(),
+            WritePermission::Immutable
+        );
+        assert_eq!(
+            WritePermission::PreserveExtent.projected(),
+            WritePermission::Replace
+        );
+        assert_eq!(
+            WritePermission::Replace.projected(),
+            WritePermission::Replace
+        );
+
+        let (resolved, mut program) = checked_program_from(
+            "async fn load(value: Int): Int { value }\n\
+             async fn effects(): Int {\n\
+                 let direct = await load(1)\n\
+                 scope {\n\
+                     let task = spawn load(direct)\n\
+                     await task\n\
+                 }\n\
+             }\n",
+        );
+        let join = program
+            .interner
+            .ids()
+            .find(|ty| {
+                matches!(
+                    program.interner.kind(*ty),
+                    Ok(TypeKind::Intrinsic {
+                        constructor: IntrinsicType::Join,
+                        ..
+                    })
+                )
+            })
+            .expect("the async fixture retains a Join type");
+        program.capability_statuses[join.index() as usize][HirCapability::Discard.index()] =
+            HirCapabilityStatus::Satisfied;
+        let error = Verifier {
+            resolved: &resolved,
+            program: &program,
+        }
+        .verify_terminal_statuses()
+        .unwrap_err();
+        assert_eq!(error.context(), "terminal types");
+        assert!(
+            error.message().contains("both terminal and Discard"),
+            "{error}"
+        );
+
+        program.capability_statuses[join.index() as usize][HirCapability::Discard.index()] =
+            HirCapabilityStatus::Unsatisfied;
+        program.capability_statuses[join.index() as usize][HirCapability::Copy.index()] =
+            HirCapabilityStatus::Satisfied;
+        let error = Verifier {
+            resolved: &resolved,
+            program: &program,
+        }
+        .verify_terminal_statuses()
+        .unwrap_err();
+        assert_eq!(error.context(), "terminal types");
+        assert!(error.message().contains("not known non-Copy"), "{error}");
+    }
+
+    #[test]
     fn array_sequence_signature_is_rederived_before_mir() {
         let (resolved, mut program) = checked_program_from(
             "fn combine(left: Array[Int], right: Array[Int]): Array[Int] {\n\

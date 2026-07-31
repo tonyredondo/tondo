@@ -791,4 +791,192 @@ mod tests {
             "tondo-test-dependency-graph-draft/1"
         );
     }
+
+    #[test]
+    fn dependency_accessors_resolution_edges_and_error_messages_are_closed() {
+        let value = record(
+            "registry:test@1#abc",
+            "interfaces/test.ti",
+            SHA_A,
+            [("support", "registry:support@1#def")],
+        );
+        assert_eq!(value.package().as_str(), "registry:test@1#abc");
+        assert_eq!(value.interface_path(), "interfaces/test.ti");
+        assert_eq!(value.interface_sha256(), SHA_A);
+        assert_eq!(
+            value.dependencies()["support"].as_str(),
+            "registry:support@1#def"
+        );
+        assert!(TestDependencyRecord::new("pkg", "", SHA_A, []).is_err());
+        assert!(
+            TestDependencyRecord::new(
+                "pkg",
+                "iface",
+                SHA_A,
+                [("bad alias".into(), "pkg:b".into())]
+            )
+            .is_err()
+        );
+        assert!(
+            TestDependencyRecord::new("pkg", "iface", SHA_A, [("a".into(), "".into())]).is_err()
+        );
+
+        let graph = build_for(
+            &[expected(
+                "testing",
+                "registry:test@1#abc",
+                "interfaces/test.ti",
+                SHA_A,
+            )],
+            &BTreeSet::new(),
+            vec![record(
+                "registry:test@1#abc",
+                "interfaces/test.ti",
+                SHA_A,
+                [],
+            )],
+        )
+        .unwrap();
+        let package = PackageId::new("registry:test@1#abc").unwrap();
+        let node = graph.package(&package).unwrap();
+        assert_eq!(node.package().as_str(), package.as_str());
+        assert_eq!(node.interface_path(), "interfaces/test.ti");
+        assert_eq!(node.interface_sha256(), SHA_A);
+        assert!(node.dependencies().is_empty());
+        assert!(matches!(
+            graph.package(&PackageId::new("registry:missing@1").unwrap()),
+            None
+        ));
+        assert!(matches!(
+            graph.resolve_from(&PackageId::new("registry:missing@1").unwrap(), "x"),
+            Err(DependencyGraphError::UnknownPackage(_))
+        ));
+        assert!(matches!(
+            graph.resolve_from(&package, "bad alias"),
+            Err(DependencyGraphError::InvalidField { .. })
+        ));
+        assert!(matches!(
+            graph.resolve_from(&package, "missing"),
+            Err(DependencyGraphError::UnknownAlias(_))
+        ));
+        assert!(matches!(
+            graph.resolve_alias(TestSourceClass::UnitTest, "bad alias"),
+            Err(DependencyGraphError::InvalidField { .. })
+        ));
+
+        let duplicate_record = record("registry:test@1#abc", "interfaces/test.ti", SHA_A, []);
+        assert!(matches!(
+            build_for(
+                &[expected(
+                    "testing",
+                    "registry:test@1#abc",
+                    "interfaces/test.ti",
+                    SHA_A
+                )],
+                &BTreeSet::new(),
+                vec![duplicate_record.clone(), duplicate_record],
+            ),
+            Err(DependencyGraphError::Duplicate {
+                kind: "test dependency package",
+                ..
+            })
+        ));
+        assert!(matches!(
+            build_for(
+                &[
+                    expected(
+                        "testing",
+                        "registry:test@1#abc",
+                        "interfaces/test.ti",
+                        SHA_A
+                    ),
+                    expected("testing", "registry:other@1", "interfaces/other.ti", SHA_B)
+                ],
+                &BTreeSet::new(),
+                vec![
+                    record("registry:test@1#abc", "interfaces/test.ti", SHA_A, []),
+                    record("registry:other@1", "interfaces/other.ti", SHA_B, [])
+                ],
+            ),
+            Err(DependencyGraphError::Duplicate {
+                kind: "test dependency alias",
+                ..
+            })
+        ));
+        assert!(matches!(
+            build_for(
+                &[expected(
+                    "testing",
+                    "registry:test@1#abc",
+                    "interfaces/test.ti",
+                    SHA_A
+                )],
+                &BTreeSet::new(),
+                vec![record(
+                    "registry:test@1#abc",
+                    "interfaces/test.ti",
+                    SHA_B,
+                    []
+                )],
+            ),
+            Err(DependencyGraphError::MetadataMismatch {
+                field: "interface_sha256",
+                ..
+            })
+        ));
+        assert!(matches!(
+            build_for(
+                &[expected(
+                    "testing",
+                    "registry:test@1#abc",
+                    "interfaces/test.ti",
+                    SHA_A
+                )],
+                &BTreeSet::from(["workspace:app@1".into()]),
+                vec![record(
+                    "registry:test@1#abc",
+                    "interfaces/test.ti",
+                    SHA_A,
+                    [("app", "workspace:app@1")]
+                )],
+            ),
+            Err(DependencyGraphError::ProductionOverlap { .. })
+        ));
+
+        for error in [
+            DependencyGraphError::InvalidField {
+                field: "x",
+                message: "bad".into(),
+            },
+            DependencyGraphError::Duplicate {
+                kind: "x",
+                value: "v".into(),
+            },
+            DependencyGraphError::MissingRecord {
+                package: "p".into(),
+            },
+            DependencyGraphError::UnexpectedRecord {
+                package: "p".into(),
+            },
+            DependencyGraphError::MetadataMismatch {
+                package: "p".into(),
+                field: "x",
+                expected: "a".into(),
+                actual: "b".into(),
+            },
+            DependencyGraphError::ProductionOverlap {
+                package: "p".into(),
+            },
+            DependencyGraphError::UnknownDependency {
+                package: "p".into(),
+                dependency: "d".into(),
+            },
+            DependencyGraphError::DependencyCycle,
+            DependencyGraphError::DevDependencyNotVisible { alias: "a".into() },
+            DependencyGraphError::UnknownAlias("a".into()),
+            DependencyGraphError::UnknownPackage("p".into()),
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
+    }
 }

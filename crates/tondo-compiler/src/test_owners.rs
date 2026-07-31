@@ -680,4 +680,67 @@ mod tests {
         assert!(resolution.owners_for(None).unwrap().is_empty());
         assert!(resolution.owners_for(Some("src/../main.to")).is_err());
     }
+
+    #[test]
+    fn ownership_accessors_plan_states_and_error_messages_are_exercised() {
+        let candidate = present(".github/CODEOWNERS", "src/** @team\n");
+        assert_eq!(candidate.path(), ".github/CODEOWNERS");
+        assert!(candidate.is_present());
+        let resolution = resolve(&CodeownersMode::Auto, vec![candidate]).unwrap();
+        assert_eq!(resolution.mode(), "auto");
+        assert_eq!(resolution.source(), Some(".github/CODEOWNERS"));
+        assert!(resolution.sha256().is_some());
+        assert_eq!(resolution.rules()[0].pattern(), "src/**");
+        assert_eq!(resolution.rules()[0].owners(), &["@team".to_owned()]);
+
+        let explicit = resolve(
+            &CodeownersMode::Path("CODEOWNERS".into()),
+            vec![present("CODEOWNERS", "* @root\n")],
+        )
+        .unwrap();
+        assert_eq!(explicit.mode(), "explicit");
+        assert_eq!(explicit.owners_for(None).unwrap(), Vec::<String>::new());
+
+        let invalid_utf8 = CodeownersCandidate::present("CODEOWNERS", vec![0xff]);
+        assert!(matches!(
+            resolve(
+                &CodeownersMode::Path("CODEOWNERS".into()),
+                vec![invalid_utf8]
+            ),
+            Err(OwnershipError::InvalidUtf8 { .. })
+        ));
+        let symlink = present("CODEOWNERS", "* @root\n").with_file_state(true, true, true);
+        assert!(matches!(
+            resolve(&CodeownersMode::Path("CODEOWNERS".into()), vec![symlink]),
+            Err(OwnershipError::InvalidFile { .. })
+        ));
+
+        for error in [
+            OwnershipError::InvalidField {
+                field: "x",
+                message: "bad".into(),
+            },
+            OwnershipError::Missing {
+                path: "CODEOWNERS".into(),
+            },
+            OwnershipError::InvalidFile {
+                path: "CODEOWNERS".into(),
+                message: "bad".into(),
+            },
+            OwnershipError::InvalidUtf8 {
+                path: "CODEOWNERS".into(),
+            },
+            OwnershipError::InvalidRule {
+                path: "CODEOWNERS".into(),
+                line: 1,
+                message: "bad".into(),
+            },
+            OwnershipError::Duplicate {
+                kind: "candidate",
+                value: "CODEOWNERS".into(),
+            },
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
+    }
 }

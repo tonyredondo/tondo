@@ -28032,6 +28032,69 @@ mod tests {
     }
 
     #[test]
+    fn qualified_time_and_environment_constructors_cover_all_bootstrap_forms() {
+        let (_, _, output) = check(
+            "import std.bytes\n\
+             import std.env\n\
+             import std.time\n\
+             fn durations(): time.Duration ! time.DurationError {\n\
+                 let nanos = time.Duration.fromNanoseconds(1)\n\
+                 let micros = time.Duration.fromMicroseconds(1)?\n\
+                 let millis = time.Duration.fromMilliseconds(1)?\n\
+                 let seconds = time.Duration.fromSeconds(1)?\n\
+                 _ = nanos\n\
+                 _ = micros\n\
+                 _ = millis\n\
+                 seconds\n\
+             }\n\
+             fn timerAt(): Unit ! time.ClockError {\n\
+                 let instant = time.now()?\n\
+                 let timer = time.Timer.at(instant)?\n\
+                 timer.cancel()\n\
+             }\n\
+             fn nameFromBytes(value: bytes.Bytes): env.Name ! env.EnvError {\n\
+                 env.Name.fromBytes(value)?\n\
+             }\n",
+        );
+        assert!(
+            output.diagnostics().is_empty(),
+            "{:#?}",
+            output.diagnostics()
+        );
+        assert!(output.is_complete());
+        let hosts = output
+            .program()
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                HirExpressionKind::Call { callee, .. } => {
+                    let callee = output.program().expression(*callee)?;
+                    match callee.kind() {
+                        HirExpressionKind::Function(HirCallableId::Host(function)) => {
+                            Some(*function)
+                        }
+                        _ => None,
+                    }
+                }
+                HirExpressionKind::BootstrapHostCall { function, .. } => Some(*function),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        for function in [
+            HirBootstrapHostFunction::DurationFromNanoseconds,
+            HirBootstrapHostFunction::DurationFromMicroseconds,
+            HirBootstrapHostFunction::DurationFromMilliseconds,
+            HirBootstrapHostFunction::DurationFromSeconds,
+            HirBootstrapHostFunction::TimerAt,
+            HirBootstrapHostFunction::EnvNameFromBytes,
+        ] {
+            assert!(
+                hosts.contains(&function),
+                "missing {function:?} in {hosts:?}"
+            );
+        }
+    }
+
+    #[test]
     fn opaque_results_infer_one_witness_and_seal_every_normal_exit() {
         let (_, _, output) = check(
             "fn choose(flag: Bool): impl Discard {\n\

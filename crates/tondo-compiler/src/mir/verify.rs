@@ -9590,6 +9590,92 @@ mod tests {
     }
 
     #[test]
+    fn defer_flow_state_rejects_invalid_nesting_and_drains_explicit_entries() {
+        let (_, hir, _) = checked_mir(
+            "fn note(value: Int) {}\n\
+             fn main() {\n\
+                 defer note(1)\n\
+                 {\n\
+                     defer note(2)\n\
+                 }\n\
+             }\n",
+        );
+        let mut scopes = hir
+            .expressions()
+            .filter_map(|expression| match expression.kind() {
+                crate::hir::HirExpressionKind::Block { scope, .. } => Some(*scope),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        scopes.sort();
+        scopes.dedup();
+        assert!(
+            scopes.len() >= 2,
+            "the fixture retains nested cleanup scopes"
+        );
+        let outer = scopes[0];
+        let inner = scopes[1];
+
+        let place = LocalAccess {
+            local: MirLocalId(0),
+            path: Vec::new(),
+            source_loan: None,
+        };
+        let mut active = DeferFlowState::default();
+        active.activate_scope(outer, "test").unwrap();
+        active.unguarded_scopes.insert(outer);
+        active.activate_scope(inner, "test").unwrap();
+        active.unguarded_scopes.insert(inner);
+        let error = active.activate_scope(outer, "test").unwrap_err();
+        assert!(error.message().contains("re-enters an outer scope"));
+        active.unguarded_scopes.clear();
+        active.remove_inactive_scope(outer);
+        assert_eq!(active.scope_order, vec![inner]);
+
+        let mut skipped = DeferFlowState {
+            scope_order: vec![outer, inner],
+            ..DeferFlowState::default()
+        };
+        let error = skipped.drain(&[outer], "test").unwrap_err();
+        assert!(error.message().contains("skips a still-active inner scope"));
+
+        let mut drained = DeferFlowState {
+            unguarded_scopes: BTreeSet::from([outer, inner]),
+            scope_order: vec![outer, inner],
+            guards: BTreeMap::from([(
+                place.clone(),
+                ActiveDeferGuard {
+                    scope: outer,
+                    registration: (MirBlockId(0), 0),
+                    kind: CleanupEntryKind::Explicit,
+                },
+            )]),
+            registrations: BTreeMap::from([(
+                (MirBlockId(0), 0),
+                ActiveCleanupRegistration {
+                    scope: outer,
+                    kind: CleanupEntryKind::Explicit,
+                },
+            )]),
+            ..DeferFlowState::default()
+        };
+        drained.drain(&[outer, inner], "test").unwrap();
+        assert!(drained.consumed.contains(&place));
+        assert!(drained.is_empty());
+
+        let mut unfinished = DeferFlowState {
+            pending_moves: BTreeMap::from([(place, PendingDeferTransition::Retarget)]),
+            ..DeferFlowState::default()
+        };
+        let error = unfinished.finish_normal("test").unwrap_err();
+        assert!(error.message().contains("abandons an explicit defer entry"));
+        unfinished.pending_moves.clear();
+        unfinished.finish_normal("test").unwrap();
+        unfinished.drain_unwind();
+        assert!(unfinished.is_empty());
+    }
+
+    #[test]
     fn scalar_and_unavailable_messages_cover_the_closed_type_catalog() {
         for scalar in [
             ScalarType::Int,

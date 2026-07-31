@@ -660,5 +660,94 @@ mod tests {
                 ..
             }
         ));
+        let mut duplicate_discovered = discovered.clone();
+        duplicate_discovered.push(discovered[0].clone());
+        let error = reconcile_expected(&expected, &duplicate_discovered).unwrap_err();
+        assert!(matches!(
+            error,
+            DiscoveryError::Duplicate {
+                kind: "discovered source",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn discovery_accessors_plan_bridge_and_error_messages_are_exercised() {
+        let root = DiscoveryRoot::new(TestSourceClass::UnitTest, "src", "logical").unwrap();
+        assert_eq!(root.class(), TestSourceClass::UnitTest);
+        assert_eq!(root.physical_path(), "src");
+        assert_eq!(root.logical_path(), "logical");
+        let entry = DiscoveryEntry::new("src/main_test.to", "src/main_test.to", "main");
+        assert_eq!(entry, entry.clone().with_file_state(true, false));
+
+        let config = DiscoveryConfig::new("", vec![root]).unwrap();
+        assert_eq!(config.repository_root(), "");
+        assert_eq!(config.roots().len(), 1);
+        assert!(DiscoveryConfig::new("", Vec::new()).is_err());
+        assert!(
+            DiscoveryConfig::new(
+                "",
+                vec![
+                    DiscoveryRoot::new(TestSourceClass::UnitTest, "src", "logical").unwrap(),
+                    DiscoveryRoot::new(TestSourceClass::UnitTest, "src", "logical").unwrap(),
+                ],
+            )
+            .is_err()
+        );
+
+        let source = discover(
+            &config,
+            vec![DiscoveryEntry::new(
+                "src/main_test.to",
+                "logical/main_test.to",
+                "main",
+            )],
+        )
+        .unwrap()
+        .pop()
+        .unwrap();
+        assert_eq!(source.class(), TestSourceClass::UnitTest);
+        assert_eq!(source.physical_path(), "src/main_test.to");
+        assert_eq!(source.logical_path(), "logical/main_test.to");
+        assert_eq!(source.module(), "main");
+        assert_eq!(source.input(), "source:unit-test:src/main_test.to");
+        assert!(
+            source_key(&ExpectedSource {
+                class: source.class(),
+                physical_path: source.physical_path().into(),
+                logical_path: source.logical_path().into(),
+                module: source.module().into(),
+                input: source.input().into(),
+            })
+            .contains("unit-test")
+        );
+        assert!(discovered_key(&source).contains("unit-test"));
+
+        for error in [
+            DiscoveryError::InvalidField {
+                field: "x",
+                message: "bad".into(),
+            },
+            DiscoveryError::Unclassified {
+                physical_path: "x".into(),
+            },
+            DiscoveryError::SymlinkEscape {
+                physical_path: "x".into(),
+            },
+            DiscoveryError::NotRegularFile {
+                physical_path: "x".into(),
+            },
+            DiscoveryError::Duplicate {
+                kind: "x",
+                value: "v".into(),
+            },
+            DiscoveryError::PlanDrift {
+                missing: vec!["m".into()],
+                additional: vec!["a".into()],
+            },
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
     }
 }

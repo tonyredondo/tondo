@@ -1708,4 +1708,508 @@ mod tests {
                 .is_err()
         );
     }
+
+    #[test]
+    fn result_statuses_validation_and_summary_cover_all_closed_states() {
+        for status in [
+            AttemptStatus::Passed,
+            AttemptStatus::Skipped,
+            AttemptStatus::FailedError,
+            AttemptStatus::FailedPanic,
+            AttemptStatus::ResourceLimit,
+            AttemptStatus::Timeout,
+            AttemptStatus::Infrastructure,
+            AttemptStatus::BlockedSetup,
+            AttemptStatus::BlockedSkip,
+        ] {
+            let _ = status.aggregate();
+        }
+        assert!(AttemptStatus::FailedError.is_failure());
+        assert!(AttemptStatus::BlockedSetup.is_blocked());
+        assert!(!AggregateStatus::Passed.is_failure());
+        assert!(AggregateStatus::Infrastructure.is_failure());
+        assert!(aggregate_attempts(&[]).is_err());
+        assert_eq!(
+            aggregate_attempts(&[
+                TestAttempt::new(1, 1, 0, None, AttemptStatus::FailedError),
+                TestAttempt::new(2, 1, 1, Some(1), AttemptStatus::Passed),
+            ])
+            .unwrap(),
+            (AggregateStatus::FlakyPass, 2)
+        );
+        assert_eq!(
+            aggregate_attempts(&[TestAttempt::new(1, 1, 0, None, AttemptStatus::BlockedSkip)])
+                .unwrap(),
+            (AggregateStatus::BlockedSkip, 1)
+        );
+
+        let mut suite = passing_suite();
+        suite.status = AggregateStatus::FailedPanic;
+        suite.attempts[0].status = AttemptStatus::FailedPanic;
+        suite.attempts[0].failure = Some(FailureRecord {
+            kind: "panic".into(),
+            code: None,
+            message: "boom".into(),
+            source: Some(SourceSpan {
+                file: "main.to".into(),
+                start: 4,
+                end: 2,
+            }),
+        });
+        assert!(validate_node(&suite, &mut BTreeSet::new()).is_err());
+
+        let mut valid = TestAttempt::new(1, 1, 0, None, AttemptStatus::Passed);
+        assert!(
+            validate_attempt(
+                &TestAttempt {
+                    index: 0,
+                    ..valid.clone()
+                },
+                ResultNodeKind::Test,
+                Some("node"),
+                0
+            )
+            .is_err()
+        );
+        assert!(
+            validate_attempt(
+                &TestAttempt {
+                    iteration: 0,
+                    ..valid.clone()
+                },
+                ResultNodeKind::Test,
+                Some("node"),
+                0
+            )
+            .is_err()
+        );
+        valid.unit = Some(1);
+        assert!(validate_attempt(&valid, ResultNodeKind::Test, Some("node"), 0).is_err());
+        valid = TestAttempt::new(1, 1, 1, None, AttemptStatus::Passed);
+        assert!(validate_attempt(&valid, ResultNodeKind::Test, Some("node"), 0).is_err());
+        valid = TestAttempt::new(1, 1, 0, None, AttemptStatus::Passed);
+        valid.phase = Some(AttemptPhase::Setup);
+        assert!(validate_attempt(&valid, ResultNodeKind::Test, Some("node"), 0).is_err());
+
+        let mut invalid = TestAttempt::new(1, 1, 0, None, AttemptStatus::Passed);
+        invalid.failure = Some(FailureRecord {
+            kind: "x".into(),
+            code: None,
+            message: "x".into(),
+            source: None,
+        });
+        assert!(validate_attempt(&invalid, ResultNodeKind::Test, Some("node"), 0).is_err());
+        invalid = TestAttempt::new(1, 1, 0, None, AttemptStatus::BlockedSetup);
+        assert!(validate_attempt(&invalid, ResultNodeKind::Test, Some("node"), 0).is_err());
+        invalid.blocked_by = Some(BlockedBy {
+            id: "suite".into(),
+            attempt: 1,
+        });
+        invalid.status = AttemptStatus::Passed;
+        assert!(validate_attempt(&invalid, ResultNodeKind::Test, Some("node"), 0).is_err());
+        invalid = TestAttempt::new(1, 1, 0, None, AttemptStatus::Skipped);
+        assert!(validate_attempt(&invalid, ResultNodeKind::Test, Some("node"), 0).is_err());
+        invalid.skip = Some(SkipRecord {
+            reason: "skip".into(),
+            source: None,
+        });
+        invalid.failure = Some(FailureRecord {
+            kind: "x".into(),
+            code: None,
+            message: "x".into(),
+            source: None,
+        });
+        assert!(validate_attempt(&invalid, ResultNodeKind::Test, Some("node"), 0).is_err());
+        invalid.failure = None;
+        invalid.phase = Some(AttemptPhase::Teardown);
+        assert!(validate_attempt(&invalid, ResultNodeKind::Suite, Some("suite"), 0).is_err());
+        invalid = TestAttempt::new(1, 1, 0, None, AttemptStatus::FailedError);
+        assert!(validate_attempt(&invalid, ResultNodeKind::Test, Some("node"), 0).is_err());
+        invalid.failure = Some(FailureRecord {
+            kind: "x".into(),
+            code: None,
+            message: "x".into(),
+            source: None,
+        });
+        invalid.skip = Some(SkipRecord {
+            reason: "skip".into(),
+            source: None,
+        });
+        assert!(validate_attempt(&invalid, ResultNodeKind::Test, Some("node"), 0).is_err());
+        invalid.skip = None;
+        invalid.phase = Some(AttemptPhase::Teardown);
+        assert!(validate_attempt(&invalid, ResultNodeKind::Suite, Some("suite"), 0).is_err());
+        invalid.status = AttemptStatus::FailedPanic;
+        assert!(validate_attempt(&invalid, ResultNodeKind::Suite, Some("suite"), 0).is_ok());
+
+        let mut payload = TestAttempt::new(1, 1, 0, None, AttemptStatus::Passed);
+        payload.tags.insert("".into(), "value".into());
+        assert!(validate_attempt(&payload, ResultNodeKind::Test, Some("node"), 0).is_err());
+        payload.tags.clear();
+        payload.artifacts.push(ArtifactRecord {
+            name: "artifact".into(),
+            media_type: "text/plain".into(),
+            size: 1,
+            sha256: "bad".into(),
+            object: "object".into(),
+        });
+        assert!(validate_attempt(&payload, ResultNodeKind::Test, Some("node"), 0).is_err());
+        payload.artifacts[0].sha256 = "a".repeat(64);
+        payload.artifacts.push(payload.artifacts[0].clone());
+        assert!(validate_attempt(&payload, ResultNodeKind::Test, Some("node"), 0).is_err());
+        payload.artifacts.pop();
+        payload.snapshots.push(SnapshotRecord {
+            name: "snap".into(),
+            status: SnapshotStatus::Matched,
+            expected_sha256: Some("bad".into()),
+            actual_sha256: "a".repeat(64),
+        });
+        assert!(validate_attempt(&payload, ResultNodeKind::Test, Some("node"), 0).is_err());
+        payload.snapshots[0].expected_sha256 = Some("b".repeat(64));
+        payload.snapshots.push(payload.snapshots[0].clone());
+        assert!(validate_attempt(&payload, ResultNodeKind::Test, Some("node"), 0).is_err());
+        payload.snapshots.pop();
+        payload.virtual_time.push(VirtualTimeRecord {
+            index: 2,
+            elapsed_ns: "not-a-number".into(),
+            automatic_advances: 0,
+            explicit_advances: 0,
+            settles: 0,
+        });
+        assert!(validate_attempt(&payload, ResultNodeKind::Test, Some("node"), 0).is_err());
+        assert!(validate_text("text", "").is_err());
+        assert!(validate_text("text", "bad\ntext").is_err());
+        assert!(validate_hex("hex", "A".repeat(64).as_str()).is_err());
+        assert!(validate_hex("hex", "bad").is_err());
+
+        let mut test_nodes = Vec::new();
+        for (index, status) in [
+            AggregateStatus::Passed,
+            AggregateStatus::FlakyPass,
+            AggregateStatus::Skipped,
+            AggregateStatus::BlockedSetup,
+            AggregateStatus::BlockedSkip,
+            AggregateStatus::FailedError,
+            AggregateStatus::FailedPanic,
+            AggregateStatus::ResourceLimit,
+            AggregateStatus::Timeout,
+            AggregateStatus::Infrastructure,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut node = passing_test(&format!("suite::root::status{index}"));
+            node.status = status;
+            node.attempts[0].status = if status == AggregateStatus::Passed {
+                AttemptStatus::Passed
+            } else {
+                AttemptStatus::Infrastructure
+            };
+            test_nodes.push(node);
+        }
+        let mut suite_statuses = Vec::new();
+        for (index, status) in [
+            AggregateStatus::Passed,
+            AggregateStatus::FlakyPass,
+            AggregateStatus::Skipped,
+            AggregateStatus::BlockedSetup,
+            AggregateStatus::BlockedSkip,
+            AggregateStatus::FailedError,
+            AggregateStatus::Infrastructure,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut node = passing_suite();
+            node.id = format!("suite::status{index}");
+            node.status = status;
+            suite_statuses.push(node);
+        }
+        test_nodes[0].attempts[0].artifacts.push(ArtifactRecord {
+            name: "a".into(),
+            media_type: "text/plain".into(),
+            size: 2,
+            sha256: "a".repeat(64),
+            object: "a".into(),
+        });
+        for (index, status) in [
+            SnapshotStatus::Matched,
+            SnapshotStatus::Missing,
+            SnapshotStatus::Mismatched,
+            SnapshotStatus::Created,
+            SnapshotStatus::Updated,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            test_nodes[0].attempts[0].snapshots.push(SnapshotRecord {
+                name: format!("s{index}"),
+                status,
+                expected_sha256: None,
+                actual_sha256: "a".repeat(64),
+            });
+        }
+        let execution = test_nodes
+            .iter()
+            .map(|node| node.id.clone())
+            .collect::<Vec<_>>();
+        let summary = summarize(&execution, &suite_statuses, &test_nodes).unwrap();
+        assert_eq!(summary.selected, test_nodes.len() as u32);
+        assert_eq!(summary.suite_selected, suite_statuses.len() as u32);
+        assert_eq!(summary.snapshot_updated, 1);
+        assert!(summarize(&[], &suite_statuses, &test_nodes).is_err());
+
+        let mut duplicate = passing_test("suite::root::duplicate");
+        duplicate.status = AggregateStatus::Passed;
+        duplicate.decisive_attempt = 1;
+        assert!(validate_node(&duplicate, &mut BTreeSet::new()).is_ok());
+        assert!(validate_node(&duplicate, &mut BTreeSet::from([duplicate.id.clone()])).is_err());
+        let mut bad_path = duplicate.clone();
+        bad_path.path = vec!["".into()];
+        assert!(validate_node(&bad_path, &mut BTreeSet::new()).is_err());
+        let mut bad_source = duplicate.clone();
+        bad_source.source = Some(SourceSpan {
+            file: "x".into(),
+            start: 2,
+            end: 1,
+        });
+        assert!(validate_node(&bad_source, &mut BTreeSet::new()).is_err());
+        let mut bad_index = duplicate.clone();
+        bad_index.attempts[0].index = 2;
+        assert!(validate_node(&bad_index, &mut BTreeSet::new()).is_err());
+        let mut bad_aggregate = duplicate.clone();
+        bad_aggregate.status = AggregateStatus::Infrastructure;
+        assert!(validate_node(&bad_aggregate, &mut BTreeSet::new()).is_err());
+
+        for error in [
+            ResultModelError::InvalidJson("bad".into()),
+            ResultModelError::InvalidField {
+                field: "x",
+                message: "bad".into(),
+            },
+            ResultModelError::InvalidReference {
+                field: "x",
+                value: "v".into(),
+            },
+            ResultModelError::InvalidAttempt {
+                node: "n".into(),
+                message: "bad".into(),
+            },
+            ResultModelError::SummaryMismatch {
+                expected: ResultSummary::default(),
+                actual: ResultSummary::default(),
+            },
+            ResultModelError::Serialization("bad".into()),
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
+    }
+
+    #[test]
+    fn protocol_validation_covers_directional_errors_and_terminal_events() {
+        assert!(ProtocolSession::new("", "worker").is_err());
+        assert!(ProtocolSession::new("run", "worker\n").is_err());
+        assert!(
+            validate_unit(&RetryUnit {
+                kind: RetryUnitKind::Test,
+                id: "".into(),
+                execution_plan: vec!["x".into()]
+            })
+            .is_err()
+        );
+        assert!(
+            validate_unit(&RetryUnit {
+                kind: RetryUnitKind::Test,
+                id: "x".into(),
+                execution_plan: vec![]
+            })
+            .is_err()
+        );
+        assert!(
+            validate_unit(&RetryUnit {
+                kind: RetryUnitKind::Test,
+                id: "x".into(),
+                execution_plan: vec!["x".into(), "x".into()]
+            })
+            .is_err()
+        );
+        assert!(non_empty("field", "bad\nvalue".into()).is_err());
+        assert!(
+            ProtocolLimits {
+                timeout_ms: 0,
+                ..limits()
+            }
+            .validate()
+            .is_err()
+        );
+
+        let mut session = ProtocolSession::new("run-1", "worker-1").unwrap();
+        let mut wrong = hello();
+        wrong.command = CoordinatorCommand::Hello {
+            worker_id: "other".into(),
+            target: "host".into(),
+            plan_sha256: "sha256:".to_owned() + &"a".repeat(64),
+            limits: limits(),
+        };
+        assert!(session.accept_coordinator(&wrong).is_err());
+        let mut bad_format = hello();
+        bad_format.format = "other".into();
+        assert!(session.accept_coordinator(&bad_format).is_err());
+        let mut bad_run = hello();
+        bad_run.run_id = "other".into();
+        assert!(session.accept_coordinator(&bad_run).is_err());
+        session.accept_coordinator(&hello()).unwrap();
+        let mut wrong_ready = WorkerFrame::new(
+            "run-1",
+            1,
+            WorkerEvent::Ready {
+                worker_id: "other".into(),
+            },
+        );
+        assert!(session.accept_worker(&wrong_ready).is_err());
+        wrong_ready.event = WorkerEvent::Ready {
+            worker_id: "worker-1".into(),
+        };
+        session.accept_worker(&wrong_ready).unwrap();
+
+        let mut run_session = ProtocolSession::new("run-1", "worker-1").unwrap();
+        run_session.accept_coordinator(&hello()).unwrap();
+        run_session
+            .accept_worker(&WorkerFrame::new(
+                "run-1",
+                1,
+                WorkerEvent::Ready {
+                    worker_id: "worker-1".into(),
+                },
+            ))
+            .unwrap();
+        let mut zero_iteration = CoordinatorFrame::new(
+            "run-1",
+            2,
+            CoordinatorCommand::Run {
+                unit: unit(),
+                iteration: 0,
+                round: 0,
+            },
+        );
+        assert!(run_session.accept_coordinator(&zero_iteration).is_err());
+        zero_iteration.command = CoordinatorCommand::Run {
+            unit: unit(),
+            iteration: 1,
+            round: 0,
+        };
+        run_session.accept_coordinator(&zero_iteration).unwrap();
+        assert!(
+            run_session
+                .accept_worker(&WorkerFrame::new(
+                    "run-1",
+                    1,
+                    WorkerEvent::Started {
+                        unit: unit(),
+                        iteration: 1,
+                        round: 0
+                    }
+                ))
+                .is_err()
+        );
+        run_session
+            .accept_worker(&WorkerFrame::new(
+                "run-1",
+                2,
+                WorkerEvent::Started {
+                    unit: unit(),
+                    iteration: 1,
+                    round: 0,
+                },
+            ))
+            .unwrap();
+        let attempt = TestAttempt::new(1, 1, 0, None, AttemptStatus::Passed);
+        run_session
+            .accept_worker(&WorkerFrame::new(
+                "run-1",
+                3,
+                WorkerEvent::Attempt {
+                    node_id: "node".into(),
+                    attempt: attempt.clone(),
+                },
+            ))
+            .unwrap();
+        run_session
+            .accept_worker(&WorkerFrame::new(
+                "run-1",
+                4,
+                WorkerEvent::Finished { clean: true },
+            ))
+            .unwrap();
+        assert!(
+            run_session
+                .accept_coordinator(&CoordinatorFrame::new(
+                    "run-1",
+                    3,
+                    CoordinatorCommand::Cancel {
+                        reason: "".into(),
+                        grace_ms: 1
+                    }
+                ))
+                .is_err()
+        );
+
+        let mut error_session = ProtocolSession::new("run-1", "worker-1").unwrap();
+        error_session.accept_coordinator(&hello()).unwrap();
+        error_session
+            .accept_worker(&WorkerFrame::new(
+                "run-1",
+                1,
+                WorkerEvent::Ready {
+                    worker_id: "worker-1".into(),
+                },
+            ))
+            .unwrap();
+        error_session
+            .accept_coordinator(&CoordinatorFrame::new(
+                "run-1",
+                2,
+                CoordinatorCommand::Cancel {
+                    reason: "stop".into(),
+                    grace_ms: 1,
+                },
+            ))
+            .unwrap();
+        error_session
+            .accept_worker(&WorkerFrame::new(
+                "run-1",
+                2,
+                WorkerEvent::Cancelled { complete: false },
+            ))
+            .unwrap();
+        error_session
+            .accept_worker(&WorkerFrame::new(
+                "run-1",
+                3,
+                WorkerEvent::Error {
+                    kind: "x".into(),
+                    message: "bad".into(),
+                    fatal: true,
+                },
+            ))
+            .unwrap();
+        assert!(error_session.is_closed());
+
+        for error in [
+            ProtocolError::InvalidField {
+                field: "x",
+                message: "bad".into(),
+            },
+            ProtocolError::Sequence {
+                expected: 1,
+                actual: 2,
+            },
+            ProtocolError::Unexpected {
+                state: "New".into(),
+                message: "bad".into(),
+            },
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
+    }
 }

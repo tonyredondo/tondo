@@ -14692,6 +14692,132 @@ mod tests {
     }
 
     #[test]
+    fn trace_descriptor_defensive_branches_are_exercised() {
+        fn descriptor_error(kind: BytecodeTypeKind) -> BytecodeVerificationError {
+            let program = BytecodeProgram {
+                types: vec![BytecodeType {
+                    name: "fixture".into(),
+                    kind,
+                }],
+                nominals: Vec::new(),
+                callables: Vec::new(),
+                constants: Vec::new(),
+                functions: Vec::new(),
+            };
+            let mut analysis = TraceMetadataAnalysis {
+                program: &program,
+                types: vec![None],
+                closures: BTreeMap::new(),
+                visiting: BTreeSet::new(),
+            };
+            analysis
+                .descriptor(BytecodeTypeId::new(0))
+                .expect_err("malformed descriptor must be rejected")
+        }
+
+        for (kind, message) in [
+            (
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Array,
+                    arguments: Vec::new(),
+                },
+                "array trace descriptor has no element type",
+            ),
+            (
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Map,
+                    arguments: Vec::new(),
+                },
+                "map trace descriptor has no key type",
+            ),
+            (
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Map,
+                    arguments: vec![BytecodeTypeId::new(0)],
+                },
+                "map trace descriptor has no value type",
+            ),
+            (
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Set,
+                    arguments: Vec::new(),
+                },
+                "set trace descriptor has no element type",
+            ),
+            (
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Range,
+                    arguments: Vec::new(),
+                },
+                "range trace descriptor has no element type",
+            ),
+            (
+                BytecodeTypeKind::Intrinsic {
+                    constructor: BytecodeIntrinsicType::Ref,
+                    arguments: Vec::new(),
+                },
+                "reference trace descriptor has no value type",
+            ),
+        ] {
+            let error = descriptor_error(kind);
+            assert!(error.message().contains(message), "{error}");
+        }
+
+        let error = descriptor_error(BytecodeTypeKind::Nominal {
+            nominal: Some(BytecodeNominalId::new(7)),
+            identity: "missing::Nominal".into(),
+            arguments: Vec::new(),
+        });
+        assert!(error.message().contains("unknown nominal"), "{error}");
+
+        let error = descriptor_error(BytecodeTypeKind::OpaqueResult {
+            identity: "missing::Witness".into(),
+            arguments: Vec::new(),
+            witness: BytecodeTypeId::new(7),
+            capabilities: BytecodeCapabilitySet::default(),
+        });
+        assert!(
+            error.message().contains("unknown opaque witness"),
+            "{error}"
+        );
+
+        let program = BytecodeProgram {
+            types: vec![BytecodeType {
+                name: "Int".into(),
+                kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Int),
+            }],
+            nominals: Vec::new(),
+            callables: Vec::new(),
+            constants: Vec::new(),
+            functions: Vec::new(),
+        };
+        let mut cycle = TraceMetadataAnalysis {
+            program: &program,
+            types: vec![None],
+            closures: BTreeMap::new(),
+            visiting: BTreeSet::from([BytecodeTypeId::new(0)]),
+        };
+        let error = cycle
+            .descriptor(BytecodeTypeId::new(0))
+            .expect_err("a re-entered descriptor must be rejected");
+        assert!(error.message().contains("descriptor cycle"), "{error}");
+
+        let missing = TraceMetadataAnalysis {
+            program: &program,
+            types: vec![None, None],
+            closures: BTreeMap::new(),
+            visiting: BTreeSet::new(),
+        };
+        let error = missing
+            .finish()
+            .expect_err("an omitted descriptor must be rejected");
+        assert!(
+            error.message().contains("no derived trace descriptor"),
+            "{error}"
+        );
+    }
+
+    #[test]
     fn trace_metadata_resolves_deep_opaque_chains_without_rust_recursion() {
         let mut program = terminal_program(false);
         let start = program.types.len() as u32;

@@ -1566,16 +1566,72 @@ mod tests {
         let (project, manifest_hash, lockfile_hash) = project_fixture();
         let bytes = serde_json::to_vec(&plan_json(&manifest_hash, &lockfile_hash)).unwrap();
         let plan = TestProjectPlan::parse(&project, &bytes).unwrap();
+        assert_eq!(plan.manifest_hash(), manifest_hash);
+        assert_eq!(plan.lockfile_hash(), lockfile_hash);
         assert_eq!(plan.repository_root(), "");
+        assert_eq!(plan.roots().len(), 3);
+        assert_eq!(plan.roots()[0].class(), TestSourceClass::Production);
+        assert_eq!(plan.roots()[0].physical_path(), "app/src");
+        assert_eq!(plan.roots()[0].logical_path(), "src");
         assert_eq!(plan.sources().len(), 3);
         assert_eq!(plan.sources()[0].class(), TestSourceClass::Production);
+        assert_eq!(plan.sources()[0].package(), "workspace:app@1");
+        assert_eq!(plan.sources()[0].physical_path(), "app/src/main.to");
+        assert_eq!(plan.sources()[0].logical_path(), "src/main.to");
+        assert_eq!(plan.sources()[0].module(), "main");
+        assert_eq!(
+            plan.sources()[0].input(),
+            "source:production:app/src/main.to"
+        );
         assert_eq!(plan.sources()[1].class(), TestSourceClass::UnitTest);
         assert_eq!(plan.sources()[2].class(), TestSourceClass::IntegrationTest);
+        assert_eq!(
+            plan.input_names().collect::<Vec<_>>(),
+            vec![
+                "source:production:app/src/main.to",
+                "source:unit-test:app/src/main_test.to",
+                "source:integration-test:tests/smoke.to"
+            ]
+        );
+        assert!(plan.dev_dependencies().is_empty());
+        assert_eq!(plan.codeowners().as_str(), "auto");
         assert_eq!(plan.selector().kind(), "none");
+        assert_eq!(plan.selector().value(), None);
+        assert_eq!(plan.shard(), None);
+        assert_eq!(plan.order().kind(), "canonical");
+        assert_eq!(plan.order().seed(), None);
         assert_eq!(plan.policy().jobs(), 1);
+        assert!(!plan.policy().allow_empty());
+        assert!(!plan.policy().fail_fast());
+        assert_eq!(plan.policy().retry(), 0);
+        assert_eq!(plan.policy().repeat(), 1);
+        assert_eq!(plan.reporters(), &["human".to_owned(), "json".to_owned()]);
+        assert_eq!(plan.artifact_store().path(), "target/test-artifacts");
+        assert_eq!(plan.artifact_store().max_bytes(), 1_048_576);
+        assert_eq!(plan.snapshot_stores().len(), 1);
+        assert_eq!(plan.snapshot_stores()[0].name(), "default");
+        assert_eq!(plan.snapshot_stores()[0].path(), "tests/snapshots");
+        assert!(!plan.snapshot_stores()[0].update());
+        assert_eq!(plan.snapshot_stores()[0].max_bytes(), 1_048_576);
+        assert_eq!(plan.target().name(), "tondo-vm-hosted");
+        assert_eq!(plan.target().profile(), "hosted");
+        assert_eq!(
+            plan.target().capabilities(),
+            &["console".to_owned(), "process".to_owned()]
+        );
         assert_eq!(plan.target().features(), &["fast"]);
+        assert_eq!(plan.time_catalog().package(), "std");
+        assert_eq!(plan.time_catalog().module(), "time");
         assert_eq!(plan.time_catalog().api(), "monotonic-v1");
         assert_eq!(plan.limits().timeout_ms(), 1000);
+        assert_eq!(plan.limits().setup_timeout_ms(), 1000);
+        assert_eq!(plan.limits().teardown_timeout_ms(), 1000);
+        assert_eq!(plan.limits().output_bytes(), 65_536);
+        assert_eq!(plan.limits().artifact_bytes(), 1_048_576);
+        assert_eq!(plan.limits().snapshot_bytes(), 1_048_576);
+        assert_eq!(plan.limits().memory_bytes(), 67_108_864);
+        assert_eq!(plan.limits().instructions(), 1_000_000);
+        assert_eq!(plan.limits().virtual_timers(), 1024);
     }
 
     #[test]
@@ -1723,5 +1779,215 @@ mod tests {
                 .any(|window| window == b"fn main() {}")
         );
         let _ = Arc::<[u8]>::from(canonical);
+    }
+
+    #[test]
+    fn closed_value_helpers_cover_all_selector_policy_and_storage_shapes() {
+        assert_eq!(TestSourceClass::Production.as_str(), "production");
+        assert_eq!(TestSourceClass::UnitTest.as_str(), "unit-test");
+        assert_eq!(
+            TestSourceClass::IntegrationTest.as_str(),
+            "integration-test"
+        );
+        assert!(TestSourceClass::parse("unknown").is_err());
+
+        let codeowners = normalize_codeowners(CodeownersWire {
+            mode: "path".into(),
+            path: Some(".github/CODEOWNERS".into()),
+        })
+        .unwrap();
+        assert_eq!(codeowners.as_str(), "path");
+        assert_eq!(codeowners.path(), Some(".github/CODEOWNERS"));
+        assert_eq!(CodeownersMode::None.as_str(), "none");
+        assert_eq!(CodeownersMode::Auto.path(), None);
+        assert_eq!(CodeownersMode::Path("owners".into()).path(), Some("owners"));
+        assert!(
+            normalize_codeowners(CodeownersWire {
+                mode: "invalid".into(),
+                path: None
+            })
+            .is_err()
+        );
+        assert!(
+            normalize_codeowners(CodeownersWire {
+                mode: "none".into(),
+                path: Some("owners".into())
+            })
+            .is_err()
+        );
+
+        for (kind, expected) in [
+            ("none", TestSelector::None),
+            ("filter", TestSelector::Filter("slow".into())),
+            ("glob", TestSelector::Glob("tests/**".into())),
+            ("exact", TestSelector::Exact("suite::one".into())),
+        ] {
+            let value = normalize_selector(SelectorWire {
+                kind: kind.into(),
+                value: expected.value().map(str::to_owned),
+            })
+            .unwrap();
+            assert_eq!(value.kind(), kind);
+            assert_eq!(value.value(), expected.value());
+        }
+        assert!(
+            normalize_selector(SelectorWire {
+                kind: "filter".into(),
+                value: None
+            })
+            .is_err()
+        );
+        assert!(
+            normalize_selector(SelectorWire {
+                kind: "other".into(),
+                value: None
+            })
+            .is_err()
+        );
+
+        let shard = normalize_shard(Some(ShardWire { index: 2, count: 3 }))
+            .unwrap()
+            .unwrap();
+        assert_eq!((shard.index(), shard.count()), (2, 3));
+        assert!(normalize_shard(Some(ShardWire { index: 0, count: 1 })).is_err());
+        assert_eq!(normalize_shard(None).unwrap(), None);
+        assert_eq!(
+            normalize_order(OrderWire {
+                kind: "canonical".into(),
+                seed: None
+            })
+            .unwrap()
+            .kind(),
+            "canonical"
+        );
+        assert_eq!(
+            normalize_order(OrderWire {
+                kind: "random".into(),
+                seed: Some("a".into())
+            })
+            .unwrap()
+            .seed(),
+            Some("000000000000000a")
+        );
+        assert!(
+            normalize_order(OrderWire {
+                kind: "canonical".into(),
+                seed: Some("a".into())
+            })
+            .is_err()
+        );
+        assert!(
+            normalize_order(OrderWire {
+                kind: "other".into(),
+                seed: None
+            })
+            .is_err()
+        );
+
+        let policy = normalize_policy(PolicyWire {
+            jobs: 2,
+            allow_empty: true,
+            fail_fast: true,
+            retry: 3,
+            repeat: 1,
+        })
+        .unwrap();
+        assert_eq!((policy.jobs(), policy.retry(), policy.repeat()), (2, 3, 1));
+        assert!(policy.allow_empty() && policy.fail_fast());
+        assert!(
+            normalize_policy(PolicyWire {
+                jobs: 0,
+                allow_empty: false,
+                fail_fast: false,
+                retry: 0,
+                repeat: 1
+            })
+            .is_err()
+        );
+        assert_eq!(
+            normalize_reporters(vec!["junit".into(), "human".into()]).unwrap(),
+            vec!["human", "junit"]
+        );
+        assert!(normalize_reporters(Vec::new()).is_err());
+        assert!(normalize_reporters(vec!["human".into(), "human".into()]).is_err());
+
+        let store = normalize_snapshot_stores(vec![SnapshotStoreWire {
+            name: "snap".into(),
+            path: "tests/snapshots".into(),
+            update: true,
+            max_bytes: 9,
+        }])
+        .unwrap();
+        assert_eq!(
+            (
+                store[0].name(),
+                store[0].path(),
+                store[0].update(),
+                store[0].max_bytes()
+            ),
+            ("snap", "tests/snapshots", true, 9)
+        );
+        assert!(
+            normalize_snapshot_stores(vec![
+                SnapshotStoreWire {
+                    name: "snap".into(),
+                    path: "a".into(),
+                    update: false,
+                    max_bytes: 1
+                },
+                SnapshotStoreWire {
+                    name: "snap".into(),
+                    path: "b".into(),
+                    update: false,
+                    max_bytes: 1
+                },
+            ])
+            .is_err()
+        );
+        assert!(
+            normalize_artifact_store(StoreWire {
+                path: "a".into(),
+                content_addressed: false,
+                max_bytes: 1
+            })
+            .is_err()
+        );
+        assert!(
+            normalize_artifact_store(StoreWire {
+                path: "a".into(),
+                content_addressed: true,
+                max_bytes: 0
+            })
+            .is_err()
+        );
+
+        assert!(canonical_repository_root(".").unwrap().is_empty());
+        assert!(canonical_identity("identity", "bad\nvalue").is_err());
+        assert!(canonical_identifier("identifier", "Bad").is_err());
+        assert!(non_empty_text("value", None).is_err());
+        assert!(non_empty_text("value", Some("bad\nvalue".into())).is_err());
+        assert_eq!(normalize_seed("f").unwrap(), "000000000000000f");
+        assert!(normalize_seed("").is_err());
+        assert!(normalize_seed("10000000000000000").is_err());
+
+        for error in [
+            TestPlanError::InvalidJson("bad".into()),
+            TestPlanError::InvalidField {
+                field: "x",
+                message: "bad".into(),
+            },
+            TestPlanError::ProjectMismatch {
+                field: "x",
+                expected: "a".into(),
+                actual: "b".into(),
+            },
+            TestPlanError::Duplicate {
+                kind: "x",
+                value: "v".into(),
+            },
+            TestPlanError::Serialization("bad".into()),
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
     }
 }
