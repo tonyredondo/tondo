@@ -49,8 +49,11 @@ is forced by a comment. Empty permitted forms remain compact.
 Records use comma-space separators when flat and significant newlines without
 commas when broken. The lexer restores logical newlines inside a brace nested in
 parentheses or brackets, so this representation remains valid in every
-expression position. Declarations, blocks, `match`, trait bodies, and
-implementation bodies use their mandatory multiline forms.
+expression position. Declarations, blocks, `match`, trait bodies,
+implementation bodies, and `suite` bodies use their mandatory multiline forms.
+A suite keeps ordinary setup statements together, inserts one blank line before
+its first direct `test`/`suite` member, and separates consecutive members like
+module-level declarations.
 
 Binary and type-operator chains break after the operator with one continuation
 indent. Assignment and match-arm bodies use the same safe break direction.

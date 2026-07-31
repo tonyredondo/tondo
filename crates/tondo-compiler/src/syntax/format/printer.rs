@@ -543,10 +543,10 @@ impl<'a> Formatter<'a> {
             return self.piece_for_node(node, Doc::concat([header.doc, Doc::HardLine, close.doc]));
         }
 
-        let broken_items = if node.kind() == SyntaxKind::Block {
-            self.join_block_units(&item_nodes, &items)
-        } else {
-            self.join_structural_units(&item_nodes, &items)
+        let broken_items = match node.kind() {
+            SyntaxKind::Block => self.join_block_units(&item_nodes, &items),
+            SyntaxKind::SuiteBlock => self.join_suite_units(&item_nodes, &items),
+            _ => self.join_structural_units(&item_nodes, &items),
         };
         let flat_items = Doc::concat(items.iter().enumerate().flat_map(|(index, item)| {
             let separator = (index > 0).then_some(Doc::text(", "));
@@ -605,6 +605,23 @@ impl<'a> Formatter<'a> {
         for (index, item) in items.iter().enumerate() {
             if index > 0 {
                 let lines = if self.has_section_comments_after(nodes[index - 1]) {
+                    2
+                } else {
+                    1
+                };
+                self.push_separation(&mut docs, &items[index - 1], lines);
+            }
+            docs.push(item.doc.clone());
+        }
+        Doc::concat(docs)
+    }
+
+    fn join_suite_units(&self, nodes: &[SyntaxNodeRef<'a>], items: &[Piece<'a>]) -> Doc<'a> {
+        debug_assert_eq!(nodes.len(), items.len());
+        let mut docs = Vec::new();
+        for (index, item) in items.iter().enumerate() {
+            if index > 0 {
+                let lines = if self.top_level_blank_between(nodes[index - 1], nodes[index]) {
                     2
                 } else {
                     1

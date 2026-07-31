@@ -90,6 +90,130 @@ fn normative_minimum_corpus_matches_byte_for_byte_and_is_idempotent() {
 }
 
 #[test]
+fn testing_declarations_have_canonical_layout_and_idempotence() {
+    let input = br#"test empty{}
+
+
+ suite arithmetic{
+let offset=20
+
+test subtracts{assert(offset==20)}
+test adds{
+assert(offset+22==42)
+}
+suite nested{test child{}
+}
+}
+test adjacent{}
+suite emptySuite{}
+"#;
+    let expected = br#"test empty {}
+
+suite arithmetic {
+    let offset = 20
+
+    test subtracts {
+        assert(offset == 20)
+    }
+
+    test adds {
+        assert(offset + 22 == 42)
+    }
+
+    suite nested {
+        test child {}
+    }
+}
+
+test adjacent {}
+
+suite emptySuite {
+}
+"#;
+
+    let formatted = format_once(input, ParseMode::Module);
+    assert_eq!(formatted, expected);
+    assert_eq!(format_once(&formatted, ParseMode::Module), formatted);
+}
+
+#[test]
+fn testing_declaration_comments_follow_their_units_and_sections() {
+    let input = br#"/// arithmetic checks
+
+suite arithmetic{
+// setup inputs
+let offset=20
+
+/// checks subtraction
+test subtracts{assert(offset==20)}
+// sibling test
+test adds{assert(offset+22==42)}
+}
+
+/// independent check
+test standalone{}
+"#;
+    let expected = br#"/// arithmetic checks
+suite arithmetic {
+    // setup inputs
+    let offset = 20
+
+    /// checks subtraction
+    test subtracts {
+        assert(offset == 20)
+    }
+
+    // sibling test
+    test adds {
+        assert(offset + 22 == 42)
+    }
+}
+
+/// independent check
+test standalone {}
+"#;
+
+    let formatted = format_once(input, ParseMode::Module);
+    assert_eq!(formatted, expected);
+    assert_eq!(format_once(&formatted, ParseMode::Module), formatted);
+}
+
+#[test]
+fn invalid_suite_layout_is_rejected_without_fabricating_formatted_output() {
+    let source: &[u8] = br#"suite broken{
+test first{}
+let after=2
+test second{}
+}
+"#;
+    let mut sources = SourceDatabase::new();
+    let file = sources
+        .add(SourceInput::virtual_file(
+            SourceId::new("format:invalid-suite").unwrap(),
+            ModulePath::new("format").unwrap(),
+            LogicalPath::new("invalid-suite.to").unwrap(),
+            Arc::<[u8]>::from(source),
+        ))
+        .unwrap();
+    let lexed = lex(&sources, file, LexMode::Module).unwrap();
+    let parsed = parse(
+        &sources,
+        file,
+        lexed,
+        ParseMode::Module,
+        ParseLimits::default(),
+    )
+    .unwrap();
+
+    assert!(!parsed.diagnostics().is_empty());
+    assert_eq!(parsed.cst().reconstruct(source), source);
+    assert!(matches!(
+        format_parsed(&sources, file, &parsed),
+        Err(FormatError::InvalidSyntax)
+    ));
+}
+
+#[test]
 fn list_layout_flattens_at_column_100_and_breaks_at_101() {
     for (payload, should_break) in [(82, false), (83, false), (84, true)] {
         let source = format!("let values = [\"{}\"]\n", "x".repeat(payload));

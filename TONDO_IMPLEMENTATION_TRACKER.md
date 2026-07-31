@@ -5,11 +5,11 @@ tempranos `std.bytes`, el time-base de `std.time`, el contrato/implementación
 read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-INPUTS-PLAN-001`, `UTEST-RESULT-MODEL-001`, `UTEST-CLI-PARSE-001` y
 `UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001` y
-`UTEST-CST-001` están cerrados sobre el draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
+`UTEST-CST-001` y `UTEST-FMT-001` están cerrados sobre el draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.19
+**Versión del tracker:** 1.20
 
 **Última actualización:** 2026-07-31
 
@@ -2757,10 +2757,14 @@ reporters.
   modifiers, nesting y reconstrucción lossless, además de la suite completa de
   `tondo-compiler`.
 
-- [ ] **UTEST-FMT-001 — Formatear suites y tests canónicamente.** Cubrir bodies
-  y setups vacíos/multiline, nesting, comentarios, documentación, separación
-  setup-members, declaraciones adyacentes, recovery e idempotencia en la
-  grammar consolidada 0.1. `fmt` no depende de discovery runtime.
+- [x] **UTEST-FMT-001 — Formatear suites y tests canónicamente.** El formatter
+  emite spacing y bloques canónicos para `test`/`suite`, mantiene bodies y
+  setups vacíos/multiline, nesting, comentarios y documentación, y separa el
+  setup de sus miembros y las declaraciones adyacentes con las reglas de
+  módulos. La salida es idempotente, el recovery inválido no fabrica bytes y
+  `fmt` no depende de discovery runtime. Evidencia: tres tests de integración
+  dedicados en `formatter_spec`, además de la suite completa del compilador y
+  el gate oficial del formatter.
 
 - [x] **ASYNC-DEFER-IMPL-001 — Implementar y verificar `defer await`.** Añadir
   la forma 0.1 al CST/formatter sin feature gate, checks de
@@ -4296,6 +4300,17 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.20 — 2026-07-31
+
+- Se completa `UTEST-FMT-001`: `SuiteBlock` usa el layout estructural de
+  declaraciones para insertar una línea vacía entre setup y miembros, y entre
+  miembros consecutivos; los cuerpos de `test` conservan las reglas ordinarias
+  de bloques y las suites anidadas mantienen su indentación.
+- Se añaden tres tests de formatter para layout canónico, nesting, bodies y
+  setups vacíos/multiline, comentarios/documentación, declaraciones adyacentes,
+  recovery e idempotencia. `docs/contracts/formatter.md` fija la regla de
+  separación y el gate completo queda en verde.
 
 ### 1.19 — 2026-07-31
 
