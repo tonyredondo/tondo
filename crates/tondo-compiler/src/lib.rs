@@ -17,6 +17,7 @@ pub mod test_capture;
 pub mod test_dependencies;
 pub mod test_discovery;
 pub mod test_inputs;
+pub mod test_integration;
 pub mod test_overlay;
 pub mod test_owners;
 pub mod test_plan;

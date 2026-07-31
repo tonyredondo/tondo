@@ -6,13 +6,13 @@ read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-INPUTS-PLAN-001`, `UTEST-RESULT-MODEL-001`, `UTEST-CLI-PARSE-001` y
 `UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001`,
 `UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001`, `UTEST-CAPTURE-001` y
-`UTEST-OVERLAY-001` están
+`UTEST-OVERLAY-001`, `UTEST-INTEG-001` están
 cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.23
+**Versión del tracker:** 1.24
 
 **Última actualización:** 2026-07-31
 
@@ -2823,10 +2823,17 @@ reporters.
   once tests unitarios, incluidos el adapter del resolver y la invariancia de
   los hashes de producción.
 
-- [ ] **UTEST-INTEG-001 — Implementar integration roots aislados.** Cada root
-  recibe PackageId sintético de consumidor, imports explícitos y únicamente
-  visibilidad pública sobre el paquete probado. No existe flag friend ni
-  reutilización accidental del scope unitario.
+- [x] **UTEST-INTEG-001 — Implementar integration roots aislados.**
+  `test_integration::build` deriva un `PackageId` sintético estable a partir del
+  paquete probado y el path lógico `tests/*.to`, conserva el nombre del paquete
+  probado únicamente en el prefijo visible y mantiene el consumidor separado.
+  Los imports son explícitos y solo admiten el paquete probado o
+  dev-dependencies del grafo cerrado; interfaces privadas, paquetes
+  desconocidos, alias duplicados, self-imports y miembros duplicados se
+  rechazan. Los roots solo pueden declarar helpers privados propios, nunca
+  exports públicos ni acceso al scope unitario. `build_many` ordena por path y
+  rechaza roots duplicados. Evidencia: `docs/contracts/test-integration.md` y
+  ocho tests unitarios deterministas.
 
 - [ ] **UTEST-CHECK-001 — Inferir el contrato exacto del body.** Comprobar cada
   test como entrada privada `async? fn(): Unit ! E` y cada setup de suite como
@@ -4322,6 +4329,16 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.24 — 2026-07-31
+
+- Se completa `UTEST-INTEG-001` con `tondo_compiler::test_integration` y el
+  contrato `docs/contracts/test-integration.md`. Cada fuente bajo `tests/`
+  recibe un consumidor sintético content-addressed, imports públicos
+  explícitos, helpers privados locales y referencias resueltas sin friend scope
+  ni dependencia implícita entre roots. La construcción por lote es estable y
+  ocho tests cubren identidades, paths, visibilidad, imports, helpers y
+  aislamiento.
 
 ### 1.23 — 2026-07-31
 
