@@ -20,6 +20,7 @@ pub mod test_dependencies;
 pub mod test_discovery;
 pub mod test_inputs;
 pub mod test_integration;
+pub mod test_limits;
 pub mod test_lower;
 pub mod test_overlay;
 pub mod test_owners;

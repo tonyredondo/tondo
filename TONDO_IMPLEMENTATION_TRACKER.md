@@ -13,7 +13,7 @@ draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.29
+**Versión del tracker:** 1.30
 
 **Última actualización:** 2026-07-31
 
@@ -2919,7 +2919,7 @@ reporters.
   orden exterior-interior, cleanup LIFO, bloqueo causal, skip, continuidad de
   hermanos, teardown y retry con contexto fresco.
 
-- [ ] **UTEST-LIMIT-001 — Hacer límites y timeout terminales reales.** Publicar
+- [x] **UTEST-LIMIT-001 — Hacer límites y timeout terminales reales.** Publicar
   defaults finitos, aplicar `--timeout` por hoja y por fase setup/teardown sin
   contar la espera de descendientes, cargar tags/logs/stdout/stderr al mismo
   presupuesto de output, artifacts/snapshot actual a límites separados de
@@ -2930,7 +2930,10 @@ reporters.
   presupuestos nuevos bajo el mismo resource profile; timeout,
   CPU/instrucciones, memoria y output siempre usan recursos reales aunque el
   intento abra tiempo virtual. OOM, abort o pérdida de aislamiento nunca se
-  presentan como assertion failure ordinario.
+  presentan como assertion failure ordinario. Evidencia:
+  `docs/contracts/test-limits.md` y ocho tests unitarios sobre defaults, hashes,
+  validación, reservas atómicas, deltas duplicados, pausas de timeout, timeout
+  desactivado, regresión de reloj y grace period de interrupción.
 
 - [ ] **UTEST-GLOB-001 — Implementar el selector glob portable.** Parsear
   componentes `::`, `*`, `?` y `**` con la gramática cerrada de la spec,
