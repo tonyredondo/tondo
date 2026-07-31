@@ -130,6 +130,8 @@ define_ast_nodes! {
     ImplDecl => ImplDecl,
     ImplementationMethod => ImplementationMethod,
     FunctionDecl => FunctionDecl,
+    TestDecl => TestDecl,
+    SuiteDecl => SuiteDecl,
     FunctionSignature => FunctionSignature,
     FunctionHead => FunctionHead,
     MethodOwner => MethodOwner,
@@ -161,6 +163,7 @@ define_ast_nodes! {
     FunctionTypeItem => FunctionTypeItem,
 
     Block => Block,
+    SuiteBlock => SuiteBlock,
     BindingDecl => BindingDecl,
     Assignment => Assignment,
     TupleAssignmentPattern => TupleAssignmentPattern,
@@ -283,6 +286,8 @@ define_ast_sum! {
         Trait(TraitDecl),
         Impl(ImplDecl),
         Function(FunctionDecl),
+        Test(TestDecl),
+        Suite(SuiteDecl),
     }
 }
 
@@ -405,6 +410,8 @@ impl_named! {
     TraitDecl,
     TraitMethod,
     ImplementationMethod,
+    TestDecl,
+    SuiteDecl,
     GenericParam,
     Parameter,
     ClosureParameter,
@@ -470,6 +477,18 @@ impl<'a> FunctionDecl<'a> {
     }
 }
 
+impl<'a> TestDecl<'a> {
+    pub fn body(self) -> Option<Block<'a>> {
+        self.child()
+    }
+}
+
+impl<'a> SuiteDecl<'a> {
+    pub fn body(self) -> Option<SuiteBlock<'a>> {
+        self.child()
+    }
+}
+
 impl<'a> ParameterList<'a> {
     pub fn parameters(self) -> AstChildren<'a, Parameter<'a>> {
         self.children()
@@ -478,6 +497,16 @@ impl<'a> ParameterList<'a> {
 
 impl<'a> Block<'a> {
     pub fn items(self) -> AstChildren<'a, BlockItem<'a>> {
+        self.children()
+    }
+}
+
+impl<'a> SuiteBlock<'a> {
+    pub fn setup(self) -> AstChildren<'a, Statement<'a>> {
+        self.children()
+    }
+
+    pub fn members(self) -> AstChildren<'a, Declaration<'a>> {
         self.children()
     }
 }

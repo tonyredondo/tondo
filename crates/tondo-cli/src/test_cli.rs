@@ -377,16 +377,15 @@ fn validate_combinations(plan: &TestCliPlan) -> Result<TestCliPlan, String> {
             return Err("`--list` cannot emit a junit report".into());
         }
     }
-    if plan.update_snapshots {
-        if plan.jobs != 1
+    if plan.update_snapshots
+        && (plan.jobs != 1
             || !matches!(plan.order, TestOrder::Canonical)
             || plan.shard.is_some()
             || plan.retry_explicit
             || plan.repeat_explicit
-            || plan.allow_flaky
-        {
-            return Err("`--update-snapshots` requires canonical order, one job, and no shard/retry/repeat/flaky policy".into());
-        }
+            || plan.allow_flaky)
+    {
+        return Err("`--update-snapshots` requires canonical order, one job, and no shard/retry/repeat/flaky policy".into());
     }
     Ok(plan.clone())
 }

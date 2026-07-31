@@ -176,6 +176,8 @@ pub enum SyntaxKind {
     ImplDecl,
     ImplementationMethod,
     FunctionDecl,
+    TestDecl,
+    SuiteDecl,
     FunctionSignature,
     FunctionHead,
     MethodOwner,
@@ -207,6 +209,7 @@ pub enum SyntaxKind {
     FunctionTypeItem,
 
     Block,
+    SuiteBlock,
     BindingDecl,
     Assignment,
     TupleAssignmentPattern,

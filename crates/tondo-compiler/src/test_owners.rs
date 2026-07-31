@@ -316,12 +316,12 @@ fn parse_rules(path: &str, text: &str) -> Result<Vec<OwnershipRule>, OwnershipEr
     for (index, raw_line) in text.split('\n').enumerate() {
         let line_number = index + 1;
         let line = raw_line.strip_suffix('\r').unwrap_or(raw_line);
-        let first = line.trim_start_matches(|character| character == ' ' || character == '\t');
+        let first = line.trim_start_matches([' ', '\t']);
         if first.is_empty() || first.starts_with('#') {
             continue;
         }
         let fields = line
-            .split(|character| character == ' ' || character == '\t')
+            .split([' ', '\t'])
             .filter(|field| !field.is_empty())
             .collect::<Vec<_>>();
         if fields.len() < 2 {

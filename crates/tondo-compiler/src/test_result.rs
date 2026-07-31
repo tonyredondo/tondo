@@ -4,6 +4,13 @@
 //! VM.  It owns the one canonical result tree that JSON, human and JUnit
 //! reporters will consume, plus the bounded wire protocol used to transport
 //! attempts between a coordinator and an isolated worker.
+//!
+//! The wire model intentionally keeps complete attempt/error payloads inline:
+//! these values are serialized as one canonical event and are not hot-path
+//! allocations. The corresponding Clippy size lints are therefore suppressed
+//! at this protocol boundary rather than changing the public representation.
+
+#![allow(clippy::large_enum_variant, clippy::result_large_err)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -1261,11 +1268,7 @@ fn summarize(
         ..ResultSummary::default()
     };
     for node in tests.iter().chain(suites.iter()) {
-        let target = if node.kind == ResultNodeKind::Test {
-            &mut summary
-        } else {
-            &mut summary
-        };
+        let target = &mut summary;
         if node.kind == ResultNodeKind::Test {
             target.executed += u32::from(
                 node.attempts

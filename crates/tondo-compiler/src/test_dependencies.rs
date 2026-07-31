@@ -843,10 +843,11 @@ mod tests {
         assert_eq!(node.interface_path(), "interfaces/test.ti");
         assert_eq!(node.interface_sha256(), SHA_A);
         assert!(node.dependencies().is_empty());
-        assert!(matches!(
-            graph.package(&PackageId::new("registry:missing@1").unwrap()),
-            None
-        ));
+        assert!(
+            graph
+                .package(&PackageId::new("registry:missing@1").unwrap())
+                .is_none()
+        );
         assert!(matches!(
             graph.resolve_from(&PackageId::new("registry:missing@1").unwrap(), "x"),
             Err(DependencyGraphError::UnknownPackage(_))

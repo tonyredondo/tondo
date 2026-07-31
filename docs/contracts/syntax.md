@@ -33,6 +33,12 @@ types, statements, expressions, postfix forms, patterns, preliminary contextual
 forms, and explicit `Error` nodes. ADR-003 defines byte ownership and synthetic
 tokens.
 
+Testing declarations are represented directly as `TestDecl` and `SuiteDecl`;
+the latter owns a `SuiteBlock` whose immediate children retain setup statements
+before direct test/suite members. The typed facade exposes these nodes without
+duplicating the lossless CST, so recovery can report an invalid setup suffix or
+nested declaration while preserving subsequent valid members.
+
 The representation is a flat immutable arena:
 
 - `NodeId` and `TokenId` are opaque request-local indices.

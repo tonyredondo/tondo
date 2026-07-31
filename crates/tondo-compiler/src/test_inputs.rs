@@ -853,14 +853,13 @@ mod tests {
             reproducibility(std::slice::from_ref(&descriptor)),
             TestReproducibility::SecretDependentVersioned
         );
-        assert_eq!(
+        assert!(
             secret_digest(std::slice::from_ref(&descriptor))
                 .unwrap()
-                .is_some(),
-            true
+                .is_some()
         );
         assert_eq!(
-            public_digest(&[descriptor.clone()]).unwrap(),
+            public_digest(std::slice::from_ref(&descriptor)).unwrap(),
             digest_hex(b"[]").unwrap()
         );
         assert!(digest_hex(b"").unwrap().len() == 64);

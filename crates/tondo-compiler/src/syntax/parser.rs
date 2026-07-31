@@ -339,6 +339,8 @@ impl Parser<'_> {
             Some(TokenKind::Fn | TokenKind::Async | TokenKind::Unsafe) => {
                 self.parse_function_decl()
             }
+            Some(TokenKind::Test) => self.parse_test_decl(),
+            Some(TokenKind::Suite) => self.parse_suite_decl(),
             _ => {
                 self.syntax_error("expected a top-level declaration")?;
                 self.recover_one()
@@ -559,6 +561,88 @@ impl Parser<'_> {
         self.expect_line_end()?;
         self.finish();
         Ok(())
+    }
+
+    fn parse_test_decl(&mut self) -> ParseResult {
+        self.start(SyntaxKind::TestDecl)?;
+        self.parse_test_suite_modifiers()?;
+        self.expect(TokenKind::Test)?;
+        self.expect_identifier()?;
+        self.parse_block()?;
+        self.expect_line_end()?;
+        self.finish();
+        Ok(())
+    }
+
+    fn parse_suite_decl(&mut self) -> ParseResult {
+        self.start(SyntaxKind::SuiteDecl)?;
+        self.parse_test_suite_modifiers()?;
+        self.expect(TokenKind::Suite)?;
+        self.expect_identifier()?;
+        self.parse_suite_block()?;
+        self.expect_line_end()?;
+        self.finish();
+        Ok(())
+    }
+
+    fn parse_test_suite_modifiers(&mut self) -> ParseResult {
+        if !self.at_any(&[
+            TokenKind::Pub,
+            TokenKind::Priv,
+            TokenKind::Async,
+            TokenKind::Unsafe,
+        ]) {
+            return Ok(());
+        }
+        self.syntax_error("test and suite declarations do not accept modifiers")?;
+        while self.at_any(&[
+            TokenKind::Pub,
+            TokenKind::Priv,
+            TokenKind::Async,
+            TokenKind::Unsafe,
+        ]) {
+            self.bump();
+        }
+        Ok(())
+    }
+
+    fn parse_suite_block(&mut self) -> ParseResult {
+        self.start(SyntaxKind::SuiteBlock)?;
+        self.expect(TokenKind::LBrace)?;
+        self.eat_newlines();
+        let mut has_member = false;
+        while !self.at_any(&[TokenKind::RBrace, TokenKind::Eof]) {
+            if self.eat(TokenKind::Nl) {
+                continue;
+            }
+            if let Some(member) = self.suite_member_discriminator() {
+                has_member = true;
+                self.parse_suite_member(member)?;
+                continue;
+            }
+            if has_member {
+                self.syntax_error(
+                    "only test or suite declarations may follow the first suite member",
+                )?;
+                self.recover_to_suite_boundary()?;
+            } else {
+                self.parse_statement()?;
+            }
+        }
+        self.expect(TokenKind::RBrace)?;
+        self.finish();
+        Ok(())
+    }
+
+    fn parse_suite_member(&mut self, member: TokenKind) -> ParseResult {
+        match member {
+            TokenKind::Test => self.parse_test_decl(),
+            TokenKind::Suite => self.parse_suite_decl(),
+            _ => {
+                self.syntax_error("expected a test or suite member")?;
+                self.recover_to_suite_boundary()
+            }
+        }
     }
 
     fn parse_function_modifiers(&mut self) {
@@ -1181,6 +1265,11 @@ impl Parser<'_> {
     }
 
     fn parse_expression_or_assignment_statement(&mut self, allow_tail: bool) -> ParseResult {
+        if self.test_suite_decl_discriminator().is_some() {
+            self.syntax_error("test and suite declarations are not allowed in this block")?;
+            self.recover_to_statement_boundary()?;
+            return Ok(());
+        }
         if self.has_top_level_assignment_before_line_end() {
             self.start(SyntaxKind::Assignment)?;
             self.parse_assignment_pattern()?;
@@ -3219,6 +3308,25 @@ impl Parser<'_> {
         self.top_decl_discriminator().is_some()
     }
 
+    fn suite_member_discriminator(&self) -> Option<TokenKind> {
+        self.test_suite_decl_discriminator()
+    }
+
+    fn test_suite_decl_discriminator(&self) -> Option<TokenKind> {
+        if !matches!(self.mode, ParseMode::Module | ParseMode::ImportedModule) {
+            return None;
+        }
+        let mut offset = 0;
+        while matches!(
+            self.nth(offset),
+            TokenKind::Pub | TokenKind::Priv | TokenKind::Async | TokenKind::Unsafe
+        ) {
+            offset += 1;
+        }
+        let kind = self.nth(offset);
+        matches!(kind, TokenKind::Test | TokenKind::Suite).then_some(kind)
+    }
+
     fn at_function_signature_start(&self) -> bool {
         let mut offset = usize::from(self.nth(0) == TokenKind::Pub);
         if self.nth(offset) == TokenKind::Async {
@@ -3389,6 +3497,9 @@ impl Parser<'_> {
     }
 
     fn top_decl_discriminator(&self) -> Option<TokenKind> {
+        if let Some(kind) = self.test_suite_decl_discriminator() {
+            return Some(kind);
+        }
         let mut offset = 0;
         if self.nth(offset) == TokenKind::Pub {
             offset += 1;
@@ -3565,6 +3676,36 @@ impl Parser<'_> {
     fn recover_to_member_boundary(&mut self) -> ParseResult {
         self.start(SyntaxKind::Error)?;
         while !self.at_any(&[TokenKind::Nl, TokenKind::RBrace, TokenKind::Eof]) {
+            self.bump();
+        }
+        self.finish();
+        self.eat(TokenKind::Nl);
+        Ok(())
+    }
+
+    fn recover_to_suite_boundary(&mut self) -> ParseResult {
+        self.start(SyntaxKind::Error)?;
+        let mut braces = 0_u32;
+        let mut parentheses = 0_u32;
+        let mut brackets = 0_u32;
+        while !self.at(TokenKind::Eof) {
+            if braces == 0
+                && parentheses == 0
+                && brackets == 0
+                && (self.at_any(&[TokenKind::Nl, TokenKind::RBrace])
+                    || self.suite_member_discriminator().is_some())
+            {
+                break;
+            }
+            match self.current() {
+                TokenKind::LBrace => braces = braces.saturating_add(1),
+                TokenKind::RBrace if braces > 0 => braces -= 1,
+                TokenKind::LParen => parentheses = parentheses.saturating_add(1),
+                TokenKind::RParen if parentheses > 0 => parentheses -= 1,
+                TokenKind::LBracket => brackets = brackets.saturating_add(1),
+                TokenKind::RBracket if brackets > 0 => brackets -= 1,
+                _ => {}
+            }
             self.bump();
         }
         self.finish();
@@ -3828,6 +3969,7 @@ mod tests {
 
     use super::*;
     use crate::source::{LogicalPath, ModulePath, SourceId, SourceInput};
+    use crate::syntax::ast::{Declaration, SourceFile};
     use crate::syntax::format::format_parsed;
     use crate::syntax::{LexMode, lex};
 
@@ -3896,6 +4038,240 @@ mod tests {
         assert_eq!(
             parsed.cst().node(parsed.cst().root()).kind(),
             SyntaxKind::Module
+        );
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn test_and_suite_declarations_are_lossless_and_typed() {
+        let source = br#"test top_level {
+    assert(true)
+}
+
+suite arithmetic {
+    let offset = 20
+
+    test subtracts_offset {
+        assert(offset == 20)
+    }
+
+    suite nested {
+        test child {
+            assert(true)
+        }
+    }
+}
+"#;
+
+        for mode in [ParseMode::Module, ParseMode::ImportedModule] {
+            let (sources, file, parsed) = parse_source(source, mode);
+            assert!(
+                parsed.diagnostics().is_empty(),
+                "{mode:?}: {:#?}",
+                parsed.diagnostics()
+            );
+            assert_eq!(
+                parsed
+                    .cst()
+                    .nodes()
+                    .iter()
+                    .filter(|node| node.kind() == SyntaxKind::TestDecl)
+                    .count(),
+                3,
+                "{mode:?}"
+            );
+            assert_eq!(
+                parsed
+                    .cst()
+                    .nodes()
+                    .iter()
+                    .filter(|node| node.kind() == SyntaxKind::SuiteDecl)
+                    .count(),
+                2,
+                "{mode:?}"
+            );
+            assert_eq!(
+                parsed
+                    .cst()
+                    .nodes()
+                    .iter()
+                    .filter(|node| node.kind() == SyntaxKind::SuiteBlock)
+                    .count(),
+                2,
+                "{mode:?}"
+            );
+            assert_lossless(&sources, file, &parsed, source);
+
+            let root = SourceFile::root(parsed.cst()).expect("the module root is typed");
+            let declarations = root.declarations().collect::<Vec<_>>();
+            assert_eq!(declarations.len(), 2, "{mode:?}");
+            let top_test = match declarations[0] {
+                Declaration::Test(test) => test,
+                declaration => panic!("expected top-level test, got {declaration:?}"),
+            };
+            assert_eq!(
+                top_test
+                    .name_token()
+                    .and_then(|token| token.token().normalized_identifier()),
+                Some("top_level")
+            );
+            assert_eq!(top_test.body().expect("test body").items().count(), 1);
+
+            let suite = match declarations[1] {
+                Declaration::Suite(suite) => suite,
+                declaration => panic!("expected top-level suite, got {declaration:?}"),
+            };
+            let body = suite.body().expect("suite body");
+            assert_eq!(body.setup().count(), 1);
+            assert_eq!(body.members().count(), 2);
+            assert_eq!(
+                body.members()
+                    .filter_map(|member| match member {
+                        Declaration::Test(test) => Some(test),
+                        _ => None,
+                    })
+                    .count(),
+                1
+            );
+        }
+    }
+
+    #[test]
+    fn suite_recovery_rejects_setup_after_first_member_and_keeps_later_members() {
+        let source = br#"suite broken {
+    let before = 1
+
+    test first {}
+    let after = 2
+
+    test second {}
+}
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert_eq!(codes(&parsed), ["E0004"]);
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::TestDecl)
+                .count(),
+            2
+        );
+        assert!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .any(|node| node.kind() == SyntaxKind::Error)
+        );
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn nested_test_declarations_are_rejected_without_losing_the_outer_test() {
+        let source = br#"test outer {
+    test inner {}
+}
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert_eq!(codes(&parsed), ["E0004"]);
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::TestDecl)
+                .count(),
+            1
+        );
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn control_flow_cannot_hide_suite_members_during_recovery() {
+        let source = br#"suite control {
+    test first {}
+    if true {
+        test nested {}
+    }
+    test second {}
+}
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert_eq!(codes(&parsed), ["E0004"]);
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::TestDecl)
+                .count(),
+            2
+        );
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn test_and_suite_modifiers_are_rejected_but_recovered() {
+        let source = br#"pub test invalid {}
+async suite invalid {
+    test valid {}
+}
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert_eq!(codes(&parsed), ["E0004", "E0004"]);
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::TestDecl)
+                .count(),
+            2
+        );
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::SuiteDecl)
+                .count(),
+            1
+        );
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn prohibited_test_and_suite_suffixes_are_diagnosed_losslessly() {
+        for source in [
+            &b"test with_parameter(value) {}\n"[..],
+            &b"suite with_parameter(value) { test child {} }\n"[..],
+            &b"test generic[T] {}\n"[..],
+            &b"suite generic[T] { test child {} }\n"[..],
+            &b"test result {}: Int\n"[..],
+            &b"suite result {} ! Error\n"[..],
+            &b"test \"string_name\" {}\n"[..],
+            &b"test signature\n"[..],
+            &b"suite signature\n"[..],
+        ] {
+            let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+            assert!(!parsed.diagnostics().is_empty(), "source: {source:?}");
+            assert_lossless(&sources, file, &parsed, source);
+        }
+    }
+
+    #[test]
+    fn test_and_suite_declarations_are_rejected_in_scripts() {
+        let source = b"test top_level {}\n";
+        let (sources, file, parsed) = parse_source(source, ParseMode::Script);
+        assert_eq!(codes(&parsed), ["E0004"]);
+        assert!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .all(|node| node.kind() != SyntaxKind::TestDecl)
         );
         assert_lossless(&sources, file, &parsed, source);
     }

@@ -422,6 +422,7 @@ impl<'a> Formatter<'a> {
             | SyntaxKind::EnumDecl
             | SyntaxKind::TraitDecl
             | SyntaxKind::ImplDecl
+            | SyntaxKind::SuiteBlock
             | SyntaxKind::MatchExpr => self.format_forced_braces(node),
             SyntaxKind::RecordLikeExpr
             | SyntaxKind::RecordUpdateBody
@@ -2040,6 +2041,8 @@ fn is_declaration(kind: SyntaxKind) -> bool {
             | SyntaxKind::TraitDecl
             | SyntaxKind::ImplDecl
             | SyntaxKind::FunctionDecl
+            | SyntaxKind::TestDecl
+            | SyntaxKind::SuiteDecl
             | SyntaxKind::FunctionSignature
     )
 }

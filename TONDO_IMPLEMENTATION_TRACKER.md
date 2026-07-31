@@ -4,12 +4,12 @@
 tempranos `std.bytes`, el time-base de `std.time`, el contrato/implementación
 read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-INPUTS-PLAN-001`, `UTEST-RESULT-MODEL-001`, `UTEST-CLI-PARSE-001` y
-`UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001` y `UTEST-LEX-001`
-están cerrados sobre el draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
+`UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001` y
+`UTEST-CST-001` están cerrados sobre el draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.18
+**Versión del tracker:** 1.19
 
 **Última actualización:** 2026-07-31
 
@@ -2746,13 +2746,16 @@ reporters.
   rechaza ambas como nombres de usuario. Evidencia: tests unitarios de
   `syntax::lexer` y `package`, además de la suite completa de `tondo-compiler`.
 
-- [ ] **UTEST-CST-001 — Parsear `test` y `suite` sin pérdida.** Añadir
-  `test identifier block` y `suite identifier suite-block` a CST/AST y
-  recovery. El suite-block admite setup ordinario seguido solo de miembros
-  estáticos; se rechazan modifiers, parámetros, firmas, nodos bajo control de
-  flujo, sentencias posteriores al primer miembro y todas las alternativas
-  ausentes. El corpus bootstrap conserva sus bytes; el parser del draft adopta
-  el contrato consolidado.
+- [x] **UTEST-CST-001 — Parsear `test` y `suite` sin pérdida.** `SyntaxKind`
+  y la fachada AST tipada exponen `TestDecl`, `SuiteDecl` y `SuiteBlock`; el
+  parser acepta las dos formas canónicas en Module e ImportedModule, conserva
+  setup ordinario y miembros directos anidados, y mantiene la partición y
+  reconstrucción byte a byte. El recovery rechaza modifiers, declaraciones
+  dentro de tests/bloques ordinarios, y sentencias después del primer miembro
+  sin perder los miembros posteriores; Script conserva el rechazo de la forma.
+  Evidencia: ocho tests de parser con AST, modos de fuente, recovery,
+  modifiers, nesting y reconstrucción lossless, además de la suite completa de
+  `tondo-compiler`.
 
 - [ ] **UTEST-FMT-001 — Formatear suites y tests canónicamente.** Cubrir bodies
   y setups vacíos/multiline, nesting, comentarios, documentación, separación
@@ -4293,6 +4296,28 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.19 — 2026-07-31
+
+- Se completa `UTEST-CST-001` con nodos lossless `TestDecl`, `SuiteDecl` y
+  `SuiteBlock` en CST/AST. `suite` conserva setup ordinario antes del primer
+  miembro y solo admite `test`/`suite` directos después, incluidos niveles
+  anidados.
+- El parser reconoce las formas en Module e ImportedModule, rechaza el uso en
+  Script, modifiers, declaraciones dentro de tests y setup posterior al primer
+  miembro, y recupera hasta el siguiente miembro sin perder bytes ni nodos
+  válidos. El formatter comparte el nuevo inventario y trata `SuiteBlock` como
+  un bloque de llaves forzadas.
+- Se añaden ocho tests de parser para vistas AST, modos, recovery, nesting,
+  modifiers y reconstrucción exacta; la suite completa del compilador queda en
+  verde.
+
+### 1.18 — 2026-07-31
+
+- Se completa `UTEST-LEX-001` reservando `suite` y `test` como keywords en todos
+  los source forms, con normalización NFC, independencia de origen y rechazo
+  como nombres de paquete. La evidencia quedó fijada en lexer, package y los
+  artefactos de fiabilidad generados.
 
 ### 1.17 — 2026-07-31
 
