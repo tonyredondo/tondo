@@ -6,13 +6,14 @@ read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-INPUTS-PLAN-001`, `UTEST-RESULT-MODEL-001`, `UTEST-CLI-PARSE-001` y
 `UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001`,
 `UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001`, `UTEST-CAPTURE-001` y
-`UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001` y `UTEST-LOWER-001` están
+`UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001`, `UTEST-LOWER-001` y
+`UTEST-CONTROL-001` están
 cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.26
+**Versión del tracker:** 1.27
 
 **Última actualización:** 2026-07-31
 
@@ -2861,7 +2862,7 @@ reporters.
   streams HIR/MIR/bytecode idénticos, identidad canónica y hash de artefacto.
   Evidencia: `docs/contracts/test-lower.md` y nueve tests unitarios.
 
-- [ ] **UTEST-CONTROL-001 — Implementar el envelope sellado de ejecución.** Cada
+- [x] **UTEST-CONTROL-001 — Implementar el envelope sellado de ejecución.** Cada
   suite/test recibe node ID, tag/log/artifact/snapshot/stdout/stderr sinks,
   cancelación y límites en estado privado del runtime, nunca como valor o
   thread-local Tondo. Helpers,
@@ -2877,7 +2878,10 @@ reporters.
   cancela el resto del scope y se propaga a la task propietaria con la prioridad
   determinista fijada por el lenguaje. El mismo envelope mantiene un registro
   por intento de dominios virtuales, pero no expone su node ID, sinks o policy al
-  controlador temporal prestado.
+  controlador temporal prestado. `test_control::EnvelopeHandle` implementa
+  la frontera, `admit_operation` mantiene `E2003` fuera de producción y el
+  reporte conserva evidencia ordenada sin paths ni contexto observable.
+  Evidencia: `docs/contracts/test-control.md` y dieciséis tests unitarios.
 
 - [ ] **UTEST-RUNTIME-001 — Ejecutar cada hoja en una raíz aislada.** Estado,
   roots, heap observable, tasks, handles, pánicos, tags, logs, attachments,
@@ -4330,6 +4334,17 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.27 — 2026-07-31
+
+- Se completa `UTEST-CONTROL-001` con `tondo_compiler::test_control` y el
+  contrato `docs/contracts/test-control.md`. El envelope privado mantiene
+  logs, tags, streams, artifacts, snapshots, virtual time, terminales y
+  presupuestos por intento con operaciones atómicas e idempotentes; no expone
+  contexto ni identidad al lenguaje. Se fijan `P2001`, `P2002`, `P2004`,
+  `P2006`, `P2007`, `P2008`, `P0007`, el orden de skip de tasks estructuradas y
+  el rechazo `E2003` de intrinsics desde producción. Dieciséis tests cubren
+  límites, precedencia, aislamiento y revocación.
 
 ### 1.26 — 2026-07-31
 
