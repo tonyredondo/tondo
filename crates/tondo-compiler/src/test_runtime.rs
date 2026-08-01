@@ -156,7 +156,13 @@ impl RunError {
             | ControlError::TagConflict { .. }
             | ControlError::InvalidName { .. }
             | ControlError::InvalidMediaType { .. }
-            | ControlError::InvalidDuration => Self::Panic {
+            | ControlError::InvalidDuration
+            | ControlError::VirtualDeadlock
+            | ControlError::VirtualExternalWait { .. }
+            | ControlError::VirtualLivelock { .. }
+            | ControlError::VirtualClockRegression
+            | ControlError::VirtualOverflow
+            | ControlError::VirtualTask { .. } => Self::Panic {
                 code: code.into(),
                 message: error.to_string(),
             },

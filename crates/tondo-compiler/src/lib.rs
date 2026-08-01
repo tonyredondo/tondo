@@ -33,6 +33,7 @@ pub mod test_schedule;
 pub mod test_shard;
 pub mod test_suite;
 pub mod test_tree;
+pub mod test_virtual_time;
 pub mod toolchain;
 pub mod types;
 

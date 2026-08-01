@@ -2985,7 +2985,7 @@ reporters.
   árboles inválidos, límite global de jobs, cola virtual y constantes de
   protocolo.
 
-- [ ] **UTEST-VTIME-001 — Implementar tiempo virtual determinista sobre la API
+- [x] **UTEST-VTIME-001 — Implementar tiempo virtual determinista sobre la API
   de producción.** Ejecutar `withVirtualTime` como `CallOnce` async bajo un
   dominio por intento/fase; prestar `ref VirtualTime`, prohibir escape y todo
   solapamiento dentro del mismo envelope y desmontar siempre tras retorno, error,
@@ -3001,6 +3001,12 @@ reporters.
   y probar instantes/deadlines de otro dominio, backoff, debounce, deadline,
   cancelación, reprogramación infinita/livelock, espera externa y cleanup sin
   pausas wall-clock.
+
+  Evidencia implementada en `crates/tondo-compiler/src/test_virtual_time.rs`,
+  integrada en `test_control::VirtualTime`, con cola/timer deterministas,
+  dominios aislados por envelope, deadlock/espera externa/livelock y rango
+  `P2003/P2004/P2005`. Contrato y límites: `docs/contracts/test-virtual-time.md`;
+  cobertura ejercitada por los tests unitarios del módulo y del envelope.
 
 - [ ] **UTEST-RETRY-001 — Implementar retries explícitos y sin estado
   heredado.** Parsear `--retry N` con default cero y máximo finito; ejecutar la

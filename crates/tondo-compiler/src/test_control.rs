@@ -6,6 +6,7 @@
 //! are linearized under one mutex so limits, tag merges and evidence names
 //! remain atomic even when tasks move between host threads.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
@@ -13,6 +14,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use crate::artifact::sha256;
 use crate::test_plan::TestSourceClass;
+use crate::test_virtual_time::{AutoAdvance, VirtualDomain, VirtualTimeError, WaitKind};
 
 pub const TEST_CONTROL_FORMAT: &str = "tondo-test-control-draft/1";
 
@@ -273,6 +275,18 @@ pub enum ControlError {
         value: String,
     },
     InvalidDuration,
+    VirtualDeadlock,
+    VirtualExternalWait {
+        task: String,
+    },
+    VirtualLivelock {
+        limit: u32,
+    },
+    VirtualClockRegression,
+    VirtualOverflow,
+    VirtualTask {
+        message: String,
+    },
     ProductionOperation {
         operation: &'static str,
     },
@@ -299,6 +313,11 @@ impl ControlError {
             Self::SnapshotMismatch { .. } => "P2007",
             Self::InvalidName { .. } | Self::InvalidMediaType { .. } => "P2006",
             Self::InvalidDuration => "P2005",
+            Self::VirtualDeadlock
+            | Self::VirtualExternalWait { .. }
+            | Self::VirtualLivelock { .. } => "P2003",
+            Self::VirtualClockRegression | Self::VirtualOverflow => "P2005",
+            Self::VirtualTask { .. } => "E2100",
             Self::ProductionOperation { .. } => "E2003",
             Self::Poisoned => "E3003",
         }
@@ -343,6 +362,19 @@ impl fmt::Display for ControlError {
             Self::InvalidDuration => {
                 formatter.write_str("virtual duration is negative or overflows")
             }
+            Self::VirtualDeadlock => formatter.write_str("virtual domain is deadlocked"),
+            Self::VirtualExternalWait { task } => {
+                write!(formatter, "task `{task}` waits on an external operation")
+            }
+            Self::VirtualLivelock { limit } => {
+                write!(
+                    formatter,
+                    "virtual domain exceeded auto-advance limit {limit}"
+                )
+            }
+            Self::VirtualClockRegression => formatter.write_str("virtual clock regressed"),
+            Self::VirtualOverflow => formatter.write_str("virtual clock overflowed"),
+            Self::VirtualTask { message } => formatter.write_str(message),
             Self::ProductionOperation { operation } => {
                 write!(
                     formatter,
@@ -689,6 +721,7 @@ impl EnvelopeHandle {
         });
         Ok(VirtualTime {
             envelope: self,
+            domain: RefCell::new(VirtualDomain::new()),
             closed: false,
         })
     }
@@ -756,11 +789,17 @@ impl EnvelopeHandle {
 /// identity or sink and is invalid after the closure returns.
 pub struct VirtualTime<'a> {
     envelope: &'a EnvelopeHandle,
+    domain: RefCell<VirtualDomain>,
     closed: bool,
 }
 
 impl<'a> VirtualTime<'a> {
     pub fn settle(&self) -> Result<(), ControlError> {
+        let _ = self
+            .domain
+            .borrow_mut()
+            .settle()
+            .map_err(control_virtual_error)?;
         let mut state = self.envelope.lock()?;
         ensure_open(&state)?;
         let Some(record) = state.virtual_time.last_mut() else {
@@ -771,20 +810,81 @@ impl<'a> VirtualTime<'a> {
     }
 
     pub fn advance(&self, duration_ns: i128) -> Result<(), ControlError> {
-        if duration_ns < 0 {
-            return Err(ControlError::InvalidDuration);
-        }
+        let report = self
+            .domain
+            .borrow_mut()
+            .advance(duration_ns)
+            .map_err(control_virtual_error)?;
         let mut state = self.envelope.lock()?;
         ensure_open(&state)?;
         let Some(record) = state.virtual_time.last_mut() else {
             return Err(ControlError::VirtualTimeMissing);
         };
-        record.elapsed_ns = record
-            .elapsed_ns
-            .checked_add(duration_ns)
-            .ok_or(ControlError::InvalidDuration)?;
+        record.elapsed_ns = i128::from(report.now());
         record.advances = record.advances.saturating_add(1);
         Ok(())
+    }
+
+    pub fn now(&self) -> Result<u64, ControlError> {
+        Ok(self.domain.borrow().now())
+    }
+
+    pub fn register_task(&self, id: impl Into<String>) -> Result<(), ControlError> {
+        self.domain
+            .borrow_mut()
+            .register_task(id)
+            .map_err(control_virtual_error)
+    }
+
+    pub fn block(&self, id: &str, wait: WaitKind) -> Result<(), ControlError> {
+        self.domain
+            .borrow_mut()
+            .block(id, wait)
+            .map_err(control_virtual_error)
+    }
+
+    pub fn complete(&self, id: &str) -> Result<(), ControlError> {
+        self.domain
+            .borrow_mut()
+            .complete(id)
+            .map_err(control_virtual_error)
+    }
+
+    pub fn schedule_timer(
+        &self,
+        id: impl Into<String>,
+        task: &str,
+        delay_ns: i128,
+    ) -> Result<u64, ControlError> {
+        Ok(self
+            .domain
+            .borrow_mut()
+            .schedule_timer(id, task, delay_ns)
+            .map_err(control_virtual_error)?
+            .deadline())
+    }
+
+    pub fn cancel_timer(&self, id: &str) -> Result<(), ControlError> {
+        self.domain
+            .borrow_mut()
+            .cancel_timer(id)
+            .map_err(control_virtual_error)
+    }
+
+    pub fn reschedule_timer(&self, id: &str, delay_ns: i128) -> Result<u64, ControlError> {
+        Ok(self
+            .domain
+            .borrow_mut()
+            .reschedule_timer(id, delay_ns)
+            .map_err(control_virtual_error)?
+            .deadline())
+    }
+
+    pub fn auto_advance(&self) -> Result<AutoAdvance, ControlError> {
+        self.domain
+            .borrow_mut()
+            .auto_advance_once()
+            .map_err(control_virtual_error)
     }
 
     fn close(mut self) -> Result<(), ControlError> {
@@ -796,6 +896,22 @@ impl<'a> VirtualTime<'a> {
         state.virtual_time_active = false;
         self.closed = true;
         Ok(())
+    }
+}
+
+fn control_virtual_error(error: VirtualTimeError) -> ControlError {
+    match error {
+        VirtualTimeError::InvalidDuration => ControlError::InvalidDuration,
+        VirtualTimeError::Overflow | VirtualTimeError::SequenceOverflow => {
+            ControlError::VirtualOverflow
+        }
+        VirtualTimeError::ClockRegression { .. } => ControlError::VirtualClockRegression,
+        VirtualTimeError::Deadlock => ControlError::VirtualDeadlock,
+        VirtualTimeError::ExternalWait(task) => ControlError::VirtualExternalWait { task },
+        VirtualTimeError::Livelock { limit } => ControlError::VirtualLivelock { limit },
+        other => ControlError::VirtualTask {
+            message: other.to_string(),
+        },
     }
 }
 
@@ -1123,6 +1239,50 @@ mod tests {
             envelope.with_virtual_time(|time| time.advance(-1)),
             Err(ControlError::InvalidDuration)
         );
+    }
+
+    #[test]
+    fn virtual_time_exposes_local_timer_queue_and_maps_safety_errors() {
+        let envelope = EnvelopeHandle::new("node", limits());
+        envelope
+            .with_virtual_time(|time| {
+                time.register_task("task")?;
+                assert_eq!(time.schedule_timer("wake", "task", 5)?, 5);
+                assert_eq!(
+                    time.auto_advance()?,
+                    AutoAdvance::Advanced {
+                        from: 0,
+                        to: 5,
+                        timer: "wake".into()
+                    }
+                );
+                time.complete("task")?;
+                assert_eq!(time.auto_advance()?, AutoAdvance::Quiescent);
+                Ok(())
+            })
+            .unwrap();
+
+        let deadlock = EnvelopeHandle::new("deadlock", limits());
+        assert_eq!(
+            deadlock.with_virtual_time(|time| {
+                time.register_task("joiner")?;
+                time.block("joiner", WaitKind::Join)?;
+                time.auto_advance().map(|_| ())
+            }),
+            Err(ControlError::VirtualDeadlock)
+        );
+
+        let external = EnvelopeHandle::new("external", limits());
+        assert_eq!(
+            external.with_virtual_time(|time| {
+                time.register_task("io")?;
+                time.block("io", WaitKind::External)?;
+                time.auto_advance().map(|_| ())
+            }),
+            Err(ControlError::VirtualExternalWait { task: "io".into() })
+        );
+        assert_eq!(ControlError::VirtualDeadlock.code(), "P2003");
+        assert_eq!(ControlError::VirtualOverflow.code(), "P2005");
     }
 
     #[test]
