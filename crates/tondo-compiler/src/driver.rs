@@ -434,6 +434,33 @@ impl CompilationRequest {
     pub fn test_entry(&self) -> Option<&str> {
         self.test_entry.as_deref()
     }
+
+    /// Creates an isolated test request rooted at the source file containing
+    /// `entry`. Source bytes and package identity are copied, never shared
+    /// mutably, so retries can compile and execute a fresh VM root.
+    pub fn for_test_entry(&self, entry: &test_backend::TestEntry) -> Result<Self, DriverError> {
+        let root = entry.file();
+        let sources = clone_source_database(&self.sources, None)?;
+        self.packages.validate_sources(&sources, root)?;
+        let request = CompilationRequest::new(
+            Operation::Test,
+            self.edition,
+            self.target.clone(),
+            self.profile,
+            self.capabilities.clone(),
+            self.diagnostic_format,
+            SourceForm::Module,
+            self.limits,
+            self.packages.clone(),
+            sources,
+            root,
+        )?
+        .with_program_arguments(self.program_arguments.clone())
+        .with_declared_build_inputs(self.build_inputs.clone())
+        .with_warning_profiles(self.warning_profiles.clone())
+        .with_test_entry(entry.id().to_owned());
+        Ok(request)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1161,6 +1188,83 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
     })
 }
 
+/// Discovers executable test leaves in the request's root package. Parsing is
+/// repeated here deliberately: discovery is a read-only planning operation;
+/// the selected request is parsed and checked again by [`execute`].
+pub fn discover_tests(
+    request: &CompilationRequest,
+) -> Result<Vec<test_backend::TestEntry>, DriverError> {
+    let root_package = request.packages.root().clone();
+    let mut entries = Vec::new();
+    for (file, source) in request.sources.iter() {
+        let Some(package) = request.packages.package_for_source(source.source_id()) else {
+            return Err(DriverError::Invariant(
+                "test discovery encountered an unowned source".into(),
+            ));
+        };
+        if package.id() != &root_package {
+            continue;
+        }
+        let (lex_mode, parse_mode) = if file == request.root {
+            (LexMode::Module, ParseMode::Module)
+        } else {
+            (LexMode::ImportedModule, ParseMode::ImportedModule)
+        };
+        let lexed = lex_with_limits(
+            &request.sources,
+            file,
+            lex_mode,
+            LexLimits {
+                max_tokens: request.limits.max_syntax_tokens as usize,
+                max_diagnostics: request.limits.max_diagnostics as usize,
+                max_nesting_depth: request.limits.max_syntax_depth,
+            },
+        )
+        .map_err(|error| match error {
+            LexError::ResourceLimit { resource, offset } => DriverError::Invariant(format!(
+                "test discovery hit lexical {resource} limit at {offset}"
+            )),
+            other => DriverError::Lex(other),
+        })?;
+        if !lexed.diagnostics().is_empty() {
+            continue;
+        }
+        let parsed = parse(
+            &request.sources,
+            file,
+            lexed,
+            parse_mode,
+            ParseLimits {
+                max_nodes: request.limits.max_syntax_nodes,
+                max_nesting_depth: request.limits.max_syntax_depth,
+                max_diagnostics: request.limits.max_diagnostics,
+            },
+        )
+        .map_err(|error| match error {
+            ParseError::ResourceLimit { resource, offset } => DriverError::Invariant(format!(
+                "test discovery hit syntax {resource} limit at {offset}"
+            )),
+            other => DriverError::Parse(other),
+        })?;
+        if !parsed.diagnostics().is_empty() {
+            continue;
+        }
+        let package_name = package.local_name().as_str();
+        entries.extend(
+            test_backend::discover(
+                &request.sources,
+                file,
+                parsed.cst(),
+                package.id(),
+                package_name,
+            )
+            .map_err(|error| DriverError::Invariant(error.to_string()))?,
+        );
+    }
+    entries.sort_by(|left, right| left.id().cmp(right.id()));
+    Ok(entries)
+}
+
 /// Lowers one source-level test declaration to an ordinary `main` and runs it
 /// through the regular compiler/VM pipeline.  Keeping this adapter outside the
 /// normal `Run` branch prevents test declarations from being treated as a
@@ -1261,26 +1365,11 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
             return backend_diagnostic_output(&request, "E2012", error.to_string());
         }
     };
-    let mut sources = SourceDatabase::new();
-    let mut root = None;
-    for (file, source) in request.sources.iter() {
-        let bytes: std::sync::Arc<[u8]> = if file == request.root {
-            std::sync::Arc::from(lowered.clone())
-        } else {
-            std::sync::Arc::from(source.bytes())
-        };
-        let new_file = sources.add(crate::source::SourceInput::new(
-            source.source_id().clone(),
-            source.module().clone(),
-            source.path().clone(),
-            source.origin(),
-            bytes,
-        ))?;
-        if file == request.root {
-            root = Some(new_file);
-        }
-    }
-    let root = root.ok_or_else(|| DriverError::Invariant("test root was not cloned".into()))?;
+    let sources = clone_source_database(
+        &request.sources,
+        Some((request.root, std::sync::Arc::from(lowered))),
+    )?;
+    let root = request.root;
     let mut nested = CompilationRequest::new(
         Operation::Run,
         request.edition,
@@ -1299,6 +1388,33 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
     .with_warning_profiles(request.warning_profiles.clone());
     nested.documentation_fixture = request.documentation_fixture;
     execute(nested)
+}
+
+fn clone_source_database(
+    original: &SourceDatabase,
+    replacement: Option<(FileId, std::sync::Arc<[u8]>)>,
+) -> Result<SourceDatabase, DriverError> {
+    let mut sources = SourceDatabase::new();
+    for (file, source) in original.iter() {
+        let bytes = replacement
+            .as_ref()
+            .filter(|(replacement_file, _)| *replacement_file == file)
+            .map(|(_, bytes)| bytes.clone())
+            .unwrap_or_else(|| std::sync::Arc::from(source.bytes()));
+        let actual = sources.add(crate::source::SourceInput::new(
+            source.source_id().clone(),
+            source.module().clone(),
+            source.path().clone(),
+            source.origin(),
+            bytes,
+        ))?;
+        if actual != file {
+            return Err(DriverError::Invariant(
+                "source clone changed file identity ordering".into(),
+            ));
+        }
+    }
+    Ok(sources)
 }
 
 fn backend_diagnostic_output(
@@ -1755,6 +1871,28 @@ mod tests {
         );
         let output = execute(request).unwrap();
         assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert_eq!(output.exit_code(), 101);
+        assert!(
+            output
+                .diagnostics()
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code() == "P0007")
+        );
+    }
+
+    #[test]
+    fn test_discovery_and_fork_execute_one_of_multiple_leaves() {
+        let request = operation_request(
+            Operation::Check,
+            b"test first { assert(true) }\ntest second { assert(false) }\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let entries = discover_tests(&request).unwrap();
+        assert_eq!(entries.len(), 2);
+        let fork = request.for_test_entry(&entries[1]).unwrap();
+        let output = execute(fork).unwrap();
         assert_eq!(output.exit_code(), 101);
         assert!(
             output
