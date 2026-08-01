@@ -28,6 +28,7 @@ use crate::syntax::{
     FormatError, LexError, LexLimits, LexMode, ParseError, ParseLimits, ParseMode, Parsed,
     format_parsed, lex_with_limits, parse,
 };
+use crate::test_backend;
 use crate::types::TypeError;
 use crate::types::{ScalarType, TypeKind};
 use tondo_vm::bytecode::BytecodeSpan;
@@ -38,6 +39,7 @@ pub enum Operation {
     Format,
     Check,
     Run,
+    Test,
 }
 
 impl Operation {
@@ -46,6 +48,7 @@ impl Operation {
             Self::Format => "fmt",
             Self::Check => "check",
             Self::Run => "run",
+            Self::Test => "test",
         }
     }
 }
@@ -278,6 +281,7 @@ pub struct CompilationRequest {
     build_inputs: DeclaredBuildInputs,
     documentation_fixture: bool,
     warning_profiles: BTreeSet<WarningProfile>,
+    test_entry: Option<String>,
 }
 
 impl CompilationRequest {
@@ -333,6 +337,7 @@ impl CompilationRequest {
             build_inputs: DeclaredBuildInputs::default(),
             documentation_fixture: false,
             warning_profiles: BTreeSet::new(),
+            test_entry: None,
         })
     }
 
@@ -360,6 +365,13 @@ impl CompilationRequest {
         profiles: impl IntoIterator<Item = WarningProfile>,
     ) -> Self {
         self.warning_profiles = profiles.into_iter().collect();
+        self
+    }
+
+    /// Selects the visible ID (or unique leaf name) of the test entry lowered
+    /// by [`Operation::Test`].
+    pub fn with_test_entry(mut self, entry: impl Into<String>) -> Self {
+        self.test_entry = Some(entry.into());
         self
     }
 
@@ -417,6 +429,10 @@ impl CompilationRequest {
 
     pub fn warning_profiles(&self) -> &BTreeSet<WarningProfile> {
         &self.warning_profiles
+    }
+
+    pub fn test_entry(&self) -> Option<&str> {
+        self.test_entry.as_deref()
     }
 }
 
@@ -617,6 +633,9 @@ impl From<FormatError> for DriverError {
 /// rejected by an implemented phase therefore reports its normative diagnostic
 /// instead of also receiving `T0001`.
 pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverError> {
+    if request.operation == Operation::Test {
+        return execute_test(request);
+    }
     validate_dependency_interfaces(
         request.edition.as_str(),
         request.target.name(),
@@ -1142,6 +1161,168 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
     })
 }
 
+/// Lowers one source-level test declaration to an ordinary `main` and runs it
+/// through the regular compiler/VM pipeline.  Keeping this adapter outside the
+/// normal `Run` branch prevents test declarations from being treated as a
+/// script and makes the backend boundary explicit.
+fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, DriverError> {
+    if request.source_form != SourceForm::Module {
+        return backend_diagnostic_output(
+            &request,
+            "E2012",
+            "test execution requires module source form",
+        );
+    }
+    request.sources.get(request.root)?;
+    let lexed = match lex_with_limits(
+        &request.sources,
+        request.root,
+        LexMode::Module,
+        LexLimits {
+            max_tokens: request.limits.max_syntax_tokens as usize,
+            max_diagnostics: request.limits.max_diagnostics as usize,
+            max_nesting_depth: request.limits.max_syntax_depth,
+        },
+    ) {
+        Ok(lexed) => lexed,
+        Err(LexError::ResourceLimit { resource, offset }) => {
+            return syntax_resource_output(&request, request.root, resource, offset);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if !lexed.diagnostics().is_empty() {
+        let mut bag = DiagnosticBag::new();
+        bag.extend(lexed.into_diagnostics());
+        return Ok(CompilationOutput {
+            status: CompilationStatus::Rejected,
+            exit_code: 1,
+            diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
+            stdout: Vec::new(),
+            semantic_model: None,
+            products: None,
+        });
+    }
+    let parsed = match parse(
+        &request.sources,
+        request.root,
+        lexed,
+        ParseMode::Module,
+        ParseLimits {
+            max_nodes: request.limits.max_syntax_nodes,
+            max_nesting_depth: request.limits.max_syntax_depth,
+            max_diagnostics: request.limits.max_diagnostics,
+        },
+    ) {
+        Ok(parsed) => parsed,
+        Err(ParseError::ResourceLimit { resource, offset }) => {
+            return syntax_resource_output(&request, request.root, resource, offset);
+        }
+        Err(error) => return Err(error.into()),
+    };
+    if !parsed.diagnostics().is_empty() {
+        let mut bag = DiagnosticBag::new();
+        bag.extend(parsed.diagnostics().iter().cloned());
+        return Ok(CompilationOutput {
+            status: CompilationStatus::Rejected,
+            exit_code: 1,
+            diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
+            stdout: Vec::new(),
+            semantic_model: None,
+            products: None,
+        });
+    }
+
+    let root_module = request
+        .packages
+        .module_for_file(&request.sources, request.root)?;
+    let package_name = request
+        .packages
+        .package(root_module.package())
+        .map(|package| package.local_name().as_str())
+        .unwrap_or("main");
+    let lowered = match test_backend::lower_selected(
+        &request.sources,
+        request.root,
+        parsed.cst(),
+        root_module.package(),
+        package_name,
+        request.test_entry(),
+    ) {
+        Ok(lowered) => lowered,
+        Err(test_backend::TestBackendError::Source(error)) => return Err(error.into()),
+        Err(test_backend::TestBackendError::ProductionMain) => {
+            return backend_diagnostic_output(
+                &request,
+                "E2011",
+                "a test target cannot declare a `main` entry point",
+            );
+        }
+        Err(error) => {
+            return backend_diagnostic_output(&request, "E2012", error.to_string());
+        }
+    };
+    let mut sources = SourceDatabase::new();
+    let mut root = None;
+    for (file, source) in request.sources.iter() {
+        let bytes: std::sync::Arc<[u8]> = if file == request.root {
+            std::sync::Arc::from(lowered.clone())
+        } else {
+            std::sync::Arc::from(source.bytes())
+        };
+        let new_file = sources.add(crate::source::SourceInput::new(
+            source.source_id().clone(),
+            source.module().clone(),
+            source.path().clone(),
+            source.origin(),
+            bytes,
+        ))?;
+        if file == request.root {
+            root = Some(new_file);
+        }
+    }
+    let root = root.ok_or_else(|| DriverError::Invariant("test root was not cloned".into()))?;
+    let mut nested = CompilationRequest::new(
+        Operation::Run,
+        request.edition,
+        request.target.clone(),
+        request.profile,
+        request.capabilities.clone(),
+        request.diagnostic_format,
+        SourceForm::Module,
+        request.limits,
+        request.packages.clone(),
+        sources,
+        root,
+    )?
+    .with_program_arguments(request.program_arguments.clone())
+    .with_declared_build_inputs(request.build_inputs.clone())
+    .with_warning_profiles(request.warning_profiles.clone());
+    nested.documentation_fixture = request.documentation_fixture;
+    execute(nested)
+}
+
+fn backend_diagnostic_output(
+    request: &CompilationRequest,
+    code: &'static str,
+    message: impl Into<String>,
+) -> Result<CompilationOutput, DriverError> {
+    let mut bag = DiagnosticBag::new();
+    bag.push(Diagnostic::new(
+        Severity::Error,
+        DiagnosticCode::new(code)?,
+        message,
+        PrimaryLocation::Source(request.sources.span(request.root, TextRange::empty(0))?),
+    )?);
+    Ok(CompilationOutput {
+        status: CompilationStatus::Rejected,
+        exit_code: 1,
+        diagnostics: bag.resolve(request.edition.as_str(), &request.sources)?,
+        stdout: Vec::new(),
+        semantic_model: None,
+        products: None,
+    })
+}
+
 #[derive(Debug)]
 struct MainEntry {
     canonical_name: String,
@@ -1548,6 +1729,40 @@ mod tests {
         limits: ResourceLimits,
     ) -> CompilationRequest {
         operation_request(Operation::Check, bytes, source_form, limits)
+    }
+
+    #[test]
+    fn test_operation_executes_a_real_assertion_through_the_vm() {
+        let request = operation_request(
+            Operation::Test,
+            b"test smoke { assert(true) }\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let output = execute(request).unwrap();
+        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(output.exit_code(), 0);
+        assert!(output.diagnostics().is_empty());
+    }
+
+    #[test]
+    fn test_operation_reports_a_runtime_assertion_failure() {
+        let request = operation_request(
+            Operation::Test,
+            b"test smoke { assert(false) }\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let output = execute(request).unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert_eq!(output.exit_code(), 101);
+        assert!(
+            output
+                .diagnostics()
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code() == "P0007")
+        );
     }
 
     fn operation_request(

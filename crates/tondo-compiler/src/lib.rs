@@ -14,6 +14,7 @@ pub mod semantic;
 pub mod source;
 pub mod syntax;
 pub mod test_artifacts;
+pub mod test_backend;
 pub mod test_capture;
 pub mod test_check;
 pub mod test_control;

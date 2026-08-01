@@ -3161,6 +3161,16 @@ reporters.
   cubren metadata/duración, estados y repeat, lifecycle/flaky, plan vacío,
   errores de timings y scalars XML.
 
+- [x] **UTEST-BACKEND-001 — Conectar una hoja `test` al backend VM.** El
+  driver expone `Operation::Test`, descubre el ID seleccionado, inyecta solo
+  el `main` privado de la hoja y conserva imports, declaraciones normales y
+  setup de suites. El resultado atraviesa resolver, HIR, MIR, bytecode y VM;
+  no existe una ruta de ejecución basada en callbacks Rust. Assertion failures,
+  panics, límites y un `main` de producción conservan diagnósticos y exits
+  normativos. Evidencia en `crates/tondo-compiler/src/test_backend.rs`,
+  `crates/tondo-compiler/src/driver.rs` y
+  `docs/contracts/test-backend.md`.
+
 - [ ] **UTEST-CLI-001 — Conectar `tondo test` end-to-end.** Después de cerrar
   plan, lifecycle, algoritmos, stores y reporters, conectar las opciones ya
   parseadas por `UTEST-CLI-PARSE-001` con discovery, compilación completa,
