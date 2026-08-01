@@ -72,7 +72,7 @@ fn help_and_version_are_successful() {
 }
 
 #[test]
-fn test_command_requires_a_closed_project_manifest() {
+fn test_command_defaults_to_the_project_manifest() {
     let parsed = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args([
             "test", "--filter", "smoke", "--order", "random", "--seed", "5eed",
@@ -81,7 +81,7 @@ fn test_command_requires_a_closed_project_manifest() {
         .unwrap();
     assert_eq!(parsed.status.code(), Some(2));
     assert!(parsed.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&parsed.stderr).contains("requires `--manifest"));
+    assert!(String::from_utf8_lossy(&parsed.stderr).contains("cannot read manifest"));
 
     let invalid = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(["test", "--shard", "0/2"])
@@ -153,18 +153,46 @@ fn test_command_executes_a_test_body_through_the_vm_backend() {
 }
 
 #[test]
-fn test_command_requires_the_canonical_sidecar_plan() {
+fn test_command_uses_opinionated_defaults_without_a_sidecar() {
     let directory = test_project(b"test smoke { assert(true) }\n");
     fs::remove_file(directory.join("tondo.test.json")).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["test", "--manifest", "tondo.json"])
+        .args(["test", "--retry", "1", "--test-format", "json"])
         .output()
         .unwrap();
+    let report = TestReport::parse(&output.stdout).unwrap();
     fs::remove_dir_all(directory).unwrap();
 
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("test plan"));
+    assert!(output.status.success());
+    assert_eq!(report.metadata().retry.max_additional_rounds, 1);
+}
+
+#[test]
+fn test_command_accepts_an_explicit_canonical_plan_path() {
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    let explicit = directory.join("custom-plan.json");
+    let sidecar = fs::read_to_string(directory.join("tondo.test.json")).unwrap();
+    fs::write(&explicit, sidecar.replace("\"retry\":0", "\"retry\":1")).unwrap();
+    fs::remove_file(directory.join("tondo.test.json")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args([
+            "test",
+            "--test-plan",
+            "custom-plan.json",
+            "--retry",
+            "2",
+            "--test-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    let report = TestReport::parse(&output.stdout).unwrap();
+    fs::remove_dir_all(directory).unwrap();
+
+    assert!(output.status.success());
+    assert_eq!(report.metadata().retry.max_additional_rounds, 2);
 }
 
 #[test]

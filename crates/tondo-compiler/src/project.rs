@@ -301,6 +301,24 @@ impl ProjectPlan {
             .map(|source| source.physical_path.as_str())
     }
 
+    /// Canonical metadata for the sources selected by the closed project.
+    ///
+    /// Test defaults use this view to materialize an in-memory test plan
+    /// without asking callers to repeat the production source graph in a
+    /// sidecar file.
+    pub fn selected_source_records(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (&str, &str, &str, &str)> + '_ {
+        self.selected_sources.iter().map(|source| {
+            (
+                source.package.as_str(),
+                source.physical_path.as_str(),
+                source.logical_path.as_str(),
+                source.module.as_str(),
+            )
+        })
+    }
+
     pub fn required_inputs(&self) -> impl ExactSizeIterator<Item = RequiredProjectInput> + '_ {
         self.required_inputs
             .iter()

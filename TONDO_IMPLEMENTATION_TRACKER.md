@@ -3172,7 +3172,7 @@ reporters.
   `docs/contracts/test-backend.md`.
 
 - [x] **UTEST-CLI-BACKEND-001 — Conectar el runner mínimo al backend.** `tondo
-  test --manifest` materializa el proyecto cerrado, descubre hojas del
+  test` materializa el proyecto cerrado, descubre hojas del
   paquete raíz, aplica selección all/filter/glob/exact, shard, order y jobs,
   ejecuta cada hoja en un worker nuevo sobre `Operation::Test`, ensambla el
   resultado canónico y publica JSON/JUnit de forma atómica. `--list`,
@@ -3180,18 +3180,21 @@ reporters.
   cubiertos. Esta base también materializa campañas reales de retry/repeat,
   conserva evidencia por intento, resuelve CODEOWNERS y publica el store de
   attachments content-addressed. La cola de timeout wall-clock y snapshots
-  queda cerrada por `UTEST-CLI-001` con el sidecar canónico y workers de
-  proceso.
+  queda cerrada por `UTEST-CLI-001` con defaults en memoria, sidecar opcional y
+  workers de proceso.
 
 - [x] **UTEST-CLI-001 — Conectar `tondo test` end-to-end.** `tondo test`
-  consume el `tondo.test.json` canónico adyacente al manifiesto, verifica sus
-  hashes de proyecto y límites, y rechaza sidecars ausentes o no canónicos
-  antes de compilar. Cada hoja se ejecuta en un proceso worker nuevo; el
+  materializa un plan canónico opinionado desde el proyecto cuando no existe
+  sidecar; `--test-plan <path>` o un `tondo.test.json` adyacente seleccionan un
+  plan avanzado, cuyos hashes de proyecto y forma canónica se verifican antes
+  de compilar. Los overrides efímeros de CLI permiten selector, shard,
+  orden/seed, jobs, retry, repeat y outputs sin editar el JSON, pero no pueden
+  ampliar límites ni capabilities. Cada hoja se ejecuta en un proceso worker nuevo; el
   coordinator importa evidencia y aplica el timeout wall-clock monotónico con
   terminación del proceso, incluidos retry y repeat. Las snapshot stores se
   cargan como inputs cerrados; `--update-snapshots` usa una
   `SnapshotUpdateStage` y rename atómico solo tras una campaña completamente
-  verde. El artifact store del sidecar fija el formato y el límite, mientras
+  verde. El artifact store del plan base fija el formato y el límite, mientras
   `--artifacts` solo puede reubicar físicamente la salida. Un `--timeout none`
   explícito se rechaza frente al límite cerrado. JSON/JUnit, artifacts,
   CODEOWNERS, selección, shards, orden, jobs y exits 0/1/2/3 quedan cubiertos

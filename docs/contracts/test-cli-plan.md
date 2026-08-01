@@ -1,7 +1,8 @@
 # `tondo test` CLI plan contract
 
-**Status:** implemented as the parse-only CLI boundary; execution consumes the
-canonical `tondo.test.json` sidecar before worker creation.
+**Status:** implemented as the parse-only CLI boundary; execution consumes an
+optional canonical `tondo.test.json` sidecar or materializes the opinionated
+defaults in memory before worker creation.
 
 `tondo_cli::test_cli::parse` converts one UTF-8 argument vector beginning with
 `test` into a typed `TestCliPlan`. It performs no discovery, source I/O,
@@ -9,13 +10,18 @@ compilation, worker creation or test execution.
 
 ## Normalized options
 
-The plan closes one selector (`all`, `filter`, `glob` or `exact`), CODEOWNERS
+The plan closes an optional manifest and test-plan path, one selector (`all`, `filter`, `glob` or `exact`), CODEOWNERS
 mode/path, optional shard, canonical/random order with an optional `u64` seed,
 list mode, jobs, timeout, retry/repeat, artifact root, diagnostic/test formats,
 repeatable JSON/JUnit report outputs and the `show-output`, `deny-skips`,
 `allow-flaky`, `allow-empty` and snapshot-update policies. Decimal integers are
 canonical and bounded; random seeds are parsed from at most sixteen hex digits;
 durations normalize `ms`, `s`, `m` and `h` to checked milliseconds.
+
+When `--manifest` is omitted, execution resolves `tondo.json` in the current
+directory. `--test-plan` is optional; execution uses the adjacent
+`tondo.test.json` when present and otherwise materializes the canonical default
+plan in memory.
 
 Explicit retry/repeat presence is retained even for values `0` and `1`, because
 the specification gives those spellings distinct compatibility rules for
@@ -30,16 +36,18 @@ ranges, non-canonical numbers, seed/order mismatches, selector collisions,
 report collisions, positional arguments, and incompatible list/retry/repeat/
 snapshot modes produce a usage error (exit `2`) before any compilation. The
 parser remains side-effect-free; the CLI consumes the closed plan only after
-this boundary, validates the adjacent `tondo-test-plan-draft` sidecar against
-the manifest/lockfile hashes, and delegates discovery, selection, scheduling,
-process-isolated VM execution and report publication to their compiler/runtime
-modules. The sidecar is required, canonical, and its timeout/resource and
-snapshot-store inputs are not replaceable by environment variables. Its
-artifact-store path is the default output root and its format/byte limit remain
-closed; an explicit `--artifacts` path may relocate that bounded output for one
-invocation. An explicit `--timeout none` is accepted by the parser for
-compatibility but rejected at this execution boundary because the sidecar
-always carries a positive wall-clock limit.
+this boundary. Without `--test-plan`, an adjacent `tondo.test.json` is used if
+present; otherwise the compiler materializes the defaults from the closed
+project graph. A supplied `--test-plan` is always canonical and is validated
+against the manifest/lockfile hashes. Discovery, selection, scheduling,
+process-isolated VM execution and report publication then consume one effective
+plan. Invocation-local flags overlay only policy and selection fields; they do
+not rewrite the sidecar. Timeout/resource ceilings, target capabilities and
+snapshot/artifact formats remain closed. An explicit `--artifacts` path may
+relocate bounded output, and `--retry`/`--repeat` can enable bounded campaigns
+without editing JSON. An explicit `--timeout none` is accepted by the parser
+for compatibility but rejected because every effective plan has a positive
+wall-clock limit.
 
 Unit tests cover defaults, both option spellings, complete option composition,
 selectors/numbers/paths/globs/report collisions, explicit zero/one retry and

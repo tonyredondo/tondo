@@ -414,6 +414,95 @@ pub struct TestProjectPlan {
 }
 
 impl TestProjectPlan {
+    /// Materialize the opinionated test plan used when no sidecar is
+    /// supplied. The production project is already closed, so its selected
+    /// source graph is the only source input that needs to be repeated here.
+    /// Callers may overlay invocation-local policy such as retry or selection
+    /// without writing this plan to disk.
+    pub fn defaults(project: &ProjectPlan, jobs: u32) -> Self {
+        let mut roots = BTreeSet::new();
+        let sources = project
+            .selected_source_records()
+            .map(|(package, physical_path, logical_path, module)| {
+                roots.insert((source_parent(physical_path), source_parent(logical_path)));
+                TestSource {
+                    class: TestSourceClass::Production,
+                    package: package.to_owned(),
+                    physical_path: physical_path.to_owned(),
+                    logical_path: logical_path.to_owned(),
+                    module: module.to_owned(),
+                    input: format!("source:production:{physical_path}"),
+                }
+            })
+            .collect::<Vec<_>>();
+        let roots = roots
+            .into_iter()
+            .map(|(physical_path, logical_path)| TestSourceRoot {
+                class: TestSourceClass::Production,
+                physical_path,
+                logical_path,
+            })
+            .collect();
+        let capabilities = project
+            .capabilities()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+        let features = project
+            .features()
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>();
+
+        Self {
+            manifest_hash: project.manifest_hash().to_owned(),
+            lockfile_hash: project.lockfile_hash().to_owned(),
+            repository_root: String::new(),
+            roots,
+            sources,
+            dev_dependencies: Vec::new(),
+            codeowners: CodeownersMode::Auto,
+            selector: TestSelector::None,
+            shard: None,
+            order: TestOrder::Canonical,
+            policy: TestPolicy {
+                jobs: jobs.max(1),
+                allow_empty: false,
+                fail_fast: false,
+                retry: 0,
+                repeat: 1,
+            },
+            reporters: vec!["human".into(), "json".into()],
+            artifact_store: TestArtifactStore {
+                path: "target/test-artifacts".into(),
+                max_bytes: 16 * 1024 * 1024,
+            },
+            snapshot_stores: Vec::new(),
+            target: TestTarget {
+                name: project.target_name().into(),
+                profile: project.profile().as_str().into(),
+                capabilities,
+                features,
+            },
+            time_catalog: TimeCatalog {
+                package: TIME_CATALOG_PACKAGE.into(),
+                module: TIME_CATALOG_MODULE.into(),
+                api: TIME_CATALOG_API.into(),
+            },
+            limits: TestLimits {
+                timeout_ms: 30_000,
+                setup_timeout_ms: 30_000,
+                teardown_timeout_ms: 30_000,
+                output_bytes: 1024 * 1024,
+                artifact_bytes: 16 * 1024 * 1024,
+                snapshot_bytes: 16 * 1024 * 1024,
+                memory_bytes: 64 * 1024 * 1024,
+                instructions: 10_000_000,
+                virtual_timers: 1_024,
+            },
+        }
+    }
+
     /// Parse and validate a closed test plan against an already validated
     /// production project. This method does not read any path named by the
     /// plan; all path and input checks are purely structural.
@@ -884,8 +973,8 @@ fn normalize_roots(wire: Vec<SourceRootWire>) -> Result<Vec<TestSourceRoot>, Tes
             let class = TestSourceClass::parse(&root.class)?;
             Ok(TestSourceRoot {
                 class,
-                physical_path: canonical_path("roots.physical_path", &root.physical_path, false)?,
-                logical_path: canonical_path("roots.logical_path", &root.logical_path, false)?,
+                physical_path: canonical_root_path("roots.physical_path", &root.physical_path)?,
+                logical_path: canonical_root_path("roots.logical_path", &root.logical_path)?,
             })
         })
         .collect::<Result<Vec<_>, TestPlanError>>()?;
@@ -1332,6 +1421,13 @@ fn canonical_repository_root(value: &str) -> Result<String, TestPlanError> {
     canonical_path("repository_root", value, true)
 }
 
+fn canonical_root_path(field: &'static str, value: &str) -> Result<String, TestPlanError> {
+    if value.is_empty() || value == "." {
+        return Ok(String::new());
+    }
+    canonical_path(field, value, false)
+}
+
 fn canonical_path(
     field: &'static str,
     value: &str,
@@ -1370,10 +1466,17 @@ fn canonical_path(
 }
 
 fn path_within(path: &str, root: &str) -> bool {
-    path == root
+    root.is_empty()
+        || path == root
         || path
             .strip_prefix(root)
             .is_some_and(|rest| rest.starts_with('/'))
+}
+
+fn source_parent(path: &str) -> String {
+    path.rsplit_once('/')
+        .map(|(parent, _)| parent.to_owned())
+        .unwrap_or_default()
 }
 
 fn canonical_identity(field: &'static str, value: &str) -> Result<String, TestPlanError> {
@@ -1632,6 +1735,33 @@ mod tests {
         assert_eq!(plan.limits().memory_bytes(), 67_108_864);
         assert_eq!(plan.limits().instructions(), 1_000_000);
         assert_eq!(plan.limits().virtual_timers(), 1024);
+    }
+
+    #[test]
+    fn defaults_materialize_from_the_closed_project_without_a_sidecar() {
+        let (project, _, _) = project_fixture();
+        let plan = TestProjectPlan::defaults(&project, 4);
+        assert_eq!(plan.manifest_hash(), project.manifest_hash());
+        assert_eq!(plan.lockfile_hash(), project.lockfile_hash());
+        assert_eq!(plan.roots().len(), 1);
+        assert_eq!(plan.roots()[0].physical_path(), "app/src");
+        assert_eq!(plan.roots()[0].logical_path(), "src");
+        assert_eq!(plan.sources().len(), 1);
+        assert_eq!(plan.sources()[0].class(), TestSourceClass::Production);
+        assert_eq!(
+            plan.sources()[0].input(),
+            "source:production:app/src/main.to"
+        );
+        assert_eq!(plan.policy().jobs(), 4);
+        assert_eq!(plan.policy().retry(), 0);
+        assert_eq!(plan.policy().repeat(), 1);
+        assert_eq!(plan.limits().timeout_ms(), 30_000);
+        assert_eq!(plan.artifact_store().max_bytes(), 16 * 1024 * 1024);
+        assert!(
+            project
+                .parse_test_plan(&plan.canonical_bytes().unwrap())
+                .is_ok()
+        );
     }
 
     #[test]

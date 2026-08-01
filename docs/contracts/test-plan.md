@@ -2,10 +2,12 @@
 
 **Status:** implemented as the pure planning boundary for `UTEST-PLAN-001`
 
-`tondo-compiler::test_plan::TestProjectPlan` validates the
+`tondo-compiler::test_plan::TestProjectPlan` validates an optional
 `tondo-test-plan-draft` record against a previously validated production
-`ProjectPlan`. It never reads a path, opens CODEOWNERS, resolves a dependency,
-materializes an input, consults the host, or executes a test.
+`ProjectPlan`. When no record is supplied, `TestProjectPlan::defaults` derives
+the same closed shape from the project graph in memory. It never reads a path,
+opens CODEOWNERS, resolves a dependency, materializes an input, consults the
+host, or executes a test.
 
 ## What the plan closes
 
@@ -25,8 +27,9 @@ materializes an input, consults the host, or executes a test.
 - positive timeout, memory, output, instruction, artifact, snapshot, and
   virtual-timer budgets.
 
-`repository_root` is represented canonically by the empty string. `.` is only
-an accepted input spelling and is normalized before the plan is exposed.
+`repository_root` and a source root that represents the repository root are
+represented canonically by the empty string. `.` is only an accepted input
+spelling and is normalized before the plan is exposed.
 
 ## Identity and normalization
 
@@ -52,10 +55,12 @@ ordering, and the absence of source bytes from the public canonical plan.
 
 `UTEST-INPUTS-PLAN-001` now closes public/secret input identity and
 reproducibility in the separate value-free `TestInputPlan`; its contract is
-documented in `test-input-plan.md`. The CLI consumes this plan from the
-canonical `tondo.test.json` sibling of the manifest before discovery. It loads
-declared snapshot stores as immutable inputs, uses the closed timeout as the
-upper bound for each process-isolated leaf worker, and publishes snapshot
-updates only through an all-passing atomic stage. Discovery, CODEOWNERS file
-matching, selectors, lifecycle, reporters, and input materialization remain
-separate consumers; they are intentionally not hidden in this parser.
+documented in `test-input-plan.md`. The CLI consumes an explicit or adjacent
+canonical `tondo.test.json` when present and otherwise materializes defaults
+before discovery. It loads declared snapshot stores as immutable inputs, uses
+the closed timeout as the upper bound for each process-isolated leaf worker,
+and publishes snapshot updates only through an all-passing atomic stage.
+Invocation flags may overlay selection and bounded campaign policy without
+mutating the base plan. Discovery, CODEOWNERS file matching, selectors,
+lifecycle, reporters, and input materialization remain separate consumers;
+they are intentionally not hidden in this parser.

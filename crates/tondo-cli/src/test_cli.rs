@@ -52,12 +52,18 @@ pub struct TestReportOutput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestCliPlan {
     pub manifest: Option<PathBuf>,
+    pub test_plan: Option<PathBuf>,
     pub selector: TestSelector,
+    pub selector_explicit: bool,
     pub codeowners: CodeownersSelection,
+    pub codeowners_explicit: bool,
     pub shard: Option<TestShard>,
+    pub shard_explicit: bool,
     pub order: TestOrder,
+    pub order_explicit: bool,
     pub list: bool,
     pub jobs: u32,
+    pub jobs_explicit: bool,
     pub timeout_ms: Option<u64>,
     /// Keeps the distinction between the default and an explicit `none`.
     /// The parser accepts the spelling for compatibility, while the closed
@@ -84,12 +90,18 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
     }
     let mut plan = TestCliPlan {
         manifest: None,
+        test_plan: None,
         selector: TestSelector::All,
+        selector_explicit: false,
         codeowners: CodeownersSelection::Auto,
+        codeowners_explicit: false,
         shard: None,
+        shard_explicit: false,
         order: TestOrder::Canonical,
+        order_explicit: false,
         list: false,
         jobs: 1,
+        jobs_explicit: false,
         timeout_ms: None,
         timeout_explicit: false,
         retry: 0,
@@ -107,7 +119,6 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
         allow_empty: false,
     };
     let mut seen = BTreeSet::new();
-    let mut order_was_explicit = false;
     let mut seed = None;
     let mut index = 1;
     while index < arguments.len() {
@@ -142,6 +153,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
                     | "--glob"
                     | "--exact"
                     | "--manifest"
+                    | "--test-plan"
                     | "--codeowners"
                     | "--shard"
                     | "--order"
@@ -157,14 +169,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
             ) {
                 return Err(format!("unknown option `{argument}`"));
             }
-            parse_value(
-                &mut plan,
-                &mut seen,
-                &mut order_was_explicit,
-                &mut seed,
-                name,
-                inline,
-            )?;
+            parse_value(&mut plan, &mut seen, &mut seed, name, inline)?;
         } else if argument.starts_with('-') {
             if !matches!(
                 argument,
@@ -172,6 +177,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
                     | "--glob"
                     | "--exact"
                     | "--manifest"
+                    | "--test-plan"
                     | "--codeowners"
                     | "--shard"
                     | "--order"
@@ -192,17 +198,10 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
                 .get(index)
                 .and_then(|value| value.to_str())
                 .ok_or_else(|| format!("`{argument}` requires a value"))?;
-            parse_value(
-                &mut plan,
-                &mut seen,
-                &mut order_was_explicit,
-                &mut seed,
-                argument,
-                value,
-            )?;
+            parse_value(&mut plan, &mut seen, &mut seed, argument, value)?;
         } else {
             return Err(format!(
-                "unexpected positional argument `{argument}`; use `--manifest`"
+                "unexpected positional argument `{argument}`; use `--manifest` or `--test-plan`"
             ));
         }
         index += 1;
@@ -216,16 +215,12 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
             }
         };
     }
-    if order_was_explicit && matches!(plan.order, TestOrder::Canonical) && seed.is_some() {
-        return Err("`--seed` requires `--order random`".into());
-    }
     validate_combinations(&plan)
 }
 
 fn parse_value(
     plan: &mut TestCliPlan,
     seen: &mut BTreeSet<&'static str>,
-    order_was_explicit: &mut bool,
     seed: &mut Option<u64>,
     name: &str,
     value: &str,
@@ -234,6 +229,11 @@ fn parse_value(
         "--manifest" => {
             once_value(seen, "--manifest")?;
             plan.manifest = Some(validate_text_path(value, "`--manifest`")?);
+            Ok(())
+        }
+        "--test-plan" => {
+            once_value(seen, "--test-plan")?;
+            plan.test_plan = Some(validate_text_path(value, "`--test-plan`")?);
             Ok(())
         }
         "--filter" => {
@@ -253,6 +253,7 @@ fn parse_value(
         }
         "--codeowners" => {
             once_value(seen, "--codeowners")?;
+            plan.codeowners_explicit = true;
             plan.codeowners = match value {
                 "auto" => CodeownersSelection::Auto,
                 "none" => CodeownersSelection::None,
@@ -262,12 +263,13 @@ fn parse_value(
         }
         "--shard" => {
             once_value(seen, "--shard")?;
+            plan.shard_explicit = true;
             plan.shard = Some(parse_shard(value)?);
             Ok(())
         }
         "--order" => {
             once_value(seen, "--order")?;
-            *order_was_explicit = true;
+            plan.order_explicit = true;
             plan.order = match value {
                 "canonical" => TestOrder::Canonical,
                 "random" => TestOrder::Random { seed: None },
@@ -282,6 +284,7 @@ fn parse_value(
         }
         "--jobs" => {
             once_value(seen, "--jobs")?;
+            plan.jobs_explicit = true;
             plan.jobs = parse_positive(value, "`--jobs`")?;
             Ok(())
         }
@@ -357,17 +360,19 @@ fn parse_value(
     }
 }
 
-fn validate_combinations(plan: &TestCliPlan) -> Result<TestCliPlan, String> {
+pub(crate) fn validate_combinations(plan: &TestCliPlan) -> Result<TestCliPlan, String> {
     if (plan.repeat_explicit && plan.retry_explicit) || (plan.repeat > 1 && plan.retry > 0) {
         return Err("`--retry` and `--repeat` are mutually exclusive".into());
     }
-    if plan.repeat_explicit && plan.allow_flaky {
+    if (plan.repeat_explicit || plan.repeat > 1) && plan.allow_flaky {
         return Err("`--repeat` and `--allow-flaky` are mutually exclusive".into());
     }
     if plan.list {
         if plan.show_output
             || plan.deny_skips
             || plan.allow_flaky
+            || plan.retry > 0
+            || plan.repeat > 1
             || plan.retry_explicit
             || plan.repeat_explicit
             || plan.update_snapshots
@@ -387,6 +392,8 @@ fn validate_combinations(plan: &TestCliPlan) -> Result<TestCliPlan, String> {
         && (plan.jobs != 1
             || !matches!(plan.order, TestOrder::Canonical)
             || plan.shard.is_some()
+            || plan.retry > 0
+            || plan.repeat > 1
             || plan.retry_explicit
             || plan.repeat_explicit
             || plan.allow_flaky)
@@ -400,6 +407,7 @@ fn set_selector(plan: &mut TestCliPlan, selector: TestSelector) -> Result<(), St
     if !matches!(plan.selector, TestSelector::All) {
         return Err("`--filter`, `--glob` and `--exact` are mutually exclusive".into());
     }
+    plan.selector_explicit = true;
     plan.selector = selector;
     Ok(())
 }
@@ -561,6 +569,8 @@ mod tests {
             "test",
             "--manifest",
             "tondo.json",
+            "--test-plan",
+            "tondo.test.json",
             "--filter",
             "math",
             "--codeowners",
@@ -587,7 +597,13 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(plan.manifest, Some(PathBuf::from("tondo.json")));
+        assert_eq!(plan.test_plan, Some(PathBuf::from("tondo.test.json")));
         assert_eq!(plan.selector, TestSelector::Filter("math".into()));
+        assert!(plan.selector_explicit);
+        assert!(plan.codeowners_explicit);
+        assert!(plan.shard_explicit);
+        assert!(plan.order_explicit);
+        assert!(plan.jobs_explicit);
         assert_eq!(plan.shard, Some(TestShard { index: 2, count: 8 }));
         assert_eq!(plan.order, TestOrder::Random { seed: Some(0x5eed) });
         assert_eq!(plan.timeout_ms, Some(2_000));
@@ -666,6 +682,21 @@ mod tests {
             let error = parse(&args(values)).unwrap_err();
             assert!(error.contains(expected), "{values:?}: {error}");
         }
+    }
+
+    #[test]
+    fn effective_sidecar_policy_cannot_leak_into_list_or_snapshot_update() {
+        let mut list = parse(&args(&["test", "--list"])).unwrap();
+        list.retry = 1;
+        assert!(validate_combinations(&list).unwrap_err().contains("--list"));
+
+        let mut update = parse(&args(&["test", "--update-snapshots"])).unwrap();
+        update.repeat = 2;
+        assert!(
+            validate_combinations(&update)
+                .unwrap_err()
+                .contains("canonical order")
+        );
     }
 
     #[test]

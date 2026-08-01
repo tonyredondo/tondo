@@ -6,8 +6,8 @@
 used by every leaf and suite phase. Defaults are finite for work, memory,
 depth, output, artifacts, snapshots, metadata, virtual timers, ready queues
 and instructions. The host-independent profile can represent a disabled
-wall-clock timeout, but the canonical CLI sidecar always supplies a positive
-cap and rejects `--timeout none`.
+wall-clock timeout, but the canonical CLI defaults and any sidecar always
+supply a positive cap and reject `--timeout none`.
 
 `LimitProfile::canonical_bytes` and its SHA-256 identify the effective values
 without host paths or map-order dependence. The existing sealed envelope gets

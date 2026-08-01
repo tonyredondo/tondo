@@ -21,7 +21,10 @@ use tondo_compiler::source::{
 };
 use tondo_compiler::test_control::{EnvelopeLimits, EnvelopeReport, SnapshotOutcome, Terminal};
 use tondo_compiler::test_glob::GlobPattern;
-use tondo_compiler::test_plan::TestProjectPlan;
+use tondo_compiler::test_plan::{
+    CodeownersMode, TestOrder as ProjectTestOrder, TestProjectPlan,
+    TestSelector as ProjectTestSelector,
+};
 use tondo_compiler::test_repeat::{RepeatCampaign, RepeatContext, RepeatPolicy};
 use tondo_compiler::test_report::{
     OrderMode as ReportOrderMode, ReportMetadata, ReportOrder, ReportSelection, ReportShard,
@@ -55,6 +58,7 @@ Usage:
   tondo <command> [--diagnostic-format <human|json>] [--warnings core] <source.to>
   tondo <check|run> [--diagnostic-format <human|json>] [--warnings core] --manifest <tondo.json>
   tondo run [--diagnostic-format <human|json>] [--warnings core] <source.to> -- [argument ...]
+  tondo test [--manifest <tondo.json>] [--test-plan <tondo.test.json>] [options]
 
 Commands:
   fmt      Format one Tondo source file
@@ -66,7 +70,8 @@ Options:
   --diagnostic-format <human|json>  Select diagnostic output
   --warnings <core>                 Enable a closed warning profile
   --check                           Verify formatting without writing output (fmt only)
-  --manifest <path>                 Build a closed project manifest (check/run only)
+  --manifest <path>                 Project manifest (default: tondo.json)
+  --test-plan <path>                Optional explicit canonical test-plan sidecar
   --lockfile <path>                 Use this lockfile (default: tondo.lock.json)
   --emit-interface <path>           Write the canonical compiled interface on success
   --emit-artifact <path>            Write canonical build metadata on success
@@ -164,11 +169,11 @@ fn run_test_command(arguments: &[OsString]) -> Result<ExitCode, String> {
             return Ok(ExitCode::from(EXIT_USAGE));
         }
     };
-    let Some(manifest_path) = plan.manifest.as_ref() else {
-        eprintln!("tondo: `tondo test` requires `--manifest <tondo.json>`\n\n{USAGE}");
-        return Ok(ExitCode::from(EXIT_USAGE));
-    };
-    match execute_test_plan(&plan, manifest_path) {
+    let manifest_path = plan
+        .manifest
+        .clone()
+        .unwrap_or_else(|| PathBuf::from("tondo.json"));
+    match execute_test_plan(&plan, &manifest_path) {
         Ok(code) => Ok(ExitCode::from(code)),
         Err(TestCommandError::Usage(message)) => {
             eprintln!("tondo: {message}\n\n{USAGE}");
@@ -196,6 +201,119 @@ impl From<tondo_compiler::driver::DriverError> for TestCommandError {
     fn from(error: tondo_compiler::driver::DriverError) -> Self {
         Self::Internal(error.to_string())
     }
+}
+
+fn resolve_test_plan_path(
+    plan: &test_cli::TestCliPlan,
+    base: &Path,
+) -> Result<Option<PathBuf>, TestCommandError> {
+    if let Some(path) = &plan.test_plan {
+        return Ok(Some(path.clone()));
+    }
+    let adjacent = base.join("tondo.test.json");
+    match fs::symlink_metadata(&adjacent) {
+        Ok(_) => Ok(Some(adjacent)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(TestCommandError::Usage(format!(
+            "cannot inspect test plan `{}`: {error}",
+            adjacent.display()
+        ))),
+    }
+}
+
+fn load_test_project_plan(
+    project: &ProjectPlan,
+    path: Option<&Path>,
+) -> Result<TestProjectPlan, TestCommandError> {
+    let Some(path) = path else {
+        return Ok(TestProjectPlan::defaults(project, 1));
+    };
+    let bytes = read_input(path, "test plan").map_err(TestCommandError::Usage)?;
+    let plan = project
+        .parse_test_plan(&bytes)
+        .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+    if plan
+        .canonical_bytes()
+        .map_err(|error| TestCommandError::Usage(error.to_string()))?
+        != bytes
+    {
+        return Err(TestCommandError::Usage(
+            "test plan is valid but not in canonical form".into(),
+        ));
+    }
+    Ok(plan)
+}
+
+fn overlay_test_project_plan(
+    execution: &mut test_cli::TestCliPlan,
+    project_plan: &TestProjectPlan,
+) -> Result<(), TestCommandError> {
+    if !execution.selector_explicit {
+        execution.selector = match project_plan.selector() {
+            ProjectTestSelector::None => test_cli::TestSelector::All,
+            ProjectTestSelector::Filter(value) => test_cli::TestSelector::Filter(value.clone()),
+            ProjectTestSelector::Glob(value) => test_cli::TestSelector::Glob(value.clone()),
+            ProjectTestSelector::Exact(value) => test_cli::TestSelector::Exact(value.clone()),
+        };
+    }
+    if !execution.codeowners_explicit {
+        execution.codeowners = match project_plan.codeowners() {
+            CodeownersMode::Auto => test_cli::CodeownersSelection::Auto,
+            CodeownersMode::None => test_cli::CodeownersSelection::None,
+            CodeownersMode::Path(path) => {
+                test_cli::CodeownersSelection::Explicit(PathBuf::from(path))
+            }
+        };
+    }
+    if !execution.shard_explicit {
+        execution.shard = project_plan.shard().map(|shard| test_cli::TestShard {
+            index: shard.index(),
+            count: shard.count(),
+        });
+    }
+    if !execution.order_explicit {
+        execution.order = match project_plan.order() {
+            ProjectTestOrder::Canonical => test_cli::TestOrder::Canonical,
+            ProjectTestOrder::Random { seed } => test_cli::TestOrder::Random {
+                seed: seed
+                    .as_deref()
+                    .map(|value| u64::from_str_radix(value, 16))
+                    .transpose()
+                    .map_err(|_| {
+                        TestCommandError::Internal(
+                            "canonical test-plan order seed is not a valid u64".into(),
+                        )
+                    })?,
+            },
+        };
+    }
+    if !execution.jobs_explicit {
+        execution.jobs = project_plan.policy().jobs();
+    }
+    if !execution.retry_explicit {
+        execution.retry = project_plan.policy().retry();
+    }
+    if !execution.repeat_explicit {
+        execution.repeat = project_plan.policy().repeat();
+    }
+    if !execution.allow_empty {
+        execution.allow_empty = project_plan.policy().allow_empty();
+    }
+    if !execution.timeout_explicit && execution.timeout_ms.is_none() {
+        execution.timeout_ms = Some(project_plan.limits().timeout_ms());
+    } else if execution.timeout_explicit && execution.timeout_ms.is_none() {
+        return Err(TestCommandError::Usage(
+            "`--timeout none` cannot disable the closed test-plan wall-clock limit".into(),
+        ));
+    } else if execution.timeout_ms > Some(project_plan.limits().timeout_ms()) {
+        return Err(TestCommandError::Usage(format!(
+            "`--timeout` cannot exceed the closed test-plan limit of {}ms",
+            project_plan.limits().timeout_ms()
+        )));
+    }
+    test_cli::validate_combinations(execution)
+        .map(|_| ())
+        .map_err(TestCommandError::Usage)
 }
 
 #[derive(Debug)]
@@ -547,34 +665,10 @@ fn execute_test_plan(
     let lockfile_bytes = read_input(&lockfile, "lockfile").map_err(TestCommandError::Usage)?;
     let project = ProjectPlan::parse(&manifest, &lockfile_bytes)
         .map_err(|error| TestCommandError::Usage(error.to_string()))?;
-    let test_plan_path = base.join("tondo.test.json");
-    let test_plan_bytes =
-        read_input(&test_plan_path, "test plan").map_err(TestCommandError::Usage)?;
-    let test_project_plan = project
-        .parse_test_plan(&test_plan_bytes)
-        .map_err(|error| TestCommandError::Usage(error.to_string()))?;
-    if test_project_plan
-        .canonical_bytes()
-        .map_err(|error| TestCommandError::Usage(error.to_string()))?
-        != test_plan_bytes
-    {
-        return Err(TestCommandError::Usage(
-            "test plan is valid but not in canonical form".into(),
-        ));
-    }
+    let test_plan_path = resolve_test_plan_path(plan, base)?;
+    let test_project_plan = load_test_project_plan(&project, test_plan_path.as_deref())?;
     let mut execution_plan = plan.clone();
-    if !execution_plan.timeout_explicit && execution_plan.timeout_ms.is_none() {
-        execution_plan.timeout_ms = Some(test_project_plan.limits().timeout_ms());
-    } else if execution_plan.timeout_explicit && execution_plan.timeout_ms.is_none() {
-        return Err(TestCommandError::Usage(
-            "`--timeout none` cannot disable the closed test-plan wall-clock limit".into(),
-        ));
-    } else if execution_plan.timeout_ms > Some(test_project_plan.limits().timeout_ms()) {
-        return Err(TestCommandError::Usage(format!(
-            "`--timeout` cannot exceed the closed test-plan limit of {}ms",
-            test_project_plan.limits().timeout_ms()
-        )));
-    }
+    overlay_test_project_plan(&mut execution_plan, &test_project_plan)?;
     let mut supplied = BTreeMap::new();
     for input in project.required_inputs() {
         let bytes = read_input(
@@ -642,6 +736,7 @@ fn execute_test_plan(
 
     let ordered = order_test_entries(selected, &execution_plan)?;
     let worker_manifest = manifest_path.to_owned();
+    let worker_test_plan = test_plan_path.clone();
     let worker_timeout = execution_plan.timeout_ms;
     let worker_update_snapshots = execution_plan.update_snapshots;
     let programs = ordered
@@ -649,12 +744,14 @@ fn execute_test_plan(
         .map(|entry| {
             let id = entry.id().to_owned();
             let worker_manifest = worker_manifest.clone();
+            let worker_test_plan = worker_test_plan.clone();
             Ok(LeafProgram::new(id.clone(), move |context| {
                 let response = spawn_test_worker(
                     &worker_manifest,
                     &id,
                     worker_timeout,
                     worker_update_snapshots,
+                    worker_test_plan.as_deref(),
                 )?;
                 let report = EnvelopeReport::decode_process(&response.report)
                     .map_err(|message| RunError::Infrastructure { message })?;
@@ -832,6 +929,7 @@ fn spawn_test_worker(
     entry: &str,
     timeout_ms: Option<u64>,
     update_snapshots: bool,
+    test_plan: Option<&Path>,
 ) -> Result<WorkerResponse, RunError> {
     let mut command =
         Command::new(
@@ -845,6 +943,9 @@ fn spawn_test_worker(
         .arg(manifest)
         .arg("--entry")
         .arg(entry);
+    if let Some(test_plan) = test_plan {
+        command.arg("--test-plan").arg(test_plan);
+    }
     if update_snapshots {
         command.arg("--update-snapshots");
     }
@@ -966,6 +1067,7 @@ fn join_worker_pipe(
 
 fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
     let mut manifest = None;
+    let mut test_plan = None;
     let mut entry = None;
     let mut update_snapshots = false;
     let mut index = 0;
@@ -993,6 +1095,15 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
                         .to_owned(),
                 );
             }
+            "--test-plan" => {
+                index += 1;
+                test_plan = Some(PathBuf::from(
+                    arguments
+                        .get(index)
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(|| "worker `--test-plan` requires a path".to_owned())?,
+                ));
+            }
             "--update-snapshots" => update_snapshots = true,
             other => return Err(format!("unknown hidden worker option `{other}`")),
         }
@@ -1000,10 +1111,11 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
     }
     let manifest = manifest.ok_or_else(|| "worker manifest is required".to_owned())?;
     let entry = entry.ok_or_else(|| "worker entry is required".to_owned())?;
-    let response = match execute_test_worker(&manifest, &entry, update_snapshots) {
-        Ok(response) => response,
-        Err(error) => infrastructure_worker_response(error),
-    };
+    let response =
+        match execute_test_worker(&manifest, test_plan.as_deref(), &entry, update_snapshots) {
+            Ok(response) => response,
+            Err(error) => infrastructure_worker_response(error),
+        };
     let bytes = serde_json::to_vec(&response).map_err(|error| error.to_string())?;
     io::stdout()
         .write_all(&bytes)
@@ -1016,6 +1128,7 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
 
 fn execute_test_worker(
     manifest_path: &Path,
+    test_plan_path: Option<&Path>,
     entry_id: &str,
     update_snapshots: bool,
 ) -> Result<WorkerResponse, String> {
@@ -1023,17 +1136,8 @@ fn execute_test_worker(
     let manifest = read_input(manifest_path, "manifest")?;
     let lockfile = read_input(&base.join("tondo.lock.json"), "lockfile")?;
     let project = ProjectPlan::parse(&manifest, &lockfile).map_err(|error| error.to_string())?;
-    let test_plan_bytes = read_input(&base.join("tondo.test.json"), "test plan")?;
-    let test_plan = project
-        .parse_test_plan(&test_plan_bytes)
-        .map_err(|error| error.to_string())?;
-    if test_plan
-        .canonical_bytes()
-        .map_err(|error| error.to_string())?
-        != test_plan_bytes
-    {
-        return Err("test plan is valid but not in canonical form".into());
-    }
+    let test_plan =
+        load_test_project_plan(&project, test_plan_path).map_err(format_test_command_error)?;
     let mut supplied = BTreeMap::new();
     for input in project.required_inputs() {
         let bytes = read_input(

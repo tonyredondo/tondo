@@ -2077,6 +2077,7 @@ Interfaz mínima:
 
 ~~~text
 tondo test [--manifest <path>]
+           [--test-plan <path>]
            [--filter <text> | --glob <pattern> | --exact <node-id>]
            [--codeowners <auto|none|path>]
            [--shard <index/count>]
@@ -2098,27 +2099,47 @@ tondo test [--manifest <path>]
            [--allow-empty]
 ~~~
 
-### 10.1 Sidecar canónico y aislamiento de hojas
+`--test-plan <path>` selecciona un sidecar canónico explícito. Sin esa opción se
+usa el `tondo.test.json` adyacente cuando existe y, en otro caso, los defaults se
+materializan en memoria.
 
-Cuando se usa `--manifest <path>`, el runner carga obligatoriamente
-`tondo.test.json` en el mismo directorio. El archivo es un
-`tondo-test-plan-draft` canónico y se valida con `TestProjectPlan` contra los
-hashes exactos de `tondo.json` y `tondo.lock.json`; un sidecar ausente,
-inválido, no canónico o perteneciente a otro proyecto termina con exit `2`
-antes de descubrir o compilar tests. No existe una variable de entorno ni un
-default implícito que pueda sustituirlo.
+### 10.1 Defaults, sidecar opcional y aislamiento de hojas
 
-El sidecar cierra roots y fuentes de test, target, capacidades, reporters,
+`tondo test` funciona sin que el usuario mantenga un JSON. El runner descubre
+el proyecto con `tondo.json` (o `--manifest <path>`) y materializa en memoria un
+`tondo-test-plan-draft` opinionado a partir del grafo cerrado: fuentes activas,
+target, capacidades, `std.time@monotonic-v1`, CODEOWNERS automático, orden
+canónico, una campaña sin retry/repeat, artifact store content-addressed y el
+perfil finito de límites del toolchain.
+
+El sidecar `tondo.test.json` es opcional. Si se proporciona
+`--test-plan <path>`, o existe el archivo adyacente al manifiesto, el runner lo
+carga como plan base; debe ser canónico y sus hashes de proyecto deben coincidir
+exactamente con `tondo.json` y `tondo.lock.json`. Si no existe, se usan los
+defaults en memoria. Un sidecar inválido, no canónico o perteneciente a otro
+proyecto termina con exit `2` antes de descubrir o compilar tests. El sidecar
+es un plan avanzado/reproducible, no un archivo que el flujo normal deba
+editar.
+
+El plan base cierra roots y fuentes de test, target, capacidades, reporters,
 artifact store (formato, límite y ruta por defecto), snapshot stores y todos los
-límites positivos. `--artifacts` puede elegir un root físico alternativo para
-los objetos de esa invocación, pero no cambia el formato ni el límite cerrado
-por el sidecar. El CLI puede restringir una invocación (selector, shard, orden,
-jobs o timeout), pero nunca puede ampliar el `timeout_ms` cerrado por el
-sidecar. Si no se proporciona `--timeout`, se usa el límite del sidecar;
-`--timeout none` se rechaza porque intentaría eliminarlo. Las snapshot stores
-declaradas se cargan como inputs inmutables antes de ejecutar; sus hashes entran
-en la identidad del reporte y una ruta ausente solo se crea en
-`--update-snapshots`.
+límites positivos. Los flags de la invocación producen un overlay efímero: se
+pueden cambiar selector, shard, orden/seed, jobs, retry, repeat, presentación y
+paths de salida sin escribir el sidecar. La presentación (`--test-format` y
+`--report`) pertenece a la invocación y no altera los reporters estructurales
+validados en el plan base. `--retry` y `--repeat` permanecen
+limitados por el presupuesto estructural; `--timeout` puede reducir el límite,
+pero nunca ampliarlo, y `--timeout none` se rechaza. Roots, sources,
+dependencias, capabilities, formatos y techos de recursos no son sustituibles
+por flags ordinarios. El reporte conserva la configuración efectiva de la
+invocación; un sidecar explícito sigue identificado por sus hashes de proyecto
+antes de que comience la campaña.
+
+`--artifacts` puede elegir un root físico alternativo para los objetos de esa
+invocación, pero no cambia el formato ni el límite cerrado por el plan. Las
+snapshot stores declaradas se cargan como inputs inmutables antes de ejecutar;
+sus hashes entran en la identidad del reporte y una ruta ausente solo se crea
+en `--update-snapshots`.
 
 Cada hoja se ejecuta en un proceso worker nuevo, incluso cuando la
 coordinación usa varios jobs, retry o repeat. El coordinator conserva el
@@ -2137,8 +2158,8 @@ transacción.
 
 Reglas:
 
-- Sin `--manifest`, el toolchain descubre el proyecto mediante su contrato
-  ordinario y materializa un plan cerrado antes de compilar.
+- Sin `--manifest`, el toolchain usa `tondo.json` en el directorio actual y
+  materializa un plan cerrado antes de compilar.
 - `--filter`, `--glob` y `--exact` seleccionan ejecución, no compilación, y
   siguen 8.2.
 - `--codeowners auto` es el default y sigue 5.7.
@@ -2147,14 +2168,16 @@ Reglas:
   reporte `junit`; tampoco admite `--retry`, `--repeat`, `--allow-flaky`,
   `--artifacts` ni `--update-snapshots`. Sí admite los tres selectores,
   sharding, orden y reporte `json`.
-- `--jobs` vale `1` por defecto.
+- `--jobs` vale `1` por defecto en el perfil seguro; un sidecar puede fijar
+  otro valor y `--jobs` lo sobreescribe solo para la invocación.
 - `--timeout` aplica por test hoja y por fase activa de suite, no al tiempo total
   del subárbol.
 - `--retry` aparece como máximo una vez, acepta únicamente un entero decimal
   canónico no negativo dentro del límite estructural publicado y sigue 8.7:
   `0` o un dígito `1..9` seguido de dígitos, sin signo, padding, separadores ni
-  whitespace. El default efectivo es `0`; los retries reutilizan la compilación
-  y nunca recompilan entre intentos.
+  whitespace. El default efectivo es `0` si no lo fija el plan base; los
+  retries reutilizan la compilación y nunca recompilan entre intentos. Un
+  `--retry N` es un override efímero y no modifica el JSON.
 - `--repeat` aparece como máximo una vez, acepta un entero decimal canónico
   positivo dentro del límite estructural publicado y sigue 8.8. El default
   efectivo es `1`; un valor explícito `1` es válido y conserva la misma
@@ -2190,15 +2213,16 @@ Reglas:
   incompatibles terminan con exit `2` sin compilar.
 
 La capa de parsing produce un `TestCliPlan` cerrado antes de leer el manifest;
-la siguiente frontera pura es el sidecar `tondo.test.json` descrito en 10.1.
-Conserva la presencia explícita de `--retry` y `--repeat` incluso cuando sus
-valores son `0` y `1`, y normaliza seed/duración/shard/paths sin ejecutar ningún
-body en esta fase. El driver consume después ese plan para descubrir hojas,
-seleccionarlas, ordenar/shardear, crear workers aislados y ejecutar cada body a
-través del backend VM; JSON/JUnit se publican solo después de ensamblar el
-resultado canónico. Retries/repeat, snapshots, CODEOWNERS y timeout se
-ejecutan dentro de esa misma campaña y quedan reflejados en el reporte; no
-existe una segunda ruta de ejecución para estas políticas.
+la siguiente frontera pura resuelve el sidecar opcional o los defaults descritos
+en 10.1. Conserva la presencia explícita de `--retry` y `--repeat` incluso
+cuando sus valores son `0` y `1`, y normaliza seed/duración/shard/paths sin
+ejecutar ningún body en esta fase. El driver combina después el plan base con
+el overlay de argumentos para descubrir hojas, seleccionarlas, ordenar/shardear,
+crear workers aislados y ejecutar cada body a través del backend VM; JSON/JUnit
+se publican solo después de ensamblar el resultado canónico. Retries/repeat,
+snapshots, CODEOWNERS y timeout se ejecutan dentro de esa misma campaña y
+quedan reflejados en el reporte; no existe una segunda ruta de ejecución para
+estas políticas.
 
 Un argumento `--codeowners` sintácticamente inválido es uso de CLI y termina con
 exit `2`; un archivo seleccionado que falta, no puede leerse o no cumple 5.7 es
@@ -2976,10 +3000,11 @@ un ejemplo; la forma, el orden y los tipos de los campos son normativos:
 `selection.kind` es `all`, `filter`, `glob` o `exact`; `value` es `null` para
 `all` y conserva el argumento exacto en los otros casos.
 `policy.deny_skips` y `policy.allow_flaky` contienen los valores efectivos de
-sus flags. En una ejecución basada en sidecar, `timeout_ms` conserva siempre el
-límite positivo efectivo del plan; la forma `--timeout none` se rechaza antes
-de compilar. Un consumidor aislado del modelo de límites todavía puede
-representar `null` para un timeout desactivado. El resource profile contiene
+sus flags. `timeout_ms` conserva siempre el límite positivo efectivo del plan
+base, después de aplicar un posible timeout más pequeño de la invocación; la
+forma `--timeout none` se rechaza antes de compilar. Un consumidor aislado del
+modelo de límites todavía puede representar `null` para un timeout desactivado.
+El resource profile contiene
 todos los presupuestos finitos del frontend, verifiers y runtime y se
 distribuye de forma recuperable por el toolchain; el hash del reporte identifica
 exactamente sus bytes canónicos.

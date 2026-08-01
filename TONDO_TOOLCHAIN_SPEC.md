@@ -453,11 +453,15 @@ lógicos distintos y sus declaraciones no colisionan.
 
 ### 4.3 Plan cerrado de testing
 
-Una invocación `tondo test` añade un record independiente
-`tondo-test-plan-draft`. No cambia el manifiesto de producción ni crea un
-segundo parser. El record se valida contra el `manifest_hash` y
-`lockfile_hash` exactos de un `ProjectPlan` ya cerrado, y todos sus campos son
-inputs del plan de test:
+Una invocación `tondo test` puede consumir un record independiente
+`tondo-test-plan-draft`, pero no obliga al usuario a mantenerlo. Sin sidecar,
+el toolchain materializa en memoria este mismo shape con defaults opinionados a
+partir del `ProjectPlan` ya cerrado. `--test-plan <path>` selecciona un record
+explícito; si no se proporciona, un `tondo.test.json` adyacente se usa cuando
+existe. No cambia el manifiesto de producción ni crea un segundo parser. Todo
+record suministrado se valida contra el `manifest_hash` y `lockfile_hash`
+exactos de un `ProjectPlan` ya cerrado, y todos sus campos son inputs del plan
+de test:
 
 ~~~json
 {
@@ -502,6 +506,14 @@ inputs del plan de test:
 }
 ~~~
 
+Sin record suministrado, el plan en memoria usa `codeowners: auto`, selector
+vacío, orden canónico, `jobs: 1`, `retry: 0`, `repeat: 1`,
+`target/test-artifacts` content-addressed y ningún snapshot store. Sus defaults
+de límites son 30 s para cada timeout, 1 MiB de output, 16 MiB para artifacts y
+snapshots, 64 MiB de memoria, 10.000.000 de instrucciones y 1.024 timers
+virtuales. Las fuentes activas del `ProjectPlan` se registran como
+`production`; sus roots se derivan únicamente de sus paths canónicos.
+
 `class` es exactamente `production`, `unit-test` o `integration-test`. Cada
 fuente pertenece a una única clase, tiene un nombre de input único y debe estar
 cubierta por una raíz explícita de la misma clase; nunca se deduce una raíz por
@@ -510,8 +522,9 @@ físico con los source sets activos del `ProjectPlan`. Una fuente de integració
 puede usar un `PackageId` sintético; las demás deben pertenecer al grafo cerrado.
 Los paths del record son lógicos, relativos, slash-separated y no pueden
 escapar de la raíz del repositorio. El valor canónico de `repository_root` es
-la cadena vacía, que representa la raíz; `.` se acepta solo como entrada y se
-normaliza a `""`.
+la cadena vacía, que representa la raíz; un source root también puede usar la
+cadena vacía para representar todo el repositorio. `.` se acepta solo como
+entrada y se normaliza a `""`.
 
 Las dependencias de desarrollo contienen `alias`, `PackageId`, path de interfaz
 y SHA-256. Son una lista separada de las dependencias de producción y no pueden
@@ -529,6 +542,11 @@ estar ausente para solicitar entropía explícita durante la materialización.
 
 La política fija `jobs > 0`, `repeat > 0`, `retry >= 0`, `allow_empty` y
 `fail_fast`. Reporters son un conjunto no vacío de `human`, `json` y `junit`.
+Los argumentos de una invocación pueden sobreescribir selector, shard,
+orden/seed, jobs, retry, repeat y la presentación/salida de la campaña sin
+modificar este record. Los reporters estructurales, techos de recursos, target,
+capabilities, dependencias y formatos de stores no se pueden ampliar mediante
+esos overrides.
 El artifact store es siempre content-addressed; snapshot stores tienen nombre,
 path, flag de actualización y límite independiente. El target, capabilities y
 features deben coincidir exactamente con el proyecto y el catálogo temporal
