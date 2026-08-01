@@ -23,6 +23,7 @@ pub mod test_glob;
 pub mod test_input_runtime;
 pub mod test_inputs;
 pub mod test_integration;
+pub mod test_interrupt;
 pub mod test_junit;
 pub mod test_limits;
 pub mod test_lower;

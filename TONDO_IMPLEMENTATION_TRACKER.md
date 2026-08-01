@@ -3091,7 +3091,7 @@ reporters.
   escapes. `docs/contracts/test-snapshots.md` documenta el contrato; los tests
   cubren parseo, matching, no-update implícito, separación del stage y rutas.
 
-- [ ] **UTEST-INTERRUPT-001 — Cerrar la interrupción externa.** En la primera
+- [x] **UTEST-INTERRUPT-001 — Cerrar la interrupción externa.** En la primera
   señal, detener dispatch, cancelar cooperativamente, conducir cleanup
   incluyendo `defer await` durante el grace period y revocar secretos,
   procesos, handles y recursos; una segunda señal puede forzar terminación.
@@ -3103,6 +3103,13 @@ reporters.
   La tarea implementa y prueba la transacción coordinator/worker mediante un
   evento de interrupción inyectable después de cerrar stores y reporters; el
   mapping de señales del SO y su prueba pública quedan en `UTEST-CLI-001`.
+  Evidencia implementada en `crates/tondo-compiler/src/test_interrupt.rs` y
+  `docs/contracts/test-interrupt.md`: la primera solicitud corta dispatch y
+  staging, exige ACK de cleanup/revocación antes de cerrar workers, usa el
+  grace period de `LimitProfile`, separa exit `4` de pérdida de aislamiento en
+  exit `3`, conserva outputs previos y restringe huérfanos a hashes
+  content-addressed. Seis tests cubren la ruta segura, expiración, segunda
+  solicitud, ACK incompleto, ledger de outputs y validación de reloj/identidad.
 
 - [x] **UTEST-REPORT-001 — Implementar los formatos machine-readable.**
   Implementar una sola vez `tondo-test-json-v1` y serializar con ella
