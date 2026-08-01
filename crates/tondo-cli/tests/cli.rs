@@ -69,16 +69,16 @@ fn help_and_version_are_successful() {
 }
 
 #[test]
-fn test_command_parses_without_starting_a_runner() {
+fn test_command_requires_a_closed_project_manifest() {
     let parsed = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args([
             "test", "--filter", "smoke", "--order", "random", "--seed", "5eed",
         ])
         .output()
         .unwrap();
-    assert_eq!(parsed.status.code(), Some(3));
+    assert_eq!(parsed.status.code(), Some(2));
     assert!(parsed.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&parsed.stderr).contains("execution is not connected"));
+    assert!(String::from_utf8_lossy(&parsed.stderr).contains("requires `--manifest"));
 
     let invalid = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(["test", "--shard", "0/2"])
@@ -86,6 +86,81 @@ fn test_command_parses_without_starting_a_runner() {
         .unwrap();
     assert_eq!(invalid.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("positive"));
+}
+
+fn test_project(source: &[u8]) -> std::path::PathBuf {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock must follow the Unix epoch")
+        .as_nanos();
+    let directory =
+        std::env::temp_dir().join(format!("tondo-test-cli-{}-{nonce}", std::process::id()));
+    fs::create_dir_all(directory.join("tests")).unwrap();
+    fs::write(directory.join("tests/smoke.to"), source).unwrap();
+    let package_id = "workspace:test-cli@1";
+    let source_hash = sha256(source);
+    let manifest = format!(
+        "{{\"format\":\"{MANIFEST_FORMAT}\",\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[],\"features\":[]}},\"root\":{{\"package\":\"{package_id}\",\"source\":\"tests/smoke.to\",\"form\":\"module\"}},\"standard\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"packages\":[{{\"id\":\"{package_id}\",\"local_name\":\"cli\",\"edition\":\"0.1\",\"dependencies\":[],\"source_sets\":[{{\"id\":\"common\",\"sources\":[{{\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\"}}]}}]}}],\"generator_inputs\":[],\"privileged_units\":[]}}"
+    );
+    fs::write(directory.join("tondo.json"), &manifest).unwrap();
+    let package_fingerprint = format!(
+        "{{\"package_id\":\"{package_id}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\",\"sha256\":\"{source_hash}\"}}],\"interface_hash\":null}}"
+    );
+    let package_hash = sha256(package_fingerprint.as_bytes());
+    let lockfile = format!(
+        "{{\"format\":\"{LOCKFILE_FORMAT}\",\"manifest_hash\":\"{}\",\"standard\":{{\"package_id\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"content_hash\":\"{}\"}},\"packages\":[{{\"id\":\"{package_id}\",\"content_hash\":\"{package_hash}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\",\"sha256\":\"{source_hash}\"}}],\"interface\":null}}],\"generator_inputs\":[],\"privileged_units\":[]}}",
+        sha256(manifest.as_bytes()),
+        bootstrap_standard_hash(),
+    );
+    fs::write(directory.join("tondo.lock.json"), lockfile).unwrap();
+    directory
+}
+
+#[test]
+fn test_command_executes_a_test_body_through_the_vm_backend() {
+    let directory = test_project(b"test smoke { assert(true) }\n");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--manifest", "tondo.json"])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(String::from_utf8_lossy(&output.stdout).contains("PASS cli::unit::smoke::smoke"));
+}
+
+#[test]
+fn test_command_reports_failures_and_publishes_json_and_junit() {
+    let directory = test_project(b"test smoke { assert(false) }\n");
+    let json = directory.join("target/report.json");
+    let junit = directory.join("target/report.xml");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args([
+            "test",
+            "--manifest",
+            "tondo.json",
+            "--report",
+            "json=target/report.json",
+            "--report",
+            "junit=target/report.xml",
+        ])
+        .output()
+        .unwrap();
+    let json_bytes = fs::read(&json).unwrap();
+    let junit_bytes = fs::read(&junit).unwrap();
+    fs::remove_dir_all(directory).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("FAIL cli::unit::smoke::smoke"));
+    assert!(String::from_utf8_lossy(&json_bytes).contains("tondo-test-report-0.1/7"));
+    assert!(String::from_utf8_lossy(&junit_bytes).contains("<testsuites"));
 }
 
 #[test]

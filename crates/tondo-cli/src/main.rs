@@ -9,13 +9,27 @@ use std::sync::Arc;
 
 use tondo_compiler::driver::{
     BuildTarget, CompilationRequest, CompilationStatus, DiagnosticFormat, Edition, HostProfile,
-    Operation, ResourceLimits, SourceForm, WarningProfile, execute,
+    Operation, ResourceLimits, SourceForm, WarningProfile, discover_tests, execute,
 };
 use tondo_compiler::package::PackageGraph;
 use tondo_compiler::project::ProjectPlan;
 use tondo_compiler::source::{
     LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput, SourceOrigin,
 };
+use tondo_compiler::test_control::EnvelopeLimits;
+use tondo_compiler::test_glob::GlobPattern;
+use tondo_compiler::test_report::{
+    OrderMode as ReportOrderMode, ReportMetadata, ReportOrder, ReportSelection, ReportShard,
+    SelectionKind, TestReport,
+};
+use tondo_compiler::test_result::{
+    AggregateStatus, AttemptStatus, FailureRecord, ResultNodeKind, TestAttempt, TestNode,
+};
+use tondo_compiler::test_runtime::{
+    LeafProgram, RunError, RuntimeConfig, RuntimeReport, RuntimeRunner, RuntimeStatus,
+};
+use tondo_compiler::test_schedule::{OrderMode, ScheduleNode, SchedulePlan, Seed};
+use tondo_compiler::test_shard::ShardSpec;
 
 mod test_cli;
 
@@ -37,7 +51,7 @@ Commands:
   fmt      Format one Tondo source file
   check    Analyze one Tondo source file
   run      Compile and run one Tondo script
-  test     Parse a test plan (execution is not connected yet)
+  test     Discover, compile and run project tests
 
 Options:
   --diagnostic-format <human|json>  Select diagnostic output
@@ -131,16 +145,416 @@ fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
 }
 
 fn run_test_command(arguments: &[OsString]) -> Result<ExitCode, String> {
-    match test_cli::parse(arguments) {
-        Ok(_) => {
-            eprintln!("tondo: test options parsed, but test execution is not connected yet");
-            Ok(ExitCode::from(EXIT_INTERNAL))
-        }
+    let plan = match test_cli::parse(arguments) {
+        Ok(plan) => plan,
         Err(message) => {
+            eprintln!("tondo: {message}\n\n{USAGE}");
+            return Ok(ExitCode::from(EXIT_USAGE));
+        }
+    };
+    let Some(manifest_path) = plan.manifest.as_ref() else {
+        eprintln!("tondo: `tondo test` requires `--manifest <tondo.json>`\n\n{USAGE}");
+        return Ok(ExitCode::from(EXIT_USAGE));
+    };
+    match execute_test_plan(&plan, manifest_path) {
+        Ok(code) => Ok(ExitCode::from(code)),
+        Err(TestCommandError::Usage(message)) => {
             eprintln!("tondo: {message}\n\n{USAGE}");
             Ok(ExitCode::from(EXIT_USAGE))
         }
+        Err(TestCommandError::Internal(message)) => {
+            eprintln!("tondo: {message}");
+            Ok(ExitCode::from(EXIT_INTERNAL))
+        }
+        Err(TestCommandError::Diagnostic(message)) => {
+            eprintln!("{message}");
+            Ok(ExitCode::from(EXIT_DIAGNOSTIC))
+        }
     }
+}
+
+#[derive(Debug)]
+enum TestCommandError {
+    Usage(String),
+    Internal(String),
+    Diagnostic(String),
+}
+
+impl From<tondo_compiler::driver::DriverError> for TestCommandError {
+    fn from(error: tondo_compiler::driver::DriverError) -> Self {
+        Self::Internal(error.to_string())
+    }
+}
+
+fn execute_test_plan(
+    plan: &test_cli::TestCliPlan,
+    manifest_path: &Path,
+) -> Result<u8, TestCommandError> {
+    let base = manifest_path.parent().unwrap_or_else(|| Path::new(""));
+    let lockfile = base.join("tondo.lock.json");
+    let manifest = read_input(manifest_path, "manifest").map_err(TestCommandError::Usage)?;
+    let lockfile_bytes = read_input(&lockfile, "lockfile").map_err(TestCommandError::Usage)?;
+    let project = ProjectPlan::parse(&manifest, &lockfile_bytes)
+        .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+    let mut supplied = BTreeMap::new();
+    for input in project.required_inputs() {
+        let bytes = read_input(
+            &base.join(input.path()),
+            &format!("{} input `{}`", input.kind().as_str(), input.path()),
+        )
+        .map_err(TestCommandError::Usage)?;
+        supplied.insert(input.path().to_owned(), Arc::<[u8]>::from(bytes));
+    }
+    let request = project
+        .resolve(&supplied)
+        .map_err(|error| TestCommandError::Usage(error.to_string()))?
+        .into_compilation_request(
+            Operation::Check,
+            plan.diagnostic_format,
+            ResourceLimits::default(),
+        )
+        .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+    let request = Arc::new(request);
+    let entries = discover_tests(&request)?;
+    let selected = select_test_entries(entries, plan)?;
+    if selected.is_empty() {
+        if plan.allow_empty {
+            if plan.list {
+                return Ok(0);
+            }
+            eprintln!("tondo: no tests selected");
+            return Ok(0);
+        }
+        return Err(TestCommandError::Diagnostic(
+            "tondo: no tests matched the selection".into(),
+        ));
+    }
+    if plan.list {
+        for entry in &selected {
+            println!("{}", entry.id());
+        }
+        return Ok(0);
+    }
+
+    let ordered = order_test_entries(selected, plan)?;
+    let programs = ordered
+        .iter()
+        .map(|entry| {
+            let id = entry.id().to_owned();
+            let base_request = Arc::clone(&request);
+            let entry = entry.clone();
+            Ok(LeafProgram::new(id, move |context| {
+                let request = base_request.for_test_entry(&entry).map_err(|error| {
+                    RunError::Infrastructure {
+                        message: error.to_string(),
+                    }
+                })?;
+                let output = execute(request).map_err(|error| RunError::Infrastructure {
+                    message: error.to_string(),
+                })?;
+                if !output.stdout().is_empty() {
+                    context.stdout(String::from_utf8_lossy(output.stdout()).into_owned())?;
+                }
+                if output.status() == CompilationStatus::Success {
+                    Ok(())
+                } else {
+                    let diagnostic = output.diagnostics().human();
+                    let message = if diagnostic.is_empty() {
+                        "test body failed".to_owned()
+                    } else {
+                        diagnostic
+                    };
+                    context.stderr(message.clone())?;
+                    Err(RunError::Error {
+                        code: "T3001".into(),
+                        message,
+                    })
+                }
+            }))
+        })
+        .collect::<Result<Vec<_>, TestCommandError>>()?;
+    let runtime = RuntimeRunner::new(
+        RuntimeConfig::new(
+            plan.jobs as usize,
+            EnvelopeLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 16 * 1024 * 1024),
+        )
+        .map_err(|error| TestCommandError::Internal(error.to_string()))?,
+    )
+    .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+    let runtime_report = runtime
+        .run(programs)
+        .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+    let report = build_test_report(&request, plan, &ordered, &runtime_report)?;
+    publish_test_outputs(plan, &report)?;
+    if plan.test_format == test_cli::TestFormat::Json {
+        print!(
+            "{}",
+            String::from_utf8(
+                report
+                    .canonical_bytes()
+                    .map_err(|error| { TestCommandError::Internal(error.to_string()) })?
+            )
+            .map_err(|error| TestCommandError::Internal(error.to_string()))?
+        );
+    } else {
+        for test in report.tests() {
+            println!("{} {}", status_label(test.status), test.id);
+            if plan.show_output {
+                for attempt in &test.attempts {
+                    if !attempt.stdout.is_empty() {
+                        print!("{}", attempt.stdout);
+                    }
+                    if !attempt.stderr.is_empty() {
+                        eprint!("{}", attempt.stderr);
+                    }
+                }
+            }
+        }
+    }
+    let failed = report.summary().failed > 0
+        || (plan.deny_skips && report.summary().skipped + report.summary().blocked_skip > 0);
+    Ok(u8::from(failed))
+}
+
+fn select_test_entries(
+    entries: Vec<tondo_compiler::test_backend::TestEntry>,
+    plan: &test_cli::TestCliPlan,
+) -> Result<Vec<tondo_compiler::test_backend::TestEntry>, TestCommandError> {
+    let mut selected = entries
+        .into_iter()
+        .filter(|entry| match &plan.selector {
+            test_cli::TestSelector::All => true,
+            test_cli::TestSelector::Filter(value) => {
+                entry.id().contains(value) || entry.name().contains(value)
+            }
+            test_cli::TestSelector::Glob(value) => GlobPattern::parse(value)
+                .map(|pattern| pattern.matches(entry.id()) || pattern.matches(entry.name()))
+                .unwrap_or(false),
+            test_cli::TestSelector::Exact(value) => {
+                entry.id() == value
+                    || entry.name() == value
+                    || entry.id().starts_with(&format!("{value}::"))
+            }
+        })
+        .collect::<Vec<_>>();
+    selected.sort_by(|left, right| left.id().as_bytes().cmp(right.id().as_bytes()));
+    if let Some(shard) = plan.shard {
+        let spec = ShardSpec::new(shard.index, shard.count)
+            .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+        let ids = selected.iter().map(|entry| entry.id()).collect::<Vec<_>>();
+        let partition = tondo_compiler::test_shard::ShardResult::partition(ids, spec)
+            .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+        selected.retain(|entry| partition.ids().any(|id| id == entry.id()));
+    }
+    Ok(selected)
+}
+
+fn order_test_entries(
+    entries: Vec<tondo_compiler::test_backend::TestEntry>,
+    plan: &test_cli::TestCliPlan,
+) -> Result<Vec<tondo_compiler::test_backend::TestEntry>, TestCommandError> {
+    let mode = match plan.order {
+        test_cli::TestOrder::Canonical => OrderMode::Canonical,
+        test_cli::TestOrder::Random { seed } => OrderMode::Random {
+            seed: Seed::from_u64(seed.unwrap_or(0)),
+        },
+    };
+    let nodes = entries
+        .iter()
+        .map(|entry| ScheduleNode::test(entry.id().to_owned(), None::<String>))
+        .collect::<Vec<_>>();
+    let schedule = SchedulePlan::new(nodes, mode, plan.jobs)
+        .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+    let by_id = entries
+        .into_iter()
+        .map(|entry| (entry.id().to_owned(), entry))
+        .collect::<BTreeMap<_, _>>();
+    schedule
+        .execution_plan()
+        .into_iter()
+        .map(|id| {
+            by_id
+                .get(&id)
+                .cloned()
+                .ok_or_else(|| TestCommandError::Internal("scheduler lost a test entry".into()))
+        })
+        .collect()
+}
+
+fn build_test_report(
+    request: &CompilationRequest,
+    plan: &test_cli::TestCliPlan,
+    entries: &[tondo_compiler::test_backend::TestEntry],
+    runtime: &RuntimeReport,
+) -> Result<TestReport, TestCommandError> {
+    let mut metadata = ReportMetadata::default();
+    metadata.target.name = request.target().name().to_owned();
+    metadata.target.profile = request.profile().as_str().to_owned();
+    metadata.target.capabilities = request
+        .capabilities()
+        .iter()
+        .map(|capability| capability.as_str().to_owned())
+        .collect();
+    metadata.limits.jobs = plan.jobs;
+    metadata.limits.timeout_ms = plan.timeout_ms;
+    metadata.policy.deny_skips = plan.deny_skips;
+    metadata.policy.allow_flaky = plan.allow_flaky;
+    metadata.repeat.count = plan.repeat;
+    metadata.retry.max_additional_rounds = plan.retry;
+    metadata.selection = match &plan.selector {
+        test_cli::TestSelector::All => ReportSelection {
+            kind: SelectionKind::All,
+            value: None,
+        },
+        test_cli::TestSelector::Filter(value) => ReportSelection {
+            kind: SelectionKind::Filter,
+            value: Some(value.clone()),
+        },
+        test_cli::TestSelector::Glob(value) => ReportSelection {
+            kind: SelectionKind::Glob,
+            value: Some(value.clone()),
+        },
+        test_cli::TestSelector::Exact(value) => ReportSelection {
+            kind: SelectionKind::Exact,
+            value: Some(value.clone()),
+        },
+    };
+    metadata.order = match plan.order {
+        test_cli::TestOrder::Canonical => ReportOrder {
+            mode: ReportOrderMode::Canonical,
+            seed: None,
+            algorithm: tondo_compiler::test_report::CANONICAL_ORDER_ALGORITHM.into(),
+        },
+        test_cli::TestOrder::Random { seed } => ReportOrder {
+            mode: ReportOrderMode::Random,
+            seed: Some(Seed::from_u64(seed.unwrap_or(0)).as_hex()),
+            algorithm: tondo_compiler::test_report::RANDOM_ORDER_ALGORITHM.into(),
+        },
+    };
+    metadata.shard = plan.shard.map(|shard| ReportShard {
+        index: shard.index,
+        count: shard.count,
+        algorithm: tondo_compiler::test_report::SHARD_ALGORITHM.into(),
+    });
+    let tests = entries
+        .iter()
+        .map(|entry| {
+            let leaf = runtime
+                .leaves()
+                .iter()
+                .find(|leaf| leaf.id() == entry.id())
+                .ok_or_else(|| {
+                    TestCommandError::Internal(format!(
+                        "runtime did not return test `{}`",
+                        entry.id()
+                    ))
+                })?;
+            let status = match leaf.status() {
+                RuntimeStatus::Passed => AttemptStatus::Passed,
+                RuntimeStatus::Skipped => AttemptStatus::Skipped,
+                RuntimeStatus::FailedError => AttemptStatus::FailedError,
+                RuntimeStatus::FailedPanic => AttemptStatus::FailedPanic,
+                RuntimeStatus::ResourceLimit => AttemptStatus::ResourceLimit,
+                RuntimeStatus::Timeout => AttemptStatus::Timeout,
+                RuntimeStatus::Infrastructure => AttemptStatus::Infrastructure,
+                RuntimeStatus::BlockedSetup => AttemptStatus::BlockedSetup,
+            };
+            let mut attempt = TestAttempt::new(1, 1, 1, Some(1), status);
+            attempt.logs = leaf
+                .report()
+                .logs()
+                .iter()
+                .map(|log| log.message().to_owned())
+                .collect();
+            attempt.tags = leaf.report().tags().clone();
+            attempt.stdout = leaf.report().stdout().to_owned();
+            attempt.stderr = leaf.report().stderr().to_owned();
+            if let Some(error) = leaf.error() {
+                attempt.failure = Some(FailureRecord {
+                    kind: "backend".into(),
+                    code: error.code().map(str::to_owned),
+                    message: error.to_string().replace(['\r', '\n'], " "),
+                    source: None,
+                });
+            }
+            let mut node_parts = entry.id().split("::");
+            let package = node_parts.next().unwrap_or("main").to_owned();
+            let module = node_parts.nth(1).unwrap_or("test").to_owned();
+            Ok(TestNode::new(
+                entry.id().to_owned(),
+                None,
+                package,
+                ResultNodeKind::Test,
+                module,
+                entry.name().to_owned(),
+                vec![attempt],
+            ))
+        })
+        .collect::<Result<Vec<_>, TestCommandError>>()?;
+    TestReport::assemble(
+        metadata,
+        entries.iter().map(|entry| entry.id().to_owned()).collect(),
+        Vec::new(),
+        tests,
+    )
+    .map_err(|error| TestCommandError::Internal(error.to_string()))
+}
+
+fn status_label(status: AggregateStatus) -> &'static str {
+    match status {
+        AggregateStatus::Passed => "PASS",
+        AggregateStatus::FlakyPass => "FLAKY",
+        AggregateStatus::Skipped => "SKIP",
+        AggregateStatus::FailedError => "FAIL",
+        AggregateStatus::FailedPanic => "PANIC",
+        AggregateStatus::ResourceLimit => "LIMIT",
+        AggregateStatus::Timeout => "TIMEOUT",
+        AggregateStatus::Infrastructure => "INTERNAL",
+        AggregateStatus::BlockedSetup => "BLOCKED",
+        AggregateStatus::BlockedSkip => "BLOCKED",
+    }
+}
+
+fn publish_test_outputs(
+    plan: &test_cli::TestCliPlan,
+    report: &TestReport,
+) -> Result<(), TestCommandError> {
+    for output in &plan.reports {
+        let bytes = match output.format {
+            test_cli::TestReportFormat::Json => report
+                .canonical_bytes()
+                .map_err(|error| TestCommandError::Internal(error.to_string()))?,
+            test_cli::TestReportFormat::Junit => {
+                tondo_compiler::test_junit::JUnitReport::from_report(report)
+                    .map_err(|error| TestCommandError::Internal(error.to_string()))?
+                    .into_bytes()
+            }
+        };
+        atomic_publish(&output.path, &bytes)?;
+    }
+    Ok(())
+}
+
+fn atomic_publish(path: &Path, bytes: &[u8]) -> Result<(), TestCommandError> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent).map_err(|error| {
+            TestCommandError::Internal(format!("cannot create report directory: {error}"))
+        })?;
+    }
+    let temporary = path.with_extension(format!(
+        "tmp.{}.{}",
+        std::process::id(),
+        path.extension().and_then(OsStr::to_str).unwrap_or("report")
+    ));
+    fs::write(&temporary, bytes)
+        .map_err(|error| TestCommandError::Internal(format!("cannot write report: {error}")))?;
+    fs::rename(&temporary, path).map_err(|error| {
+        let _ = fs::remove_file(&temporary);
+        TestCommandError::Internal(format!("cannot publish report: {error}"))
+    })
 }
 
 #[derive(Debug)]

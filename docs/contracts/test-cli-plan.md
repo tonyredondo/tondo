@@ -27,10 +27,10 @@ validated as relative logical paths where the spec requires it.
 Unknown or repeated singleton options, missing values, invalid globs, shard
 ranges, non-canonical numbers, seed/order mismatches, selector collisions,
 report collisions, positional arguments, and incompatible list/retry/repeat/
-snapshot modes produce a usage error (exit `2`) before any compilation. A
-syntactically valid plan currently returns an explicit not-connected result
-(exit `3`) rather than pretending that a runner exists. This keeps the parser
-contract testable without claiming execution support prematurely.
+snapshot modes produce a usage error (exit `2`) before any compilation. The
+parser remains side-effect-free; the CLI consumes the closed plan only after
+this boundary and delegates discovery, selection, scheduling, VM execution and
+report publication to their compiler/runtime modules.
 
 Unit tests cover defaults, both option spellings, complete option composition,
 selectors/numbers/paths/globs/report collisions, explicit zero/one retry and

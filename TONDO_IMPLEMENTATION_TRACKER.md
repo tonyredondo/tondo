@@ -2700,10 +2700,10 @@ reporters.
   la presencia explícita de retry/repeat para aplicar las incompatibilidades
   de los valores cero/uno. Valida paths, globs, ranges, overflow, duplicados,
   report collisions y combinaciones de list/update antes de compilar.
-  Diagnostics de uso terminan en exit `2`; una forma válida termina
-  explícitamente en exit `3` porque `UTEST-CLI-001` aún no conecta la ejecución.
+  Diagnostics de uso terminan en exit `2`; el parser es una frontera sin
+  efectos y el runner consume el plan cerrado en `UTEST-CLI-BACKEND-001`.
   Evidencia: `docs/contracts/test-cli-plan.md`, cinco tests unitarios del parser
-  y un test CLI de ambos límites.
+  y tests CLI de los límites de uso y ejecución.
 
 - [x] **UTEST-INPUTS-001 — Materializar inputs públicos y secretos sin
   filtraciones.** Después de `UTEST-INPUTS-PLAN-001`,
@@ -3170,6 +3170,15 @@ reporters.
   normativos. Evidencia en `crates/tondo-compiler/src/test_backend.rs`,
   `crates/tondo-compiler/src/driver.rs` y
   `docs/contracts/test-backend.md`.
+
+- [x] **UTEST-CLI-BACKEND-001 — Conectar el runner mínimo al backend.** `tondo
+  test --manifest` materializa el proyecto cerrado, descubre hojas del
+  paquete raíz, aplica selección all/filter/glob/exact, shard, order y jobs,
+  ejecuta cada hoja en un worker nuevo sobre `Operation::Test`, ensambla el
+  resultado canónico y publica JSON/JUnit de forma atómica. `--list`,
+  `--show-output`, `--allow-empty`, `--deny-skips` y exits 0/1/2/3 quedan
+  cubiertos; retries/repeat, timeout, snapshots y CODEOWNERS siguen siendo la
+  cola explícita de `UTEST-CLI-001`.
 
 - [ ] **UTEST-CLI-001 — Conectar `tondo test` end-to-end.** Después de cerrar
   plan, lifecycle, algoritmos, stores y reporters, conectar las opciones ya

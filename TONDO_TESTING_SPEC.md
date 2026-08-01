@@ -2152,10 +2152,14 @@ Reglas:
 
 La capa de parsing produce un `TestCliPlan` cerrado antes de leer el manifest.
 Conserva la presencia explícita de `--retry` y `--repeat` incluso cuando sus
-valores son `0` y `1`, normaliza seed/duración/shard/paths y no ejecuta ningún
-body. Hasta cerrar `UTEST-CLI-001`, una invocación sintácticamente válida que
-ya pasó esta frontera termina con el diagnóstico de tooling de runner no
-conectado y exit `3`; no anuncia una ejecución inexistente ni publica reportes.
+valores son `0` y `1`, y normaliza seed/duración/shard/paths sin ejecutar ningún
+body en esta fase. El driver consume después ese plan para descubrir hojas,
+seleccionarlas, ordenar/shardear, crear workers aislados y ejecutar cada body a
+través del backend VM; JSON/JUnit se publican solo después de ensamblar el
+resultado canónico. Las políticas avanzadas que todavía no estén conectadas a
+la campaña (retries/repeat, snapshots, CODEOWNERS y timeout) permanecen
+registradas en el plan y no se anuncian como ejecutadas hasta cerrar
+`UTEST-CLI-001`.
 
 Un argumento `--codeowners` sintácticamente inválido es uso de CLI y termina con
 exit `2`; un archivo seleccionado que falta, no puede leerse o no cumple 5.7 es
