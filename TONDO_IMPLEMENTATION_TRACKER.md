@@ -3132,7 +3132,7 @@ reporters.
   unitarios cubren round-trip, canonicalización, lista descriptor-only,
   policies, identidad y rechazo de schema.
 
-- [ ] **UTEST-JUNIT-001 — Exportar JUnit desde el resultado normativo.**
+- [x] **UTEST-JUNIT-001 — Exportar JUnit desde el resultado normativo.**
   Proyectar la misma ejecución como `tondo-junit-report-0.1/4`, XML 1.0 UTF-8,
   con un testcase agregado por hoja, testcases sintéticos únicos para fallos de
   lifecycle y flaky suite, y
@@ -3145,7 +3145,14 @@ reporters.
   artifact/snapshot descriptors, policy, `tondo.virtual_time`, conteos por
   identidad y duración real sumada por intentos. No embeber bytes ni valores de
   snapshot. Publicar cada path atómicamente, rechazar colisiones y mantener JSON
-  como representación canónica y sin pérdida.
+  como representación canónica y sin pérdida. Evidencia implementada en
+  `crates/tondo-compiler/src/test_junit.rs` y
+  `docs/contracts/test-junit.md`: el proyector genera XML `/4` determinista,
+  conserva las properties `tondo.*`, emite casos sintéticos de lifecycle,
+  flaky y plan vacío, aplica la política de repeat-instability, escapa XML 1.0
+  y comprueba tiempos por intento con aritmética checked. Seis tests unitarios
+  cubren metadata/duración, estados y repeat, lifecycle/flaky, plan vacío,
+  errores de timings y scalars XML.
 
 - [ ] **UTEST-CLI-001 — Conectar `tondo test` end-to-end.** Después de cerrar
   plan, lifecycle, algoritmos, stores y reporters, conectar las opciones ya
