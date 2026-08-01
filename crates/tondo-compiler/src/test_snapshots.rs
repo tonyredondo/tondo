@@ -570,10 +570,12 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "tondo-snapshots-{label}-{}-{nonce}",
-            std::process::id()
-        ))
+        std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!(
+                "tondo-snapshots-{label}-{}-{nonce}",
+                std::process::id()
+            ))
     }
 
     fn entry(node: &str, name: &str, value: &str) -> SnapshotEntry {

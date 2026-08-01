@@ -565,10 +565,12 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::env::temp_dir().join(format!(
-            "tondo-artifacts-{label}-{}-{nonce}",
-            std::process::id()
-        ))
+        std::fs::canonicalize(std::env::temp_dir())
+            .unwrap()
+            .join(format!(
+                "tondo-artifacts-{label}-{}-{nonce}",
+                std::process::id()
+            ))
     }
 
     fn store(label: &str) -> (PathBuf, ArtifactStore) {
@@ -673,8 +675,11 @@ mod tests {
         orphan.attach("orphan", "text/plain", b"orphan").unwrap();
         let orphan_hash = orphan.descriptors().next().unwrap().object.clone();
         let orphans_before = store.orphan_objects().unwrap();
-        assert_eq!(orphans_before, [orphan_hash.clone()]);
-        assert_eq!(store.reclaim_orphans().unwrap(), [orphan_hash.clone()]);
+        assert_eq!(orphans_before, std::slice::from_ref(&orphan_hash));
+        assert_eq!(
+            store.reclaim_orphans().unwrap(),
+            std::slice::from_ref(&orphan_hash)
+        );
         assert!(store.orphan_objects().unwrap().is_empty());
         assert_eq!(live.artifacts.len(), 1);
         fs::remove_dir_all(root).unwrap();

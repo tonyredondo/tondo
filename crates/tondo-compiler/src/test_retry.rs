@@ -726,6 +726,14 @@ impl fmt::Display for RetryError {
 
 impl Error for RetryError {}
 
+trait Pipe: Sized {
+    fn pipe<T>(self, f: impl FnOnce(Self) -> T) -> T {
+        f(self)
+    }
+}
+
+impl<T> Pipe for T {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1069,11 +1077,3 @@ mod tests {
         assert_eq!(TEST_RETRY_FORMAT, "tondo-test-retry-0.1/1");
     }
 }
-
-trait Pipe: Sized {
-    fn pipe<T>(self, f: impl FnOnce(Self) -> T) -> T {
-        f(self)
-    }
-}
-
-impl<T> Pipe for T {}
