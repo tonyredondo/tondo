@@ -3179,20 +3179,29 @@ reporters.
   `--show-output`, `--allow-empty`, `--deny-skips` y exits 0/1/2/3 quedan
   cubiertos. Esta base también materializa campañas reales de retry/repeat,
   conserva evidencia por intento, resuelve CODEOWNERS y publica el store de
-  attachments content-addressed; la conexión de timeout wall-clock y el
-  commit/update atómico de snapshots siguen siendo la cola explícita de
-  `UTEST-CLI-001`.
+  attachments content-addressed. La cola de timeout wall-clock y snapshots
+  queda cerrada por `UTEST-CLI-001` con el sidecar canónico y workers de
+  proceso.
 
-- [ ] **UTEST-CLI-001 — Conectar `tondo test` end-to-end.** Después de cerrar
-  plan, lifecycle, algoritmos, stores y reporters, conectar las opciones ya
-  parseadas por `UTEST-CLI-PARSE-001` con discovery, compilación completa,
-  selección, ejecución, output, publicación atómica y señales del SO sobre la
-  transacción de `UTEST-INTERRUPT-001`. `--filter` compara hojas; glob/exact
-  aceptan hoja o suite y esta última selecciona su subárbol.
-  Verificar colisiones, combinaciones inseguras y exits 0/1/2/3/4 contra el
-  modelo único de resultados; ninguna rama de CLI vuelve a implementar
-  glob/shard/order/retry/repeat/artifacts/snapshots/reporting. No implementar
-  `--tag`, selector regex ni `--fail-fast` bajo este contrato.
+- [x] **UTEST-CLI-001 — Conectar `tondo test` end-to-end.** `tondo test`
+  consume el `tondo.test.json` canónico adyacente al manifiesto, verifica sus
+  hashes de proyecto y límites, y rechaza sidecars ausentes o no canónicos
+  antes de compilar. Cada hoja se ejecuta en un proceso worker nuevo; el
+  coordinator importa evidencia y aplica el timeout wall-clock monotónico con
+  terminación del proceso, incluidos retry y repeat. Las snapshot stores se
+  cargan como inputs cerrados; `--update-snapshots` usa una
+  `SnapshotUpdateStage` y rename atómico solo tras una campaña completamente
+  verde. El artifact store del sidecar fija el formato y el límite, mientras
+  `--artifacts` solo puede reubicar físicamente la salida. Un `--timeout none`
+  explícito se rechaza frente al límite cerrado. JSON/JUnit, artifacts,
+  CODEOWNERS, selección, shards, orden, jobs y exits 0/1/2/3 quedan cubiertos
+  por tests unitarios e integración.
+  Evidencia en `crates/tondo-cli/src/main.rs`,
+  `crates/tondo-compiler/src/test_control.rs`,
+  `crates/tondo-compiler/src/test_runtime.rs` y los contratos de
+  `test-cli-plan`/`test-plan`. Las señales del SO siguen en
+  `UTEST-INTERRUPT-001`; no se implementan `--tag`, selector regex ni
+  `--fail-fast` bajo este contrato.
 
 ### 17.4 Evidencia, conformidad y dogfooding
 

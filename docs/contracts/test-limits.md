@@ -5,7 +5,9 @@
 `tondo_compiler::test_limits` defines the coordinator-side resource profile
 used by every leaf and suite phase. Defaults are finite for work, memory,
 depth, output, artifacts, snapshots, metadata, virtual timers, ready queues
-and instructions. Only the wall-clock timeout can be explicitly disabled.
+and instructions. The host-independent profile can represent a disabled
+wall-clock timeout, but the canonical CLI sidecar always supplies a positive
+cap and rejects `--timeout none`.
 
 `LimitProfile::canonical_bytes` and its SHA-256 identify the effective values
 without host paths or map-order dependence. The existing sealed envelope gets
@@ -23,8 +25,8 @@ errors. The effective profile is available for report publication.
 
 `PhaseDeadline` uses monotonic integer nanoseconds. A suite can pause its own
 phase while it waits for selected descendants; paused time is excluded from
-the setup/teardown deadline. `None` means `--timeout none` and does not disable
-any structural budget. `InterruptController` models the first cancellation
+the setup/teardown deadline. `None` represents an intentionally disabled
+wall-clock deadline for non-sidecar consumers and does not disable any
+structural budget. `InterruptController` models the first cancellation
 request, one finite grace period and forced termination of a non-cooperative
 worker. Clock regressions are rejected rather than wrapped.
-

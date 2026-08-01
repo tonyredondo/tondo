@@ -766,8 +766,19 @@ mod tests {
             ensure_safe_path(Path::new("../escape"), true),
             Err(ArtifactError::PathEscape)
         ));
+        let parent_file = root("io-parent");
+        fs::write(&parent_file, b"not a directory").unwrap();
+        assert!(matches!(
+            ArtifactStore::new(
+                parent_file.join("store"),
+                "attempt",
+                ArtifactLimits::new(10, 1)
+            ),
+            Err(ArtifactError::Io(_))
+        ));
         fs::remove_dir_all(root_path).unwrap();
         fs::remove_dir_all(outside).unwrap();
+        fs::remove_file(parent_file).unwrap();
     }
 
     #[test]

@@ -1882,6 +1882,19 @@ mod tests {
     }
 
     #[test]
+    fn test_operation_rejects_script_source_form_with_a_typed_diagnostic() {
+        let request = operation_request(
+            Operation::Test,
+            b"test smoke { assert(true) }\n",
+            SourceForm::Script,
+            ResourceLimits::default(),
+        );
+        let output = execute(request).unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert_eq!(output.diagnostics().diagnostics()[0].code(), "E2012");
+    }
+
+    #[test]
     fn test_discovery_and_fork_execute_one_of_multiple_leaves() {
         let request = operation_request(
             Operation::Check,

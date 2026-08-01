@@ -316,6 +316,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn evidence_generators_are_callable_as_one_closed_pipeline() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        assert!(generate_all(&root).unwrap().contains("inventory"));
+        assert!(generate_inventory(&root).unwrap().contains("logical tests"));
+        assert!(generate_matrix(&root).unwrap().contains("requirements"));
+        let arguments = parse_arguments(vec!["ratchet".into(), "generate".into()]).unwrap();
+        assert!(
+            generate_ratchet(&root, &arguments)
+                .unwrap()
+                .contains("draft case layers")
+        );
+    }
+
+    #[test]
     fn arguments_are_order_independent_but_closed() {
         let arguments = parse_arguments(vec![
             "inventory".into(),

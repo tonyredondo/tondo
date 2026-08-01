@@ -1604,9 +1604,39 @@ fn case_failure<T>(case: &ConformanceCase, message: impl Into<String>) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::PinnedFile;
     use crate::protocol::AdapterResponse;
 
     struct IdentityAdapter;
+
+    #[test]
+    fn case_failure_keeps_the_normative_case_identity() {
+        let case = ConformanceCase {
+            id: "case-id".into(),
+            group: crate::manifest::CaseGroup::Runtime,
+            target: "tondo-vm-hosted".into(),
+            profile: "hosted".into(),
+            capabilities: Vec::new(),
+            repeat: 1,
+            covers: Vec::new(),
+            positive_for: Vec::new(),
+            requirements: Vec::new(),
+            action: CaseAction::Memory {
+                scenario: MemoryScenario::ReachableRoots,
+            },
+            expectation: Expectation::Exact {
+                observation: PinnedFile {
+                    path: "observation.json".into(),
+                    sha256: "a".repeat(64),
+                },
+            },
+        };
+        let error = case_failure::<()>(&case, "observed failure").unwrap_err();
+        assert!(matches!(
+            error,
+            RunError::Case { id, message } if id == "case-id" && message == "observed failure"
+        ));
+    }
 
     impl Adapter for IdentityAdapter {
         fn exchange(&mut self, request: &AdapterRequest) -> Result<AdapterResponse, String> {

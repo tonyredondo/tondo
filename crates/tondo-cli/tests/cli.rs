@@ -5,9 +5,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tondo_compiler::artifact::{BuildArtifact, CAPABILITY_REGISTRY, CompiledInterface, sha256};
 use tondo_compiler::project::{
-    BOOTSTRAP_STANDARD_PACKAGE, LOCKFILE_FORMAT, MANIFEST_FORMAT, bootstrap_standard_hash,
+    BOOTSTRAP_STANDARD_PACKAGE, LOCKFILE_FORMAT, MANIFEST_FORMAT, ProjectPlan,
+    bootstrap_standard_hash,
 };
-use tondo_compiler::test_report::{TestList, TestReport};
+use tondo_compiler::test_report::{SnapshotMode, TestList, TestReport};
+use tondo_compiler::test_snapshots::SnapshotStore;
 
 static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -113,7 +115,19 @@ fn test_project(source: &[u8]) -> std::path::PathBuf {
         sha256(manifest.as_bytes()),
         bootstrap_standard_hash(),
     );
-    fs::write(directory.join("tondo.lock.json"), lockfile).unwrap();
+    fs::write(directory.join("tondo.lock.json"), &lockfile).unwrap();
+    let test_plan = format!(
+        "{{\"format\":\"tondo-test-plan-draft\",\"project\":{{\"manifest_hash\":\"{}\",\"lockfile_hash\":\"{}\"}},\"repository_root\":\"\",\"roots\":[{{\"class\":\"production\",\"physical_path\":\"tests\",\"logical_path\":\"tests\"}}],\"sources\":[{{\"class\":\"production\",\"package\":\"{package_id}\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\",\"input\":\"source:production:tests/smoke.to\"}}],\"dev_dependencies\":[],\"codeowners\":{{\"mode\":\"auto\"}},\"selector\":{{\"kind\":\"none\"}},\"shard\":null,\"order\":{{\"kind\":\"canonical\"}},\"policy\":{{\"jobs\":1,\"allow_empty\":false,\"fail_fast\":false,\"retry\":0,\"repeat\":1}},\"reporters\":[\"human\",\"json\"],\"artifact_store\":{{\"path\":\"target/test-artifacts\",\"content_addressed\":true,\"max_bytes\":1048576}},\"snapshot_stores\":[],\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[],\"features\":[]}},\"time_catalog\":{{\"package\":\"std\",\"module\":\"time\",\"api\":\"monotonic-v1\"}},\"limits\":{{\"timeout_ms\":1000,\"setup_timeout_ms\":1000,\"teardown_timeout_ms\":1000,\"output_bytes\":65536,\"artifact_bytes\":1048576,\"snapshot_bytes\":1048576,\"memory_bytes\":67108864,\"instructions\":1000000,\"virtual_timers\":1024}}}}",
+        sha256(manifest.as_bytes()),
+        sha256(lockfile.as_bytes()),
+    );
+    let project = ProjectPlan::parse(manifest.as_bytes(), lockfile.as_bytes()).unwrap();
+    let test_plan = project
+        .parse_test_plan(test_plan.as_bytes())
+        .unwrap()
+        .canonical_bytes()
+        .unwrap();
+    fs::write(directory.join("tondo.test.json"), test_plan).unwrap();
     directory
 }
 
@@ -135,6 +149,176 @@ fn test_command_executes_a_test_body_through_the_vm_backend() {
     );
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("PASS cli::integration::smoke::smoke")
+    );
+}
+
+#[test]
+fn test_command_requires_the_canonical_sidecar_plan() {
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    fs::remove_file(directory.join("tondo.test.json")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--manifest", "tondo.json"])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("test plan"));
+}
+
+#[test]
+fn test_command_cannot_disable_the_closed_sidecar_timeout() {
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--manifest", "tondo.json", "--timeout", "none"])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("closed test-plan"));
+}
+
+#[test]
+fn test_command_kills_a_recursive_leaf_at_the_wall_clock_boundary() {
+    let directory = test_project(b"fn spin() { spin() }\ntest smoke { spin() }\n");
+    let started = std::time::Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--manifest", "tondo.json", "--timeout", "20ms"])
+        .output()
+        .unwrap();
+    let elapsed = started.elapsed();
+    fs::remove_dir_all(directory).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stdout).contains("TIMEOUT"));
+    assert!(
+        elapsed < std::time::Duration::from_secs(3),
+        "worker was not bounded: {elapsed:?}"
+    );
+}
+
+#[test]
+fn update_snapshots_uses_the_sidecar_store_and_publishes_atomically() {
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    let sidecar = fs::read_to_string(directory.join("tondo.test.json")).unwrap();
+    let sidecar = sidecar.replace(
+        "\"snapshot_stores\":[]",
+        "\"snapshot_stores\":[{\"name\":\"default\",\"path\":\"tests/snapshots.json\",\"update\":false,\"max_bytes\":1048576}]",
+    );
+    fs::write(directory.join("tondo.test.json"), sidecar).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args([
+            "test",
+            "--manifest",
+            "tondo.json",
+            "--update-snapshots",
+            "--test-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    let snapshot = fs::read(directory.join("tests/snapshots.json")).unwrap();
+    let report = TestReport::parse(&output.stdout).unwrap();
+    fs::remove_dir_all(directory).unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(SnapshotStore::parse(&snapshot).unwrap().entries(), &[]);
+    assert_eq!(report.metadata().snapshot_policy.mode, SnapshotMode::Update);
+    assert_eq!(report.metadata().snapshot_policy.published, Some(true));
+}
+
+#[test]
+fn snapshot_store_inputs_are_validated_before_worker_execution() {
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    let sidecar = fs::read_to_string(directory.join("tondo.test.json")).unwrap();
+    let sidecar = sidecar.replace(
+        "\"snapshot_stores\":[]",
+        "\"snapshot_stores\":[{\"name\":\"default\",\"path\":\"tests/snapshots.json\",\"update\":false,\"max_bytes\":1048576}]",
+    );
+    fs::write(directory.join("tondo.test.json"), &sidecar).unwrap();
+    let missing = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--manifest", "tondo.json"])
+        .output()
+        .unwrap();
+    assert_eq!(missing.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("cannot load snapshot store"));
+    fs::remove_dir_all(directory).unwrap();
+
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    let sidecar = fs::read_to_string(directory.join("tondo.test.json")).unwrap();
+    let sidecar = sidecar.replace(
+        "\"snapshot_stores\":[]",
+        "\"snapshot_stores\":[{\"name\":\"default\",\"path\":\"tests/snapshots.json\",\"update\":false,\"max_bytes\":1048576}]",
+    );
+    fs::write(directory.join("tondo.test.json"), &sidecar).unwrap();
+    fs::write(
+        directory.join("tests/snapshots.json"),
+        SnapshotStore::empty("workspace:other@1")
+            .unwrap()
+            .canonical_bytes()
+            .unwrap(),
+    )
+    .unwrap();
+    let wrong_package = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--manifest", "tondo.json"])
+        .output()
+        .unwrap();
+    assert_eq!(wrong_package.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&wrong_package.stderr).contains("belongs to package"));
+    fs::remove_dir_all(directory).unwrap();
+
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    let sidecar = fs::read_to_string(directory.join("tondo.test.json")).unwrap();
+    let sidecar = sidecar.replace(
+        "\"snapshot_stores\":[]",
+        "\"snapshot_stores\":[{\"name\":\"default\",\"path\":\"tests/snapshots.json\",\"update\":false,\"max_bytes\":1}]",
+    );
+    fs::write(directory.join("tondo.test.json"), &sidecar).unwrap();
+    let too_large = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--manifest", "tondo.json", "--update-snapshots"])
+        .output()
+        .unwrap();
+    assert_eq!(too_large.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&too_large.stderr).contains("closed 1 byte limit"));
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn hidden_worker_reports_infrastructure_without_leaking_process_errors() {
+    let missing = std::env::temp_dir().join(format!(
+        "tondo-hidden-worker-missing-{}-{}.json",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["__test-worker", "--manifest"])
+        .arg(&missing)
+        .args(["--entry", "missing"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["status"], "infrastructure");
+    assert!(
+        response["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("cannot read manifest")
     );
 }
 

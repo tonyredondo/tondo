@@ -59,6 +59,10 @@ pub struct TestCliPlan {
     pub list: bool,
     pub jobs: u32,
     pub timeout_ms: Option<u64>,
+    /// Keeps the distinction between the default and an explicit `none`.
+    /// The parser accepts the spelling for compatibility, while the closed
+    /// project plan decides whether execution may disable its wall-clock cap.
+    pub timeout_explicit: bool,
     pub retry: u32,
     pub retry_explicit: bool,
     pub repeat: u32,
@@ -86,7 +90,8 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
         order: TestOrder::Canonical,
         list: false,
         jobs: 1,
-        timeout_ms: Some(30_000),
+        timeout_ms: None,
+        timeout_explicit: false,
         retry: 0,
         retry_explicit: false,
         repeat: 1,
@@ -282,6 +287,7 @@ fn parse_value(
         }
         "--timeout" => {
             once_value(seen, "--timeout")?;
+            plan.timeout_explicit = true;
             plan.timeout_ms = if value == "none" {
                 None
             } else {
@@ -585,6 +591,7 @@ mod tests {
         assert_eq!(plan.shard, Some(TestShard { index: 2, count: 8 }));
         assert_eq!(plan.order, TestOrder::Random { seed: Some(0x5eed) });
         assert_eq!(plan.timeout_ms, Some(2_000));
+        assert!(plan.timeout_explicit);
         assert_eq!(plan.retry, 2);
         assert_eq!(plan.reports.len(), 2);
         assert_eq!(plan.diagnostic_format, DiagnosticFormat::Json);
@@ -604,6 +611,7 @@ mod tests {
         .unwrap();
         assert_eq!(plan.order, TestOrder::Random { seed: Some(0xabc) });
         assert_eq!(plan.timeout_ms, None);
+        assert!(plan.timeout_explicit);
     }
 
     #[test]

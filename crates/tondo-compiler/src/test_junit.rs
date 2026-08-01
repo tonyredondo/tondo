@@ -981,6 +981,31 @@ mod tests {
     }
 
     #[test]
+    fn flaky_suite_policy_emits_one_explicit_synthetic_case() {
+        let mut metadata = metadata();
+        metadata.policy.allow_flaky = true;
+        let mut suite = node("application::unit::math", ResultNodeKind::Suite);
+        let mut failed = TestAttempt::new(1, 1, 0, None, AttemptStatus::FailedPanic);
+        failed.failure = Some(crate::test_result::FailureRecord {
+            kind: "panic".into(),
+            code: Some("P0007".into()),
+            message: "first attempt failed".into(),
+            source: None,
+        });
+        suite.attempts = vec![
+            failed,
+            TestAttempt::new(2, 1, 1, Some(1), AttemptStatus::Passed),
+        ];
+        let test = node("application::unit::math::adds", ResultNodeKind::Test);
+        let report =
+            TestReport::assemble(metadata, vec![test.id.clone()], vec![suite], vec![test]).unwrap();
+        let xml =
+            String::from_utf8(JUnitReport::from_report(&report).unwrap().into_bytes()).unwrap();
+        assert!(xml.contains("@flaky"));
+        assert!(xml.contains("flaky-policy"));
+    }
+
+    #[test]
     fn update_snapshot_policy_and_empty_plan_are_serialized_without_execution_payloads() {
         let mut metadata = metadata();
         metadata.snapshot_policy.mode = SnapshotMode::Update;

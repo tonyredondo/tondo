@@ -4270,6 +4270,20 @@ mod tests {
         (resolved, hir)
     }
 
+    #[test]
+    fn trait_dispatch_error_adapters_preserve_the_closed_diagnostic() {
+        let prelude = prelude_trait_dispatch_selection_error(TraitSelectionError::Ambiguous);
+        let (_, hir) = checked("fn value(): Int { 1 }\n");
+        let span = hir
+            .expressions()
+            .next()
+            .expect("the checked expression supplies a diagnostic span")
+            .span();
+        let source = trait_dispatch_selection_error(TraitSelectionError::Ambiguous, span);
+        assert!(prelude.to_string().contains("trait dispatch"));
+        assert!(source.to_string().contains("trait dispatch"));
+    }
+
     fn lowered(source: &str) -> bc::BytecodeProgram {
         let (resolved, hir) = checked(source);
         let mir = lower_to_mir(&resolved, &hir, MirLoweringLimits::default()).unwrap();
@@ -5131,6 +5145,17 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
                 )
             })
         }));
+    }
+
+    #[test]
+    fn aggregate_constants_use_the_shared_lowering_helpers() {
+        let program = lowered(
+            "enum Choice { Empty, Item(Int) }\n\
+             const Pair: (Int, Int) = (1, 2)\n\
+             const Pick: Choice = Choice.Item(42)\n\
+             fn read(): Int { match Pick { Choice.Empty => 0\n Choice.Item(value) => value\n } }\n",
+        );
+        assert!(program.constants.len() >= 2);
     }
 
     #[test]

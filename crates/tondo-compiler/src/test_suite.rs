@@ -606,6 +606,18 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn panicking_suite_actions_are_projected_without_unwinding_the_runner() {
+        let suite = SuiteNode::suite("suite", None::<String>).with_setup(|_| panic!("setup panic"));
+        let test = SuiteNode::test("suite::test", Some("suite"), |_| Ok(()));
+        let plan = SuitePlan::new([suite, test]).unwrap();
+        let report = SuiteRunner::new().run(&plan);
+        assert!(matches!(
+            report.result("suite").unwrap().status(),
+            AttemptStatus::FailedPanic
+        ));
+    }
+
     fn passed_test(id: &str, parent: &str, events: Arc<Mutex<Vec<String>>>) -> SuiteNode {
         let id = id.to_owned();
         SuiteNode::test(id.clone(), Some(parent.to_owned()), move |context| {

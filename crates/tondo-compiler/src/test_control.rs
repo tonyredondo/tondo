@@ -12,6 +12,8 @@ use std::error::Error;
 use std::fmt;
 use std::sync::{Arc, Mutex, MutexGuard};
 
+use serde::{Deserialize, Serialize};
+
 use crate::artifact::sha256;
 use crate::test_plan::TestSourceClass;
 use crate::test_virtual_time::{AutoAdvance, VirtualDomain, VirtualTimeError, WaitKind};
@@ -123,7 +125,7 @@ impl ArtifactEvidence {
 }
 
 /// Snapshot result recorded for one attempt.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SnapshotOutcome {
     Matched {
         expected_sha256: String,
@@ -230,6 +232,258 @@ impl EnvelopeReport {
 
     pub fn stderr(&self) -> &str {
         &self.stderr
+    }
+
+    /// Encode detached evidence for the CLI process-worker transport. This is
+    /// deliberately a private wire format rather than the public test report
+    /// schema: it carries artifact bytes needed by the parent coordinator.
+    pub fn encode_process(&self) -> Result<Vec<u8>, String> {
+        serde_json::to_vec(&ProcessReportWire::from_report(self)).map_err(|error| error.to_string())
+    }
+
+    /// Decode evidence emitted by a same-version hidden worker process.
+    pub fn decode_process(bytes: &[u8]) -> Result<Self, String> {
+        let wire: ProcessReportWire =
+            serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        wire.into_report()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProcessReportWire {
+    phase: u8,
+    terminal: Option<ProcessTerminalWire>,
+    logs: Vec<ProcessLogWire>,
+    tags: BTreeMap<String, String>,
+    artifacts: Vec<ProcessArtifactWire>,
+    snapshots: Vec<ProcessSnapshotWire>,
+    virtual_time: Vec<ProcessVirtualTimeWire>,
+    stdout: String,
+    stderr: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+enum ProcessTerminalWire {
+    FailNow { code: String, message: String },
+    Skipped { reason: String },
+    CleanupFailure { code: String, message: String },
+    ResourceLimit { resource_kind: String },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProcessLogWire {
+    sequence: u64,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProcessArtifactWire {
+    name: String,
+    media_type: String,
+    bytes: Vec<u8>,
+    sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProcessSnapshotWire {
+    name: String,
+    outcome: SnapshotOutcome,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProcessVirtualTimeWire {
+    index: u32,
+    elapsed_ns: i128,
+    settles: u32,
+    advances: u32,
+}
+
+impl ProcessReportWire {
+    fn from_report(report: &EnvelopeReport) -> Self {
+        Self {
+            phase: match report.phase {
+                ExecutionPhase::Setup => 0,
+                ExecutionPhase::Body => 1,
+                ExecutionPhase::Cleanup => 2,
+                ExecutionPhase::Closed => 3,
+            },
+            terminal: report
+                .terminal
+                .as_ref()
+                .map(ProcessTerminalWire::from_terminal),
+            logs: report
+                .logs
+                .iter()
+                .map(|log| ProcessLogWire {
+                    sequence: log.sequence,
+                    message: log.message.clone(),
+                })
+                .collect(),
+            tags: report.tags.clone(),
+            artifacts: report
+                .artifacts
+                .iter()
+                .map(|artifact| ProcessArtifactWire {
+                    name: artifact.name.clone(),
+                    media_type: artifact.media_type.clone(),
+                    bytes: artifact.bytes.clone(),
+                    sha256: artifact.sha256.clone(),
+                })
+                .collect(),
+            snapshots: report
+                .snapshots
+                .iter()
+                .map(|snapshot| ProcessSnapshotWire {
+                    name: snapshot.name.clone(),
+                    outcome: snapshot.outcome.clone(),
+                })
+                .collect(),
+            virtual_time: report
+                .virtual_time
+                .iter()
+                .map(|record| ProcessVirtualTimeWire {
+                    index: record.index,
+                    elapsed_ns: record.elapsed_ns,
+                    settles: record.settles,
+                    advances: record.advances,
+                })
+                .collect(),
+            stdout: report.stdout.clone(),
+            stderr: report.stderr.clone(),
+        }
+    }
+
+    fn into_report(self) -> Result<EnvelopeReport, String> {
+        let phase = match self.phase {
+            0 => ExecutionPhase::Setup,
+            1 => ExecutionPhase::Body,
+            2 => ExecutionPhase::Cleanup,
+            3 => ExecutionPhase::Closed,
+            other => return Err(format!("invalid process report phase {other}")),
+        };
+        Ok(EnvelopeReport {
+            phase,
+            terminal: self.terminal.map(ProcessTerminalWire::into_terminal),
+            logs: self
+                .logs
+                .into_iter()
+                .map(|log| LogRecord {
+                    sequence: log.sequence,
+                    message: log.message,
+                })
+                .collect(),
+            tags: self.tags,
+            artifacts: self
+                .artifacts
+                .into_iter()
+                .map(|artifact| ArtifactEvidence {
+                    name: artifact.name,
+                    media_type: artifact.media_type,
+                    bytes: artifact.bytes,
+                    sha256: artifact.sha256,
+                })
+                .collect(),
+            snapshots: self
+                .snapshots
+                .into_iter()
+                .map(|snapshot| SnapshotEvidence {
+                    name: snapshot.name,
+                    outcome: snapshot.outcome,
+                })
+                .collect(),
+            virtual_time: self
+                .virtual_time
+                .into_iter()
+                .map(|record| VirtualTimeRecord {
+                    index: record.index,
+                    elapsed_ns: record.elapsed_ns,
+                    settles: record.settles,
+                    advances: record.advances,
+                })
+                .collect(),
+            stdout: self.stdout,
+            stderr: self.stderr,
+        })
+    }
+}
+
+impl ProcessTerminalWire {
+    fn from_terminal(terminal: &Terminal) -> Self {
+        match terminal {
+            Terminal::FailNow { code, message } => Self::FailNow {
+                code: (*code).into(),
+                message: message.clone(),
+            },
+            Terminal::Skipped { reason } => Self::Skipped {
+                reason: reason.clone(),
+            },
+            Terminal::CleanupFailure { code, message } => Self::CleanupFailure {
+                code: code.clone(),
+                message: message.clone(),
+            },
+            Terminal::ResourceLimit { kind } => Self::ResourceLimit {
+                resource_kind: (*kind).into(),
+            },
+        }
+    }
+
+    fn into_terminal(self) -> Terminal {
+        match self {
+            Self::FailNow { code, message } => Terminal::FailNow {
+                code: process_code(&code),
+                message,
+            },
+            Self::Skipped { reason } => Terminal::Skipped { reason },
+            Self::CleanupFailure { code, message } => Terminal::CleanupFailure { code, message },
+            Self::ResourceLimit { resource_kind } => Terminal::ResourceLimit {
+                kind: process_kind(&resource_kind),
+            },
+        }
+    }
+}
+
+fn process_code(code: &str) -> &'static str {
+    match code {
+        "E2003" => "E2003",
+        "E2100" => "E2100",
+        "E2200" => "E2200",
+        "E2201" => "E2201",
+        "E3000" => "E3000",
+        "E3001" => "E3001",
+        "E3002" => "E3002",
+        "E3003" => "E3003",
+        "P0007" => "P0007",
+        "P0008" => "P0008",
+        "P2001" => "P2001",
+        "P2002" => "P2002",
+        "P2003" => "P2003",
+        "P2004" => "P2004",
+        "P2005" => "P2005",
+        "P2006" => "P2006",
+        "P2007" => "P2007",
+        "P2008" => "P2008",
+        "R0001" => "R0001",
+        "R0002" => "R0002",
+        "R0003" => "R0003",
+        _ => "E3003",
+    }
+}
+
+fn process_kind(kind: &str) -> &'static str {
+    match kind {
+        "bytes" => "bytes",
+        "artifacts" => "artifacts",
+        "snapshots" => "snapshots",
+        "output" => "output",
+        "memory" => "memory",
+        "instructions" => "instructions",
+        _ => "resource",
     }
 }
 
@@ -404,6 +658,8 @@ struct EnvelopeState {
     snapshots: BTreeMap<String, SnapshotEvidence>,
     expected_snapshots: BTreeMap<String, String>,
     expected_installed: bool,
+    snapshot_update: bool,
+    snapshot_updates: BTreeMap<String, String>,
     virtual_time: Vec<VirtualTimeRecord>,
     virtual_time_active: bool,
     next_child: u64,
@@ -436,6 +692,8 @@ impl EnvelopeHandle {
                 snapshots: BTreeMap::new(),
                 expected_snapshots: BTreeMap::new(),
                 expected_installed: false,
+                snapshot_update: false,
+                snapshot_updates: BTreeMap::new(),
                 virtual_time: Vec::new(),
                 virtual_time_active: false,
                 next_child: 0,
@@ -465,6 +723,21 @@ impl EnvelopeHandle {
         }
         state.expected_snapshots = expected;
         state.expected_installed = true;
+        Ok(())
+    }
+
+    /// Enable update mode for this attempt. Actual values are retained only
+    /// as coordinator-owned update candidates and never enter the public
+    /// report wire format.
+    pub fn with_snapshot_update(&self, enabled: bool) -> Result<(), ControlError> {
+        let mut state = self.lock()?;
+        ensure_open(&state)?;
+        if !state.snapshots.is_empty() {
+            return Err(ControlError::SnapshotConflict {
+                name: "snapshot-update-already-configured".into(),
+            });
+        }
+        state.snapshot_update = enabled;
         Ok(())
     }
 
@@ -687,9 +960,116 @@ impl EnvelopeHandle {
         match outcome {
             SnapshotOutcome::Matched { .. } => Ok(outcome),
             SnapshotOutcome::Missing { .. } | SnapshotOutcome::Mismatched { .. } => {
-                Err(ControlError::SnapshotMismatch { name })
+                if state.snapshot_update {
+                    state.snapshot_updates.insert(name, actual.into());
+                    Ok(outcome)
+                } else {
+                    Err(ControlError::SnapshotMismatch { name })
+                }
             }
         }
+    }
+
+    /// Return update candidates accumulated by this attempt.
+    pub fn snapshot_updates(&self) -> Result<Vec<(String, String)>, ControlError> {
+        Ok(self
+            .lock()?
+            .snapshot_updates
+            .iter()
+            .map(|(name, value)| (name.clone(), value.clone()))
+            .collect())
+    }
+
+    /// Import evidence from a process-isolated child into the coordinator's
+    /// envelope while preserving the coordinator's own limits and lifecycle.
+    pub fn merge_worker_report(
+        &self,
+        report: &EnvelopeReport,
+        updates: &[(String, String)],
+    ) -> Result<(), ControlError> {
+        let mut state = self.lock()?;
+        ensure_open(&state)?;
+        let output_limit = state.limits.output_bytes;
+        let artifact_limit = state.limits.artifact_bytes;
+        for log in &report.logs {
+            reserve(
+                &mut state.used_output,
+                output_limit,
+                log.message.len() as u64,
+                ControlError::OutputLimit,
+            )?;
+            state.sequence = state.sequence.saturating_add(1);
+            let sequence = state.sequence;
+            state.logs.push(LogRecord {
+                sequence,
+                message: log.message.clone(),
+            });
+        }
+        for (key, value) in &report.tags {
+            if let Some(previous) = state.tags.get(key) {
+                if previous != value {
+                    return Err(ControlError::TagConflict { key: key.clone() });
+                }
+            } else {
+                reserve(
+                    &mut state.used_output,
+                    output_limit,
+                    (key.len() + value.len()) as u64,
+                    ControlError::OutputLimit,
+                )?;
+                state.tags.insert(key.clone(), value.clone());
+            }
+        }
+        reserve(
+            &mut state.used_output,
+            output_limit,
+            (report.stdout.len() + report.stderr.len()) as u64,
+            ControlError::OutputLimit,
+        )?;
+        state.stdout.push_str(&report.stdout);
+        state.stderr.push_str(&report.stderr);
+        for artifact in &report.artifacts {
+            if state.artifacts.contains_key(&artifact.name) {
+                return Err(ControlError::ArtifactConflict {
+                    name: artifact.name.clone(),
+                });
+            }
+            reserve(
+                &mut state.used_artifacts,
+                artifact_limit,
+                artifact.bytes.len() as u64,
+                ControlError::ArtifactLimit,
+            )?;
+            state
+                .artifacts
+                .insert(artifact.name.clone(), artifact.clone());
+        }
+        for snapshot in &report.snapshots {
+            if state.snapshots.contains_key(&snapshot.name) {
+                return Err(ControlError::SnapshotConflict {
+                    name: snapshot.name.clone(),
+                });
+            }
+            state
+                .snapshots
+                .insert(snapshot.name.clone(), snapshot.clone());
+        }
+        state
+            .virtual_time
+            .extend(report.virtual_time.iter().cloned());
+        for (name, value) in updates {
+            if state
+                .snapshot_updates
+                .insert(name.clone(), value.clone())
+                .is_some()
+            {
+                return Err(ControlError::SnapshotConflict { name: name.clone() });
+            }
+        }
+        if state.terminal.is_none() {
+            state.terminal = report.terminal.clone();
+        }
+        Ok(())
     }
 
     pub fn with_virtual_time<T>(
@@ -1084,6 +1464,123 @@ mod tests {
         assert_eq!(report.tags().get("suite"), Some(&"unit".into()));
         assert_eq!(report.stdout(), "out");
         assert_eq!(report.stderr(), "err");
+    }
+
+    #[test]
+    fn process_report_round_trip_preserves_evidence() {
+        let envelope = EnvelopeHandle::new("worker", limits());
+        envelope.log("message").unwrap();
+        envelope
+            .tags(BTreeMap::from([("suite".into(), "unit".into())]))
+            .unwrap();
+        envelope
+            .attach("trace", "text/plain", b"bytes".to_vec())
+            .unwrap();
+        envelope.snapshot("golden", "value").unwrap_err();
+        envelope.stdout("out").unwrap();
+        let report = envelope.report().unwrap();
+        let decoded = EnvelopeReport::decode_process(&report.encode_process().unwrap()).unwrap();
+        assert_eq!(decoded.logs(), report.logs());
+        assert_eq!(decoded.tags(), report.tags());
+        assert_eq!(decoded.artifacts(), report.artifacts());
+        assert_eq!(decoded.snapshots(), report.snapshots());
+        assert_eq!(decoded.stdout(), "out");
+    }
+
+    #[test]
+    fn process_report_round_trip_maps_every_terminal_wire_vocabulary() {
+        let codes = [
+            "E2003", "E2100", "E2200", "E2201", "E3000", "E3001", "E3002", "E3003", "P0007",
+            "P0008", "P2001", "P2002", "P2003", "P2004", "P2005", "P2006", "P2007", "P2008",
+            "R0001", "R0002", "R0003",
+        ];
+        for code in codes {
+            let report = EnvelopeReport {
+                phase: ExecutionPhase::Closed,
+                terminal: Some(Terminal::FailNow {
+                    code,
+                    message: "failed".into(),
+                }),
+                logs: Vec::new(),
+                tags: BTreeMap::new(),
+                artifacts: Vec::new(),
+                snapshots: Vec::new(),
+                virtual_time: Vec::new(),
+                stdout: String::new(),
+                stderr: String::new(),
+            };
+            assert_eq!(
+                EnvelopeReport::decode_process(&report.encode_process().unwrap())
+                    .unwrap()
+                    .terminal(),
+                report.terminal()
+            );
+        }
+        for kind in [
+            "bytes",
+            "artifacts",
+            "snapshots",
+            "output",
+            "memory",
+            "instructions",
+        ] {
+            let report = EnvelopeReport {
+                phase: ExecutionPhase::Closed,
+                terminal: Some(Terminal::ResourceLimit { kind }),
+                logs: Vec::new(),
+                tags: BTreeMap::new(),
+                artifacts: Vec::new(),
+                snapshots: Vec::new(),
+                virtual_time: Vec::new(),
+                stdout: String::new(),
+                stderr: String::new(),
+            };
+            assert!(EnvelopeReport::decode_process(&report.encode_process().unwrap()).is_ok());
+        }
+    }
+
+    #[test]
+    fn snapshot_update_mode_accepts_drift_and_exposes_private_candidates() {
+        let envelope = EnvelopeHandle::new("worker", limits());
+        envelope
+            .with_expected_snapshots(BTreeMap::from([("golden".into(), "old".into())]))
+            .unwrap();
+        envelope.with_snapshot_update(true).unwrap();
+        assert!(matches!(
+            envelope.snapshot("golden", "new").unwrap(),
+            SnapshotOutcome::Mismatched { .. }
+        ));
+        assert_eq!(
+            envelope.snapshot_updates().unwrap(),
+            [("golden".into(), "new".into())]
+        );
+    }
+
+    #[test]
+    fn merged_worker_evidence_is_limited_and_resequenced() {
+        let child = EnvelopeHandle::new("child", limits());
+        child.log("child-log").unwrap();
+        child.stdout("child-out").unwrap();
+        let report = child.report().unwrap();
+        let parent = EnvelopeHandle::new("parent", limits());
+        parent.log("parent-log").unwrap();
+        parent
+            .merge_worker_report(&report, &[("golden".into(), "value".into())])
+            .unwrap();
+        let merged = parent.report().unwrap();
+        assert_eq!(
+            merged
+                .logs()
+                .iter()
+                .map(LogRecord::sequence)
+                .collect::<Vec<_>>(),
+            [1, 2]
+        );
+        assert_eq!(merged.stdout(), "child-out");
+        assert_eq!(
+            parent.snapshot_updates().unwrap(),
+            [("golden".into(), "value".into())]
+        );
     }
 
     #[test]

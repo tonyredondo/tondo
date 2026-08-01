@@ -1126,6 +1126,15 @@ mod tests {
         assert!(logical_path(Path::new("/root"), Path::new("/elsewhere")).is_err());
     }
 
+    #[test]
+    fn command_entry_and_io_errors_have_stable_shapes() {
+        assert_eq!(main(), ExitCode::from(2));
+        assert_eq!(io_error(std::io::Error::other("broken")), "broken");
+        let missing =
+            env::temp_dir().join(format!("tondo-maintain-missing-{}", std::process::id()));
+        assert!(bless_at(&missing).is_err());
+    }
+
     fn copy_directory(source: &Path, destination: &Path) {
         fs::create_dir_all(destination).expect("destination directory must be creatable");
         let mut entries = fs::read_dir(source)

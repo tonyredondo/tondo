@@ -274,6 +274,7 @@ impl Error for RuntimeConfigError {}
 pub struct LeafProgram {
     id: String,
     expected_snapshots: BTreeMap<String, String>,
+    snapshot_update: bool,
     body: Arc<LeafBody>,
 }
 
@@ -285,6 +286,7 @@ impl std::fmt::Debug for LeafProgram {
             .debug_struct("LeafProgram")
             .field("id", &self.id)
             .field("expected_snapshots", &self.expected_snapshots)
+            .field("snapshot_update", &self.snapshot_update)
             .finish_non_exhaustive()
     }
 }
@@ -294,6 +296,7 @@ impl Clone for LeafProgram {
         Self {
             id: self.id.clone(),
             expected_snapshots: self.expected_snapshots.clone(),
+            snapshot_update: self.snapshot_update,
             body: self.body.clone(),
         }
     }
@@ -307,6 +310,7 @@ impl LeafProgram {
         Self {
             id: id.into(),
             expected_snapshots: BTreeMap::new(),
+            snapshot_update: false,
             body: Arc::new(body),
         }
     }
@@ -316,6 +320,11 @@ impl LeafProgram {
         snapshots: impl IntoIterator<Item = (String, String)>,
     ) -> Self {
         self.expected_snapshots = snapshots.into_iter().collect();
+        self
+    }
+
+    pub fn with_snapshot_update(mut self, enabled: bool) -> Self {
+        self.snapshot_update = enabled;
         self
     }
 
@@ -343,6 +352,19 @@ impl std::fmt::Debug for WorkerContext {
 impl WorkerContext {
     pub fn worker(&self) -> WorkerInfo {
         self.worker.info
+    }
+
+    /// Import evidence emitted by a process-isolated child worker. The
+    /// coordinator keeps ownership of the public envelope and limits.
+    pub fn merge_worker_report(
+        &self,
+        report: &EnvelopeReport,
+        updates: &[(String, String)],
+    ) -> Result<(), RunError> {
+        self.worker
+            .envelope
+            .merge_worker_report(report, updates)
+            .map_err(RunError::from_control)
     }
 
     pub fn log(&self, message: impl Into<String>) -> Result<(), RunError> {
@@ -634,6 +656,7 @@ pub struct LeafResult {
     worker: WorkerInfo,
     report: EnvelopeReport,
     error: Option<RunError>,
+    snapshot_updates: Vec<(String, String)>,
     cleanup_executed: bool,
     forced_termination: bool,
 }
@@ -657,6 +680,10 @@ impl LeafResult {
 
     pub fn error(&self) -> Option<&RunError> {
         self.error.as_ref()
+    }
+
+    pub fn snapshot_updates(&self) -> &[(String, String)] {
+        &self.snapshot_updates
     }
 
     pub const fn cleanup_executed(&self) -> bool {
@@ -791,6 +818,7 @@ fn run_leaf(
                 worker,
                 report: empty_report(),
                 error: Some(error),
+                snapshot_updates: Vec::new(),
                 cleanup_executed: false,
                 forced_termination: false,
             };
@@ -809,6 +837,25 @@ fn run_leaf(
             worker,
             report: empty_report(),
             error: Some(error),
+            snapshot_updates: Vec::new(),
+            cleanup_executed: false,
+            forced_termination: false,
+        };
+    }
+    if let Err(error) = context
+        .worker
+        .envelope
+        .with_snapshot_update(program.snapshot_update)
+        .map_err(RunError::from_control)
+    {
+        let _ = bootstrap.revoke();
+        return LeafResult {
+            id: program.id,
+            status: RuntimeStatus::Infrastructure,
+            worker,
+            report: empty_report(),
+            error: Some(error),
+            snapshot_updates: Vec::new(),
             cleanup_executed: false,
             forced_termination: false,
         };
@@ -832,6 +879,11 @@ fn run_leaf(
         .envelope
         .report()
         .unwrap_or_else(|_| empty_report());
+    let snapshot_updates = context
+        .worker
+        .envelope
+        .snapshot_updates()
+        .unwrap_or_default();
     let status = classify(&final_error, report.terminal(), forced);
     let _ = bootstrap.revoke();
     LeafResult {
@@ -840,6 +892,7 @@ fn run_leaf(
         worker,
         report,
         error: final_error,
+        snapshot_updates,
         cleanup_executed,
         forced_termination: forced,
     }
@@ -939,6 +992,14 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_worker_reports_are_closed_and_detached() {
+        let report = empty_report();
+        assert_eq!(report.phase(), ExecutionPhase::Closed);
+        assert!(report.logs().is_empty());
+        assert!(report.stdout().is_empty());
+    }
 
     fn config() -> RuntimeConfig {
         RuntimeConfig::new(2, EnvelopeLimits::new(1_000, 1_000, 1_000)).unwrap()
@@ -1199,6 +1260,18 @@ mod tests {
                 .status(),
             RuntimeStatus::FailedPanic
         );
+    }
+
+    #[test]
+    fn snapshot_update_candidates_leave_the_leaf_passing() {
+        let runner = RuntimeRunner::new(config()).unwrap();
+        let program = LeafProgram::new("update", |context| context.snapshot("golden", "new"))
+            .with_expected_snapshots([(String::from("golden"), String::from("old"))])
+            .with_snapshot_update(true);
+        let report = runner.run(vec![program]).unwrap();
+        let leaf = &report.leaves()[0];
+        assert_eq!(leaf.status(), RuntimeStatus::Passed);
+        assert_eq!(leaf.snapshot_updates(), [("golden".into(), "new".into())]);
     }
 
     #[test]

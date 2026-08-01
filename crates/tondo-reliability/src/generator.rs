@@ -223,6 +223,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn hex_encoding_is_lowercase_and_lossless() {
+        assert_eq!(encode_hex(&[0x00, 0x0f, 0xa5, 0xff]), "000fa5ff");
+    }
+
+    #[test]
     fn same_seed_replays_the_same_generation() {
         let mut left = Generator::new(42);
         let mut right = Generator::new(42);

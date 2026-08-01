@@ -52,7 +52,10 @@ ordering, and the absence of source bytes from the public canonical plan.
 
 `UTEST-INPUTS-PLAN-001` now closes public/secret input identity and
 reproducibility in the separate value-free `TestInputPlan`; its contract is
-documented in `test-input-plan.md`. Discovery, CODEOWNERS file matching,
-selectors, workers, lifecycle, reporters, and input materialization consume
-these two closed plans in later tasks; they are intentionally not hidden in
-either parser.
+documented in `test-input-plan.md`. The CLI consumes this plan from the
+canonical `tondo.test.json` sibling of the manifest before discovery. It loads
+declared snapshot stores as immutable inputs, uses the closed timeout as the
+upper bound for each process-isolated leaf worker, and publishes snapshot
+updates only through an all-passing atomic stage. Discovery, CODEOWNERS file
+matching, selectors, lifecycle, reporters, and input materialization remain
+separate consumers; they are intentionally not hidden in this parser.

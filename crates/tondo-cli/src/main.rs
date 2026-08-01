@@ -2,10 +2,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Child, Command, ExitCode, Stdio};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use serde::{Deserialize, Serialize};
 
 use tondo_compiler::driver::{
     BuildTarget, CompilationRequest, CompilationStatus, DiagnosticFormat, Edition, HostProfile,
@@ -18,6 +21,7 @@ use tondo_compiler::source::{
 };
 use tondo_compiler::test_control::{EnvelopeLimits, EnvelopeReport, SnapshotOutcome, Terminal};
 use tondo_compiler::test_glob::GlobPattern;
+use tondo_compiler::test_plan::TestProjectPlan;
 use tondo_compiler::test_repeat::{RepeatCampaign, RepeatContext, RepeatPolicy};
 use tondo_compiler::test_report::{
     OrderMode as ReportOrderMode, ReportMetadata, ReportOrder, ReportSelection, ReportShard,
@@ -34,6 +38,7 @@ use tondo_compiler::test_runtime::{
 };
 use tondo_compiler::test_schedule::{OrderMode, ScheduleNode, SchedulePlan, Seed};
 use tondo_compiler::test_shard::ShardSpec;
+use tondo_compiler::test_snapshots::{SnapshotPolicy, SnapshotStore, SnapshotUpdateStage};
 
 mod test_cli;
 
@@ -80,6 +85,9 @@ fn main() -> ExitCode {
 }
 
 fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
+    if arguments.first().and_then(|argument| argument.to_str()) == Some("__test-worker") {
+        return run_test_worker(&arguments[1..]);
+    }
     match arguments.as_slice() {
         [argument] if argument == "-h" || argument == "--help" => {
             println!("{USAGE}");
@@ -198,6 +206,252 @@ struct OwnershipInfo {
     resolution: tondo_compiler::test_owners::OwnershipResolution,
 }
 
+#[derive(Debug, Clone)]
+struct LoadedSnapshotStore {
+    name: String,
+    relative: PathBuf,
+    max_bytes: u64,
+    store: SnapshotStore,
+}
+
+#[derive(Debug, Clone)]
+struct SnapshotInputs {
+    stores: Vec<LoadedSnapshotStore>,
+    before_sha256: String,
+    update: bool,
+}
+
+impl SnapshotInputs {
+    fn expected_for(&self, node_id: &str) -> Result<BTreeMap<String, String>, TestCommandError> {
+        let mut expected = BTreeMap::new();
+        for loaded in &self.stores {
+            for entry in loaded.store.entries() {
+                if entry.node_id == node_id
+                    && expected
+                        .insert(entry.name.clone(), entry.value.clone())
+                        .is_some()
+                {
+                    return Err(TestCommandError::Usage(format!(
+                        "snapshot name `{}` is duplicated across stores",
+                        entry.name
+                    )));
+                }
+            }
+        }
+        Ok(expected)
+    }
+
+    fn stage_and_publish(
+        &self,
+        base: &Path,
+        plan: &test_cli::TestCliPlan,
+        attempts: &[CliAttempt],
+    ) -> Result<SnapshotMutation, TestCommandError> {
+        if !self.update || self.stores.is_empty() {
+            return Ok(SnapshotMutation {
+                after_sha256: self.before_sha256.clone(),
+                published: false,
+            });
+        }
+        let policy = SnapshotPolicy::new(
+            plan.jobs,
+            matches!(plan.order, test_cli::TestOrder::Canonical),
+            plan.shard.is_some(),
+            plan.retry > 0,
+            plan.repeat > 1,
+            plan.allow_flaky,
+        );
+        let mut stages = self
+            .stores
+            .iter()
+            .map(|loaded| {
+                SnapshotUpdateStage::new(loaded.store.clone(), policy)
+                    .map_err(|error| TestCommandError::Usage(error.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        for attempt in attempts {
+            for (name, value) in &attempt.snapshot_updates {
+                let matches = self
+                    .stores
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, loaded)| {
+                        loaded
+                            .store
+                            .entries()
+                            .iter()
+                            .any(|entry| entry.node_id == attempt.id && entry.name == *name)
+                    })
+                    .map(|(index, _)| index)
+                    .collect::<Vec<_>>();
+                let index = match matches.as_slice() {
+                    [index] => *index,
+                    [] if self.stores.len() == 1 => 0,
+                    [] => {
+                        return Err(TestCommandError::Usage(format!(
+                            "new snapshot `{name}` is ambiguous across stores"
+                        )));
+                    }
+                    _ => {
+                        return Err(TestCommandError::Usage(format!(
+                            "snapshot `{name}` is duplicated across stores"
+                        )));
+                    }
+                };
+                stages[index]
+                    .stage(&attempt.id, name, value)
+                    .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+            }
+        }
+        if attempts
+            .iter()
+            .all(|attempt| attempt.status == RuntimeStatus::Passed)
+        {
+            for stage in &mut stages {
+                stage.mark_success();
+            }
+            let mut staged_stores = Vec::with_capacity(stages.len());
+            for (stage, loaded) in stages.iter().zip(&self.stores) {
+                let staged = stage
+                    .staged_store()
+                    .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+                let staged_size = staged
+                    .canonical_bytes()
+                    .map_err(|error| TestCommandError::Internal(error.to_string()))?
+                    .len() as u64;
+                if staged_size > loaded.max_bytes {
+                    return Err(TestCommandError::Usage(format!(
+                        "snapshot store `{}` exceeds its closed {} byte limit",
+                        loaded.relative.display(),
+                        loaded.max_bytes
+                    )));
+                }
+                staged_stores.push(staged);
+            }
+            let mut published_hashes = Vec::with_capacity(stages.len());
+            for ((stage, _staged), loaded) in stages.iter_mut().zip(staged_stores).zip(&self.stores)
+            {
+                let published = stage
+                    .publish(base, &loaded.relative)
+                    .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+                published_hashes.push((
+                    loaded.name.as_str(),
+                    published
+                        .content_hash()
+                        .map_err(|error| TestCommandError::Internal(error.to_string()))?,
+                ));
+            }
+            Ok(SnapshotMutation {
+                after_sha256: combined_store_hash(&published_hashes),
+                published: true,
+            })
+        } else {
+            Ok(SnapshotMutation {
+                after_sha256: self.before_sha256.clone(),
+                published: false,
+            })
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SnapshotMutation {
+    after_sha256: String,
+    published: bool,
+}
+
+fn combined_store_hash(stores: &[(&str, String)]) -> String {
+    if let [(_, hash)] = stores {
+        return hash.strip_prefix("sha256:").unwrap_or(hash).to_owned();
+    }
+    let mut bytes = Vec::new();
+    for (name, hash) in stores {
+        bytes.extend_from_slice(name.as_bytes());
+        bytes.push(0);
+        bytes.extend_from_slice(hash.as_bytes());
+        bytes.push(0);
+    }
+    tondo_compiler::artifact::sha256(&bytes)
+        .strip_prefix("sha256:")
+        .unwrap_or_default()
+        .to_owned()
+}
+
+fn load_snapshot_inputs(
+    base: &Path,
+    request: &CompilationRequest,
+    test_plan: &TestProjectPlan,
+    update: bool,
+) -> Result<SnapshotInputs, TestCommandError> {
+    let package = request.packages().root().as_str();
+    let mut stores = Vec::new();
+    for descriptor in test_plan.snapshot_stores() {
+        let relative = PathBuf::from(descriptor.path());
+        let path = base.join(&relative);
+        let store = if update && !path.exists() {
+            SnapshotStore::empty(package)
+                .map_err(|error| TestCommandError::Usage(error.to_string()))?
+        } else {
+            SnapshotStore::load(base, &relative).map_err(|error| {
+                TestCommandError::Usage(format!(
+                    "cannot load snapshot store `{}`: {error}",
+                    descriptor.path()
+                ))
+            })?
+        };
+        if store.package != package {
+            return Err(TestCommandError::Usage(format!(
+                "snapshot store `{}` belongs to package `{}` instead of `{package}`",
+                descriptor.path(),
+                store.package
+            )));
+        }
+        let canonical_size = store
+            .canonical_bytes()
+            .map_err(|error| TestCommandError::Usage(error.to_string()))?
+            .len() as u64;
+        if canonical_size > descriptor.max_bytes() {
+            return Err(TestCommandError::Usage(format!(
+                "snapshot store `{}` exceeds its closed {} byte limit",
+                descriptor.path(),
+                descriptor.max_bytes()
+            )));
+        }
+        stores.push(LoadedSnapshotStore {
+            name: descriptor.name().to_owned(),
+            relative,
+            max_bytes: descriptor.max_bytes(),
+            store,
+        });
+    }
+    let mut hashes = Vec::with_capacity(stores.len());
+    for store in &stores {
+        hashes.push((
+            store.name.as_str(),
+            store
+                .store
+                .content_hash()
+                .map_err(|error| TestCommandError::Usage(error.to_string()))?,
+        ));
+    }
+    let before_sha256 = if hashes.is_empty() {
+        SnapshotStore::empty(package)
+            .map_err(|error| TestCommandError::Internal(error.to_string()))?
+            .content_hash()
+            .map_err(|error| TestCommandError::Internal(error.to_string()))?
+            .strip_prefix("sha256:")
+            .unwrap_or_default()
+            .to_owned()
+    } else {
+        combined_store_hash(&hashes)
+    };
+    Ok(SnapshotInputs {
+        stores,
+        before_sha256,
+        update,
+    })
+}
+
 fn resolve_ownership(
     plan: &test_cli::TestCliPlan,
     base: &Path,
@@ -293,6 +547,34 @@ fn execute_test_plan(
     let lockfile_bytes = read_input(&lockfile, "lockfile").map_err(TestCommandError::Usage)?;
     let project = ProjectPlan::parse(&manifest, &lockfile_bytes)
         .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+    let test_plan_path = base.join("tondo.test.json");
+    let test_plan_bytes =
+        read_input(&test_plan_path, "test plan").map_err(TestCommandError::Usage)?;
+    let test_project_plan = project
+        .parse_test_plan(&test_plan_bytes)
+        .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+    if test_project_plan
+        .canonical_bytes()
+        .map_err(|error| TestCommandError::Usage(error.to_string()))?
+        != test_plan_bytes
+    {
+        return Err(TestCommandError::Usage(
+            "test plan is valid but not in canonical form".into(),
+        ));
+    }
+    let mut execution_plan = plan.clone();
+    if !execution_plan.timeout_explicit && execution_plan.timeout_ms.is_none() {
+        execution_plan.timeout_ms = Some(test_project_plan.limits().timeout_ms());
+    } else if execution_plan.timeout_explicit && execution_plan.timeout_ms.is_none() {
+        return Err(TestCommandError::Usage(
+            "`--timeout none` cannot disable the closed test-plan wall-clock limit".into(),
+        ));
+    } else if execution_plan.timeout_ms > Some(test_project_plan.limits().timeout_ms()) {
+        return Err(TestCommandError::Usage(format!(
+            "`--timeout` cannot exceed the closed test-plan limit of {}ms",
+            test_project_plan.limits().timeout_ms()
+        )));
+    }
     let mut supplied = BTreeMap::new();
     for input in project.required_inputs() {
         let bytes = read_input(
@@ -307,17 +589,23 @@ fn execute_test_plan(
         .map_err(|error| TestCommandError::Usage(error.to_string()))?
         .into_compilation_request(
             Operation::Check,
-            plan.diagnostic_format,
+            execution_plan.diagnostic_format,
             ResourceLimits::default(),
         )
         .map_err(|error| TestCommandError::Usage(error.to_string()))?;
     let request = Arc::new(request);
-    let ownership = resolve_ownership(plan, base)?;
+    let snapshot_inputs = load_snapshot_inputs(
+        base,
+        &request,
+        &test_project_plan,
+        execution_plan.update_snapshots,
+    )?;
+    let ownership = resolve_ownership(&execution_plan, base)?;
     let entries = discover_tests(&request)?;
-    let selected = select_test_entries(entries, plan)?;
+    let selected = select_test_entries(entries, &execution_plan)?;
     if selected.is_empty() {
-        if plan.allow_empty {
-            if plan.list {
+        if execution_plan.allow_empty {
+            if execution_plan.list {
                 return Ok(0);
             }
             eprintln!("tondo: no tests selected");
@@ -327,9 +615,15 @@ fn execute_test_plan(
             "tondo: no tests matched the selection".into(),
         ));
     }
-    if plan.list {
-        if plan.test_format == test_cli::TestFormat::Json {
-            let list = build_test_list(&request, plan, &selected, &ownership)?;
+    if execution_plan.list {
+        if execution_plan.test_format == test_cli::TestFormat::Json {
+            let list = build_test_list(
+                &request,
+                &execution_plan,
+                &selected,
+                &ownership,
+                &snapshot_inputs,
+            )?;
             let bytes = list
                 .canonical_bytes()
                 .map_err(|error| TestCommandError::Internal(error.to_string()))?;
@@ -346,56 +640,76 @@ fn execute_test_plan(
         return Ok(0);
     }
 
-    let ordered = order_test_entries(selected, plan)?;
+    let ordered = order_test_entries(selected, &execution_plan)?;
+    let worker_manifest = manifest_path.to_owned();
+    let worker_timeout = execution_plan.timeout_ms;
+    let worker_update_snapshots = execution_plan.update_snapshots;
     let programs = ordered
         .iter()
         .map(|entry| {
             let id = entry.id().to_owned();
-            let base_request = Arc::clone(&request);
-            let entry = entry.clone();
-            Ok(LeafProgram::new(id, move |context| {
-                let request = base_request.for_test_entry(&entry).map_err(|error| {
-                    RunError::Infrastructure {
-                        message: error.to_string(),
-                    }
-                })?;
-                let output = execute(request).map_err(|error| RunError::Infrastructure {
-                    message: error.to_string(),
-                })?;
-                if !output.stdout().is_empty() {
-                    context.stdout(String::from_utf8_lossy(output.stdout()).into_owned())?;
-                }
-                if output.status() == CompilationStatus::Success {
-                    Ok(())
-                } else {
-                    let diagnostic = output.diagnostics().human();
-                    let message = if diagnostic.is_empty() {
-                        "test body failed".to_owned()
-                    } else {
-                        diagnostic
-                    };
-                    context.stderr(message.clone())?;
-                    Err(RunError::Error {
-                        code: "T3001".into(),
-                        message,
-                    })
-                }
+            let worker_manifest = worker_manifest.clone();
+            Ok(LeafProgram::new(id.clone(), move |context| {
+                let response = spawn_test_worker(
+                    &worker_manifest,
+                    &id,
+                    worker_timeout,
+                    worker_update_snapshots,
+                )?;
+                let report = EnvelopeReport::decode_process(&response.report)
+                    .map_err(|message| RunError::Infrastructure { message })?;
+                let updates = response
+                    .updates
+                    .iter()
+                    .map(|update| (update.name.clone(), update.value.clone()))
+                    .collect::<Vec<_>>();
+                context.merge_worker_report(&report, &updates)?;
+                response.error.map_or_else(
+                    || {
+                        if response.status == "passed" {
+                            Ok(())
+                        } else {
+                            Err(RunError::Infrastructure {
+                                message: format!("worker returned status `{}`", response.status),
+                            })
+                        }
+                    },
+                    WorkerError::into_run_error,
+                )
             }))
         })
         .collect::<Result<Vec<_>, TestCommandError>>()?;
     let runtime = RuntimeRunner::new(
         RuntimeConfig::new(
-            plan.jobs as usize,
-            EnvelopeLimits::new(64 * 1024 * 1024, 64 * 1024 * 1024, 16 * 1024 * 1024),
+            execution_plan.jobs as usize,
+            EnvelopeLimits::new(
+                test_project_plan.limits().output_bytes(),
+                test_project_plan.limits().artifact_bytes(),
+                test_project_plan.limits().snapshot_bytes(),
+            ),
         )
         .map_err(|error| TestCommandError::Internal(error.to_string()))?,
     )
     .map_err(|error| TestCommandError::Internal(error.to_string()))?;
-    let attempts = execute_campaign(&request, plan, &ordered, programs, runtime)?;
-    publish_attempt_artifacts(base, plan, &attempts)?;
-    let report = build_test_report(&request, plan, &ordered, &ownership, &attempts)?;
-    publish_test_outputs(plan, &report)?;
-    if plan.test_format == test_cli::TestFormat::Json {
+    let attempts = execute_campaign(&request, &execution_plan, &ordered, programs, runtime)?;
+    publish_attempt_artifacts(
+        base,
+        &execution_plan,
+        Some(test_project_plan.artifact_store()),
+        &attempts,
+    )?;
+    let snapshot_mutation = snapshot_inputs.stage_and_publish(base, &execution_plan, &attempts)?;
+    let report = build_test_report(
+        &request,
+        &execution_plan,
+        &ordered,
+        &ownership,
+        &attempts,
+        &snapshot_inputs,
+        &snapshot_mutation,
+    )?;
+    publish_test_outputs(&execution_plan, &report)?;
+    if execution_plan.test_format == test_cli::TestFormat::Json {
         print!(
             "{}",
             String::from_utf8(
@@ -408,7 +722,7 @@ fn execute_test_plan(
     } else {
         for test in report.tests() {
             println!("{} {}", status_label(test.status), test.id);
-            if plan.show_output {
+            if execution_plan.show_output {
                 for attempt in &test.attempts {
                     if !attempt.stdout.is_empty() {
                         print!("{}", attempt.stdout);
@@ -423,6 +737,423 @@ fn execute_test_plan(
     let failed = report.summary().failed > 0
         || (plan.deny_skips && report.summary().skipped + report.summary().blocked_skip > 0);
     Ok(u8::from(failed))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerSnapshotUpdate {
+    name: String,
+    value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerError {
+    kind: String,
+    code: Option<String>,
+    message: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerResponse {
+    format: String,
+    status: String,
+    report: Vec<u8>,
+    updates: Vec<WorkerSnapshotUpdate>,
+    error: Option<WorkerError>,
+}
+
+const WORKER_RESPONSE_FORMAT: &str = "tondo-test-worker-process/1";
+
+impl WorkerError {
+    fn from_run_error(error: &RunError) -> Self {
+        let kind = match error {
+            RunError::Error { .. } => "error",
+            RunError::Panic { .. } | RunError::Control(_) => "panic",
+            RunError::ResourceLimit { .. } => "resource-limit",
+            RunError::Timeout | RunError::ForcedTermination { .. } => "timeout",
+            RunError::Infrastructure { .. } => "infrastructure",
+            RunError::Skip { .. } => "skip",
+        };
+        Self {
+            kind: kind.into(),
+            code: error.code().map(str::to_owned),
+            message: error.to_string(),
+        }
+    }
+
+    fn into_run_error(self) -> Result<(), RunError> {
+        let code = self.code.unwrap_or_else(|| "T3001".into());
+        let message = self.message;
+        Err(match self.kind.as_str() {
+            "error" => RunError::Error { code, message },
+            "panic" => RunError::Panic { code, message },
+            "resource-limit" => RunError::ResourceLimit { kind: code },
+            "timeout" => RunError::Timeout,
+            "skip" => RunError::Skip { reason: message },
+            "infrastructure" => RunError::Infrastructure { message },
+            other => RunError::Infrastructure {
+                message: format!("unknown worker error kind `{other}`: {message}"),
+            },
+        })
+    }
+}
+
+fn empty_worker_report() -> Vec<u8> {
+    let envelope = tondo_compiler::test_control::EnvelopeHandle::new(
+        "worker-empty",
+        EnvelopeLimits::new(0, 0, 0),
+    );
+    envelope.close().expect("fresh worker envelope closes");
+    envelope
+        .report()
+        .expect("closed worker envelope reports")
+        .encode_process()
+        .expect("worker empty report encodes")
+}
+
+fn infrastructure_worker_response(error: impl Into<String>) -> WorkerResponse {
+    WorkerResponse {
+        format: WORKER_RESPONSE_FORMAT.into(),
+        status: "infrastructure".into(),
+        report: empty_worker_report(),
+        updates: Vec::new(),
+        error: Some(WorkerError {
+            kind: "infrastructure".into(),
+            code: None,
+            message: error.into(),
+        }),
+    }
+}
+
+fn spawn_test_worker(
+    manifest: &Path,
+    entry: &str,
+    timeout_ms: Option<u64>,
+    update_snapshots: bool,
+) -> Result<WorkerResponse, RunError> {
+    let mut command =
+        Command::new(
+            worker_executable().map_err(|error| RunError::Infrastructure {
+                message: format!("cannot locate tondo worker executable: {error}"),
+            })?,
+        );
+    command
+        .arg("__test-worker")
+        .arg("--manifest")
+        .arg(manifest)
+        .arg("--entry")
+        .arg(entry);
+    if update_snapshots {
+        command.arg("--update-snapshots");
+    }
+    let child = command
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| RunError::Infrastructure {
+            message: format!("cannot spawn isolated test worker: {error}"),
+        })?;
+    let (status, stdout, stderr) = wait_worker(child, timeout_ms)?;
+    if stdout.is_empty() {
+        let detail = String::from_utf8_lossy(&stderr);
+        return Err(RunError::Infrastructure {
+            message: format!(
+                "isolated test worker exited with {status} without a response: {}",
+                detail.trim()
+            ),
+        });
+    }
+    let response: WorkerResponse =
+        serde_json::from_slice(&stdout).map_err(|error| RunError::Infrastructure {
+            message: format!("invalid isolated test worker response: {error}"),
+        })?;
+    if response.format != WORKER_RESPONSE_FORMAT {
+        return Err(RunError::Infrastructure {
+            message: format!(
+                "unexpected isolated test worker format `{}`",
+                response.format
+            ),
+        });
+    }
+    Ok(response)
+}
+
+fn worker_executable() -> Result<PathBuf, io::Error> {
+    let current = env::current_exe()?;
+    if cfg!(test)
+        && let Some(deps) = current.parent()
+        && deps.file_name() == Some(OsStr::new("deps"))
+        && let Some(target) = deps.parent()
+    {
+        let binary = target.join(if cfg!(windows) { "tondo.exe" } else { "tondo" });
+        if binary.is_file() {
+            return Ok(binary);
+        }
+    }
+    Ok(current)
+}
+
+fn wait_worker(
+    mut child: Child,
+    timeout_ms: Option<u64>,
+) -> Result<(String, Vec<u8>, Vec<u8>), RunError> {
+    // Drain both pipes while the worker is running. Waiting for process exit
+    // before reading would deadlock a valid worker whose bounded report is
+    // larger than the host pipe buffer.
+    let stdout_reader = child.stdout.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            pipe.read_to_end(&mut bytes).map(|_| bytes)
+        })
+    });
+    let stderr_reader = child.stderr.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            pipe.read_to_end(&mut bytes).map(|_| bytes)
+        })
+    });
+    let started = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = join_worker_pipe(stdout_reader, "output")?;
+                let stderr = join_worker_pipe(stderr_reader, "diagnostics")?;
+                return Ok((status.to_string(), stdout, stderr));
+            }
+            Ok(None) => {
+                if timeout_ms.is_some_and(|limit| started.elapsed() >= Duration::from_millis(limit))
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _ = join_worker_pipe(stdout_reader, "output");
+                    let _ = join_worker_pipe(stderr_reader, "diagnostics");
+                    return Err(RunError::Timeout);
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = join_worker_pipe(stdout_reader, "output");
+                let _ = join_worker_pipe(stderr_reader, "diagnostics");
+                return Err(RunError::Infrastructure {
+                    message: format!("cannot poll isolated test worker: {error}"),
+                });
+            }
+        }
+    }
+}
+
+fn join_worker_pipe(
+    reader: Option<std::thread::JoinHandle<io::Result<Vec<u8>>>>,
+    stream: &str,
+) -> Result<Vec<u8>, RunError> {
+    let Some(reader) = reader else {
+        return Ok(Vec::new());
+    };
+    reader
+        .join()
+        .map_err(|_| RunError::Infrastructure {
+            message: format!("isolated worker {stream} reader panicked"),
+        })?
+        .map_err(|error| RunError::Infrastructure {
+            message: format!("cannot read isolated worker {stream}: {error}"),
+        })
+}
+
+fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
+    let mut manifest = None;
+    let mut entry = None;
+    let mut update_snapshots = false;
+    let mut index = 0;
+    while index < arguments.len() {
+        let value = arguments[index]
+            .to_str()
+            .ok_or_else(|| "hidden test-worker arguments must be UTF-8".to_owned())?;
+        match value {
+            "--manifest" => {
+                index += 1;
+                manifest = Some(PathBuf::from(
+                    arguments
+                        .get(index)
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(|| "worker `--manifest` requires a path".to_owned())?,
+                ));
+            }
+            "--entry" => {
+                index += 1;
+                entry = Some(
+                    arguments
+                        .get(index)
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(|| "worker `--entry` requires an id".to_owned())?
+                        .to_owned(),
+                );
+            }
+            "--update-snapshots" => update_snapshots = true,
+            other => return Err(format!("unknown hidden worker option `{other}`")),
+        }
+        index += 1;
+    }
+    let manifest = manifest.ok_or_else(|| "worker manifest is required".to_owned())?;
+    let entry = entry.ok_or_else(|| "worker entry is required".to_owned())?;
+    let response = match execute_test_worker(&manifest, &entry, update_snapshots) {
+        Ok(response) => response,
+        Err(error) => infrastructure_worker_response(error),
+    };
+    let bytes = serde_json::to_vec(&response).map_err(|error| error.to_string())?;
+    io::stdout()
+        .write_all(&bytes)
+        .map_err(|error| format!("cannot write worker response: {error}"))?;
+    io::stdout()
+        .write_all(b"\n")
+        .map_err(|error| format!("cannot finish worker response: {error}"))?;
+    Ok(ExitCode::SUCCESS)
+}
+
+fn execute_test_worker(
+    manifest_path: &Path,
+    entry_id: &str,
+    update_snapshots: bool,
+) -> Result<WorkerResponse, String> {
+    let base = manifest_path.parent().unwrap_or_else(|| Path::new(""));
+    let manifest = read_input(manifest_path, "manifest")?;
+    let lockfile = read_input(&base.join("tondo.lock.json"), "lockfile")?;
+    let project = ProjectPlan::parse(&manifest, &lockfile).map_err(|error| error.to_string())?;
+    let test_plan_bytes = read_input(&base.join("tondo.test.json"), "test plan")?;
+    let test_plan = project
+        .parse_test_plan(&test_plan_bytes)
+        .map_err(|error| error.to_string())?;
+    if test_plan
+        .canonical_bytes()
+        .map_err(|error| error.to_string())?
+        != test_plan_bytes
+    {
+        return Err("test plan is valid but not in canonical form".into());
+    }
+    let mut supplied = BTreeMap::new();
+    for input in project.required_inputs() {
+        let bytes = read_input(
+            &base.join(input.path()),
+            &format!("{} input `{}`", input.kind().as_str(), input.path()),
+        )?;
+        supplied.insert(input.path().to_owned(), Arc::<[u8]>::from(bytes));
+    }
+    let request = project
+        .resolve(&supplied)
+        .map_err(|error| error.to_string())?
+        .into_compilation_request(
+            Operation::Check,
+            DiagnosticFormat::Human,
+            ResourceLimits::default(),
+        )
+        .map_err(|error| error.to_string())?;
+    let request = Arc::new(request);
+    let snapshot_inputs = load_snapshot_inputs(base, &request, &test_plan, update_snapshots)
+        .map_err(format_test_command_error)?;
+    let entries = discover_tests(&request).map_err(|error| error.to_string())?;
+    let entry = entries
+        .into_iter()
+        .find(|entry| entry.id() == entry_id)
+        .ok_or_else(|| format!("test entry `{entry_id}` was not found"))?;
+    let expected = snapshot_inputs
+        .expected_for(entry.id())
+        .map_err(format_test_command_error)?;
+    let base_request = Arc::clone(&request);
+    let body_entry = entry.clone();
+    let program = LeafProgram::new(entry.id().to_owned(), move |context| {
+        let request =
+            base_request
+                .for_test_entry(&body_entry)
+                .map_err(|error| RunError::Infrastructure {
+                    message: error.to_string(),
+                })?;
+        let output = execute(request).map_err(|error| RunError::Infrastructure {
+            message: error.to_string(),
+        })?;
+        if !output.stdout().is_empty() {
+            context.stdout(String::from_utf8_lossy(output.stdout()).into_owned())?;
+        }
+        if output.status() == CompilationStatus::Success {
+            Ok(())
+        } else {
+            let diagnostic = output.diagnostics().human();
+            let message = if diagnostic.is_empty() {
+                "test body failed".to_owned()
+            } else {
+                diagnostic
+            };
+            context.stderr(message.clone())?;
+            Err(RunError::Error {
+                code: "T3001".into(),
+                message,
+            })
+        }
+    })
+    .with_expected_snapshots(expected)
+    .with_snapshot_update(update_snapshots);
+    let limits = test_plan.limits();
+    let runtime = RuntimeRunner::new(
+        RuntimeConfig::new(
+            1,
+            EnvelopeLimits::new(
+                limits.output_bytes(),
+                limits.artifact_bytes(),
+                limits.snapshot_bytes(),
+            ),
+        )
+        .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let report = runtime
+        .run(vec![program])
+        .map_err(|error| error.to_string())?;
+    let leaf = report
+        .leaves()
+        .first()
+        .ok_or_else(|| "worker runtime returned no leaf".to_owned())?;
+    let report_bytes = leaf
+        .report()
+        .encode_process()
+        .map_err(|error| format!("cannot encode worker report: {error}"))?;
+    Ok(WorkerResponse {
+        format: WORKER_RESPONSE_FORMAT.into(),
+        status: runtime_status_wire(leaf.status()).into(),
+        report: report_bytes,
+        updates: leaf
+            .snapshot_updates()
+            .iter()
+            .map(|(name, value)| WorkerSnapshotUpdate {
+                name: name.clone(),
+                value: value.clone(),
+            })
+            .collect(),
+        error: leaf.error().map(WorkerError::from_run_error),
+    })
+}
+
+fn runtime_status_wire(status: RuntimeStatus) -> &'static str {
+    match status {
+        RuntimeStatus::Passed => "passed",
+        RuntimeStatus::Skipped => "skipped",
+        RuntimeStatus::FailedError => "failed-error",
+        RuntimeStatus::FailedPanic => "failed-panic",
+        RuntimeStatus::ResourceLimit => "resource-limit",
+        RuntimeStatus::Timeout => "timeout",
+        RuntimeStatus::Infrastructure => "infrastructure",
+        RuntimeStatus::BlockedSetup => "blocked-setup",
+    }
+}
+
+fn format_test_command_error(error: TestCommandError) -> String {
+    match error {
+        TestCommandError::Usage(message)
+        | TestCommandError::Internal(message)
+        | TestCommandError::Diagnostic(message) => message,
+    }
 }
 
 fn select_test_entries(
@@ -490,7 +1221,7 @@ fn order_test_entries(
         .collect()
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CliAttempt {
     id: String,
     iteration: u32,
@@ -499,6 +1230,7 @@ struct CliAttempt {
     status: RuntimeStatus,
     report: EnvelopeReport,
     error: Option<RunError>,
+    snapshot_updates: Vec<(String, String)>,
 }
 
 fn execute_campaign(
@@ -543,6 +1275,7 @@ fn execute_campaign(
                 status: attempt.status(),
                 report: attempt.report().clone(),
                 error: None,
+                snapshot_updates: Vec::new(),
             })
             .collect());
     }
@@ -580,6 +1313,7 @@ fn execute_campaign(
                 status: attempt.status(),
                 report: attempt.report().clone(),
                 error: None,
+                snapshot_updates: Vec::new(),
             })
             .collect());
     }
@@ -597,6 +1331,7 @@ fn execute_campaign(
             status: leaf.status(),
             report: leaf.report().clone(),
             error: leaf.error().cloned(),
+            snapshot_updates: leaf.snapshot_updates().to_vec(),
         })
         .collect())
 }
@@ -627,8 +1362,18 @@ fn build_test_list(
     plan: &test_cli::TestCliPlan,
     entries: &[tondo_compiler::test_backend::TestEntry],
     ownership: &OwnershipInfo,
+    snapshots: &SnapshotInputs,
 ) -> Result<TestList, TestCommandError> {
-    let metadata = report_metadata(request, plan, ownership)?;
+    let metadata = report_metadata(
+        request,
+        plan,
+        ownership,
+        snapshots,
+        &SnapshotMutation {
+            after_sha256: snapshots.before_sha256.clone(),
+            published: false,
+        },
+    )?;
     let tests = entries
         .iter()
         .map(|entry| {
@@ -653,7 +1398,10 @@ fn build_test_list(
         .collect::<Result<Vec<_>, TestCommandError>>()?;
     TestList::new(
         metadata,
-        empty_snapshot_identity(request)?,
+        SnapshotStoreIdentity {
+            format: tondo_compiler::test_report::TEST_SNAPSHOT_FORMAT.into(),
+            sha256: snapshots.before_sha256.clone(),
+        },
         entries.iter().map(|entry| entry.id().to_owned()).collect(),
         Vec::new(),
         tests,
@@ -661,28 +1409,12 @@ fn build_test_list(
     .map_err(|error| TestCommandError::Internal(error.to_string()))
 }
 
-fn empty_snapshot_identity(
-    request: &CompilationRequest,
-) -> Result<SnapshotStoreIdentity, TestCommandError> {
-    let package = request.packages().root().as_str();
-    let store = tondo_compiler::test_snapshots::SnapshotStore::empty(package)
-        .map_err(|error| TestCommandError::Internal(error.to_string()))?;
-    let hash = store
-        .content_hash()
-        .map_err(|error| TestCommandError::Internal(error.to_string()))?
-        .strip_prefix("sha256:")
-        .unwrap_or_default()
-        .to_owned();
-    Ok(SnapshotStoreIdentity {
-        format: tondo_compiler::test_report::TEST_SNAPSHOT_FORMAT.into(),
-        sha256: hash,
-    })
-}
-
 fn report_metadata(
     request: &CompilationRequest,
     plan: &test_cli::TestCliPlan,
     ownership: &OwnershipInfo,
+    snapshots: &SnapshotInputs,
+    mutation: &SnapshotMutation,
 ) -> Result<ReportMetadata, TestCommandError> {
     let mut metadata = ReportMetadata::default();
     metadata.target.name = request.target().name().to_owned();
@@ -708,6 +1440,9 @@ fn report_metadata(
     } else {
         SnapshotMode::Check
     };
+    metadata.snapshot_policy.before_sha256 = snapshots.before_sha256.clone();
+    metadata.snapshot_policy.after_sha256 = mutation.after_sha256.clone();
+    metadata.snapshot_policy.published = plan.update_snapshots.then_some(mutation.published);
     metadata.selection = match &plan.selector {
         test_cli::TestSelector::All => ReportSelection {
             kind: SelectionKind::All,
@@ -752,8 +1487,10 @@ fn build_test_report(
     entries: &[tondo_compiler::test_backend::TestEntry],
     ownership: &OwnershipInfo,
     attempts: &[CliAttempt],
+    snapshots: &SnapshotInputs,
+    mutation: &SnapshotMutation,
 ) -> Result<TestReport, TestCommandError> {
-    let mut metadata = report_metadata(request, plan, ownership)?;
+    let mut metadata = report_metadata(request, plan, ownership, snapshots, mutation)?;
     metadata.retry.rounds = retry_rounds(plan, entries, attempts);
     let tests = entries
         .iter()
@@ -1023,12 +1760,14 @@ fn skip_reason(source: &CliAttempt) -> String {
 fn publish_attempt_artifacts(
     base: &Path,
     plan: &test_cli::TestCliPlan,
+    artifact_store: Option<&tondo_compiler::test_plan::TestArtifactStore>,
     attempts: &[CliAttempt],
 ) -> Result<(), TestCommandError> {
     let root = plan.artifacts.as_ref().map_or_else(
-        || base.join("target/test-artifacts"),
+        || base.join(artifact_store.map_or("target/test-artifacts", |store| store.path())),
         |path| base.join(path),
     );
+    let max_bytes = artifact_store.map_or(64 * 1024 * 1024, |store| store.max_bytes());
     for (index, attempt) in attempts.iter().enumerate() {
         if attempt.report.artifacts().is_empty() && plan.artifacts.is_none() {
             continue;
@@ -1040,7 +1779,7 @@ fn publish_attempt_artifacts(
         let mut store = tondo_compiler::test_artifacts::ArtifactStore::new(
             &root,
             identity,
-            tondo_compiler::test_artifacts::ArtifactLimits::new(64 * 1024 * 1024, 64),
+            tondo_compiler::test_artifacts::ArtifactLimits::new(max_bytes, 64),
         )
         .map_err(|error| TestCommandError::Internal(error.to_string()))?;
         for evidence in attempt.report.artifacts() {
@@ -1844,6 +2583,7 @@ mod tests {
                 code: "E-test".into(),
                 message: "bad\nvalue".into(),
             }),
+            snapshot_updates: Vec::new(),
         };
         let failure = failure_record(&failed).unwrap();
         assert_eq!(failure.kind, "error");
@@ -1862,6 +2602,7 @@ mod tests {
             error: Some(RunError::Skip {
                 reason: "not applicable".into(),
             }),
+            snapshot_updates: Vec::new(),
         };
         assert_eq!(skip_reason(&skipped), "not applicable");
         assert!(make_test_attempt(2, &skipped).unwrap().skip.is_some());
@@ -1901,7 +2642,7 @@ mod tests {
         assert_eq!(fs::read(&report_path).unwrap(), b"ok");
         let artifacts_plan =
             test_cli::parse(&["test", "--artifacts", "artifacts"].map(OsString::from)).unwrap();
-        publish_attempt_artifacts(&base, &artifacts_plan, &[failed]).unwrap();
+        publish_attempt_artifacts(&base, &artifacts_plan, None, &[failed]).unwrap();
         assert!(base.join("artifacts").exists());
         fs::remove_dir_all(base).unwrap();
 
@@ -1933,7 +2674,19 @@ mod tests {
             tondo_compiler::project::bootstrap_standard_hash(),
             tondo_compiler::artifact::sha256(package_fingerprint.as_bytes()),
         );
-        fs::write(project.join("tondo.lock.json"), lockfile).unwrap();
+        fs::write(project.join("tondo.lock.json"), &lockfile).unwrap();
+        let test_plan = format!(
+            "{{\"format\":\"tondo-test-plan-draft\",\"project\":{{\"manifest_hash\":\"{}\",\"lockfile_hash\":\"{}\"}},\"repository_root\":\"\",\"roots\":[{{\"class\":\"production\",\"physical_path\":\"tests\",\"logical_path\":\"tests\"}}],\"sources\":[{{\"class\":\"production\",\"package\":\"{package_id}\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\",\"input\":\"source:production:tests/smoke.to\"}}],\"dev_dependencies\":[],\"codeowners\":{{\"mode\":\"auto\"}},\"selector\":{{\"kind\":\"none\"}},\"shard\":null,\"order\":{{\"kind\":\"canonical\"}},\"policy\":{{\"jobs\":1,\"allow_empty\":false,\"fail_fast\":false,\"retry\":0,\"repeat\":1}},\"reporters\":[\"human\",\"json\"],\"artifact_store\":{{\"path\":\"target/test-artifacts\",\"content_addressed\":true,\"max_bytes\":1048576}},\"snapshot_stores\":[],\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[],\"features\":[]}},\"time_catalog\":{{\"package\":\"std\",\"module\":\"time\",\"api\":\"monotonic-v1\"}},\"limits\":{{\"timeout_ms\":1000,\"setup_timeout_ms\":1000,\"teardown_timeout_ms\":1000,\"output_bytes\":65536,\"artifact_bytes\":1048576,\"snapshot_bytes\":1048576,\"memory_bytes\":67108864,\"instructions\":1000000,\"virtual_timers\":1024}}}}",
+            tondo_compiler::artifact::sha256(manifest.as_bytes()),
+            tondo_compiler::artifact::sha256(lockfile.as_bytes()),
+        );
+        let project_plan = ProjectPlan::parse(manifest.as_bytes(), lockfile.as_bytes()).unwrap();
+        let test_plan = project_plan
+            .parse_test_plan(test_plan.as_bytes())
+            .unwrap()
+            .canonical_bytes()
+            .unwrap();
+        fs::write(project.join("tondo.test.json"), test_plan).unwrap();
         let manifest_path = project.join("tondo.json");
         let run_plan = test_cli::parse(
             &[
@@ -1971,6 +2724,85 @@ mod tests {
         )
         .unwrap();
         assert_eq!(execute_test_plan(&repeat_plan, &manifest_path).unwrap(), 0);
+        for selector in [
+            &["--filter", "smoke"][..],
+            &["--glob", "*smoke"][..],
+            &["--exact", "smoke"][..],
+            &["--shard", "1/1"][..],
+        ] {
+            let mut values = vec!["test", "--manifest", "tondo.json"];
+            values.extend_from_slice(selector);
+            let selected_plan =
+                test_cli::parse(&values.into_iter().map(OsString::from).collect::<Vec<_>>())
+                    .unwrap();
+            assert_eq!(
+                execute_test_plan(&selected_plan, &manifest_path).unwrap(),
+                0
+            );
+        }
+        let human_list =
+            test_cli::parse(&["test", "--manifest", "tondo.json", "--list"].map(OsString::from))
+                .unwrap();
+        assert_eq!(execute_test_plan(&human_list, &manifest_path).unwrap(), 0);
+        let show_output = test_cli::parse(
+            &["test", "--manifest", "tondo.json", "--show-output"].map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(execute_test_plan(&show_output, &manifest_path).unwrap(), 0);
+        let too_long = test_cli::parse(
+            &["test", "--manifest", "tondo.json", "--timeout", "2s"].map(OsString::from),
+        )
+        .unwrap();
+        assert!(matches!(
+            execute_test_plan(&too_long, &manifest_path),
+            Err(TestCommandError::Usage(message)) if message.contains("cannot exceed")
+        ));
+        let no_match = [
+            OsString::from("test"),
+            OsString::from("--manifest"),
+            manifest_path.clone().into(),
+            OsString::from("--filter"),
+            OsString::from("absent"),
+        ];
+        assert_eq!(
+            run(no_match.to_vec()).unwrap(),
+            ExitCode::from(EXIT_DIAGNOSTIC)
+        );
+        let allow_empty = [
+            OsString::from("test"),
+            OsString::from("--manifest"),
+            manifest_path.clone().into(),
+            OsString::from("--filter"),
+            OsString::from("absent"),
+            OsString::from("--allow-empty"),
+        ];
+        assert_eq!(run(allow_empty.to_vec()).unwrap(), ExitCode::SUCCESS);
+        let allow_empty_list = [
+            OsString::from("test"),
+            OsString::from("--manifest"),
+            manifest_path.clone().into(),
+            OsString::from("--filter"),
+            OsString::from("absent"),
+            OsString::from("--allow-empty"),
+            OsString::from("--list"),
+        ];
+        assert_eq!(run(allow_empty_list.to_vec()).unwrap(), ExitCode::SUCCESS);
+        let invalid_report_parent = project.join("report-parent");
+        fs::write(&invalid_report_parent, b"not a directory").unwrap();
+        let internal_report = [
+            OsString::from("test"),
+            OsString::from("--manifest"),
+            manifest_path.clone().into(),
+            OsString::from("--report"),
+            OsString::from(format!(
+                "json={}",
+                invalid_report_parent.join("report.json").display()
+            )),
+        ];
+        assert_eq!(
+            run(internal_report.to_vec()).unwrap(),
+            ExitCode::from(EXIT_INTERNAL)
+        );
         let plain_source = project.join("main.to");
         fs::write(&plain_source, b"fn main() {}\n").unwrap();
         assert_eq!(
@@ -2003,5 +2835,364 @@ mod tests {
         assert!(validate_source_extension(Path::new("main.txt")).is_err());
         assert!(normalized_absolute_path(Path::new(".")).is_some());
         assert!(read_input(Path::new("missing-input.to"), "source").is_err());
+    }
+
+    #[test]
+    fn worker_wire_and_snapshot_helpers_cover_closed_boundaries() {
+        use tondo_compiler::test_control::{ControlError, EnvelopeHandle};
+
+        let errors = [
+            RunError::Error {
+                code: "T1".into(),
+                message: "error".into(),
+            },
+            RunError::Panic {
+                code: "P1".into(),
+                message: "panic".into(),
+            },
+            RunError::Control(ControlError::FailNow {
+                message: "control".into(),
+            }),
+            RunError::ResourceLimit {
+                kind: "output".into(),
+            },
+            RunError::Timeout,
+            RunError::ForcedTermination {
+                message: "forced".into(),
+            },
+            RunError::Infrastructure {
+                message: "infrastructure".into(),
+            },
+            RunError::Skip {
+                reason: "skip".into(),
+            },
+        ];
+        for error in &errors {
+            assert!(WorkerError::from_run_error(error).into_run_error().is_err());
+        }
+        for kind in [
+            "error",
+            "panic",
+            "resource-limit",
+            "timeout",
+            "skip",
+            "infrastructure",
+            "unknown",
+        ] {
+            assert!(
+                WorkerError {
+                    kind: kind.into(),
+                    code: None,
+                    message: "wire error".into(),
+                }
+                .into_run_error()
+                .is_err()
+            );
+        }
+        for status in [
+            RuntimeStatus::Passed,
+            RuntimeStatus::Skipped,
+            RuntimeStatus::FailedError,
+            RuntimeStatus::FailedPanic,
+            RuntimeStatus::ResourceLimit,
+            RuntimeStatus::Timeout,
+            RuntimeStatus::Infrastructure,
+            RuntimeStatus::BlockedSetup,
+        ] {
+            assert!(!runtime_status_wire(status).is_empty());
+        }
+        assert_eq!(
+            format_test_command_error(TestCommandError::Usage("u".into())),
+            "u"
+        );
+        assert_eq!(
+            format_test_command_error(TestCommandError::Internal("i".into())),
+            "i"
+        );
+        assert_eq!(
+            format_test_command_error(TestCommandError::Diagnostic("d".into())),
+            "d"
+        );
+        assert!(EnvelopeReport::decode_process(&empty_worker_report()).is_ok());
+        let infrastructure = infrastructure_worker_response("worker failed");
+        assert_eq!(infrastructure.status, "infrastructure");
+        assert_eq!(
+            infrastructure
+                .error
+                .as_ref()
+                .map(|error| error.message.as_str()),
+            Some("worker failed")
+        );
+        assert!(!combined_store_hash(&[]).is_empty());
+        assert_eq!(combined_store_hash(&[("one", "sha256:abc".into())]), "abc");
+        assert_eq!(combined_store_hash(&[("one", "abc".into())]), "abc");
+        let combined =
+            combined_store_hash(&[("one", "sha256:a".into()), ("two", "sha256:b".into())]);
+        assert_eq!(combined.len(), 64);
+
+        let empty_envelope =
+            EnvelopeHandle::new("snapshot-test", EnvelopeLimits::new(4096, 4096, 4096));
+        empty_envelope.close().unwrap();
+        let report = empty_envelope.report().unwrap();
+        let plan = test_cli::parse(&arguments(&["test", "--update-snapshots"])).unwrap();
+        let attempt = CliAttempt {
+            id: "pkg::production::smoke::smoke".into(),
+            iteration: 1,
+            round: 0,
+            unit: None,
+            status: RuntimeStatus::Passed,
+            report: report.clone(),
+            error: None,
+            snapshot_updates: vec![("new-value".into(), "value".into())],
+        };
+        let base = std::env::temp_dir().join(format!(
+            "tondo-cli-snapshot-boundary-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&base).unwrap();
+        let empty_store = SnapshotStore::empty("pkg").unwrap();
+        let inputs = SnapshotInputs {
+            stores: vec![LoadedSnapshotStore {
+                name: "default".into(),
+                relative: PathBuf::from("snapshots.json"),
+                max_bytes: 4096,
+                store: empty_store.clone(),
+            }],
+            before_sha256: "before".into(),
+            update: true,
+        };
+        assert!(inputs.expected_for("missing").unwrap().is_empty());
+        let published = inputs
+            .stage_and_publish(&base, &plan, std::slice::from_ref(&attempt))
+            .unwrap();
+        assert!(published.published);
+        let stored = SnapshotStore::load(&base, Path::new("snapshots.json")).unwrap();
+        assert_eq!(stored.entries()[0].name, "new-value");
+
+        let failed = CliAttempt {
+            status: RuntimeStatus::FailedError,
+            snapshot_updates: Vec::new(),
+            ..CliAttempt {
+                id: "pkg::production::smoke::smoke".into(),
+                iteration: 1,
+                round: 0,
+                unit: None,
+                status: RuntimeStatus::Passed,
+                report: report.clone(),
+                error: None,
+                snapshot_updates: Vec::new(),
+            }
+        };
+        let not_published = inputs.stage_and_publish(&base, &plan, &[failed]).unwrap();
+        assert!(!not_published.published);
+        assert_eq!(not_published.after_sha256, "before");
+
+        let no_update = SnapshotInputs {
+            update: false,
+            ..inputs.clone()
+        };
+        assert!(
+            !no_update
+                .stage_and_publish(&base, &plan, &[])
+                .unwrap()
+                .published
+        );
+        let no_stores = SnapshotInputs {
+            stores: Vec::new(),
+            ..inputs.clone()
+        };
+        assert!(
+            !no_stores
+                .stage_and_publish(&base, &plan, &[])
+                .unwrap()
+                .published
+        );
+
+        let existing = SnapshotStore::from_entries(
+            "pkg",
+            [tondo_compiler::test_snapshots::SnapshotEntry {
+                node_id: "pkg::production::smoke::smoke".into(),
+                name: "known".into(),
+                value: "old".into(),
+            }],
+        )
+        .unwrap();
+        let duplicate_inputs = SnapshotInputs {
+            stores: vec![
+                LoadedSnapshotStore {
+                    name: "one".into(),
+                    relative: PathBuf::from("one.json"),
+                    max_bytes: 4096,
+                    store: existing.clone(),
+                },
+                LoadedSnapshotStore {
+                    name: "two".into(),
+                    relative: PathBuf::from("two.json"),
+                    max_bytes: 4096,
+                    store: existing.clone(),
+                },
+            ],
+            before_sha256: "before".into(),
+            update: true,
+        };
+        assert!(
+            duplicate_inputs
+                .expected_for("pkg::production::smoke::smoke")
+                .is_err()
+        );
+        let known_update = CliAttempt {
+            id: "pkg::production::smoke::smoke".into(),
+            iteration: 1,
+            round: 0,
+            unit: None,
+            status: RuntimeStatus::Passed,
+            report: report.clone(),
+            error: None,
+            snapshot_updates: vec![("known".into(), "new".into())],
+        };
+        assert!(
+            duplicate_inputs
+                .stage_and_publish(&base, &plan, &[known_update])
+                .is_err()
+        );
+        let ambiguous_inputs = SnapshotInputs {
+            stores: vec![
+                LoadedSnapshotStore {
+                    name: "one".into(),
+                    relative: PathBuf::from("one.json"),
+                    max_bytes: 4096,
+                    store: empty_store.clone(),
+                },
+                LoadedSnapshotStore {
+                    name: "two".into(),
+                    relative: PathBuf::from("two.json"),
+                    max_bytes: 4096,
+                    store: empty_store.clone(),
+                },
+            ],
+            before_sha256: "before".into(),
+            update: true,
+        };
+        let ambiguous_attempt = CliAttempt {
+            snapshot_updates: vec![("new-value".into(), "value".into())],
+            ..attempt.clone()
+        };
+        assert!(
+            ambiguous_inputs
+                .stage_and_publish(&base, &plan, &[ambiguous_attempt])
+                .is_err()
+        );
+        let limited_inputs = SnapshotInputs {
+            stores: vec![LoadedSnapshotStore {
+                name: "limited".into(),
+                relative: PathBuf::from("limited.json"),
+                max_bytes: 1,
+                store: empty_store,
+            }],
+            before_sha256: "before".into(),
+            update: true,
+        };
+        let limited_attempt = CliAttempt {
+            snapshot_updates: vec![("new-value".into(), "value".into())],
+            ..attempt
+        };
+        assert!(
+            limited_inputs
+                .stage_and_publish(&base, &plan, &[limited_attempt])
+                .is_err()
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn ownership_selection_and_worker_wait_cover_non_happy_paths() {
+        let base = std::env::temp_dir().join(format!(
+            "tondo-cli-owner-boundary-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&base).unwrap();
+        fs::create_dir_all(base.join("CODEOWNERS-dir")).unwrap();
+        let explicit = base.join("CODEOWNERS");
+        fs::write(&explicit, b"* @tondo\n").unwrap();
+        let explicit_plan = test_cli::parse(&[
+            OsString::from("test"),
+            OsString::from("--codeowners"),
+            OsString::from("CODEOWNERS"),
+        ])
+        .unwrap();
+        let owners = resolve_ownership(&explicit_plan, &base).unwrap();
+        assert_eq!(
+            owners.mode,
+            tondo_compiler::test_report::OwnershipMode::Explicit
+        );
+        let directory_plan = test_cli::parse(&[
+            OsString::from("test"),
+            OsString::from("--codeowners"),
+            OsString::from("CODEOWNERS-dir"),
+        ])
+        .unwrap();
+        assert!(resolve_ownership(&directory_plan, &base).is_err());
+        let absent = read_codeowners_candidate(&base, "missing-CODEOWNERS").unwrap();
+        assert!(!absent.is_present());
+        assert!(run_test_worker(&[]).is_err());
+        assert!(run_test_worker(&[OsString::from("--unknown")]).is_err());
+        assert!(run_test_worker(&[OsString::from("--manifest")]).is_err());
+        assert!(run_test_worker(&[OsString::from("--entry")]).is_err());
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&explicit, base.join("CODEOWNERS-link")).unwrap();
+            let symlink_plan = test_cli::parse(&[
+                OsString::from("test"),
+                OsString::from("--codeowners"),
+                OsString::from("CODEOWNERS-link"),
+            ])
+            .unwrap();
+            assert!(resolve_ownership(&symlink_plan, &base).is_err());
+        }
+
+        #[cfg(unix)]
+        {
+            let child = Command::new("sh")
+                .args(["-c", "printf out; printf err >&2"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let (_status, stdout, stderr) = wait_worker(child, None).unwrap();
+            assert_eq!(stdout, b"out");
+            assert_eq!(stderr, b"err");
+            let child = Command::new("sh")
+                .args([
+                    "-c",
+                    "dd if=/dev/zero bs=131072 count=1 2>/dev/null; dd if=/dev/zero bs=131072 count=1 >&2 2>/dev/null",
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            let (_status, stdout, stderr) = wait_worker(child, Some(1_000)).unwrap();
+            assert_eq!(stdout.len(), 131_072);
+            assert_eq!(stderr.len(), 131_072);
+            let child = Command::new("sh")
+                .args(["-c", "sleep 1"])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            assert!(matches!(
+                wait_worker(child, Some(1)),
+                Err(RunError::Timeout)
+            ));
+        }
+        fs::remove_dir_all(base).unwrap();
     }
 }

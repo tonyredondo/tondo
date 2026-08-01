@@ -1,6 +1,7 @@
 # `tondo test` CLI plan contract
 
-**Status:** implemented as the parse-only boundary for `UTEST-CLI-PARSE-001`
+**Status:** implemented as the parse-only CLI boundary; execution consumes the
+canonical `tondo.test.json` sidecar before worker creation.
 
 `tondo_cli::test_cli::parse` converts one UTF-8 argument vector beginning with
 `test` into a typed `TestCliPlan`. It performs no discovery, source I/O,
@@ -29,8 +30,16 @@ ranges, non-canonical numbers, seed/order mismatches, selector collisions,
 report collisions, positional arguments, and incompatible list/retry/repeat/
 snapshot modes produce a usage error (exit `2`) before any compilation. The
 parser remains side-effect-free; the CLI consumes the closed plan only after
-this boundary and delegates discovery, selection, scheduling, VM execution and
-report publication to their compiler/runtime modules.
+this boundary, validates the adjacent `tondo-test-plan-draft` sidecar against
+the manifest/lockfile hashes, and delegates discovery, selection, scheduling,
+process-isolated VM execution and report publication to their compiler/runtime
+modules. The sidecar is required, canonical, and its timeout/resource and
+snapshot-store inputs are not replaceable by environment variables. Its
+artifact-store path is the default output root and its format/byte limit remain
+closed; an explicit `--artifacts` path may relocate that bounded output for one
+invocation. An explicit `--timeout none` is accepted by the parser for
+compatibility but rejected at this execution boundary because the sidecar
+always carries a positive wall-clock limit.
 
 Unit tests cover defaults, both option spellings, complete option composition,
 selectors/numbers/paths/globs/report collisions, explicit zero/one retry and
