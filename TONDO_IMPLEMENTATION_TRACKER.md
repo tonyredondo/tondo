@@ -3035,7 +3035,7 @@ reporters.
   contrato; los tests cubren causas elegibles/no elegibles, flaky-pass,
   aislamiento de workers, orden y combinaciones incompatibles.
 
-- [ ] **UTEST-REPEAT-001 — Implementar repetición completa y aislada.** Parsear
+- [x] **UTEST-REPEAT-001 — Implementar repetición completa y aislada.** Parsear
   `--repeat N` con default uno y `N >= 1`; rechazar retry, allow-flaky, list y
   snapshot update. Ejecutar cada iteración completa de forma secuencial en un
   proceso worker nuevo, sin recompilar y conservando selección, shard,
@@ -3047,6 +3047,13 @@ reporters.
   secretos y recursos, cero virtual, registros y presupuestos nuevos,
   determinismo del replay y ausencia de un modo implícito o
   `allow-repeat-flaky`.
+
+  Evidencia implementada en `crates/tondo-compiler/src/test_repeat.rs`: policy
+  finita y validación de combinaciones, contexto canónico y campaña secuencial
+  sobre workers frescos con reportes por iteración. `docs/contracts/test-repeat.md`
+  fija los campos `iteration/round/unit`, la política de salida y la ausencia
+  de estado virtual o recursos entre iteraciones; los tests cubren cleanup,
+  skips, fallos, virtual time y no solapamiento.
 
 - [ ] **UTEST-ARTIFACT-001 — Persistir attachments por intento.** Implementar
   `testing.attach` con copia exacta y linealizada de `std.bytes.Bytes`, gramática
