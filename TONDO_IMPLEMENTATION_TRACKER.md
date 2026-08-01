@@ -3008,7 +3008,7 @@ reporters.
   `P2003/P2004/P2005`. Contrato y límites: `docs/contracts/test-virtual-time.md`;
   cobertura ejercitada por los tests unitarios del módulo y del envelope.
 
-- [ ] **UTEST-RETRY-001 — Implementar retries explícitos y sin estado
+- [x] **UTEST-RETRY-001 — Implementar retries explícitos y sin estado
   heredado.** Parsear `--retry N` con default cero y máximo finito; ejecutar la
   ronda inicial completa antes de planificar rondas adicionales solo para
   `failed-error`, `failed-panic` y `timeout`. Construir unidades hoja con
@@ -3028,6 +3028,12 @@ reporters.
   avanzado. El snapshot store esperado permanece como input inmutable y los
   attachments de cada intento permanecen separados. Rechazar la combinación
   con repeat o snapshot update.
+
+  Evidencia implementada en `crates/tondo-compiler/src/test_retry.rs`: política
+  finita, planner de hojas/suites con absorción ancestral, contexto canónico y
+  campaña runtime por workers frescos. `docs/contracts/test-retry.md` fija el
+  contrato; los tests cubren causas elegibles/no elegibles, flaky-pass,
+  aislamiento de workers, orden y combinaciones incompatibles.
 
 - [ ] **UTEST-REPEAT-001 — Implementar repetición completa y aislada.** Parsear
   `--repeat N` con default uno y `N >= 1`; rechazar retry, allow-flaky, list y
