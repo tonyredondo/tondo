@@ -29,6 +29,7 @@ pub mod test_owners;
 pub mod test_plan;
 pub mod test_result;
 pub mod test_runtime;
+pub mod test_schedule;
 pub mod test_shard;
 pub mod test_suite;
 pub mod test_tree;

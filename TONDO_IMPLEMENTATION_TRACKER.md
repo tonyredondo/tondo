@@ -8,13 +8,14 @@ read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001`, `UTEST-CAPTURE-001` y
 `UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001`, `UTEST-LOWER-001` y
 `UTEST-CONTROL-001`, `UTEST-RUNTIME-001`, `UTEST-SUITE-001`,
-`UTEST-LIMIT-001`, `UTEST-INPUTS-001`, `UTEST-GLOB-001` y `UTEST-SHARD-001` están
+`UTEST-LIMIT-001`, `UTEST-INPUTS-001`, `UTEST-GLOB-001`, `UTEST-SHARD-001` y
+`UTEST-SCHED-001` están
 cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.33
+**Versión del tracker:** 1.34
 
 **Última actualización:** 2026-07-31
 
@@ -2964,7 +2965,7 @@ reporters.
   order, unión/disjunción, shard vacío, shard único, selección inválida y
   constantes del protocolo.
 
-- [ ] **UTEST-SCHED-001 — Fijar orden y paralelismo observable.** El default
+- [x] **UTEST-SCHED-001 — Fijar orden y paralelismo observable.** El default
   usa `id-byte-order-v1`; random usa `sha256-tree-v1` con seed hexadecimal
   explícita o generada y registrada. Ordenar hermanos sin romper la atomicidad
   estructural ni el bracketing de suites y materializar `execution_plan` como
@@ -2978,6 +2979,10 @@ reporters.
   determinista por secuencia de creación/wake y ordenar timers empatados por
   creación sin cambiar el scheduler de producción fuera de tests. Iteraciones
   repeat son secuenciales y cada una vuelve a aplicar el mismo límite global.
+  Evidencia: `docs/contracts/test-schedule.md` y ocho tests unitarios sobre
+  seeds canónicas, vectores SHA-256, atomicidad de suites, repetibilidad,
+  árboles inválidos, límite global de jobs, cola virtual y constantes de
+  protocolo.
 
 - [ ] **UTEST-VTIME-001 — Implementar tiempo virtual determinista sobre la API
   de producción.** Ejecutar `withVirtualTime` como `CallOnce` async bajo un
