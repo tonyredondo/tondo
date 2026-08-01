@@ -3104,7 +3104,7 @@ reporters.
   evento de interrupción inyectable después de cerrar stores y reporters; el
   mapping de señales del SO y su prueba pública quedan en `UTEST-CLI-001`.
 
-- [ ] **UTEST-REPORT-001 — Implementar los formatos machine-readable.**
+- [x] **UTEST-REPORT-001 — Implementar los formatos machine-readable.**
   Implementar una sola vez `tondo-test-json-v1` y serializar con ella
   `tondo-test-report-0.1/7` y `tondo-test-list-0.1/6`, con arrays separados de
   suites/tests, parents, source, owners, paths, estado agregado,
@@ -3124,6 +3124,13 @@ reporters.
   `--test-format json` y `--report json=path` producen bytes idénticos para la
   misma ejecución. Fallos de compilación continúan usando diagnostics
   estructurados, no consumen intentos y no ejecutan setup ni bodies.
+  Evidencia implementada en `crates/tondo-compiler/src/test_report.rs` y
+  `docs/contracts/test-report.md`: `tondo-test-json-v1` serializa reportes y
+  listas compactas con LF único, metadata de invocación, nodos separados y
+  summary derivado; el parser rechaza deriva canónica, secretos, referencias
+  rotas, source classes inconsistentes y payloads no válidos. Ocho tests
+  unitarios cubren round-trip, canonicalización, lista descriptor-only,
+  policies, identidad y rechazo de schema.
 
 - [ ] **UTEST-JUNIT-001 — Exportar JUnit desde el resultado normativo.**
   Proyectar la misma ejecución como `tondo-junit-report-0.1/4`, XML 1.0 UTF-8,

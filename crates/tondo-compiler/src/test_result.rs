@@ -146,6 +146,10 @@ pub struct SkipRecord {
 pub struct ArtifactRecord {
     pub name: String,
     pub media_type: String,
+    #[serde(
+        serialize_with = "serialize_u64_string",
+        deserialize_with = "deserialize_u64_string"
+    )]
     pub size: u64,
     pub sha256: String,
     pub object: String,
@@ -340,6 +344,10 @@ pub struct ResultSummary {
     pub suite_repeated: u32,
     pub suite_attempts: u32,
     pub artifacts: u32,
+    #[serde(
+        serialize_with = "serialize_u64_string",
+        deserialize_with = "deserialize_u64_string"
+    )]
     pub artifact_bytes: u64,
     pub snapshots: u32,
     pub snapshot_matched: u32,
@@ -1393,6 +1401,23 @@ fn validate_hex(field: &'static str, value: &str) -> Result<(), ResultModelError
         });
     }
     Ok(())
+}
+
+fn serialize_u64_string<S>(value: &u64, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_str(&value.to_string())
+}
+
+fn deserialize_u64_string<'de, D>(deserializer: D) -> Result<u64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    value
+        .parse::<u64>()
+        .map_err(|_| serde::de::Error::custom("expected canonical unsigned decimal string"))
 }
 
 #[cfg(test)]

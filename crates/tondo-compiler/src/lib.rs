@@ -29,6 +29,7 @@ pub mod test_overlay;
 pub mod test_owners;
 pub mod test_plan;
 pub mod test_repeat;
+pub mod test_report;
 pub mod test_result;
 pub mod test_retry;
 pub mod test_runtime;
