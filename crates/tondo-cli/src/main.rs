@@ -1485,6 +1485,8 @@ fn validate_source_extension(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tondo_compiler::artifact::CAPABILITY_REGISTRY;
+    use tondo_compiler::project::MANIFEST_FORMAT;
 
     fn arguments(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
@@ -1757,5 +1759,249 @@ mod tests {
             .unwrap_err()
             .contains("exactly one source file")
         );
+    }
+
+    #[test]
+    fn backend_helpers_preserve_campaign_and_report_contracts() {
+        let plan = test_cli::parse(
+            &[
+                "test",
+                "--timeout",
+                "2s",
+                "--jobs",
+                "3",
+                "--shard",
+                "1/2",
+                "--order",
+                "random",
+                "--seed",
+                "a",
+            ]
+            .map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(campaign_limits(&plan)["timeout_ms"], 2_000);
+        assert_eq!(campaign_limits(&plan)["jobs"], 3);
+        assert_eq!(shard_identity(&plan), "1/2");
+        assert_eq!(order_seed(&plan), 10);
+
+        let canonical = test_cli::parse(&["test"].map(OsString::from)).unwrap();
+        assert_eq!(shard_identity(&canonical), "all");
+        assert_eq!(order_seed(&canonical), 0);
+        assert_eq!(
+            identity_parts("pkg::integration::module::suite::case"),
+            (
+                "pkg".into(),
+                "module".into(),
+                vec!["suite".into(), "case".into()],
+            )
+        );
+        assert_eq!(
+            identity_parts("bare"),
+            ("bare".into(), "test".into(), Vec::new())
+        );
+
+        for (runtime, result) in [
+            (RuntimeStatus::Passed, AttemptStatus::Passed),
+            (RuntimeStatus::Skipped, AttemptStatus::Skipped),
+            (RuntimeStatus::FailedError, AttemptStatus::FailedError),
+            (RuntimeStatus::FailedPanic, AttemptStatus::FailedPanic),
+            (RuntimeStatus::ResourceLimit, AttemptStatus::ResourceLimit),
+            (RuntimeStatus::Timeout, AttemptStatus::Timeout),
+            (RuntimeStatus::Infrastructure, AttemptStatus::Infrastructure),
+            (RuntimeStatus::BlockedSetup, AttemptStatus::BlockedSetup),
+        ] {
+            assert_eq!(attempt_status(runtime), result);
+        }
+        for (status, label) in [
+            (AggregateStatus::Passed, "PASS"),
+            (AggregateStatus::FlakyPass, "FLAKY"),
+            (AggregateStatus::Skipped, "SKIP"),
+            (AggregateStatus::FailedError, "FAIL"),
+            (AggregateStatus::FailedPanic, "PANIC"),
+            (AggregateStatus::ResourceLimit, "LIMIT"),
+            (AggregateStatus::Timeout, "TIMEOUT"),
+            (AggregateStatus::Infrastructure, "INTERNAL"),
+            (AggregateStatus::BlockedSetup, "BLOCKED"),
+            (AggregateStatus::BlockedSkip, "BLOCKED"),
+        ] {
+            assert_eq!(status_label(status), label);
+        }
+
+        let envelope = tondo_compiler::test_control::EnvelopeHandle::new(
+            "cli-helper",
+            EnvelopeLimits::new(1_000, 1_000, 1_000),
+        );
+        let report = envelope.report().unwrap();
+        let failed = CliAttempt {
+            id: "pkg::unit::mod::failed".into(),
+            iteration: 1,
+            round: 0,
+            unit: None,
+            status: RuntimeStatus::FailedError,
+            report: report.clone(),
+            error: Some(RunError::Error {
+                code: "E-test".into(),
+                message: "bad\nvalue".into(),
+            }),
+        };
+        let failure = failure_record(&failed).unwrap();
+        assert_eq!(failure.kind, "error");
+        assert_eq!(failure.code.as_deref(), Some("E-test"));
+        assert_eq!(failure.message, "E-test: bad value");
+        let attempt = make_test_attempt(1, &failed).unwrap();
+        assert!(attempt.failure.is_some());
+
+        let skipped = CliAttempt {
+            id: "pkg::unit::mod::skipped".into(),
+            iteration: 1,
+            round: 0,
+            unit: None,
+            status: RuntimeStatus::Skipped,
+            report: report.clone(),
+            error: Some(RunError::Skip {
+                reason: "not applicable".into(),
+            }),
+        };
+        assert_eq!(skip_reason(&skipped), "not applicable");
+        assert!(make_test_attempt(2, &skipped).unwrap().skip.is_some());
+
+        let base = std::env::temp_dir().join(format!(
+            "tondo-cli-helper-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(base.join(".github")).unwrap();
+        fs::write(base.join(".github/CODEOWNERS"), b"* @tondo\n").unwrap();
+        let owners_plan = test_cli::parse(&["test"].map(OsString::from)).unwrap();
+        let owners = resolve_ownership(&owners_plan, &base).unwrap();
+        assert_eq!(
+            owners
+                .resolution
+                .owners_for(Some("tests/smoke.to"))
+                .unwrap(),
+            ["@tondo"]
+        );
+        let none_plan =
+            test_cli::parse(&["test", "--codeowners", "none"].map(OsString::from)).unwrap();
+        assert!(
+            resolve_ownership(&none_plan, &base)
+                .unwrap()
+                .resolution
+                .owners_for(None)
+                .unwrap()
+                .is_empty()
+        );
+
+        let report_path = base.join("nested/report.json");
+        atomic_publish(&report_path, b"ok").unwrap();
+        assert_eq!(fs::read(&report_path).unwrap(), b"ok");
+        let artifacts_plan =
+            test_cli::parse(&["test", "--artifacts", "artifacts"].map(OsString::from)).unwrap();
+        publish_attempt_artifacts(&base, &artifacts_plan, &[failed]).unwrap();
+        assert!(base.join("artifacts").exists());
+        fs::remove_dir_all(base).unwrap();
+
+        let project = std::env::temp_dir().join(format!(
+            "tondo-cli-backend-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(project.join("tests")).unwrap();
+        let source = b"test smoke { assert(true) }\n";
+        fs::write(project.join("tests/smoke.to"), source).unwrap();
+        let package_id = "workspace:cli-helper@1";
+        let source_hash = tondo_compiler::artifact::sha256(source);
+        let standard_package = tondo_compiler::project::BOOTSTRAP_STANDARD_PACKAGE;
+        let lockfile_format = tondo_compiler::project::LOCKFILE_FORMAT;
+        let manifest = format!(
+            "{{\"format\":\"{MANIFEST_FORMAT}\",\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[],\"features\":[]}},\"root\":{{\"package\":\"{package_id}\",\"source\":\"tests/smoke.to\",\"form\":\"module\"}},\"standard\":\"{standard_package}\",\"packages\":[{{\"id\":\"{package_id}\",\"local_name\":\"cli\",\"edition\":\"0.1\",\"dependencies\":[],\"source_sets\":[{{\"id\":\"common\",\"sources\":[{{\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\"}}]}}]}}],\"generator_inputs\":[],\"privileged_units\":[]}}"
+        );
+        fs::write(project.join("tondo.json"), &manifest).unwrap();
+        let package_fingerprint = format!(
+            "{{\"package_id\":\"{package_id}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\",\"sha256\":\"{source_hash}\"}}],\"interface_hash\":null}}"
+        );
+        let lockfile = format!(
+            "{{\"format\":\"{lockfile_format}\",\"manifest_hash\":\"{}\",\"standard\":{{\"package_id\":\"{standard_package}\",\"content_hash\":\"{}\"}},\"packages\":[{{\"id\":\"{package_id}\",\"content_hash\":\"{}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\",\"sha256\":\"{source_hash}\"}}],\"interface\":null}}],\"generator_inputs\":[],\"privileged_units\":[]}}",
+            tondo_compiler::artifact::sha256(manifest.as_bytes()),
+            tondo_compiler::project::bootstrap_standard_hash(),
+            tondo_compiler::artifact::sha256(package_fingerprint.as_bytes()),
+        );
+        fs::write(project.join("tondo.lock.json"), lockfile).unwrap();
+        let manifest_path = project.join("tondo.json");
+        let run_plan = test_cli::parse(
+            &[
+                "test",
+                "--manifest",
+                "tondo.json",
+                "--order",
+                "random",
+                "--seed",
+                "a",
+                "--report",
+                "json=target/helper-report.json",
+                "--test-format",
+                "json",
+            ]
+            .map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(execute_test_plan(&run_plan, &manifest_path).unwrap(), 0);
+        let list_plan = test_cli::parse(
+            &[
+                "test",
+                "--manifest",
+                "tondo.json",
+                "--list",
+                "--test-format",
+                "json",
+            ]
+            .map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(execute_test_plan(&list_plan, &manifest_path).unwrap(), 0);
+        let repeat_plan = test_cli::parse(
+            &["test", "--manifest", "tondo.json", "--repeat", "2"].map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(execute_test_plan(&repeat_plan, &manifest_path).unwrap(), 0);
+        let plain_source = project.join("main.to");
+        fs::write(&plain_source, b"fn main() {}\n").unwrap();
+        assert_eq!(
+            run(vec![OsString::from("check"), plain_source.clone().into()]).unwrap(),
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run(vec![OsString::from("fmt"), plain_source.clone().into()]).unwrap(),
+            ExitCode::SUCCESS
+        );
+        assert_eq!(
+            run(vec![
+                OsString::from("test"),
+                OsString::from("--manifest"),
+                manifest_path.clone().into(),
+            ])
+            .unwrap(),
+            ExitCode::SUCCESS
+        );
+        fs::remove_dir_all(project).unwrap();
+
+        assert_eq!(
+            parse_diagnostic_format("json").unwrap(),
+            DiagnosticFormat::Json
+        );
+        assert_eq!(parse_warning_profile("core").unwrap(), WarningProfile::Core);
+        assert!(parse_diagnostic_format("xml").is_err());
+        assert!(parse_warning_profile("all").is_err());
+        assert!(validate_source_extension(Path::new("main.to")).is_ok());
+        assert!(validate_source_extension(Path::new("main.txt")).is_err());
+        assert!(normalized_absolute_path(Path::new(".")).is_some());
+        assert!(read_input(Path::new("missing-input.to"), "source").is_err());
     }
 }

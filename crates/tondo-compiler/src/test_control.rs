@@ -1408,4 +1408,85 @@ mod tests {
         crate::artifact::validate_sha256(envelope.report().unwrap().artifacts()[0].sha256())
             .unwrap();
     }
+
+    #[test]
+    fn public_control_views_preserve_limits_evidence_and_error_codes() {
+        let budget = EnvelopeLimits::new(7, 8, 9);
+        assert_eq!(std::hint::black_box(budget.output_bytes()), 7);
+        assert_eq!(std::hint::black_box(budget.artifact_bytes()), 8);
+        assert_eq!(std::hint::black_box(budget.snapshot_bytes()), 9);
+        assert_eq!(ExecutionPhase::Setup.rank(), 0);
+        assert_eq!(ExecutionPhase::Closed.rank(), 3);
+
+        let envelope = EnvelopeHandle::new("node", EnvelopeLimits::new(1_000, 1_000, 1_000));
+        envelope.log("hello").unwrap();
+        envelope
+            .tags(BTreeMap::from([("k".into(), "v".into())]))
+            .unwrap();
+        envelope.stdout("out").unwrap();
+        envelope.stderr("err").unwrap();
+        envelope
+            .attach("artifact", "text/plain", b"bytes".to_vec())
+            .unwrap();
+        envelope.snapshot("snapshot", "value").unwrap_err();
+        envelope
+            .with_virtual_time(|time| {
+                time.advance(2)?;
+                time.settle()
+            })
+            .unwrap();
+        let report = envelope.report().unwrap();
+        assert_eq!(std::hint::black_box(report.phase()), ExecutionPhase::Setup);
+        assert!(std::hint::black_box(report.terminal()).is_none());
+        assert_eq!(std::hint::black_box(report.logs())[0].sequence(), 1);
+        assert_eq!(std::hint::black_box(report.logs())[0].message(), "hello");
+        assert_eq!(
+            std::hint::black_box(report.tags()).get("k"),
+            Some(&"v".into())
+        );
+        assert_eq!(
+            std::hint::black_box(report.artifacts())[0].name(),
+            "artifact"
+        );
+        assert_eq!(
+            std::hint::black_box(report.artifacts())[0].media_type(),
+            "text/plain"
+        );
+        assert_eq!(
+            std::hint::black_box(report.artifacts())[0].bytes(),
+            b"bytes"
+        );
+        assert!(
+            !std::hint::black_box(report.artifacts())[0]
+                .sha256()
+                .is_empty()
+        );
+        assert_eq!(
+            std::hint::black_box(report.snapshots())[0].name(),
+            "snapshot"
+        );
+        assert!(matches!(
+            std::hint::black_box(report.snapshots())[0].outcome(),
+            SnapshotOutcome::Missing { .. }
+        ));
+        assert_eq!(std::hint::black_box(report.virtual_time())[0].index(), 0);
+        assert_eq!(
+            std::hint::black_box(report.virtual_time())[0].elapsed_ns(),
+            2
+        );
+        assert_eq!(std::hint::black_box(report.virtual_time())[0].settles(), 1);
+        assert_eq!(std::hint::black_box(report.virtual_time())[0].advances(), 1);
+        assert_eq!(std::hint::black_box(report.stdout()), "out");
+        assert_eq!(std::hint::black_box(report.stderr()), "err");
+
+        for error in [
+            ControlError::Closed,
+            ControlError::OutputLimit,
+            ControlError::SnapshotMismatch { name: "x".into() },
+            ControlError::ProductionOperation { operation: "log" },
+        ] {
+            assert!(!error.to_string().is_empty());
+            assert!(!error.code().is_empty());
+        }
+    }
 }

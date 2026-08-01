@@ -53,8 +53,8 @@ One logical test is not necessarily one source file or one execution:
   They are contracts within Tondo 0.1, but are never counted as executable
   coverage before their implementation and draft evidence exist.
 
-The current draft inventory contains 1,653 logical tests and 1,872 repetitions.
-Of those, 1,603 are executable, 38 are draft-pending contracts, three are fuzz
+The current draft inventory contains 1,886 logical tests and 2,105 repetitions.
+Of those, 1,836 are executable, 38 are draft-pending contracts, three are fuzz
 campaigns, and nine are non-executable fences. Counts are derived from entries
 and cannot be edited independently.
 
@@ -228,18 +228,18 @@ adds closed negative and boundary contracts for the CLI, canonical artifacts,
 manifest and adapter protocols, semantic snapshots, bytecode verification and
 disassembly, managed runtime values, and the reliability tooling itself.
 
-The reviewed M10.5b observation is 90.08% of lines (119,622/132,793), 86.42%
-of functions (7,866/9,102), and 88.15% of regions (169,052/191,782). The
+The current reviewed observation is 90.25% of lines (149,146/165,251), 86.43%
+of functions (10,326/11,947), and 88.47% of regions (212,388/240,061). The
 machine gate deliberately truncates those observations to exact non-regression
-floors of 9,008, 8,642, and 8,814 basis points. Its line floors by risk are:
+floors of 9,025, 8,643, and 8,847 basis points. Its line floors by risk are:
 
-- parser: 9,451 basis points;
+- parser: 9,463 basis points;
 - checkers: 9,064;
-- HIR/MIR/bytecode verifiers: 8,868;
+- HIR/MIR/bytecode verifiers: 8,891;
 - heap and managed values: 9,770;
-- lowering and execution: 8,912; and
+- lowering and execution: 8,916; and
 - untrusted artifacts, projects, conformance, adapters, and reliability
-  protocols: 9,106.
+  protocols: 9,110.
 
 Function and region floors for every risk scope remain machine-readable in
 `testing/quality-baseline.json`. Every floor is the reviewed observed value; a
@@ -253,7 +253,7 @@ instrumentation domain, branch-heavy behavior is defended by region coverage,
 closed decision matrices, model/property tests, and mutation testing. Enabling
 either numeric gate requires a reviewed toolchain report with actual units.
 
-`cargo-mutants 27.1.0` runs a bounded, explicit 28-mutant selection over:
+`cargo-mutants 27.1.0` runs a bounded, explicit 30-mutant selection over:
 
 - project and privileged-unit admission;
 - documentation line-ending admission;
@@ -261,11 +261,12 @@ either numeric gate requires a reviewed toolchain report with actual units.
 - heap capacity enforcement.
 
 The campaign copies VCS metadata because the process fixture intentionally
-executes `git log`. Of 28 generated mutations, 27 are executable and all 27
-must be caught; one `ProjectPlan::parse` replacement is unviable because the
-return type has no valid default. A changed selection, an additional unviable
-mutant, any survivor, any timeout, or a lower score requires review and a new
-baseline.
+executes `git log`. Of 30 generated mutations, 26 are executable and all 26
+must be caught; four are unviable because the generated replacement cannot
+compile or has no valid return value. A changed selection, an additional
+unviable mutant, any survivor, any timeout, or a lower score requires review
+and a new baseline. The build timeout is 900 seconds because the isolated
+workspace build is a legitimate, bounded operation on the supported runner.
 
 ## Regression rule
 

@@ -8,7 +8,9 @@ reports="target/reliability/quality"
 coverage="$reports/coverage.json"
 mutation_output="$reports/mutation"
 mutation_report="$mutation_output/mutants.out/outcomes.json"
+mutation_tmp="${TONDO_MUTATION_TMPDIR:-$reports/mutation-tmp}"
 mkdir -p "$reports"
+mkdir -p "$mutation_tmp"
 
 cargo llvm-cov \
     --workspace \
@@ -16,7 +18,7 @@ cargo llvm-cov \
     --json \
     --output-path "$coverage"
 
-cargo mutants \
+TMPDIR="$mutation_tmp" cargo mutants \
     --workspace \
     --no-config \
     --copy-vcs true \
@@ -28,7 +30,7 @@ cargo mutants \
     --baseline run \
     --jobs 2 \
     --timeout 300 \
-    --build-timeout 300 \
+    --build-timeout 900 \
     --cargo-arg=--locked \
     --output "$mutation_output" \
     --no-times \

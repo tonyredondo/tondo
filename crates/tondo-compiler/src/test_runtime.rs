@@ -1325,4 +1325,113 @@ mod tests {
             RunError::Skip { .. }
         ));
     }
+
+    #[test]
+    fn public_runtime_views_cover_worker_evidence_and_configuration_accessors() {
+        let config = RuntimeConfig::new(1, EnvelopeLimits::new(10_000, 10_000, 10_000))
+            .unwrap()
+            .with_max_resource_handles(2)
+            .with_clock(ClockProvider::Virtual)
+            .with_catch_panics(false);
+        assert_eq!(std::hint::black_box(config.jobs()), 1);
+        assert_eq!(
+            std::hint::black_box(config.envelope_limits()).output_bytes(),
+            10_000
+        );
+        assert_eq!(std::hint::black_box(config.max_resource_handles()), 2);
+        assert_eq!(std::hint::black_box(config.clock()), ClockProvider::Virtual);
+        assert!(!std::hint::black_box(config.catch_panics()));
+
+        let program = LeafProgram::new("views", |context| {
+            let worker = std::hint::black_box(context.worker());
+            assert!(worker.worker_id() > 0);
+            assert!(worker.heap_id() > worker.worker_id());
+            assert!(worker.executor_id() > worker.heap_id());
+            assert!(worker.environment_empty());
+            assert_eq!(worker.clock(), ClockProvider::Virtual);
+            assert_eq!(context.phase().unwrap(), ExecutionPhase::Body);
+            context.log("log")?;
+            context.tags(BTreeMap::from([(
+                String::from("kind"),
+                String::from("unit"),
+            )]))?;
+            context.stdout("out")?;
+            context.stderr("err")?;
+            context.attach("trace", "text/plain", b"trace".to_vec())?;
+            let handle = context.allocate_resource()?;
+            assert!(handle.id() > 0);
+            assert_eq!(handle.worker_id(), worker.worker_id());
+            drop(handle);
+            context.snapshot("golden", "value")?;
+            context.with_virtual_time(|time| {
+                time.register_task("child")?;
+                time.complete("child")?;
+                assert_eq!(time.now()?, 0);
+                time.advance(3)?;
+                time.settle()
+            })?;
+            let child = context.child()?;
+            child.log("child log").map_err(RunError::from_control)?;
+            child
+                .tags(BTreeMap::from([(
+                    String::from("kind"),
+                    String::from("unit"),
+                )]))
+                .map_err(RunError::from_control)?;
+            child
+                .attach("child-trace", "text/plain", b"child".to_vec())
+                .map_err(RunError::from_control)?;
+            Ok(())
+        })
+        .with_expected_snapshots([(String::from("golden"), String::from("value"))]);
+        assert_eq!(std::hint::black_box(program.id()), "views");
+
+        let runner = RuntimeRunner::new(config).unwrap();
+        assert_eq!(std::hint::black_box(runner.config()), config);
+        let report = runner.run(vec![program]).unwrap();
+        assert_eq!(std::hint::black_box(report.active_resources()), 0);
+        let leaf = &report.leaves()[0];
+        assert_eq!(std::hint::black_box(leaf.id()), "views");
+        assert_eq!(std::hint::black_box(leaf.status()), RuntimeStatus::Passed);
+        assert!(std::hint::black_box(leaf.worker()).environment_empty());
+        assert!(std::hint::black_box(leaf.report()).stdout().contains("out"));
+        assert!(std::hint::black_box(leaf.error()).is_none());
+        assert!(std::hint::black_box(leaf.cleanup_executed()));
+        assert!(!std::hint::black_box(leaf.forced_termination()));
+        assert_eq!(report.leaves().len(), 1);
+
+        for error in [
+            RuntimeError::DuplicateLeaf("x".into()),
+            RuntimeError::EmptyLeafId,
+            RuntimeError::InvalidConfig(RuntimeConfigError::ZeroJobs),
+            RuntimeError::WorkerJoin,
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
+        for error in [
+            RunError::Error {
+                code: "E".into(),
+                message: "error".into(),
+            },
+            RunError::Panic {
+                code: "P".into(),
+                message: "panic".into(),
+            },
+            RunError::ResourceLimit {
+                kind: "bytes".into(),
+            },
+            RunError::Timeout,
+            RunError::Infrastructure {
+                message: "host".into(),
+            },
+            RunError::Skip {
+                reason: "skip".into(),
+            },
+            RunError::ForcedTermination {
+                message: "stop".into(),
+            },
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
+    }
 }

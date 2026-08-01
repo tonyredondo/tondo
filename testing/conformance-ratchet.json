@@ -4,19 +4,19 @@
   "revision": 1,
   "manifest": {
     "path": "conformance/draft/manifest.json",
-    "sha256": "5875482aedae3832354d9133bf03e77f759f1d1cd341c7d404236df2b810913a"
+    "sha256": "7863a0b1ef0bed8094ff1d01cc714cac9ed1ed8fe14057f54b8da9ef1a08961f"
   },
   "inventory": {
     "path": "testing/inventory.json",
-    "sha256": "5251e88d84833a6fa0429a7d43291fa2a525e0b71d57fcb249c80eb9c7e873eb"
+    "sha256": "92d1453f872ada3511832ffe3e0d3e3a1fe97b37d908edeb36baa6a150a97222"
   },
   "matrix": {
     "path": "testing/coverage-matrix.json",
-    "sha256": "77d9cd599f61c06b495e3265dbd0721d1d3a3538211916233c01888a153c5b29"
+    "sha256": "29291d0f46729d2ca5f2823f4d65c4709982ae10f9f63c2288a756c286725035"
   },
   "quality_baseline": {
     "path": "testing/quality-baseline.json",
-    "sha256": "0066620771c25f3f374a24efadb386c40d44321d2fa70a9c783f9f404bb07490"
+    "sha256": "6f9b4b42668364d527fe32de6d26896eaa6eefcfe764622f0c6ffabe9af4cbff"
   },
   "draft_case_layers": 0,
   "pending_tasks": [

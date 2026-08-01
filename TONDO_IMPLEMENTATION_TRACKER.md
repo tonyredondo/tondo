@@ -2477,10 +2477,10 @@ de M10.6, STD-0.1A, M11 y STD-0.1B.
   el porcentaje global permanezca por encima del valor anterior.
 
 - [x] **MUT-002 — Revalidar la resistencia tras el hardening.** La selección
-  revisada conserva exactamente 28 mutantes: 27 ejecutables detectados, uno
-  inviable, cero timeouts y cero supervivientes. Ninguno de los cuatro archivos
-  de producción seleccionados cambió durante el hardening; el reporte fijado se
-  verifica contra la nueva baseline antes de publicarla.
+  vigente contiene exactamente 30 mutantes: 26 ejecutables detectados, cuatro
+  inviables, cero timeouts y cero supervivientes. Ninguno de los cuatro archivos
+  de producción seleccionados cambió durante este hardening; el reporte fijado se
+  verifica contra la baseline recapturada antes de publicarla.
 
 ### Gate H0 — Infraestructura de fiabilidad
 

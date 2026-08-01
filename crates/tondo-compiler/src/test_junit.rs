@@ -1024,4 +1024,53 @@ mod tests {
         assert_eq!(seconds(0).unwrap(), "0");
         assert_eq!(seconds(1_000_000_001).unwrap(), "1.000000001");
     }
+
+    #[test]
+    fn public_junit_views_and_closed_error_shapes_are_total() {
+        let report = report();
+        let junit = JUnitReport::from_report(&report).unwrap();
+        assert!(!std::hint::black_box(junit.canonical_bytes()).is_empty());
+        assert!(!std::hint::black_box(junit.clone().into_bytes()).is_empty());
+        let mut counts = Counts::default();
+        counts.add(Outcome::Passed.counts()).unwrap();
+        counts
+            .add(
+                Outcome::Failure {
+                    kind: "panic".into(),
+                    message: "failed".into(),
+                    body: "{}".into(),
+                }
+                .counts(),
+            )
+            .unwrap();
+        counts
+            .add(
+                Outcome::Error {
+                    kind: "timeout".into(),
+                    message: "slow".into(),
+                    body: "{}".into(),
+                }
+                .counts(),
+            )
+            .unwrap();
+        counts
+            .add(
+                Outcome::Skipped {
+                    message: "skip".into(),
+                }
+                .counts(),
+            )
+            .unwrap();
+        assert_eq!(
+            (counts.tests, counts.failures, counts.errors, counts.skipped),
+            (4, 1, 1, 1)
+        );
+        for error in [
+            JUnitError::InvalidTiming("bad".into()),
+            JUnitError::DurationOverflow,
+            JUnitError::XmlScalar(0),
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
+    }
 }

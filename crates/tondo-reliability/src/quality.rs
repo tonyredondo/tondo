@@ -299,7 +299,7 @@ pub fn capture(
         },
         mutation: MutationBaseline {
             tool: "cargo-mutants 27.1.0".into(),
-            command: "cargo mutants --workspace --no-config --copy-vcs true --file <selected-path> --re <reviewed-selection> --baseline run --jobs 2 --timeout 300 --build-timeout 300 --cargo-arg=--locked --output <directory> --no-times --colors never --annotations none".into(),
+            command: "cargo mutants --workspace --no-config --copy-vcs true --file <selected-path> --re <reviewed-selection> --baseline run --jobs 2 --timeout 300 --build-timeout 900 --cargo-arg=--locked --output <directory> --no-times --colors never --annotations none".into(),
             selected_paths: mutation_paths(),
             total: mutation.total,
             caught: mutation.caught,

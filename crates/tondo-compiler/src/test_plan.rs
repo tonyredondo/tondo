@@ -1782,6 +1782,77 @@ mod tests {
     }
 
     #[test]
+    fn public_plan_views_are_stable_and_do_not_expose_source_contents() {
+        let (project, manifest_hash, lockfile_hash) = project_fixture();
+        let plan = TestProjectPlan::parse(
+            &project,
+            &serde_json::to_vec(&plan_json(&manifest_hash, &lockfile_hash)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(std::hint::black_box(plan.manifest_hash()), manifest_hash);
+        assert_eq!(std::hint::black_box(plan.lockfile_hash()), lockfile_hash);
+        assert_eq!(std::hint::black_box(plan.repository_root()), "");
+        for root in std::hint::black_box(plan.roots()) {
+            let _ = (root.class(), root.physical_path(), root.logical_path());
+        }
+        for source in std::hint::black_box(plan.sources()) {
+            let _ = (
+                source.class(),
+                source.package(),
+                source.physical_path(),
+                source.logical_path(),
+                source.module(),
+                source.input(),
+            );
+        }
+        assert_eq!(
+            std::hint::black_box(plan.input_names())
+                .collect::<Vec<_>>()
+                .len(),
+            3
+        );
+        assert!(std::hint::black_box(plan.dev_dependencies()).is_empty());
+        assert_eq!(std::hint::black_box(plan.codeowners()).as_str(), "auto");
+        assert_eq!(std::hint::black_box(plan.selector()).kind(), "none");
+        assert_eq!(std::hint::black_box(plan.shard()), None);
+        assert_eq!(std::hint::black_box(plan.order()).kind(), "canonical");
+        let policy = std::hint::black_box(plan.policy());
+        assert_eq!((policy.jobs(), policy.retry(), policy.repeat()), (1, 0, 1));
+        assert!(!policy.allow_empty() && !policy.fail_fast());
+        assert_eq!(std::hint::black_box(plan.reporters()), &["human", "json"]);
+        assert_eq!(
+            std::hint::black_box(plan.artifact_store()).path(),
+            "target/test-artifacts"
+        );
+        assert_eq!(std::hint::black_box(plan.snapshot_stores()).len(), 1);
+        assert_eq!(
+            std::hint::black_box(plan.target()).name(),
+            "tondo-vm-hosted"
+        );
+        assert_eq!(std::hint::black_box(plan.target()).profile(), "hosted");
+        assert_eq!(std::hint::black_box(plan.target()).capabilities().len(), 2);
+        assert_eq!(std::hint::black_box(plan.target()).features(), &["fast"]);
+        assert_eq!(std::hint::black_box(plan.time_catalog()).package(), "std");
+        let limits = std::hint::black_box(plan.limits());
+        assert_eq!(limits.timeout_ms(), 1000);
+        assert_eq!(limits.setup_timeout_ms(), 1000);
+        assert_eq!(limits.teardown_timeout_ms(), 1000);
+        assert_eq!(limits.output_bytes(), 65_536);
+        assert_eq!(limits.artifact_bytes(), 1_048_576);
+        assert_eq!(limits.snapshot_bytes(), 1_048_576);
+        assert_eq!(limits.memory_bytes(), 67_108_864);
+        assert_eq!(limits.instructions(), 1_000_000);
+        assert_eq!(limits.virtual_timers(), 1024);
+        assert!(
+            !plan
+                .canonical_bytes()
+                .unwrap()
+                .windows(12)
+                .any(|window| window == b"fn main() {}")
+        );
+    }
+
+    #[test]
     fn closed_value_helpers_cover_all_selector_policy_and_storage_shapes() {
         assert_eq!(TestSourceClass::Production.as_str(), "production");
         assert_eq!(TestSourceClass::UnitTest.as_str(), "unit-test");
