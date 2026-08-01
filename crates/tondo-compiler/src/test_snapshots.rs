@@ -565,17 +565,26 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    fn temp_root() -> PathBuf {
+        #[cfg(unix)]
+        {
+            std::fs::canonicalize(std::env::temp_dir()).unwrap()
+        }
+        #[cfg(not(unix))]
+        {
+            std::env::temp_dir()
+        }
+    }
+
     fn root(label: &str) -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        std::fs::canonicalize(std::env::temp_dir())
-            .unwrap()
-            .join(format!(
-                "tondo-snapshots-{label}-{}-{nonce}",
-                std::process::id()
-            ))
+        temp_root().join(format!(
+            "tondo-snapshots-{label}-{}-{nonce}",
+            std::process::id()
+        ))
     }
 
     fn entry(node: &str, name: &str, value: &str) -> SnapshotEntry {
