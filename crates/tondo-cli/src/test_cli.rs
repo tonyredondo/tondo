@@ -51,6 +51,7 @@ pub struct TestReportOutput {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestCliPlan {
+    pub project: Option<PathBuf>,
     pub manifest: Option<PathBuf>,
     pub test_plan: Option<PathBuf>,
     pub selector: TestSelector,
@@ -89,6 +90,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
         return Err("the `test` command is required".into());
     }
     let mut plan = TestCliPlan {
+        project: None,
         manifest: None,
         test_plan: None,
         selector: TestSelector::All,
@@ -152,6 +154,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
                 "--filter"
                     | "--glob"
                     | "--exact"
+                    | "--project"
                     | "--manifest"
                     | "--test-plan"
                     | "--codeowners"
@@ -176,6 +179,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
                 "--filter"
                     | "--glob"
                     | "--exact"
+                    | "--project"
                     | "--manifest"
                     | "--test-plan"
                     | "--codeowners"
@@ -201,7 +205,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
             parse_value(&mut plan, &mut seen, &mut seed, argument, value)?;
         } else {
             return Err(format!(
-                "unexpected positional argument `{argument}`; use `--manifest` or `--test-plan`"
+                "unexpected positional argument `{argument}`; use `--project`, `--manifest` or `--test-plan`"
             ));
         }
         index += 1;
@@ -215,6 +219,9 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
             }
         };
     }
+    if plan.project.is_some() && plan.manifest.is_some() {
+        return Err("choose either `--project` or `--manifest`, not both".into());
+    }
     validate_combinations(&plan)
 }
 
@@ -226,6 +233,11 @@ fn parse_value(
     value: &str,
 ) -> Result<(), String> {
     match name {
+        "--project" => {
+            once_value(seen, "--project")?;
+            plan.project = Some(validate_text_path(value, "`--project`")?);
+            Ok(())
+        }
         "--manifest" => {
             once_value(seen, "--manifest")?;
             plan.manifest = Some(validate_text_path(value, "`--manifest`")?);
@@ -628,6 +640,34 @@ mod tests {
         assert_eq!(plan.order, TestOrder::Random { seed: Some(0xabc) });
         assert_eq!(plan.timeout_ms, None);
         assert!(plan.timeout_explicit);
+    }
+
+    #[test]
+    fn accepts_a_conventional_project_without_a_legacy_manifest() {
+        let plan = parse(&args(&[
+            "test",
+            "--project",
+            "example",
+            "--test-plan",
+            "tondo.test.toml",
+        ]))
+        .unwrap();
+        assert_eq!(plan.project, Some(PathBuf::from("example")));
+        assert_eq!(plan.manifest, None);
+        assert_eq!(plan.test_plan, Some(PathBuf::from("tondo.test.toml")));
+    }
+
+    #[test]
+    fn rejects_legacy_manifest_and_conventional_project_together() {
+        let error = parse(&args(&[
+            "test",
+            "--project",
+            "example",
+            "--manifest",
+            "tondo.json",
+        ]))
+        .unwrap_err();
+        assert!(error.contains("either `--project` or `--manifest`"));
     }
 
     #[test]

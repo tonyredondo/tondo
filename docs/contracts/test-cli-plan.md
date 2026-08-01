@@ -1,8 +1,8 @@
 # `tondo test` CLI plan contract
 
 **Status:** implemented as the parse-only CLI boundary; execution consumes an
-optional canonical `tondo.test.json` sidecar or materializes the opinionated
-defaults in memory before worker creation.
+optional TOML `tondo.test.toml` sidecar (JSON is a legacy fallback) or
+materializes the opinionated defaults in memory before worker creation.
 
 `tondo_cli::test_cli::parse` converts one UTF-8 argument vector beginning with
 `test` into a typed `TestCliPlan`. It performs no discovery, source I/O,
@@ -10,7 +10,8 @@ compilation, worker creation or test execution.
 
 ## Normalized options
 
-The plan closes an optional manifest and test-plan path, one selector (`all`, `filter`, `glob` or `exact`), CODEOWNERS
+The plan closes an optional conventional project or legacy manifest and
+test-plan path, one selector (`all`, `filter`, `glob` or `exact`), CODEOWNERS
 mode/path, optional shard, canonical/random order with an optional `u64` seed,
 list mode, jobs, timeout, retry/repeat, artifact root, diagnostic/test formats,
 repeatable JSON/JUnit report outputs and the `show-output`, `deny-skips`,
@@ -18,10 +19,12 @@ repeatable JSON/JUnit report outputs and the `show-output`, `deny-skips`,
 canonical and bounded; random seeds are parsed from at most sixteen hex digits;
 durations normalize `ms`, `s`, `m` and `h` to checked milliseconds.
 
-When `--manifest` is omitted, execution resolves `tondo.json` in the current
-directory. `--test-plan` is optional; execution uses the adjacent
-`tondo.test.json` when present and otherwise materializes the canonical default
-plan in memory.
+When `--project` and `--manifest` are omitted, execution discovers the current
+directory by convention. `--project` selects another conventional root;
+`--manifest` is the compatibility path for a closed JSON graph and is mutually
+exclusive with `--project`. `--test-plan` is optional; execution prefers the
+adjacent `tondo.test.toml`, accepts `tondo.test.json` only as a legacy fallback,
+and otherwise materializes the canonical default plan in memory.
 
 Explicit retry/repeat presence is retained even for values `0` and `1`, because
 the specification gives those spellings distinct compatibility rules for
@@ -36,10 +39,11 @@ ranges, non-canonical numbers, seed/order mismatches, selector collisions,
 report collisions, positional arguments, and incompatible list/retry/repeat/
 snapshot modes produce a usage error (exit `2`) before any compilation. The
 parser remains side-effect-free; the CLI consumes the closed plan only after
-this boundary. Without `--test-plan`, an adjacent `tondo.test.json` is used if
-present; otherwise the compiler materializes the defaults from the closed
-project graph. A supplied `--test-plan` is always canonical and is validated
-against the manifest/lockfile hashes. Discovery, selection, scheduling,
+this boundary. Without `--test-plan`, an adjacent `tondo.test.toml` is used if
+present, then `tondo.test.json` for compatibility; otherwise the compiler
+materializes the defaults from the closed project graph. TOML is normalized to
+the same closed wire shape before validation. A supplied `--test-plan` is
+validated against the project/lockfile hashes. Discovery, selection, scheduling,
 process-isolated VM execution and report publication then consume one effective
 plan. Invocation-local flags overlay only policy and selection fields; they do
 not rewrite the sidecar. Timeout/resource ceilings, target capabilities and

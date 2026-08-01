@@ -9,15 +9,15 @@ read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001`, `UTEST-LOWER-001` y
 `UTEST-CONTROL-001`, `UTEST-RUNTIME-001`, `UTEST-SUITE-001`,
 `UTEST-LIMIT-001`, `UTEST-INPUTS-001`, `UTEST-GLOB-001`, `UTEST-SHARD-001` y
-`UTEST-SCHED-001` están
+`UTEST-SCHED-001` y `TOOLCHAIN-PROJECT-001` están
 cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.34
+**Versión del tracker:** 1.35
 
-**Última actualización:** 2026-07-31
+**Última actualización:** 2026-08-01
 
 **Especificaciones normativas:**
 
@@ -3183,9 +3183,24 @@ reporters.
   queda cerrada por `UTEST-CLI-001` con defaults en memoria, sidecar opcional y
   workers de proceso.
 
+- [x] **TOOLCHAIN-PROJECT-001 — Hacer la CLI convention-first.** `check`,
+  `run` y `test` aceptan el directorio actual o `--project <dir>` sin exigir
+  `tondo.json`. La CLI descubre `src/`, `src/main.to`, `tests/` y módulos por
+  paths ordenados; lee el `tondo.toml` opcional para package/edition,
+  target/profile/capabilities/features y aliases, y materializa un grafo
+  interno equivalente al `ProjectPlan` cerrado. Un `tondo.lock.toml` generado
+  es obligatorio para dependencias externas y los proyectos sin dependencias
+  usan un lockfile equivalente en memoria. `tondo.test.toml` es el sidecar
+  humano preferido; `tondo.test.json` queda como fallback legacy. Symlinks,
+  `target/`, `vendor/` y directorios ocultos no entran en discovery. El camino
+  `--manifest`/JSON se conserva para conformance y compatibilidad, pero no es
+  la ruta documentada para proyectos nuevos. Evidencia en
+  `crates/tondo-cli/src/project_discovery.rs`, `main.rs`,
+  `docs/contracts/project-discovery.md` y las pruebas CLI de proyecto/TOML.
+
 - [x] **UTEST-CLI-001 — Conectar `tondo test` end-to-end.** `tondo test`
   materializa un plan canónico opinionado desde el proyecto cuando no existe
-  sidecar; `--test-plan <path>` o un `tondo.test.json` adyacente seleccionan un
+  sidecar; `--test-plan <path>` o un `tondo.test.toml` adyacente seleccionan un
   plan avanzado, cuyos hashes de proyecto y forma canónica se verifican antes
   de compilar. Los overrides efímeros de CLI permiten selector, shard,
   orden/seed, jobs, retry, repeat y outputs sin editar el JSON, pero no pueden
@@ -3198,7 +3213,8 @@ reporters.
   `--artifacts` solo puede reubicar físicamente la salida. Un `--timeout none`
   explícito se rechaza frente al límite cerrado. JSON/JUnit, artifacts,
   CODEOWNERS, selección, shards, orden, jobs y exits 0/1/2/3 quedan cubiertos
-  por tests unitarios e integración.
+  por tests unitarios e integración. `tondo.test.json` se conserva como
+  fallback legacy.
   Evidencia en `crates/tondo-cli/src/main.rs`,
   `crates/tondo-compiler/src/test_control.rs`,
   `crates/tondo-compiler/src/test_runtime.rs` y los contratos de

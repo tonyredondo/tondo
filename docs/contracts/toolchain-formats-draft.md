@@ -17,6 +17,12 @@ bytes, reject unknown fields and return validated records. They do not read
 the filesystem, environment, clock, network or process state and they never
 execute generators or derive providers.
 
+The user-facing CLI has a separate convention boundary: it reads optional
+`tondo.toml`/`tondo.lock.toml`, discovers source files, and materializes these
+same JSON records before calling this module. TOML is therefore a project
+configuration/transport spelling, not a second compiler format or resolution
+algorithm.
+
 `ProjectPlanDraft::parse` validates the manifest, lockfile and canonical standard
 descriptor together, checks exact manifest and package hashes, checks runtime
 and meta graphs, verifies providers and generator declarations, and returns

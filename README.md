@@ -157,12 +157,15 @@ their independent verifiers preserve the effect bit and exact raw-operation
 types, while the VM delegates dynamic pointer behavior only to a pinned
 privileged target adapter rather than inventing a stable layout or FFI ABI.
 
-Closed project builds are also implemented. A strict manifest and lockfile
-select target, profile, capabilities, features, exact PackageIds, aliases,
-source sets, sources, dependency interfaces, generator inputs, and privileged
-units before lexing. The pure project planner accepts only declared
-hash-matching bytes and performs no filesystem, environment, network, process,
-or clock access. Versioned canonical interfaces reject incompatible compiler,
+Project builds are convention-first and also support the closed legacy graph.
+`tondo check`, `tondo run` and `tondo test` use the current directory (or
+`--project <dir>`), discover `src/`, `src/main.to` and `tests/`, and read the
+optional `tondo.toml`. External dependencies are pinned by a generated
+`tondo.lock.toml`; projects without dependencies need no lockfile. The CLI
+materializes an equivalent strict manifest/lockfile internally before lexing;
+`--manifest <tondo.json>` remains available for conformance and compatibility.
+The pure project planner accepts only declared hash-matching bytes and performs
+no filesystem, environment, network, process, or clock access. Versioned canonical interfaces reject incompatible compiler,
 edition, package, target, capability, feature, module, source-set, or transitive
 dependency identities before frontend work. Successful builds can emit
 canonical interface and artifact metadata, including public API and complete
@@ -210,6 +213,8 @@ current draft, another backend, profile, or capability set.
 - `docs/contracts/` records bootstrap interfaces that later milestones build on.
 - `docs/contracts/formatter.md` records the implemented formatting boundary.
 - `docs/contracts/package-graph.md` records the closed M2 build input.
+- `docs/contracts/project-discovery.md` records convention-first layout,
+  optional TOML configuration, generated lockfiles and legacy JSON fallback.
 - `docs/contracts/resolution.md` records name, scope, member, and visibility
   resolution.
 - `docs/contracts/hir.md` records declaration lowering and the typed-HIR subset.

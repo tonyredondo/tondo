@@ -43,6 +43,7 @@ use tondo_compiler::test_schedule::{OrderMode, ScheduleNode, SchedulePlan, Seed}
 use tondo_compiler::test_shard::ShardSpec;
 use tondo_compiler::test_snapshots::{SnapshotPolicy, SnapshotStore, SnapshotUpdateStage};
 
+mod project_discovery;
 mod test_cli;
 
 const EXIT_DIAGNOSTIC: u8 = 1;
@@ -56,9 +57,9 @@ Tondo bootstrap toolchain
 
 Usage:
   tondo <command> [--diagnostic-format <human|json>] [--warnings core] <source.to>
-  tondo <check|run> [--diagnostic-format <human|json>] [--warnings core] --manifest <tondo.json>
+  tondo <check|run> [--diagnostic-format <human|json>] [--warnings core] [--project <dir>]
   tondo run [--diagnostic-format <human|json>] [--warnings core] <source.to> -- [argument ...]
-  tondo test [--manifest <tondo.json>] [--test-plan <tondo.test.json>] [options]
+  tondo test [--project <dir>] [--test-plan <tondo.test.toml>] [options]
 
 Commands:
   fmt      Format one Tondo source file
@@ -70,9 +71,10 @@ Options:
   --diagnostic-format <human|json>  Select diagnostic output
   --warnings <core>                 Enable a closed warning profile
   --check                           Verify formatting without writing output (fmt only)
-  --manifest <path>                 Project manifest (default: tondo.json)
-  --test-plan <path>                Optional explicit canonical test-plan sidecar
-  --lockfile <path>                 Use this lockfile (default: tondo.lock.json)
+  --project <dir>                   Project directory (default: current directory)
+  --manifest <path>                 Legacy internal JSON manifest
+  --test-plan <path>                Optional advanced TOML test-plan sidecar
+  --lockfile <path>                 Legacy explicit lockfile
   --emit-interface <path>           Write the canonical compiled interface on success
   --emit-artifact <path>            Write canonical build metadata on success
   -- [argument ...]                 Pass UTF-8 arguments to a run script
@@ -169,11 +171,13 @@ fn run_test_command(arguments: &[OsString]) -> Result<ExitCode, String> {
             return Ok(ExitCode::from(EXIT_USAGE));
         }
     };
-    let manifest_path = plan
-        .manifest
-        .clone()
-        .unwrap_or_else(|| PathBuf::from("tondo.json"));
-    match execute_test_plan(&plan, &manifest_path) {
+    let location = match (&plan.manifest, &plan.project) {
+        (Some(manifest), None) => ProjectLocation::Manifest(manifest.clone()),
+        (None, Some(project)) => ProjectLocation::Directory(project.clone()),
+        (None, None) => ProjectLocation::Directory(PathBuf::from(".")),
+        (Some(_), Some(_)) => unreachable!("test CLI rejects project/manifest combinations"),
+    };
+    match execute_test_plan_at(&plan, location) {
         Ok(code) => Ok(ExitCode::from(code)),
         Err(TestCommandError::Usage(message)) => {
             eprintln!("tondo: {message}\n\n{USAGE}");
@@ -186,6 +190,63 @@ fn run_test_command(arguments: &[OsString]) -> Result<ExitCode, String> {
         Err(TestCommandError::Diagnostic(message)) => {
             eprintln!("{message}");
             Ok(ExitCode::from(EXIT_DIAGNOSTIC))
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+enum ProjectLocation {
+    Manifest(PathBuf),
+    Directory(PathBuf),
+}
+
+#[derive(Debug)]
+struct LoadedProject {
+    location: ProjectLocation,
+    base: PathBuf,
+    project: ProjectPlan,
+}
+
+impl ProjectLocation {
+    fn load(&self) -> Result<LoadedProject, TestCommandError> {
+        match self {
+            Self::Manifest(path) => {
+                let base = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
+                let lockfile = base.join("tondo.lock.json");
+                let manifest_bytes =
+                    read_input(path, "manifest").map_err(TestCommandError::Usage)?;
+                let lockfile_bytes =
+                    read_input(&lockfile, "lockfile").map_err(TestCommandError::Usage)?;
+                let project = ProjectPlan::parse(&manifest_bytes, &lockfile_bytes)
+                    .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+                Ok(LoadedProject {
+                    location: self.clone(),
+                    base,
+                    project,
+                })
+            }
+            Self::Directory(path) => {
+                let root = path.canonicalize().map_err(|error| {
+                    TestCommandError::Usage(format!(
+                        "cannot resolve project directory `{}`: {error}",
+                        path.display()
+                    ))
+                })?;
+                let legacy_manifest = root.join("tondo.json");
+                if !root.join("tondo.toml").is_file() && legacy_manifest.is_file() {
+                    return Self::Manifest(legacy_manifest).load();
+                }
+                let discovered =
+                    project_discovery::discover(&root).map_err(TestCommandError::Usage)?;
+                let project =
+                    ProjectPlan::parse(&discovered.manifest_bytes, &discovered.lockfile_bytes)
+                        .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+                Ok(LoadedProject {
+                    location: self.clone(),
+                    base: discovered.root.clone(),
+                    project,
+                })
+            }
         }
     }
 }
@@ -210,15 +271,20 @@ fn resolve_test_plan_path(
     if let Some(path) = &plan.test_plan {
         return Ok(Some(path.clone()));
     }
-    let adjacent = base.join("tondo.test.json");
-    match fs::symlink_metadata(&adjacent) {
-        Ok(_) => Ok(Some(adjacent)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(TestCommandError::Usage(format!(
-            "cannot inspect test plan `{}`: {error}",
-            adjacent.display()
-        ))),
+    for name in ["tondo.test.toml", "tondo.test.json"] {
+        let adjacent = base.join(name);
+        match fs::symlink_metadata(&adjacent) {
+            Ok(_) => return Ok(Some(adjacent)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(TestCommandError::Usage(format!(
+                    "cannot inspect test plan `{}`: {error}",
+                    adjacent.display()
+                )));
+            }
+        }
     }
+    Ok(None)
 }
 
 fn load_test_project_plan(
@@ -228,14 +294,27 @@ fn load_test_project_plan(
     let Some(path) = path else {
         return Ok(TestProjectPlan::defaults(project, 1));
     };
-    let bytes = read_input(path, "test plan").map_err(TestCommandError::Usage)?;
+    let source_bytes = read_input(path, "test plan").map_err(TestCommandError::Usage)?;
+    let is_toml = path.extension().and_then(OsStr::to_str) == Some("toml");
+    let bytes = if is_toml {
+        let text = String::from_utf8(source_bytes).map_err(|error| {
+            TestCommandError::Usage(format!("invalid test plan UTF-8: {error}"))
+        })?;
+        let value = toml::from_str::<toml::Value>(&text).map_err(|error| {
+            TestCommandError::Usage(format!("invalid test plan `{}`: {error}", path.display()))
+        })?;
+        serde_json::to_vec(&value).map_err(|error| TestCommandError::Internal(error.to_string()))?
+    } else {
+        source_bytes
+    };
     let plan = project
         .parse_test_plan(&bytes)
         .map_err(|error| TestCommandError::Usage(error.to_string()))?;
-    if plan
-        .canonical_bytes()
-        .map_err(|error| TestCommandError::Usage(error.to_string()))?
-        != bytes
+    if !is_toml
+        && plan
+            .canonical_bytes()
+            .map_err(|error| TestCommandError::Usage(error.to_string()))?
+            != bytes
     {
         return Err(TestCommandError::Usage(
             "test plan is valid but not in canonical form".into(),
@@ -655,18 +734,23 @@ fn read_codeowners_candidate(
     }
 }
 
+#[cfg(test)]
 fn execute_test_plan(
     plan: &test_cli::TestCliPlan,
     manifest_path: &Path,
 ) -> Result<u8, TestCommandError> {
-    let base = manifest_path.parent().unwrap_or_else(|| Path::new(""));
-    let lockfile = base.join("tondo.lock.json");
-    let manifest = read_input(manifest_path, "manifest").map_err(TestCommandError::Usage)?;
-    let lockfile_bytes = read_input(&lockfile, "lockfile").map_err(TestCommandError::Usage)?;
-    let project = ProjectPlan::parse(&manifest, &lockfile_bytes)
-        .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+    execute_test_plan_at(plan, ProjectLocation::Manifest(manifest_path.to_owned()))
+}
+
+fn execute_test_plan_at(
+    plan: &test_cli::TestCliPlan,
+    location: ProjectLocation,
+) -> Result<u8, TestCommandError> {
+    let loaded = location.load()?;
+    let base = loaded.base.as_path();
+    let project = &loaded.project;
     let test_plan_path = resolve_test_plan_path(plan, base)?;
-    let test_project_plan = load_test_project_plan(&project, test_plan_path.as_deref())?;
+    let test_project_plan = load_test_project_plan(project, test_plan_path.as_deref())?;
     let mut execution_plan = plan.clone();
     overlay_test_project_plan(&mut execution_plan, &test_project_plan)?;
     let mut supplied = BTreeMap::new();
@@ -735,7 +819,7 @@ fn execute_test_plan(
     }
 
     let ordered = order_test_entries(selected, &execution_plan)?;
-    let worker_manifest = manifest_path.to_owned();
+    let worker_location = loaded.location.clone();
     let worker_test_plan = test_plan_path.clone();
     let worker_timeout = execution_plan.timeout_ms;
     let worker_update_snapshots = execution_plan.update_snapshots;
@@ -743,11 +827,11 @@ fn execute_test_plan(
         .iter()
         .map(|entry| {
             let id = entry.id().to_owned();
-            let worker_manifest = worker_manifest.clone();
+            let worker_location = worker_location.clone();
             let worker_test_plan = worker_test_plan.clone();
             Ok(LeafProgram::new(id.clone(), move |context| {
                 let response = spawn_test_worker(
-                    &worker_manifest,
+                    &worker_location,
                     &id,
                     worker_timeout,
                     worker_update_snapshots,
@@ -925,7 +1009,7 @@ fn infrastructure_worker_response(error: impl Into<String>) -> WorkerResponse {
 }
 
 fn spawn_test_worker(
-    manifest: &Path,
+    location: &ProjectLocation,
     entry: &str,
     timeout_ms: Option<u64>,
     update_snapshots: bool,
@@ -937,12 +1021,16 @@ fn spawn_test_worker(
                 message: format!("cannot locate tondo worker executable: {error}"),
             })?,
         );
-    command
-        .arg("__test-worker")
-        .arg("--manifest")
-        .arg(manifest)
-        .arg("--entry")
-        .arg(entry);
+    command.arg("__test-worker");
+    match location {
+        ProjectLocation::Manifest(manifest) => {
+            command.arg("--manifest").arg(manifest);
+        }
+        ProjectLocation::Directory(project) => {
+            command.arg("--project").arg(project);
+        }
+    }
+    command.arg("--entry").arg(entry);
     if let Some(test_plan) = test_plan {
         command.arg("--test-plan").arg(test_plan);
     }
@@ -1067,6 +1155,7 @@ fn join_worker_pipe(
 
 fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
     let mut manifest = None;
+    let mut project = None;
     let mut test_plan = None;
     let mut entry = None;
     let mut update_snapshots = false;
@@ -1083,6 +1172,15 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
                         .get(index)
                         .and_then(|value| value.to_str())
                         .ok_or_else(|| "worker `--manifest` requires a path".to_owned())?,
+                ));
+            }
+            "--project" => {
+                index += 1;
+                project = Some(PathBuf::from(
+                    arguments
+                        .get(index)
+                        .and_then(|value| value.to_str())
+                        .ok_or_else(|| "worker `--project` requires a directory".to_owned())?,
                 ));
             }
             "--entry" => {
@@ -1109,13 +1207,20 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
         }
         index += 1;
     }
-    let manifest = manifest.ok_or_else(|| "worker manifest is required".to_owned())?;
+    if manifest.is_some() == project.is_some() {
+        return Err("worker requires exactly one of `--manifest` or `--project`".into());
+    }
     let entry = entry.ok_or_else(|| "worker entry is required".to_owned())?;
-    let response =
-        match execute_test_worker(&manifest, test_plan.as_deref(), &entry, update_snapshots) {
-            Ok(response) => response,
-            Err(error) => infrastructure_worker_response(error),
-        };
+    let response = match execute_test_worker(
+        manifest.as_deref(),
+        project.as_deref(),
+        test_plan.as_deref(),
+        &entry,
+        update_snapshots,
+    ) {
+        Ok(response) => response,
+        Err(error) => infrastructure_worker_response(error),
+    };
     let bytes = serde_json::to_vec(&response).map_err(|error| error.to_string())?;
     io::stdout()
         .write_all(&bytes)
@@ -1127,17 +1232,22 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
 }
 
 fn execute_test_worker(
-    manifest_path: &Path,
+    manifest_path: Option<&Path>,
+    project_path: Option<&Path>,
     test_plan_path: Option<&Path>,
     entry_id: &str,
     update_snapshots: bool,
 ) -> Result<WorkerResponse, String> {
-    let base = manifest_path.parent().unwrap_or_else(|| Path::new(""));
-    let manifest = read_input(manifest_path, "manifest")?;
-    let lockfile = read_input(&base.join("tondo.lock.json"), "lockfile")?;
-    let project = ProjectPlan::parse(&manifest, &lockfile).map_err(|error| error.to_string())?;
+    let location = match (manifest_path, project_path) {
+        (Some(manifest), None) => ProjectLocation::Manifest(manifest.to_owned()),
+        (None, Some(project)) => ProjectLocation::Directory(project.to_owned()),
+        _ => return Err("worker requires exactly one project location".into()),
+    };
+    let loaded = location.load().map_err(format_test_command_error)?;
+    let base = loaded.base.as_path();
+    let project = &loaded.project;
     let test_plan =
-        load_test_project_plan(&project, test_plan_path).map_err(format_test_command_error)?;
+        load_test_project_plan(project, test_plan_path).map_err(format_test_command_error)?;
     let mut supplied = BTreeMap::new();
     for input in project.required_inputs() {
         let bytes = read_input(
@@ -1970,6 +2080,7 @@ struct Invocation {
     warning_profiles: BTreeSet<WarningProfile>,
     format_check: bool,
     source: Option<PathBuf>,
+    project: Option<PathBuf>,
     manifest: Option<PathBuf>,
     lockfile: Option<PathBuf>,
     emit_interface: Option<PathBuf>,
@@ -1992,6 +2103,7 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
     let mut warning_profiles = BTreeSet::new();
     let mut format_check = false;
     let mut source: Option<PathBuf> = None;
+    let mut project: Option<PathBuf> = None;
     let mut manifest: Option<PathBuf> = None;
     let mut lockfile: Option<PathBuf> = None;
     let mut emit_interface: Option<PathBuf> = None;
@@ -2004,8 +2116,8 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
             if operation != Operation::Run {
                 return Err("program arguments are only valid with `tondo run`".into());
             }
-            if source.is_none() && manifest.is_none() {
-                return Err("the source file or manifest must appear before `--`".into());
+            if source.is_none() && project.is_none() && manifest.is_none() {
+                return Err("the source file, project or manifest must appear before `--`".into());
             }
             program_arguments = arguments[index + 1..]
                 .iter()
@@ -2041,6 +2153,14 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
             };
             if manifest.replace(PathBuf::from(value)).is_some() {
                 return Err("`--manifest` may appear only once".into());
+            }
+        } else if argument == "--project" {
+            index += 1;
+            let Some(value) = arguments.get(index) else {
+                return Err("`--project` requires a directory".into());
+            };
+            if project.replace(PathBuf::from(value)).is_some() {
+                return Err("`--project` may appear only once".into());
             }
         } else if argument == "--lockfile" {
             index += 1;
@@ -2082,14 +2202,23 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
         index += 1;
     }
 
-    if source.is_some() && manifest.is_some() {
-        return Err("choose either one source file or `--manifest`, not both".into());
+    if source.is_some() && (project.is_some() || manifest.is_some()) {
+        return Err(
+            "choose either one source file, `--project` or `--manifest`, not multiple inputs"
+                .into(),
+        );
     }
-    if source.is_none() && manifest.is_none() {
-        return Err("a source file is required (or use `--manifest` for a project)".into());
+    if project.is_some() && manifest.is_some() {
+        return Err("choose either `--project` or `--manifest`, not both".into());
     }
-    if operation == Operation::Format && manifest.is_some() {
-        return Err("`tondo fmt` accepts a source file, not a project manifest".into());
+    if source.is_none() && project.is_none() && manifest.is_none() {
+        if operation == Operation::Format {
+            return Err("a source file is required for `tondo fmt`".into());
+        }
+        project = Some(PathBuf::from("."));
+    }
+    if operation == Operation::Format && (project.is_some() || manifest.is_some()) {
+        return Err("`tondo fmt` accepts a source file, not a project".into());
     }
     if operation == Operation::Format && (emit_interface.is_some() || emit_artifact.is_some()) {
         return Err("build products are only available from `check` or `run`".into());
@@ -2142,6 +2271,7 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
         warning_profiles,
         format_check,
         source,
+        project,
         manifest,
         lockfile,
         emit_interface,
@@ -2182,10 +2312,36 @@ fn compilation_request(invocation: &Invocation) -> Result<PreparedCompilation, S
         return Ok((request, None));
     }
 
+    if let Some(project_path) = &invocation.project {
+        let (base, manifest_bytes, lockfile_bytes) = discover_cli_project(project_path)?;
+        let plan = ProjectPlan::parse(&manifest_bytes, &lockfile_bytes)
+            .map_err(|error| error.to_string())?;
+        let mut supplied = BTreeMap::new();
+        for input in plan.required_inputs() {
+            let physical = base.join(input.path());
+            reject_product_input_collision(invocation, &physical, input.path())?;
+            let bytes = read_input(
+                &physical,
+                &format!("{} input `{}`", input.kind().as_str(), input.path()),
+            )?;
+            supplied.insert(input.path().to_owned(), Arc::<[u8]>::from(bytes));
+        }
+        let request = plan
+            .resolve(&supplied)
+            .map_err(|error| error.to_string())?
+            .into_compilation_request(
+                invocation.operation,
+                invocation.diagnostic_format,
+                ResourceLimits::default(),
+            )
+            .map_err(|error| error.to_string())?;
+        return Ok((request, None));
+    }
+
     let source = invocation
         .source
         .as_ref()
-        .expect("parse_invocation requires a source or manifest");
+        .expect("parse_invocation requires a source, project or manifest");
     let bytes = Arc::<[u8]>::from(read_input(source, "source")?);
     let file_name = source
         .file_name()
@@ -2216,6 +2372,28 @@ fn compilation_request(invocation: &Invocation) -> Result<PreparedCompilation, S
     )
     .map_err(|error| error.to_string())?;
     Ok((request, Some(bytes)))
+}
+
+fn discover_cli_project(project_path: &Path) -> Result<(PathBuf, Vec<u8>, Vec<u8>), String> {
+    let root = project_path.canonicalize().map_err(|error| {
+        format!(
+            "cannot resolve project directory `{}`: {error}",
+            project_path.display()
+        )
+    })?;
+    let legacy_manifest = root.join("tondo.json");
+    if !root.join("tondo.toml").is_file() && legacy_manifest.is_file() {
+        let manifest = read_input(&legacy_manifest, "manifest")?;
+        let lockfile_path = root.join("tondo.lock.json");
+        let lockfile = read_input(&lockfile_path, "lockfile")?;
+        return Ok((root, manifest, lockfile));
+    }
+    let discovered = project_discovery::discover(&root)?;
+    Ok((
+        discovered.root,
+        discovered.manifest_bytes,
+        discovered.lockfile_bytes,
+    ))
 }
 
 fn reject_product_input_collision(
@@ -2572,6 +2750,8 @@ mod tests {
             &["check", "--diagnostic-format", "human", "main.to"][..],
             &["check", "--warnings", "core", "main.to"][..],
             &["check", "--warnings=core", "main.to"][..],
+            &["check", "--project", "example"][..],
+            &["run", "--project", "example", "--", "arg"][..],
         ] {
             parse_invocation(&arguments(values)).unwrap();
         }

@@ -9,9 +9,10 @@
 **Especificación de testing:** [Testing Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
 Esta especificación define la frontera de proyecto del toolchain Tondo 0.1:
-manifiesto, lockfile, selección de fuentes, grafo de paquetes, interfaces
-compiladas, metadatos de artefacto y unidades privilegiadas. No modifica la
-sintaxis ni la semántica de un archivo `.to`.
+layout convencional, configuración TOML opcional, lockfile, selección de
+fuentes, grafo de paquetes, interfaces compiladas, metadatos de artefacto y
+unidades privilegiadas. No modifica la sintaxis ni la semántica de un archivo
+`.to`.
 
 Las palabras **debe**, **no debe**, **puede** y **error** son normativas para el
 toolchain del draft. La resolución de versiones, descarga de
@@ -34,8 +35,10 @@ La frontera de proyecto tiene cinco propiedades:
    artefacto.
 
 El compilador no consulta red, reloj, variables de entorno, directorio actual,
-aleatoriedad ni procesos. La CLI puede leer los paths que el plan cerrado le
-solicita, pero no puede añadir entradas por descubrimiento.
+aleatoriedad ni procesos. La CLI puede descubrir un proyecto por sus
+convenciones y materializar un grafo interno; después solo entrega al
+compilador los `required_inputs` cerrados. El JSON del compilador sigue siendo
+un formato interno, no una configuración que el usuario deba mantener.
 
 `tondo test` añade una fase de orquestación definida por la especificación de
 testing: puede enumerar únicamente las convenciones dentro de roots declarados,
@@ -120,9 +123,80 @@ Un alias y el nombre local de un paquete son identificadores Tondo válidos.
 `std` está reservado. Los aliases de un paquete son únicos, no pueden coincidir
 con su nombre local y resuelven a un `PackageId` exacto.
 
-## 3. Manifiesto
+## 3. Proyectos convencionales y configuración humana
 
-### 3.1 Forma completa
+La CLI normal es *convention-first*: una aplicación no necesita `tondo.json`
+para compilarse. El directorio del proyecto es el directorio actual o el
+argumento `--project <dir>`. La forma recomendada es:
+
+~~~text
+app/
+  src/
+    main.to
+    models/user.to
+  tests/
+    user_test.to
+  tondo.toml                 # opcional
+  tondo.lock.toml            # solo si hay dependencias externas
+~~~
+
+Las reglas de descubrimiento son deterministas:
+
+1. Si existe `src/`, se recorren sus archivos `.to` y, si existe, el árbol
+   `tests/`. `src/main.to` es la raíz preferida; si no existe, la raíz es el
+   primer path físico ordenado por bytes UTF-8.
+2. Sin `src/`, un proyecto reconocido debe tener `tondo.toml` o `main.to`.
+   En ese caso se incluyen los `.to` del nivel raíz y, cuando hay TOML, el
+   árbol `tests/`. Un directorio sin ninguno de esos marcadores no se trata
+   como proyecto aunque contenga archivos `.to` auxiliares.
+3. Se ignoran symlinks, directorios ocultos, `target/` y `vendor/`. Los paths
+   se normalizan a `/`, son relativos a la raíz y forman el `physical_path`,
+   `logical_path` y módulo del manifiesto interno.
+4. El nombre del paquete se toma de `[package].name`; si falta, se usa el
+   nombre del directorio y debe ser un alias Tondo válido. Un directorio con
+   guiones u otro spelling no válido debe declarar el nombre explícitamente.
+
+`tondo.toml` es la única configuración humana del proyecto. No repite fuentes
+ni módulos. Sus tablas admitidas son:
+
+~~~toml
+[package]
+name = "app"
+edition = "0.1"
+
+[target]
+name = "tondo-vm-hosted"
+profile = "hosted"
+capability_registry = "tondo-capabilities-draft"
+capabilities = ["console", "process"]
+features = []
+
+[dependencies]
+http = "registry:http@1"
+serde = { package = "registry:serde@1", interface = "interfaces/serde.ti" }
+~~~
+
+Todas las tablas y claves desconocidas son error. Si no existe `[target]`, se
+usan `tondo-vm-hosted`, perfil `hosted`, el registro vigente, las capacidades
+hosted soportadas y features vacías. Si no existe `[package]`, la edición es
+`0.1` y el nombre se deriva según las reglas anteriores.
+
+Las dependencias externas requieren `tondo.lock.toml`, que es un artefacto
+generado por el resolvedor y debe fijar el mismo grafo, hashes de fuente,
+interfaces y standard package que el manifiesto interno. El compilador no
+resuelve versiones ni red. Un proyecto sin dependencias puede omitir el
+lockfile: la CLI materializa un lockfile equivalente en memoria. El formato
+TOML del lockfile es una transliteración estructural del lockfile JSON cerrado
+(las tablas `standard`, `packages`, `sources`, `generator_inputs` y
+`privileged_units` conservan exactamente sus nombres y listas); el JSON solo
+se usa como frontera canónica interna de `ProjectPlan`.
+
+`tondo.json` y `tondo.lock.json` son formatos internos/legacy. La CLI los acepta
+únicamente mediante `--manifest` (y su lockfile adyacente) o como fallback de
+compatibilidad cuando un directorio no tiene `tondo.toml`; no son necesarios en
+un proyecto nuevo y no deben aparecer en la documentación de uso normal.
+
+### 3.1 Manifiesto interno: forma completa
 
 ~~~json
 {
@@ -457,8 +531,9 @@ Una invocación `tondo test` puede consumir un record independiente
 `tondo-test-plan-draft`, pero no obliga al usuario a mantenerlo. Sin sidecar,
 el toolchain materializa en memoria este mismo shape con defaults opinionados a
 partir del `ProjectPlan` ya cerrado. `--test-plan <path>` selecciona un record
-explícito; si no se proporciona, un `tondo.test.json` adyacente se usa cuando
-existe. No cambia el manifiesto de producción ni crea un segundo parser. Todo
+explícito; si no se proporciona, un `tondo.test.toml` adyacente se usa cuando
+existe, y `tondo.test.json` solo se conserva como fallback legacy. No cambia el
+manifiesto de producción ni crea un segundo parser. Todo
 record suministrado se valida contra el `manifest_hash` y `lockfile_hash`
 exactos de un `ProjectPlan` ya cerrado, y todos sus campos son inputs del plan
 de test:
@@ -1171,7 +1246,20 @@ incompatible antes de compilar fuente. Su hash exacto forma parte del artefacto.
 
 ## 10. CLI de proyecto
 
-Las formas de proyecto son:
+Las formas normales de proyecto son:
+
+~~~text
+tondo check [--project <dir>]
+tondo run [--project <dir>] -- [argument ...]
+tondo test [--project <dir>] [--test-plan <tondo.test.toml>] [opciones de test]
+~~~
+
+Sin `--project` se usa el directorio actual. `check` y `run` materializan el
+grafo convencional descrito en la sección 3. `test` aplica las mismas reglas y
+además descubre las fuentes de test según `TONDO_TESTING_SPEC.md`.
+
+Las formas legacy, útiles para conformance y herramientas que ya produzcan el
+grafo cerrado, son:
 
 ~~~text
 tondo check --manifest <tondo.json>
@@ -1187,17 +1275,20 @@ Opciones:
 --emit-artifact <path>   metadatos canónicos del build
 ~~~
 
-Sin `--lockfile`, se utiliza `tondo.lock.json` junto al manifiesto. `fmt` sigue
-operando sobre un único `.to` y no acepta manifiestos ni productos.
+`--manifest` usa `tondo.lock.json` junto al manifiesto salvo que se dé
+`--lockfile`. La forma convencional obtiene `tondo.lock.toml` de la raíz y
+materializa el JSON interno sin escribirlo. `fmt` sigue operando sobre un único
+`.to` y no acepta proyectos ni productos.
 La forma, opciones, selección, ejecución y reportes de `tondo test` se rigen por
 `TONDO_TESTING_SPEC.md`; antes de invocar al compilador debe materializar el
 plan cerrado descrito arriba.
 
 La CLI:
 
-1. lee manifiesto y lockfile;
+1. descubre el layout/TOML o lee el manifiesto legacy;
 2. crea el plan puro;
-3. lee exactamente `required_inputs`, relativos al manifiesto;
+3. lee exactamente `required_inputs`, relativos a la raíz del proyecto (o al
+   directorio del manifiesto legacy);
 4. entrega los bytes al plan;
 5. compila y valida los programas meta;
 6. construye el snapshot, ejecuta la única ronda de generación y valida todas

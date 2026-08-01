@@ -18,7 +18,7 @@
   "specifications": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "68bdf171a1f9be7cf542166415c97223f54aae60fa2733183255553b73afc7ef"
+      "sha256": "fa6f2b533c6873514b72e39dd75e79b0aa40eaeff7081c915842ae026941d0b7"
     },
     {
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",
@@ -26,11 +26,11 @@
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
-      "sha256": "75fda912c934a8549b9bf8e6ce79973598e39b9ad3ed8f27ae93f42d364eca8f"
+      "sha256": "b10363b23496c618412fa79c8bfee8f9a84c7d62566a6ba75c03398ccdea423c"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "cf19fee01f2a0328ef04add643c22c5bbe688d73c96607ffa197a146ff7ce4d2"
+      "sha256": "2c5cb7e367dc1c98e6e2cb0d20853b7873e3e9966409fb191f3295b9ae34a9cc"
     }
   ],
   "case_layers": [],

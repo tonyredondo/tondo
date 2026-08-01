@@ -11,11 +11,14 @@ target, profile, capabilities, resource limits, source snapshots, and the root
 file.
 
 Version selection, fetching, generator execution, and lockfile maintenance
-remain external toolchain responsibilities. M9 adds a pure project planner that
-parses the concrete manifest and lockfile contract, selects source sets, checks
-all hashes and interfaces, and then constructs this graph from explicitly
-supplied bytes. It cannot infer an input from a physical path. The wire formats
-are defined in `../../TONDO_TOOLCHAIN_SPEC.md`.
+remain external toolchain responsibilities. The CLI may first discover
+`src/`/`tests/` and optional `tondo.toml`/`tondo.lock.toml`; that boundary
+materializes the same closed records but is not part of this pure module. M9
+adds a pure project planner that parses the concrete manifest and lockfile
+contract, selects source sets, checks all hashes and interfaces, and then
+constructs this graph from explicitly supplied bytes. It cannot infer an input
+from a physical path. The wire formats are defined in
+`../../TONDO_TOOLCHAIN_SPEC.md`.
 
 ## Package nodes
 

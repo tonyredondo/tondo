@@ -10962,3 +10962,21 @@ El SHA-256 esperado de esos bytes es
 orden o byte exige publicar un hash nuevo y una nueva revisión del Markdown. De
 este modo dos runners no pueden usar stubs distintos y afirmar que comprobaron el
 mismo ejemplo.
+
+## Apéndice D. Layout convencional de proyectos
+
+La sintaxis `.to` no contiene declaraciones `module`, `package` ni `source`
+path. La CLI puede materializar esos datos por convención: `src/` es el source
+root de producción, `src/main.to` es la raíz preferida de un ejecutable y
+`tests/` contiene fuentes de integración. Los archivos hermanos que terminan
+en `_test.to` dentro de un source root de producción son companions unitarios;
+la clasificación y sus reglas de visibilidad pertenecen a
+`TONDO_TESTING_SPEC.md`, no al parser.
+
+La configuración humana opcional es `tondo.toml`; define nombre de paquete,
+edición, target, perfil, capabilities, features y aliases de dependencias, pero
+no puede declarar módulos alternativos ni cambiar la semántica de imports. Un
+`tondo.lock.toml` generado fija las identidades externas. Estos archivos son
+toolchain inputs, no unidades de compilación Tondo y no se importan desde
+`.to`. El compilador recibe finalmente el grafo cerrado interno y conserva la
+misma semántica que tendría un manifiesto explícito.

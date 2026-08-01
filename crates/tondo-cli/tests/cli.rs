@@ -37,10 +37,10 @@ fn missing_source_is_a_usage_error() {
         .unwrap();
 
     assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
-        String::from_utf8(output.stderr)
-            .unwrap()
-            .contains("a source file is required")
+        stderr.contains("a source file is required"),
+        "unexpected diagnostic: {stderr}"
     );
 }
 
@@ -60,6 +60,50 @@ fn check_reaches_the_shared_driver() {
 }
 
 #[test]
+fn check_and_run_accept_a_conventional_project_without_json_configuration() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let directory = std::env::temp_dir().join(format!(
+        "tondo-conventional-cli-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir_all(directory.join("src")).unwrap();
+    fs::write(
+        directory.join("src/main.to"),
+        b"import std.console\nfn main() { console.print(\"conventional\\n\") }\n",
+    )
+    .unwrap();
+    fs::write(directory.join("tondo.toml"), "[package]\nname = \"demo\"\n").unwrap();
+
+    let check = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["check", "--project"])
+        .arg(&directory)
+        .output()
+        .unwrap();
+    assert!(
+        check.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(check.stdout.is_empty());
+
+    let run = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .args(["run", "--project"])
+        .arg(&directory)
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    assert_eq!(run.stdout, b"conventional\n");
+}
+
+#[test]
 fn help_and_version_are_successful() {
     for argument in ["--help", "--version"] {
         let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
@@ -72,16 +116,28 @@ fn help_and_version_are_successful() {
 }
 
 #[test]
-fn test_command_defaults_to_the_project_manifest() {
+fn test_command_defaults_to_the_conventional_project_directory() {
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    fs::create_dir_all(directory.join("src")).unwrap();
+    fs::write(directory.join("src/main.to"), b"fn main() {}\n").unwrap();
+    fs::write(directory.join("tondo.toml"), "[package]\nname = \"demo\"\n").unwrap();
+    fs::remove_file(directory.join("tondo.json")).unwrap();
+    fs::remove_file(directory.join("tondo.lock.json")).unwrap();
+    fs::remove_file(directory.join("tondo.test.json")).unwrap();
     let parsed = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
         .args([
             "test", "--filter", "smoke", "--order", "random", "--seed", "5eed",
         ])
         .output()
         .unwrap();
-    assert_eq!(parsed.status.code(), Some(2));
-    assert!(parsed.stdout.is_empty());
-    assert!(String::from_utf8_lossy(&parsed.stderr).contains("cannot read manifest"));
+    fs::remove_dir_all(directory).unwrap();
+    assert!(
+        parsed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&parsed.stderr)
+    );
+    assert!(parsed.stdout.is_empty() || String::from_utf8_lossy(&parsed.stdout).contains("PASS"));
 
     let invalid = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .args(["test", "--shard", "0/2"])
@@ -193,6 +249,52 @@ fn test_command_accepts_an_explicit_canonical_plan_path() {
 
     assert!(output.status.success());
     assert_eq!(report.metadata().retry.max_additional_rounds, 2);
+}
+
+fn remove_json_nulls(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            fields.retain(|_, value| !value.is_null());
+            for value in fields.values_mut() {
+                remove_json_nulls(value);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                remove_json_nulls(value);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
+#[test]
+fn test_command_accepts_an_optional_toml_plan_sidecar() {
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(directory.join("tondo.test.json")).unwrap())
+            .unwrap();
+    remove_json_nulls(&mut value);
+    let toml_plan = toml::to_string(&toml::Value::try_from(value).unwrap()).unwrap();
+    fs::write(directory.join("tondo.test.toml"), toml_plan).unwrap();
+    fs::remove_file(directory.join("tondo.test.json")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args(["test", "--manifest", "tondo.json", "--test-format", "json"])
+        .output()
+        .unwrap();
+    let report = TestReport::parse(&output.stdout).unwrap();
+    fs::remove_dir_all(directory).unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(report.tests().len(), 1);
 }
 
 #[test]

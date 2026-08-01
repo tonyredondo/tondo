@@ -56,7 +56,8 @@ ordering, and the absence of source bytes from the public canonical plan.
 `UTEST-INPUTS-PLAN-001` now closes public/secret input identity and
 reproducibility in the separate value-free `TestInputPlan`; its contract is
 documented in `test-input-plan.md`. The CLI consumes an explicit or adjacent
-canonical `tondo.test.json` when present and otherwise materializes defaults
+`tondo.test.toml` when present (`tondo.test.json` is a legacy fallback) and
+otherwise materializes defaults
 before discovery. It loads declared snapshot stores as immutable inputs, uses
 the closed timeout as the upper bound for each process-isolated leaf worker,
 and publishes snapshot updates only through an all-passing atomic stage.

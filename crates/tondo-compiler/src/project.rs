@@ -262,6 +262,11 @@ impl ProjectPlan {
         &self.target.name
     }
 
+    /// Canonical source path selected as the project entry point.
+    pub fn root_source_path(&self) -> &str {
+        &self.root.physical_path
+    }
+
     pub fn profile(&self) -> HostProfile {
         self.target.profile
     }
