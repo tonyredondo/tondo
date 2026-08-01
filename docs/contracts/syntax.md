@@ -124,7 +124,8 @@ The maintained tests cover:
   multiple assignment;
 - local recovery that preserves later methods and declarations;
 - every one-byte input, 2,048 deterministic arbitrary byte sequences, and
-  valid/invalid nesting inputs on 64 KiB worker stacks across expressions,
+  valid/invalid nesting inputs on small worker stacks (64 KiB on POSIX and
+  256 KiB on Windows for the platform ABI/harness) across expressions,
   blocks, loops, calls, records, types, and patterns;
 - deep CST token partition/reconstruction and formatter round-trips, including
   synthetic missing-delimiter recovery, with significant-token shape

@@ -2514,7 +2514,8 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   gramática, precedencia o shape del CST; se eliminó
   `MAX_SAFE_RECURSIVE_PARSER_DEPTH` y `ParseLimits.max_nesting_depth` es ahora
   el único presupuesto lógico, cargado contra los frames. La batería cubre
-  casos válidos e inválidos de profundidad 1.000–4.000 en workers de 64 KiB,
+  casos válidos e inválidos de profundidad 1.000–4.000 en workers pequeños
+  (64 KiB en POSIX y 256 KiB en Windows por el overhead del ABI/harness),
   equivalencia de partición/reconstrucción y token shape tras formatter, además
   de los 2.048 inputs arbitrarios y fuzz targets existentes. La evidencia
   observada en Linux x86_64 pasa; la matriz Linux ARM64/macOS/Windows queda

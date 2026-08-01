@@ -3973,6 +3973,12 @@ mod tests {
     use crate::syntax::format::format_parsed;
     use crate::syntax::{LexMode, lex};
 
+    // Windows test threads need a little more reserved stack for the MSVC
+    // harness and debug ABI. The parser remains on explicit heap frames; this
+    // is only the smallest portable test-thread reservation that exercises the
+    // same parser path without the platform runtime exhausting its guard page.
+    const SMALL_HOST_STACK_SIZE: usize = if cfg!(windows) { 256 * 1024 } else { 64 * 1024 };
+
     fn parse_source(source: &[u8], mode: ParseMode) -> (SourceDatabase, FileId, Parsed) {
         parse_source_with_limits(source, mode, ParseLimits::default())
     }
@@ -5227,7 +5233,7 @@ fn after(): Int {
         let expected = source.clone();
         let handle = std::thread::Builder::new()
             .name("tondo-parser-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &source,
@@ -5302,7 +5308,7 @@ fn after(): Int {
         let expected = source.clone();
         let handle = std::thread::Builder::new()
             .name("tondo-type-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &source,
@@ -5370,7 +5376,7 @@ fn after(): Int {
         let expected = source.clone();
         let handle = std::thread::Builder::new()
             .name("tondo-type-group-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &source,
@@ -5514,7 +5520,7 @@ fn after(): Int {
         let expected_type = type_source.clone();
         let type_handle = std::thread::Builder::new()
             .name("tondo-invalid-type-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &type_source,
@@ -5541,7 +5547,7 @@ fn after(): Int {
         let expected_pattern = pattern_source.clone();
         let pattern_handle = std::thread::Builder::new()
             .name("tondo-invalid-pattern-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &pattern_source,
@@ -5576,7 +5582,7 @@ fn after(): Int {
         let expected = source.clone();
         let handle = std::thread::Builder::new()
             .name("tondo-if-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &source,
@@ -5618,7 +5624,7 @@ fn after(): Int {
         let expected = source.clone();
         let handle = std::thread::Builder::new()
             .name("tondo-else-if-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &source,
@@ -5664,7 +5670,7 @@ fn after(): Int {
         let expected = source.clone();
         let handle = std::thread::Builder::new()
             .name("tondo-for-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &source,
@@ -5706,7 +5712,7 @@ fn after(): Int {
         let expected = source.clone().into_bytes();
         let handle = std::thread::Builder::new()
             .name("tondo-assignment-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     source.as_bytes(),
@@ -5750,7 +5756,7 @@ fn after(): Int {
         let expected = block_source.clone();
         let handle = std::thread::Builder::new()
             .name("tondo-block-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &block_source,
@@ -5819,7 +5825,7 @@ fn after(): Int {
         let expected = call_source.clone();
         let call_handle = std::thread::Builder::new()
             .name("tondo-call-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &call_source,
@@ -5861,7 +5867,7 @@ fn after(): Int {
         let expected = record_source.clone();
         let record_handle = std::thread::Builder::new()
             .name("tondo-record-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &record_source,
@@ -5905,7 +5911,7 @@ fn after(): Int {
         let expected = source.clone();
         let handle = std::thread::Builder::new()
             .name("tondo-invalid-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &source,
@@ -5930,7 +5936,7 @@ fn after(): Int {
         let expected = array_source.clone();
         let array_handle = std::thread::Builder::new()
             .name("tondo-invalid-array-small-stack".into())
-            .stack_size(64 * 1024)
+            .stack_size(SMALL_HOST_STACK_SIZE)
             .spawn(move || {
                 let (sources, file, parsed) = parse_source_with_limits(
                     &array_source,

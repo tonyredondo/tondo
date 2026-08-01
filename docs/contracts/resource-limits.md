@@ -94,7 +94,8 @@ Once that path reaches its implementation spill depth, source-controlled
 continuations move to explicit heap-backed frames. `ParseLimits.max_nesting_depth`
 remains the sole logical nesting budget; it is charged by the frame machines and
 is not clamped to 128 or to any other host-stack-derived value. CST traversal,
-lossless reconstruction, and delimiter recovery also use explicit stacks, so a
-64 KiB worker stack exercises the same accepted and rejected inputs as a normal
-host stack. Frame memory is O(depth), and exhaustion is reported as the typed
+lossless reconstruction, and delimiter recovery also use explicit stacks, so
+the small worker stacks used by the portable tests (64 KiB on POSIX, 256 KiB on
+Windows for platform runtime overhead) exercise the same accepted and rejected
+inputs as a normal host stack. Frame memory is O(depth), and exhaustion is reported as the typed
 `ParseResource::NestingDepth`/`T0002` result rather than a process abort.
