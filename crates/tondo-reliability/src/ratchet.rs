@@ -292,11 +292,8 @@ mod tests {
         assert_eq!(evidence.status, "not-applicable");
         assert!(evidence.report_sha256.is_none());
 
-        let report = std::env::temp_dir().join(format!(
-            "tondo-ratchet-report-{}-{}",
-            std::process::id(),
-            std::thread::current().name().unwrap_or("test")
-        ));
+        let report =
+            std::env::temp_dir().join(format!("tondo-ratchet-report-{}", std::process::id()));
         std::fs::write(&report, b"validated report").unwrap();
         let evidence = scope_evidence(&root, "coverage", Some(&report), false, |bytes, _| {
             assert_eq!(bytes, b"validated report");
