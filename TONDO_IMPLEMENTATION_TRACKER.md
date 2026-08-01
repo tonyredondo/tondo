@@ -8,13 +8,13 @@ read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001`, `UTEST-CAPTURE-001` y
 `UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001`, `UTEST-LOWER-001` y
 `UTEST-CONTROL-001`, `UTEST-RUNTIME-001`, `UTEST-SUITE-001`,
-`UTEST-LIMIT-001` y `UTEST-INPUTS-001` están
+`UTEST-LIMIT-001`, `UTEST-INPUTS-001` y `UTEST-GLOB-001` están
 cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.31
+**Versión del tracker:** 1.32
 
 **Última actualización:** 2026-07-31
 
@@ -2940,7 +2940,7 @@ reporters.
   validación, reservas atómicas, deltas duplicados, pausas de timeout, timeout
   desactivado, regresión de reloj y grace period de interrupción.
 
-- [ ] **UTEST-GLOB-001 — Implementar el selector glob portable.** Parsear
+- [x] **UTEST-GLOB-001 — Implementar el selector glob portable.** Parsear
   componentes `::`, `*`, `?` y `**` con la gramática cerrada de la spec,
   rechazar patterns vacíos/no canónicos y no delegar matching al shell,
   filesystem, locale ni normalización. Hacer full match case-sensitive sobre
@@ -2948,7 +2948,10 @@ reporters.
   `O(pattern_scalars * id_scalars)`, seleccionar subárboles de suites,
   deduplicar la unión y aplicar selección antes de shard/order. Cubrir vectores
   Unicode, cero/muchos componentes para `**`, metacaracteres inválidos,
-  coincidencias solapadas y no-match con y sin `--allow-empty`.
+  coincidencias solapadas y no-match con y sin `--allow-empty`. Evidencia:
+  `docs/contracts/test-glob.md` y ocho tests unitarios sobre full-match,
+  Unicode, globstar, gramática inválida, deduplicación, selección de suites,
+  hojas individuales, selección vacía y árboles malformados.
 
 - [ ] **UTEST-SHARD-001 — Particionar hojas de forma estable.** Aplicar
   `sha256-mod-v1` después de filter/glob/exact y antes del orden, con índices
