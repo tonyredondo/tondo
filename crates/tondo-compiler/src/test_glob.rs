@@ -448,11 +448,7 @@ mod tests {
         assert_eq!(child.parent(), Some("app"));
         assert_eq!(child.kind(), GlobNodeKind::Test);
         let selection = pattern
-            .select_tree([
-                suite,
-                child,
-                GlobNode::test("app::unit::two", Some("app")),
-            ])
+            .select_tree([suite, child, GlobNode::test("app::unit::two", Some("app"))])
             .unwrap();
         assert_eq!(selection.leaves(), ["app::unit::one"]);
     }

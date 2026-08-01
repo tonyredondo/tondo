@@ -8,13 +8,13 @@ read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
 `UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001`, `UTEST-CAPTURE-001` y
 `UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001`, `UTEST-LOWER-001` y
 `UTEST-CONTROL-001`, `UTEST-RUNTIME-001`, `UTEST-SUITE-001`,
-`UTEST-LIMIT-001`, `UTEST-INPUTS-001` y `UTEST-GLOB-001` están
+`UTEST-LIMIT-001`, `UTEST-INPUTS-001`, `UTEST-GLOB-001` y `UTEST-SHARD-001` están
 cerrados sobre el
 draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
 metaprogramación, testing y Standard Library deben implementarse y añadirse a
 la conformidad del mismo draft antes de publicar la primera versión
 
-**Versión del tracker:** 1.32
+**Versión del tracker:** 1.33
 
 **Última actualización:** 2026-07-31
 
@@ -2953,13 +2953,16 @@ reporters.
   Unicode, globstar, gramática inválida, deduplicación, selección de suites,
   hojas individuales, selección vacía y árboles malformados.
 
-- [ ] **UTEST-SHARD-001 — Particionar hojas de forma estable.** Aplicar
+- [x] **UTEST-SHARD-001 — Particionar hojas de forma estable.** Aplicar
   `sha256-mod-v1` después de filter/glob/exact y antes del orden, con índices
   one-based, validación estricta y asignación independiente de discovery order,
   plataforma y cantidad de jobs. Probar unión exacta, disjunción, compilación
   completa, el vector SHA-256 normativo, lifecycle independiente por proceso y
   shard vacío válido sin `--allow-empty` cuando la selección previa no era
-  vacía.
+  vacía. Evidencia: `docs/contracts/test-shard.md` y ocho tests unitarios sobre
+  parsing estricto, vector SHA-256 normativo, independencia del discovery
+  order, unión/disjunción, shard vacío, shard único, selección inválida y
+  constantes del protocolo.
 
 - [ ] **UTEST-SCHED-001 — Fijar orden y paralelismo observable.** El default
   usa `id-byte-order-v1`; random usa `sha256-tree-v1` con seed hexadecimal
