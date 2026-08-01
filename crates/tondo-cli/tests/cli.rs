@@ -7,6 +7,7 @@ use tondo_compiler::artifact::{BuildArtifact, CAPABILITY_REGISTRY, CompiledInter
 use tondo_compiler::project::{
     BOOTSTRAP_STANDARD_PACKAGE, LOCKFILE_FORMAT, MANIFEST_FORMAT, bootstrap_standard_hash,
 };
+use tondo_compiler::test_report::{TestList, TestReport};
 
 static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -132,7 +133,9 @@ fn test_command_executes_a_test_body_through_the_vm_backend() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(String::from_utf8_lossy(&output.stdout).contains("PASS cli::unit::smoke::smoke"));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("PASS cli::integration::smoke::smoke")
+    );
 }
 
 #[test]
@@ -158,9 +161,86 @@ fn test_command_reports_failures_and_publishes_json_and_junit() {
     fs::remove_dir_all(directory).unwrap();
 
     assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("FAIL cli::unit::smoke::smoke"));
+    assert!(
+        String::from_utf8_lossy(&output.stdout).contains("FAIL cli::integration::smoke::smoke")
+    );
     assert!(String::from_utf8_lossy(&json_bytes).contains("tondo-test-report-0.1/7"));
     assert!(String::from_utf8_lossy(&junit_bytes).contains("<testsuites"));
+}
+
+#[test]
+fn test_command_executes_retry_rounds_and_preserves_each_attempt() {
+    let directory = test_project(b"test smoke { assert(false) }\n");
+    let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args([
+            "test",
+            "--manifest",
+            "tondo.json",
+            "--retry",
+            "1",
+            "--test-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let report = TestReport::parse(&output.stdout).unwrap();
+    assert_eq!(report.tests()[0].attempts.len(), 2);
+    assert_eq!(report.tests()[0].attempts[0].round, 0);
+    assert_eq!(report.tests()[0].attempts[1].round, 1);
+    assert_eq!(report.metadata().retry.rounds.len(), 1);
+}
+
+#[test]
+fn test_command_repeats_in_fresh_attempts_and_emits_json_lists_and_owners() {
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    fs::create_dir_all(directory.join(".github")).unwrap();
+    fs::write(directory.join(".github/CODEOWNERS"), b"* @tondo\n").unwrap();
+    let repeated = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args([
+            "test",
+            "--manifest",
+            "tondo.json",
+            "--repeat",
+            "2",
+            "--test-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        repeated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&repeated.stderr)
+    );
+    let report = TestReport::parse(&repeated.stdout).unwrap();
+    assert_eq!(report.tests()[0].attempts.len(), 2);
+    assert_eq!(report.tests()[0].owners, ["@tondo"]);
+
+    let listed = Command::new(env!("CARGO_BIN_EXE_tondo"))
+        .current_dir(&directory)
+        .args([
+            "test",
+            "--manifest",
+            "tondo.json",
+            "--list",
+            "--test-format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    fs::remove_dir_all(directory).unwrap();
+    assert!(
+        listed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&listed.stderr)
+    );
+    let list = TestList::parse(&listed.stdout).unwrap();
+    assert_eq!(list.tests()[0].owners, ["@tondo"]);
 }
 
 #[test]

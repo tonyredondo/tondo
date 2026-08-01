@@ -19,6 +19,7 @@ use crate::syntax::{Cst, SyntaxKind};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestEntry {
     file: FileId,
+    logical_path: String,
     id: String,
     name: String,
     body: Vec<u8>,
@@ -28,6 +29,11 @@ pub struct TestEntry {
 impl TestEntry {
     pub fn file(&self) -> FileId {
         self.file
+    }
+
+    /// Canonical source path used for ownership matching and report metadata.
+    pub fn logical_path(&self) -> &str {
+        &self.logical_path
     }
 
     pub fn id(&self) -> &str {
@@ -105,6 +111,7 @@ pub fn discover(
         source.bytes(),
         root.declarations(),
         package_name,
+        source.path().as_str(),
         source.module().as_str(),
         &mut parents,
         &mut setup,
@@ -195,6 +202,7 @@ fn visit_declarations<'a>(
     source: &[u8],
     declarations: impl Iterator<Item = Declaration<'a>>,
     package_name: &str,
+    logical_path: &str,
     module: &str,
     parents: &mut Vec<String>,
     setup: &mut Vec<Vec<u8>>,
@@ -212,9 +220,16 @@ fn visit_declarations<'a>(
                 let body = test
                     .body()
                     .ok_or_else(|| TestBackendError::InvalidBody("test has no body".into()))?;
-                let id = test_id(package_name, module, parents, name);
+                let source_class = if logical_path == "tests" || logical_path.starts_with("tests/")
+                {
+                    "integration"
+                } else {
+                    "unit"
+                };
+                let id = test_id(package_name, source_class, module, parents, name);
                 entries.push(TestEntry {
                     file,
+                    logical_path: logical_path.to_owned(),
                     id,
                     name: name.to_owned(),
                     body: block_contents(source, body.syntax().range())?,
@@ -241,6 +256,7 @@ fn visit_declarations<'a>(
                     source,
                     body.members(),
                     package_name,
+                    logical_path,
                     module,
                     parents,
                     setup,
@@ -257,8 +273,14 @@ fn visit_declarations<'a>(
     Ok(())
 }
 
-fn test_id(package_name: &str, module: &str, parents: &[String], name: &str) -> String {
-    let mut id = format!("{package_name}::unit::{module}");
+fn test_id(
+    package_name: &str,
+    source_class: &str,
+    module: &str,
+    parents: &[String],
+    name: &str,
+) -> String {
+    let mut id = format!("{package_name}::{source_class}::{module}");
     for parent in parents {
         id.push_str("::");
         id.push_str(parent);

@@ -16,17 +16,21 @@ use tondo_compiler::project::ProjectPlan;
 use tondo_compiler::source::{
     LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput, SourceOrigin,
 };
-use tondo_compiler::test_control::EnvelopeLimits;
+use tondo_compiler::test_control::{EnvelopeLimits, EnvelopeReport, SnapshotOutcome, Terminal};
 use tondo_compiler::test_glob::GlobPattern;
+use tondo_compiler::test_repeat::{RepeatCampaign, RepeatContext, RepeatPolicy};
 use tondo_compiler::test_report::{
     OrderMode as ReportOrderMode, ReportMetadata, ReportOrder, ReportSelection, ReportShard,
-    SelectionKind, TestReport,
+    SelectionKind, SnapshotMode, SnapshotStoreIdentity, TestList, TestReport,
 };
 use tondo_compiler::test_result::{
-    AggregateStatus, AttemptStatus, FailureRecord, ResultNodeKind, TestAttempt, TestNode,
+    AggregateStatus, ArtifactRecord, AttemptStatus, FailureRecord, ResultNodeKind, RetryUnit,
+    RetryUnitKind, SkipRecord, SnapshotRecord, SnapshotStatus, TestAttempt, TestNode,
+    VirtualTimeRecord,
 };
+use tondo_compiler::test_retry::{RetryCampaign, RetryContext, RetryPolicy};
 use tondo_compiler::test_runtime::{
-    LeafProgram, RunError, RuntimeConfig, RuntimeReport, RuntimeRunner, RuntimeStatus,
+    LeafProgram, RunError, RuntimeConfig, RuntimeRunner, RuntimeStatus,
 };
 use tondo_compiler::test_schedule::{OrderMode, ScheduleNode, SchedulePlan, Seed};
 use tondo_compiler::test_shard::ShardSpec;
@@ -186,6 +190,99 @@ impl From<tondo_compiler::driver::DriverError> for TestCommandError {
     }
 }
 
+#[derive(Debug)]
+struct OwnershipInfo {
+    mode: tondo_compiler::test_report::OwnershipMode,
+    source: Option<String>,
+    sha256: Option<String>,
+    resolution: tondo_compiler::test_owners::OwnershipResolution,
+}
+
+fn resolve_ownership(
+    plan: &test_cli::TestCliPlan,
+    base: &Path,
+) -> Result<OwnershipInfo, TestCommandError> {
+    let mode = match &plan.codeowners {
+        test_cli::CodeownersSelection::Auto => tondo_compiler::test_plan::CodeownersMode::Auto,
+        test_cli::CodeownersSelection::None => tondo_compiler::test_plan::CodeownersMode::None,
+        test_cli::CodeownersSelection::Explicit(path) => {
+            tondo_compiler::test_plan::CodeownersMode::Path(path.to_string_lossy().into_owned())
+        }
+    };
+    let paths: Vec<&str> =
+        match &plan.codeowners {
+            test_cli::CodeownersSelection::Auto => {
+                tondo_compiler::test_owners::AUTO_CODEOWNERS_PATHS.to_vec()
+            }
+            test_cli::CodeownersSelection::None => Vec::new(),
+            test_cli::CodeownersSelection::Explicit(path) => {
+                vec![path.to_str().ok_or_else(|| {
+                    TestCommandError::Usage("CODEOWNERS path must be UTF-8".into())
+                })?]
+            }
+        };
+    let candidates = paths
+        .into_iter()
+        .map(|path| read_codeowners_candidate(base, path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let resolution = tondo_compiler::test_owners::resolve(&mode, candidates)
+        .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+    let ownership_mode = match resolution.mode() {
+        "auto" if resolution.source().is_some() => tondo_compiler::test_report::OwnershipMode::Auto,
+        "auto" => tondo_compiler::test_report::OwnershipMode::None,
+        "explicit" => tondo_compiler::test_report::OwnershipMode::Explicit,
+        "none" => tondo_compiler::test_report::OwnershipMode::None,
+        other => {
+            return Err(TestCommandError::Internal(format!(
+                "unknown CODEOWNERS resolution mode `{other}`"
+            )));
+        }
+    };
+    Ok(OwnershipInfo {
+        mode: ownership_mode,
+        source: resolution.source().map(str::to_owned),
+        sha256: resolution.sha256().map(str::to_owned),
+        resolution,
+    })
+}
+
+fn read_codeowners_candidate(
+    base: &Path,
+    relative: &str,
+) -> Result<tondo_compiler::test_owners::CodeownersCandidate, TestCommandError> {
+    let path = base.join(relative);
+    let metadata = match fs::symlink_metadata(&path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return Ok(tondo_compiler::test_owners::CodeownersCandidate::absent(
+                relative,
+            ));
+        }
+        Err(error) => {
+            return Err(TestCommandError::Usage(format!(
+                "cannot inspect CODEOWNERS `{relative}`: {error}"
+            )));
+        }
+    };
+    let symlink = metadata.file_type().is_symlink();
+    if symlink || !metadata.file_type().is_file() {
+        return Ok(
+            tondo_compiler::test_owners::CodeownersCandidate::present(relative, Vec::new())
+                .with_file_state(false, true, symlink),
+        );
+    }
+    match fs::read(&path) {
+        Ok(bytes) => Ok(tondo_compiler::test_owners::CodeownersCandidate::present(
+            relative, bytes,
+        )),
+        Err(_) => Ok(tondo_compiler::test_owners::CodeownersCandidate::present(
+            relative,
+            Vec::new(),
+        )
+        .with_file_state(true, false, false)),
+    }
+}
+
 fn execute_test_plan(
     plan: &test_cli::TestCliPlan,
     manifest_path: &Path,
@@ -215,6 +312,7 @@ fn execute_test_plan(
         )
         .map_err(|error| TestCommandError::Usage(error.to_string()))?;
     let request = Arc::new(request);
+    let ownership = resolve_ownership(plan, base)?;
     let entries = discover_tests(&request)?;
     let selected = select_test_entries(entries, plan)?;
     if selected.is_empty() {
@@ -230,8 +328,20 @@ fn execute_test_plan(
         ));
     }
     if plan.list {
-        for entry in &selected {
-            println!("{}", entry.id());
+        if plan.test_format == test_cli::TestFormat::Json {
+            let list = build_test_list(&request, plan, &selected, &ownership)?;
+            let bytes = list
+                .canonical_bytes()
+                .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+            print!(
+                "{}",
+                String::from_utf8(bytes)
+                    .map_err(|error| { TestCommandError::Internal(error.to_string()) })?
+            );
+        } else {
+            for entry in &selected {
+                println!("{}", entry.id());
+            }
         }
         return Ok(0);
     }
@@ -281,10 +391,9 @@ fn execute_test_plan(
         .map_err(|error| TestCommandError::Internal(error.to_string()))?,
     )
     .map_err(|error| TestCommandError::Internal(error.to_string()))?;
-    let runtime_report = runtime
-        .run(programs)
-        .map_err(|error| TestCommandError::Internal(error.to_string()))?;
-    let report = build_test_report(&request, plan, &ordered, &runtime_report)?;
+    let attempts = execute_campaign(&request, plan, &ordered, programs, runtime)?;
+    publish_attempt_artifacts(base, plan, &attempts)?;
+    let report = build_test_report(&request, plan, &ordered, &ownership, &attempts)?;
     publish_test_outputs(plan, &report)?;
     if plan.test_format == test_cli::TestFormat::Json {
         print!(
@@ -381,12 +490,200 @@ fn order_test_entries(
         .collect()
 }
 
-fn build_test_report(
+#[derive(Debug)]
+struct CliAttempt {
+    id: String,
+    iteration: u32,
+    round: u32,
+    unit: Option<u32>,
+    status: RuntimeStatus,
+    report: EnvelopeReport,
+    error: Option<RunError>,
+}
+
+fn execute_campaign(
     request: &CompilationRequest,
     plan: &test_cli::TestCliPlan,
     entries: &[tondo_compiler::test_backend::TestEntry],
-    runtime: &RuntimeReport,
-) -> Result<TestReport, TestCommandError> {
+    programs: Vec<LeafProgram>,
+    runtime: RuntimeRunner,
+) -> Result<Vec<CliAttempt>, TestCommandError> {
+    if plan.repeat > 1 {
+        let policy = RepeatPolicy::new(plan.repeat)
+            .map_err(|error| TestCommandError::Usage(error.to_string()))?;
+        let context = RepeatContext::new(
+            entries.iter().map(|entry| entry.id().to_owned()),
+            entries.iter().map(|entry| entry.id().to_owned()),
+            shard_identity(plan),
+            request.target().name(),
+            "closed-inputs",
+            order_seed(plan),
+            tondo_compiler::test_report::CANONICAL_ORDER_ALGORITHM,
+            request
+                .capabilities()
+                .iter()
+                .map(|capability| capability.as_str().to_owned()),
+            campaign_limits(plan),
+            "artifact-store",
+            "snapshot-store",
+        )
+        .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+        let report = RepeatCampaign::new(runtime, policy, context)
+            .map_err(|error| TestCommandError::Internal(error.to_string()))?
+            .run(programs)
+            .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+        return Ok(report
+            .attempts()
+            .iter()
+            .map(|attempt| CliAttempt {
+                id: attempt.id().to_owned(),
+                iteration: attempt.iteration(),
+                round: attempt.round(),
+                unit: attempt.unit(),
+                status: attempt.status(),
+                report: attempt.report().clone(),
+                error: None,
+            })
+            .collect());
+    }
+    if plan.retry > 0 {
+        let policy = RetryPolicy::new(plan.retry)
+            .map_err(|error| TestCommandError::Usage(error.to_string()))?
+            .with_allow_flaky(plan.allow_flaky);
+        let context = RetryContext::new(
+            shard_identity(plan),
+            request.target().name(),
+            "closed-inputs",
+            order_seed(plan),
+            tondo_compiler::test_report::CANONICAL_ORDER_ALGORITHM,
+            request
+                .capabilities()
+                .iter()
+                .map(|capability| capability.as_str().to_owned()),
+            campaign_limits(plan),
+            "artifact-store",
+            "snapshot-store",
+        )
+        .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+        let report = RetryCampaign::new(runtime, policy, context)
+            .map_err(|error| TestCommandError::Internal(error.to_string()))?
+            .run(programs)
+            .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+        return Ok(report
+            .attempts()
+            .iter()
+            .map(|attempt| CliAttempt {
+                id: attempt.id().to_owned(),
+                iteration: 1,
+                round: attempt.round(),
+                unit: attempt.unit(),
+                status: attempt.status(),
+                report: attempt.report().clone(),
+                error: None,
+            })
+            .collect());
+    }
+    let report = runtime
+        .run(programs)
+        .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+    Ok(report
+        .leaves()
+        .iter()
+        .map(|leaf| CliAttempt {
+            id: leaf.id().to_owned(),
+            iteration: 1,
+            round: 0,
+            unit: None,
+            status: leaf.status(),
+            report: leaf.report().clone(),
+            error: leaf.error().cloned(),
+        })
+        .collect())
+}
+
+fn campaign_limits(plan: &test_cli::TestCliPlan) -> BTreeMap<String, u64> {
+    BTreeMap::from([
+        ("timeout_ms".to_owned(), plan.timeout_ms.unwrap_or_default()),
+        ("jobs".to_owned(), u64::from(plan.jobs)),
+    ])
+}
+
+fn shard_identity(plan: &test_cli::TestCliPlan) -> String {
+    plan.shard.map_or_else(
+        || "all".to_owned(),
+        |shard| format!("{}/{}", shard.index, shard.count),
+    )
+}
+
+fn order_seed(plan: &test_cli::TestCliPlan) -> u64 {
+    match plan.order {
+        test_cli::TestOrder::Canonical => 0,
+        test_cli::TestOrder::Random { seed } => seed.unwrap_or(0),
+    }
+}
+
+fn build_test_list(
+    request: &CompilationRequest,
+    plan: &test_cli::TestCliPlan,
+    entries: &[tondo_compiler::test_backend::TestEntry],
+    ownership: &OwnershipInfo,
+) -> Result<TestList, TestCommandError> {
+    let metadata = report_metadata(request, plan, ownership)?;
+    let tests = entries
+        .iter()
+        .map(|entry| {
+            let (package, module, path) = identity_parts(entry.id());
+            let owners = ownership
+                .resolution
+                .owners_for(Some(entry.logical_path()))
+                .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+            let mut node = TestNode::new(
+                entry.id().to_owned(),
+                None,
+                package,
+                ResultNodeKind::Test,
+                module,
+                entry.name().to_owned(),
+                Vec::new(),
+            );
+            node.path = path;
+            node.owners = owners;
+            Ok(node)
+        })
+        .collect::<Result<Vec<_>, TestCommandError>>()?;
+    TestList::new(
+        metadata,
+        empty_snapshot_identity(request)?,
+        entries.iter().map(|entry| entry.id().to_owned()).collect(),
+        Vec::new(),
+        tests,
+    )
+    .map_err(|error| TestCommandError::Internal(error.to_string()))
+}
+
+fn empty_snapshot_identity(
+    request: &CompilationRequest,
+) -> Result<SnapshotStoreIdentity, TestCommandError> {
+    let package = request.packages().root().as_str();
+    let store = tondo_compiler::test_snapshots::SnapshotStore::empty(package)
+        .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+    let hash = store
+        .content_hash()
+        .map_err(|error| TestCommandError::Internal(error.to_string()))?
+        .strip_prefix("sha256:")
+        .unwrap_or_default()
+        .to_owned();
+    Ok(SnapshotStoreIdentity {
+        format: tondo_compiler::test_report::TEST_SNAPSHOT_FORMAT.into(),
+        sha256: hash,
+    })
+}
+
+fn report_metadata(
+    request: &CompilationRequest,
+    plan: &test_cli::TestCliPlan,
+    ownership: &OwnershipInfo,
+) -> Result<ReportMetadata, TestCommandError> {
     let mut metadata = ReportMetadata::default();
     metadata.target.name = request.target().name().to_owned();
     metadata.target.profile = request.profile().as_str().to_owned();
@@ -401,6 +698,16 @@ fn build_test_report(
     metadata.policy.allow_flaky = plan.allow_flaky;
     metadata.repeat.count = plan.repeat;
     metadata.retry.max_additional_rounds = plan.retry;
+    metadata.ownership = tondo_compiler::test_report::ReportOwnership {
+        mode: ownership.mode,
+        source: ownership.source.clone(),
+        sha256: ownership.sha256.clone(),
+    };
+    metadata.snapshot_policy.mode = if plan.update_snapshots {
+        SnapshotMode::Update
+    } else {
+        SnapshotMode::Check
+    };
     metadata.selection = match &plan.selector {
         test_cli::TestSelector::All => ReportSelection {
             kind: SelectionKind::All,
@@ -436,59 +743,56 @@ fn build_test_report(
         count: shard.count,
         algorithm: tondo_compiler::test_report::SHARD_ALGORITHM.into(),
     });
+    Ok(metadata)
+}
+
+fn build_test_report(
+    request: &CompilationRequest,
+    plan: &test_cli::TestCliPlan,
+    entries: &[tondo_compiler::test_backend::TestEntry],
+    ownership: &OwnershipInfo,
+    attempts: &[CliAttempt],
+) -> Result<TestReport, TestCommandError> {
+    let mut metadata = report_metadata(request, plan, ownership)?;
+    metadata.retry.rounds = retry_rounds(plan, entries, attempts);
     let tests = entries
         .iter()
         .map(|entry| {
-            let leaf = runtime
-                .leaves()
+            let mut selected = attempts
                 .iter()
-                .find(|leaf| leaf.id() == entry.id())
-                .ok_or_else(|| {
-                    TestCommandError::Internal(format!(
-                        "runtime did not return test `{}`",
-                        entry.id()
-                    ))
-                })?;
-            let status = match leaf.status() {
-                RuntimeStatus::Passed => AttemptStatus::Passed,
-                RuntimeStatus::Skipped => AttemptStatus::Skipped,
-                RuntimeStatus::FailedError => AttemptStatus::FailedError,
-                RuntimeStatus::FailedPanic => AttemptStatus::FailedPanic,
-                RuntimeStatus::ResourceLimit => AttemptStatus::ResourceLimit,
-                RuntimeStatus::Timeout => AttemptStatus::Timeout,
-                RuntimeStatus::Infrastructure => AttemptStatus::Infrastructure,
-                RuntimeStatus::BlockedSetup => AttemptStatus::BlockedSetup,
-            };
-            let mut attempt = TestAttempt::new(1, 1, 1, Some(1), status);
-            attempt.logs = leaf
-                .report()
-                .logs()
-                .iter()
-                .map(|log| log.message().to_owned())
-                .collect();
-            attempt.tags = leaf.report().tags().clone();
-            attempt.stdout = leaf.report().stdout().to_owned();
-            attempt.stderr = leaf.report().stderr().to_owned();
-            if let Some(error) = leaf.error() {
-                attempt.failure = Some(FailureRecord {
-                    kind: "backend".into(),
-                    code: error.code().map(str::to_owned),
-                    message: error.to_string().replace(['\r', '\n'], " "),
-                    source: None,
-                });
+                .filter(|attempt| attempt.id == entry.id())
+                .collect::<Vec<_>>();
+            selected.sort_by_key(|attempt| {
+                (attempt.iteration, attempt.round, attempt.unit.unwrap_or(0))
+            });
+            if selected.is_empty() {
+                return Err(TestCommandError::Internal(format!(
+                    "runtime did not return test `{}`",
+                    entry.id()
+                )));
             }
-            let mut node_parts = entry.id().split("::");
-            let package = node_parts.next().unwrap_or("main").to_owned();
-            let module = node_parts.nth(1).unwrap_or("test").to_owned();
-            Ok(TestNode::new(
+            let test_attempts = selected
+                .iter()
+                .enumerate()
+                .map(|(index, attempt)| make_test_attempt(index as u32 + 1, attempt))
+                .collect::<Result<Vec<_>, _>>()?;
+            let (package, module, path) = identity_parts(entry.id());
+            let owners = ownership
+                .resolution
+                .owners_for(Some(entry.logical_path()))
+                .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+            let mut node = TestNode::new(
                 entry.id().to_owned(),
                 None,
                 package,
                 ResultNodeKind::Test,
                 module,
                 entry.name().to_owned(),
-                vec![attempt],
-            ))
+                test_attempts,
+            );
+            node.path = path;
+            node.owners = owners;
+            Ok(node)
         })
         .collect::<Result<Vec<_>, TestCommandError>>()?;
     TestReport::assemble(
@@ -498,6 +802,264 @@ fn build_test_report(
         tests,
     )
     .map_err(|error| TestCommandError::Internal(error.to_string()))
+}
+
+fn retry_rounds(
+    plan: &test_cli::TestCliPlan,
+    entries: &[tondo_compiler::test_backend::TestEntry],
+    attempts: &[CliAttempt],
+) -> Vec<tondo_compiler::test_report::ReportRetryRound> {
+    if plan.retry == 0 {
+        return Vec::new();
+    }
+    let mut rounds = Vec::new();
+    for round in 1..=plan.retry {
+        let units = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                attempts
+                    .iter()
+                    .any(|attempt| attempt.id == entry.id() && attempt.round == round)
+                    .then(|| RetryUnit {
+                        kind: RetryUnitKind::Test,
+                        id: entry.id().to_owned(),
+                        execution_plan: vec![entry.id().to_owned()],
+                    })
+                    .map(|unit| (index, unit))
+            })
+            .collect::<Vec<_>>();
+        if !units.is_empty() {
+            rounds.push(tondo_compiler::test_report::ReportRetryRound {
+                round,
+                units: units.into_iter().map(|(_, unit)| unit).collect(),
+            });
+        }
+    }
+    rounds
+}
+
+fn identity_parts(id: &str) -> (String, String, Vec<String>) {
+    let mut parts = id.split("::");
+    let package = parts.next().unwrap_or("main").to_owned();
+    let _source_class = parts.next();
+    let module = parts.next().unwrap_or("test").to_owned();
+    let path = parts.map(str::to_owned).collect();
+    (package, module, path)
+}
+
+fn make_test_attempt(index: u32, source: &CliAttempt) -> Result<TestAttempt, TestCommandError> {
+    let status = attempt_status(source.status);
+    let mut attempt = TestAttempt::new(index, source.iteration, source.round, source.unit, status);
+    attempt.logs = source
+        .report
+        .logs()
+        .iter()
+        .map(|log| log.message().to_owned())
+        .collect();
+    attempt.tags = source.report.tags().clone();
+    attempt.stdout = source.report.stdout().to_owned();
+    attempt.stderr = source.report.stderr().to_owned();
+    attempt.virtual_time = source
+        .report
+        .virtual_time()
+        .iter()
+        .map(|record| VirtualTimeRecord {
+            index: record.index(),
+            elapsed_ns: record.elapsed_ns().to_string(),
+            automatic_advances: 0,
+            explicit_advances: record.advances(),
+            settles: record.settles(),
+        })
+        .collect();
+    attempt.artifacts = source
+        .report
+        .artifacts()
+        .iter()
+        .map(|artifact| {
+            let sha256 = artifact
+                .sha256()
+                .strip_prefix("sha256:")
+                .unwrap_or_default()
+                .to_owned();
+            ArtifactRecord {
+                name: artifact.name().to_owned(),
+                media_type: artifact.media_type().to_owned(),
+                size: artifact.bytes().len() as u64,
+                sha256: sha256.clone(),
+                object: format!("objects/{sha256}"),
+            }
+        })
+        .collect();
+    attempt.snapshots = source
+        .report
+        .snapshots()
+        .iter()
+        .map(|snapshot| {
+            let (status, expected_sha256, actual_sha256) = match snapshot.outcome() {
+                SnapshotOutcome::Matched {
+                    expected_sha256,
+                    actual_sha256,
+                } => (
+                    SnapshotStatus::Matched,
+                    Some(expected_sha256),
+                    actual_sha256,
+                ),
+                SnapshotOutcome::Missing { actual_sha256 } => {
+                    (SnapshotStatus::Missing, None, actual_sha256)
+                }
+                SnapshotOutcome::Mismatched {
+                    expected_sha256,
+                    actual_sha256,
+                } => (
+                    SnapshotStatus::Mismatched,
+                    Some(expected_sha256),
+                    actual_sha256,
+                ),
+            };
+            SnapshotRecord {
+                name: snapshot.name().to_owned(),
+                status,
+                expected_sha256: expected_sha256
+                    .map(|hash| hash.strip_prefix("sha256:").unwrap_or(hash).to_owned()),
+                actual_sha256: actual_sha256
+                    .strip_prefix("sha256:")
+                    .unwrap_or(actual_sha256)
+                    .to_owned(),
+            }
+        })
+        .collect();
+    if matches!(
+        status,
+        AttemptStatus::FailedError
+            | AttemptStatus::FailedPanic
+            | AttemptStatus::ResourceLimit
+            | AttemptStatus::Timeout
+            | AttemptStatus::Infrastructure
+    ) {
+        attempt.failure = failure_record(source);
+    }
+    if status == AttemptStatus::Skipped {
+        attempt.skip = Some(SkipRecord {
+            reason: skip_reason(source),
+            source: None,
+        });
+    }
+    Ok(attempt)
+}
+
+fn attempt_status(status: RuntimeStatus) -> AttemptStatus {
+    match status {
+        RuntimeStatus::Passed => AttemptStatus::Passed,
+        RuntimeStatus::Skipped => AttemptStatus::Skipped,
+        RuntimeStatus::FailedError => AttemptStatus::FailedError,
+        RuntimeStatus::FailedPanic => AttemptStatus::FailedPanic,
+        RuntimeStatus::ResourceLimit => AttemptStatus::ResourceLimit,
+        RuntimeStatus::Timeout => AttemptStatus::Timeout,
+        RuntimeStatus::Infrastructure => AttemptStatus::Infrastructure,
+        RuntimeStatus::BlockedSetup => AttemptStatus::BlockedSetup,
+    }
+}
+
+fn failure_record(source: &CliAttempt) -> Option<FailureRecord> {
+    let status = attempt_status(source.status);
+    if !matches!(
+        status,
+        AttemptStatus::FailedError
+            | AttemptStatus::FailedPanic
+            | AttemptStatus::ResourceLimit
+            | AttemptStatus::Timeout
+            | AttemptStatus::Infrastructure
+    ) {
+        return None;
+    }
+    if let Some(error) = &source.error {
+        let kind = match error {
+            RunError::Error { .. } => "error",
+            RunError::Panic { .. } | RunError::Control(_) => "panic",
+            RunError::ResourceLimit { .. } => "resource-limit",
+            RunError::Timeout | RunError::ForcedTermination { .. } => "timeout",
+            RunError::Infrastructure { .. } => "infrastructure",
+            RunError::Skip { .. } => "skip",
+        };
+        return Some(FailureRecord {
+            kind: kind.into(),
+            code: error.code().map(str::to_owned),
+            message: error.to_string().replace(['\r', '\n'], " "),
+            source: None,
+        });
+    }
+    let (kind, code, message) = match source.report.terminal() {
+        Some(Terminal::FailNow { code, message }) => {
+            ("panic", Some((*code).to_owned()), message.clone())
+        }
+        Some(Terminal::CleanupFailure { code, message }) => {
+            ("panic", Some(code.clone()), message.clone())
+        }
+        Some(Terminal::ResourceLimit { kind }) => {
+            ("resource-limit", Some((*kind).to_owned()), kind.to_string())
+        }
+        Some(Terminal::Skipped { reason }) => ("skip", None, reason.clone()),
+        None => ("backend", None, "test attempt failed".into()),
+    };
+    Some(FailureRecord {
+        kind: kind.into(),
+        code,
+        message: message.replace(['\r', '\n'], " "),
+        source: None,
+    })
+}
+
+fn skip_reason(source: &CliAttempt) -> String {
+    if let Some(RunError::Skip { reason }) = &source.error {
+        return reason.clone();
+    }
+    if let Some(Terminal::Skipped { reason }) = source.report.terminal() {
+        return reason.clone();
+    }
+    "test skipped".into()
+}
+
+fn publish_attempt_artifacts(
+    base: &Path,
+    plan: &test_cli::TestCliPlan,
+    attempts: &[CliAttempt],
+) -> Result<(), TestCommandError> {
+    let root = plan.artifacts.as_ref().map_or_else(
+        || base.join("target/test-artifacts"),
+        |path| base.join(path),
+    );
+    for (index, attempt) in attempts.iter().enumerate() {
+        if attempt.report.artifacts().is_empty() && plan.artifacts.is_none() {
+            continue;
+        }
+        let identity = format!(
+            "{}-{}-{}-{}",
+            attempt.id, attempt.iteration, attempt.round, index
+        );
+        let mut store = tondo_compiler::test_artifacts::ArtifactStore::new(
+            &root,
+            identity,
+            tondo_compiler::test_artifacts::ArtifactLimits::new(64 * 1024 * 1024, 64),
+        )
+        .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+        for evidence in attempt.report.artifacts() {
+            let descriptor = store
+                .attach(evidence.name(), evidence.media_type(), evidence.bytes())
+                .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+            let expected = evidence.sha256();
+            if descriptor.sha256 != expected {
+                return Err(TestCommandError::Internal(format!(
+                    "artifact digest changed while publishing `{}`",
+                    evidence.name()
+                )));
+            }
+        }
+        store
+            .publish()
+            .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+    }
+    Ok(())
 }
 
 fn status_label(status: AggregateStatus) -> &'static str {

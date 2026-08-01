@@ -17,6 +17,11 @@ execution. The VM result and diagnostics are returned through the normal
 `CompilationOutput`, so assertion failures, panics and resource limits retain
 their existing semantics.
 
+Discovery derives the source-class segment from the canonical logical path:
+files below `tests/` produce `integration` IDs and other test companion files
+produce `unit` IDs. The entry also retains that logical path for CODEOWNERS
+matching; physical paths and insertion order never participate in identity.
+
 This is the execution bridge used by the test runner. Envelope operations such
 as logs, tags, attachments, snapshots, retries and scheduling remain owned by
 their sealed runner modules and are not reimplemented in the backend.

@@ -3177,8 +3177,11 @@ reporters.
   ejecuta cada hoja en un worker nuevo sobre `Operation::Test`, ensambla el
   resultado canónico y publica JSON/JUnit de forma atómica. `--list`,
   `--show-output`, `--allow-empty`, `--deny-skips` y exits 0/1/2/3 quedan
-  cubiertos; retries/repeat, timeout, snapshots y CODEOWNERS siguen siendo la
-  cola explícita de `UTEST-CLI-001`.
+  cubiertos. Esta base también materializa campañas reales de retry/repeat,
+  conserva evidencia por intento, resuelve CODEOWNERS y publica el store de
+  attachments content-addressed; la conexión de timeout wall-clock y el
+  commit/update atómico de snapshots siguen siendo la cola explícita de
+  `UTEST-CLI-001`.
 
 - [ ] **UTEST-CLI-001 — Conectar `tondo test` end-to-end.** Después de cerrar
   plan, lifecycle, algoritmos, stores y reporters, conectar las opciones ya

@@ -11,6 +11,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::test_control::EnvelopeReport;
 use crate::test_result::{RetryUnit, RetryUnitKind};
 use crate::test_runtime::{LeafProgram, RuntimeError, RuntimeRunner, RuntimeStatus, WorkerInfo};
 
@@ -491,6 +492,7 @@ pub struct RetryAttempt {
     cause: Option<RetryCause>,
     status: RuntimeStatus,
     worker: WorkerInfo,
+    report: EnvelopeReport,
 }
 
 impl RetryAttempt {
@@ -511,6 +513,11 @@ impl RetryAttempt {
     }
     pub const fn worker(&self) -> WorkerInfo {
         self.worker
+    }
+
+    /// Detached envelope evidence captured by this isolated retry attempt.
+    pub fn report(&self) -> &EnvelopeReport {
+        &self.report
     }
 }
 
@@ -620,6 +627,7 @@ impl RetryCampaign {
                 cause: RetryCause::from_status(leaf.status()),
                 status: leaf.status(),
                 worker: leaf.worker(),
+                report: leaf.report().clone(),
             })
             .collect::<Vec<_>>();
         let mut rounds = 0;
@@ -635,6 +643,11 @@ impl RetryCampaign {
                 .iter()
                 .filter_map(|id| by_id.get(id).cloned())
                 .collect::<Vec<_>>();
+            let units = ids
+                .iter()
+                .enumerate()
+                .map(|(index, id)| (id.as_str(), index as u32 + 1))
+                .collect::<BTreeMap<_, _>>();
             let report = self
                 .runner
                 .run(retry_programs)
@@ -646,10 +659,11 @@ impl RetryCampaign {
                 attempts.push(RetryAttempt {
                     id: leaf.id().into(),
                     round,
-                    unit: Some(attempts_for_id(&attempts, leaf.id()) as u32),
+                    unit: units.get(leaf.id()).copied(),
                     cause,
                     status: leaf.status(),
                     worker: leaf.worker(),
+                    report: leaf.report().clone(),
                 });
             }
         }
@@ -688,10 +702,6 @@ impl RetryCampaign {
             context: self.context.clone(),
         })
     }
-}
-
-fn attempts_for_id(attempts: &[RetryAttempt], id: &str) -> usize {
-    attempts.iter().filter(|attempt| attempt.id == id).count()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1021,13 +1031,14 @@ mod tests {
         assert_eq!(suite.parent(), Some("root"));
         assert_eq!(suite.leaves(), &["leaf".to_owned()]);
 
-        let worker =
+        let result =
             RuntimeRunner::new(RuntimeConfig::new(1, EnvelopeLimits::new(1, 1, 1)).unwrap())
                 .unwrap()
                 .run(vec![LeafProgram::new("worker", |_| Ok(())).clone()])
                 .unwrap()
                 .leaves()[0]
-                .worker();
+                .clone();
+        let worker = result.worker();
         let attempt = RetryAttempt {
             id: "leaf".into(),
             round: 1,
@@ -1035,6 +1046,7 @@ mod tests {
             cause: Some(RetryCause::Timeout),
             status: RuntimeStatus::Timeout,
             worker,
+            report: result.report().clone(),
         };
         assert_eq!(attempt.id(), "leaf");
         assert_eq!(attempt.round(), 1);
