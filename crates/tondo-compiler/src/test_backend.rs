@@ -189,6 +189,7 @@ fn append_node(output: &mut Vec<u8>, source: &[u8], range: crate::source::TextRa
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn visit_declarations<'a>(
     file: FileId,
     source: &[u8],
