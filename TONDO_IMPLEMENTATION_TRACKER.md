@@ -3184,17 +3184,17 @@ reporters.
   workers de proceso.
 
 - [x] **TOOLCHAIN-PROJECT-001 — Hacer la CLI convention-first.** `check`,
-  `run` y `test` aceptan el directorio actual o `--project <dir>` sin exigir
-  `tondo.json`. La CLI descubre `src/`, `src/main.to`, `tests/` y módulos por
+  `run` y `test` aceptan el directorio actual o `--project <dir>` sin usar
+  manifiestos JSON. La CLI descubre `src/`, `src/main.to`, `tests/` y módulos por
   paths ordenados; lee el `tondo.toml` opcional para package/edition,
   target/profile/capabilities/features y aliases, y materializa un grafo
   interno equivalente al `ProjectPlan` cerrado. Un `tondo.lock.toml` generado
   es obligatorio para dependencias externas y los proyectos sin dependencias
   usan un lockfile equivalente en memoria. `tondo.test.toml` es el sidecar
-  humano preferido; `tondo.test.json` queda como fallback legacy. Symlinks,
-  `target/`, `vendor/` y directorios ocultos no entran en discovery. El camino
-  `--manifest`/JSON se conserva para conformance y compatibilidad, pero no es
-  la ruta documentada para proyectos nuevos. Evidencia en
+  humano único; no existe un sidecar JSON. Symlinks,
+  `target/`, `vendor/` y directorios ocultos no entran en discovery. La
+  representación JSON interna queda privada al compilador y no es una ruta
+  de configuración. Evidencia en
   `crates/tondo-cli/src/project_discovery.rs`, `main.rs`,
   `docs/contracts/project-discovery.md` y las pruebas CLI de proyecto/TOML.
 
@@ -3203,7 +3203,7 @@ reporters.
   sidecar; `--test-plan <path>` o un `tondo.test.toml` adyacente seleccionan un
   plan avanzado, cuyos hashes de proyecto y forma canónica se verifican antes
   de compilar. Los overrides efímeros de CLI permiten selector, shard,
-  orden/seed, jobs, retry, repeat y outputs sin editar el JSON, pero no pueden
+  orden/seed, jobs, retry, repeat y outputs sin editar el TOML, pero no pueden
   ampliar límites ni capabilities. Cada hoja se ejecuta en un proceso worker nuevo; el
   coordinator importa evidencia y aplica el timeout wall-clock monotónico con
   terminación del proceso, incluidos retry y repeat. Las snapshot stores se
@@ -3213,8 +3213,8 @@ reporters.
   `--artifacts` solo puede reubicar físicamente la salida. Un `--timeout none`
   explícito se rechaza frente al límite cerrado. JSON/JUnit, artifacts,
   CODEOWNERS, selección, shards, orden, jobs y exits 0/1/2/3 quedan cubiertos
-  por tests unitarios e integración. `tondo.test.json` se conserva como
-  fallback legacy.
+  por tests unitarios e integración. El plan de usuario solo admite TOML;
+  JSON queda restringido a informes y fronteras internas.
   Evidencia en `crates/tondo-cli/src/main.rs`,
   `crates/tondo-compiler/src/test_control.rs`,
   `crates/tondo-compiler/src/test_runtime.rs` y los contratos de

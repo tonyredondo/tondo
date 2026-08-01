@@ -2,7 +2,7 @@
 
 **Status:** implemented for the unpublished Tondo 0.1 draft
 
-The user-facing CLI accepts a project directory instead of requiring a JSON
+The user-facing CLI accepts a project directory and never requires a JSON
 manifest. `tondo` uses the current directory by default; `--project <dir>`
 selects another root. Discovery is a CLI concern and ends by producing the same
 closed `ProjectPlan` consumed by the compiler's pure boundary.
@@ -35,17 +35,15 @@ capabilities/features and dependency aliases. Sources and modules are never
 listed there. Unknown keys are rejected.
 
 External dependencies require the generated `tondo.lock.toml`; a project with
-no dependencies has an equivalent lock materialized in memory. `tondo.json` and
-`tondo.lock.json` remain accepted only through the explicit legacy
-`--manifest` path (or the compatibility fallback when no TOML exists).
+no dependencies has an equivalent lock materialized in memory. There is no
+JSON project configuration or compatibility fallback.
 
 ## Test-plan sidecar
 
-`tondo test` first looks for `tondo.test.toml`, then accepts
-`tondo.test.json` for compatibility. Both describe the same closed
-`tondo-test-plan-draft` shape; TOML is converted to the internal JSON value
-model before validation. The sidecar is optional, and CLI flags overlay its
-selection/policy without rewriting it.
+`tondo test` optionally reads `tondo.test.toml`. There is no JSON sidecar. The
+TOML describes the closed `tondo-test-plan-draft` shape and is converted to the
+internal value model before validation. The sidecar is optional, and CLI flags
+overlay its selection/policy without rewriting it.
 
 ## Determinism and boundary
 

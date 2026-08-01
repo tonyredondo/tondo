@@ -26,11 +26,11 @@
     },
     {
       "path": "TONDO_TESTING_SPEC.md",
-      "sha256": "b10363b23496c618412fa79c8bfee8f9a84c7d62566a6ba75c03398ccdea423c"
+      "sha256": "410c6df3e027bd7f4292cd043ebac9eb588b1228fd25f2cb7a75952baa339073"
     },
     {
       "path": "TONDO_TOOLCHAIN_SPEC.md",
-      "sha256": "2c5cb7e367dc1c98e6e2cb0d20853b7873e3e9966409fb191f3295b9ae34a9cc"
+      "sha256": "b24af3c2169c7472d9ddfeaaa95f99a1646fc6d3fc6ea0db1c0f0af97ae062fc"
     }
   ],
   "case_layers": [],

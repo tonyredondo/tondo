@@ -60,12 +60,16 @@ package for the input plus the bootstrap standard node. This convenience does
 not introduce a second resolution algorithm.
 
 `tondo test` does not mutate this production graph. It validates a separate
-`tondo-test-plan-draft` record against the graph's manifest/lockfile hashes;
+`tondo-test-plan-draft` record against the graph's internal project hashes;
 that record adds explicit `production`, `unit-test`, and `integration-test`
 source classes and roots, then carries the test-only policy and output stores.
 `TestProjectPlan` is pure and contains no source bytes or host discovery. Unit
 overlays and integration consumers are admitted by later frontend/runtime
 tasks, after this boundary has closed their identities.
+
+The CLI obtains these internal records from the conventional directory layout
+and TOML files. The JSON wire representation stays private to the compiler
+boundary; users do not maintain a JSON project manifest or lockfile.
 
 ## Import lookup
 

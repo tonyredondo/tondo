@@ -72,9 +72,7 @@ Options:
   --warnings <core>                 Enable a closed warning profile
   --check                           Verify formatting without writing output (fmt only)
   --project <dir>                   Project directory (default: current directory)
-  --manifest <path>                 Legacy internal JSON manifest
   --test-plan <path>                Optional advanced TOML test-plan sidecar
-  --lockfile <path>                 Legacy explicit lockfile
   --emit-interface <path>           Write the canonical compiled interface on success
   --emit-artifact <path>            Write canonical build metadata on success
   -- [argument ...]                 Pass UTF-8 arguments to a run script
@@ -171,12 +169,8 @@ fn run_test_command(arguments: &[OsString]) -> Result<ExitCode, String> {
             return Ok(ExitCode::from(EXIT_USAGE));
         }
     };
-    let location = match (&plan.manifest, &plan.project) {
-        (Some(manifest), None) => ProjectLocation::Manifest(manifest.clone()),
-        (None, Some(project)) => ProjectLocation::Directory(project.clone()),
-        (None, None) => ProjectLocation::Directory(PathBuf::from(".")),
-        (Some(_), Some(_)) => unreachable!("test CLI rejects project/manifest combinations"),
-    };
+    let location =
+        ProjectLocation::Directory(plan.project.clone().unwrap_or_else(|| PathBuf::from(".")));
     match execute_test_plan_at(&plan, location) {
         Ok(code) => Ok(ExitCode::from(code)),
         Err(TestCommandError::Usage(message)) => {
@@ -196,7 +190,6 @@ fn run_test_command(arguments: &[OsString]) -> Result<ExitCode, String> {
 
 #[derive(Debug, Clone)]
 enum ProjectLocation {
-    Manifest(PathBuf),
     Directory(PathBuf),
 }
 
@@ -210,21 +203,6 @@ struct LoadedProject {
 impl ProjectLocation {
     fn load(&self) -> Result<LoadedProject, TestCommandError> {
         match self {
-            Self::Manifest(path) => {
-                let base = path.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
-                let lockfile = base.join("tondo.lock.json");
-                let manifest_bytes =
-                    read_input(path, "manifest").map_err(TestCommandError::Usage)?;
-                let lockfile_bytes =
-                    read_input(&lockfile, "lockfile").map_err(TestCommandError::Usage)?;
-                let project = ProjectPlan::parse(&manifest_bytes, &lockfile_bytes)
-                    .map_err(|error| TestCommandError::Usage(error.to_string()))?;
-                Ok(LoadedProject {
-                    location: self.clone(),
-                    base,
-                    project,
-                })
-            }
             Self::Directory(path) => {
                 let root = path.canonicalize().map_err(|error| {
                     TestCommandError::Usage(format!(
@@ -232,10 +210,6 @@ impl ProjectLocation {
                         path.display()
                     ))
                 })?;
-                let legacy_manifest = root.join("tondo.json");
-                if !root.join("tondo.toml").is_file() && legacy_manifest.is_file() {
-                    return Self::Manifest(legacy_manifest).load();
-                }
                 let discovered =
                     project_discovery::discover(&root).map_err(TestCommandError::Usage)?;
                 let project =
@@ -271,20 +245,23 @@ fn resolve_test_plan_path(
     if let Some(path) = &plan.test_plan {
         return Ok(Some(path.clone()));
     }
-    for name in ["tondo.test.toml", "tondo.test.json"] {
-        let adjacent = base.join(name);
-        match fs::symlink_metadata(&adjacent) {
-            Ok(_) => return Ok(Some(adjacent)),
-            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
-            Err(error) => {
-                return Err(TestCommandError::Usage(format!(
-                    "cannot inspect test plan `{}`: {error}",
-                    adjacent.display()
-                )));
-            }
-        }
+    let adjacent = base.join("tondo.test.toml");
+    match fs::symlink_metadata(&adjacent) {
+        Ok(_) => Ok(Some(adjacent)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(TestCommandError::Usage(format!(
+            "cannot inspect test plan `{}`: {error}",
+            adjacent.display()
+        ))),
     }
-    Ok(None)
+}
+
+#[cfg(test)]
+fn execute_test_plan(
+    plan: &test_cli::TestCliPlan,
+    project_path: &Path,
+) -> Result<u8, TestCommandError> {
+    execute_test_plan_at(plan, ProjectLocation::Directory(project_path.to_owned()))
 }
 
 fn load_test_project_plan(
@@ -294,32 +271,26 @@ fn load_test_project_plan(
     let Some(path) = path else {
         return Ok(TestProjectPlan::defaults(project, 1));
     };
+    if path
+        .extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+    {
+        return Err(TestCommandError::Usage(
+            "test plans use TOML; JSON plans are unsupported".into(),
+        ));
+    }
     let source_bytes = read_input(path, "test plan").map_err(TestCommandError::Usage)?;
-    let is_toml = path.extension().and_then(OsStr::to_str) == Some("toml");
-    let bytes = if is_toml {
-        let text = String::from_utf8(source_bytes).map_err(|error| {
-            TestCommandError::Usage(format!("invalid test plan UTF-8: {error}"))
-        })?;
-        let value = toml::from_str::<toml::Value>(&text).map_err(|error| {
-            TestCommandError::Usage(format!("invalid test plan `{}`: {error}", path.display()))
-        })?;
-        serde_json::to_vec(&value).map_err(|error| TestCommandError::Internal(error.to_string()))?
-    } else {
-        source_bytes
-    };
+    let text = String::from_utf8(source_bytes)
+        .map_err(|error| TestCommandError::Usage(format!("invalid test plan UTF-8: {error}")))?;
+    let value = toml::from_str::<toml::Value>(&text).map_err(|error| {
+        TestCommandError::Usage(format!("invalid test plan `{}`: {error}", path.display()))
+    })?;
+    let bytes = serde_json::to_vec(&value)
+        .map_err(|error| TestCommandError::Internal(error.to_string()))?;
     let plan = project
         .parse_test_plan(&bytes)
         .map_err(|error| TestCommandError::Usage(error.to_string()))?;
-    if !is_toml
-        && plan
-            .canonical_bytes()
-            .map_err(|error| TestCommandError::Usage(error.to_string()))?
-            != bytes
-    {
-        return Err(TestCommandError::Usage(
-            "test plan is valid but not in canonical form".into(),
-        ));
-    }
     Ok(plan)
 }
 
@@ -734,14 +705,6 @@ fn read_codeowners_candidate(
     }
 }
 
-#[cfg(test)]
-fn execute_test_plan(
-    plan: &test_cli::TestCliPlan,
-    manifest_path: &Path,
-) -> Result<u8, TestCommandError> {
-    execute_test_plan_at(plan, ProjectLocation::Manifest(manifest_path.to_owned()))
-}
-
 fn execute_test_plan_at(
     plan: &test_cli::TestCliPlan,
     location: ProjectLocation,
@@ -819,7 +782,9 @@ fn execute_test_plan_at(
     }
 
     let ordered = order_test_entries(selected, &execution_plan)?;
-    let worker_location = loaded.location.clone();
+    let worker_project = match &loaded.location {
+        ProjectLocation::Directory(path) => path.clone(),
+    };
     let worker_test_plan = test_plan_path.clone();
     let worker_timeout = execution_plan.timeout_ms;
     let worker_update_snapshots = execution_plan.update_snapshots;
@@ -827,11 +792,11 @@ fn execute_test_plan_at(
         .iter()
         .map(|entry| {
             let id = entry.id().to_owned();
-            let worker_location = worker_location.clone();
+            let worker_project = worker_project.clone();
             let worker_test_plan = worker_test_plan.clone();
             Ok(LeafProgram::new(id.clone(), move |context| {
                 let response = spawn_test_worker(
-                    &worker_location,
+                    &worker_project,
                     &id,
                     worker_timeout,
                     worker_update_snapshots,
@@ -1009,7 +974,7 @@ fn infrastructure_worker_response(error: impl Into<String>) -> WorkerResponse {
 }
 
 fn spawn_test_worker(
-    location: &ProjectLocation,
+    project: &Path,
     entry: &str,
     timeout_ms: Option<u64>,
     update_snapshots: bool,
@@ -1021,15 +986,7 @@ fn spawn_test_worker(
                 message: format!("cannot locate tondo worker executable: {error}"),
             })?,
         );
-    command.arg("__test-worker");
-    match location {
-        ProjectLocation::Manifest(manifest) => {
-            command.arg("--manifest").arg(manifest);
-        }
-        ProjectLocation::Directory(project) => {
-            command.arg("--project").arg(project);
-        }
-    }
+    command.arg("__test-worker").arg("--project").arg(project);
     command.arg("--entry").arg(entry);
     if let Some(test_plan) = test_plan {
         command.arg("--test-plan").arg(test_plan);
@@ -1154,7 +1111,6 @@ fn join_worker_pipe(
 }
 
 fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
-    let mut manifest = None;
     let mut project = None;
     let mut test_plan = None;
     let mut entry = None;
@@ -1165,15 +1121,6 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
             .to_str()
             .ok_or_else(|| "hidden test-worker arguments must be UTF-8".to_owned())?;
         match value {
-            "--manifest" => {
-                index += 1;
-                manifest = Some(PathBuf::from(
-                    arguments
-                        .get(index)
-                        .and_then(|value| value.to_str())
-                        .ok_or_else(|| "worker `--manifest` requires a path".to_owned())?,
-                ));
-            }
             "--project" => {
                 index += 1;
                 project = Some(PathBuf::from(
@@ -1207,20 +1154,13 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
         }
         index += 1;
     }
-    if manifest.is_some() == project.is_some() {
-        return Err("worker requires exactly one of `--manifest` or `--project`".into());
-    }
+    let project = project.ok_or_else(|| "worker project is required".to_owned())?;
     let entry = entry.ok_or_else(|| "worker entry is required".to_owned())?;
-    let response = match execute_test_worker(
-        manifest.as_deref(),
-        project.as_deref(),
-        test_plan.as_deref(),
-        &entry,
-        update_snapshots,
-    ) {
-        Ok(response) => response,
-        Err(error) => infrastructure_worker_response(error),
-    };
+    let response =
+        match execute_test_worker(&project, test_plan.as_deref(), &entry, update_snapshots) {
+            Ok(response) => response,
+            Err(error) => infrastructure_worker_response(error),
+        };
     let bytes = serde_json::to_vec(&response).map_err(|error| error.to_string())?;
     io::stdout()
         .write_all(&bytes)
@@ -1232,17 +1172,12 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
 }
 
 fn execute_test_worker(
-    manifest_path: Option<&Path>,
-    project_path: Option<&Path>,
+    project_path: &Path,
     test_plan_path: Option<&Path>,
     entry_id: &str,
     update_snapshots: bool,
 ) -> Result<WorkerResponse, String> {
-    let location = match (manifest_path, project_path) {
-        (Some(manifest), None) => ProjectLocation::Manifest(manifest.to_owned()),
-        (None, Some(project)) => ProjectLocation::Directory(project.to_owned()),
-        _ => return Err("worker requires exactly one project location".into()),
-    };
+    let location = ProjectLocation::Directory(project_path.to_owned());
     let loaded = location.load().map_err(format_test_command_error)?;
     let base = loaded.base.as_path();
     let project = &loaded.project;
@@ -2081,8 +2016,6 @@ struct Invocation {
     format_check: bool,
     source: Option<PathBuf>,
     project: Option<PathBuf>,
-    manifest: Option<PathBuf>,
-    lockfile: Option<PathBuf>,
     emit_interface: Option<PathBuf>,
     emit_artifact: Option<PathBuf>,
     program_arguments: Vec<String>,
@@ -2104,8 +2037,6 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
     let mut format_check = false;
     let mut source: Option<PathBuf> = None;
     let mut project: Option<PathBuf> = None;
-    let mut manifest: Option<PathBuf> = None;
-    let mut lockfile: Option<PathBuf> = None;
     let mut emit_interface: Option<PathBuf> = None;
     let mut emit_artifact: Option<PathBuf> = None;
     let mut program_arguments = Vec::new();
@@ -2116,8 +2047,8 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
             if operation != Operation::Run {
                 return Err("program arguments are only valid with `tondo run`".into());
             }
-            if source.is_none() && project.is_none() && manifest.is_none() {
-                return Err("the source file, project or manifest must appear before `--`".into());
+            if source.is_none() && project.is_none() {
+                return Err("the source file or project must appear before `--`".into());
             }
             program_arguments = arguments[index + 1..]
                 .iter()
@@ -2146,14 +2077,6 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
                 return Err("`--warnings` requires `core`".into());
             };
             warning_profiles.insert(parse_warning_profile(value)?);
-        } else if argument == "--manifest" {
-            index += 1;
-            let Some(value) = arguments.get(index) else {
-                return Err("`--manifest` requires a path".into());
-            };
-            if manifest.replace(PathBuf::from(value)).is_some() {
-                return Err("`--manifest` may appear only once".into());
-            }
         } else if argument == "--project" {
             index += 1;
             let Some(value) = arguments.get(index) else {
@@ -2161,14 +2084,6 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
             };
             if project.replace(PathBuf::from(value)).is_some() {
                 return Err("`--project` may appear only once".into());
-            }
-        } else if argument == "--lockfile" {
-            index += 1;
-            let Some(value) = arguments.get(index) else {
-                return Err("`--lockfile` requires a path".into());
-            };
-            if lockfile.replace(PathBuf::from(value)).is_some() {
-                return Err("`--lockfile` may appear only once".into());
             }
         } else if argument == "--emit-interface" {
             index += 1;
@@ -2202,22 +2117,16 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
         index += 1;
     }
 
-    if source.is_some() && (project.is_some() || manifest.is_some()) {
-        return Err(
-            "choose either one source file, `--project` or `--manifest`, not multiple inputs"
-                .into(),
-        );
+    if source.is_some() && project.is_some() {
+        return Err("choose either one source file or `--project`, not both".into());
     }
-    if project.is_some() && manifest.is_some() {
-        return Err("choose either `--project` or `--manifest`, not both".into());
-    }
-    if source.is_none() && project.is_none() && manifest.is_none() {
+    if source.is_none() && project.is_none() {
         if operation == Operation::Format {
             return Err("a source file is required for `tondo fmt`".into());
         }
         project = Some(PathBuf::from("."));
     }
-    if operation == Operation::Format && (project.is_some() || manifest.is_some()) {
+    if operation == Operation::Format && project.is_some() {
         return Err("`tondo fmt` accepts a source file, not a project".into());
     }
     if operation == Operation::Format && (emit_interface.is_some() || emit_artifact.is_some()) {
@@ -2226,30 +2135,10 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
     if operation == Operation::Format && !warning_profiles.is_empty() {
         return Err("warning profiles are only available from `check` or `run`".into());
     }
-    if lockfile.is_some() && manifest.is_none() {
-        return Err("`--lockfile` requires `--manifest`".into());
-    }
     if let Some(source) = &source {
         validate_source_extension(source)?;
         if source.file_name().and_then(OsStr::to_str).is_none() {
             return Err("source filename is not valid UTF-8".into());
-        }
-    }
-    if let Some(manifest_path) = &manifest {
-        let resolved_lockfile = lockfile.get_or_insert_with(|| {
-            manifest_path
-                .parent()
-                .unwrap_or_else(|| Path::new(""))
-                .join("tondo.lock.json")
-        });
-        for output in [&emit_interface, &emit_artifact].into_iter().flatten() {
-            if paths_refer_to_same_location(output, manifest_path)
-                || paths_refer_to_same_location(output, resolved_lockfile)
-            {
-                return Err(
-                    "an emitted product must not overwrite the manifest or lockfile".into(),
-                );
-            }
         }
     }
     if let (Some(interface), Some(artifact)) = (&emit_interface, &emit_artifact)
@@ -2272,8 +2161,6 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
         format_check,
         source,
         project,
-        manifest,
-        lockfile,
         emit_interface,
         emit_artifact,
         program_arguments,
@@ -2281,37 +2168,6 @@ fn parse_invocation(arguments: &[OsString]) -> Result<Invocation, String> {
 }
 
 fn compilation_request(invocation: &Invocation) -> Result<PreparedCompilation, String> {
-    if let Some(manifest_path) = &invocation.manifest {
-        let lockfile_path = invocation
-            .lockfile
-            .as_ref()
-            .expect("parse_invocation resolves the default lockfile");
-        let manifest = read_input(manifest_path, "manifest")?;
-        let lockfile = read_input(lockfile_path, "lockfile")?;
-        let plan = ProjectPlan::parse(&manifest, &lockfile).map_err(|error| error.to_string())?;
-        let base = manifest_path.parent().unwrap_or_else(|| Path::new(""));
-        let mut supplied = BTreeMap::new();
-        for input in plan.required_inputs() {
-            let physical = base.join(input.path());
-            reject_product_input_collision(invocation, &physical, input.path())?;
-            let bytes = read_input(
-                &physical,
-                &format!("{} input `{}`", input.kind().as_str(), input.path()),
-            )?;
-            supplied.insert(input.path().to_owned(), Arc::<[u8]>::from(bytes));
-        }
-        let request = plan
-            .resolve(&supplied)
-            .map_err(|error| error.to_string())?
-            .into_compilation_request(
-                invocation.operation,
-                invocation.diagnostic_format,
-                ResourceLimits::default(),
-            )
-            .map_err(|error| error.to_string())?;
-        return Ok((request, None));
-    }
-
     if let Some(project_path) = &invocation.project {
         let (base, manifest_bytes, lockfile_bytes) = discover_cli_project(project_path)?;
         let plan = ProjectPlan::parse(&manifest_bytes, &lockfile_bytes)
@@ -2341,7 +2197,7 @@ fn compilation_request(invocation: &Invocation) -> Result<PreparedCompilation, S
     let source = invocation
         .source
         .as_ref()
-        .expect("parse_invocation requires a source, project or manifest");
+        .expect("parse_invocation requires a source or project");
     let bytes = Arc::<[u8]>::from(read_input(source, "source")?);
     let file_name = source
         .file_name()
@@ -2381,13 +2237,6 @@ fn discover_cli_project(project_path: &Path) -> Result<(PathBuf, Vec<u8>, Vec<u8
             project_path.display()
         )
     })?;
-    let legacy_manifest = root.join("tondo.json");
-    if !root.join("tondo.toml").is_file() && legacy_manifest.is_file() {
-        let manifest = read_input(&legacy_manifest, "manifest")?;
-        let lockfile_path = root.join("tondo.lock.json");
-        let lockfile = read_input(&lockfile_path, "lockfile")?;
-        return Ok((root, manifest, lockfile));
-    }
     let discovered = project_discovery::discover(&root)?;
     Ok((
         discovered.root,
@@ -2506,8 +2355,6 @@ fn validate_source_extension(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tondo_compiler::artifact::CAPABILITY_REGISTRY;
-    use tondo_compiler::project::MANIFEST_FORMAT;
 
     fn arguments(values: &[&str]) -> Vec<OsString> {
         values.iter().map(OsString::from).collect()
@@ -2515,6 +2362,58 @@ mod tests {
 
     fn invocation_error(values: &[&str]) -> String {
         parse_invocation(&arguments(values)).unwrap_err()
+    }
+
+    fn remove_json_nulls(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(fields) => {
+                fields.retain(|_, value| !value.is_null());
+                for value in fields.values_mut() {
+                    remove_json_nulls(value);
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    remove_json_nulls(value);
+                }
+            }
+            serde_json::Value::Null
+            | serde_json::Value::Bool(_)
+            | serde_json::Value::Number(_)
+            | serde_json::Value::String(_) => {}
+        }
+    }
+
+    fn conventional_test_project(source: &[u8]) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "tondo-cli-backend-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("tests")).unwrap();
+        fs::write(root.join("src/main.to"), b"fn main() {}\n").unwrap();
+        fs::write(root.join("tests/smoke.to"), source).unwrap();
+        fs::write(root.join("tondo.toml"), "[package]\nname = \"cli\"\n").unwrap();
+        let discovered = project_discovery::discover(&root).unwrap();
+        let project =
+            ProjectPlan::parse(&discovered.manifest_bytes, &discovered.lockfile_bytes).unwrap();
+        let mut test_plan: serde_json::Value = serde_json::from_slice(
+            &TestProjectPlan::defaults(&project, 1)
+                .canonical_bytes()
+                .unwrap(),
+        )
+        .unwrap();
+        remove_json_nulls(&mut test_plan);
+        for field in ["timeout_ms", "setup_timeout_ms", "teardown_timeout_ms"] {
+            test_plan["limits"][field] = serde_json::json!(1_000);
+        }
+        let test_plan_toml = toml::to_string(&toml::Value::try_from(test_plan).unwrap()).unwrap();
+        fs::write(root.join("tondo.test.toml"), test_plan_toml).unwrap();
+        root
     }
 
     #[test]
@@ -2590,8 +2489,8 @@ mod tests {
     fn project_products_cannot_overwrite_a_declared_input() {
         let arguments = [
             "check",
-            "--manifest",
-            "project/tondo.json",
+            "--project",
+            "project",
             "--emit-interface",
             "project/src/main.to",
         ]
@@ -2635,23 +2534,10 @@ mod tests {
                 &["check", "--warnings", "all", "main.to"],
                 "unknown warning profile",
             ),
-            (&["check", "--manifest"], "`--manifest` requires"),
+            (&["check", "--project"], "`--project` requires"),
             (
-                &["check", "--manifest", "one.json", "--manifest", "two.json"],
-                "`--manifest` may appear only once",
-            ),
-            (&["check", "--lockfile"], "`--lockfile` requires"),
-            (
-                &[
-                    "check",
-                    "--manifest",
-                    "tondo.json",
-                    "--lockfile",
-                    "one.lock",
-                    "--lockfile",
-                    "two.lock",
-                ],
-                "`--lockfile` may appear only once",
+                &["check", "--project", "one", "--project", "two"],
+                "`--project` may appear only once",
             ),
             (
                 &["check", "--emit-interface"],
@@ -2682,45 +2568,20 @@ mod tests {
             ),
             (&["check", "--unknown", "main.to"], "unknown option"),
             (
-                &["check", "main.to", "--manifest", "tondo.json"],
+                &["check", "main.to", "--project", "project"],
                 "choose either",
             ),
-            (
-                &["fmt", "--manifest", "tondo.json"],
-                "accepts a source file",
-            ),
+            (&["fmt", "--project", "project"], "accepts a source file"),
             (
                 &["fmt", "main.to", "--emit-interface", "main.ti"],
                 "build products",
             ),
             (&["fmt", "--warnings=core", "main.to"], "warning profiles"),
             (
-                &["check", "--lockfile", "tondo.lock.json", "main.to"],
-                "requires `--manifest`",
+                &["check", "--lockfile", "tondo.lock.toml", "main.to"],
+                "unknown option",
             ),
             (&["check", "main.tondo"], "`.to` extension"),
-            (
-                &[
-                    "check",
-                    "--manifest",
-                    "tondo.json",
-                    "--emit-interface",
-                    "tondo.json",
-                ],
-                "must not overwrite the manifest or lockfile",
-            ),
-            (
-                &[
-                    "check",
-                    "--manifest",
-                    "tondo.json",
-                    "--lockfile",
-                    "custom.lock",
-                    "--emit-artifact",
-                    "custom.lock",
-                ],
-                "must not overwrite the manifest or lockfile",
-            ),
             (
                 &[
                     "check",
@@ -2930,53 +2791,12 @@ mod tests {
         assert!(base.join("artifacts").exists());
         fs::remove_dir_all(base).unwrap();
 
-        let project = std::env::temp_dir().join(format!(
-            "tondo-cli-backend-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir_all(project.join("tests")).unwrap();
-        let source = b"test smoke { assert(true) }\n";
-        fs::write(project.join("tests/smoke.to"), source).unwrap();
-        let package_id = "workspace:cli-helper@1";
-        let source_hash = tondo_compiler::artifact::sha256(source);
-        let standard_package = tondo_compiler::project::BOOTSTRAP_STANDARD_PACKAGE;
-        let lockfile_format = tondo_compiler::project::LOCKFILE_FORMAT;
-        let manifest = format!(
-            "{{\"format\":\"{MANIFEST_FORMAT}\",\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[],\"features\":[]}},\"root\":{{\"package\":\"{package_id}\",\"source\":\"tests/smoke.to\",\"form\":\"module\"}},\"standard\":\"{standard_package}\",\"packages\":[{{\"id\":\"{package_id}\",\"local_name\":\"cli\",\"edition\":\"0.1\",\"dependencies\":[],\"source_sets\":[{{\"id\":\"common\",\"sources\":[{{\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\"}}]}}]}}],\"generator_inputs\":[],\"privileged_units\":[]}}"
-        );
-        fs::write(project.join("tondo.json"), &manifest).unwrap();
-        let package_fingerprint = format!(
-            "{{\"package_id\":\"{package_id}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\",\"sha256\":\"{source_hash}\"}}],\"interface_hash\":null}}"
-        );
-        let lockfile = format!(
-            "{{\"format\":\"{lockfile_format}\",\"manifest_hash\":\"{}\",\"standard\":{{\"package_id\":\"{standard_package}\",\"content_hash\":\"{}\"}},\"packages\":[{{\"id\":\"{package_id}\",\"content_hash\":\"{}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\",\"sha256\":\"{source_hash}\"}}],\"interface\":null}}],\"generator_inputs\":[],\"privileged_units\":[]}}",
-            tondo_compiler::artifact::sha256(manifest.as_bytes()),
-            tondo_compiler::project::bootstrap_standard_hash(),
-            tondo_compiler::artifact::sha256(package_fingerprint.as_bytes()),
-        );
-        fs::write(project.join("tondo.lock.json"), &lockfile).unwrap();
-        let test_plan = format!(
-            "{{\"format\":\"tondo-test-plan-draft\",\"project\":{{\"manifest_hash\":\"{}\",\"lockfile_hash\":\"{}\"}},\"repository_root\":\"\",\"roots\":[{{\"class\":\"production\",\"physical_path\":\"tests\",\"logical_path\":\"tests\"}}],\"sources\":[{{\"class\":\"production\",\"package\":\"{package_id}\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\",\"input\":\"source:production:tests/smoke.to\"}}],\"dev_dependencies\":[],\"codeowners\":{{\"mode\":\"auto\"}},\"selector\":{{\"kind\":\"none\"}},\"shard\":null,\"order\":{{\"kind\":\"canonical\"}},\"policy\":{{\"jobs\":1,\"allow_empty\":false,\"fail_fast\":false,\"retry\":0,\"repeat\":1}},\"reporters\":[\"human\",\"json\"],\"artifact_store\":{{\"path\":\"target/test-artifacts\",\"content_addressed\":true,\"max_bytes\":1048576}},\"snapshot_stores\":[],\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[],\"features\":[]}},\"time_catalog\":{{\"package\":\"std\",\"module\":\"time\",\"api\":\"monotonic-v1\"}},\"limits\":{{\"timeout_ms\":1000,\"setup_timeout_ms\":1000,\"teardown_timeout_ms\":1000,\"output_bytes\":65536,\"artifact_bytes\":1048576,\"snapshot_bytes\":1048576,\"memory_bytes\":67108864,\"instructions\":1000000,\"virtual_timers\":1024}}}}",
-            tondo_compiler::artifact::sha256(manifest.as_bytes()),
-            tondo_compiler::artifact::sha256(lockfile.as_bytes()),
-        );
-        let project_plan = ProjectPlan::parse(manifest.as_bytes(), lockfile.as_bytes()).unwrap();
-        let test_plan = project_plan
-            .parse_test_plan(test_plan.as_bytes())
-            .unwrap()
-            .canonical_bytes()
-            .unwrap();
-        fs::write(project.join("tondo.test.json"), test_plan).unwrap();
-        let manifest_path = project.join("tondo.json");
+        let project = conventional_test_project(b"test smoke { assert(true) }\n");
         let run_plan = test_cli::parse(
             &[
                 "test",
-                "--manifest",
-                "tondo.json",
+                "--project",
+                project.to_str().unwrap(),
                 "--order",
                 "random",
                 "--seed",
@@ -2989,12 +2809,12 @@ mod tests {
             .map(OsString::from),
         )
         .unwrap();
-        assert_eq!(execute_test_plan(&run_plan, &manifest_path).unwrap(), 0);
+        assert_eq!(execute_test_plan(&run_plan, &project).unwrap(), 0);
         let list_plan = test_cli::parse(
             &[
                 "test",
-                "--manifest",
-                "tondo.json",
+                "--project",
+                project.to_str().unwrap(),
                 "--list",
                 "--test-format",
                 "json",
@@ -3002,49 +2822,67 @@ mod tests {
             .map(OsString::from),
         )
         .unwrap();
-        assert_eq!(execute_test_plan(&list_plan, &manifest_path).unwrap(), 0);
+        assert_eq!(execute_test_plan(&list_plan, &project).unwrap(), 0);
         let repeat_plan = test_cli::parse(
-            &["test", "--manifest", "tondo.json", "--repeat", "2"].map(OsString::from),
+            &[
+                "test",
+                "--project",
+                project.to_str().unwrap(),
+                "--repeat",
+                "2",
+            ]
+            .map(OsString::from),
         )
         .unwrap();
-        assert_eq!(execute_test_plan(&repeat_plan, &manifest_path).unwrap(), 0);
+        assert_eq!(execute_test_plan(&repeat_plan, &project).unwrap(), 0);
         for selector in [
             &["--filter", "smoke"][..],
             &["--glob", "*smoke"][..],
             &["--exact", "smoke"][..],
             &["--shard", "1/1"][..],
         ] {
-            let mut values = vec!["test", "--manifest", "tondo.json"];
+            let mut values = vec!["test", "--project", project.to_str().unwrap()];
             values.extend_from_slice(selector);
             let selected_plan =
                 test_cli::parse(&values.into_iter().map(OsString::from).collect::<Vec<_>>())
                     .unwrap();
-            assert_eq!(
-                execute_test_plan(&selected_plan, &manifest_path).unwrap(),
-                0
-            );
+            assert_eq!(execute_test_plan(&selected_plan, &project).unwrap(), 0);
         }
-        let human_list =
-            test_cli::parse(&["test", "--manifest", "tondo.json", "--list"].map(OsString::from))
-                .unwrap();
-        assert_eq!(execute_test_plan(&human_list, &manifest_path).unwrap(), 0);
-        let show_output = test_cli::parse(
-            &["test", "--manifest", "tondo.json", "--show-output"].map(OsString::from),
+        let human_list = test_cli::parse(
+            &["test", "--project", project.to_str().unwrap(), "--list"].map(OsString::from),
         )
         .unwrap();
-        assert_eq!(execute_test_plan(&show_output, &manifest_path).unwrap(), 0);
+        assert_eq!(execute_test_plan(&human_list, &project).unwrap(), 0);
+        let show_output = test_cli::parse(
+            &[
+                "test",
+                "--project",
+                project.to_str().unwrap(),
+                "--show-output",
+            ]
+            .map(OsString::from),
+        )
+        .unwrap();
+        assert_eq!(execute_test_plan(&show_output, &project).unwrap(), 0);
         let too_long = test_cli::parse(
-            &["test", "--manifest", "tondo.json", "--timeout", "2s"].map(OsString::from),
+            &[
+                "test",
+                "--project",
+                project.to_str().unwrap(),
+                "--timeout",
+                "2s",
+            ]
+            .map(OsString::from),
         )
         .unwrap();
         assert!(matches!(
-            execute_test_plan(&too_long, &manifest_path),
+            execute_test_plan(&too_long, &project),
             Err(TestCommandError::Usage(message)) if message.contains("cannot exceed")
         ));
         let no_match = [
             OsString::from("test"),
-            OsString::from("--manifest"),
-            manifest_path.clone().into(),
+            OsString::from("--project"),
+            project.clone().into(),
             OsString::from("--filter"),
             OsString::from("absent"),
         ];
@@ -3054,8 +2892,8 @@ mod tests {
         );
         let allow_empty = [
             OsString::from("test"),
-            OsString::from("--manifest"),
-            manifest_path.clone().into(),
+            OsString::from("--project"),
+            project.clone().into(),
             OsString::from("--filter"),
             OsString::from("absent"),
             OsString::from("--allow-empty"),
@@ -3063,8 +2901,8 @@ mod tests {
         assert_eq!(run(allow_empty.to_vec()).unwrap(), ExitCode::SUCCESS);
         let allow_empty_list = [
             OsString::from("test"),
-            OsString::from("--manifest"),
-            manifest_path.clone().into(),
+            OsString::from("--project"),
+            project.clone().into(),
             OsString::from("--filter"),
             OsString::from("absent"),
             OsString::from("--allow-empty"),
@@ -3075,8 +2913,8 @@ mod tests {
         fs::write(&invalid_report_parent, b"not a directory").unwrap();
         let internal_report = [
             OsString::from("test"),
-            OsString::from("--manifest"),
-            manifest_path.clone().into(),
+            OsString::from("--project"),
+            project.clone().into(),
             OsString::from("--report"),
             OsString::from(format!(
                 "json={}",
@@ -3100,8 +2938,8 @@ mod tests {
         assert_eq!(
             run(vec![
                 OsString::from("test"),
-                OsString::from("--manifest"),
-                manifest_path.clone().into(),
+                OsString::from("--project"),
+                project.clone().into(),
             ])
             .unwrap(),
             ExitCode::SUCCESS
@@ -3119,6 +2957,21 @@ mod tests {
         assert!(validate_source_extension(Path::new("main.txt")).is_err());
         assert!(normalized_absolute_path(Path::new(".")).is_some());
         assert!(read_input(Path::new("missing-input.to"), "source").is_err());
+    }
+
+    #[test]
+    fn test_plan_loader_rejects_json_paths_before_io() {
+        let root = conventional_test_project(b"test smoke { assert(true) }\n");
+        let discovered = project_discovery::discover(&root).unwrap();
+        let project =
+            ProjectPlan::parse(&discovered.manifest_bytes, &discovered.lockfile_bytes).unwrap();
+        let error =
+            load_test_project_plan(&project, Some(Path::new("tondo.test.json"))).unwrap_err();
+        assert!(matches!(
+            error,
+            TestCommandError::Usage(message) if message.contains("JSON plans are unsupported")
+        ));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -3428,7 +3281,7 @@ mod tests {
         assert!(!absent.is_present());
         assert!(run_test_worker(&[]).is_err());
         assert!(run_test_worker(&[OsString::from("--unknown")]).is_err());
-        assert!(run_test_worker(&[OsString::from("--manifest")]).is_err());
+        assert!(run_test_worker(&[OsString::from("--project")]).is_err());
         assert!(run_test_worker(&[OsString::from("--entry")]).is_err());
 
         #[cfg(unix)]

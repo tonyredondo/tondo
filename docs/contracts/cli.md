@@ -9,19 +9,18 @@ tondo fmt [--check] [--diagnostic-format <human|json>] <source.to>
 tondo check [--diagnostic-format <human|json>] [--project <dir>]
 tondo run [--diagnostic-format <human|json>] [--project <dir>] [-- <argument>...]
 tondo test [--project <dir>] [--test-plan <tondo.test.toml>] [options]
-tondo check [--diagnostic-format <human|json>] --manifest <tondo.json>
-tondo run [--diagnostic-format <human|json>] --manifest <tondo.json> [-- <argument>...]
 tondo --help
 tondo --version
 ~~~
 
-The bootstrap accepts one loose source file, one conventional project directory,
-or one closed legacy project manifest. The forms cannot be combined. Without
+The bootstrap accepts one loose source file or one conventional project directory.
+The forms cannot be combined. Without
 `--project`, the current directory is used for `check`, `run` and `test`.
 
 - `fmt` and `check` classify the loose root as a module.
 - A conventional project uses `src/`, optional `tests/`, optional `tondo.toml`
-  and an optional generated `tondo.lock.toml`; it never requires `tondo.json`.
+  and an optional generated `tondo.lock.toml`; it never uses a JSON project
+  configuration.
 - `run` classifies the loose root as a script.
 - `fmt` writes canonical source to stdout and never edits the input file.
 - `fmt --check` writes no source and exits with code 1 when the input differs
@@ -39,28 +38,24 @@ or one closed legacy project manifest. The forms cannot be combined. Without
 Build and project options are:
 
 ~~~text
---lockfile <path>
 --emit-interface <path>
 --emit-artifact <path>
 ~~~
 
-Without `--lockfile`, legacy manifests use `tondo.lock.json` beside the
-manifest. Conventional projects use `tondo.lock.toml` automatically and do
-not accept a manual lockfile override. `--lockfile` requires `--manifest`.
 `--emit-interface` and `--emit-artifact`
 are valid for `check` or `run`, in loose-source or project mode, and write
 canonical products only after successful compilation. The two outputs must
-differ and cannot overwrite the source, manifest, lockfile, active project
-source, dependency interface, generator input, or privileged unit named by the
-invocation. `fmt` accepts neither a project nor build products.
+differ and cannot overwrite the source, active project source, dependency
+interface, generator input, or privileged unit named by the invocation. `fmt`
+accepts neither a project nor build products.
 
-The CLI either discovers the conventional project and creates an equivalent
-closed internal plan, or parses the legacy manifest and lockfile. It then asks
-the pure project plan for its exact required inputs, reads only those relative
-to the project root/manifest directory, and passes their bytes back to the
+The CLI discovers the conventional project and creates the closed internal
+plan. It then asks the pure project plan for its exact required inputs, reads
+only those relative to the project root, and passes their bytes back to the
 compiler. Discovery does not resolve versions or use network access; after the
 plan boundary the compiler performs no directory scan or implicit generator
-execution.
+execution. JSON diagnostics and reports are output formats, not project input
+formats.
 
 ## Logical identity for a loose source
 

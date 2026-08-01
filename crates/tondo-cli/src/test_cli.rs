@@ -52,7 +52,6 @@ pub struct TestReportOutput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TestCliPlan {
     pub project: Option<PathBuf>,
-    pub manifest: Option<PathBuf>,
     pub test_plan: Option<PathBuf>,
     pub selector: TestSelector,
     pub selector_explicit: bool,
@@ -91,7 +90,6 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
     }
     let mut plan = TestCliPlan {
         project: None,
-        manifest: None,
         test_plan: None,
         selector: TestSelector::All,
         selector_explicit: false,
@@ -155,7 +153,6 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
                     | "--glob"
                     | "--exact"
                     | "--project"
-                    | "--manifest"
                     | "--test-plan"
                     | "--codeowners"
                     | "--shard"
@@ -180,7 +177,6 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
                     | "--glob"
                     | "--exact"
                     | "--project"
-                    | "--manifest"
                     | "--test-plan"
                     | "--codeowners"
                     | "--shard"
@@ -205,7 +201,7 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
             parse_value(&mut plan, &mut seen, &mut seed, argument, value)?;
         } else {
             return Err(format!(
-                "unexpected positional argument `{argument}`; use `--project`, `--manifest` or `--test-plan`"
+                "unexpected positional argument `{argument}`; use `--project` or `--test-plan`"
             ));
         }
         index += 1;
@@ -218,9 +214,6 @@ pub fn parse(arguments: &[OsString]) -> Result<TestCliPlan, String> {
                 return Err("`--seed` requires `--order random`".into());
             }
         };
-    }
-    if plan.project.is_some() && plan.manifest.is_some() {
-        return Err("choose either `--project` or `--manifest`, not both".into());
     }
     validate_combinations(&plan)
 }
@@ -238,14 +231,17 @@ fn parse_value(
             plan.project = Some(validate_text_path(value, "`--project`")?);
             Ok(())
         }
-        "--manifest" => {
-            once_value(seen, "--manifest")?;
-            plan.manifest = Some(validate_text_path(value, "`--manifest`")?);
-            Ok(())
-        }
         "--test-plan" => {
             once_value(seen, "--test-plan")?;
-            plan.test_plan = Some(validate_text_path(value, "`--test-plan`")?);
+            let path = validate_text_path(value, "`--test-plan`")?;
+            if path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+            {
+                return Err("`--test-plan` accepts TOML only; JSON plans are unsupported".into());
+            }
+            plan.test_plan = Some(path);
             Ok(())
         }
         "--filter" => {
@@ -579,10 +575,10 @@ mod tests {
     fn parses_defaults_and_all_value_forms_without_execution() {
         let plan = parse(&args(&[
             "test",
-            "--manifest",
-            "tondo.json",
+            "--project",
+            ".",
             "--test-plan",
-            "tondo.test.json",
+            "tondo.test.toml",
             "--filter",
             "math",
             "--codeowners",
@@ -608,8 +604,8 @@ mod tests {
             "--allow-empty",
         ]))
         .unwrap();
-        assert_eq!(plan.manifest, Some(PathBuf::from("tondo.json")));
-        assert_eq!(plan.test_plan, Some(PathBuf::from("tondo.test.json")));
+        assert_eq!(plan.project, Some(PathBuf::from(".")));
+        assert_eq!(plan.test_plan, Some(PathBuf::from("tondo.test.toml")));
         assert_eq!(plan.selector, TestSelector::Filter("math".into()));
         assert!(plan.selector_explicit);
         assert!(plan.codeowners_explicit);
@@ -643,7 +639,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_a_conventional_project_without_a_legacy_manifest() {
+    fn accepts_a_conventional_project_without_json_configuration() {
         let plan = parse(&args(&[
             "test",
             "--project",
@@ -653,21 +649,16 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(plan.project, Some(PathBuf::from("example")));
-        assert_eq!(plan.manifest, None);
         assert_eq!(plan.test_plan, Some(PathBuf::from("tondo.test.toml")));
     }
 
     #[test]
-    fn rejects_legacy_manifest_and_conventional_project_together() {
-        let error = parse(&args(&[
-            "test",
-            "--project",
-            "example",
-            "--manifest",
-            "tondo.json",
-        ]))
-        .unwrap_err();
-        assert!(error.contains("either `--project` or `--manifest`"));
+    fn rejects_removed_json_project_options() {
+        let error = parse(&args(&["test", "--manifest", "tondo.json"])).unwrap_err();
+        assert!(error.contains("unknown option"));
+
+        let error = parse(&args(&["test", "--test-plan", "tondo.test.json"])).unwrap_err();
+        assert!(error.contains("TOML only"));
     }
 
     #[test]

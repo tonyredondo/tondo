@@ -19,9 +19,9 @@ execute generators or derive providers.
 
 The user-facing CLI has a separate convention boundary: it reads optional
 `tondo.toml`/`tondo.lock.toml`, discovers source files, and materializes these
-same JSON records before calling this module. TOML is therefore a project
-configuration/transport spelling, not a second compiler format or resolution
-algorithm.
+private records before calling this module. TOML is the only project
+configuration/transport spelling; the JSON representation is an internal
+compiler boundary, not a file users maintain or a second resolution algorithm.
 
 `ProjectPlanDraft::parse` validates the manifest, lockfile and canonical standard
 descriptor together, checks exact manifest and package hashes, checks runtime

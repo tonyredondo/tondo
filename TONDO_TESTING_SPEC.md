@@ -657,14 +657,14 @@ adquiere una dependencia sobre el runner.
 
 Antes de clasificar tests, la CLI materializa el proyecto por convención. La
 raíz por defecto es el directorio actual y `--project <dir>` permite elegirla;
-no se exige `tondo.json`. Si existe `src/`, sus `.to` y los `.to` de `tests/`
+no se exige ningún manifiesto JSON. Si existe `src/`, sus `.to` y los `.to` de `tests/`
 forman el conjunto de fuentes. Sin `src/`, solo se aceptan un `main.to` o un
 `tondo.toml`; el TOML habilita además el árbol `tests/`. Se ignoran symlinks,
 directorios ocultos, `target/` y `vendor/`. El nombre de paquete, target,
 perfil, capabilities y features salen de `tondo.toml` o de defaults cerrados.
 Con dependencias externas, `tondo.lock.toml` es obligatorio; sin dependencias
-el lockfile se materializa en memoria. Un `tondo.json` existente se utiliza
-solo como compatibilidad legacy cuando no hay `tondo.toml`.
+el lockfile se materializa en memoria. No existe una ruta alternativa basada en
+un manifiesto JSON.
 
 Cuando el manifiesto no declara source sets de test explícitos, el comando
 oficial aplica estas convenciones ASCII, case-sensitive:
@@ -2087,7 +2087,7 @@ frontera: solo transporta intentos ya observados por la implementación futura.
 Interfaz mínima:
 
 ~~~text
-tondo test [--project <dir> | --manifest <path>]
+tondo test [--project <dir>]
            [--test-plan <path>]
            [--filter <text> | --glob <pattern> | --exact <node-id>]
            [--codeowners <auto|none|path>]
@@ -2110,19 +2110,16 @@ tondo test [--project <dir> | --manifest <path>]
            [--allow-empty]
 ~~~
 
-`--project <dir>` selecciona una raíz convencional y es la forma normal. Si se
-omite, se usa el directorio actual. `--manifest <path>` queda reservado para
-el grafo JSON legacy y es mutuamente excluyente con `--project`.
+`--project <dir>` selecciona una raíz convencional. Si se omite, se usa el
+directorio actual. No existe una opción de manifiesto JSON.
 `--test-plan <path>` selecciona un sidecar explícito: el formato humano
-recomendado es TOML (`tondo.test.toml`), mientras que `tondo.test.json` se
-conserva únicamente por compatibilidad. Sin sidecar, los defaults se
+recomendado y único es TOML (`tondo.test.toml`). Sin sidecar, los defaults se
 materializan en memoria.
 
 ### 10.1 Defaults, sidecar opcional y aislamiento de hojas
 
-`tondo test` funciona sin que el usuario mantenga un JSON. El runner descubre
-el proyecto por layout convencional y `tondo.toml` (o usa `--manifest <path>`
-para legacy) y materializa en memoria un
+`tondo test` funciona sin que el usuario mantenga un archivo de plan. El runner
+descubre el proyecto por layout convencional y `tondo.toml` y materializa en memoria un
 `tondo-test-plan-draft` opinionado a partir del grafo cerrado: fuentes activas,
 target, capacidades, `std.time@monotonic-v1`, CODEOWNERS automático, orden
 canónico, una campaña sin retry/repeat, artifact store content-addressed y el
@@ -2131,10 +2128,9 @@ perfil finito de límites del toolchain.
 El sidecar `tondo.test.toml` es opcional. Si se proporciona
 `--test-plan <path>`, o existe el archivo adyacente a la raíz del proyecto, el
 runner lo carga como plan base; TOML se normaliza a la misma estructura cerrada
-que JSON y sus hashes de proyecto deben coincidir exactamente con el grafo
-materializado. `tondo.test.json` sigue aceptándose como fallback legacy y debe
-ser JSON canónico. Si no existe ningún sidecar, se usan los
-defaults en memoria. Un sidecar inválido, no canónico o perteneciente a otro
+que usa la frontera interna y sus hashes de proyecto deben coincidir exactamente
+con el grafo materializado. Si no existe ningún sidecar, se usan los defaults en
+memoria. Un sidecar inválido o perteneciente a otro
 proyecto termina con exit `2` antes de descubrir o compilar tests. El sidecar
 es un plan avanzado/reproducible, no un archivo que el flujo normal deba
 editar.
@@ -2176,10 +2172,9 @@ transacción.
 
 Reglas:
 
-- Sin `--project` ni `--manifest`, el toolchain usa el directorio actual y
-  descubre `src/`, `tests/` y el `tondo.toml` opcional antes de materializar un
-  plan cerrado. `--project` selecciona otra raíz convencional; `--manifest`
-  conserva el camino JSON legacy.
+- Sin `--project`, el toolchain usa el directorio actual y descubre `src/`,
+  `tests/` y el `tondo.toml` opcional antes de materializar un plan cerrado.
+  `--project` selecciona otra raíz convencional.
 - `--filter`, `--glob` y `--exact` seleccionan ejecución, no compilación, y
   siguen 8.2.
 - `--codeowners auto` es el default y sigue 5.7.
@@ -2197,7 +2192,7 @@ Reglas:
   `0` o un dígito `1..9` seguido de dígitos, sin signo, padding, separadores ni
   whitespace. El default efectivo es `0` si no lo fija el plan base; los
   retries reutilizan la compilación y nunca recompilan entre intentos. Un
-  `--retry N` es un override efímero y no modifica el JSON.
+  `--retry N` es un override efímero y no modifica el sidecar TOML.
 - `--repeat` aparece como máximo una vez, acepta un entero decimal canónico
   positivo dentro del límite estructural publicado y sigue 8.8. El default
   efectivo es `1`; un valor explícito `1` es válido y conserva la misma

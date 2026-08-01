@@ -8,6 +8,7 @@ use tondo_compiler::project::{
     BOOTSTRAP_STANDARD_PACKAGE, LOCKFILE_FORMAT, MANIFEST_FORMAT, ProjectPlan,
     bootstrap_standard_hash,
 };
+use tondo_compiler::test_plan::TestProjectPlan;
 use tondo_compiler::test_report::{SnapshotMode, TestList, TestReport};
 use tondo_compiler::test_snapshots::SnapshotStore;
 
@@ -27,6 +28,26 @@ fn source_file_with(bytes: &[u8]) -> std::path::PathBuf {
 
 fn source_file() -> std::path::PathBuf {
     source_file_with(b"fn main() {}\n")
+}
+
+fn remove_json_nulls(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            fields.retain(|_, value| !value.is_null());
+            for value in fields.values_mut() {
+                remove_json_nulls(value);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                remove_json_nulls(value);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
 }
 
 #[test]
@@ -118,12 +139,7 @@ fn help_and_version_are_successful() {
 #[test]
 fn test_command_defaults_to_the_conventional_project_directory() {
     let directory = test_project(b"test smoke { assert(true) }\n");
-    fs::create_dir_all(directory.join("src")).unwrap();
-    fs::write(directory.join("src/main.to"), b"fn main() {}\n").unwrap();
-    fs::write(directory.join("tondo.toml"), "[package]\nname = \"demo\"\n").unwrap();
-    fs::remove_file(directory.join("tondo.json")).unwrap();
-    fs::remove_file(directory.join("tondo.lock.json")).unwrap();
-    fs::remove_file(directory.join("tondo.test.json")).unwrap();
+    fs::remove_file(directory.join("tondo.test.toml")).unwrap();
     let parsed = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
         .args([
@@ -154,36 +170,52 @@ fn test_project(source: &[u8]) -> std::path::PathBuf {
         .as_nanos();
     let directory =
         std::env::temp_dir().join(format!("tondo-test-cli-{}-{nonce}", std::process::id()));
+    fs::create_dir_all(directory.join("src")).unwrap();
     fs::create_dir_all(directory.join("tests")).unwrap();
+    fs::write(directory.join("src/main.to"), b"fn main() {}\n").unwrap();
     fs::write(directory.join("tests/smoke.to"), source).unwrap();
-    let package_id = "workspace:test-cli@1";
+    fs::write(
+        directory.join("tondo.toml"),
+        "[package]\nname = \"cli\"\n[target]\ncapabilities = [\"console\", \"process\", \"clock\", \"environment\"]\n",
+    )
+    .unwrap();
+    let package_id = "workspace:cli@local";
+    let production_source = b"fn main() {}\n";
+    let production_hash = sha256(production_source);
     let source_hash = sha256(source);
-    let manifest = format!(
-        "{{\"format\":\"{MANIFEST_FORMAT}\",\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[],\"features\":[]}},\"root\":{{\"package\":\"{package_id}\",\"source\":\"tests/smoke.to\",\"form\":\"module\"}},\"standard\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"packages\":[{{\"id\":\"{package_id}\",\"local_name\":\"cli\",\"edition\":\"0.1\",\"dependencies\":[],\"source_sets\":[{{\"id\":\"common\",\"sources\":[{{\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\"}}]}}]}}],\"generator_inputs\":[],\"privileged_units\":[]}}"
+    let manifest_text = format!(
+        "{{\"format\":\"{MANIFEST_FORMAT}\",\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[\"console\",\"process\",\"clock\",\"environment\"],\"features\":[]}},\"root\":{{\"package\":\"{package_id}\",\"source\":\"src/main.to\",\"form\":\"module\"}},\"standard\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"packages\":[{{\"id\":\"{package_id}\",\"local_name\":\"cli\",\"edition\":\"0.1\",\"dependencies\":[],\"source_sets\":[{{\"id\":\"common\",\"sources\":[{{\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\"}},{{\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"tests\"}}]}}]}}],\"generator_inputs\":[],\"privileged_units\":[]}}"
     );
-    fs::write(directory.join("tondo.json"), &manifest).unwrap();
+    let manifest_value: serde_json::Value = serde_json::from_str(&manifest_text).unwrap();
+    let manifest = serde_json::to_vec(&manifest_value).unwrap();
     let package_fingerprint = format!(
-        "{{\"package_id\":\"{package_id}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\",\"sha256\":\"{source_hash}\"}}],\"interface_hash\":null}}"
+        "{{\"package_id\":\"{package_id}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\",\"sha256\":\"{production_hash}\"}},{{\"source_set\":\"common\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"tests\",\"sha256\":\"{source_hash}\"}}],\"interface_hash\":null}}"
     );
     let package_hash = sha256(package_fingerprint.as_bytes());
     let lockfile = format!(
-        "{{\"format\":\"{LOCKFILE_FORMAT}\",\"manifest_hash\":\"{}\",\"standard\":{{\"package_id\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"content_hash\":\"{}\"}},\"packages\":[{{\"id\":\"{package_id}\",\"content_hash\":\"{package_hash}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\",\"sha256\":\"{source_hash}\"}}],\"interface\":null}}],\"generator_inputs\":[],\"privileged_units\":[]}}",
-        sha256(manifest.as_bytes()),
+        "{{\"format\":\"{LOCKFILE_FORMAT}\",\"manifest_hash\":\"{}\",\"standard\":{{\"package_id\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"content_hash\":\"{}\"}},\"packages\":[{{\"id\":\"{package_id}\",\"content_hash\":\"{package_hash}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\",\"sha256\":\"{production_hash}\"}},{{\"source_set\":\"common\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"tests\",\"sha256\":\"{source_hash}\"}}],\"interface\":null}}],\"generator_inputs\":[],\"privileged_units\":[]}}",
+        sha256(&manifest),
         bootstrap_standard_hash(),
     );
-    fs::write(directory.join("tondo.lock.json"), &lockfile).unwrap();
-    let test_plan = format!(
-        "{{\"format\":\"tondo-test-plan-draft\",\"project\":{{\"manifest_hash\":\"{}\",\"lockfile_hash\":\"{}\"}},\"repository_root\":\"\",\"roots\":[{{\"class\":\"production\",\"physical_path\":\"tests\",\"logical_path\":\"tests\"}}],\"sources\":[{{\"class\":\"production\",\"package\":\"{package_id}\",\"physical_path\":\"tests/smoke.to\",\"logical_path\":\"tests/smoke.to\",\"module\":\"smoke\",\"input\":\"source:production:tests/smoke.to\"}}],\"dev_dependencies\":[],\"codeowners\":{{\"mode\":\"auto\"}},\"selector\":{{\"kind\":\"none\"}},\"shard\":null,\"order\":{{\"kind\":\"canonical\"}},\"policy\":{{\"jobs\":1,\"allow_empty\":false,\"fail_fast\":false,\"retry\":0,\"repeat\":1}},\"reporters\":[\"human\",\"json\"],\"artifact_store\":{{\"path\":\"target/test-artifacts\",\"content_addressed\":true,\"max_bytes\":1048576}},\"snapshot_stores\":[],\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[],\"features\":[]}},\"time_catalog\":{{\"package\":\"std\",\"module\":\"time\",\"api\":\"monotonic-v1\"}},\"limits\":{{\"timeout_ms\":1000,\"setup_timeout_ms\":1000,\"teardown_timeout_ms\":1000,\"output_bytes\":65536,\"artifact_bytes\":1048576,\"snapshot_bytes\":1048576,\"memory_bytes\":67108864,\"instructions\":1000000,\"virtual_timers\":1024}}}}",
-        sha256(manifest.as_bytes()),
-        sha256(lockfile.as_bytes()),
-    );
-    let project = ProjectPlan::parse(manifest.as_bytes(), lockfile.as_bytes()).unwrap();
-    let test_plan = project
-        .parse_test_plan(test_plan.as_bytes())
-        .unwrap()
+    let mut lock_value: serde_json::Value = serde_json::from_str(&lockfile).unwrap();
+    remove_json_nulls(&mut lock_value);
+    let lock_toml = toml::to_string(&toml::Value::try_from(lock_value).unwrap()).unwrap();
+    fs::write(directory.join("tondo.lock.toml"), lock_toml).unwrap();
+    let normalized_lock = serde_json::to_vec(
+        &toml::from_str::<toml::Value>(
+            &fs::read_to_string(directory.join("tondo.lock.toml")).unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let project = ProjectPlan::parse(&manifest, &normalized_lock).unwrap();
+    let test_plan = TestProjectPlan::defaults(&project, 1)
         .canonical_bytes()
         .unwrap();
-    fs::write(directory.join("tondo.test.json"), test_plan).unwrap();
+    let mut test_plan_value: serde_json::Value = serde_json::from_slice(&test_plan).unwrap();
+    remove_json_nulls(&mut test_plan_value);
+    let test_plan_toml = toml::to_string(&toml::Value::try_from(test_plan_value).unwrap()).unwrap();
+    fs::write(directory.join("tondo.test.toml"), test_plan_toml).unwrap();
     directory
 }
 
@@ -193,7 +225,7 @@ fn test_command_executes_a_test_body_through_the_vm_backend() {
 
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["test", "--manifest", "tondo.json"])
+        .args(["test"])
         .output()
         .unwrap();
     fs::remove_dir_all(directory).unwrap();
@@ -204,14 +236,14 @@ fn test_command_executes_a_test_body_through_the_vm_backend() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("PASS cli::integration::smoke::smoke")
+        String::from_utf8_lossy(&output.stdout).contains("PASS cli::integration::tests::smoke")
     );
 }
 
 #[test]
 fn test_command_uses_opinionated_defaults_without_a_sidecar() {
     let directory = test_project(b"test smoke { assert(true) }\n");
-    fs::remove_file(directory.join("tondo.test.json")).unwrap();
+    fs::remove_file(directory.join("tondo.test.toml")).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
         .args(["test", "--retry", "1", "--test-format", "json"])
@@ -227,16 +259,16 @@ fn test_command_uses_opinionated_defaults_without_a_sidecar() {
 #[test]
 fn test_command_accepts_an_explicit_canonical_plan_path() {
     let directory = test_project(b"test smoke { assert(true) }\n");
-    let explicit = directory.join("custom-plan.json");
-    let sidecar = fs::read_to_string(directory.join("tondo.test.json")).unwrap();
-    fs::write(&explicit, sidecar.replace("\"retry\":0", "\"retry\":1")).unwrap();
-    fs::remove_file(directory.join("tondo.test.json")).unwrap();
+    let explicit = directory.join("custom-plan.toml");
+    let sidecar = fs::read_to_string(directory.join("tondo.test.toml")).unwrap();
+    fs::write(&explicit, sidecar.replace("retry = 0", "retry = 1")).unwrap();
+    fs::remove_file(directory.join("tondo.test.toml")).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
         .args([
             "test",
             "--test-plan",
-            "custom-plan.json",
+            "custom-plan.toml",
             "--retry",
             "2",
             "--test-format",
@@ -251,39 +283,34 @@ fn test_command_accepts_an_explicit_canonical_plan_path() {
     assert_eq!(report.metadata().retry.max_additional_rounds, 2);
 }
 
-fn remove_json_nulls(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(fields) => {
-            fields.retain(|_, value| !value.is_null());
-            for value in fields.values_mut() {
-                remove_json_nulls(value);
-            }
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                remove_json_nulls(value);
-            }
-        }
-        serde_json::Value::Null
-        | serde_json::Value::Bool(_)
-        | serde_json::Value::Number(_)
-        | serde_json::Value::String(_) => {}
-    }
+fn rewrite_test_plan(directory: &std::path::Path, edit: impl FnOnce(&mut serde_json::Value)) {
+    let mut value: serde_json::Value = serde_json::to_value(
+        toml::from_str::<toml::Value>(
+            &fs::read_to_string(directory.join("tondo.test.toml")).unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    edit(&mut value);
+    let toml_plan = toml::to_string(&toml::Value::try_from(value).unwrap()).unwrap();
+    fs::write(directory.join("tondo.test.toml"), toml_plan).unwrap();
 }
 
 #[test]
 fn test_command_accepts_an_optional_toml_plan_sidecar() {
     let directory = test_project(b"test smoke { assert(true) }\n");
-    let mut value: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(directory.join("tondo.test.json")).unwrap())
-            .unwrap();
-    remove_json_nulls(&mut value);
-    let toml_plan = toml::to_string(&toml::Value::try_from(value).unwrap()).unwrap();
-    fs::write(directory.join("tondo.test.toml"), toml_plan).unwrap();
-    fs::remove_file(directory.join("tondo.test.json")).unwrap();
+    let explicit = directory.join("custom-plan.toml");
+    fs::copy(directory.join("tondo.test.toml"), &explicit).unwrap();
+    fs::remove_file(directory.join("tondo.test.toml")).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["test", "--manifest", "tondo.json", "--test-format", "json"])
+        .args([
+            "test",
+            "--test-plan",
+            "custom-plan.toml",
+            "--test-format",
+            "json",
+        ])
         .output()
         .unwrap();
     let report = TestReport::parse(&output.stdout).unwrap();
@@ -302,7 +329,7 @@ fn test_command_cannot_disable_the_closed_sidecar_timeout() {
     let directory = test_project(b"test smoke { assert(true) }\n");
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["test", "--manifest", "tondo.json", "--timeout", "none"])
+        .args(["test", "--timeout", "none"])
         .output()
         .unwrap();
     fs::remove_dir_all(directory).unwrap();
@@ -317,7 +344,7 @@ fn test_command_kills_a_recursive_leaf_at_the_wall_clock_boundary() {
     let started = std::time::Instant::now();
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["test", "--manifest", "tondo.json", "--timeout", "20ms"])
+        .args(["test", "--timeout", "20ms"])
         .output()
         .unwrap();
     let elapsed = started.elapsed();
@@ -334,22 +361,17 @@ fn test_command_kills_a_recursive_leaf_at_the_wall_clock_boundary() {
 #[test]
 fn update_snapshots_uses_the_sidecar_store_and_publishes_atomically() {
     let directory = test_project(b"test smoke { assert(true) }\n");
-    let sidecar = fs::read_to_string(directory.join("tondo.test.json")).unwrap();
-    let sidecar = sidecar.replace(
-        "\"snapshot_stores\":[]",
-        "\"snapshot_stores\":[{\"name\":\"default\",\"path\":\"tests/snapshots.json\",\"update\":false,\"max_bytes\":1048576}]",
-    );
-    fs::write(directory.join("tondo.test.json"), sidecar).unwrap();
+    rewrite_test_plan(&directory, |plan| {
+        plan["snapshot_stores"] = serde_json::json!([{
+            "name": "default",
+            "path": "tests/snapshots.json",
+            "update": false,
+            "max_bytes": 1_048_576
+        }]);
+    });
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args([
-            "test",
-            "--manifest",
-            "tondo.json",
-            "--update-snapshots",
-            "--test-format",
-            "json",
-        ])
+        .args(["test", "--update-snapshots", "--test-format", "json"])
         .output()
         .unwrap();
     let snapshot = fs::read(directory.join("tests/snapshots.json")).unwrap();
@@ -369,15 +391,17 @@ fn update_snapshots_uses_the_sidecar_store_and_publishes_atomically() {
 #[test]
 fn snapshot_store_inputs_are_validated_before_worker_execution() {
     let directory = test_project(b"test smoke { assert(true) }\n");
-    let sidecar = fs::read_to_string(directory.join("tondo.test.json")).unwrap();
-    let sidecar = sidecar.replace(
-        "\"snapshot_stores\":[]",
-        "\"snapshot_stores\":[{\"name\":\"default\",\"path\":\"tests/snapshots.json\",\"update\":false,\"max_bytes\":1048576}]",
-    );
-    fs::write(directory.join("tondo.test.json"), &sidecar).unwrap();
+    rewrite_test_plan(&directory, |plan| {
+        plan["snapshot_stores"] = serde_json::json!([{
+            "name": "default",
+            "path": "tests/snapshots.json",
+            "update": false,
+            "max_bytes": 1_048_576
+        }]);
+    });
     let missing = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["test", "--manifest", "tondo.json"])
+        .args(["test"])
         .output()
         .unwrap();
     assert_eq!(missing.status.code(), Some(2));
@@ -385,12 +409,14 @@ fn snapshot_store_inputs_are_validated_before_worker_execution() {
     fs::remove_dir_all(directory).unwrap();
 
     let directory = test_project(b"test smoke { assert(true) }\n");
-    let sidecar = fs::read_to_string(directory.join("tondo.test.json")).unwrap();
-    let sidecar = sidecar.replace(
-        "\"snapshot_stores\":[]",
-        "\"snapshot_stores\":[{\"name\":\"default\",\"path\":\"tests/snapshots.json\",\"update\":false,\"max_bytes\":1048576}]",
-    );
-    fs::write(directory.join("tondo.test.json"), &sidecar).unwrap();
+    rewrite_test_plan(&directory, |plan| {
+        plan["snapshot_stores"] = serde_json::json!([{
+            "name": "default",
+            "path": "tests/snapshots.json",
+            "update": false,
+            "max_bytes": 1_048_576
+        }]);
+    });
     fs::write(
         directory.join("tests/snapshots.json"),
         SnapshotStore::empty("workspace:other@1")
@@ -401,7 +427,7 @@ fn snapshot_store_inputs_are_validated_before_worker_execution() {
     .unwrap();
     let wrong_package = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["test", "--manifest", "tondo.json"])
+        .args(["test"])
         .output()
         .unwrap();
     assert_eq!(wrong_package.status.code(), Some(2));
@@ -409,15 +435,17 @@ fn snapshot_store_inputs_are_validated_before_worker_execution() {
     fs::remove_dir_all(directory).unwrap();
 
     let directory = test_project(b"test smoke { assert(true) }\n");
-    let sidecar = fs::read_to_string(directory.join("tondo.test.json")).unwrap();
-    let sidecar = sidecar.replace(
-        "\"snapshot_stores\":[]",
-        "\"snapshot_stores\":[{\"name\":\"default\",\"path\":\"tests/snapshots.json\",\"update\":false,\"max_bytes\":1}]",
-    );
-    fs::write(directory.join("tondo.test.json"), &sidecar).unwrap();
+    rewrite_test_plan(&directory, |plan| {
+        plan["snapshot_stores"] = serde_json::json!([{
+            "name": "default",
+            "path": "tests/snapshots.json",
+            "update": false,
+            "max_bytes": 1
+        }]);
+    });
     let too_large = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["test", "--manifest", "tondo.json", "--update-snapshots"])
+        .args(["test", "--update-snapshots"])
         .output()
         .unwrap();
     assert_eq!(too_large.status.code(), Some(2));
@@ -428,7 +456,7 @@ fn snapshot_store_inputs_are_validated_before_worker_execution() {
 #[test]
 fn hidden_worker_reports_infrastructure_without_leaking_process_errors() {
     let missing = std::env::temp_dir().join(format!(
-        "tondo-hidden-worker-missing-{}-{}.json",
+        "tondo-hidden-worker-missing-{}-{}",
         std::process::id(),
         SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -436,7 +464,7 @@ fn hidden_worker_reports_infrastructure_without_leaking_process_errors() {
             .as_nanos()
     ));
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
-        .args(["__test-worker", "--manifest"])
+        .args(["__test-worker", "--project"])
         .arg(&missing)
         .args(["--entry", "missing"])
         .output()
@@ -448,7 +476,7 @@ fn hidden_worker_reports_infrastructure_without_leaking_process_errors() {
         response["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("cannot read manifest")
+            .contains("cannot resolve project directory")
     );
 }
 
@@ -461,8 +489,6 @@ fn test_command_reports_failures_and_publishes_json_and_junit() {
         .current_dir(&directory)
         .args([
             "test",
-            "--manifest",
-            "tondo.json",
             "--report",
             "json=target/report.json",
             "--report",
@@ -476,7 +502,7 @@ fn test_command_reports_failures_and_publishes_json_and_junit() {
 
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("FAIL cli::integration::smoke::smoke")
+        String::from_utf8_lossy(&output.stdout).contains("FAIL cli::integration::tests::smoke")
     );
     assert!(String::from_utf8_lossy(&json_bytes).contains("tondo-test-report-0.1/7"));
     assert!(String::from_utf8_lossy(&junit_bytes).contains("<testsuites"));
@@ -487,15 +513,7 @@ fn test_command_executes_retry_rounds_and_preserves_each_attempt() {
     let directory = test_project(b"test smoke { assert(false) }\n");
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args([
-            "test",
-            "--manifest",
-            "tondo.json",
-            "--retry",
-            "1",
-            "--test-format",
-            "json",
-        ])
+        .args(["test", "--retry", "1", "--test-format", "json"])
         .output()
         .unwrap();
     fs::remove_dir_all(directory).unwrap();
@@ -515,15 +533,7 @@ fn test_command_repeats_in_fresh_attempts_and_emits_json_lists_and_owners() {
     fs::write(directory.join(".github/CODEOWNERS"), b"* @tondo\n").unwrap();
     let repeated = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args([
-            "test",
-            "--manifest",
-            "tondo.json",
-            "--repeat",
-            "2",
-            "--test-format",
-            "json",
-        ])
+        .args(["test", "--repeat", "2", "--test-format", "json"])
         .output()
         .unwrap();
     assert!(
@@ -537,14 +547,7 @@ fn test_command_repeats_in_fresh_attempts_and_emits_json_lists_and_owners() {
 
     let listed = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args([
-            "test",
-            "--manifest",
-            "tondo.json",
-            "--list",
-            "--test-format",
-            "json",
-        ])
+        .args(["test", "--list", "--test-format", "json"])
         .output()
         .unwrap();
     fs::remove_dir_all(directory).unwrap();
@@ -686,37 +689,14 @@ fn run_writes_console_print_to_stdout_without_an_implicit_newline() {
 
 #[test]
 fn project_check_uses_the_default_lockfile_and_emits_canonical_products() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock must follow the Unix epoch")
-        .as_nanos();
-    let directory =
-        std::env::temp_dir().join(format!("tondo-project-{}-{nonce}", std::process::id()));
-    fs::create_dir_all(directory.join("src")).unwrap();
-    let source = b"fn main() {}\n";
-    fs::write(directory.join("src/main.to"), source).unwrap();
-    let package_id = "workspace:cli@1";
-    let source_hash = sha256(source);
-    let manifest = format!(
-        "{{\"format\":\"{MANIFEST_FORMAT}\",\"target\":{{\"name\":\"tondo-vm-hosted\",\"profile\":\"hosted\",\"capability_registry\":\"{CAPABILITY_REGISTRY}\",\"capabilities\":[\"console\",\"process\",\"clock\",\"environment\"],\"features\":[]}},\"root\":{{\"package\":\"{package_id}\",\"source\":\"src/main.to\",\"form\":\"module\"}},\"standard\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"packages\":[{{\"id\":\"{package_id}\",\"local_name\":\"cli\",\"edition\":\"0.1\",\"dependencies\":[],\"source_sets\":[{{\"id\":\"common\",\"sources\":[{{\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\"}}]}}]}}],\"generator_inputs\":[],\"privileged_units\":[]}}"
-    );
-    fs::write(directory.join("tondo.json"), &manifest).unwrap();
-    let package_fingerprint = format!(
-        "{{\"package_id\":\"{package_id}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\",\"sha256\":\"{source_hash}\"}}],\"interface_hash\":null}}"
-    );
-    let package_hash = sha256(package_fingerprint.as_bytes());
-    let lockfile = format!(
-        "{{\"format\":\"{LOCKFILE_FORMAT}\",\"manifest_hash\":\"{}\",\"standard\":{{\"package_id\":\"{BOOTSTRAP_STANDARD_PACKAGE}\",\"content_hash\":\"{}\"}},\"packages\":[{{\"id\":\"{package_id}\",\"content_hash\":\"{package_hash}\",\"dependencies\":[],\"sources\":[{{\"source_set\":\"common\",\"physical_path\":\"src/main.to\",\"logical_path\":\"src/main.to\",\"module\":\"main\",\"sha256\":\"{source_hash}\"}}],\"interface\":null}}],\"generator_inputs\":[],\"privileged_units\":[]}}",
-        sha256(manifest.as_bytes()),
-        bootstrap_standard_hash(),
-    );
-    fs::write(directory.join("tondo.lock.json"), lockfile).unwrap();
+    let directory = test_project(b"test smoke { assert(true) }\n");
+    let package_id = "workspace:cli@local";
     let interface_path = directory.join("app.ti");
     let artifact_path = directory.join("app.ta");
 
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["check", "--manifest", "tondo.json", "--emit-interface"])
+        .args(["check", "--emit-interface"])
         .arg(&interface_path)
         .arg("--emit-artifact")
         .arg(&artifact_path)

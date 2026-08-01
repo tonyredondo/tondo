@@ -48,9 +48,12 @@ archivos, y `check`/`run` no adquieren esta excepción acotada.
 
 ## 2. Identidades y codificación
 
-### 2.1 JSON
+### 2.1 Frontera JSON interna
 
-Los formatos persistentes de este documento utilizan UTF-8 JSON:
+Los records internos del compilador se serializan con UTF-8 JSON únicamente
+dentro de la frontera pura; no son archivos de proyecto ni formatos de entrada
+de la CLI. Los únicos archivos persistentes de configuración son `tondo.toml`,
+`tondo.lock.toml` y, opcionalmente, `tondo.test.toml`:
 
 - manifiesto: `tondo-manifest-draft`;
 - lockfile: `tondo-lock-draft`;
@@ -59,7 +62,7 @@ Los formatos persistentes de este documento utilizan UTF-8 JSON:
 - descriptor estándar: `tondo-standard-descriptor-draft`;
 - unidad privilegiada: `tondo-privileged-unit-draft`.
 
-Un lector rechaza campos desconocidos. El manifiesto y el lockfile no necesitan
+Un lector interno rechaza campos desconocidos. Los records de proyecto no necesitan
 una representación JSON canónica, pero sus bytes exactos participan en los
 hashes del build. Las interfaces, artefactos y unidades privilegiadas sí exigen
 la codificación canónica compacta producida por el toolchain: sin whitespace
@@ -125,8 +128,8 @@ con su nombre local y resuelven a un `PackageId` exacto.
 
 ## 3. Proyectos convencionales y configuración humana
 
-La CLI normal es *convention-first*: una aplicación no necesita `tondo.json`
-para compilarse. El directorio del proyecto es el directorio actual o el
+La CLI normal es *convention-first*: una aplicación no necesita ningún
+manifiesto JSON para compilarse. El directorio del proyecto es el directorio actual o el
 argumento `--project <dir>`. La forma recomendada es:
 
 ~~~text
@@ -186,17 +189,17 @@ generado por el resolvedor y debe fijar el mismo grafo, hashes de fuente,
 interfaces y standard package que el manifiesto interno. El compilador no
 resuelve versiones ni red. Un proyecto sin dependencias puede omitir el
 lockfile: la CLI materializa un lockfile equivalente en memoria. El formato
-TOML del lockfile es una transliteración estructural del lockfile JSON cerrado
-(las tablas `standard`, `packages`, `sources`, `generator_inputs` y
-`privileged_units` conservan exactamente sus nombres y listas); el JSON solo
-se usa como frontera canónica interna de `ProjectPlan`.
-
-`tondo.json` y `tondo.lock.json` son formatos internos/legacy. La CLI los acepta
-únicamente mediante `--manifest` (y su lockfile adyacente) o como fallback de
-compatibilidad cuando un directorio no tiene `tondo.toml`; no son necesarios en
-un proyecto nuevo y no deben aparecer en la documentación de uso normal.
+TOML del lockfile conserva estructuralmente las tablas `standard`, `packages`,
+`sources`, `generator_inputs` y `privileged_units`. La CLI no lee ni escribe
+manifiestos JSON de proyecto: genera los registros internos necesarios en
+memoria y los entrega a la frontera pura del compilador. Esa representación
+interna no es un archivo de configuración ni una API de usuario.
 
 ### 3.1 Manifiesto interno: forma completa
+
+La forma siguiente es una representación privada del compilador para hashes,
+interfaces y herramientas. No corresponde a un archivo que un proyecto pueda
+crear o pasar a `tondo`; la configuración humana es exclusivamente TOML.
 
 ~~~json
 {
@@ -532,11 +535,12 @@ Una invocación `tondo test` puede consumir un record independiente
 el toolchain materializa en memoria este mismo shape con defaults opinionados a
 partir del `ProjectPlan` ya cerrado. `--test-plan <path>` selecciona un record
 explícito; si no se proporciona, un `tondo.test.toml` adyacente se usa cuando
-existe, y `tondo.test.json` solo se conserva como fallback legacy. No cambia el
+existe. No existe una variante JSON de este sidecar y la CLI no acepta una. No cambia el
 manifiesto de producción ni crea un segundo parser. Todo
 record suministrado se valida contra el `manifest_hash` y `lockfile_hash`
 exactos de un `ProjectPlan` ya cerrado, y todos sus campos son inputs del plan
-de test:
+de test. El ejemplo siguiente muestra la forma interna; el único sidecar que
+puede escribir el usuario es su equivalente TOML.
 
 ~~~json
 {
@@ -678,7 +682,7 @@ materializa un valor. Su forma canónica es:
 }
 ~~~
 
-`test_plan_sha256` es el SHA-256 con prefijo `sha256:` de los bytes JSON
+`test_plan_sha256` es el SHA-256 con prefijo `sha256:` de los bytes internos
 compactos y canónicos de `TestProjectPlan`. `inputs` se ordena por `name` y
 cada nombre es único, no vacío y no contiene saltos de línea ni barras
 invertidas. Toda referencia `source.input` del plan de proyecto debe tener
@@ -1256,28 +1260,18 @@ tondo test [--project <dir>] [--test-plan <tondo.test.toml>] [opciones de test]
 
 Sin `--project` se usa el directorio actual. `check` y `run` materializan el
 grafo convencional descrito en la sección 3. `test` aplica las mismas reglas y
-además descubre las fuentes de test según `TONDO_TESTING_SPEC.md`.
-
-Las formas legacy, útiles para conformance y herramientas que ya produzcan el
-grafo cerrado, son:
-
-~~~text
-tondo check --manifest <tondo.json>
-tondo run --manifest <tondo.json> -- [argument ...]
-tondo test --manifest <tondo.json> [opciones de test]
-~~~
+además descubre las fuentes de test según `TONDO_TESTING_SPEC.md`. No existe un
+modo de proyecto basado en manifiestos JSON.
 
 Opciones:
 
 ~~~text
---lockfile <path>        lockfile explícito
 --emit-interface <path>  interfaz canónica de la raíz
 --emit-artifact <path>   metadatos canónicos del build
 ~~~
 
-`--manifest` usa `tondo.lock.json` junto al manifiesto salvo que se dé
-`--lockfile`. La forma convencional obtiene `tondo.lock.toml` de la raíz y
-materializa el JSON interno sin escribirlo. `fmt` sigue operando sobre un único
+La forma convencional obtiene `tondo.lock.toml` de la raíz y materializa los
+registros internos sin escribirlos. `fmt` sigue operando sobre un único
 `.to` y no acepta proyectos ni productos.
 La forma, opciones, selección, ejecución y reportes de `tondo test` se rigen por
 `TONDO_TESTING_SPEC.md`; antes de invocar al compilador debe materializar el
@@ -1285,10 +1279,9 @@ plan cerrado descrito arriba.
 
 La CLI:
 
-1. descubre el layout/TOML o lee el manifiesto legacy;
+1. descubre el layout/TOML y genera los registros internos;
 2. crea el plan puro;
-3. lee exactamente `required_inputs`, relativos a la raíz del proyecto (o al
-   directorio del manifiesto legacy);
+3. lee exactamente `required_inputs`, relativos a la raíz del proyecto;
 4. entrega los bytes al plan;
 5. compila y valida los programas meta;
 6. construye el snapshot, ejecuta la única ronda de generación y valida todas
@@ -1296,8 +1289,8 @@ La CLI:
 7. compila la base de fuentes completa; y
 8. escribe productos solo si todas las fases tienen éxito.
 
-Un producto no puede declarar el mismo path que una fuente suelta, manifiesto,
-lockfile, source activo o generado, interfaz de dependencia, generator input,
+Un producto no puede declarar el mismo path que una fuente suelta, archivo de
+configuración del proyecto, source activo o generado, interfaz de dependencia,
 unidad privilegiada u otro producto de esa invocación.
 
 ## 11. Determinismo y frontera ambiental
