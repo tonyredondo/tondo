@@ -34,6 +34,7 @@ pub mod test_retry;
 pub mod test_runtime;
 pub mod test_schedule;
 pub mod test_shard;
+pub mod test_snapshots;
 pub mod test_suite;
 pub mod test_tree;
 pub mod test_virtual_time;

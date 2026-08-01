@@ -3072,7 +3072,7 @@ reporters.
   físicos/Base64/timestamps; los tests cubren límites, colisiones, orden,
   atomicidad y reclamación.
 
-- [ ] **UTEST-SNAPSHOT-001 — Implementar snapshots textuales explícitos.**
+- [x] **UTEST-SNAPSHOT-001 — Implementar snapshots textuales explícitos.**
   Resolver `(node_id, name)` contra `tondo-snapshot-store-0.1/1`, comparar el
   `String` exacto, registrar `matched/missing/mismatched` y producir
   `P2007`/`P2008` con diffs humanos acotados. Parsear, validar, ordenar y
@@ -3083,6 +3083,13 @@ reporters.
   tras una invocación completa sin otros estados no exitosos. Probar
   `snapshot_policy.published: false`, ausencia de update/borrado implícito y
   separación de registros entre intentos.
+
+  Evidencia implementada en `crates/tondo-compiler/src/test_snapshots.rs`:
+  store canónico ordenado/hasheado, checks exactos con diff acotado,
+  `P2007/P2008`, stage de created/updated, preservación de stale entries,
+  policy serial/canónica y publicación atómica con validación de symlinks y
+  escapes. `docs/contracts/test-snapshots.md` documenta el contrato; los tests
+  cubren parseo, matching, no-update implícito, separación del stage y rutas.
 
 - [ ] **UTEST-INTERRUPT-001 — Cerrar la interrupción externa.** En la primera
   señal, detener dispatch, cancelar cooperativamente, conducir cleanup
