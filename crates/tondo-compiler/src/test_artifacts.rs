@@ -392,7 +392,8 @@ impl ArtifactStore {
 
     fn manifest_path(&self) -> PathBuf {
         let digest = sha256(self.attempt.as_bytes());
-        self.root.join("manifests").join(format!("{digest}.json"))
+        let filename = digest.strip_prefix("sha256:").unwrap_or(&digest);
+        self.root.join("manifests").join(format!("{filename}.json"))
     }
 }
 
@@ -664,6 +665,14 @@ mod tests {
             .attach("a", "application/octet-stream", b"one")
             .unwrap();
         let first = store.publish().unwrap();
+        assert!(
+            !store
+                .manifest_path()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains(':')
+        );
         assert_eq!(store.publish(), Err(ArtifactError::Published));
         let mut second =
             ArtifactStore::new(&root, "attempt-1", ArtifactLimits::new(10, 2)).unwrap();
