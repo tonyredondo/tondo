@@ -3055,7 +3055,7 @@ reporters.
   de estado virtual o recursos entre iteraciones; los tests cubren cleanup,
   skips, fallos, virtual time y no solapamiento.
 
-- [ ] **UTEST-ARTIFACT-001 — Persistir attachments por intento.** Implementar
+- [x] **UTEST-ARTIFACT-001 — Persistir attachments por intento.** Implementar
   `testing.attach` con copia exacta y linealizada de `std.bytes.Bytes`, gramática
   cerrada de nombre/media type, unicidad por intento, límites y `P2006`. Calcular
   descriptors SHA-256 y escribir `tondo-test-artifacts-0.1/1` con objects
@@ -3064,6 +3064,13 @@ reporters.
   colisiones; no incluir Base64, upload, ejecución, timestamps ni paths físicos.
   Mantener blobs huérfanos fuera del store lógico tras interrupción y permitir
   su recolección segura.
+
+  Evidencia implementada en `crates/tondo-compiler/src/test_artifacts.rs`:
+  blobs SHA-256 inmutables, deduplicación, manifiesto canónico y publicación
+  atómica, límites `P2006`, validación de symlinks/escapes y GC seguro de
+  huérfanos. `docs/contracts/test-artifacts.md` fija la ausencia de paths
+  físicos/Base64/timestamps; los tests cubren límites, colisiones, orden,
+  atomicidad y reclamación.
 
 - [ ] **UTEST-SNAPSHOT-001 — Implementar snapshots textuales explícitos.**
   Resolver `(node_id, name)` contra `tondo-snapshot-store-0.1/1`, comparar el
