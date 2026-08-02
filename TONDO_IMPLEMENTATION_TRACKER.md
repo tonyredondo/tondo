@@ -3462,7 +3462,7 @@ vez los errores de los slices anteriores.
   cache solo con identidad completa y no publicar fuente, interface o artifact
   parcial ante fallo.
 
-- [ ] **REFLECT-IMPL-001 — Implementar metadata runtime alcanzable.** Generar
+- [x] **REFLECT-IMPL-001 — Implementar metadata runtime alcanzable.** Generar
   metadata de `typeInfo[T]()` estáticamente, eliminar la no alcanzable y
   demostrar que `TypeId` no escapa como identidad de wire ni habilita value
   reflection.

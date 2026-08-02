@@ -17,6 +17,7 @@ pub mod mir;
 pub mod package;
 mod process_host;
 pub mod project;
+pub mod reflect;
 pub mod resolve;
 pub mod semantic;
 pub mod source;
