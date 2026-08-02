@@ -273,7 +273,7 @@ mod tests {
         assert_eq!(package.descriptor().source_hash(), sha256(package.source()));
         assert_eq!(
             package.content_hash(),
-            "sha256:3d10de3a2a7535da69f6c9b1e990b314ad9974d7f32e786afde3cec044d7b4b8"
+            "sha256:0ca6b7cd70d4aaca4f3c222f8d681620f7fa937955e4328f25c7088634bc7226"
         );
     }
 

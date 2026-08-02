@@ -10,6 +10,14 @@ pub type Output = {
     source: String
 }
 
+pub type SourceMap = {
+    generatedStart: UInt32
+    generatedEnd: UInt32
+    originFile: UInt32
+    originStart: UInt32
+    originEnd: UInt32
+}
+
 pub fn api(): String {
     "tondo-std-meta-0.1/1"
 }

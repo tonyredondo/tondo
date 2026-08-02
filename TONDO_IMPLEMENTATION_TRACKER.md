@@ -3787,7 +3787,7 @@ layer pueden avanzar en paralelo.
   builder en Tondo cuando sea posible y validar su descriptor/content hash. No
   incorpora providers de serialization ni formatos.
 
-- [ ] **STD-META-CONF-001 — Cerrar la evidencia build-only.** Ejecutar
+- [x] **STD-META-CONF-001 — Cerrar la evidencia build-only.** Ejecutar
   round-trips canónicos, source maps, errores, límites, budgets y ausencia
   efectiva de filesystem, environment, process, clock, entropy, network,
   threads, FFI y unsafe. Debe pasar antes de `META-DERIVE-001` o
