@@ -594,7 +594,7 @@ fn validate_evidence(
                     && (test.target != evidence.target
                         || !matches!(
                             test.kind.as_str(),
-                            "conformance-case" | "fixture" | "spec-fence"
+                            "conformance-case" | "conformance-layer" | "fixture" | "spec-fence"
                         ))
                 {
                     return Err(format!(

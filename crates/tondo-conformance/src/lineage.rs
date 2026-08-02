@@ -14,6 +14,7 @@ use crate::sha256;
 pub const DRAFT_LINEAGE_FORMAT: &str = "tondo-conformance-draft-lineage";
 pub const DRAFT_LINEAGE_NAME: &str = "tondo-draft";
 pub const DRAFT_LINEAGE_PATH: &str = "conformance/draft/manifest.json";
+pub const CASE_LAYER_FORMAT: &str = "tondo-conformance-case-layer/1";
 
 const BASELINE_MANIFEST_PATH: &str = "conformance/0.1/manifest.json";
 const BASELINE_SPECIFICATION_PATH: &str = "conformance/baseline/TONDO_LANGUAGE_SPEC.md";
@@ -53,6 +54,25 @@ pub struct CaseLayer {
     pub manifest: PinnedFile,
     pub tasks: Vec<String>,
     pub requirements: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DraftCaseLayerManifest {
+    pub format: String,
+    pub layer: String,
+    pub edition: String,
+    pub tasks: Vec<String>,
+    pub cases: Vec<DraftContractCase>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DraftContractCase {
+    pub id: String,
+    pub surface: String,
+    pub requirements: Vec<String>,
+    pub evidence: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -109,6 +129,7 @@ pub struct DraftLineage {
     baseline_specification: Vec<u8>,
     baseline_suite: LoadedSuite,
     specifications: BTreeMap<String, Vec<u8>>,
+    case_layers: Vec<DraftCaseLayerManifest>,
 }
 
 impl DraftLineage {
@@ -171,8 +192,22 @@ impl DraftLineage {
                 read_pinned(&root, specification)?,
             );
         }
+        let mut case_layers = Vec::with_capacity(manifest.case_layers.len());
         for layer in &manifest.case_layers {
-            read_pinned(&root, &layer.manifest)?;
+            let bytes = read_pinned(&root, &layer.manifest)?;
+            let layer_manifest: DraftCaseLayerManifest = serde_json::from_slice(&bytes)
+                .map_err(|error| LineageError::Json(error.to_string()))?;
+            validate_case_layer(layer, &layer_manifest)?;
+            let mut canonical = serde_json::to_vec_pretty(&layer_manifest)
+                .map_err(|error| LineageError::Json(error.to_string()))?;
+            canonical.push(b'\n');
+            if canonical != bytes {
+                return invalid(format!(
+                    "case layer `{}` is not canonical pretty JSON",
+                    layer.id
+                ));
+            }
+            case_layers.push(layer_manifest);
         }
         validate_history(&root, &manifest)?;
 
@@ -184,6 +219,7 @@ impl DraftLineage {
             baseline_specification,
             baseline_suite,
             specifications,
+            case_layers,
         })
     }
 
@@ -223,6 +259,10 @@ impl DraftLineage {
             .collect()
     }
 
+    pub fn case_layers(&self) -> &[DraftCaseLayerManifest] {
+        &self.case_layers
+    }
+
     pub fn check_sealable(&self) -> Result<(), LineageError> {
         if self.manifest.state != "open" {
             return Err(LineageError::Invalid(format!(
@@ -238,6 +278,79 @@ impl DraftLineage {
         }
         Ok(())
     }
+}
+
+fn validate_case_layer(
+    descriptor: &CaseLayer,
+    manifest: &DraftCaseLayerManifest,
+) -> Result<(), LineageError> {
+    if manifest.format != CASE_LAYER_FORMAT
+        || manifest.layer != descriptor.id
+        || manifest.edition != "0.1"
+        || manifest.cases.is_empty()
+    {
+        return invalid(format!(
+            "case layer `{}` has an invalid format, identity, edition, or empty case set",
+            descriptor.id
+        ));
+    }
+    require_sorted_unique(
+        &format!("case layer `{}` implementation tasks", descriptor.id),
+        manifest.tasks.iter().map(String::as_str),
+    )?;
+    if manifest.tasks != descriptor.tasks {
+        return invalid(format!(
+            "case layer `{}` task set differs from its lineage descriptor",
+            descriptor.id
+        ));
+    }
+    require_sorted_unique(
+        &format!("case layer `{}` case IDs", descriptor.id),
+        manifest.cases.iter().map(|case| case.id.as_str()),
+    )?;
+    let mut requirements = BTreeSet::new();
+    for case in &manifest.cases {
+        for (name, value) in [("case ID", &case.id), ("surface", &case.surface)] {
+            if value.is_empty()
+                || !value
+                    .bytes()
+                    .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+            {
+                return invalid(format!(
+                    "case layer `{}` {name} must use lowercase ASCII, digits, and hyphens",
+                    descriptor.id
+                ));
+            }
+        }
+        require_sorted_unique(
+            &format!("case layer `{}` case requirements", descriptor.id),
+            case.requirements.iter().map(String::as_str),
+        )?;
+        require_sorted_unique(
+            &format!("case layer `{}` case evidence", descriptor.id),
+            case.evidence.iter().map(String::as_str),
+        )?;
+        if case.requirements.is_empty()
+            || case.evidence.is_empty()
+            || case
+                .evidence
+                .iter()
+                .any(|id| !(id.starts_with("rust:") || id.starts_with("fuzz:")))
+        {
+            return invalid(format!(
+                "case layer `{}` cases require requirements and executable inventory evidence",
+                descriptor.id
+            ));
+        }
+        requirements.extend(case.requirements.iter().cloned());
+    }
+    if requirements.into_iter().collect::<Vec<_>>() != descriptor.requirements {
+        return invalid(format!(
+            "case layer `{}` requirement set differs from its lineage descriptor",
+            descriptor.id
+        ));
+    }
+    Ok(())
 }
 
 fn validate_manifest(manifest: &DraftLineageManifest) -> Result<(), LineageError> {
@@ -452,7 +565,11 @@ mod tests {
             first.baseline_suite().manifest_sha256(),
             "6bb8fe5b151ef73f1d49b3d432a51ec18c7a634cf4c9d014eea81d6a351c6ffb"
         );
-        assert!(first.implemented_requirements().is_empty());
+        assert_eq!(first.manifest().revision, 2);
+        assert_eq!(first.case_layers().len(), 1);
+        assert_eq!(first.case_layers()[0].layer, "meta");
+        assert_eq!(first.case_layers()[0].cases.len(), 6);
+        assert_eq!(first.implemented_requirements().len(), 11);
         assert!(
             first
                 .check_sealable()
@@ -589,6 +706,64 @@ mod tests {
         broken_history.revision = 2;
         broken_history.parent = None;
         assert!(validate_manifest(&broken_history).is_err());
+    }
+
+    #[test]
+    fn case_layer_validation_rejects_each_invalid_contract_dimension() {
+        let lineage = DraftLineage::load(repository_root(), DRAFT_LINEAGE_PATH).unwrap();
+        let descriptor = &lineage.manifest().case_layers[0];
+        let valid = &lineage.case_layers()[0];
+        let assert_invalid = |manifest: DraftCaseLayerManifest| {
+            assert!(validate_case_layer(descriptor, &manifest).is_err());
+        };
+
+        let mut invalid = valid.clone();
+        invalid.format = "future".into();
+        assert_invalid(invalid);
+
+        let mut invalid = valid.clone();
+        invalid.layer = "other".into();
+        assert_invalid(invalid);
+
+        let mut invalid = valid.clone();
+        invalid.edition = "0.2".into();
+        assert_invalid(invalid);
+
+        let mut invalid = valid.clone();
+        invalid.cases.clear();
+        assert_invalid(invalid);
+
+        let mut invalid = valid.clone();
+        invalid.tasks.push("META-UNDECLARED-001".into());
+        invalid.tasks.sort();
+        assert_invalid(invalid);
+
+        let mut invalid = valid.clone();
+        invalid.cases[0].id.clear();
+        assert_invalid(invalid);
+
+        let mut invalid = valid.clone();
+        invalid.cases[0].surface = "Invalid".into();
+        assert_invalid(invalid);
+
+        let mut invalid = valid.clone();
+        invalid.cases[0].requirements.clear();
+        assert_invalid(invalid);
+
+        let mut invalid = valid.clone();
+        invalid.cases[0].evidence.clear();
+        assert_invalid(invalid);
+
+        let mut invalid = valid.clone();
+        invalid.cases[0].evidence = vec!["documentation:meta".into()];
+        assert_invalid(invalid);
+
+        let mut invalid = valid.clone();
+        invalid.cases[0].requirements.push("TL01-27-99-R999".into());
+        invalid.cases[0].requirements.sort();
+        assert_invalid(invalid);
+
+        validate_case_layer(descriptor, valid).unwrap();
     }
 
     #[test]

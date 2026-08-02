@@ -70,6 +70,269 @@
           "waiver": null
         }
       }
+    },
+    {
+      "requirements": [
+        "TL01-27-1-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:meta:meta-runtime-metadata"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:meta:meta-runtime-metadata"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-runtime-metadata"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:meta:meta-runtime-metadata"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:meta:meta-runtime-metadata"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-runtime-metadata"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-27-2-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:meta:meta-syntax"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:meta:meta-syntax"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-syntax"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:meta:meta-syntax"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:meta:meta-syntax"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-syntax"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-27-2-R002",
+        "TL01-27-2-R003",
+        "TL01-27-3-R001",
+        "TL01-27-4-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-27-5-R001",
+        "TL01-27-5-R002",
+        "TL01-27-5-R003"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-27-7-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:meta:meta-reproducibility"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:meta:meta-reproducibility"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-reproducibility"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:meta:meta-reproducibility"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:meta:meta-reproducibility"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-reproducibility"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-27-8-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
+        }
+      }
     }
   ]
 }

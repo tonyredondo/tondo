@@ -30,7 +30,7 @@ fn validate_command_reports_the_single_draft_identity() {
     assert!(output.stderr.is_empty());
     assert_eq!(
         String::from_utf8(output.stdout).expect("identity must be UTF-8"),
-        "tondo-draft 0.1 open 1 9274a05a21ba468fd0e8d904ada34509780afef98a4157a67c17c1ed5eb31f8c\n"
+        "tondo-draft 0.1 open 2 c39c06150130697805fa8c933cdac0b70f4b15f219b0fcb10cb812e35de3a0f5\n"
     );
 }
 
@@ -79,7 +79,7 @@ fn seal_is_a_non_mutating_preflight_and_rejects_pending_work() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8(output.stderr).expect("error must be UTF-8");
-    assert!(stderr.contains("draft still has pending tasks: M10.6, M10.7, PARSER-STACK-001"));
+    assert!(stderr.contains("draft still has pending tasks: M10.6"));
 }
 
 #[test]

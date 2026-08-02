@@ -328,6 +328,40 @@ mod tests {
                 ..
             })
         ));
+
+        let mut kind_drift = observations(b"same");
+        let index = kind_drift
+            .iter()
+            .position(|item| item.dimension() == MetaReproDimension::Scheduling)
+            .unwrap();
+        kind_drift[index] = MetaReproObservation::new(
+            MetaReproDimension::Scheduling,
+            kind_drift[index].variation(),
+            MetaObservationKind::Diagnostics,
+            b"same",
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_meta_reproducibility(kind_drift),
+            Err(MetaReproError::Drift { .. })
+        ));
+
+        let mut byte_drift = observations(b"same");
+        let index = byte_drift
+            .iter()
+            .position(|item| item.dimension() == MetaReproDimension::Scheduling)
+            .unwrap();
+        byte_drift[index] = MetaReproObservation::new(
+            MetaReproDimension::Scheduling,
+            byte_drift[index].variation(),
+            MetaObservationKind::Output,
+            b"different",
+        )
+        .unwrap();
+        assert!(matches!(
+            verify_meta_reproducibility(byte_drift),
+            Err(MetaReproError::Drift { .. })
+        ));
     }
 
     #[test]

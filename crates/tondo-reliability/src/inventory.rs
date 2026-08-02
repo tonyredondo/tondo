@@ -78,6 +78,7 @@ pub fn build(root: &Path) -> Result<Inventory, String> {
     discover_rust_tests(root, &mut tests)?;
     discover_fixture_tests(root, &mut tests)?;
     discover_conformance_tests(root, suite, &mut tests)?;
+    discover_draft_case_layers(&lineage, &mut tests)?;
     discover_language_fences(root, suite, &mut tests)?;
     discover_pending_testing_fences(root, &mut tests)?;
     discover_fuzz_targets(root, &mut tests)?;
@@ -111,6 +112,46 @@ pub fn build(root: &Path) -> Result<Inventory, String> {
         summary: summarize(&tests),
         tests,
     })
+}
+
+fn discover_draft_case_layers(
+    lineage: &DraftLineage,
+    tests: &mut Vec<TestEntry>,
+) -> Result<(), String> {
+    for (descriptor, layer) in lineage
+        .manifest()
+        .case_layers
+        .iter()
+        .zip(lineage.case_layers())
+    {
+        if descriptor.id != layer.layer {
+            return Err(format!(
+                "draft layer `{}` differs from its loaded manifest identity",
+                descriptor.id
+            ));
+        }
+        for case in &layer.cases {
+            tests.push(TestEntry {
+                id: format!("draft-layer:{}:{}", layer.layer, case.id),
+                kind: "conformance-layer".into(),
+                crate_name: None,
+                phase: "metaprogramming".into(),
+                source: descriptor.manifest.path.clone(),
+                fixture: None,
+                group: case.surface.clone(),
+                requirements: case.requirements.clone(),
+                oracle: "executable-inventory-evidence".into(),
+                repetitions: 1,
+                source_sha256: descriptor.manifest.sha256.clone(),
+                target: "tondo-vm-hosted".into(),
+                document: Some(DRAFT_LINEAGE_PATH.into()),
+                edition: lineage.manifest().edition.clone(),
+                status: "executable".into(),
+                sidecars: case.evidence.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 pub fn validate(inventory: &Inventory) -> Result<(), String> {

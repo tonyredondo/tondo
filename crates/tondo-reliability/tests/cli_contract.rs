@@ -110,7 +110,6 @@ fn repository_evidence_commands_are_readable_and_current_through_the_cli() {
         vec!["quality", "check", "--root", root],
         vec!["inventory", "check", "--root", root],
         vec!["matrix", "check", "--root", root],
-        vec!["ratchet", "check", "--root", root],
         vec!["check", "--root", root],
     ] {
         let output = run(&arguments);
@@ -121,6 +120,10 @@ fn repository_evidence_commands_are_readable_and_current_through_the_cli() {
         );
         assert!(!text(&output.stdout).trim().is_empty());
     }
+
+    let ratchet = run(&["ratchet", "check", "--root", root]);
+    assert!(!ratchet.status.success());
+    assert!(text(&ratchet.stderr).contains("coverage report is required"));
 }
 
 #[test]

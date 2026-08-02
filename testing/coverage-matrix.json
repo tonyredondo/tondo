@@ -3,13 +3,13 @@
   "document": "TONDO_LANGUAGE_SPEC.md",
   "edition": "0.1",
   "document_sha256": "ccfb9628a9e15894d45848ec24d650eba48b833a47f95c6a2835bad10bd1e7f8",
-  "inventory_sha256": "ecc563e223ecee9f742ac331ec6bcfa34f5501f7ea0de7962c1e4744084c6cfd",
+  "inventory_sha256": "e57c33433b1d59a43b4024d390b0c3832eea8dd93946150dafeaa0d693dc93d9",
   "target": "tondo-vm-hosted",
   "summary": {
     "total": 316,
     "by_status": {
-      "covered": 17,
-      "draft-pending": 29,
+      "covered": 28,
+      "draft-pending": 18,
       "stdlib-pending": 3,
       "target-not-applicable": 7,
       "toolchain-limit": 260
@@ -20,7 +20,7 @@
       "low": 39,
       "medium": 14
     },
-    "with_executable_evidence": 17
+    "with_executable_evidence": 28
   },
   "requirements": [
     {
@@ -9246,35 +9246,47 @@
       "text_sha256": "58e0f18f5bc03888bcf7e08c78f5fd85d15bc4520697e2cae72a13f3b4ee337b",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9955#27-1-modelo-único"
+        "draft-layer:meta:meta-runtime-metadata"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-runtime-metadata"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-runtime-metadata"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-runtime-metadata"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-runtime-metadata"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-runtime-metadata"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-runtime-metadata"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9289,35 +9301,47 @@
       "text_sha256": "d4002c2988d217af9b436950b77bc72d344f49bcc0ef4a760b817f7dc525757e",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9977#27-2-declaración-derive"
+        "draft-layer:meta:meta-syntax"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-syntax"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-syntax"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-syntax"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-syntax"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-syntax"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-syntax"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9332,35 +9356,47 @@
       "text_sha256": "51e6ff4eec595a94e0b61041f0c4487315a333eb603f75bd3122d8a2a6965b2f",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9984#27-2-declaración-derive"
+        "draft-layer:meta:meta-semantics"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9375,35 +9411,47 @@
       "text_sha256": "4fa705cde54dc2a2bd5766e3d0d8523d270ded9d8745ef83904656d3426c8f82",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:9990#27-2-declaración-derive"
+        "draft-layer:meta:meta-semantics"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9418,35 +9466,47 @@
       "text_sha256": "a5ec5a2ef68e541b09fedcf67865d35057b01b589638946a5ad751d0bad22c73",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10014#27-3-providers-y-resultado-de-derive"
+        "draft-layer:meta:meta-semantics"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9461,35 +9521,47 @@
       "text_sha256": "6b5b42d63f3754959455f61ae05c38a9142fa8f20776848b02e52b24da3e7071",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10044#27-4-acceso-privado-de-un-provider"
+        "draft-layer:meta:meta-semantics"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-semantics"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9504,35 +9576,47 @@
       "text_sha256": "ff77fa2408457ba146ea77e9d65df9dd25da2f16b5d3d1abbc37628ac242d1fe",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10070#27-5-generadores-declarados-por-el-manifiesto"
+        "draft-layer:meta:meta-toolchain"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9547,35 +9631,47 @@
       "text_sha256": "367ce2d42f26fd13cce8a88a5968c1f29d3fa18263d8e876af5535c831a4cab0",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10076#27-5-generadores-declarados-por-el-manifiesto"
+        "draft-layer:meta:meta-toolchain"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9590,35 +9686,47 @@
       "text_sha256": "e96745bcd3edf815b7dde90d1e7ad503d121f713fc1e5d0bebf58833924b505e",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10082#27-5-generadores-declarados-por-el-manifiesto"
+        "draft-layer:meta:meta-toolchain"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9633,35 +9741,47 @@
       "text_sha256": "48bb98c8054411605e3c6b831e69661cb5f7751621046c8c3d989e5ef2712fd6",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10131#27-7-perfil-hermético-meta"
+        "draft-layer:meta:meta-reproducibility"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-reproducibility"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-reproducibility"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-reproducibility"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-reproducibility"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-reproducibility"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-reproducibility"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9676,35 +9796,47 @@
       "text_sha256": "d116aee0949fd58076467a8a0bac9bad4c274df3c34cefb116afaf82672fd058",
       "phase": "metaprogramming",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10156#27-8-fases-y-ausencia-de-ciclos"
+        "draft-layer:meta:meta-toolchain"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:meta:meta-toolchain"
+          ],
+          "waiver": null
         }
       }
     },

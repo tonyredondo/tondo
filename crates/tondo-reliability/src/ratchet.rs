@@ -54,6 +54,23 @@ pub fn build(
         .map_err(|error| error.to_string())?;
     let inventory = inventory::build(root)?;
     inventory::validate(&inventory)?;
+    let inventory_ids = inventory
+        .tests
+        .iter()
+        .map(|test| test.id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    for layer in lineage.case_layers() {
+        for case in &layer.cases {
+            for evidence in &case.evidence {
+                if !inventory_ids.contains(evidence.as_str()) {
+                    return Err(format!(
+                        "draft case `{}` references unknown inventory evidence `{evidence}`",
+                        case.id
+                    ));
+                }
+            }
+        }
+    }
     check_bytes(
         &root.join(crate::INVENTORY_PATH),
         &canonical_json(&inventory)?,
@@ -211,27 +228,49 @@ mod tests {
     }
 
     #[test]
-    fn repository_ratchet_is_current_and_does_not_claim_new_scope() {
+    fn repository_ratchet_requires_reports_for_the_meta_layer() {
         let root = repository_root();
-        let record = build(&root, None, None).unwrap();
-        assert_eq!(record.draft_case_layers, 0);
-        assert_eq!(record.coverage.status, "not-applicable");
-        assert_eq!(record.mutation.status, "not-applicable");
-        validate(&record).unwrap();
+        let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();
+        assert_eq!(lineage.manifest().case_layers.len(), 1);
+        assert!(scope_evidence(&root, "coverage", None, true, |_, _| Ok(())).is_err());
+        assert!(scope_evidence(&root, "mutation", None, true, |_, _| Ok(())).is_err());
+    }
+
+    fn record() -> RatchetRecord {
+        let evidence = |path: &str| EvidenceFile {
+            path: path.into(),
+            sha256: "a".repeat(64),
+        };
+        let scope = ScopeEvidence {
+            status: "validated".into(),
+            reason: "verified".into(),
+            report_sha256: Some("b".repeat(64)),
+        };
+        RatchetRecord {
+            format: FORMAT.into(),
+            lineage: DRAFT_LINEAGE_NAME.into(),
+            revision: 2,
+            manifest: evidence(DRAFT_LINEAGE_PATH),
+            inventory: evidence(crate::INVENTORY_PATH),
+            matrix: evidence(crate::MATRIX_PATH),
+            quality_baseline: evidence(crate::QUALITY_BASELINE_PATH),
+            draft_case_layers: 1,
+            pending_tasks: vec!["M10.6".into()],
+            coverage: scope.clone(),
+            mutation: scope,
+        }
     }
 
     #[test]
     fn validated_scope_requires_a_report_hash() {
-        let root = repository_root();
-        let mut record = build(&root, None, None).unwrap();
-        record.coverage.status = "validated".into();
+        let mut record = record();
+        record.coverage.report_sha256 = None;
         assert!(validate(&record).is_err());
     }
 
     #[test]
     fn ratchet_validation_rejects_each_identity_and_scope_boundary() {
-        let root = repository_root();
-        let base = build(&root, None, None).unwrap();
+        let base = record();
 
         let mut record = base.clone();
         record.format = "future-ratchet".into();
@@ -258,11 +297,11 @@ mod tests {
         assert!(validate(&record).is_err());
 
         let mut record = base.clone();
-        record.coverage.report_sha256 = Some("a".repeat(64));
+        record.coverage.status = "not-applicable".into();
         assert!(validate(&record).is_err());
 
         let mut record = base.clone();
-        record.mutation.report_sha256 = Some("a".repeat(64));
+        record.mutation.status = "not-applicable".into();
         assert!(validate(&record).is_err());
 
         let mut record = base.clone();

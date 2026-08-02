@@ -322,11 +322,7 @@ mod tests {
         assert!(generate_inventory(&root).unwrap().contains("logical tests"));
         assert!(generate_matrix(&root).unwrap().contains("requirements"));
         let arguments = parse_arguments(vec!["ratchet".into(), "generate".into()]).unwrap();
-        assert!(
-            generate_ratchet(&root, &arguments)
-                .unwrap()
-                .contains("draft case layers")
-        );
+        assert!(generate_ratchet(&root, &arguments).is_err());
     }
 
     #[test]

@@ -2,9 +2,12 @@
   "format": "tondo-conformance-draft-lineage",
   "lineage": "tondo-draft",
   "edition": "0.1",
-  "revision": 1,
+  "revision": 2,
   "state": "open",
-  "parent": null,
+  "parent": {
+    "path": "conformance/draft/history/9274a05a21ba468fd0e8d904ada34509780afef98a4157a67c17c1ed5eb31f8c.json",
+    "sha256": "9274a05a21ba468fd0e8d904ada34509780afef98a4157a67c17c1ed5eb31f8c"
+  },
   "baseline": {
     "manifest": {
       "path": "conformance/0.1/manifest.json",
@@ -33,10 +36,48 @@
       "sha256": "f4912ea0da2fb052b90222d60fc6a4444c4007c9e7e9c2ac3569d5d2f3cf8144"
     }
   ],
-  "case_layers": [],
+  "case_layers": [
+    {
+      "id": "meta",
+      "manifest": {
+        "path": "conformance/draft/layers/meta.json",
+        "sha256": "7be760eb9f998a923cb94b947b3d591562b161654c61bd41f688805e24407038"
+      },
+      "tasks": [
+        "META-ATOMIC-001",
+        "META-CONF-001",
+        "META-DERIVE-001",
+        "META-DIAG-001",
+        "META-FORMAT-001",
+        "META-GEN-001",
+        "META-MODEL-001",
+        "META-QUERY-001",
+        "META-REPRO-001",
+        "META-ROBUST-001",
+        "META-SEM-001",
+        "META-SPEC-001",
+        "META-SYNTAX-001",
+        "META-TOOLCHAIN-SPEC-001",
+        "META-VM-001",
+        "REFLECT-ARCH-001",
+        "REFLECT-IMPL-001"
+      ],
+      "requirements": [
+        "TL01-27-1-R001",
+        "TL01-27-2-R001",
+        "TL01-27-2-R002",
+        "TL01-27-2-R003",
+        "TL01-27-3-R001",
+        "TL01-27-4-R001",
+        "TL01-27-5-R001",
+        "TL01-27-5-R002",
+        "TL01-27-5-R003",
+        "TL01-27-7-R001",
+        "TL01-27-8-R001"
+      ]
+    }
+  ],
   "pending_tasks": [
-    "M10.6",
-    "M10.7",
-    "PARSER-STACK-001"
+    "M10.6"
   ]
 }

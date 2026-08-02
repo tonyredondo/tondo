@@ -235,7 +235,7 @@ mod tests {
         assert!(
             run(seal)
                 .unwrap_err()
-                .contains("still has pending tasks: M10.6, M10.7, PARSER-STACK-001",)
+                .contains("still has pending tasks: M10.6",)
         );
     }
 }

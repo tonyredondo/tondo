@@ -3484,7 +3484,7 @@ vez los errores de los slices anteriores.
   UTF-8 inválido y generadores hostiles sin panic del compilador ni publicación
   parcial.
 
-- [ ] **META-CONF-001 — Extender `tondo-conformance-draft`.** Añadir syntax,
+- [x] **META-CONF-001 — Extender `tondo-conformance-draft`.** Añadir syntax,
   semantic, tooling, runtime metadata, toolchain y reproducibility cases en la
   línea draft creada por `CONF-DRAFT-001`, sin presentar la regresión bootstrap
   como conformidad completa. Ratchetear su contribución acumulada solo después de actualizar
