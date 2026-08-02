@@ -1581,6 +1581,12 @@ pub enum MetaDiagnosticCode {
     InvalidDeriveTarget,
     MissingDeriveProvider,
     InvalidDeriveRequest,
+    DeriveExpansionFailed,
+    InvalidGeneratedSource,
+    GeneratorContractViolation,
+    GeneratorResourceLimit,
+    MetaCapabilityDenied,
+    GenerationDependencyCycle,
     CoherenceConflict,
 }
 
@@ -1590,7 +1596,28 @@ impl MetaDiagnosticCode {
             Self::InvalidDeriveTarget => "E2101",
             Self::MissingDeriveProvider => "E2102",
             Self::InvalidDeriveRequest => "E2103",
+            Self::DeriveExpansionFailed => "E2104",
+            Self::InvalidGeneratedSource => "E2105",
+            Self::GeneratorContractViolation => "E2106",
+            Self::GeneratorResourceLimit => "E2107",
+            Self::MetaCapabilityDenied => "E2108",
+            Self::GenerationDependencyCycle => "E2109",
             Self::CoherenceConflict => "E1111",
+        }
+    }
+
+    pub const fn stable_name(self) -> &'static str {
+        match self {
+            Self::InvalidDeriveTarget => "invalid-derive-target",
+            Self::MissingDeriveProvider => "missing-derive-provider",
+            Self::InvalidDeriveRequest => "invalid-derive-request",
+            Self::DeriveExpansionFailed => "derive-expansion-failed",
+            Self::InvalidGeneratedSource => "invalid-generated-source",
+            Self::GeneratorContractViolation => "generator-contract-violation",
+            Self::GeneratorResourceLimit => "generator-resource-limit",
+            Self::MetaCapabilityDenied => "meta-capability-denied",
+            Self::GenerationDependencyCycle => "generation-dependency-cycle",
+            Self::CoherenceConflict => "coherence-conflict",
         }
     }
 }

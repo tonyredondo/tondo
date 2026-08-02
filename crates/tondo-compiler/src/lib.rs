@@ -8,6 +8,7 @@ pub mod hir;
 pub mod meta;
 pub mod meta_atomic;
 pub mod meta_derive;
+pub mod meta_diagnostics;
 pub mod meta_generate;
 pub mod meta_query;
 #[cfg(test)]

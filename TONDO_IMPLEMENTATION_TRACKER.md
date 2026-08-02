@@ -3469,7 +3469,7 @@ vez los errores de los slices anteriores.
 
 ### 18.4 Evidencia y contribución a Gate G5
 
-- [ ] **META-DIAG-001 — Cubrir `E2101`–`E2109`.** Cada error tiene vecino
+- [x] **META-DIAG-001 — Cubrir `E2101`–`E2109`.** Cada error tiene vecino
   positivo, precedencia, span/ubicación nula correcta, JSON estable y
   diagnostics de provider asociados a inputs o fields relevantes.
 
