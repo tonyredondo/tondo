@@ -3687,7 +3687,7 @@ layer pueden avanzar en paralelo.
   de eventos, derive format-neutral, bounds genéricos, construcción atómica,
   ownership, errores y personalización mediante impl/DTO explícito.
 
-- [ ] **STD-REFLECT-001 — Especificar el contrato exacto de `std.reflect`.**
+- [x] **STD-REFLECT-001 — Especificar el contrato exacto de `std.reflect`.**
   Cerrar antes de `REFLECT-IMPL-001` `TypeInfo`, `TypeId`, kinds,
   descriptores, ownership y errores públicos; fijar los oracles de retención
   opt-in, DCE y ausencia de value access, private access, layout, global

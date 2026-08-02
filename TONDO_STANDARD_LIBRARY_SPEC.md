@@ -1781,41 +1781,139 @@ tipo DTO explícito. Protobuf no utiliza este derive para inferir field numbers.
 
 ### 14.6 `std.reflect`
 
-`std.reflect` implementa la reflection conservada de 27.10. Su núcleo lógico es:
+`std.reflect` implementa reflection descriptiva, estática y retenida de forma
+explícita. No es un sistema de objetos dinámico ni una puerta lateral hacia el
+compilador. Su superficie completa es:
 
 ~~~tondo pseudocode
 pub fn typeInfo[T](): TypeInfo
 
-pub type TypeInfo
-pub type TypeId
+pub type TypeId: Copy + Equatable + Key + Send + Share
+
 pub enum TypeKind {
-    Primitive
+    Primitive(PrimitiveKind)
     Record
     Enum
     Newtype
     Tuple
     Union
     Function
-    Applied
-    Reference
+    Applied(AppliedKind)
+    Reference(ReferenceKind)
     Opaque
 }
+
+pub enum PrimitiveKind {
+    Bool
+    Int
+    Int8
+    Int16
+    Int32
+    UInt8
+    UInt16
+    UInt32
+    UInt64
+    Float
+    Float32
+    Byte
+    Char
+    String
+    Unit
+    Never
+}
+
+pub enum AppliedKind {
+    Array
+    Map
+    Set
+    Range
+    Option
+    Result
+    Other
+}
+
+pub enum ReferenceKind {
+    Ref
+    Pointer
+}
+
+pub enum TypeCapability {
+    Copy
+    Discard
+    Equatable
+    Key
+    Send
+    Share
+}
+
+pub type TypeInfo
+pub type FieldInfo
+pub type VariantInfo
+pub type ParameterInfo
+pub type FunctionInfo
 ~~~
 
-`TypeInfo` permite consultar nombre calificado, `TypeId`, kind, argumentos
-genéricos, fields públicos, variants públicas y capabilities demostradas. Los
-descriptores secundarios contienen únicamente nombres, tipos y posición
-declarativa; nunca contienen getters, setters, constructores o function
-handles.
+`TypeInfo` es un handle de valor inmutable, barato de copiar, `Send + Share` y
+respaldado por metadata read-only del artefacto. Expone exactamente:
 
-No hay enumeración global de tipos. `typeInfo[T]()` retiene solo metadata
-alcanzable para `T`; el linker puede eliminar el resto. `TypeId` solo compara
-identidad dentro del mismo artefacto exacto y no es estable para persistencia,
-red, schemas ni caches externas.
+- `id(): TypeId`, `qualifiedName(): String` y `kind(): TypeKind`;
+- `genericArguments(): Array[TypeInfo]` en orden de declaración;
+- `capabilities(): Set[TypeCapability]` con solo capacidades demostradas;
+- `fields(): Array[FieldInfo]` para records y payloads record públicos;
+- `variants(): Array[VariantInfo]` para enums públicos;
+- `tupleElements(): Array[TypeInfo]` para tuple y union, preservando el orden
+  canónico del tipo; y
+- `function(): FunctionInfo?` para funciones.
+
+Consultar una vista que no corresponde al kind devuelve la colección vacía o
+`none`; no inventa un `ReflectError`. `typeInfo[T]()` tampoco falla en runtime:
+un `T` no describible se rechaza durante compilación. Por tanto `std.reflect`
+no publica un tipo de error runtime en 0.1. Esta ausencia es parte del contrato,
+no una omisión provisional.
+
+`FieldInfo` contiene únicamente `name`, `type`, ordinal declarativo y docs
+retenidas; `VariantInfo`, nombre, ordinal y descriptores de su payload;
+`ParameterInfo`, posición, tipo y modo (`value`, `ref`, `mut` o `var`); y
+`FunctionInfo`, parámetros, outcome, variadicidad y flags `async`/`unsafe`.
+Todas las colecciones devueltas son valores inmutables canónicos. Sus elementos
+no dependen de direcciones, vtables ni del orden de un registro global.
+
+Solo se publican fields, variants y firmas visibles desde el punto donde se
+formó `typeInfo[T]()`. Un field privado no aparece ni siquiera si la consulta
+se escribió en su propio módulo. Los descriptores nunca contienen getters,
+setters, constructores, function handles, offsets, tamaño, alineación, ABI,
+direcciones, discriminantes físicos, estado del GC ni bytes de un valor.
+
+`TypeId` es una identidad opaca por artefacto. Admite igualdad y hash para ser
+key durante esa ejecución exacta; no admite constructor desde enteros/string,
+orden total, acceso a bits ni encoding estándar. Copiarlo a disco, red,
+schemas, caches o IPC carece de significado. Dos artefactos pueden asignar IDs
+distintos al mismo fuente y dos toolchains no prometen IDs comparables.
+
+#### Retención y DCE
+
+Cada instanciación concreta de `typeInfo[T]()` crea una raíz explícita de
+metadata. La clausura conserva solo `T` y los tipos nombrados por sus
+descriptores públicos alcanzables. No conserva cuerpos, valores, private
+members ni tipos no alcanzables. Genéricos se retienen por instanciación
+concreta, no como un registro abierto de todas sus posibles aplicaciones.
+
+Si no existe una raíz `typeInfo[T]()` alcanzable, el linker puede eliminar toda
+la metadata de `T`. Si elimina el código que contenía la consulta, puede
+eliminar también su clausura. Añadir reflection sobre `A` no retiene metadata
+de un `B` no alcanzable. Estos tres casos —raíz viva, raíz eliminada y tipo no
+alcanzable— son los oracles normativos de DCE para `REFLECT-IMPL-001`.
+
+No existe `allTypes`, lookup por nombre/ID, registro global, carga dinámica,
+reflection de valores, `get`/`set`/`invoke`, construcción dinámica ni
+attributes ejecutables. El único punto de entrada es el genérico estático
+`typeInfo[T]()`. La implementación puede resolver y compactar toda su clausura
+en compile time; una consulta no ejecuta búsqueda, allocation obligatoria ni
+locking global.
 
 Los usos previstos son diagnostics de aplicación, documentación y herramientas
 que necesitan describir un tipo conocido estáticamente. JSON, MessagePack y
-Protobuf no dependen de este módulo.
+Protobuf no dependen de este módulo: usan impls generados y dispatch estático.
 
 ### 14.7 `std.meta`
 
