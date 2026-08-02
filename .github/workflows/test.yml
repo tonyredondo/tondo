@@ -64,12 +64,16 @@ jobs:
         include:
           - platform: Linux ARM64
             runner: ubuntu-24.04-arm
+            target-id: linux-aarch64
           - platform: macOS Intel
             runner: macos-15-intel
+            target-id: macos-x86_64
           - platform: macOS Apple Silicon
             runner: macos-15
+            target-id: macos-aarch64
           - platform: Windows x86_64
             runner: windows-2025
+            target-id: windows-x86_64
     steps:
       - name: Check out source
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -79,7 +83,18 @@ jobs:
 
       - name: Run portable tests and CLI smoke test
         shell: bash
+        env:
+          TONDO_TEST_TARGET: ${{ matrix.target-id }}
         run: bash scripts/platform-test.sh
+
+      - name: Retain portable testing reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: portable-testing-${{ matrix.target-id }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/platform-test/${{ matrix.target-id }}/
+          if-no-files-found: error
+          retention-days: 14
 
   fuzz-smoke:
     name: Deterministic fuzz smoke

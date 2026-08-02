@@ -17,3 +17,16 @@ fi
 output="$("$binary" run tests/runtime/g2-002-hello-world.to)"
 printf 'Tondo output: %s\n' "$output"
 test "$output" = "Hello, world"
+
+platform="${TONDO_TEST_TARGET:-host-native}"
+reports="target/platform-test/$platform"
+mkdir -p "$reports"
+"$binary" test \
+    --project acceptance/projects/testing-acceptance \
+    --order random \
+    --seed 5eed \
+    --jobs 2 \
+    --report "json=$reports/results.json" \
+    --report "junit=$reports/results.xml"
+test -s "$reports/results.json"
+test -s "$reports/results.xml"

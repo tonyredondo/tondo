@@ -3255,13 +3255,21 @@ reporters.
   tiene además cobertura directa de logs, tags, attachment y snapshot, y
   `std.testing` permanece ausente de producción.
 
-- [ ] **UTEST-PLATFORM-001 — Validar la matriz declarada.** Linux ejecuta el
+- [x] **UTEST-PLATFORM-001 — Validar la matriz declarada.** Linux ejecuta el
   gate canónico completo; Linux ARM64, macOS Intel/ARM64 y Windows ejecutan
   discovery, paths jerárquicos, substring/glob/exact de suite/test, lifecycle,
   envelopes, tags/logs/skips, CODEOWNERS, sharding, orden/seed, workers nuevos
   de retry y repeat, reloj virtual y ties de timers deterministas, cleanup async,
   inputs, interrupción, artifacts/snapshots, aislamiento, timeout, captura y
   reportes JSON/JUnit aplicables además del smoke test de binario.
+  `.github/workflows/test.yml` conserva el gate estricto en Linux x86_64 y
+  ejecuta `scripts/platform-test.sh` sobre runners nativos Linux ARM64, macOS
+  Intel/ARM64 y Windows x86_64. El gate portable recorre todos los tests Rust,
+  incluidos los contratos de lifecycle, scheduler, reloj virtual, inputs,
+  captura y reporters, y después ejecuta el proyecto público de aceptación con
+  seed fija mediante el binario de cada plataforma. Los resultados JSON/JUnit
+  se validan como no vacíos y se retienen como artifacts identificados por
+  target; el mismo binario debe superar además `--version` y Hello World.
 
 - [ ] **UTEST-DOGFOOD-001 — Probar componentes Tondo mediante `tondo test`.**
   Antes de Gate T0, mantener una pequeña biblioteca de aceptación escrita en
