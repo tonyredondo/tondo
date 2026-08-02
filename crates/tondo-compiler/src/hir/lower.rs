@@ -18,11 +18,11 @@ use super::capabilities::bounds_imply;
 use super::termination::{TraitTerminationEdge, TraitTerminationError, analyze_trait_termination};
 use super::{
     HirBootstrapHostFunction, HirCallableId, HirCallableSignature, HirCapability, HirConstant,
-    HirError, HirField, HirGenericParameter, HirImplementation, HirImplementationId,
-    HirImplementationMethod, HirImplementationMethodContract, HirImplementationMethodId,
-    HirNominalDefinition, HirNominalShape, HirOpaqueResult, HirOutput, HirParameter,
-    HirPreludeTraitMethod, HirProgram, HirTraitConstructor, HirTraitDefinition, HirTraitIdentity,
-    HirTraitMethod, HirTraitMethodKey, HirTraitReference, HirTypeDeclaration,
+    HirDeriveRequest, HirError, HirField, HirGenericParameter, HirImplementation,
+    HirImplementationId, HirImplementationMethod, HirImplementationMethodContract,
+    HirImplementationMethodId, HirNominalDefinition, HirNominalShape, HirOpaqueResult, HirOutput,
+    HirParameter, HirPreludeTraitMethod, HirProgram, HirTraitConstructor, HirTraitDefinition,
+    HirTraitIdentity, HirTraitMethod, HirTraitMethodKey, HirTraitReference, HirTypeDeclaration,
     HirTypeDeclarationKind, HirVariant, HirVariantPayload,
 };
 
@@ -61,6 +61,7 @@ pub fn lower_types<'a>(
         callables: Vec::new(),
         implementation_sites: Vec::new(),
         implementations: Vec::new(),
+        derive_requests: Vec::new(),
         annotations: BTreeMap::new(),
         generic_types: BTreeMap::new(),
     };
@@ -80,6 +81,7 @@ pub fn lower_types<'a>(
             constants: lowerer.constants,
             callables: lowerer.callables,
             implementations: lowerer.implementations,
+            derive_requests: lowerer.derive_requests,
             annotations: lowerer.annotations,
             expressions: Vec::new(),
             expression_flows: Vec::new(),
@@ -175,6 +177,7 @@ struct TypeLowerer<'a> {
     callables: Vec<HirCallableSignature>,
     implementation_sites: Vec<ImplementationSite<'a>>,
     implementations: Vec<HirImplementation>,
+    derive_requests: Vec<HirDeriveRequest>,
     annotations: BTreeMap<(FileId, u32, u32), TypeId>,
     generic_types: BTreeMap<LocalId, TypeId>,
 }
@@ -2323,6 +2326,9 @@ impl<'a> TypeLowerer<'a> {
                     SyntaxKind::FunctionDecl => self.lower_function_declaration(file, node)?,
                     SyntaxKind::TraitDecl => self.lower_trait_declaration(file, node)?,
                     SyntaxKind::ImplDecl => {}
+                    SyntaxKind::DeriveDecl => {
+                        self.lower_derive_request(file, node)?;
+                    }
                     SyntaxKind::TypeDecl | SyntaxKind::AliasDecl | SyntaxKind::EnumDecl => {}
                     SyntaxKind::ImportDecl => {}
                     _ => self.lower_annotation_tree(file, node, &TypeEnvironment::default())?,
@@ -2343,6 +2349,62 @@ impl<'a> TypeLowerer<'a> {
         if self.diagnostics.len() == diagnostics_before_coherence {
             self.validate_trait_termination()?;
         }
+        Ok(())
+    }
+
+    fn lower_derive_request(
+        &mut self,
+        file: FileId,
+        node: SyntaxNodeRef<'a>,
+    ) -> Result<(), HirError> {
+        let path = |path_node: SyntaxNodeRef<'a>| {
+            path_node
+                .descendant_tokens()
+                .filter_map(|token| token.token().normalized_identifier())
+                .collect::<Vec<_>>()
+                .join(".")
+        };
+        let generic_parameters = node
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::GenericParams)
+            .map(|params| {
+                params
+                    .child_nodes()
+                    .filter(|child| child.kind() == SyntaxKind::GenericParam)
+                    .filter_map(first_identifier)
+                    .filter_map(|token| token.token().normalized_identifier().map(str::to_owned))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let Some(traits_node) = node
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::DeriveTraitList)
+        else {
+            return Ok(());
+        };
+        let traits = traits_node
+            .child_nodes()
+            .filter(|child| child.kind() == SyntaxKind::TypePath)
+            .map(path)
+            .collect::<Vec<_>>();
+        let Some(target_node) = node
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::DeriveTarget)
+        else {
+            return Ok(());
+        };
+        let Some(target_path) = target_node
+            .child_nodes()
+            .find(|child| child.kind() == SyntaxKind::TypePath)
+        else {
+            return Ok(());
+        };
+        self.derive_requests.push(HirDeriveRequest {
+            span: self.sources.span(file, node.range())?,
+            generic_parameters,
+            traits,
+            target: path(target_path),
+        });
         Ok(())
     }
 
@@ -4528,6 +4590,19 @@ mod tests {
             .iter()
             .map(|diagnostic| diagnostic.code().as_str())
             .collect()
+    }
+
+    #[test]
+    fn hir_retains_derive_requests_without_executing_them() {
+        let (_, _, output) = lower(
+            "trait Serialize {}\ntrait Deserialize {}\ntype User = Int\nderive Serialize + Deserialize for User\n",
+        );
+        let requests = output.program().derive_requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].traits(), ["Serialize", "Deserialize"]);
+        assert_eq!(requests[0].target(), "User");
+        assert!(requests[0].generic_parameters().is_empty());
+        assert!(requests[0].span().range().start() < requests[0].span().range().end());
     }
 
     type LoweringSnapshot = (Vec<String>, Vec<(String, String, String, u32)>);

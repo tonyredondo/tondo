@@ -44,6 +44,7 @@ pub enum TokenKind {
     Const,
     Continue,
     Defer,
+    Derive,
     Else,
     Enum,
     Err,
@@ -156,6 +157,7 @@ impl TokenKind {
                 | Self::Const
                 | Self::Continue
                 | Self::Defer
+                | Self::Derive
                 | Self::Else
                 | Self::Enum
                 | Self::Err
@@ -204,6 +206,7 @@ impl TokenKind {
             "const" => Self::Const,
             "continue" => Self::Continue,
             "defer" => Self::Defer,
+            "derive" => Self::Derive,
             "else" => Self::Else,
             "enum" => Self::Enum,
             "err" => Self::Err,

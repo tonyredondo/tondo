@@ -422,6 +422,7 @@ impl<'a> Formatter<'a> {
             | SyntaxKind::EnumDecl
             | SyntaxKind::TraitDecl
             | SyntaxKind::ImplDecl
+            | SyntaxKind::DeriveDecl
             | SyntaxKind::SuiteBlock
             | SyntaxKind::MatchExpr => self.format_forced_braces(node),
             SyntaxKind::RecordLikeExpr
@@ -1813,13 +1814,20 @@ impl<'a> Formatter<'a> {
             && matches!(right, TokenKind::LParen | TokenKind::LBracket)
             && !matches!(
                 left,
-                TokenKind::Fn | TokenKind::Some | TokenKind::Ok | TokenKind::Err
+                TokenKind::Fn
+                    | TokenKind::Some
+                    | TokenKind::Ok
+                    | TokenKind::Err
+                    | TokenKind::Derive
             )
         {
             return Doc::text(" ");
         }
         if right == TokenKind::LParen || right == TokenKind::LBracket {
             return Doc::Nil;
+        }
+        if parent == SyntaxKind::DeriveDecl && left == TokenKind::RBracket && word_like(right) {
+            return Doc::text(" ");
         }
         if right.is_keyword()
             && matches!(
@@ -2057,6 +2065,7 @@ fn is_declaration(kind: SyntaxKind) -> bool {
             | SyntaxKind::EnumDecl
             | SyntaxKind::TraitDecl
             | SyntaxKind::ImplDecl
+            | SyntaxKind::DeriveDecl
             | SyntaxKind::FunctionDecl
             | SyntaxKind::TestDecl
             | SyntaxKind::SuiteDecl

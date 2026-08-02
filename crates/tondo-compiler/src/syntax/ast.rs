@@ -128,6 +128,9 @@ define_ast_nodes! {
     TraitDecl => TraitDecl,
     TraitMethod => TraitMethod,
     ImplDecl => ImplDecl,
+    DeriveDecl => DeriveDecl,
+    DeriveTraitList => DeriveTraitList,
+    DeriveTarget => DeriveTarget,
     ImplementationMethod => ImplementationMethod,
     FunctionDecl => FunctionDecl,
     TestDecl => TestDecl,
@@ -285,6 +288,7 @@ define_ast_sum! {
         Enum(EnumDecl),
         Trait(TraitDecl),
         Impl(ImplDecl),
+        Derive(DeriveDecl),
         Function(FunctionDecl),
         Test(TestDecl),
         Suite(SuiteDecl),
@@ -473,6 +477,32 @@ impl<'a> FunctionDecl<'a> {
     }
 
     pub fn body(self) -> Option<Block<'a>> {
+        self.child()
+    }
+}
+
+impl<'a> DeriveDecl<'a> {
+    pub fn generic_params(self) -> Option<GenericParams<'a>> {
+        self.child()
+    }
+
+    pub fn traits(self) -> Option<DeriveTraitList<'a>> {
+        self.child()
+    }
+
+    pub fn target(self) -> Option<DeriveTarget<'a>> {
+        self.child()
+    }
+}
+
+impl<'a> DeriveTraitList<'a> {
+    pub fn paths(self) -> AstChildren<'a, TypePath<'a>> {
+        self.children()
+    }
+}
+
+impl<'a> DeriveTarget<'a> {
+    pub fn path(self) -> Option<TypePath<'a>> {
         self.child()
     }
 }

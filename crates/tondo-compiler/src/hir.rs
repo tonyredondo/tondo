@@ -213,6 +213,7 @@ pub struct HirProgram {
     constants: BTreeMap<SymbolId, HirConstant>,
     callables: Vec<HirCallableSignature>,
     implementations: Vec<HirImplementation>,
+    derive_requests: Vec<HirDeriveRequest>,
     annotations: BTreeMap<(FileId, u32, u32), TypeId>,
     expressions: Vec<HirExpression>,
     expression_flows: Vec<HirFlow>,
@@ -251,6 +252,13 @@ impl HirProgram {
 
     pub fn callables(&self) -> impl ExactSizeIterator<Item = &HirCallableSignature> {
         self.callables.iter()
+    }
+
+    /// Parsed `derive` requests in source order. Semantic provider selection
+    /// and target validation are performed by the meta-semantic phase; HIR
+    /// keeps the lossless, typed request visible without executing it.
+    pub fn derive_requests(&self) -> &[HirDeriveRequest] {
+        &self.derive_requests
     }
 
     pub fn callable(&self, id: HirCallableId) -> Option<&HirCallableSignature> {
@@ -865,6 +873,32 @@ pub struct HirTypeDeclaration {
     span: Span,
     parameters: Vec<HirGenericParameter>,
     kind: HirTypeDeclarationKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HirDeriveRequest {
+    span: Span,
+    generic_parameters: Vec<String>,
+    traits: Vec<String>,
+    target: String,
+}
+
+impl HirDeriveRequest {
+    pub fn span(&self) -> Span {
+        self.span
+    }
+
+    pub fn generic_parameters(&self) -> &[String] {
+        &self.generic_parameters
+    }
+
+    pub fn traits(&self) -> &[String] {
+        &self.traits
+    }
+
+    pub fn target(&self) -> &str {
+        &self.target
+    }
 }
 
 impl HirTypeDeclaration {

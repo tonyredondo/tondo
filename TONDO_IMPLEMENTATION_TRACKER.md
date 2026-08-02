@@ -3410,9 +3410,13 @@ vez los errores de los slices anteriores.
 
 ### 18.2 Frontend y modelo semántico
 
-- [ ] **META-SYNTAX-001 — Implementar `derive` end-to-end en syntax.** Lexer,
+- [x] **META-SYNTAX-001 — Implementar `derive` end-to-end en syntax.** Lexer,
   CST sin pérdida, parser, recuperación, formatter canónico, documentación y
-  AST/HIR soportan una única declaración sin attributes ni body.
+  AST/HIR soportan una única declaración sin attributes ni body. La forma
+  `derive [T] Trait + Trait for Target` usa nodos `DeriveDecl`,
+  `DeriveTraitList` y `DeriveTarget`, conserva trivia y normaliza espacios sin
+  introducir una segunda sintaxis; la resolución semántica permanece en
+  `META-SEM-001`.
 
 - [ ] **META-SEM-001 — Validar solicitudes derive.** Resolver identidades
   exactas de traits/providers, owner nominal, binders, duplicados, superficie

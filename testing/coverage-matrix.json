@@ -3,7 +3,7 @@
   "document": "TONDO_LANGUAGE_SPEC.md",
   "edition": "0.1",
   "document_sha256": "fa6f2b533c6873514b72e39dd75e79b0aa40eaeff7081c915842ae026941d0b7",
-  "inventory_sha256": "b82265451e279fb4b99bd32987c4693280c09146dc157a20de2751e0dd18cc00",
+  "inventory_sha256": "94bfa2e89eac3e6240af14133a9f021a4428c9f732d605a9e19f40c8bd3a3ac9",
   "target": "tondo-vm-hosted",
   "summary": {
     "total": 316,

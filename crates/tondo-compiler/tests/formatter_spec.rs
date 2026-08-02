@@ -101,6 +101,7 @@ test subtracts{assert(offset==20)}
 test adds{
 assert(offset+22==42)
 }
+
 suite nested{test child{}
 }
 }
@@ -131,6 +132,15 @@ suite emptySuite {
 }
 "#;
 
+    let formatted = format_once(input, ParseMode::Module);
+    assert_eq!(formatted, expected);
+    assert_eq!(format_once(&formatted, ParseMode::Module), formatted);
+}
+
+#[test]
+fn derive_declarations_have_one_canonical_layout() {
+    let input = b"derive serialization.Deserialize+serialization.Serialize for User\nderive[T] serialization.Serialize for Page[T]\n";
+    let expected = b"derive serialization.Deserialize + serialization.Serialize for User\n\nderive[T] serialization.Serialize for Page[T]\n";
     let formatted = format_once(input, ParseMode::Module);
     assert_eq!(formatted, expected);
     assert_eq!(format_once(&formatted, ParseMode::Module), formatted);

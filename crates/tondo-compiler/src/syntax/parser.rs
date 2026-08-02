@@ -336,6 +336,7 @@ impl Parser<'_> {
             Some(TokenKind::Enum) => self.parse_enum_decl(),
             Some(TokenKind::Trait) => self.parse_trait_decl(),
             Some(TokenKind::Impl) => self.parse_impl_decl(),
+            Some(TokenKind::Derive) => self.parse_derive_decl(),
             Some(TokenKind::Fn | TokenKind::Async | TokenKind::Unsafe) => {
                 self.parse_function_decl()
             }
@@ -513,6 +514,27 @@ impl Parser<'_> {
             self.parse_implementation_method()?;
         }
         self.expect(TokenKind::RBrace)?;
+        self.expect_line_end()?;
+        self.finish();
+        Ok(())
+    }
+
+    fn parse_derive_decl(&mut self) -> ParseResult {
+        self.start(SyntaxKind::DeriveDecl)?;
+        self.expect(TokenKind::Derive)?;
+        if self.at(TokenKind::LBracket) {
+            self.parse_generic_params()?;
+        }
+        self.start(SyntaxKind::DeriveTraitList)?;
+        self.parse_type_path()?;
+        while self.eat(TokenKind::Plus) {
+            self.parse_type_path()?;
+        }
+        self.finish();
+        self.expect(TokenKind::For)?;
+        self.start(SyntaxKind::DeriveTarget)?;
+        self.parse_type_path()?;
+        self.finish();
         self.expect_line_end()?;
         self.finish();
         Ok(())
@@ -3519,6 +3541,7 @@ impl Parser<'_> {
                 | TokenKind::Enum
                 | TokenKind::Trait
                 | TokenKind::Impl
+                | TokenKind::Derive
                 | TokenKind::Fn
         )
         .then_some(kind)
@@ -4448,6 +4471,52 @@ impl Display for User[Int] {
 "#;
         let (sources, file, parsed) = parse_source(source, ParseMode::Module);
         assert!(parsed.diagnostics().is_empty(), "{:?}", codes(&parsed));
+        assert_lossless(&sources, file, &parsed, source);
+    }
+
+    #[test]
+    fn derive_declarations_are_lossless_and_have_typed_parts() {
+        let source = br#"derive serialization.Serialize + serialization.Deserialize for User
+derive[T] serialization.Serialize for Page[T]
+"#;
+        let (sources, file, parsed) = parse_source(source, ParseMode::Module);
+        assert!(parsed.diagnostics().is_empty(), "{:?}", codes(&parsed));
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::DeriveDecl)
+                .count(),
+            2
+        );
+        assert_eq!(
+            parsed
+                .cst()
+                .nodes()
+                .iter()
+                .filter(|node| node.kind() == SyntaxKind::DeriveTraitList)
+                .count(),
+            2
+        );
+        let declarations = SourceFile::root(parsed.cst())
+            .expect("the module root is typed")
+            .declarations()
+            .collect::<Vec<_>>();
+        let first = match declarations[0] {
+            Declaration::Derive(derive) => derive,
+            declaration => panic!("expected derive declaration, got {declaration:?}"),
+        };
+        assert_eq!(first.traits().expect("trait list").paths().count(), 2);
+        assert!(first.target().expect("target").path().is_some());
+        assert!(first.generic_params().is_none());
+        let second = match declarations[1] {
+            Declaration::Derive(derive) => derive,
+            declaration => panic!("expected derive declaration, got {declaration:?}"),
+        };
+        assert_eq!(second.traits().expect("trait list").paths().count(), 1);
+        assert!(second.target().expect("target").path().is_some());
+        assert!(second.generic_params().is_some());
         assert_lossless(&sources, file, &parsed, source);
     }
 
