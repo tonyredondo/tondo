@@ -4603,6 +4603,28 @@ mod tests {
         assert_eq!(requests[0].target(), "User");
         assert!(requests[0].generic_parameters().is_empty());
         assert!(requests[0].span().range().start() < requests[0].span().range().end());
+        let mut context = crate::meta::DeriveContext::new("main");
+        context.add_target(crate::meta::DeriveTarget::new(
+            "User",
+            "main",
+            std::iter::empty::<String>(),
+            crate::meta::DeriveTargetKind::Newtype,
+        ));
+        context.add_trait("Serialize");
+        context.add_trait("Deserialize");
+        context.add_provider(crate::meta::DeriveProvider::new(
+            "Serialize",
+            "std.meta.serialize",
+            std::iter::empty::<String>(),
+        ));
+        context.add_provider(crate::meta::DeriveProvider::new(
+            "Deserialize",
+            "std.meta.deserialize",
+            std::iter::empty::<String>(),
+        ));
+        let validated =
+            crate::meta::validate_hir_derive_requests("main", output.program(), &context).unwrap();
+        assert_eq!(validated[0].traits().len(), 2);
     }
 
     type LoweringSnapshot = (Vec<String>, Vec<(String, String, String, u32)>);

@@ -3418,9 +3418,12 @@ vez los errores de los slices anteriores.
   introducir una segunda sintaxis; la resolución semántica permanece en
   `META-SEM-001`.
 
-- [ ] **META-SEM-001 — Validar solicitudes derive.** Resolver identidades
+- [x] **META-SEM-001 — Validar solicitudes derive.** Resolver identidades
   exactas de traits/providers, owner nominal, binders, duplicados, superficie
   permitida, bounds generados, coherencia y conflictos con impls manuales.
+  `std::meta::validate_derive_requests` produce un plan determinista y
+  all-or-nothing; `validate_hir_derive_requests` conserva spans y no ejecuta
+  providers hasta las fases posteriores.
 
 - [ ] **META-MODEL-001 — Construir el snapshot meta inmutable.** Serializar de
   forma canónica únicamente la clausura de roots autorizada: módulos,

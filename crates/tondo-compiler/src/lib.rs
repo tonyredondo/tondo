@@ -5,6 +5,7 @@ pub mod bytecode;
 pub mod diagnostics;
 pub mod driver;
 pub mod hir;
+pub mod meta;
 pub mod mir;
 pub mod package;
 mod process_host;
