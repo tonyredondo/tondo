@@ -3441,7 +3441,7 @@ vez los errores de los slices anteriores.
 
 ### 18.3 Ejecución hermética
 
-- [ ] **META-VM-001 — Implementar el sustrato target/VM `tondo-meta`.**
+- [x] **META-VM-001 — Implementar el sustrato target/VM `tondo-meta`.**
   Registrar target, loader y sandbox capaces de ejecutar un programa Tondo
   mínimo con heap nuevo por run, cero capabilities y contadores deterministas
   de steps, memoria viva y output. Esta tarea no embebe una API provisional:

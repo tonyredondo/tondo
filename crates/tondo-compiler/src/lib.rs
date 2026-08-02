@@ -6,6 +6,7 @@ pub mod diagnostics;
 pub mod driver;
 pub mod hir;
 pub mod meta;
+pub mod meta_vm;
 pub mod mir;
 pub mod package;
 mod process_host;

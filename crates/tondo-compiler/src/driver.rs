@@ -56,12 +56,14 @@ impl Operation {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum HostProfile {
     Hosted,
+    Meta,
 }
 
 impl HostProfile {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Hosted => "hosted",
+            Self::Meta => "meta",
         }
     }
 }
@@ -157,6 +159,17 @@ impl BuildTarget {
                 .expect("the built-in target source ID is valid"),
             profiles: BTreeSet::from([HostProfile::Hosted]),
             supported_capabilities,
+        }
+    }
+
+    /// Hermetic target used exclusively by compile-time Tondo programs.
+    pub fn tondo_meta() -> Self {
+        Self {
+            name: "tondo-meta".into(),
+            diagnostic_source_id: SourceId::new("target:tondo-meta")
+                .expect("the built-in meta target source ID is valid"),
+            profiles: BTreeSet::from([HostProfile::Meta]),
+            supported_capabilities: BTreeSet::new(),
         }
     }
 

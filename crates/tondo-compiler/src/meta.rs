@@ -487,6 +487,7 @@ pub struct MetaDeclaration {
 }
 
 impl MetaDeclaration {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         identity: impl Into<String>,
         module: impl Into<String>,
@@ -1097,7 +1098,7 @@ fn canonical_docs(docs: Option<String>) -> Result<Option<String>, MetaModelError
     }
 }
 
-fn canonicalize_fields(fields: &mut Vec<MetaField>) -> Result<(), MetaModelError> {
+fn canonicalize_fields(fields: &mut [MetaField]) -> Result<(), MetaModelError> {
     for field in fields.iter() {
         required_text("field.name", field.name.clone())?;
         required_text("field.type", field.ty.clone())?;
