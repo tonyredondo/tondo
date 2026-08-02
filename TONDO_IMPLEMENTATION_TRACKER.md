@@ -3818,7 +3818,7 @@ layer pueden avanzar en paralelo.
   nombres inválidos, límites sin publicación parcial), el fixture
   `m10-std-env-001` y la capability test del driver.
 
-- [ ] **STD-ENV-CONF-001 — Cerrar la evidencia temprana de environment.** Probar
+- [x] **STD-ENV-CONF-001 — Cerrar la evidencia temprana de environment.** Probar
   snapshots vacío y declarado, ausencia, Unicode/bytes, ownership, capability y
   rechazo de consulta ambiental fuera del adaptador; sin snapshot explícito no
   aparece ninguna entrada del host. Clasificación production/test-only,

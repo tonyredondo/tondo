@@ -2188,6 +2188,38 @@ mod tests {
     }
 
     #[test]
+    fn environment_module_requires_the_explicit_target_capability() {
+        let source =
+            b"import std.env\nfn main(): !env.EnvError {\n    let snapshot = env.snapshot()?\n}\n";
+        let rejected = execute(operation_request_with_capabilities(
+            Operation::Check,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+            BTreeSet::new(),
+        ))
+        .unwrap();
+        assert_eq!(rejected.status(), CompilationStatus::Rejected);
+        let diagnostic = &rejected.diagnostics().diagnostics()[0];
+        assert_eq!(diagnostic.code(), "E1008");
+        assert!(
+            diagnostic
+                .message()
+                .contains("capability `environment` is missing")
+        );
+
+        let accepted = execute(operation_request(
+            Operation::Check,
+            source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(accepted.status(), CompilationStatus::Success);
+        assert!(accepted.diagnostics().diagnostics().is_empty());
+    }
+
+    #[test]
     fn program_arguments_reach_process_args_without_cli_options() {
         let source = br#"
 import std.console

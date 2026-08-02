@@ -2280,6 +2280,16 @@ mod tests {
         let RuntimeValue::Array(arguments) = arguments else {
             panic!("snapshot arguments must be an Array[Value]");
         };
+        let RuntimeValue::Array(second_arguments) = host
+            .invoke("std.env.Snapshot.arguments", std::slice::from_ref(&first))
+            .unwrap()
+        else {
+            panic!("snapshot arguments must remain an Array[Value]");
+        };
+        assert_ne!(
+            arguments, second_arguments,
+            "each arguments result owns independent value handles"
+        );
         assert_eq!(arguments.len(), 2);
         assert_eq!(
             host.invoke("std.env.Value.asText", &[arguments[0].clone()])
@@ -2315,7 +2325,15 @@ mod tests {
         let text_bytes = host
             .invoke("std.env.Value.asBytes", &[(*value).clone()])
             .unwrap();
+        let second_text_bytes = host
+            .invoke("std.env.Value.asBytes", &[(*value).clone()])
+            .unwrap();
+        assert_ne!(
+            text_bytes, second_text_bytes,
+            "byte conversions must not alias mutable host storage"
+        );
         assert_eq!(host.bytes(&text_bytes).unwrap(), b"hello");
+        assert_eq!(host.bytes(&second_text_bytes).unwrap(), b"hello");
 
         let raw_name_bytes = host.allocate(
             RuntimeHostValueKind::Bytes,
@@ -2354,6 +2372,35 @@ mod tests {
                 .unwrap(),
             RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))
         );
+    }
+
+    #[test]
+    fn environment_default_snapshot_is_empty_and_never_reads_ambient_host_state() {
+        let mut host = BootstrapHost::default();
+        let snapshot = ok(host.invoke("std.env.snapshot", &[]).unwrap());
+        assert_eq!(
+            host.invoke(
+                "std.env.Snapshot.arguments",
+                std::slice::from_ref(&snapshot)
+            )
+            .unwrap(),
+            RuntimeValue::Array(Vec::new())
+        );
+
+        for ambient_name in ["PATH", "HOME", "TONDO_UNDECLARED"] {
+            let name = ok(host
+                .invoke(
+                    "std.env.Name.fromText",
+                    &[RuntimeValue::String(ambient_name.into())],
+                )
+                .unwrap());
+            assert_eq!(
+                host.invoke("std.env.Snapshot.get", &[snapshot.clone(), name])
+                    .unwrap(),
+                RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone)),
+                "the default adapter must not consult host variable {ambient_name}"
+            );
+        }
     }
 
     #[test]
