@@ -18,7 +18,7 @@
   "specifications": [
     {
       "path": "TONDO_LANGUAGE_SPEC.md",
-      "sha256": "fa6f2b533c6873514b72e39dd75e79b0aa40eaeff7081c915842ae026941d0b7"
+      "sha256": "ccfb9628a9e15894d45848ec24d650eba48b833a47f95c6a2835bad10bd1e7f8"
     },
     {
       "path": "TONDO_STANDARD_LIBRARY_SPEC.md",

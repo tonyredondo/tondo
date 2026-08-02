@@ -3694,11 +3694,14 @@ layer pueden avanzar en paralelo.
   registry o identidad portable. La implementación y su evidencia runtime
   permanecen en M10.7.
 
-- [ ] **STD-META-SPEC-001 — Especificar `std.meta`.** Cerrar request/response,
+- [x] **STD-META-SPEC-001 — Especificar `std.meta`.** Cerrar request/response,
   modelo inmutable, recorrido canónico, renderizado seguro, source builder,
   ownership, errores y ausencia de capabilities/callbacks antes de construir el
   target `tondo-meta`. Los providers de formatos concretos continúan en sus
-  módulos posteriores.
+  módulos posteriores. Cerrado con `docs/contracts/std-meta.md` y los records
+  puros `MetaRequest`/`MetaResponse`/`MetaSourceBuilder` de `meta.rs`; el builder
+  consume el request, valida UTF-8 y paths/módulos declarados, aplica límites y
+  no publica respuestas parciales.
 
 - [ ] **STD-JSON-001 — Especificar JSON out of the box.** Ruta
   typed directa, `JsonValue`/`JsonNumber`, reader/writer/eventos incrementales,

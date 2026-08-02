@@ -10111,6 +10111,16 @@ Cada versión del modelo tiene schema y codificación canónica. Cambiar su form
 semántica exige una versión nueva. Un generador que solicite una versión no
 soportada se rechaza antes de ejecutarse.
 
+La API companion `std.meta` se identifica como `tondo-std-meta-0.1/1`. Su
+`MetaRequest` posee por valor el snapshot, inputs bytes hasheados, outputs
+declarados y límites positivos; no contiene callbacks ni capabilities. El
+request se consume al crear un `SourceBuilder`, que solo acepta una vez cada
+path y módulo declarados, exige UTF-8 y path lógico `.to`, aplica el presupuesto
+agregado de bytes y devuelve una respuesta ordenada únicamente cuando todos los
+outputs están presentes. El builder posee los bytes y no publica respuestas
+parciales. Errores de límites, paths, duplicados, módulos, UTF-8 o outputs
+faltantes son variantes cerradas y deterministas.
+
 ### 27.7 Perfil hermético `meta`
 
 El perfil `meta` ejecuta semántica Tondo ordinaria sobre memoria aislada, pero no

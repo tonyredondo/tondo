@@ -16,6 +16,8 @@ use crate::source::Span;
 
 /// The only meta model accepted by the Tondo 0.1 toolchain.
 pub const META_MODEL: &str = "tondo-meta-model-0.1/1";
+/// The closed companion API exposed to a Tondo `std.meta` program.
+pub const META_API: &str = "tondo-std-meta-0.1/1";
 
 /// A source position included in the immutable meta snapshot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -704,6 +706,372 @@ impl fmt::Display for MetaModelError {
 }
 
 impl Error for MetaModelError {}
+
+/// Finite resources admitted to one hermetic meta run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaLimits {
+    steps: u64,
+    memory_bytes: u64,
+    output_bytes: u64,
+}
+
+impl MetaLimits {
+    pub fn new(
+        steps: u64,
+        memory_bytes: u64,
+        output_bytes: u64,
+    ) -> Result<Self, MetaContractError> {
+        if steps == 0 || memory_bytes == 0 || output_bytes == 0 {
+            return Err(MetaContractError::InvalidLimit);
+        }
+        Ok(Self {
+            steps,
+            memory_bytes,
+            output_bytes,
+        })
+    }
+
+    pub fn steps(&self) -> u64 {
+        self.steps
+    }
+
+    pub fn memory_bytes(&self) -> u64 {
+        self.memory_bytes
+    }
+
+    pub fn output_bytes(&self) -> u64 {
+        self.output_bytes
+    }
+}
+
+/// An input owned by the request. Inputs are values; the companion has no
+/// filesystem, environment, callback, or capability channel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaInput {
+    name: String,
+    bytes: Vec<u8>,
+    hash: String,
+}
+
+impl MetaInput {
+    pub fn new(
+        name: impl Into<String>,
+        bytes: impl Into<Vec<u8>>,
+    ) -> Result<Self, MetaContractError> {
+        let name = required_contract_text("input.name", name.into())?;
+        let bytes = bytes.into();
+        let hash = crate::artifact::sha256(&bytes);
+        Ok(Self { name, bytes, hash })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn hash(&self) -> &str {
+        &self.hash
+    }
+}
+
+/// One output path that the request authorizes exactly once.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaOutputSpec {
+    path: String,
+    module: String,
+}
+
+impl MetaOutputSpec {
+    pub fn new(
+        path: impl Into<String>,
+        module: impl Into<String>,
+    ) -> Result<Self, MetaContractError> {
+        let path = validate_meta_path(path.into())?;
+        let module = required_contract_text("output.module", module.into())?;
+        Ok(Self { path, module })
+    }
+
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn module(&self) -> &str {
+        &self.module
+    }
+}
+
+/// A generated UTF-8 source file accepted by the source builder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaSource {
+    path: String,
+    module: String,
+    bytes: Vec<u8>,
+    hash: String,
+}
+
+impl MetaSource {
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+
+    pub fn module(&self) -> &str {
+        &self.module
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn hash(&self) -> &str {
+        &self.hash
+    }
+}
+
+/// A request is an owned, immutable hand-off from the toolchain to one
+/// companion run. It contains no callback or ambient capability slot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaRequest {
+    api: String,
+    snapshot: MetaSnapshot,
+    inputs: Vec<MetaInput>,
+    outputs: Vec<MetaOutputSpec>,
+    limits: MetaLimits,
+}
+
+impl MetaRequest {
+    pub fn new(
+        snapshot: MetaSnapshot,
+        inputs: impl IntoIterator<Item = MetaInput>,
+        outputs: impl IntoIterator<Item = MetaOutputSpec>,
+        limits: MetaLimits,
+    ) -> Result<Self, MetaContractError> {
+        let mut request = Self {
+            api: META_API.into(),
+            snapshot,
+            inputs: inputs.into_iter().collect(),
+            outputs: outputs.into_iter().collect(),
+            limits,
+        };
+        request.inputs.sort_by_key(|input| input.name.clone());
+        ensure_unique_contract_keys(
+            request.inputs.iter().map(|input| input.name.clone()),
+            "input",
+        )?;
+        request.outputs.sort_by_key(|output| output.path.clone());
+        ensure_unique_contract_keys(
+            request.outputs.iter().map(|output| output.path.clone()),
+            "output",
+        )?;
+        Ok(request)
+    }
+
+    pub fn api(&self) -> &str {
+        &self.api
+    }
+
+    pub fn snapshot(&self) -> &MetaSnapshot {
+        &self.snapshot
+    }
+
+    pub fn inputs(&self) -> &[MetaInput] {
+        &self.inputs
+    }
+
+    pub fn outputs(&self) -> &[MetaOutputSpec] {
+        &self.outputs
+    }
+
+    pub fn limits(&self) -> MetaLimits {
+        self.limits
+    }
+
+    /// Transfer ownership to the only output construction API.
+    pub fn into_source_builder(self) -> MetaSourceBuilder {
+        MetaSourceBuilder {
+            expected: self
+                .outputs
+                .into_iter()
+                .map(|output| (output.path.clone(), output))
+                .collect(),
+            limits: self.limits,
+            outputs: BTreeMap::new(),
+        }
+    }
+}
+
+/// An owned builder that accepts only the output paths declared by its request.
+#[derive(Debug)]
+pub struct MetaSourceBuilder {
+    expected: BTreeMap<String, MetaOutputSpec>,
+    limits: MetaLimits,
+    outputs: BTreeMap<String, MetaSource>,
+}
+
+impl MetaSourceBuilder {
+    pub fn add_source(
+        &mut self,
+        path: impl Into<String>,
+        module: impl Into<String>,
+        bytes: impl Into<Vec<u8>>,
+    ) -> Result<(), MetaContractError> {
+        let path = validate_meta_path(path.into())?;
+        let module = required_contract_text("output.module", module.into())?;
+        let Some(expected) = self.expected.get(&path) else {
+            return Err(MetaContractError::UnknownOutput(path));
+        };
+        if expected.module != module {
+            return Err(MetaContractError::OutputModuleMismatch { path });
+        }
+        if self.outputs.contains_key(&path) {
+            return Err(MetaContractError::DuplicateOutput(path));
+        }
+        let bytes = bytes.into();
+        if std::str::from_utf8(&bytes).is_err() {
+            return Err(MetaContractError::InvalidSourceUtf8(path));
+        }
+        let current = self
+            .outputs
+            .values()
+            .try_fold(0_u64, |total, source| {
+                total.checked_add(source.bytes.len() as u64)
+            })
+            .and_then(|total| total.checked_add(bytes.len() as u64))
+            .ok_or(MetaContractError::OutputLimit {
+                limit: self.limits.output_bytes,
+            })?;
+        if current > self.limits.output_bytes {
+            return Err(MetaContractError::OutputLimit {
+                limit: self.limits.output_bytes,
+            });
+        }
+        let hash = crate::artifact::sha256(&bytes);
+        self.outputs.insert(
+            path.clone(),
+            MetaSource {
+                path,
+                module,
+                bytes,
+                hash,
+            },
+        );
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<MetaResponse, MetaContractError> {
+        for path in self.expected.keys() {
+            if !self.outputs.contains_key(path) {
+                return Err(MetaContractError::MissingOutput(path.clone()));
+            }
+        }
+        Ok(MetaResponse {
+            outputs: self.outputs.into_values().collect(),
+        })
+    }
+}
+
+/// A successful response contains all and only the declared outputs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaResponse {
+    outputs: Vec<MetaSource>,
+}
+
+impl MetaResponse {
+    pub fn outputs(&self) -> &[MetaSource] {
+        &self.outputs
+    }
+
+    pub fn output(&self, path: &str) -> Option<&MetaSource> {
+        self.outputs.iter().find(|source| source.path == path)
+    }
+}
+
+/// Closed request/response boundary errors. There is intentionally no variant
+/// for invoking a callback or acquiring a host capability.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MetaContractError {
+    InvalidLimit,
+    InvalidText { field: String },
+    InvalidPath(String),
+    DuplicateInput(String),
+    DuplicateOutput(String),
+    UnknownOutput(String),
+    OutputModuleMismatch { path: String },
+    InvalidSourceUtf8(String),
+    OutputLimit { limit: u64 },
+    MissingOutput(String),
+}
+
+impl fmt::Display for MetaContractError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidLimit => formatter.write_str("meta limits must be positive"),
+            Self::InvalidText { field } => write!(formatter, "invalid meta text `{field}`"),
+            Self::InvalidPath(path) => write!(formatter, "invalid meta output path `{path}`"),
+            Self::DuplicateInput(name) => write!(formatter, "duplicate meta input `{name}`"),
+            Self::DuplicateOutput(path) => write!(formatter, "duplicate meta output `{path}`"),
+            Self::UnknownOutput(path) => write!(formatter, "undeclared meta output `{path}`"),
+            Self::OutputModuleMismatch { path } => {
+                write!(formatter, "meta output module mismatch for `{path}`")
+            }
+            Self::InvalidSourceUtf8(path) => write!(formatter, "meta source is not UTF-8 `{path}`"),
+            Self::OutputLimit { limit } => {
+                write!(formatter, "meta output limit exceeded ({limit} bytes)")
+            }
+            Self::MissingOutput(path) => write!(formatter, "missing declared meta output `{path}`"),
+        }
+    }
+}
+
+impl Error for MetaContractError {}
+
+fn required_contract_text(field: &str, value: String) -> Result<String, MetaContractError> {
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return Err(MetaContractError::InvalidText {
+            field: field.into(),
+        });
+    }
+    Ok(value)
+}
+
+fn validate_meta_path(path: String) -> Result<String, MetaContractError> {
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.contains('\\')
+        || path
+            .split('/')
+            .any(|component| component.is_empty() || component == "." || component == "..")
+        || !path.ends_with(".to")
+    {
+        return Err(MetaContractError::InvalidPath(path));
+    }
+    required_contract_text("output.path", path)
+}
+
+fn ensure_unique_contract_keys(
+    values: impl Iterator<Item = String>,
+    kind: &str,
+) -> Result<(), MetaContractError> {
+    let mut seen = BTreeSet::new();
+    for value in values {
+        if !seen.insert(value.clone()) {
+            return Err(if kind == "input" {
+                MetaContractError::DuplicateInput(value)
+            } else {
+                MetaContractError::DuplicateOutput(value)
+            });
+        }
+    }
+    Ok(())
+}
 
 fn required_text(field: &str, value: String) -> Result<String, MetaModelError> {
     if value.is_empty() {
@@ -1708,5 +2076,173 @@ mod tests {
                 .to_string()
                 .contains("encoding")
         );
+    }
+
+    fn contract_request() -> MetaRequest {
+        MetaRequest::new(
+            snapshot(false),
+            [
+                MetaInput::new("z-schema", b"{}".to_vec()).unwrap(),
+                MetaInput::new("a-schema", b"[]".to_vec()).unwrap(),
+            ],
+            [
+                MetaOutputSpec::new("generated/z.to", "generated.z").unwrap(),
+                MetaOutputSpec::new("generated/a.to", "generated.a").unwrap(),
+            ],
+            MetaLimits::new(100, 4_096, 128).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn std_meta_request_owns_inputs_and_builder_returns_declared_sources() {
+        assert_eq!(META_API, "tondo-std-meta-0.1/1");
+        let request = contract_request();
+        assert_eq!(request.api(), META_API);
+        assert_eq!(request.snapshot().format(), META_MODEL);
+        assert_eq!(request.inputs()[0].name(), "a-schema");
+        assert_eq!(request.inputs()[0].bytes(), b"[]");
+        assert!(request.inputs()[0].hash().starts_with("sha256:"));
+        assert_eq!(request.inputs()[1].name(), "z-schema");
+        assert_eq!(request.outputs()[0].path(), "generated/a.to");
+        assert_eq!(request.outputs()[0].module(), "generated.a");
+        let limits = request.limits();
+        assert_eq!(limits.steps(), 100);
+        assert_eq!(limits.memory_bytes(), 4_096);
+        assert_eq!(limits.output_bytes(), 128);
+
+        let mut builder = request.into_source_builder();
+        builder
+            .add_source("generated/z.to", "generated.z", "type Z = Int")
+            .unwrap();
+        builder
+            .add_source("generated/a.to", "generated.a", "type A = String")
+            .unwrap();
+        let response = builder.finish().unwrap();
+        assert_eq!(response.outputs().len(), 2);
+        assert_eq!(response.outputs()[0].path(), "generated/a.to");
+        assert_eq!(response.outputs()[0].module(), "generated.a");
+        assert_eq!(response.outputs()[0].bytes(), b"type A = String");
+        assert!(response.outputs()[0].hash().starts_with("sha256:"));
+        assert!(response.output("generated/z.to").is_some());
+        assert!(response.output("missing.to").is_none());
+    }
+
+    #[test]
+    fn std_meta_contract_rejects_ambient_boundaries_and_incomplete_outputs() {
+        assert!(matches!(
+            MetaLimits::new(0, 1, 1),
+            Err(MetaContractError::InvalidLimit)
+        ));
+        assert!(matches!(
+            MetaInput::new("bad\ninput", Vec::<u8>::new()),
+            Err(MetaContractError::InvalidText { .. })
+        ));
+        for path in ["", "/absolute.to", "a/../b.to", "a\\b.to", "a.txt"] {
+            assert!(matches!(
+                MetaOutputSpec::new(path, "main"),
+                Err(MetaContractError::InvalidPath(_))
+            ));
+        }
+        assert!(matches!(
+            MetaOutputSpec::new("a.to", "bad\nmodule"),
+            Err(MetaContractError::InvalidText { .. })
+        ));
+
+        let limits = MetaLimits::new(1, 1, 3).unwrap();
+        let duplicate_input = MetaRequest::new(
+            snapshot(false),
+            [
+                MetaInput::new("same", vec![1]).unwrap(),
+                MetaInput::new("same", vec![2]).unwrap(),
+            ],
+            std::iter::empty::<MetaOutputSpec>(),
+            limits,
+        )
+        .unwrap_err();
+        assert!(duplicate_input.to_string().contains("duplicate meta input"));
+
+        let duplicate_output = MetaRequest::new(
+            snapshot(false),
+            std::iter::empty::<MetaInput>(),
+            [
+                MetaOutputSpec::new("same.to", "main").unwrap(),
+                MetaOutputSpec::new("same.to", "main").unwrap(),
+            ],
+            limits,
+        )
+        .unwrap_err();
+        assert!(
+            duplicate_output
+                .to_string()
+                .contains("duplicate meta output")
+        );
+
+        let request = MetaRequest::new(
+            snapshot(false),
+            std::iter::empty::<MetaInput>(),
+            [MetaOutputSpec::new("only.to", "main").unwrap()],
+            MetaLimits::new(1, 1, 3).unwrap(),
+        )
+        .unwrap();
+        let mut builder = request.into_source_builder();
+        assert!(matches!(
+            builder.add_source("unknown.to", "main", "x"),
+            Err(MetaContractError::UnknownOutput(_))
+        ));
+        assert!(matches!(
+            builder.add_source("only.to", "other", "x"),
+            Err(MetaContractError::OutputModuleMismatch { .. })
+        ));
+        assert!(matches!(
+            builder.add_source("only.to", "main", vec![0xff]),
+            Err(MetaContractError::InvalidSourceUtf8(_))
+        ));
+        builder.add_source("only.to", "main", "ok").unwrap();
+        assert!(matches!(
+            builder.add_source("only.to", "main", "again"),
+            Err(MetaContractError::DuplicateOutput(_))
+        ));
+
+        let mut oversized = MetaRequest::new(
+            snapshot(false),
+            std::iter::empty::<MetaInput>(),
+            [MetaOutputSpec::new("small.to", "main").unwrap()],
+            MetaLimits::new(1, 1, 2).unwrap(),
+        )
+        .unwrap()
+        .into_source_builder();
+        assert!(matches!(
+            oversized.add_source("small.to", "main", "too long"),
+            Err(MetaContractError::OutputLimit { .. })
+        ));
+
+        let missing = MetaRequest::new(
+            snapshot(false),
+            std::iter::empty::<MetaInput>(),
+            [MetaOutputSpec::new("missing.to", "main").unwrap()],
+            limits,
+        )
+        .unwrap()
+        .into_source_builder()
+        .finish()
+        .unwrap_err();
+        assert!(missing.to_string().contains("missing declared"));
+        for error in [
+            MetaContractError::InvalidLimit,
+            MetaContractError::InvalidText { field: "x".into() },
+            MetaContractError::InvalidPath("x".into()),
+            MetaContractError::DuplicateInput("x".into()),
+            MetaContractError::DuplicateOutput("x.to".into()),
+            MetaContractError::UnknownOutput("x.to".into()),
+            MetaContractError::OutputModuleMismatch {
+                path: "x.to".into(),
+            },
+            MetaContractError::InvalidSourceUtf8("x.to".into()),
+            MetaContractError::OutputLimit { limit: 1 },
+            MetaContractError::MissingOutput("x.to".into()),
+        ] {
+            assert!(!error.to_string().is_empty());
+        }
     }
 }

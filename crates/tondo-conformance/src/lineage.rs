@@ -442,7 +442,7 @@ mod tests {
         );
         assert_eq!(
             sha256(first.specification("TONDO_LANGUAGE_SPEC.md").unwrap()),
-            "fa6f2b533c6873514b72e39dd75e79b0aa40eaeff7081c915842ae026941d0b7"
+            "ccfb9628a9e15894d45848ec24d650eba48b833a47f95c6a2835bad10bd1e7f8"
         );
         assert_ne!(
             first.baseline_specification(),
