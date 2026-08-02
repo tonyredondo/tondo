@@ -5,6 +5,7 @@ use std::sync::Arc;
 use libfuzzer_sys::fuzz_target;
 use tondo_compiler::artifact::{BuildArtifact, CompiledInterface};
 use tondo_compiler::driver::{Operation, ResourceLimits, SourceForm};
+use tondo_compiler::meta_robust::probe_meta_protocols;
 use tondo_compiler::project::{PrivilegedUnit, ProjectPlan};
 use tondo_conformance::manifest::SuiteManifest;
 use tondo_conformance::protocol::{AdapterRequest, AdapterResponse};
@@ -16,6 +17,7 @@ fuzz_target!(|input: &[u8]| {
     let _ = PrivilegedUnit::decode(input);
     let _ = CompiledInterface::decode(input);
     let _ = BuildArtifact::decode(input);
+    let _ = probe_meta_protocols(input);
     let _ = serde_json::from_slice::<SuiteManifest>(input);
     let _ = serde_json::from_slice::<AdapterRequest>(input);
     let _ = serde_json::from_slice::<AdapterResponse>(input);

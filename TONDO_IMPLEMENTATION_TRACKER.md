@@ -3478,7 +3478,7 @@ vez los errores de los slices anteriores.
   comparar outputs byte a byte y demostrar denegación de filesystem, red,
   process, clock, entropy, threads, async, FFI y unsafe.
 
-- [ ] **META-ROBUST-001 — Añadir properties, fuzzing y límites.** Fuzzear
+- [x] **META-ROBUST-001 — Añadir properties, fuzzing y límites.** Fuzzear
   records draft y revisiones de schema, modelo meta, outputs y source maps; probar cycles imposibles,
   roots que cruzan la frontera de ronda, colisiones, pánicos, budget exhaustion,
   UTF-8 inválido y generadores hostiles sin panic del compilador ni publicación

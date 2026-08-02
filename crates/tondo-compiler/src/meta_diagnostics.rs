@@ -134,7 +134,10 @@ pub fn derive_execution_code(error: &DeriveExecutionError) -> MetaDiagnosticCode
     match error {
         DeriveExecutionError::MissingProvider(_) => MetaDiagnosticCode::MissingDeriveProvider,
         DeriveExecutionError::DuplicatePlanEntry { .. } => MetaDiagnosticCode::InvalidDeriveRequest,
-        DeriveExecutionError::ProviderFailed { .. } => MetaDiagnosticCode::DeriveExpansionFailed,
+        DeriveExecutionError::ProviderFailed { .. }
+        | DeriveExecutionError::ProviderPanicked { .. } => {
+            MetaDiagnosticCode::DeriveExpansionFailed
+        }
         DeriveExecutionError::ProviderVm { source, .. } => vm_code(source),
         DeriveExecutionError::InvalidProviderResult(_)
         | DeriveExecutionError::InvalidProviderBody
@@ -149,7 +152,8 @@ pub fn generator_execution_code(error: &GeneratorExecutionError) -> MetaDiagnost
         GeneratorExecutionError::ProviderVm { source, .. } => vm_code(source),
         GeneratorExecutionError::InvalidGeneratedSource
         | GeneratorExecutionError::InvalidProviderResult(_)
-        | GeneratorExecutionError::ProviderFailed { .. } => {
+        | GeneratorExecutionError::ProviderFailed { .. }
+        | GeneratorExecutionError::ProviderPanicked { .. } => {
             MetaDiagnosticCode::InvalidGeneratedSource
         }
         GeneratorExecutionError::SnapshotRoots(_) => MetaDiagnosticCode::GenerationDependencyCycle,

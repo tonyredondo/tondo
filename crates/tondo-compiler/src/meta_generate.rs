@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use tondo_vm::runtime::{RuntimeValue, VmOutcome};
@@ -232,15 +233,18 @@ pub fn execute_generator_plan(
         )?;
         let request = MetaRequest::new(snapshot, inputs, outputs, limits)?;
         let provider = registry.get(generator)?;
-        let artifact = provider
-            .compile(GeneratorProviderRequest {
-                generator_id: &generator.id,
-                owner_package: &generator.owner_package,
-                provider_package: &generator.provider_package,
-                entry: &generator.entry,
-                provider_hash: &generator.provider_hash,
-                request: &request,
-            })
+        let provider_request = GeneratorProviderRequest {
+            generator_id: &generator.id,
+            owner_package: &generator.owner_package,
+            provider_package: &generator.provider_package,
+            entry: &generator.entry,
+            provider_hash: &generator.provider_hash,
+            request: &request,
+        };
+        let artifact = catch_unwind(AssertUnwindSafe(|| provider.compile(provider_request)))
+            .map_err(|_| GeneratorExecutionError::ProviderPanicked {
+                generator: generator.id.clone(),
+            })?
             .map_err(|message| GeneratorExecutionError::ProviderFailed {
                 generator: generator.id.clone(),
                 message,
@@ -489,6 +493,9 @@ pub enum GeneratorExecutionError {
         generator: String,
         message: String,
     },
+    ProviderPanicked {
+        generator: String,
+    },
     ProviderVm {
         generator: String,
         source: MetaVmError,
@@ -532,6 +539,9 @@ impl fmt::Display for GeneratorExecutionError {
                 formatter,
                 "generator `{generator}` provider failed: {message}"
             ),
+            Self::ProviderPanicked { generator } => {
+                write!(formatter, "generator `{generator}` provider panicked")
+            }
             Self::ProviderVm { generator, source } => {
                 write!(formatter, "generator `{generator}` VM failed: {source}")
             }
@@ -612,6 +622,17 @@ mod tests {
             _request: GeneratorProviderRequest<'_>,
         ) -> Result<MetaVmArtifact, String> {
             Err("rejected".into())
+        }
+    }
+
+    struct Panic;
+
+    impl GeneratorProviderCompiler for Panic {
+        fn compile(
+            &self,
+            _request: GeneratorProviderRequest<'_>,
+        ) -> Result<MetaVmArtifact, String> {
+            panic!("hostile generator provider")
         }
     }
 
@@ -795,6 +816,19 @@ mod tests {
             Err(GeneratorExecutionError::ProviderFailed { .. })
         ));
 
+        let mut panicked = GeneratorProviderRegistry::default();
+        panicked.insert_for(&generator, Arc::new(Panic)).unwrap();
+        assert!(matches!(
+            execute_generator_plan(
+                std::slice::from_ref(&generator),
+                &locked,
+                &values,
+                &snapshots(),
+                &panicked
+            ),
+            Err(GeneratorExecutionError::ProviderPanicked { .. })
+        ));
+
         let mut invalid = GeneratorProviderRegistry::default();
         invalid
             .insert_for(&generator, Arc::new(InvalidResponse))
@@ -947,6 +981,9 @@ mod tests {
             GeneratorExecutionError::ProviderFailed {
                 generator: "gen".into(),
                 message: "failure".into(),
+            },
+            GeneratorExecutionError::ProviderPanicked {
+                generator: "gen".into(),
             },
             GeneratorExecutionError::ProviderVm {
                 generator: "gen".into(),

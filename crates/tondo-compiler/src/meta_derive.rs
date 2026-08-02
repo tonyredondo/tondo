@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
 use tondo_vm::runtime::{RuntimeValue, VmOutcome};
@@ -152,15 +153,18 @@ pub fn execute_derive_plan(
         let provider = registry.get(validated_trait.provider()).ok_or_else(|| {
             DeriveExecutionError::MissingProvider(validated_trait.provider().into())
         })?;
-        let program = provider
-            .compile(DeriveProviderRequest {
-                target: derive.target().identity(),
-                module: derive.target().module(),
-                trait_identity: validated_trait.identity(),
-                provider_identity: validated_trait.provider(),
-                introduced_bounds: validated_trait.introduced_bounds(),
-                snapshot: &snapshot,
-            })
+        let provider_request = DeriveProviderRequest {
+            target: derive.target().identity(),
+            module: derive.target().module(),
+            trait_identity: validated_trait.identity(),
+            provider_identity: validated_trait.provider(),
+            introduced_bounds: validated_trait.introduced_bounds(),
+            snapshot: &snapshot,
+        };
+        let program = catch_unwind(AssertUnwindSafe(|| provider.compile(provider_request)))
+            .map_err(|_| DeriveExecutionError::ProviderPanicked {
+                provider: validated_trait.provider().into(),
+            })?
             .map_err(|message| DeriveExecutionError::ProviderFailed {
                 provider: validated_trait.provider().into(),
                 message,
@@ -251,6 +255,9 @@ pub enum DeriveExecutionError {
         provider: String,
         message: String,
     },
+    ProviderPanicked {
+        provider: String,
+    },
     ProviderVm {
         provider: String,
         source: MetaVmError,
@@ -281,6 +288,9 @@ impl fmt::Display for DeriveExecutionError {
             ),
             Self::ProviderFailed { provider, message } => {
                 write!(formatter, "derive provider `{provider}` failed: {message}")
+            }
+            Self::ProviderPanicked { provider } => {
+                write!(formatter, "derive provider `{provider}` panicked")
             }
             Self::ProviderVm { provider, source } => {
                 write!(
@@ -336,6 +346,14 @@ mod tests {
     impl DeriveProviderCompiler for Failure {
         fn compile(&self, _request: DeriveProviderRequest<'_>) -> Result<MetaVmArtifact, String> {
             Err("rejected".into())
+        }
+    }
+
+    struct Panic;
+
+    impl DeriveProviderCompiler for Panic {
+        fn compile(&self, _request: DeriveProviderRequest<'_>) -> Result<MetaVmArtifact, String> {
+            panic!("hostile derive provider")
         }
     }
 
@@ -400,6 +418,15 @@ mod tests {
         assert!(matches!(
             execute_derive_plan(&plan(), snapshot(), limits, &failed),
             Err(DeriveExecutionError::ProviderFailed { .. })
+        ));
+
+        let mut panicked = DeriveProviderRegistry::default();
+        panicked
+            .insert("std.derive.Display", Arc::new(Panic))
+            .unwrap();
+        assert!(matches!(
+            execute_derive_plan(&plan(), snapshot(), limits, &panicked),
+            Err(DeriveExecutionError::ProviderPanicked { .. })
         ));
 
         let mut invalid = DeriveProviderRegistry::default();
