@@ -11,6 +11,7 @@ pub mod meta_derive;
 pub mod meta_diagnostics;
 pub mod meta_generate;
 pub mod meta_query;
+pub mod meta_repro;
 #[cfg(test)]
 mod meta_test_support;
 pub mod meta_vm;

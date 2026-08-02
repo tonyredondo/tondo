@@ -3473,7 +3473,7 @@ vez los errores de los slices anteriores.
   positivo, precedencia, span/ubicación nula correcta, JSON estable y
   diagnostics de provider asociados a inputs o fields relevantes.
 
-- [ ] **META-REPRO-001 — Probar hermeticidad y determinismo.** Variar cwd,
+- [x] **META-REPRO-001 — Probar hermeticidad y determinismo.** Variar cwd,
   environment, filesystem order, core count y scheduling; repetir builds,
   comparar outputs byte a byte y demostrar denegación de filesystem, red,
   process, clock, entropy, threads, async, FFI y unsafe.
