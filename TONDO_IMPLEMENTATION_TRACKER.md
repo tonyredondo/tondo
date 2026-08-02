@@ -3448,7 +3448,7 @@ vez los errores de los slices anteriores.
   `STD-META-IMPL-001` compila después el companion especificado sobre este
   sustrato, y solo entonces se habilitan providers.
 
-- [ ] **META-DERIVE-001 — Ejecutar providers derive.** Pasar requests tipados,
+- [x] **META-DERIVE-001 — Ejecutar providers derive.** Pasar requests tipados,
   limitar outputs al impl autorizado, validar y formatear fuente, y fusionarla
   solo cuando todos los providers terminan correctamente.
 

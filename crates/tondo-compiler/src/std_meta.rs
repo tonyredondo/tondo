@@ -175,6 +175,8 @@ impl MetaRenderer {
                 '\0' => output.push_str("\\0"),
                 '\\' => output.push_str("\\\\"),
                 '"' => output.push_str("\\\""),
+                '{' => output.push_str("{{"),
+                '}' => output.push_str("}}"),
                 character if character.is_control() => {
                     write!(output, "\\u{{{:X}}}", u32::from(character))
                         .expect("writing to String cannot fail");
@@ -341,8 +343,8 @@ mod tests {
         assert_eq!(MetaRenderer::identifier("validName").unwrap(), "validName");
         assert!(MetaRenderer::identifier("for").is_err());
         assert_eq!(
-            MetaRenderer::string("a\n\t\0\\\"\u{7}🙂"),
-            "\"a\\n\\t\\0\\\\\\\"\\u{7}🙂\""
+            MetaRenderer::string("a{b}\n\t\0\\\"\u{7}🙂"),
+            "\"a{{b}}\\n\\t\\0\\\\\\\"\\u{7}🙂\""
         );
         assert_eq!(MetaRenderer::indentation(3).unwrap(), "            ");
         assert!(matches!(
