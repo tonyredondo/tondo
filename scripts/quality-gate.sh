@@ -4,13 +4,14 @@ set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
-reports="target/reliability/quality"
+reports="$root/target/reliability/quality"
 coverage="$reports/coverage.json"
 mutation_output="$reports/mutation"
 mutation_report="$mutation_output/mutants.out/outcomes.json"
 mutation_tmp="${TONDO_MUTATION_TMPDIR:-$reports/mutation-tmp}"
 mkdir -p "$reports"
 mkdir -p "$mutation_tmp"
+mutation_tmp="$(cd "$mutation_tmp" && pwd)"
 
 cargo llvm-cov \
     --workspace \

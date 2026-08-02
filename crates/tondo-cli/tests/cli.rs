@@ -371,10 +371,22 @@ fn update_snapshots_uses_the_sidecar_store_and_publishes_atomically() {
     });
     let output = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["test", "--update-snapshots", "--test-format", "json"])
+        .args(["test", "--project"])
+        .arg(&directory)
+        .args(["--update-snapshots", "--test-format", "json"])
         .output()
         .unwrap();
-    let snapshot = fs::read(directory.join("tests/snapshots.json")).unwrap();
+    assert!(
+        output.status.success(),
+        "snapshot update failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let snapshot = fs::read(directory.join("tests/snapshots.json")).unwrap_or_else(|error| {
+        panic!(
+            "snapshot store was not published: {error}; stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        )
+    });
     let report = TestReport::parse(&output.stdout).unwrap();
     fs::remove_dir_all(directory).unwrap();
 
@@ -401,7 +413,8 @@ fn snapshot_store_inputs_are_validated_before_worker_execution() {
     });
     let missing = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["test"])
+        .args(["test", "--project"])
+        .arg(&directory)
         .output()
         .unwrap();
     assert_eq!(missing.status.code(), Some(2));
@@ -427,11 +440,16 @@ fn snapshot_store_inputs_are_validated_before_worker_execution() {
     .unwrap();
     let wrong_package = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["test"])
+        .args(["test", "--project"])
+        .arg(&directory)
         .output()
         .unwrap();
     assert_eq!(wrong_package.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&wrong_package.stderr).contains("belongs to package"));
+    assert!(
+        String::from_utf8_lossy(&wrong_package.stderr).contains("belongs to package"),
+        "unexpected diagnostic: {}",
+        String::from_utf8_lossy(&wrong_package.stderr)
+    );
     fs::remove_dir_all(directory).unwrap();
 
     let directory = test_project(b"test smoke { assert(true) }\n");
@@ -445,7 +463,9 @@ fn snapshot_store_inputs_are_validated_before_worker_execution() {
     });
     let too_large = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
-        .args(["test", "--update-snapshots"])
+        .args(["test", "--project"])
+        .arg(&directory)
+        .args(["--update-snapshots"])
         .output()
         .unwrap();
     assert_eq!(too_large.status.code(), Some(2));

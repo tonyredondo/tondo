@@ -2364,6 +2364,21 @@ mod tests {
         parse_invocation(&arguments(values)).unwrap_err()
     }
 
+    fn temp_root() -> PathBuf {
+        #[cfg(unix)]
+        {
+            // macOS exposes the temporary directory through /var, which is a
+            // symlink to /private/var.  The artifact and snapshot stores
+            // intentionally reject symlinked path components, so fixtures
+            // must start from the physical path they are validating.
+            std::fs::canonicalize(std::env::temp_dir()).unwrap()
+        }
+        #[cfg(not(unix))]
+        {
+            std::env::temp_dir()
+        }
+    }
+
     fn remove_json_nulls(value: &mut serde_json::Value) {
         match value {
             serde_json::Value::Object(fields) => {
@@ -2385,7 +2400,7 @@ mod tests {
     }
 
     fn conventional_test_project(source: &[u8]) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
+        let root = temp_root().join(format!(
             "tondo-cli-backend-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -2752,7 +2767,7 @@ mod tests {
         assert_eq!(skip_reason(&skipped), "not applicable");
         assert!(make_test_attempt(2, &skipped).unwrap().skip.is_some());
 
-        let base = std::env::temp_dir().join(format!(
+        let base = temp_root().join(format!(
             "tondo-cli-helper-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -3082,7 +3097,7 @@ mod tests {
             error: None,
             snapshot_updates: vec![("new-value".into(), "value".into())],
         };
-        let base = std::env::temp_dir().join(format!(
+        let base = temp_root().join(format!(
             "tondo-cli-snapshot-boundary-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
@@ -3247,7 +3262,7 @@ mod tests {
 
     #[test]
     fn ownership_selection_and_worker_wait_cover_non_happy_paths() {
-        let base = std::env::temp_dir().join(format!(
+        let base = temp_root().join(format!(
             "tondo-cli-owner-boundary-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
