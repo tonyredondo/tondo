@@ -3688,6 +3688,24 @@ fn lower_operation(
                 crate::mir::MirBootstrapHostFunction::PointerFromAddress => {
                     bc::BytecodeBootstrapHostFunction::PointerFromAddress
                 }
+                crate::mir::MirBootstrapHostFunction::TestingLog => {
+                    bc::BytecodeBootstrapHostFunction::TestingLog
+                }
+                crate::mir::MirBootstrapHostFunction::TestingTags => {
+                    bc::BytecodeBootstrapHostFunction::TestingTags
+                }
+                crate::mir::MirBootstrapHostFunction::TestingFailNow => {
+                    bc::BytecodeBootstrapHostFunction::TestingFailNow
+                }
+                crate::mir::MirBootstrapHostFunction::TestingSkip => {
+                    bc::BytecodeBootstrapHostFunction::TestingSkip
+                }
+                crate::mir::MirBootstrapHostFunction::TestingAttach => {
+                    bc::BytecodeBootstrapHostFunction::TestingAttach
+                }
+                crate::mir::MirBootstrapHostFunction::TestingSnapshot => {
+                    bc::BytecodeBootstrapHostFunction::TestingSnapshot
+                }
             },
             arguments: arguments
                 .iter()

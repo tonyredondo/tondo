@@ -295,6 +295,7 @@ pub struct CompilationRequest {
     documentation_fixture: bool,
     warning_profiles: BTreeSet<WarningProfile>,
     test_entry: Option<String>,
+    test_envelope: Option<crate::test_control::EnvelopeHandle>,
 }
 
 impl CompilationRequest {
@@ -351,6 +352,7 @@ impl CompilationRequest {
             documentation_fixture: false,
             warning_profiles: BTreeSet::new(),
             test_entry: None,
+            test_envelope: None,
         })
     }
 
@@ -385,6 +387,13 @@ impl CompilationRequest {
     /// by [`Operation::Test`].
     pub fn with_test_entry(mut self, entry: impl Into<String>) -> Self {
         self.test_entry = Some(entry.into());
+        self
+    }
+
+    /// Installs the private evidence envelope used by `std.testing` host calls.
+    /// Ordinary compilation requests never carry this handle.
+    pub fn with_test_envelope(mut self, envelope: crate::test_control::EnvelopeHandle) -> Self {
+        self.test_envelope = Some(envelope);
         self
     }
 
@@ -454,7 +463,9 @@ impl CompilationRequest {
     pub fn for_test_entry(&self, entry: &test_backend::TestEntry) -> Result<Self, DriverError> {
         let root = entry.file();
         let sources = clone_source_database(&self.sources, None)?;
-        self.packages.validate_sources(&sources, root)?;
+        let mut packages = self.packages.clone();
+        packages.enable_bootstrap_testing()?;
+        packages.validate_sources(&sources, root)?;
         let request = CompilationRequest::new(
             Operation::Test,
             self.edition,
@@ -464,7 +475,7 @@ impl CompilationRequest {
             self.diagnostic_format,
             SourceForm::Module,
             self.limits,
-            self.packages.clone(),
+            packages,
             sources,
             root,
         )?
@@ -1111,6 +1122,9 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                     request.program_arguments.clone(),
                     request.limits.max_vm_heap_bytes,
                 );
+                if let Some(envelope) = request.test_envelope.clone() {
+                    host.install_testing_envelope(envelope);
+                }
                 let execution = match execute_with_limits(
                     &bytecode,
                     function,
@@ -1383,6 +1397,7 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
         Some((request.root, std::sync::Arc::from(lowered))),
     )?;
     let root = request.root;
+    let test_envelope = request.test_envelope.clone();
     let mut nested = CompilationRequest::new(
         Operation::Run,
         request.edition,
@@ -1399,6 +1414,9 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
     .with_program_arguments(request.program_arguments.clone())
     .with_declared_build_inputs(request.build_inputs.clone())
     .with_warning_profiles(request.warning_profiles.clone());
+    if let Some(envelope) = test_envelope {
+        nested = nested.with_test_envelope(envelope);
+    }
     nested.documentation_fixture = request.documentation_fixture;
     execute(nested)
 }

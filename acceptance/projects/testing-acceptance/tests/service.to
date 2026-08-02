@@ -1,0 +1,29 @@
+import std.testing
+
+fn recordIntegration() {
+    testing.log("integration service")
+    testing.tags(["kind": "integration"])
+}
+
+test integration_root {
+    recordIntegration()
+    assert(true)
+}
+
+suite shared_service {
+    let port = 8080
+
+    test starts {
+        recordIntegration()
+        assert(port == 8080)
+    }
+
+    suite nested_client {
+        let response = port + 1
+
+        test receives_response {
+            recordIntegration()
+            assert(response == 8081)
+        }
+    }
+}

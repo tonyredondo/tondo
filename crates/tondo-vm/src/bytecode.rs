@@ -1097,6 +1097,12 @@ pub enum BytecodeBootstrapHostFunction {
     PointerCast,
     PointerAddress,
     PointerFromAddress,
+    TestingLog,
+    TestingTags,
+    TestingFailNow,
+    TestingSkip,
+    TestingAttach,
+    TestingSnapshot,
 }
 
 impl BytecodeBootstrapHostFunction {
@@ -1115,6 +1121,12 @@ impl BytecodeBootstrapHostFunction {
             Self::PointerCast => "intrinsic.Pointer.cast",
             Self::PointerAddress => "intrinsic.Pointer.address",
             Self::PointerFromAddress => "intrinsic.UInt64.toPointer",
+            Self::TestingLog => "std.testing.log",
+            Self::TestingTags => "std.testing.tags",
+            Self::TestingFailNow => "std.testing.failNow",
+            Self::TestingSkip => "std.testing.skip",
+            Self::TestingAttach => "std.testing.attach",
+            Self::TestingSnapshot => "std.testing.snapshot",
         }
     }
 }

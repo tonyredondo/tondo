@@ -5273,6 +5273,17 @@ impl Verifier<'_> {
                             && intrinsic(arguments[0], BytecodeIntrinsicType::ExitStatus)?
                     ))
                 };
+                let string_map = |ty| -> Result<bool, BytecodeVerificationError> {
+                    Ok(matches!(
+                        &self.ty(ty, context)?.kind,
+                        BytecodeTypeKind::Intrinsic {
+                            constructor: BytecodeIntrinsicType::Map,
+                            arguments,
+                        } if arguments.len() == 2
+                            && self.is_scalar(arguments[0], BytecodeScalarType::String)
+                            && self.is_scalar(arguments[1], BytecodeScalarType::String)
+                    ))
+                };
                 let pointer_element =
                     |ty| -> Result<Option<BytecodeTypeId>, BytecodeVerificationError> {
                         Ok(match &self.ty(ty, context)?.kind {
@@ -5351,6 +5362,32 @@ impl Verifier<'_> {
                         arguments.len() == 1
                             && self.is_scalar(arguments[0].ty, BytecodeScalarType::UInt64)
                             && pointer_element(operation.ty)?.is_some()
+                    }
+                    BytecodeBootstrapHostFunction::TestingLog
+                    | BytecodeBootstrapHostFunction::TestingFailNow
+                    | BytecodeBootstrapHostFunction::TestingSkip => {
+                        arguments.len() == 1
+                            && self.is_scalar(arguments[0].ty, BytecodeScalarType::String)
+                            && self.is_scalar(operation.ty, BytecodeScalarType::Unit)
+                    }
+                    BytecodeBootstrapHostFunction::TestingTags => {
+                        arguments.len() == 1
+                            && string_map(arguments[0].ty)?
+                            && self.is_scalar(operation.ty, BytecodeScalarType::Unit)
+                    }
+                    BytecodeBootstrapHostFunction::TestingAttach => {
+                        arguments.len() == 3
+                            && self.is_scalar(arguments[0].ty, BytecodeScalarType::String)
+                            && self.is_scalar(arguments[1].ty, BytecodeScalarType::String)
+                            && intrinsic(arguments[2].ty, BytecodeIntrinsicType::Bytes)?
+                            && self.is_scalar(operation.ty, BytecodeScalarType::Unit)
+                    }
+                    BytecodeBootstrapHostFunction::TestingSnapshot => {
+                        arguments.len() == 2
+                            && arguments.iter().all(|argument| {
+                                self.is_scalar(argument.ty, BytecodeScalarType::String)
+                            })
+                            && self.is_scalar(operation.ty, BytecodeScalarType::Unit)
                     }
                 };
                 if !valid {
@@ -12511,6 +12548,14 @@ mod tests {
             "UInt64",
             BytecodeTypeKind::Scalar(BytecodeScalarType::UInt64),
         );
+        let string_map = push_type(
+            &mut program,
+            "Map[String, String]",
+            BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::Map,
+                arguments: vec![ids.string, ids.string],
+            },
+        );
         let mut function = projection_function(&program, ids);
         function.slots.extend(
             [
@@ -12524,6 +12569,7 @@ mod tests {
                 pointer_int,
                 pointer_string,
                 uint64,
+                string_map,
             ]
             .into_iter()
             .map(|ty| BytecodeSlot {
@@ -12756,6 +12802,36 @@ mod tests {
                 BytecodeBootstrapHostFunction::PointerFromAddress,
                 pointer_int,
                 vec![move_slot(28, uint64)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::TestingLog,
+                ids.unit,
+                vec![string()],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::TestingFailNow,
+                ids.unit,
+                vec![string()],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::TestingSkip,
+                ids.unit,
+                vec![string()],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::TestingTags,
+                ids.unit,
+                vec![move_slot(29, string_map)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::TestingAttach,
+                ids.unit,
+                vec![string(), string(), move_slot(23, bytes)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::TestingSnapshot,
+                ids.unit,
+                vec![string(), string()],
             ),
         ];
         for operation in valid {

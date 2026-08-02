@@ -498,6 +498,19 @@ impl PackageGraph {
         self.packages.values()
     }
 
+    /// Exposes the compiler-owned testing module only after the coordinator
+    /// has selected an isolated test worker.
+    pub(crate) fn enable_bootstrap_testing(&mut self) -> Result<(), PackageGraphError> {
+        if self.standard.as_str() == "toolchain:std:0.1-bootstrap" {
+            self.packages
+                .get_mut(&self.standard)
+                .expect("the standard package was validated during graph construction")
+                .modules
+                .insert(ModulePath::new("testing")?);
+        }
+        Ok(())
+    }
+
     pub fn package(&self, id: &PackageId) -> Option<&PackageNode> {
         self.packages.get(id)
     }

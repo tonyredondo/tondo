@@ -5315,6 +5315,12 @@ fn bootstrap_host_function(
         HirBootstrapHostFunction::PointerFromAddress => {
             MirBootstrapHostFunction::PointerFromAddress
         }
+        HirBootstrapHostFunction::TestingLog => MirBootstrapHostFunction::TestingLog,
+        HirBootstrapHostFunction::TestingTags => MirBootstrapHostFunction::TestingTags,
+        HirBootstrapHostFunction::TestingFailNow => MirBootstrapHostFunction::TestingFailNow,
+        HirBootstrapHostFunction::TestingSkip => MirBootstrapHostFunction::TestingSkip,
+        HirBootstrapHostFunction::TestingAttach => MirBootstrapHostFunction::TestingAttach,
+        HirBootstrapHostFunction::TestingSnapshot => MirBootstrapHostFunction::TestingSnapshot,
         function => {
             return Err(MirError::Construction {
                 span,

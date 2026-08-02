@@ -1,0 +1,11 @@
+import std.testing
+
+fn answer(): Int {
+    42
+}
+
+test production_api {
+    testing.log("unit production API")
+    testing.tags(["kind": "unit"])
+    assert(answer() == 42)
+}

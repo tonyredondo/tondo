@@ -2730,6 +2730,18 @@ impl Verifier<'_> {
                             && intrinsic(arguments[0], IntrinsicType::ExitStatus)?
                     ))
                 };
+                let string_map = |ty| -> Result<bool, MirInvariantError> {
+                    Ok(matches!(
+                        self.kind(ty, context)?,
+                        TypeKind::Intrinsic {
+                            constructor: IntrinsicType::Map,
+                            arguments,
+                        } if arguments.len() == 2
+                            && arguments.iter().all(|argument| {
+                                *argument == self.hir.interner().scalar(ScalarType::String)
+                            })
+                    ))
+                };
                 let pointer_element = |ty| -> Result<Option<TypeId>, MirInvariantError> {
                     Ok(match self.kind(ty, context)? {
                         TypeKind::Intrinsic {
@@ -2808,6 +2820,32 @@ impl Verifier<'_> {
                         arguments.len() == 1
                             && arguments[0].ty == self.hir.interner().scalar(ScalarType::UInt64)
                             && pointer_element(operation.ty)?.is_some()
+                    }
+                    super::MirBootstrapHostFunction::TestingLog
+                    | super::MirBootstrapHostFunction::TestingFailNow
+                    | super::MirBootstrapHostFunction::TestingSkip => {
+                        arguments.len() == 1
+                            && arguments[0].ty == self.hir.interner().scalar(ScalarType::String)
+                            && operation.ty == self.hir.interner().scalar(ScalarType::Unit)
+                    }
+                    super::MirBootstrapHostFunction::TestingTags => {
+                        arguments.len() == 1
+                            && string_map(arguments[0].ty)?
+                            && operation.ty == self.hir.interner().scalar(ScalarType::Unit)
+                    }
+                    super::MirBootstrapHostFunction::TestingAttach => {
+                        arguments.len() == 3
+                            && arguments[0].ty == self.hir.interner().scalar(ScalarType::String)
+                            && arguments[1].ty == self.hir.interner().scalar(ScalarType::String)
+                            && intrinsic(arguments[2].ty, IntrinsicType::Bytes)?
+                            && operation.ty == self.hir.interner().scalar(ScalarType::Unit)
+                    }
+                    super::MirBootstrapHostFunction::TestingSnapshot => {
+                        arguments.len() == 2
+                            && arguments.iter().all(|argument| {
+                                argument.ty == self.hir.interner().scalar(ScalarType::String)
+                            })
+                            && operation.ty == self.hir.interner().scalar(ScalarType::Unit)
                     }
                 };
                 if !valid {
@@ -12295,6 +12333,70 @@ mod tests {
                 .contains("bootstrap host operation does not match its closed contract"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn testing_host_operation_contracts_accept_every_typed_shape() {
+        const SOURCE: &str = "import std.console\n\
+             import std.bytes\n\
+             fn operations(\n\
+                 text: String,\n\
+                 tags: Map[String, String],\n\
+                 payload: bytes.Bytes,\n\
+             ) { console.print(text) }\n";
+        for function in [
+            MirBootstrapHostFunction::TestingLog,
+            MirBootstrapHostFunction::TestingFailNow,
+            MirBootstrapHostFunction::TestingSkip,
+            MirBootstrapHostFunction::TestingTags,
+            MirBootstrapHostFunction::TestingAttach,
+            MirBootstrapHostFunction::TestingSnapshot,
+        ] {
+            let (resolved, hir, mut mir) = checked_mir(SOURCE);
+            let operations = MirFunctionId::Callable(callable_named(&resolved, "operations"));
+            let parameters = mir.functions[&operations].parameters.clone();
+            let string = hir.interner().scalar(ScalarType::String);
+            let unit = hir.interner().scalar(ScalarType::Unit);
+            let string_operand = || MirOperand {
+                ty: string,
+                kind: MirOperandKind::Constant(MirConstant::String("text".into())),
+            };
+            let copied_parameter = |index: usize| {
+                let local = parameters[index];
+                let ty = mir.functions[&operations].locals[local.0 as usize].ty;
+                MirOperand {
+                    ty,
+                    kind: MirOperandKind::Copy(MirPlace {
+                        local,
+                        ty,
+                        projections: Vec::new(),
+                        source_loan: None,
+                    }),
+                }
+            };
+            let arguments = match function {
+                MirBootstrapHostFunction::TestingLog
+                | MirBootstrapHostFunction::TestingFailNow
+                | MirBootstrapHostFunction::TestingSkip => vec![string_operand()],
+                MirBootstrapHostFunction::TestingTags => vec![copied_parameter(1)],
+                MirBootstrapHostFunction::TestingAttach => {
+                    vec![string_operand(), string_operand(), copied_parameter(2)]
+                }
+                MirBootstrapHostFunction::TestingSnapshot => {
+                    vec![string_operand(), string_operand()]
+                }
+                _ => unreachable!(),
+            };
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::BootstrapHostCall { .. })
+            });
+            operation.ty = unit;
+            operation.kind = MirOperationKind::BootstrapHostCall {
+                function,
+                arguments,
+            };
+            verify_mir(&resolved, &hir, &mir).unwrap();
+        }
     }
 
     #[test]

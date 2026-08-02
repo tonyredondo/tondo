@@ -13484,7 +13484,16 @@ impl<'a> ExpressionChecker<'a> {
             ("time", Some("deadline")) => HirBootstrapHostFunction::TimeDeadline,
             ("time", Some("sleep")) => HirBootstrapHostFunction::TimeSleep,
             ("env", Some("snapshot")) => HirBootstrapHostFunction::EnvSnapshot,
-            ("process", Some(name)) | ("bytes", Some(name)) | ("env", Some(name)) => {
+            ("testing", Some("log")) => HirBootstrapHostFunction::TestingLog,
+            ("testing", Some("tags")) => HirBootstrapHostFunction::TestingTags,
+            ("testing", Some("failNow")) => HirBootstrapHostFunction::TestingFailNow,
+            ("testing", Some("skip")) => HirBootstrapHostFunction::TestingSkip,
+            ("testing", Some("attach")) => HirBootstrapHostFunction::TestingAttach,
+            ("testing", Some("snapshot")) => HirBootstrapHostFunction::TestingSnapshot,
+            ("process", Some(name))
+            | ("bytes", Some(name))
+            | ("env", Some(name))
+            | ("testing", Some(name)) => {
                 let module_name = module.path().as_str();
                 self.emit(
                     self.sources.span(file, function_token.range())?,

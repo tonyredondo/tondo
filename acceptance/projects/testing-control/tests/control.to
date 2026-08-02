@@ -1,0 +1,22 @@
+import std.testing
+import std.bytes
+
+fn recordEvidence() {
+    match bytes.Bytes("attachment payload") {
+        ok(payload) => testing.attach("trace", "text/plain", payload)
+        err(_) => testing.failNow("could not create attachment")
+    }
+    testing.snapshot("greeting", "hello from Tondo")
+}
+
+test controlledFailure {
+    testing.failNow("controlled failure")
+}
+
+test controlledSkip {
+    testing.skip("controlled skip")
+}
+
+test controlledEvidence {
+    recordEvidence()
+}

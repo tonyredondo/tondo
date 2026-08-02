@@ -2104,6 +2104,12 @@ pub enum HirBootstrapHostFunction {
     EnvSnapshotGet,
     EnvValueAsText,
     EnvValueAsBytes,
+    TestingLog,
+    TestingTags,
+    TestingFailNow,
+    TestingSkip,
+    TestingAttach,
+    TestingSnapshot,
 }
 
 impl HirBootstrapHostFunction {
@@ -2188,6 +2194,12 @@ impl HirBootstrapHostFunction {
             Self::EnvSnapshotGet => "std.env.Snapshot.get",
             Self::EnvValueAsText => "std.env.Value.asText",
             Self::EnvValueAsBytes => "std.env.Value.asBytes",
+            Self::TestingLog => "std.testing.log",
+            Self::TestingTags => "std.testing.tags",
+            Self::TestingFailNow => "std.testing.failNow",
+            Self::TestingSkip => "std.testing.skip",
+            Self::TestingAttach => "std.testing.attach",
+            Self::TestingSnapshot => "std.testing.snapshot",
         }
     }
 

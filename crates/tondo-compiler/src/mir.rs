@@ -681,6 +681,12 @@ pub enum MirBootstrapHostFunction {
     PointerCast,
     PointerAddress,
     PointerFromAddress,
+    TestingLog,
+    TestingTags,
+    TestingFailNow,
+    TestingSkip,
+    TestingAttach,
+    TestingSnapshot,
 }
 
 #[derive(Debug, Clone)]

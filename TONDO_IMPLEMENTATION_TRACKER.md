@@ -3229,7 +3229,7 @@ reporters.
   manifiesto draft añade los cincuenta y dos grupos mínimos enumerados por la
   spec de testing y mantiene adaptador público para VM y futuros backends.
 
-- [ ] **UTEST-PROJECTS-001 — Añadir proyectos de aceptación completos.**
+- [x] **UTEST-PROJECTS-001 — Añadir proyectos de aceptación completos.**
   Incluir package unitario, integration roots, dev-dependency, suites anidadas,
   servicio compartido, captura válida/inválida, async/error, fallos de
   setup/teardown, `blocked-setup`, log directo/desde helper/task, `failNow`,
@@ -3244,6 +3244,16 @@ reporters.
   check/update mode, y reporters JSON/JUnit. Cada proyecto debe poder ejecutarse
   desde una copia en otro path físico con observaciones canónicas iguales salvo
   duración JUnit y material secreto deliberadamente externo.
+  El corpus versionado `acceptance/projects/testing-acceptance` y
+  `acceptance/projects/testing-control` cruza discovery convencional, unit e
+  integration roots, suites anidadas, helper compartido, `std.testing`
+  sellado, `failNow`, skip, logs, tags, CODEOWNERS, selección, shards, seed y
+  reporters JSON/JUnit a través del binario real. La prueba copia el proyecto
+  a dos raíces físicas y compara los bytes canónicos. Los modelos de lifecycle,
+  retries/repeat, tiempo virtual, inputs, interrupción, artifacts/snapshots y
+  sus fallos quedan enlazados por los 52 grupos de `UTEST-CONF-001`; el host VM
+  tiene además cobertura directa de logs, tags, attachment y snapshot, y
+  `std.testing` permanece ausente de producción.
 
 - [ ] **UTEST-PLATFORM-001 — Validar la matriz declarada.** Linux ejecuta el
   gate canónico completo; Linux ARM64, macOS Intel/ARM64 y Windows ejecutan

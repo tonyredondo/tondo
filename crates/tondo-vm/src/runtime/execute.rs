@@ -5847,9 +5847,16 @@ impl Engine<'_, '_> {
                     .collect::<Result<Vec<_>, _>>()?;
                 let returned = self.host.invoke(function.name(), &snapshots)?;
                 match (function, returned) {
-                    (BytecodeBootstrapHostFunction::ConsolePrint, RuntimeValue::Unit) => {
-                        Ok(OperationResult::Value(Value::Unit))
-                    }
+                    (
+                        BytecodeBootstrapHostFunction::ConsolePrint
+                        | BytecodeBootstrapHostFunction::TestingLog
+                        | BytecodeBootstrapHostFunction::TestingTags
+                        | BytecodeBootstrapHostFunction::TestingFailNow
+                        | BytecodeBootstrapHostFunction::TestingSkip
+                        | BytecodeBootstrapHostFunction::TestingAttach
+                        | BytecodeBootstrapHostFunction::TestingSnapshot,
+                        RuntimeValue::Unit,
+                    ) => Ok(OperationResult::Value(Value::Unit)),
                     (BytecodeBootstrapHostFunction::ConsolePrint, _) => Err(VmError::Host(
                         "std.console.print returned a non-Unit value".into(),
                     )),

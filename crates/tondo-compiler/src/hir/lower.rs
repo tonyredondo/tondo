@@ -194,6 +194,8 @@ impl<'a> TypeLowerer<'a> {
         let time_module = self.packages.module(self.packages.standard(), &time);
         let env = ModulePath::new("env")?;
         let env_module = self.packages.module(self.packages.standard(), &env);
+        let testing = ModulePath::new("testing")?;
+        let testing_module = self.packages.module(self.packages.standard(), &testing);
         let bytes_referenced = bytes_module.as_ref().is_some_and(|bytes_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -226,7 +228,20 @@ impl<'a> TypeLowerer<'a> {
                 )
             })
         });
-        if !bytes_referenced && !process_referenced && !time_referenced && !env_referenced {
+        let testing_referenced = testing_module.as_ref().is_some_and(|testing_module| {
+            self.resolved.references().any(|reference| {
+                matches!(
+                    reference.entity(),
+                    ResolvedEntity::Module(module) if module == testing_module
+                )
+            })
+        });
+        if !bytes_referenced
+            && !process_referenced
+            && !time_referenced
+            && !env_referenced
+            && !testing_referenced
+        {
             return Ok(());
         }
         let file = *self
@@ -276,6 +291,9 @@ impl<'a> TypeLowerer<'a> {
         let strings = self
             .interner
             .intrinsic(IntrinsicType::Array, vec![string])?;
+        let string_map = self
+            .interner
+            .intrinsic(IntrinsicType::Map, vec![string, string])?;
         let optional_int = self.interner.option(int)?;
         let start_outcome = self.interner.result(handle, process_error)?;
         let status_outcome = self.interner.result(statuses, process_error)?;
@@ -283,6 +301,43 @@ impl<'a> TypeLowerer<'a> {
         let check_error = self.interner.union([process_error, process_exit_error])?;
         let check_outcome = self.interner.result(output, check_error)?;
         let string_from_bytes_outcome = self.interner.result(string, utf8_error)?;
+
+        if testing_referenced {
+            for function in [
+                HirBootstrapHostFunction::TestingLog,
+                HirBootstrapHostFunction::TestingFailNow,
+                HirBootstrapHostFunction::TestingSkip,
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(string, false)],
+                    None,
+                    unit,
+                )?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingTags,
+                vec![(string_map, false)],
+                None,
+                unit,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingAttach,
+                vec![(string, false), (string, false), (bytes, false)],
+                None,
+                unit,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingSnapshot,
+                vec![(string, false), (string, false)],
+                None,
+                unit,
+            )?;
+        }
 
         if time_referenced {
             let duration = self

@@ -11,6 +11,8 @@ use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 use tondo_vm::runtime::{RuntimeHostValueKind, RuntimeValue, VmError, VmHost};
 
+use crate::test_control::{ControlError, EnvelopeHandle};
+
 const INT_MIN: i128 = i64::MIN as i128;
 const INT_MAX: i128 = i64::MAX as i128;
 const NANOS_PER_MICROSECOND: i128 = 1_000;
@@ -163,6 +165,7 @@ pub(crate) struct BootstrapHost {
     max_bytes: u64,
     max_time_resources: usize,
     time_resources: usize,
+    testing: Option<EnvelopeHandle>,
 }
 
 impl BootstrapHost {
@@ -207,6 +210,32 @@ impl BootstrapHost {
             max_bytes,
             max_time_resources,
             time_resources: 0,
+            testing: None,
+        }
+    }
+
+    pub(crate) fn install_testing_envelope(&mut self, envelope: EnvelopeHandle) {
+        self.testing = Some(envelope);
+    }
+
+    fn testing_envelope(&self) -> Result<EnvelopeHandle, VmError> {
+        self.testing.clone().ok_or_else(|| {
+            VmError::Host("std.testing is only available inside a test worker".into())
+        })
+    }
+
+    fn testing_result(
+        envelope: &EnvelopeHandle,
+        result: Result<(), ControlError>,
+    ) -> Result<RuntimeValue, VmError> {
+        match result {
+            Ok(()) | Err(ControlError::FailNow { .. } | ControlError::Skip { .. }) => {
+                Ok(RuntimeValue::Unit)
+            }
+            Err(error) => {
+                let _ = envelope.fail_now(error.to_string());
+                Ok(RuntimeValue::Unit)
+            }
         }
     }
 
@@ -859,6 +888,55 @@ impl VmHost for BootstrapHost {
             ("std.console.print", [RuntimeValue::String(text)]) => {
                 self.stdout.extend_from_slice(text.as_bytes());
                 Ok(RuntimeValue::Unit)
+            }
+            ("std.testing.log", [RuntimeValue::String(message)]) => {
+                let envelope = self.testing_envelope()?;
+                Self::testing_result(&envelope, envelope.log(message.clone()))
+            }
+            ("std.testing.tags", [RuntimeValue::Map(entries)]) => {
+                let envelope = self.testing_envelope()?;
+                let mut tags = BTreeMap::new();
+                for (key, value) in entries {
+                    let (RuntimeValue::String(key), RuntimeValue::String(value)) = (key, value)
+                    else {
+                        return Err(VmError::Host(
+                            "std.testing.tags expects Map[String, String]".into(),
+                        ));
+                    };
+                    tags.insert(key.clone(), value.clone());
+                }
+                Self::testing_result(&envelope, envelope.tags(tags))
+            }
+            ("std.testing.failNow", [RuntimeValue::String(message)]) => {
+                let envelope = self.testing_envelope()?;
+                Self::testing_result(&envelope, envelope.fail_now(message.clone()))
+            }
+            ("std.testing.skip", [RuntimeValue::String(reason)]) => {
+                let envelope = self.testing_envelope()?;
+                Self::testing_result(&envelope, envelope.skip(reason.clone()))
+            }
+            (
+                "std.testing.attach",
+                [
+                    RuntimeValue::String(name),
+                    RuntimeValue::String(media_type),
+                    bytes,
+                ],
+            ) => {
+                let envelope = self.testing_envelope()?;
+                let bytes = self.bytes(bytes)?.to_vec();
+                Self::testing_result(
+                    &envelope,
+                    envelope.attach(name.clone(), media_type.clone(), bytes),
+                )
+            }
+            (
+                "std.testing.snapshot",
+                [RuntimeValue::String(name), RuntimeValue::String(actual)],
+            ) => {
+                let envelope = self.testing_envelope()?;
+                let result = envelope.snapshot(name.clone(), actual).map(|_| ());
+                Self::testing_result(&envelope, result)
             }
             ("std.time.now", []) => match self.clock.now() {
                 Ok(nanos) => Ok(RuntimeValue::ResultOk(Box::new(
@@ -2968,6 +3046,79 @@ mod tests {
                         ..
                     }
                 )
+        ));
+    }
+
+    #[test]
+    fn testing_host_records_typed_evidence_in_the_installed_envelope() {
+        let envelope = EnvelopeHandle::new(
+            "hosted-test",
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+        );
+        envelope
+            .with_expected_snapshots(BTreeMap::from([("golden".into(), "value".into())]))
+            .unwrap();
+        envelope
+            .set_phase(crate::test_control::ExecutionPhase::Body)
+            .unwrap();
+        let mut host = BootstrapHost::default();
+        host.install_testing_envelope(envelope.clone());
+        let bytes = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(b"trace".to_vec()),
+        );
+
+        assert_eq!(
+            host.invoke(
+                "std.testing.log",
+                &[RuntimeValue::String("from Tondo".into())]
+            )
+            .unwrap(),
+            RuntimeValue::Unit
+        );
+        host.invoke(
+            "std.testing.tags",
+            &[RuntimeValue::Map(vec![(
+                RuntimeValue::String("kind".into()),
+                RuntimeValue::String("integration".into()),
+            )])],
+        )
+        .unwrap();
+        host.invoke(
+            "std.testing.attach",
+            &[
+                RuntimeValue::String("trace".into()),
+                RuntimeValue::String("text/plain".into()),
+                bytes,
+            ],
+        )
+        .unwrap();
+        host.invoke(
+            "std.testing.snapshot",
+            &[
+                RuntimeValue::String("golden".into()),
+                RuntimeValue::String("value".into()),
+            ],
+        )
+        .unwrap();
+
+        envelope.close().unwrap();
+        let report = envelope.report().unwrap();
+        assert_eq!(report.logs()[0].message(), "from Tondo");
+        assert_eq!(
+            report.tags().get("kind").map(String::as_str),
+            Some("integration")
+        );
+        assert_eq!(report.artifacts()[0].bytes(), b"trace");
+        assert!(matches!(
+            report.snapshots()[0].outcome(),
+            crate::test_control::SnapshotOutcome::Matched { .. }
+        ));
+
+        assert!(matches!(
+            BootstrapHost::default()
+                .invoke("std.testing.log", &[RuntimeValue::String("outside".into())]),
+            Err(VmError::Host(_))
         ));
     }
 

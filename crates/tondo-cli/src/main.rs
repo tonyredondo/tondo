@@ -19,7 +19,9 @@ use tondo_compiler::project::ProjectPlan;
 use tondo_compiler::source::{
     LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput, SourceOrigin,
 };
-use tondo_compiler::test_control::{EnvelopeLimits, EnvelopeReport, SnapshotOutcome, Terminal};
+use tondo_compiler::test_control::{
+    EnvelopeHandle, EnvelopeLimits, EnvelopeReport, ExecutionPhase, SnapshotOutcome, Terminal,
+};
 use tondo_compiler::test_glob::GlobPattern;
 use tondo_compiler::test_plan::{
     CodeownersMode, TestOrder as ProjectTestOrder, TestProjectPlan,
@@ -812,7 +814,7 @@ fn execute_test_plan_at(
                 context.merge_worker_report(&report, &updates)?;
                 response.error.map_or_else(
                     || {
-                        if response.status == "passed" {
+                        if response.status == "passed" || report.terminal().is_some() {
                             Ok(())
                         } else {
                             Err(RunError::Infrastructure {
@@ -1211,18 +1213,39 @@ fn execute_test_worker(
     let expected = snapshot_inputs
         .expected_for(entry.id())
         .map_err(format_test_command_error)?;
+    let limits = test_plan.limits();
+    let envelope_limits = EnvelopeLimits::new(
+        limits.output_bytes(),
+        limits.artifact_bytes(),
+        limits.snapshot_bytes(),
+    );
     let base_request = Arc::clone(&request);
     let body_entry = entry.clone();
+    let body_expected = expected.clone();
     let program = LeafProgram::new(entry.id().to_owned(), move |context| {
-        let request =
-            base_request
-                .for_test_entry(&body_entry)
-                .map_err(|error| RunError::Infrastructure {
-                    message: error.to_string(),
-                })?;
+        let envelope = EnvelopeHandle::new(body_entry.id(), envelope_limits);
+        envelope
+            .with_expected_snapshots(body_expected.clone())
+            .map_err(RunError::Control)?;
+        envelope
+            .with_snapshot_update(update_snapshots)
+            .map_err(RunError::Control)?;
+        envelope
+            .set_phase(ExecutionPhase::Body)
+            .map_err(RunError::Control)?;
+        let request = base_request
+            .for_test_entry(&body_entry)
+            .map_err(|error| RunError::Infrastructure {
+                message: error.to_string(),
+            })?
+            .with_test_envelope(envelope.clone());
         let output = execute(request).map_err(|error| RunError::Infrastructure {
             message: error.to_string(),
         })?;
+        envelope.close().map_err(RunError::Control)?;
+        let evidence = envelope.report().map_err(RunError::Control)?;
+        let updates = envelope.snapshot_updates().map_err(RunError::Control)?;
+        context.merge_worker_report(&evidence, &updates)?;
         if !output.stdout().is_empty() {
             context.stdout(String::from_utf8_lossy(output.stdout()).into_owned())?;
         }
@@ -1244,17 +1267,8 @@ fn execute_test_worker(
     })
     .with_expected_snapshots(expected)
     .with_snapshot_update(update_snapshots);
-    let limits = test_plan.limits();
     let runtime = RuntimeRunner::new(
-        RuntimeConfig::new(
-            1,
-            EnvelopeLimits::new(
-                limits.output_bytes(),
-                limits.artifact_bytes(),
-                limits.snapshot_bytes(),
-            ),
-        )
-        .map_err(|error| error.to_string())?,
+        RuntimeConfig::new(1, envelope_limits).map_err(|error| error.to_string())?,
     )
     .map_err(|error| error.to_string())?;
     let report = runtime
