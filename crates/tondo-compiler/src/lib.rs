@@ -9,6 +9,7 @@ pub mod meta;
 pub mod meta_atomic;
 pub mod meta_derive;
 pub mod meta_generate;
+pub mod meta_query;
 #[cfg(test)]
 mod meta_test_support;
 pub mod meta_vm;

@@ -3435,7 +3435,7 @@ vez los errores de los slices anteriores.
   validación de duplicados/orden/UTF-8 y round-trip que audita la ausencia de
   datos ejecutables o de runtime.
 
-- [ ] **META-QUERY-001 — Exponer expansiones y procedencia.** Tooling devuelve
+- [x] **META-QUERY-001 — Exponer expansiones y procedencia.** Tooling devuelve
   fuente formateada, provider, request/output hashes, bounds introducidos y
   source map sin revelar símbolos privados ajenos al target.
 
