@@ -2,11 +2,11 @@
   "format": "tondo-conformance-draft-lineage",
   "lineage": "tondo-draft",
   "edition": "0.1",
-  "revision": 3,
+  "revision": 2,
   "state": "open",
   "parent": {
-    "path": "conformance/draft/history/c39c06150130697805fa8c933cdac0b70f4b15f219b0fcb10cb812e35de3a0f5.json",
-    "sha256": "c39c06150130697805fa8c933cdac0b70f4b15f219b0fcb10cb812e35de3a0f5"
+    "path": "conformance/draft/history/9274a05a21ba468fd0e8d904ada34509780afef98a4157a67c17c1ed5eb31f8c.json",
+    "sha256": "9274a05a21ba468fd0e8d904ada34509780afef98a4157a67c17c1ed5eb31f8c"
   },
   "baseline": {
     "manifest": {
@@ -74,59 +74,6 @@
         "TL01-27-5-R003",
         "TL01-27-7-R001",
         "TL01-27-8-R001"
-      ]
-    },
-    {
-      "id": "testing",
-      "manifest": {
-        "path": "conformance/draft/layers/testing.json",
-        "sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed"
-      },
-      "tasks": [
-        "UTEST-ARTIFACT-001",
-        "UTEST-BACKEND-001",
-        "UTEST-CAPTURE-001",
-        "UTEST-CHECK-001",
-        "UTEST-CLI-001",
-        "UTEST-CLI-BACKEND-001",
-        "UTEST-CLI-PARSE-001",
-        "UTEST-CONF-001",
-        "UTEST-CONTROL-001",
-        "UTEST-CST-001",
-        "UTEST-DEPS-001",
-        "UTEST-DISC-001",
-        "UTEST-EDITION-001",
-        "UTEST-FMT-001",
-        "UTEST-GLOB-001",
-        "UTEST-ID-001",
-        "UTEST-INPUTS-001",
-        "UTEST-INPUTS-PLAN-001",
-        "UTEST-INTEG-001",
-        "UTEST-INTERRUPT-001",
-        "UTEST-JUNIT-001",
-        "UTEST-LEX-001",
-        "UTEST-LIMIT-001",
-        "UTEST-LOWER-001",
-        "UTEST-OVERLAY-001",
-        "UTEST-OWNERS-001",
-        "UTEST-PLAN-001",
-        "UTEST-REPEAT-001",
-        "UTEST-REPORT-001",
-        "UTEST-RESULT-MODEL-001",
-        "UTEST-RETRY-001",
-        "UTEST-RUNTIME-001",
-        "UTEST-SCHED-001",
-        "UTEST-SHARD-001",
-        "UTEST-SNAPSHOT-001",
-        "UTEST-SPEC-001",
-        "UTEST-SUITE-001",
-        "UTEST-VTIME-001"
-      ],
-      "requirements": [
-        "TL01-28-1-R001",
-        "TL01-28-2-R001",
-        "TL01-28-3-R001",
-        "TL01-28-5-R001"
       ]
     }
   ],

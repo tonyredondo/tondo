@@ -1,0 +1,583 @@
+{
+  "format": "tondo-conformance-case-layer/1",
+  "layer": "testing",
+  "edition": "0.1",
+  "tasks": [
+    "UTEST-ARTIFACT-001",
+    "UTEST-BACKEND-001",
+    "UTEST-CAPTURE-001",
+    "UTEST-CHECK-001",
+    "UTEST-CLI-001",
+    "UTEST-CLI-BACKEND-001",
+    "UTEST-CLI-PARSE-001",
+    "UTEST-CONF-001",
+    "UTEST-CONTROL-001",
+    "UTEST-CST-001",
+    "UTEST-DEPS-001",
+    "UTEST-DISC-001",
+    "UTEST-EDITION-001",
+    "UTEST-FMT-001",
+    "UTEST-GLOB-001",
+    "UTEST-ID-001",
+    "UTEST-INPUTS-001",
+    "UTEST-INPUTS-PLAN-001",
+    "UTEST-INTEG-001",
+    "UTEST-INTERRUPT-001",
+    "UTEST-JUNIT-001",
+    "UTEST-LEX-001",
+    "UTEST-LIMIT-001",
+    "UTEST-LOWER-001",
+    "UTEST-OVERLAY-001",
+    "UTEST-OWNERS-001",
+    "UTEST-PLAN-001",
+    "UTEST-REPEAT-001",
+    "UTEST-REPORT-001",
+    "UTEST-RESULT-MODEL-001",
+    "UTEST-RETRY-001",
+    "UTEST-RUNTIME-001",
+    "UTEST-SCHED-001",
+    "UTEST-SHARD-001",
+    "UTEST-SNAPSHOT-001",
+    "UTEST-SPEC-001",
+    "UTEST-SUITE-001",
+    "UTEST-VTIME-001"
+  ],
+  "cases": [
+    {
+      "id": "testing-01-syntax",
+      "surface": "syntax",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-2-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::syntax::parser:test_and_suite_declarations_are_lossless_and_typed",
+        "rust:tondo-compiler:tests::formatter_spec:testing_declarations_have_canonical_layout_and_idempotence"
+      ]
+    },
+    {
+      "id": "testing-02-keywords",
+      "surface": "keywords",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-2-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::syntax::parser:prohibited_test_and_suite_suffixes_are_diagnosed_losslessly"
+      ]
+    },
+    {
+      "id": "testing-03-alternatives",
+      "surface": "alternatives",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-2-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::syntax::parser:test_and_suite_modifiers_are_rejected_but_recovered"
+      ]
+    },
+    {
+      "id": "testing-04-static-tree",
+      "surface": "tree",
+      "requirements": [
+        "TL01-28-2-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_tree:duplicate_siblings_across_files_are_e2002_and_cannot_reopen_suites",
+        "rust:tondo-compiler:src::test_tree:empty_suites_are_e2004_even_when_setup_exists"
+      ]
+    },
+    {
+      "id": "testing-05-identity",
+      "surface": "identity",
+      "requirements": [
+        "TL01-28-2-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_tree:source_permutation_does_not_change_nodes_or_diagnostics"
+      ]
+    },
+    {
+      "id": "testing-06-captures",
+      "surface": "captures",
+      "requirements": [
+        "TL01-28-2-R001",
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_capture:valid_let_capture_creates_one_snapshot_slot_per_target",
+        "rust:tondo-compiler:src::test_capture:var_ref_mut_and_move_accesses_are_all_e2005"
+      ]
+    },
+    {
+      "id": "testing-07-testing-api",
+      "surface": "api",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-3-R001",
+        "TL01-28-5-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_check:all_control_and_metadata_operations_have_exact_shapes",
+        "rust:tondo-compiler:src::test_check:test_only_operations_are_rejected_in_production"
+      ]
+    },
+    {
+      "id": "testing-08-envelope",
+      "surface": "envelope",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_control:structured_child_shares_sinks_but_not_a_visible_context"
+      ]
+    },
+    {
+      "id": "testing-09-logs",
+      "surface": "logs",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_control:logs_tags_streams_and_report_are_isolated_and_ordered"
+      ]
+    },
+    {
+      "id": "testing-10-fail-now",
+      "surface": "fail-now",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_control:fail_now_and_cleanup_failure_have_deterministic_precedence"
+      ]
+    },
+    {
+      "id": "testing-11-skip",
+      "surface": "skip",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_suite:skipped_setup_marks_descendants_blocked_skip"
+      ]
+    },
+    {
+      "id": "testing-12-tags",
+      "surface": "tags",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_control:tags_merge_atomically_and_choose_the_lexicographically_first_conflict"
+      ]
+    },
+    {
+      "id": "testing-13-setup-signatures",
+      "surface": "setup",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_check:admits_unit_never_and_infers_async_from_ordinary_or_temporal_operations"
+      ]
+    },
+    {
+      "id": "testing-14-selected-setup",
+      "surface": "selection",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_suite:unselected_subtree_has_no_lifecycle"
+      ]
+    },
+    {
+      "id": "testing-15-lifecycle-order",
+      "surface": "lifecycle",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_suite:setup_runs_once_and_teardown_is_inside_out"
+      ]
+    },
+    {
+      "id": "testing-16-setup-failure",
+      "surface": "setup-failure",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_suite:setup_failure_blocks_only_its_subtree_and_sibling_continues"
+      ]
+    },
+    {
+      "id": "testing-17-teardown-failure",
+      "surface": "teardown-failure",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_suite:teardown_failure_does_not_rewrite_leaf_result"
+      ]
+    },
+    {
+      "id": "testing-18-terminal-statuses",
+      "surface": "statuses",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_runtime:statuses_cover_return_skip_error_panic_resource_timeout_and_infrastructure"
+      ]
+    },
+    {
+      "id": "testing-19-cleanup-obligations",
+      "surface": "cleanup",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_lower:cleanup_and_environment_order_are_canonicalized"
+      ]
+    },
+    {
+      "id": "testing-20-structured-async",
+      "surface": "async",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_runtime:panic_in_body_is_caught_and_siblings_continue"
+      ]
+    },
+    {
+      "id": "testing-21-unit-overlay",
+      "surface": "unit-overlay",
+      "requirements": [
+        "TL01-28-5-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_overlay:accepts_companion_private_access_and_keeps_production_identity"
+      ]
+    },
+    {
+      "id": "testing-22-integration-visibility",
+      "surface": "integration",
+      "requirements": [
+        "TL01-28-5-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_overlay:allows_only_explicit_public_imports"
+      ]
+    },
+    {
+      "id": "testing-23-dev-dependencies",
+      "surface": "dependencies",
+      "requirements": [
+        "TL01-28-5-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_dependencies:production_identity_is_framed_and_does_not_depend_on_test_records"
+      ]
+    },
+    {
+      "id": "testing-24-codeowners",
+      "surface": "owners",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_owners:auto_uses_precedence_and_last_matching_rule"
+      ]
+    },
+    {
+      "id": "testing-25-selection",
+      "surface": "selection",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_plan:closed_value_helpers_cover_all_selector_policy_and_storage_shapes"
+      ]
+    },
+    {
+      "id": "testing-26-sharding",
+      "surface": "sharding",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_shard:every_shard_is_disjoint_and_the_union_reconstructs_selection"
+      ]
+    },
+    {
+      "id": "testing-27-random-order",
+      "surface": "order",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_schedule:canonical_and_random_plans_keep_suites_atomic_and_execution_plan_leaf_only"
+      ]
+    },
+    {
+      "id": "testing-28-jobs",
+      "surface": "jobs",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_schedule:global_job_limiter_covers_setup_body_and_teardown_admission"
+      ]
+    },
+    {
+      "id": "testing-29-stream-capture",
+      "surface": "streams",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_control:logs_tags_streams_and_report_are_isolated_and_ordered"
+      ]
+    },
+    {
+      "id": "testing-30-cli",
+      "surface": "cli",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-cli:src::test_cli:parses_defaults_and_all_value_forms_without_execution"
+      ]
+    },
+    {
+      "id": "testing-31-json-report",
+      "surface": "json",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_report:report_is_compact_lossless_and_round_trips"
+      ]
+    },
+    {
+      "id": "testing-32-junit-report",
+      "surface": "junit",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_junit:projects_failures_skips_flaky_and_repeat_instability_without_duplicate_leaf_cases"
+      ]
+    },
+    {
+      "id": "testing-33-platform-targets",
+      "surface": "platform",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:tests::support::mod:platform_arguments_are_paired_and_select_only_the_current_host"
+      ]
+    },
+    {
+      "id": "testing-34-production-separation",
+      "surface": "production",
+      "requirements": [
+        "TL01-28-5-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_check:test_only_operations_are_rejected_in_production"
+      ]
+    },
+    {
+      "id": "testing-35-exact-equivalence",
+      "surface": "exact",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-cli:src::test_cli:parses_defaults_and_all_value_forms_without_execution"
+      ]
+    },
+    {
+      "id": "testing-36-globs",
+      "surface": "globs",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_glob:suite_matches_select_all_descendant_leaves_and_union_is_deduplicated"
+      ]
+    },
+    {
+      "id": "testing-37-retry-planning",
+      "surface": "retry-plan",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_retry:planner_absorbs_descendant_failures_under_the_outer_suite"
+      ]
+    },
+    {
+      "id": "testing-38-retry-isolation",
+      "surface": "retry-isolation",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_runtime:retrying_a_program_uses_a_new_worker_identity"
+      ]
+    },
+    {
+      "id": "testing-39-retry-history",
+      "surface": "retry-history",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_result:assemble_derives_one_summary_and_flaky_status_for_reporters"
+      ]
+    },
+    {
+      "id": "testing-40-retry-junit",
+      "surface": "retry-junit",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_junit:flaky_suite_policy_emits_one_explicit_synthetic_case"
+      ]
+    },
+    {
+      "id": "testing-41-virtual-time-api",
+      "surface": "virtual-api",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_check:virtual_time_requires_closed_callback_and_nonnegative_finite_duration"
+      ]
+    },
+    {
+      "id": "testing-42-virtual-scheduler",
+      "surface": "virtual-scheduler",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_schedule:virtual_queue_orders_ready_work_and_tied_timers_by_creation_sequence"
+      ]
+    },
+    {
+      "id": "testing-43-virtual-advance",
+      "surface": "virtual-advance",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_virtual_time:timers_are_exact_and_ties_use_creation_order"
+      ]
+    },
+    {
+      "id": "testing-44-virtual-time-safety",
+      "surface": "virtual-safety",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_virtual_time:deadlock_and_external_waits_are_distinct_and_coded"
+      ]
+    },
+    {
+      "id": "testing-45-virtual-time-reporting",
+      "surface": "virtual-report",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_runtime:control_evidence_and_virtual_time_cross_the_worker_boundary"
+      ]
+    },
+    {
+      "id": "testing-46-defer-await",
+      "surface": "defer-await",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-3-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_lower:preserves_environment_domain_errors_async_and_cleanup"
+      ]
+    },
+    {
+      "id": "testing-47-inputs",
+      "surface": "inputs",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-5-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_inputs:input_plan_canonicalization_is_stable_and_has_no_secret_value_channel"
+      ]
+    },
+    {
+      "id": "testing-48-interruption",
+      "surface": "interrupt",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_interrupt:complete_cleanup_and_close_restore_isolation_and_select_exit_four"
+      ]
+    },
+    {
+      "id": "testing-49-artifacts",
+      "surface": "artifacts",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_artifacts:attachments_are_content_addressed_and_manifest_is_canonical"
+      ]
+    },
+    {
+      "id": "testing-50-repeat",
+      "surface": "repeat",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_repeat:repeat_runs_iterations_sequentially_with_new_workers_and_fresh_virtual_time"
+      ]
+    },
+    {
+      "id": "testing-51-snapshots",
+      "surface": "snapshots",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_snapshots:update_stage_is_explicit_preserves_stale_values_and_publishes_once"
+      ]
+    },
+    {
+      "id": "testing-52-lossless-reporting",
+      "surface": "reporting",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "evidence": [
+        "rust:tondo-compiler:src::test_report:retry_repeat_snapshot_and_artifact_policies_are_closed"
+      ]
+    }
+  ]
+}

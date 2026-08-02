@@ -30,17 +30,17 @@
       "path": "conformance/draft/manifest.json",
       "edition": "0.1",
       "status": "draft-open",
-      "sha256": "c39c06150130697805fa8c933cdac0b70f4b15f219b0fcb10cb812e35de3a0f5"
+      "sha256": "28358f54a5ddb674398a69905517a8dcfc27ba205cb2ad8e845ba548fc587878"
     }
   ],
   "summary": {
-    "logical_tests": 2014,
-    "repetitions": 2233,
-    "physical_sources": 469,
-    "unique_source_hashes": 815,
+    "logical_tests": 2066,
+    "repetitions": 2285,
+    "physical_sources": 470,
+    "unique_source_hashes": 816,
     "by_kind": {
       "conformance-case": 205,
-      "conformance-layer": 6,
+      "conformance-layer": 58,
       "draft-contract": 38,
       "fixture": 141,
       "fuzz-target": 3,
@@ -50,7 +50,7 @@
     "by_status": {
       "campaign": 3,
       "draft-pending": 38,
-      "executable": 1964,
+      "executable": 2016,
       "non-executable": 9
     },
     "by_phase": {
@@ -65,7 +65,7 @@
       "host": 9,
       "lexer": 28,
       "memory": 4,
-      "metaprogramming": 6,
+      "metaprogramming": 58,
       "mir": 60,
       "parser": 55,
       "protocol": 58,
@@ -11292,6 +11292,1166 @@
       "sidecars": [
         "rust:tondo-compiler:src::meta_query:query_is_canonical_complete_and_does_not_carry_unrelated_private_symbols",
         "rust:tondo-compiler:src::meta_query:source_map_projection_is_numeric_bounded_and_total"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-01-syntax",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "syntax",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-2-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::syntax::parser:test_and_suite_declarations_are_lossless_and_typed",
+        "rust:tondo-compiler:tests::formatter_spec:testing_declarations_have_canonical_layout_and_idempotence"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-02-keywords",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "keywords",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-2-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::syntax::parser:prohibited_test_and_suite_suffixes_are_diagnosed_losslessly"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-03-alternatives",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "alternatives",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-2-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::syntax::parser:test_and_suite_modifiers_are_rejected_but_recovered"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-04-static-tree",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "tree",
+      "requirements": [
+        "TL01-28-2-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_tree:duplicate_siblings_across_files_are_e2002_and_cannot_reopen_suites",
+        "rust:tondo-compiler:src::test_tree:empty_suites_are_e2004_even_when_setup_exists"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-05-identity",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "identity",
+      "requirements": [
+        "TL01-28-2-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_tree:source_permutation_does_not_change_nodes_or_diagnostics"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-06-captures",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "captures",
+      "requirements": [
+        "TL01-28-2-R001",
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_capture:valid_let_capture_creates_one_snapshot_slot_per_target",
+        "rust:tondo-compiler:src::test_capture:var_ref_mut_and_move_accesses_are_all_e2005"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-07-testing-api",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "api",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-3-R001",
+        "TL01-28-5-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_check:all_control_and_metadata_operations_have_exact_shapes",
+        "rust:tondo-compiler:src::test_check:test_only_operations_are_rejected_in_production"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-08-envelope",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "envelope",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_control:structured_child_shares_sinks_but_not_a_visible_context"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-09-logs",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "logs",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_control:logs_tags_streams_and_report_are_isolated_and_ordered"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-10-fail-now",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "fail-now",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_control:fail_now_and_cleanup_failure_have_deterministic_precedence"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-11-skip",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "skip",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_suite:skipped_setup_marks_descendants_blocked_skip"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-12-tags",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "tags",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_control:tags_merge_atomically_and_choose_the_lexicographically_first_conflict"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-13-setup-signatures",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "setup",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_check:admits_unit_never_and_infers_async_from_ordinary_or_temporal_operations"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-14-selected-setup",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "selection",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_suite:unselected_subtree_has_no_lifecycle"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-15-lifecycle-order",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "lifecycle",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_suite:setup_runs_once_and_teardown_is_inside_out"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-16-setup-failure",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "setup-failure",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_suite:setup_failure_blocks_only_its_subtree_and_sibling_continues"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-17-teardown-failure",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "teardown-failure",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_suite:teardown_failure_does_not_rewrite_leaf_result"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-18-terminal-statuses",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "statuses",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_runtime:statuses_cover_return_skip_error_panic_resource_timeout_and_infrastructure"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-19-cleanup-obligations",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "cleanup",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_lower:cleanup_and_environment_order_are_canonicalized"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-20-structured-async",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "async",
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_runtime:panic_in_body_is_caught_and_siblings_continue"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-21-unit-overlay",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "unit-overlay",
+      "requirements": [
+        "TL01-28-5-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_overlay:accepts_companion_private_access_and_keeps_production_identity"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-22-integration-visibility",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "integration",
+      "requirements": [
+        "TL01-28-5-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_overlay:allows_only_explicit_public_imports"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-23-dev-dependencies",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "dependencies",
+      "requirements": [
+        "TL01-28-5-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_dependencies:production_identity_is_framed_and_does_not_depend_on_test_records"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-24-codeowners",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "owners",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_owners:auto_uses_precedence_and_last_matching_rule"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-25-selection",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "selection",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_plan:closed_value_helpers_cover_all_selector_policy_and_storage_shapes"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-26-sharding",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "sharding",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_shard:every_shard_is_disjoint_and_the_union_reconstructs_selection"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-27-random-order",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "order",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_schedule:canonical_and_random_plans_keep_suites_atomic_and_execution_plan_leaf_only"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-28-jobs",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "jobs",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_schedule:global_job_limiter_covers_setup_body_and_teardown_admission"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-29-stream-capture",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "streams",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_control:logs_tags_streams_and_report_are_isolated_and_ordered"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-30-cli",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "cli",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-cli:src::test_cli:parses_defaults_and_all_value_forms_without_execution"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-31-json-report",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "json",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_report:report_is_compact_lossless_and_round_trips"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-32-junit-report",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "junit",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_junit:projects_failures_skips_flaky_and_repeat_instability_without_duplicate_leaf_cases"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-33-platform-targets",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "platform",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:tests::support::mod:platform_arguments_are_paired_and_select_only_the_current_host"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-34-production-separation",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "production",
+      "requirements": [
+        "TL01-28-5-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_check:test_only_operations_are_rejected_in_production"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-35-exact-equivalence",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "exact",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-cli:src::test_cli:parses_defaults_and_all_value_forms_without_execution"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-36-globs",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "globs",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_glob:suite_matches_select_all_descendant_leaves_and_union_is_deduplicated"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-37-retry-planning",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "retry-plan",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_retry:planner_absorbs_descendant_failures_under_the_outer_suite"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-38-retry-isolation",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "retry-isolation",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_runtime:retrying_a_program_uses_a_new_worker_identity"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-39-retry-history",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "retry-history",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_result:assemble_derives_one_summary_and_flaky_status_for_reporters"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-40-retry-junit",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "retry-junit",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_junit:flaky_suite_policy_emits_one_explicit_synthetic_case"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-41-virtual-time-api",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "virtual-api",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_check:virtual_time_requires_closed_callback_and_nonnegative_finite_duration"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-42-virtual-scheduler",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "virtual-scheduler",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_schedule:virtual_queue_orders_ready_work_and_tied_timers_by_creation_sequence"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-43-virtual-advance",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "virtual-advance",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_virtual_time:timers_are_exact_and_ties_use_creation_order"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-44-virtual-time-safety",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "virtual-safety",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_virtual_time:deadlock_and_external_waits_are_distinct_and_coded"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-45-virtual-time-reporting",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "virtual-report",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_runtime:control_evidence_and_virtual_time_cross_the_worker_boundary"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-46-defer-await",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "defer-await",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-3-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_lower:preserves_environment_domain_errors_async_and_cleanup"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-47-inputs",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "inputs",
+      "requirements": [
+        "TL01-28-1-R001",
+        "TL01-28-5-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_inputs:input_plan_canonicalization_is_stable_and_has_no_secret_value_channel"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-48-interruption",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "interrupt",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_interrupt:complete_cleanup_and_close_restore_isolation_and_select_exit_four"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-49-artifacts",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "artifacts",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_artifacts:attachments_are_content_addressed_and_manifest_is_canonical"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-50-repeat",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "repeat",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_repeat:repeat_runs_iterations_sequentially_with_new_workers_and_fresh_virtual_time"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-51-snapshots",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "snapshots",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_snapshots:update_stage_is_explicit_preserves_stale_values_and_publishes_once"
+      ]
+    },
+    {
+      "id": "draft-layer:testing:testing-52-lossless-reporting",
+      "kind": "conformance-layer",
+      "crate_name": null,
+      "phase": "metaprogramming",
+      "source": "conformance/draft/layers/testing.json",
+      "fixture": null,
+      "group": "reporting",
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "oracle": "executable-inventory-evidence",
+      "repetitions": 1,
+      "source_sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed",
+      "target": "tondo-vm-hosted",
+      "document": "conformance/draft/manifest.json",
+      "edition": "0.1",
+      "status": "executable",
+      "sidecars": [
+        "rust:tondo-compiler:src::test_report:retry_repeat_snapshot_and_artifact_policies_are_closed"
       ]
     },
     {
@@ -34808,7 +35968,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "c3602cc14c99aed39ca129bbc9b05748969a170990ce85bfbf3c0832e88b4685",
+      "source_sha256": "d152123ce2fca5cf91395abce6802a7b15f883adc28275edb757796fc0e7fe29",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -34826,7 +35986,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "c3602cc14c99aed39ca129bbc9b05748969a170990ce85bfbf3c0832e88b4685",
+      "source_sha256": "d152123ce2fca5cf91395abce6802a7b15f883adc28275edb757796fc0e7fe29",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -34844,7 +36004,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "c3602cc14c99aed39ca129bbc9b05748969a170990ce85bfbf3c0832e88b4685",
+      "source_sha256": "d152123ce2fca5cf91395abce6802a7b15f883adc28275edb757796fc0e7fe29",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -34862,7 +36022,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "c3602cc14c99aed39ca129bbc9b05748969a170990ce85bfbf3c0832e88b4685",
+      "source_sha256": "d152123ce2fca5cf91395abce6802a7b15f883adc28275edb757796fc0e7fe29",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -34880,7 +36040,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "c3602cc14c99aed39ca129bbc9b05748969a170990ce85bfbf3c0832e88b4685",
+      "source_sha256": "d152123ce2fca5cf91395abce6802a7b15f883adc28275edb757796fc0e7fe29",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -34898,7 +36058,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "c3602cc14c99aed39ca129bbc9b05748969a170990ce85bfbf3c0832e88b4685",
+      "source_sha256": "d152123ce2fca5cf91395abce6802a7b15f883adc28275edb757796fc0e7fe29",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -35258,7 +36418,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "4b5ccfadc1dff9b24c4780ae3a8147fb95608359a6a88638023930b57f802546",
+      "source_sha256": "cf03732a8e3a32f4c3b775a7593b472feeadb9c5dd077c3e4b66f0f02b9ffc03",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -35276,7 +36436,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "4b5ccfadc1dff9b24c4780ae3a8147fb95608359a6a88638023930b57f802546",
+      "source_sha256": "cf03732a8e3a32f4c3b775a7593b472feeadb9c5dd077c3e4b66f0f02b9ffc03",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -35294,7 +36454,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "4b5ccfadc1dff9b24c4780ae3a8147fb95608359a6a88638023930b57f802546",
+      "source_sha256": "cf03732a8e3a32f4c3b775a7593b472feeadb9c5dd077c3e4b66f0f02b9ffc03",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -35312,7 +36472,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "4b5ccfadc1dff9b24c4780ae3a8147fb95608359a6a88638023930b57f802546",
+      "source_sha256": "cf03732a8e3a32f4c3b775a7593b472feeadb9c5dd077c3e4b66f0f02b9ffc03",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -36266,7 +37426,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6ccdbce29839a039e030e9127e7ba61af26ecca30e6f0e96ba0b83e33fcee74a",
+      "source_sha256": "d0cd90c1b266e1bbe5f0821e726215ebcc70119dbe33efd6506328e1a1c9ea11",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -36274,7 +37434,7 @@
       "sidecars": []
     },
     {
-      "id": "rust:tondo-reliability:src::ratchet:repository_ratchet_requires_reports_for_the_meta_layer",
+      "id": "rust:tondo-reliability:src::ratchet:repository_ratchet_requires_reports_for_draft_case_layers",
       "kind": "rust-test",
       "crate_name": "tondo-reliability",
       "phase": "reliability",
@@ -36284,7 +37444,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6ccdbce29839a039e030e9127e7ba61af26ecca30e6f0e96ba0b83e33fcee74a",
+      "source_sha256": "d0cd90c1b266e1bbe5f0821e726215ebcc70119dbe33efd6506328e1a1c9ea11",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -36302,7 +37462,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6ccdbce29839a039e030e9127e7ba61af26ecca30e6f0e96ba0b83e33fcee74a",
+      "source_sha256": "d0cd90c1b266e1bbe5f0821e726215ebcc70119dbe33efd6506328e1a1c9ea11",
       "target": "host-rust",
       "document": null,
       "edition": "host",
@@ -36320,7 +37480,7 @@
       "requirements": [],
       "oracle": "rust-assertions",
       "repetitions": 1,
-      "source_sha256": "6ccdbce29839a039e030e9127e7ba61af26ecca30e6f0e96ba0b83e33fcee74a",
+      "source_sha256": "d0cd90c1b266e1bbe5f0821e726215ebcc70119dbe33efd6506328e1a1c9ea11",
       "target": "host-rust",
       "document": null,
       "edition": "host",

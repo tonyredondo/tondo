@@ -228,10 +228,10 @@ mod tests {
     }
 
     #[test]
-    fn repository_ratchet_requires_reports_for_the_meta_layer() {
+    fn repository_ratchet_requires_reports_for_draft_case_layers() {
         let root = repository_root();
         let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();
-        assert_eq!(lineage.manifest().case_layers.len(), 1);
+        assert_eq!(lineage.manifest().case_layers.len(), 2);
         assert!(scope_evidence(&root, "coverage", None, true, |_, _| Ok(())).is_err());
         assert!(scope_evidence(&root, "mutation", None, true, |_, _| Ok(())).is_err());
     }
@@ -249,12 +249,12 @@ mod tests {
         RatchetRecord {
             format: FORMAT.into(),
             lineage: DRAFT_LINEAGE_NAME.into(),
-            revision: 2,
+            revision: 3,
             manifest: evidence(DRAFT_LINEAGE_PATH),
             inventory: evidence(crate::INVENTORY_PATH),
             matrix: evidence(crate::MATRIX_PATH),
             quality_baseline: evidence(crate::QUALITY_BASELINE_PATH),
-            draft_case_layers: 1,
+            draft_case_layers: 2,
             pending_tasks: vec!["M10.6".into()],
             coverage: scope.clone(),
             mutation: scope,

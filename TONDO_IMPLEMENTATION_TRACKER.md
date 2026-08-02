@@ -3224,7 +3224,7 @@ reporters.
 
 ### 17.4 Evidencia, conformidad y dogfooding
 
-- [ ] **UTEST-CONF-001 — Ampliar la conformidad del draft Tondo 0.1.** No
+- [x] **UTEST-CONF-001 — Ampliar la conformidad del draft Tondo 0.1.** No
   presentar el corpus bootstrap como evidencia de requisitos nuevos. El
   manifiesto draft añade los cincuenta y dos grupos mínimos enumerados por la
   spec de testing y mantiene adaptador público para VM y futuros backends.

@@ -3,13 +3,13 @@
   "document": "TONDO_LANGUAGE_SPEC.md",
   "edition": "0.1",
   "document_sha256": "ccfb9628a9e15894d45848ec24d650eba48b833a47f95c6a2835bad10bd1e7f8",
-  "inventory_sha256": "6c29fec7b2f04dbbf973602073547a5d9ad3484dd83ad285777a6063935af4d9",
+  "inventory_sha256": "f077e0c499069b9a91500566fee5758c9e4495b76c14cde3b84e1edbcb0df48d",
   "target": "tondo-vm-hosted",
   "summary": {
     "total": 316,
     "by_status": {
-      "covered": 28,
-      "draft-pending": 18,
+      "covered": 32,
+      "draft-pending": 14,
       "stdlib-pending": 3,
       "target-not-applicable": 7,
       "toolchain-limit": 260
@@ -20,7 +20,7 @@
       "low": 39,
       "medium": 14
     },
-    "with_executable_evidence": 28
+    "with_executable_evidence": 32
   },
   "requirements": [
     {
@@ -9851,35 +9851,47 @@
       "text_sha256": "afc5629402443b23dfbfea622891df90df53d1562c7ee66a6e793272726033c6",
       "phase": "testing",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10262#28-1-un-único-contrato-tondo-0-1"
+        "draft-layer:testing:testing-01-syntax"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-01-syntax"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-01-syntax"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-01-syntax"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-01-syntax"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-01-syntax"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-01-syntax"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9894,35 +9906,47 @@
       "text_sha256": "5925e8aa84d38434cdd47f9ef53792702a572152034ff3aeb13edeb1d6f0ad3c",
       "phase": "testing",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10293#28-2-árbol-estático"
+        "draft-layer:testing:testing-04-static-tree"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-04-static-tree"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-04-static-tree"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-04-static-tree"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-04-static-tree"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-04-static-tree"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-04-static-tree"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9937,35 +9961,47 @@
       "text_sha256": "f9bf4250d13541945ab060336db222e1287879369582c971e9cf484d9f346be9",
       "phase": "testing",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10316#28-3-entradas-ocultas-e-inferencia"
+        "draft-layer:testing:testing-06-captures"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-06-captures"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-06-captures"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-06-captures"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-06-captures"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-06-captures"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-06-captures"
+          ],
+          "waiver": null
         }
       }
     },
@@ -9980,35 +10016,47 @@
       "text_sha256": "3d3ff001823cbee9f12a90e45e0830608dc7b2fc82660616b5219f703ed37f45",
       "phase": "testing",
       "risk": "critical",
-      "status": "draft-pending",
-      "classification_reason": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation.",
+      "status": "covered",
+      "classification_reason": "A draft case layer and the versioned normative evidence map link this requirement to executable public-boundary evidence.",
       "evidence": [
-        "TONDO_LANGUAGE_SPEC.md:10356#28-5-frontera-con-producción"
+        "draft-layer:testing:testing-21-unit-overlay"
       ],
       "dimensions": {
         "positive": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
         },
         "rejection_or_failure": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
         },
         "boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
         },
         "composition": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
         },
         "oracle": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
         },
         "public_boundary": {
-          "evidence": [],
-          "waiver": "The requirement is new or changed since the bootstrap baseline and no draft case layer claims its implementation."
+          "evidence": [
+            "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
         }
       }
     },

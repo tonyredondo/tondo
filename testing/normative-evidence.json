@@ -333,6 +333,178 @@
           "waiver": null
         }
       }
+    },
+    {
+      "requirements": [
+        "TL01-28-1-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:testing:testing-01-syntax"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:testing:testing-01-syntax"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-01-syntax"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:testing:testing-01-syntax"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:testing:testing-01-syntax"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-01-syntax"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-28-2-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:testing:testing-04-static-tree"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:testing:testing-04-static-tree"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-04-static-tree"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:testing:testing-04-static-tree"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:testing:testing-04-static-tree"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-04-static-tree"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-28-3-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:testing:testing-06-captures"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:testing:testing-06-captures"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-06-captures"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:testing:testing-06-captures"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:testing:testing-06-captures"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-06-captures"
+          ],
+          "waiver": null
+        }
+      }
+    },
+    {
+      "requirements": [
+        "TL01-28-5-R001"
+      ],
+      "dimensions": {
+        "positive": {
+          "evidence": [
+            "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
+        },
+        "rejection_or_failure": {
+          "evidence": [
+            "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
+        },
+        "boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
+        },
+        "composition": {
+          "evidence": [
+            "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
+        },
+        "oracle": {
+          "evidence": [
+            "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
+        },
+        "public_boundary": {
+          "evidence": [
+            "draft-layer:testing:testing-21-unit-overlay"
+          ],
+          "waiver": null
+        }
+      }
     }
   ]
 }
