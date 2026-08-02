@@ -3425,12 +3425,15 @@ vez los errores de los slices anteriores.
   all-or-nothing; `validate_hir_derive_requests` conserva spans y no ejecuta
   providers hasta las fases posteriores.
 
-- [ ] **META-MODEL-001 — Construir el snapshot meta inmutable.** Serializar de
+- [x] **META-MODEL-001 — Construir el snapshot meta inmutable.** Serializar de
   forma canónica únicamente la clausura de roots autorizada: módulos,
   declaraciones, tipos, bounds, fields/variants públicos, spans y docs; entregar
   al derive solo la vista privada del target autorizado. Excluir bodies,
   valores, layout, direcciones y estado del GC; diagnosticar `E2109` si una
-  clausura requiere una salida de la misma ronda.
+  clausura requiere una salida de la misma ronda. Cerrado con el modelo privado
+  `MetaSnapshot` de `crates/tondo-compiler/src/meta.rs`, JSON/hash canónicos,
+  validación de duplicados/orden/UTF-8 y round-trip que audita la ausencia de
+  datos ejecutables o de runtime.
 
 - [ ] **META-QUERY-001 — Exponer expansiones y procedencia.** Tooling devuelve
   fuente formateada, provider, request/output hashes, bounds introducidos y

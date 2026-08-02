@@ -9,11 +9,772 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
+
 use crate::hir::HirProgram;
 use crate::source::Span;
 
 /// The only meta model accepted by the Tondo 0.1 toolchain.
 pub const META_MODEL: &str = "tondo-meta-model-0.1/1";
+
+/// A source position included in the immutable meta snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaSpan {
+    file: u32,
+    start: u32,
+    end: u32,
+}
+
+impl MetaSpan {
+    pub fn new(file: u32, start: u32, end: u32) -> Result<Self, MetaModelError> {
+        if start > end {
+            return Err(MetaModelError::InvalidSpan { start, end });
+        }
+        Ok(Self { file, start, end })
+    }
+
+    pub fn file(&self) -> u32 {
+        self.file
+    }
+
+    pub fn start(&self) -> u32 {
+        self.start
+    }
+
+    pub fn end(&self) -> u32 {
+        self.end
+    }
+}
+
+impl From<Span> for MetaSpan {
+    fn from(span: Span) -> Self {
+        Self {
+            file: span.file().index(),
+            start: span.range().start(),
+            end: span.range().end(),
+        }
+    }
+}
+
+/// A root explicitly authorized by a generator or implicitly authorized by derive.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaRoot {
+    package: String,
+    module: String,
+}
+
+impl MetaRoot {
+    pub fn new(
+        package: impl Into<String>,
+        module: impl Into<String>,
+    ) -> Result<Self, MetaModelError> {
+        Ok(Self {
+            package: required_text("root.package", package.into())?,
+            module: required_text("root.module", module.into())?,
+        })
+    }
+
+    pub fn package(&self) -> &str {
+        &self.package
+    }
+
+    pub fn module(&self) -> &str {
+        &self.module
+    }
+}
+
+/// A module in the authorized semantic closure.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaModule {
+    identity: String,
+    docs: Option<String>,
+}
+
+impl MetaModule {
+    pub fn new(
+        identity: impl Into<String>,
+        docs: Option<impl Into<String>>,
+    ) -> Result<Self, MetaModelError> {
+        Ok(Self {
+            identity: required_text("module.identity", identity.into())?,
+            docs: canonical_docs(docs.map(Into::into))?,
+        })
+    }
+
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    pub fn docs(&self) -> Option<&str> {
+        self.docs.as_deref()
+    }
+}
+
+/// Visibility exposed by the snapshot. A derive target may be private, while
+/// its requested view is still restricted to that exact target.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum MetaVisibility {
+    Public,
+    Private,
+}
+
+/// A generic parameter and its canonical positive bounds.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaGenericParameter {
+    name: String,
+    bounds: Vec<String>,
+}
+
+impl MetaGenericParameter {
+    pub fn new(
+        name: impl Into<String>,
+        bounds: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Result<Self, MetaModelError> {
+        let mut parameter = Self {
+            name: required_text("generic_parameter.name", name.into())?,
+            bounds: bounds.into_iter().map(Into::into).collect(),
+        };
+        parameter.canonicalize()?;
+        Ok(parameter)
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn bounds(&self) -> &[String] {
+        &self.bounds
+    }
+
+    fn canonicalize(&mut self) -> Result<(), MetaModelError> {
+        for bound in &self.bounds {
+            required_text("generic_parameter.bound", bound.clone())?;
+        }
+        self.bounds.sort();
+        self.bounds.dedup();
+        Ok(())
+    }
+}
+
+/// A type bound retained in a declaration's semantic closure.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaBound {
+    binder: String,
+    trait_identity: String,
+}
+
+impl MetaBound {
+    pub fn new(
+        binder: impl Into<String>,
+        trait_identity: impl Into<String>,
+    ) -> Result<Self, MetaModelError> {
+        Ok(Self {
+            binder: required_text("bound.binder", binder.into())?,
+            trait_identity: required_text("bound.trait", trait_identity.into())?,
+        })
+    }
+
+    pub fn binder(&self) -> &str {
+        &self.binder
+    }
+
+    pub fn trait_identity(&self) -> &str {
+        &self.trait_identity
+    }
+}
+
+/// A public or target-authorized field. `ordinal` preserves source order while
+/// allowing canonical serialization independent of insertion order.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaField {
+    name: String,
+    ty: String,
+    visibility: MetaVisibility,
+    ordinal: u32,
+    span: MetaSpan,
+    docs: Option<String>,
+}
+
+impl MetaField {
+    pub fn new(
+        name: impl Into<String>,
+        ty: impl Into<String>,
+        visibility: MetaVisibility,
+        ordinal: u32,
+        span: MetaSpan,
+        docs: Option<impl Into<String>>,
+    ) -> Result<Self, MetaModelError> {
+        Ok(Self {
+            name: required_text("field.name", name.into())?,
+            ty: required_text("field.type", ty.into())?,
+            visibility,
+            ordinal,
+            span,
+            docs: canonical_docs(docs.map(Into::into))?,
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn ty(&self) -> &str {
+        &self.ty
+    }
+
+    pub fn visibility(&self) -> MetaVisibility {
+        self.visibility
+    }
+
+    pub fn ordinal(&self) -> u32 {
+        self.ordinal
+    }
+
+    pub fn span(&self) -> MetaSpan {
+        self.span
+    }
+
+    pub fn docs(&self) -> Option<&str> {
+        self.docs.as_deref()
+    }
+}
+
+/// The payload shape of an enum variant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MetaVariantPayload {
+    Unit,
+    Tuple(Vec<String>),
+    Record(Vec<MetaField>),
+}
+
+impl MetaVariantPayload {
+    pub fn unit() -> Self {
+        Self::Unit
+    }
+
+    pub fn tuple(types: impl IntoIterator<Item = impl Into<String>>) -> Self {
+        Self::Tuple(types.into_iter().map(Into::into).collect())
+    }
+
+    pub fn record(fields: impl IntoIterator<Item = MetaField>) -> Self {
+        Self::Record(fields.into_iter().collect())
+    }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Unit => "unit",
+            Self::Tuple(_) => "tuple",
+            Self::Record(_) => "record",
+        }
+    }
+
+    fn canonicalize(&mut self) -> Result<(), MetaModelError> {
+        match self {
+            Self::Unit => Ok(()),
+            Self::Tuple(types) => {
+                for ty in types {
+                    required_text("variant.type", ty.clone())?;
+                }
+                Ok(())
+            }
+            Self::Record(fields) => canonicalize_fields(fields),
+        }
+    }
+}
+
+/// An enum variant in the semantic closure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaVariant {
+    name: String,
+    payload: MetaVariantPayload,
+    ordinal: u32,
+    span: MetaSpan,
+    docs: Option<String>,
+}
+
+impl MetaVariant {
+    pub fn new(
+        name: impl Into<String>,
+        payload: MetaVariantPayload,
+        ordinal: u32,
+        span: MetaSpan,
+        docs: Option<impl Into<String>>,
+    ) -> Result<Self, MetaModelError> {
+        Ok(Self {
+            name: required_text("variant.name", name.into())?,
+            payload,
+            ordinal,
+            span,
+            docs: canonical_docs(docs.map(Into::into))?,
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn payload(&self) -> &MetaVariantPayload {
+        &self.payload
+    }
+
+    pub fn ordinal(&self) -> u32 {
+        self.ordinal
+    }
+
+    pub fn span(&self) -> MetaSpan {
+        self.span
+    }
+
+    pub fn docs(&self) -> Option<&str> {
+        self.docs.as_deref()
+    }
+
+    fn canonicalize(&mut self) -> Result<(), MetaModelError> {
+        required_text("variant.name", self.name.clone())?;
+        self.payload.canonicalize()
+    }
+}
+
+/// A trait operation retained without executable bodies.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaOperation {
+    name: String,
+    signature: String,
+    visibility: MetaVisibility,
+    ordinal: u32,
+    span: MetaSpan,
+    docs: Option<String>,
+}
+
+impl MetaOperation {
+    pub fn new(
+        name: impl Into<String>,
+        signature: impl Into<String>,
+        visibility: MetaVisibility,
+        ordinal: u32,
+        span: MetaSpan,
+        docs: Option<impl Into<String>>,
+    ) -> Result<Self, MetaModelError> {
+        Ok(Self {
+            name: required_text("operation.name", name.into())?,
+            signature: required_text("operation.signature", signature.into())?,
+            visibility,
+            ordinal,
+            span,
+            docs: canonical_docs(docs.map(Into::into))?,
+        })
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn signature(&self) -> &str {
+        &self.signature
+    }
+
+    pub fn visibility(&self) -> MetaVisibility {
+        self.visibility
+    }
+
+    pub fn ordinal(&self) -> u32 {
+        self.ordinal
+    }
+
+    pub fn span(&self) -> MetaSpan {
+        self.span
+    }
+
+    pub fn docs(&self) -> Option<&str> {
+        self.docs.as_deref()
+    }
+}
+
+/// The declaration shapes visible to a meta program. No variant contains a
+/// body, value, layout, address, or garbage-collector state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MetaDeclarationKind {
+    Record(Vec<MetaField>),
+    Enum(Vec<MetaVariant>),
+    Newtype(String),
+    Trait(Vec<MetaOperation>),
+}
+
+impl MetaDeclarationKind {
+    pub fn record(fields: impl IntoIterator<Item = MetaField>) -> Self {
+        Self::Record(fields.into_iter().collect())
+    }
+
+    pub fn enumeration(variants: impl IntoIterator<Item = MetaVariant>) -> Self {
+        Self::Enum(variants.into_iter().collect())
+    }
+
+    pub fn newtype(underlying: impl Into<String>) -> Self {
+        Self::Newtype(underlying.into())
+    }
+
+    pub fn trait_definition(operations: impl IntoIterator<Item = MetaOperation>) -> Self {
+        Self::Trait(operations.into_iter().collect())
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Record(_) => "record",
+            Self::Enum(_) => "enum",
+            Self::Newtype(_) => "newtype",
+            Self::Trait(_) => "trait",
+        }
+    }
+
+    fn canonicalize(&mut self) -> Result<(), MetaModelError> {
+        match self {
+            Self::Record(fields) => canonicalize_fields(fields),
+            Self::Enum(variants) => {
+                for variant in variants.iter_mut() {
+                    variant.canonicalize()?;
+                }
+                variants.sort_by_key(|variant| (variant.ordinal, variant.name.clone()));
+                ensure_unique_ordinals_and_names(
+                    variants
+                        .iter()
+                        .map(|variant| (variant.ordinal, variant.name.as_str())),
+                    "variant",
+                )
+            }
+            Self::Newtype(underlying) => {
+                required_text("newtype.underlying", underlying.clone())?;
+                Ok(())
+            }
+            Self::Trait(operations) => {
+                for operation in operations.iter() {
+                    required_text("operation.name", operation.name.clone())?;
+                    required_text("operation.signature", operation.signature.clone())?;
+                }
+                operations.sort_by_key(|operation| (operation.ordinal, operation.name.clone()));
+                ensure_unique_ordinals_and_names(
+                    operations
+                        .iter()
+                        .map(|operation| (operation.ordinal, operation.name.as_str())),
+                    "operation",
+                )
+            }
+        }
+    }
+}
+
+/// One declaration in the authorized semantic closure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaDeclaration {
+    identity: String,
+    module: String,
+    visibility: MetaVisibility,
+    generic_parameters: Vec<MetaGenericParameter>,
+    bounds: Vec<MetaBound>,
+    span: MetaSpan,
+    docs: Option<String>,
+    kind: MetaDeclarationKind,
+}
+
+impl MetaDeclaration {
+    pub fn new(
+        identity: impl Into<String>,
+        module: impl Into<String>,
+        visibility: MetaVisibility,
+        generic_parameters: impl IntoIterator<Item = MetaGenericParameter>,
+        bounds: impl IntoIterator<Item = MetaBound>,
+        span: MetaSpan,
+        docs: Option<impl Into<String>>,
+        kind: MetaDeclarationKind,
+    ) -> Result<Self, MetaModelError> {
+        let mut declaration = Self {
+            identity: required_text("declaration.identity", identity.into())?,
+            module: required_text("declaration.module", module.into())?,
+            visibility,
+            generic_parameters: generic_parameters.into_iter().collect(),
+            bounds: bounds.into_iter().collect(),
+            span,
+            docs: canonical_docs(docs.map(Into::into))?,
+            kind,
+        };
+        declaration.canonicalize()?;
+        Ok(declaration)
+    }
+
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+
+    pub fn module(&self) -> &str {
+        &self.module
+    }
+
+    pub fn visibility(&self) -> MetaVisibility {
+        self.visibility
+    }
+
+    pub fn generic_parameters(&self) -> &[MetaGenericParameter] {
+        &self.generic_parameters
+    }
+
+    pub fn bounds(&self) -> &[MetaBound] {
+        &self.bounds
+    }
+
+    pub fn span(&self) -> MetaSpan {
+        self.span
+    }
+
+    pub fn docs(&self) -> Option<&str> {
+        self.docs.as_deref()
+    }
+
+    pub fn kind(&self) -> &MetaDeclarationKind {
+        &self.kind
+    }
+
+    fn canonicalize(&mut self) -> Result<(), MetaModelError> {
+        required_text("declaration.identity", self.identity.clone())?;
+        required_text("declaration.module", self.module.clone())?;
+        for parameter in &mut self.generic_parameters {
+            parameter.canonicalize()?;
+        }
+        let mut parameter_names = BTreeSet::new();
+        for parameter in &self.generic_parameters {
+            if !parameter_names.insert(parameter.name.as_str()) {
+                return Err(MetaModelError::Duplicate {
+                    kind: "generic parameter".into(),
+                    identity: parameter.name.clone(),
+                });
+            }
+        }
+        for bound in &self.bounds {
+            required_text("bound.binder", bound.binder.clone())?;
+            required_text("bound.trait", bound.trait_identity.clone())?;
+        }
+        self.bounds.sort();
+        self.bounds.dedup();
+        self.kind.canonicalize()
+    }
+}
+
+/// A deterministic, immutable snapshot of one authorized semantic closure.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MetaSnapshot {
+    format: String,
+    roots: Vec<MetaRoot>,
+    modules: Vec<MetaModule>,
+    declarations: Vec<MetaDeclaration>,
+}
+
+impl MetaSnapshot {
+    pub fn new(
+        roots: impl IntoIterator<Item = MetaRoot>,
+        modules: impl IntoIterator<Item = MetaModule>,
+        declarations: impl IntoIterator<Item = MetaDeclaration>,
+    ) -> Result<Self, MetaModelError> {
+        Self {
+            format: META_MODEL.into(),
+            roots: roots.into_iter().collect(),
+            modules: modules.into_iter().collect(),
+            declarations: declarations.into_iter().collect(),
+        }
+        .canonicalize()
+    }
+
+    pub fn format(&self) -> &str {
+        &self.format
+    }
+
+    pub fn roots(&self) -> &[MetaRoot] {
+        &self.roots
+    }
+
+    pub fn modules(&self) -> &[MetaModule] {
+        &self.modules
+    }
+
+    pub fn declarations(&self) -> &[MetaDeclaration] {
+        &self.declarations
+    }
+
+    /// Serialize this snapshot as canonical UTF-8 JSON.
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, MetaModelError> {
+        let canonical = self.clone().canonicalize()?;
+        serde_json::to_vec(&canonical)
+            .map_err(|error| MetaModelError::Serialization(error.to_string()))
+    }
+
+    pub fn hash(&self) -> Result<String, MetaModelError> {
+        Ok(crate::artifact::sha256(&self.canonical_bytes()?))
+    }
+
+    /// Decode only canonical encodings. This rejects reordered or extended
+    /// snapshots before they can enter the meta execution boundary.
+    pub fn decode(bytes: &[u8]) -> Result<Self, MetaModelError> {
+        let snapshot: Self = serde_json::from_slice(bytes)
+            .map_err(|error| MetaModelError::Serialization(error.to_string()))?;
+        let canonical = snapshot.clone().canonicalize()?;
+        let canonical_bytes = serde_json::to_vec(&canonical)
+            .map_err(|error| MetaModelError::Serialization(error.to_string()))?;
+        if bytes != canonical_bytes {
+            return Err(MetaModelError::NonCanonicalEncoding);
+        }
+        Ok(canonical)
+    }
+
+    fn canonicalize(mut self) -> Result<Self, MetaModelError> {
+        if self.format != META_MODEL {
+            return Err(MetaModelError::UnsupportedFormat(self.format));
+        }
+
+        self.roots
+            .sort_by_key(|root| (root.package.clone(), root.module.clone()));
+        ensure_unique_keys(
+            self.roots
+                .iter()
+                .map(|root| format!("{}::{}", root.package, root.module)),
+            "root",
+        )?;
+
+        self.modules.sort_by_key(|module| module.identity.clone());
+        ensure_unique_keys(
+            self.modules.iter().map(|module| module.identity.clone()),
+            "module",
+        )?;
+        for module in &mut self.modules {
+            module.identity = required_text("module.identity", module.identity.clone())?;
+            module.docs = canonical_docs(module.docs.take())?;
+        }
+
+        for declaration in &mut self.declarations {
+            declaration.canonicalize()?;
+        }
+        self.declarations
+            .sort_by_key(|declaration| (declaration.module.clone(), declaration.identity.clone()));
+        ensure_unique_keys(
+            self.declarations
+                .iter()
+                .map(|declaration| format!("{}::{}", declaration.module, declaration.identity)),
+            "declaration",
+        )?;
+        Ok(self)
+    }
+}
+
+/// Errors found while constructing or decoding the immutable meta model.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MetaModelError {
+    InvalidValue { field: String, reason: String },
+    InvalidSpan { start: u32, end: u32 },
+    Duplicate { kind: String, identity: String },
+    UnsupportedFormat(String),
+    NonCanonicalEncoding,
+    Serialization(String),
+}
+
+impl fmt::Display for MetaModelError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidValue { field, reason } => write!(formatter, "invalid {field}: {reason}"),
+            Self::InvalidSpan { start, end } => {
+                write!(formatter, "invalid meta span {start}..{end}")
+            }
+            Self::Duplicate { kind, identity } => {
+                write!(formatter, "duplicate {kind} `{identity}`")
+            }
+            Self::UnsupportedFormat(format) => {
+                write!(formatter, "unsupported meta model `{format}`")
+            }
+            Self::NonCanonicalEncoding => formatter.write_str("meta snapshot is not canonical"),
+            Self::Serialization(error) => {
+                write!(formatter, "meta snapshot encoding failed: {error}")
+            }
+        }
+    }
+}
+
+impl Error for MetaModelError {}
+
+fn required_text(field: &str, value: String) -> Result<String, MetaModelError> {
+    if value.is_empty() {
+        return Err(MetaModelError::InvalidValue {
+            field: field.into(),
+            reason: "must not be empty".into(),
+        });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(MetaModelError::InvalidValue {
+            field: field.into(),
+            reason: "must not contain control characters".into(),
+        });
+    }
+    Ok(value)
+}
+
+fn canonical_docs(docs: Option<String>) -> Result<Option<String>, MetaModelError> {
+    match docs {
+        Some(value) if value.is_empty() => Ok(None),
+        Some(value) => Ok(Some(required_text("docs", value)?)),
+        None => Ok(None),
+    }
+}
+
+fn canonicalize_fields(fields: &mut Vec<MetaField>) -> Result<(), MetaModelError> {
+    for field in fields.iter() {
+        required_text("field.name", field.name.clone())?;
+        required_text("field.type", field.ty.clone())?;
+    }
+    fields.sort_by_key(|field| (field.ordinal, field.name.clone()));
+    ensure_unique_ordinals_and_names(
+        fields
+            .iter()
+            .map(|field| (field.ordinal, field.name.as_str())),
+        "field",
+    )
+}
+
+fn ensure_unique_ordinals_and_names<'a>(
+    values: impl Iterator<Item = (u32, &'a str)>,
+    kind: &str,
+) -> Result<(), MetaModelError> {
+    let mut ordinals = BTreeSet::new();
+    let mut names = BTreeSet::new();
+    for (ordinal, name) in values {
+        if !ordinals.insert(ordinal) || !names.insert(name) {
+            return Err(MetaModelError::Duplicate {
+                kind: kind.into(),
+                identity: name.into(),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn ensure_unique_keys(
+    values: impl Iterator<Item = String>,
+    kind: &str,
+) -> Result<(), MetaModelError> {
+    let mut seen = BTreeSet::new();
+    for identity in values {
+        if !seen.insert(identity.clone()) {
+            return Err(MetaModelError::Duplicate {
+                kind: kind.into(),
+                identity,
+            });
+        }
+    }
+    Ok(())
+}
 
 /// Nominal shapes that can authorize a derive request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -701,6 +1462,251 @@ mod tests {
             MetaDiagnosticCode::InvalidDeriveTarget
                 .as_str()
                 .starts_with('E')
+        );
+    }
+
+    fn snapshot_span(offset: u32) -> MetaSpan {
+        MetaSpan::new(3, offset, offset + 2).unwrap()
+    }
+
+    fn snapshot_field(name: &str, ordinal: u32) -> MetaField {
+        MetaField::new(
+            name,
+            "String",
+            MetaVisibility::Public,
+            ordinal,
+            snapshot_span(ordinal),
+            Some(format!("{name} docs")),
+        )
+        .unwrap()
+    }
+
+    fn snapshot_declaration(identity: &str, kind: MetaDeclarationKind) -> MetaDeclaration {
+        MetaDeclaration::new(
+            identity,
+            "app.models",
+            MetaVisibility::Public,
+            [MetaGenericParameter::new("T", ["Eq", "Eq"]).unwrap()],
+            [MetaBound::new("T", "std.Eq").unwrap()],
+            snapshot_span(10),
+            Some("public declaration"),
+            kind,
+        )
+        .unwrap()
+    }
+
+    fn snapshot(reverse: bool) -> MetaSnapshot {
+        let user = snapshot_declaration(
+            "User",
+            MetaDeclarationKind::record([snapshot_field("name", 1), snapshot_field("id", 0)]),
+        );
+        let state = snapshot_declaration(
+            "State",
+            MetaDeclarationKind::enumeration([
+                MetaVariant::new(
+                    "Ready",
+                    MetaVariantPayload::unit(),
+                    1,
+                    snapshot_span(20),
+                    None::<String>,
+                )
+                .unwrap(),
+                MetaVariant::new(
+                    "Busy",
+                    MetaVariantPayload::record([snapshot_field("reason", 0)]),
+                    0,
+                    snapshot_span(18),
+                    Some("busy state"),
+                )
+                .unwrap(),
+            ]),
+        );
+        let mut roots = vec![MetaRoot::new("app", "app.models").unwrap()];
+        let mut modules = vec![MetaModule::new("app.models", Some("model docs")).unwrap()];
+        let mut declarations = vec![user, state];
+        if reverse {
+            roots.reverse();
+            modules.reverse();
+            declarations.reverse();
+        }
+        MetaSnapshot::new(roots, modules, declarations).unwrap()
+    }
+
+    #[test]
+    fn meta_snapshot_is_canonical_and_round_trips_with_a_stable_hash() {
+        let first = snapshot(false);
+        let second = snapshot(true);
+        assert_eq!(first.format(), META_MODEL);
+        assert_eq!(first.roots()[0].package(), "app");
+        assert_eq!(first.roots()[0].module(), "app.models");
+        assert_eq!(first.modules()[0].identity(), "app.models");
+        assert_eq!(first.modules()[0].docs(), Some("model docs"));
+        assert_eq!(first.declarations()[0].identity(), "State");
+        assert_eq!(first.declarations()[0].module(), "app.models");
+        assert_eq!(first.declarations()[0].visibility(), MetaVisibility::Public);
+        assert_eq!(first.declarations()[0].generic_parameters()[0].name(), "T");
+        assert_eq!(
+            first.declarations()[0].generic_parameters()[0].bounds(),
+            ["Eq"]
+        );
+        assert_eq!(first.declarations()[0].bounds()[0].binder(), "T");
+        assert_eq!(
+            first.declarations()[0].bounds()[0].trait_identity(),
+            "std.Eq"
+        );
+        assert_eq!(first.declarations()[0].span(), snapshot_span(10));
+        assert_eq!(first.declarations()[0].docs(), Some("public declaration"));
+        assert_eq!(first.declarations()[0].kind().name(), "enum");
+        assert_eq!(first.declarations()[1].kind().name(), "record");
+
+        let bytes = first.canonical_bytes().unwrap();
+        assert_eq!(bytes, second.canonical_bytes().unwrap());
+        assert_eq!(first.hash().unwrap(), second.hash().unwrap());
+        assert!(String::from_utf8_lossy(&bytes).contains("tondo-meta-model-0.1/1"));
+        for forbidden in ["body", "value", "layout", "address", "gc"] {
+            assert!(!String::from_utf8_lossy(&bytes).contains(forbidden));
+        }
+        let decoded = MetaSnapshot::decode(&bytes).unwrap();
+        assert_eq!(decoded, first);
+    }
+
+    #[test]
+    fn meta_snapshot_shapes_expose_only_structural_data() {
+        let tuple = MetaVariantPayload::tuple(["Int", "String"]);
+        assert_eq!(tuple.kind(), "tuple");
+        assert_eq!(MetaVariantPayload::unit().kind(), "unit");
+        let field = snapshot_field("x", 0);
+        assert_eq!(field.name(), "x");
+        assert_eq!(field.ty(), "String");
+        assert_eq!(field.visibility(), MetaVisibility::Public);
+        assert_eq!(field.ordinal(), 0);
+        assert_eq!(field.span(), snapshot_span(0));
+        assert_eq!(field.docs(), Some("x docs"));
+
+        let variant =
+            MetaVariant::new("Tuple", tuple, 0, snapshot_span(4), Some("tuple docs")).unwrap();
+        assert_eq!(variant.name(), "Tuple");
+        assert_eq!(variant.payload().kind(), "tuple");
+        assert_eq!(variant.ordinal(), 0);
+        assert_eq!(variant.span(), snapshot_span(4));
+        assert_eq!(variant.docs(), Some("tuple docs"));
+
+        let operation = MetaOperation::new(
+            "encode",
+            "fn(Self): Bytes",
+            MetaVisibility::Public,
+            0,
+            snapshot_span(30),
+            Some("operation docs"),
+        )
+        .unwrap();
+        assert_eq!(operation.name(), "encode");
+        assert_eq!(operation.signature(), "fn(Self): Bytes");
+        assert_eq!(operation.visibility(), MetaVisibility::Public);
+        assert_eq!(operation.ordinal(), 0);
+        assert_eq!(operation.span(), snapshot_span(30));
+        assert_eq!(operation.docs(), Some("operation docs"));
+
+        let trait_declaration = MetaDeclaration::new(
+            "Codec",
+            "app.models",
+            MetaVisibility::Private,
+            std::iter::empty::<MetaGenericParameter>(),
+            std::iter::empty::<MetaBound>(),
+            snapshot_span(31),
+            None::<String>,
+            MetaDeclarationKind::trait_definition([operation]),
+        )
+        .unwrap();
+        assert_eq!(trait_declaration.visibility(), MetaVisibility::Private);
+        assert_eq!(trait_declaration.kind().name(), "trait");
+
+        let newtype = MetaDeclaration::new(
+            "UserId",
+            "app.models",
+            MetaVisibility::Public,
+            std::iter::empty::<MetaGenericParameter>(),
+            std::iter::empty::<MetaBound>(),
+            snapshot_span(32),
+            None::<String>,
+            MetaDeclarationKind::newtype("Int"),
+        )
+        .unwrap();
+        assert_eq!(newtype.kind().name(), "newtype");
+    }
+
+    #[test]
+    fn meta_snapshot_rejects_invalid_values_duplicates_and_noncanonical_bytes() {
+        assert!(matches!(
+            MetaSpan::new(0, 3, 2),
+            Err(MetaModelError::InvalidSpan { .. })
+        ));
+        assert!(matches!(
+            MetaRoot::new("bad\nroot", "main"),
+            Err(MetaModelError::InvalidValue { .. })
+        ));
+        assert!(matches!(
+            MetaField::new(
+                "x",
+                "",
+                MetaVisibility::Private,
+                0,
+                snapshot_span(0),
+                None::<String>,
+            ),
+            Err(MetaModelError::InvalidValue { .. })
+        ));
+        let duplicate_root = MetaRoot::new("app", "main").unwrap();
+        let duplicate = MetaSnapshot::new(
+            [duplicate_root.clone(), duplicate_root],
+            std::iter::empty::<MetaModule>(),
+            std::iter::empty::<MetaDeclaration>(),
+        )
+        .unwrap_err();
+        assert!(duplicate.to_string().contains("duplicate root"));
+
+        let mut duplicate_json: serde_json::Value =
+            serde_json::from_slice(&snapshot(false).canonical_bytes().unwrap()).unwrap();
+        let field = duplicate_json["declarations"][1]["kind"]["Record"][0].clone();
+        duplicate_json["declarations"][1]["kind"]["Record"] =
+            serde_json::json!([field.clone(), field]);
+        let duplicate_fields =
+            MetaSnapshot::decode(&serde_json::to_vec(&duplicate_json).unwrap()).unwrap_err();
+        assert!(duplicate_fields.to_string().contains("duplicate field"));
+
+        let mut unsupported = serde_json::to_vec(&serde_json::json!({
+            "format": "tondo-meta-model-0.2/1",
+            "roots": [],
+            "modules": [],
+            "declarations": []
+        }))
+        .unwrap();
+        assert!(matches!(
+            MetaSnapshot::decode(&unsupported),
+            Err(MetaModelError::UnsupportedFormat(_))
+        ));
+        unsupported.extend_from_slice(b" ");
+        assert!(matches!(
+            MetaSnapshot::decode(&unsupported),
+            Err(MetaModelError::UnsupportedFormat(_))
+        ));
+
+        let canonical = snapshot(false).canonical_bytes().unwrap();
+        let mut reordered = canonical.clone();
+        reordered.extend_from_slice(b" ");
+        assert_eq!(
+            MetaSnapshot::decode(&reordered),
+            Err(MetaModelError::NonCanonicalEncoding)
+        );
+        assert!(
+            MetaModelError::NonCanonicalEncoding
+                .to_string()
+                .contains("canonical")
+        );
+        assert!(
+            MetaModelError::Serialization("x".into())
+                .to_string()
+                .contains("encoding")
         );
     }
 }
