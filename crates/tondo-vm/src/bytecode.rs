@@ -1103,6 +1103,9 @@ pub enum BytecodeBootstrapHostFunction {
     TestingSkip,
     TestingAttach,
     TestingSnapshot,
+    TestingRunLeaf,
+    TestingRunSuite,
+    TestingBeginSuiteCleanup,
 }
 
 impl BytecodeBootstrapHostFunction {
@@ -1127,6 +1130,9 @@ impl BytecodeBootstrapHostFunction {
             Self::TestingSkip => "std.testing.skip",
             Self::TestingAttach => "std.testing.attach",
             Self::TestingSnapshot => "std.testing.snapshot",
+            Self::TestingRunLeaf => "std.testing.__runLeaf",
+            Self::TestingRunSuite => "std.testing.__runSuite",
+            Self::TestingBeginSuiteCleanup => "std.testing.__beginSuiteCleanup",
         }
     }
 }

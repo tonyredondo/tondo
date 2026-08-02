@@ -687,6 +687,9 @@ pub enum MirBootstrapHostFunction {
     TestingSkip,
     TestingAttach,
     TestingSnapshot,
+    TestingRunLeaf,
+    TestingRunSuite,
+    TestingBeginSuiteCleanup,
 }
 
 #[derive(Debug, Clone)]

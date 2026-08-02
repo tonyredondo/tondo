@@ -344,6 +344,28 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 unit,
             )?;
+            let async_leaf =
+                self.interner
+                    .function(FunctionType::new(true, false, Vec::new(), None, unit))?;
+            for function in [
+                HirBootstrapHostFunction::TestingRunLeaf,
+                HirBootstrapHostFunction::TestingRunSuite,
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(string, false), (async_leaf, false)],
+                    None,
+                    unit,
+                )?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingBeginSuiteCleanup,
+                Vec::new(),
+                None,
+                unit,
+            )?;
         }
 
         if time_referenced {

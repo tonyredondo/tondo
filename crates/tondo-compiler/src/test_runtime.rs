@@ -32,6 +32,7 @@ pub enum RuntimeStatus {
     Timeout,
     Infrastructure,
     BlockedSetup,
+    BlockedSkip,
 }
 
 /// The clock provider is selected once at the worker boundary. User bytecode
@@ -46,6 +47,7 @@ pub enum ClockProvider {
 /// copied into a Tondo value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WorkerInfo {
+    invocation_id: u64,
     worker_id: u64,
     heap_id: u64,
     executor_id: u64,
@@ -54,6 +56,10 @@ pub struct WorkerInfo {
 }
 
 impl WorkerInfo {
+    pub const fn invocation_id(self) -> u64 {
+        self.invocation_id
+    }
+
     pub const fn worker_id(self) -> u64 {
         self.worker_id
     }
@@ -117,6 +123,8 @@ pub enum RunError {
     ResourceLimit { kind: String },
     Timeout,
     Infrastructure { message: String },
+    BlockedSetup { suite: String },
+    BlockedSkip { suite: String },
     Skip { reason: String },
     ForcedTermination { message: String },
     Control(ControlError),
@@ -130,6 +138,8 @@ impl RunError {
             Self::ResourceLimit { .. }
             | Self::Timeout
             | Self::Infrastructure { .. }
+            | Self::BlockedSetup { .. }
+            | Self::BlockedSkip { .. }
             | Self::Skip { .. }
             | Self::ForcedTermination { .. } => None,
         }
@@ -179,6 +189,10 @@ impl std::fmt::Display for RunError {
             Self::ResourceLimit { kind } => write!(formatter, "resource limit: {kind}"),
             Self::Timeout => formatter.write_str("test worker timed out"),
             Self::Infrastructure { message } => write!(formatter, "infrastructure: {message}"),
+            Self::BlockedSetup { suite } => write!(formatter, "blocked by suite `{suite}`"),
+            Self::BlockedSkip { suite } => {
+                write!(formatter, "blocked by skipped suite `{suite}`")
+            }
             Self::Skip { reason } => write!(formatter, "skipped: {reason}"),
             Self::ForcedTermination { message } => {
                 write!(formatter, "forced termination: {message}")
@@ -273,6 +287,7 @@ impl Error for RuntimeConfigError {}
 /// worker or envelope.
 pub struct LeafProgram {
     id: String,
+    retry_group: Option<String>,
     expected_snapshots: BTreeMap<String, String>,
     snapshot_update: bool,
     body: Arc<LeafBody>,
@@ -295,6 +310,7 @@ impl Clone for LeafProgram {
     fn clone(&self) -> Self {
         Self {
             id: self.id.clone(),
+            retry_group: self.retry_group.clone(),
             expected_snapshots: self.expected_snapshots.clone(),
             snapshot_update: self.snapshot_update,
             body: self.body.clone(),
@@ -309,6 +325,7 @@ impl LeafProgram {
     ) -> Self {
         Self {
             id: id.into(),
+            retry_group: None,
             expected_snapshots: BTreeMap::new(),
             snapshot_update: false,
             body: Arc::new(body),
@@ -326,6 +343,16 @@ impl LeafProgram {
     pub fn with_snapshot_update(mut self, enabled: bool) -> Self {
         self.snapshot_update = enabled;
         self
+    }
+
+    /// Associates leaves that must be retried as one suite participation.
+    pub fn with_retry_group(mut self, group: impl Into<String>) -> Self {
+        self.retry_group = Some(group.into());
+        self
+    }
+
+    pub fn retry_group(&self) -> Option<&str> {
+        self.retry_group.as_deref()
     }
 
     pub fn id(&self) -> &str {
@@ -591,9 +618,15 @@ impl std::fmt::Debug for WorkerBootstrap {
 }
 
 impl WorkerBootstrap {
-    fn new(registry: Arc<ResourceRegistry>, config: RuntimeConfig, serial: u64) -> Self {
+    fn new(
+        registry: Arc<ResourceRegistry>,
+        config: RuntimeConfig,
+        serial: u64,
+        invocation: u64,
+    ) -> Self {
         let worker_id = serial.saturating_mul(3).saturating_add(1);
         let info = WorkerInfo {
+            invocation_id: invocation,
             worker_id,
             heap_id: worker_id.saturating_add(1),
             executor_id: worker_id.saturating_add(2),
@@ -736,6 +769,7 @@ impl RuntimeReport {
 pub struct RuntimeRunner {
     config: RuntimeConfig,
     serial: AtomicU64,
+    invocation_serial: AtomicU64,
 }
 
 impl std::fmt::Debug for RuntimeRunner {
@@ -755,6 +789,7 @@ impl RuntimeRunner {
         Ok(Self {
             config,
             serial: AtomicU64::new(0),
+            invocation_serial: AtomicU64::new(0),
         })
     }
 
@@ -774,6 +809,7 @@ impl RuntimeRunner {
         }
         let registry = Arc::new(ResourceRegistry::default());
         let config = self.config;
+        let invocation = self.invocation_serial.fetch_add(1, Ordering::Relaxed) + 1;
         let mut results = Vec::with_capacity(programs.len());
         thread::scope(|scope| {
             let mut pending: Vec<thread::ScopedJoinHandle<'_, LeafResult>> =
@@ -786,7 +822,9 @@ impl RuntimeRunner {
                 }
                 let registry = registry.clone();
                 let serial = self.serial.fetch_add(1, Ordering::Relaxed);
-                pending.push(scope.spawn(move || run_leaf(program, config, registry, serial)));
+                pending.push(
+                    scope.spawn(move || run_leaf(program, config, registry, serial, invocation)),
+                );
             }
             for handle in pending {
                 results.push(handle.join().map_err(|_| RuntimeError::WorkerJoin)?);
@@ -806,8 +844,9 @@ fn run_leaf(
     config: RuntimeConfig,
     registry: Arc<ResourceRegistry>,
     serial: u64,
+    invocation: u64,
 ) -> LeafResult {
-    let mut bootstrap = WorkerBootstrap::new(registry, config, serial);
+    let mut bootstrap = WorkerBootstrap::new(registry, config, serial, invocation);
     let worker = bootstrap.info();
     let context = match bootstrap.initialize() {
         Ok(context) => context,
@@ -961,6 +1000,8 @@ fn classify(error: &Option<RunError>, terminal: Option<&Terminal>, forced: bool)
             | RunError::Control(ControlError::CleanupFailure { .. }) => RuntimeStatus::FailedPanic,
             RunError::Error { .. } => RuntimeStatus::FailedError,
             RunError::Infrastructure { .. } | RunError::Control(_) => RuntimeStatus::Infrastructure,
+            RunError::BlockedSetup { .. } => RuntimeStatus::BlockedSetup,
+            RunError::BlockedSkip { .. } => RuntimeStatus::BlockedSkip,
         };
     }
     match terminal {
@@ -1060,6 +1101,7 @@ mod tests {
         let runner = RuntimeRunner {
             config,
             serial: AtomicU64::new(0),
+            invocation_serial: AtomicU64::new(0),
         };
         let report = runner.run(programs).unwrap();
         assert_eq!(
@@ -1294,7 +1336,7 @@ mod tests {
     fn bootstrap_has_one_initialization_and_one_revocation_phase() {
         let config = config();
         let registry = Arc::new(ResourceRegistry::default());
-        let mut bootstrap = WorkerBootstrap::new(registry, config, 77);
+        let mut bootstrap = WorkerBootstrap::new(registry, config, 77, 1);
         assert_eq!(bootstrap.phase(), BootstrapPhase::Fresh);
         let context = bootstrap.initialize().unwrap();
         assert_eq!(bootstrap.phase(), BootstrapPhase::Initialized);
@@ -1397,6 +1439,18 @@ mod tests {
             RunError::from_control(ControlError::Skip { reason: "x".into() }),
             RunError::Skip { .. }
         ));
+        let blocked = RunError::BlockedSkip {
+            suite: "root::skipped".into(),
+        };
+        assert_eq!(blocked.code(), None);
+        assert_eq!(
+            blocked.to_string(),
+            "blocked by skipped suite `root::skipped`"
+        );
+        assert_eq!(
+            classify(&Some(blocked), None, false),
+            RuntimeStatus::BlockedSkip
+        );
     }
 
     #[test]

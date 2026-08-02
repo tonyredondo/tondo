@@ -5393,6 +5393,26 @@ impl Verifier<'_> {
                             })
                             && self.is_scalar(operation.ty, BytecodeScalarType::Unit)
                     }
+                    BytecodeBootstrapHostFunction::TestingRunLeaf
+                    | BytecodeBootstrapHostFunction::TestingRunSuite => {
+                        arguments.len() == 2
+                            && self.is_scalar(arguments[0].ty, BytecodeScalarType::String)
+                            && matches!(
+                                &self.ty(arguments[1].ty, context)?.kind,
+                                BytecodeTypeKind::Function(function)
+                                    if function.is_async
+                                        && function.parameters.is_empty()
+                                        && self.is_scalar(
+                                            function.outcome,
+                                            BytecodeScalarType::Unit,
+                                        )
+                            )
+                            && self.is_scalar(operation.ty, BytecodeScalarType::Unit)
+                    }
+                    BytecodeBootstrapHostFunction::TestingBeginSuiteCleanup => {
+                        arguments.is_empty()
+                            && self.is_scalar(operation.ty, BytecodeScalarType::Unit)
+                    }
                 };
                 if !valid {
                     return Err(operation_error(context));
@@ -12560,7 +12580,58 @@ mod tests {
                 arguments: vec![ids.string, ids.string],
             },
         );
+        let async_unit = push_type(
+            &mut program,
+            "async fn()",
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: true,
+                is_unsafe: false,
+                parameters: Vec::new(),
+                variadic: None,
+                outcome: ids.unit,
+            }),
+        );
+        let sync_unit = push_type(
+            &mut program,
+            "fn()",
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: false,
+                is_unsafe: false,
+                parameters: Vec::new(),
+                variadic: None,
+                outcome: ids.unit,
+            }),
+        );
+        let async_argument = push_type(
+            &mut program,
+            "async fn(Int)",
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: true,
+                is_unsafe: false,
+                parameters: vec![BytecodeFunctionParameter {
+                    mode: BytecodeParameterMode::Value,
+                    ty: ids.int,
+                }],
+                variadic: None,
+                outcome: ids.unit,
+            }),
+        );
+        let async_int = push_type(
+            &mut program,
+            "async fn(): Int",
+            BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: true,
+                is_unsafe: false,
+                parameters: Vec::new(),
+                variadic: None,
+                outcome: ids.int,
+            }),
+        );
         let mut function = projection_function(&program, ids);
+        let async_unit_slot = function.slots.len() as u32 + 11;
+        let sync_unit_slot = async_unit_slot + 1;
+        let async_argument_slot = async_unit_slot + 2;
+        let async_int_slot = async_unit_slot + 3;
         function.slots.extend(
             [
                 array_string,
@@ -12574,6 +12645,10 @@ mod tests {
                 pointer_string,
                 uint64,
                 string_map,
+                async_unit,
+                sync_unit,
+                async_argument,
+                async_int,
             ]
             .into_iter()
             .map(|ty| BytecodeSlot {
@@ -12837,6 +12912,21 @@ mod tests {
                 ids.unit,
                 vec![string(), string()],
             ),
+            host(
+                BytecodeBootstrapHostFunction::TestingRunLeaf,
+                ids.unit,
+                vec![string(), move_slot(async_unit_slot, async_unit)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::TestingRunSuite,
+                ids.unit,
+                vec![string(), move_slot(async_unit_slot, async_unit)],
+            ),
+            host(
+                BytecodeBootstrapHostFunction::TestingBeginSuiteCleanup,
+                ids.unit,
+                Vec::new(),
+            ),
         ];
         for operation in valid {
             verifier
@@ -12849,7 +12939,7 @@ mod tests {
                 .unwrap();
         }
 
-        let invalid = [
+        let invalid = vec![
             (
                 BytecodeOperation {
                     ty: ids.map,
@@ -12950,6 +13040,78 @@ mod tests {
                     BytecodeBootstrapHostFunction::ConsolePrint,
                     ids.unit,
                     vec![integer()],
+                ),
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                host(
+                    BytecodeBootstrapHostFunction::TestingRunLeaf,
+                    ids.unit,
+                    vec![string()],
+                ),
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                host(
+                    BytecodeBootstrapHostFunction::TestingRunLeaf,
+                    ids.unit,
+                    vec![integer(), move_slot(async_unit_slot, async_unit)],
+                ),
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                host(
+                    BytecodeBootstrapHostFunction::TestingRunLeaf,
+                    ids.unit,
+                    vec![string(), move_slot(sync_unit_slot, sync_unit)],
+                ),
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                host(
+                    BytecodeBootstrapHostFunction::TestingRunLeaf,
+                    ids.unit,
+                    vec![string(), move_slot(async_argument_slot, async_argument)],
+                ),
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                host(
+                    BytecodeBootstrapHostFunction::TestingRunLeaf,
+                    ids.unit,
+                    vec![string(), move_slot(async_int_slot, async_int)],
+                ),
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                host(
+                    BytecodeBootstrapHostFunction::TestingRunLeaf,
+                    ids.int,
+                    vec![string(), move_slot(async_unit_slot, async_unit)],
+                ),
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                host(
+                    BytecodeBootstrapHostFunction::TestingBeginSuiteCleanup,
+                    ids.unit,
+                    vec![string()],
+                ),
+                OperationContext::Immediate,
+                "fallible operation operands",
+            ),
+            (
+                host(
+                    BytecodeBootstrapHostFunction::TestingBeginSuiteCleanup,
+                    ids.int,
+                    Vec::new(),
                 ),
                 OperationContext::Immediate,
                 "fallible operation operands",

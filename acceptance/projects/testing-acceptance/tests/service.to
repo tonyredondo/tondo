@@ -26,6 +26,7 @@ test integration_root {
 }
 
 suite shared_service {
+    testing.log("shared setup")
     let port = 8080
 
     test starts {

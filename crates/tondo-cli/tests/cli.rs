@@ -500,9 +500,10 @@ fn hidden_worker_reports_infrastructure_without_leaking_process_errors() {
         .unwrap();
     assert!(output.status.success());
     let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(response["status"], "infrastructure");
+    assert_eq!(response["format"], "tondo-test-worker-batch/1");
+    assert_eq!(response["responses"][0][1]["status"], "infrastructure");
     assert!(
-        response["error"]["message"]
+        response["responses"][0][1]["error"]["message"]
             .as_str()
             .unwrap()
             .contains("cannot resolve project directory")
@@ -531,7 +532,7 @@ fn test_command_reports_failures_and_publishes_json_and_junit() {
 
     assert_eq!(output.status.code(), Some(1));
     assert!(
-        String::from_utf8_lossy(&output.stdout).contains("FAIL cli::integration::tests::smoke")
+        String::from_utf8_lossy(&output.stdout).contains("PANIC cli::integration::tests::smoke")
     );
     assert!(String::from_utf8_lossy(&json_bytes).contains("tondo-test-report-0.1/7"));
     assert!(String::from_utf8_lossy(&junit_bytes).contains("<testsuites"));

@@ -296,6 +296,8 @@ pub struct CompilationRequest {
     warning_profiles: BTreeSet<WarningProfile>,
     test_entry: Option<String>,
     test_envelope: Option<crate::test_control::EnvelopeHandle>,
+    test_participation_entries: Vec<String>,
+    test_participation: Option<crate::test_backend::TestParticipation>,
 }
 
 impl CompilationRequest {
@@ -353,6 +355,8 @@ impl CompilationRequest {
             warning_profiles: BTreeSet::new(),
             test_entry: None,
             test_envelope: None,
+            test_participation_entries: Vec::new(),
+            test_participation: None,
         })
     }
 
@@ -394,6 +398,16 @@ impl CompilationRequest {
     /// Ordinary compilation requests never carry this handle.
     pub fn with_test_envelope(mut self, envelope: crate::test_control::EnvelopeHandle) -> Self {
         self.test_envelope = Some(envelope);
+        self
+    }
+
+    pub fn with_test_participation(
+        mut self,
+        entries: impl IntoIterator<Item = String>,
+        participation: crate::test_backend::TestParticipation,
+    ) -> Self {
+        self.test_participation_entries = entries.into_iter().collect();
+        self.test_participation = Some(participation);
         self
     }
 
@@ -484,6 +498,51 @@ impl CompilationRequest {
         .with_warning_profiles(self.warning_profiles.clone())
         .with_test_entry(entry.id().to_owned());
         Ok(request)
+    }
+
+    /// Creates one test request for every selected leaf in the same source
+    /// file, preserving suite scopes inside a single VM root.
+    pub fn for_test_participation(
+        &self,
+        entries: &[test_backend::TestEntry],
+        participation: test_backend::TestParticipation,
+    ) -> Result<Self, DriverError> {
+        let first = entries
+            .first()
+            .ok_or_else(|| DriverError::Invariant("test participation cannot be empty".into()))?;
+        if entries.iter().any(|entry| entry.file() != first.file()) {
+            return Err(DriverError::Invariant(
+                "test participation crosses source files".into(),
+            ));
+        }
+        let root = first.file();
+        let sources = clone_source_database(&self.sources, None)?;
+        let mut packages = self.packages.clone();
+        packages.enable_bootstrap_testing()?;
+        packages.validate_sources(&sources, root)?;
+        CompilationRequest::new(
+            Operation::Test,
+            self.edition,
+            self.target.clone(),
+            self.profile,
+            self.capabilities.clone(),
+            self.diagnostic_format,
+            SourceForm::Module,
+            self.limits,
+            packages,
+            sources,
+            root,
+        )
+        .map(|request| {
+            request
+                .with_program_arguments(self.program_arguments.clone())
+                .with_declared_build_inputs(self.build_inputs.clone())
+                .with_warning_profiles(self.warning_profiles.clone())
+                .with_test_participation(
+                    entries.iter().map(|entry| entry.id().to_owned()),
+                    participation,
+                )
+        })
     }
 }
 
@@ -1125,6 +1184,9 @@ pub fn execute(request: CompilationRequest) -> Result<CompilationOutput, DriverE
                 if let Some(envelope) = request.test_envelope.clone() {
                     host.install_testing_envelope(envelope);
                 }
+                if let Some(participation) = request.test_participation.clone() {
+                    host.install_testing_participation(participation);
+                }
                 let execution = match execute_with_limits(
                     &bytecode,
                     function,
@@ -1371,14 +1433,29 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
         .package(root_module.package())
         .map(|package| package.local_name().as_str())
         .unwrap_or("main");
-    let lowered = match test_backend::lower_selected(
-        &request.sources,
-        request.root,
-        parsed.cst(),
-        root_module.package(),
-        package_name,
-        request.test_entry(),
-    ) {
+    let lowered_result = if request.test_participation_entries.is_empty() {
+        test_backend::lower_selected(
+            &request.sources,
+            request.root,
+            parsed.cst(),
+            root_module.package(),
+            package_name,
+            request.test_entry(),
+        )
+    } else {
+        test_backend::lower_participation(
+            &request.sources,
+            request.root,
+            parsed.cst(),
+            root_module.package(),
+            package_name,
+            request
+                .test_participation_entries
+                .iter()
+                .map(String::as_str),
+        )
+    };
+    let lowered = match lowered_result {
         Ok(lowered) => lowered,
         Err(test_backend::TestBackendError::Source(error)) => return Err(error.into()),
         Err(test_backend::TestBackendError::ProductionMain) => {
@@ -1394,10 +1471,15 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
     };
     let sources = clone_source_database(
         &request.sources,
-        Some((request.root, std::sync::Arc::from(lowered))),
+        Some((
+            request.root,
+            std::sync::Arc::from(lowered),
+            crate::source::SourceOrigin::GeneratedTesting,
+        )),
     )?;
     let root = request.root;
     let test_envelope = request.test_envelope.clone();
+    let test_participation = request.test_participation.clone();
     let mut nested = CompilationRequest::new(
         Operation::Run,
         request.edition,
@@ -1417,26 +1499,33 @@ fn execute_test(request: CompilationRequest) -> Result<CompilationOutput, Driver
     if let Some(envelope) = test_envelope {
         nested = nested.with_test_envelope(envelope);
     }
+    if let Some(participation) = test_participation {
+        nested.test_participation = Some(participation);
+    }
     nested.documentation_fixture = request.documentation_fixture;
     execute(nested)
 }
 
 fn clone_source_database(
     original: &SourceDatabase,
-    replacement: Option<(FileId, std::sync::Arc<[u8]>)>,
+    replacement: Option<(FileId, std::sync::Arc<[u8]>, crate::source::SourceOrigin)>,
 ) -> Result<SourceDatabase, DriverError> {
     let mut sources = SourceDatabase::new();
     for (file, source) in original.iter() {
         let bytes = replacement
             .as_ref()
-            .filter(|(replacement_file, _)| *replacement_file == file)
-            .map(|(_, bytes)| bytes.clone())
+            .filter(|(replacement_file, _, _)| *replacement_file == file)
+            .map(|(_, bytes, _)| bytes.clone())
             .unwrap_or_else(|| std::sync::Arc::from(source.bytes()));
+        let origin = replacement
+            .as_ref()
+            .filter(|(replacement_file, _, _)| *replacement_file == file)
+            .map_or(source.origin(), |(_, _, origin)| *origin);
         let actual = sources.add(crate::source::SourceInput::new(
             source.source_id().clone(),
             source.module().clone(),
             source.path().clone(),
-            source.origin(),
+            origin,
             bytes,
         ))?;
         if actual != file {
@@ -1838,6 +1927,7 @@ fn resource_limit_diagnostic(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::sync::Arc;
 
     use super::*;
@@ -1887,7 +1977,12 @@ mod tests {
             ResourceLimits::default(),
         );
         let output = execute(request).unwrap();
-        assert_eq!(output.status(), CompilationStatus::Success);
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
         assert_eq!(output.exit_code(), 0);
         assert!(output.diagnostics().is_empty());
     }
@@ -1909,6 +2004,56 @@ mod tests {
                 .diagnostics()
                 .iter()
                 .any(|diagnostic| diagnostic.code() == "P0007")
+        );
+    }
+
+    #[test]
+    fn test_participation_preserves_suite_scope_and_isolates_leaf_panics() {
+        let base = operation_request(
+            Operation::Check,
+            b"import std.testing\nsuite shared {\n testing.log(\"setup once\")\n let value = 42\n test failing { assert(false) }\n test passing { assert(value == 42) }\n}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let entries = discover_tests(&base).unwrap();
+        let participation = test_backend::TestParticipation::new(
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+            BTreeMap::new(),
+            false,
+        );
+        let request = base
+            .for_test_participation(&entries, participation.clone())
+            .unwrap();
+        let output = execute(request).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        let executions = participation.executions().unwrap();
+        assert_eq!(
+            executions
+                .iter()
+                .filter(|execution| execution.kind == test_backend::TestExecutionKind::Leaf)
+                .count(),
+            2
+        );
+        assert!(
+            executions
+                .iter()
+                .any(|execution| execution.id.ends_with("::failing") && execution.panic.is_some())
+        );
+        let suite = executions
+            .iter()
+            .find(|execution| execution.kind == test_backend::TestExecutionKind::Suite)
+            .unwrap();
+        assert_eq!(suite.report.logs().len(), 1);
+        assert_eq!(suite.report.logs()[0].message(), "setup once");
+        assert!(
+            executions
+                .iter()
+                .any(|execution| execution.id.ends_with("::passing") && execution.panic.is_none())
         );
     }
 

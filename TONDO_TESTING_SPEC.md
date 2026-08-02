@@ -1019,6 +1019,16 @@ del runner, no stdout ni stderr. El dominio virtual tampoco concede una
 capability de host ausente: sustituye únicamente el proveedor monotónico de las
 APIs temporales que ya fueron admitidas para el target.
 
+El frontend reserva los identificadores que comienzan por `__tondo` dentro de
+fuentes de test. Ese prefijo pertenece exclusivamente a nombres generados por
+el compilador y no forma parte de la API de `std.testing`. El origen sellado
+`GeneratedTesting`, no la ortografía por sí sola, autoriza sus operaciones
+internas: copiar un nombre interno a una fuente ordinaria se rechaza antes de
+emitir bytecode. El lowerer genera una única participación con el árbol
+seleccionado; setup, closures de hoja y cleanup atraviesan HIR, MIR, bytecode y
+VM comunes. El runner no reemplaza ese código por callbacks o por una máquina
+de lifecycle paralela.
+
 ### 7.3 Lifecycle de suite
 
 En cada participación de una suite en la ronda inicial o en una unidad de retry,

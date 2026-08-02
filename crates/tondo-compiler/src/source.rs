@@ -292,6 +292,8 @@ impl Span {
 pub enum SourceOrigin {
     Physical,
     Virtual,
+    /// Compiler-owned source produced from `suite`/`test` declarations.
+    GeneratedTesting,
 }
 
 #[derive(Debug, Clone)]

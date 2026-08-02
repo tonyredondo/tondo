@@ -9,8 +9,11 @@ use std::time::{Duration, Instant as StdInstant};
 #[cfg(unix)]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
-use tondo_vm::runtime::{RuntimeHostValueKind, RuntimeValue, VmError, VmHost};
+use tondo_vm::runtime::{
+    RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
+};
 
+use crate::test_backend::{TestExecutionKind, TestParticipation};
 use crate::test_control::{ControlError, EnvelopeHandle};
 
 const INT_MIN: i128 = i64::MIN as i128;
@@ -166,6 +169,8 @@ pub(crate) struct BootstrapHost {
     max_time_resources: usize,
     time_resources: usize,
     testing: Option<EnvelopeHandle>,
+    testing_participation: Option<TestParticipation>,
+    testing_stack: Vec<Option<EnvelopeHandle>>,
 }
 
 impl BootstrapHost {
@@ -211,11 +216,17 @@ impl BootstrapHost {
             max_time_resources,
             time_resources: 0,
             testing: None,
+            testing_participation: None,
+            testing_stack: Vec::new(),
         }
     }
 
     pub(crate) fn install_testing_envelope(&mut self, envelope: EnvelopeHandle) {
         self.testing = Some(envelope);
+    }
+
+    pub(crate) fn install_testing_participation(&mut self, participation: TestParticipation) {
+        self.testing_participation = Some(participation);
     }
 
     fn testing_envelope(&self) -> Result<EnvelopeHandle, VmError> {
@@ -1527,6 +1538,58 @@ impl VmHost for BootstrapHost {
             self.values.remove(id);
         }
         Ok(())
+    }
+
+    fn begin_test_node(&mut self, kind: VmTestNodeKind, id: &str) -> Result<(), VmError> {
+        let participation = self.testing_participation.clone().ok_or_else(|| {
+            VmError::Host("test node boundary has no installed participation".into())
+        })?;
+        let kind = match kind {
+            VmTestNodeKind::Leaf => TestExecutionKind::Leaf,
+            VmTestNodeKind::Suite => TestExecutionKind::Suite,
+        };
+        let envelope = participation.envelope(id, kind).map_err(VmError::Host)?;
+        self.testing_stack.push(self.testing.take());
+        self.testing = Some(envelope);
+        Ok(())
+    }
+
+    fn finish_test_node(
+        &mut self,
+        kind: VmTestNodeKind,
+        id: &str,
+        outcome: VmTestNodeOutcome,
+    ) -> Result<(), VmError> {
+        let participation = self.testing_participation.clone().ok_or_else(|| {
+            VmError::Host("test node boundary has no installed participation".into())
+        })?;
+        let envelope = self
+            .testing
+            .take()
+            .ok_or_else(|| VmError::Host(format!("test node `{id}` lost its evidence envelope")))?;
+        let previous = self
+            .testing_stack
+            .pop()
+            .ok_or_else(|| VmError::Host(format!("test node `{id}` has no enclosing envelope")))?;
+        self.testing = previous;
+        let kind = match kind {
+            VmTestNodeKind::Leaf => TestExecutionKind::Leaf,
+            VmTestNodeKind::Suite => TestExecutionKind::Suite,
+        };
+        let panic = match outcome {
+            VmTestNodeOutcome::Passed => None,
+            VmTestNodeOutcome::Panicked(panic) => Some(panic),
+        };
+        participation
+            .finish(id, kind, envelope, panic)
+            .map_err(VmError::Host)
+    }
+
+    fn begin_test_suite_cleanup(&mut self) -> Result<(), VmError> {
+        let envelope = self.testing_envelope()?;
+        envelope
+            .set_phase(crate::test_control::ExecutionPhase::Cleanup)
+            .map_err(|error| VmError::Host(error.to_string()))
     }
 }
 

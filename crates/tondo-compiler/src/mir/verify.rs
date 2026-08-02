@@ -2851,6 +2851,24 @@ impl Verifier<'_> {
                             })
                             && operation.ty == self.hir.interner().scalar(ScalarType::Unit)
                     }
+                    super::MirBootstrapHostFunction::TestingRunLeaf
+                    | super::MirBootstrapHostFunction::TestingRunSuite => {
+                        arguments.len() == 2
+                            && arguments[0].ty == self.hir.interner().scalar(ScalarType::String)
+                            && matches!(
+                                self.kind(arguments[1].ty, context)?,
+                                TypeKind::Function(function)
+                                    if function.is_async()
+                                        && function.parameters().is_empty()
+                                        && function.outcome()
+                                            == self.hir.interner().scalar(ScalarType::Unit)
+                            )
+                            && operation.ty == self.hir.interner().scalar(ScalarType::Unit)
+                    }
+                    super::MirBootstrapHostFunction::TestingBeginSuiteCleanup => {
+                        arguments.is_empty()
+                            && operation.ty == self.hir.interner().scalar(ScalarType::Unit)
+                    }
                 };
                 if !valid {
                     return Err(MirInvariantError::new(
@@ -12442,6 +12460,132 @@ mod tests {
                 }
             }
             verify_mir(&resolved, &hir, &mir).unwrap();
+        }
+    }
+
+    #[test]
+    fn testing_suite_boundary_contracts_reject_every_invalid_shape() {
+        const SOURCE: &str = "import std.console\n\
+             fn operations(\n\
+                 text: String,\n\
+                 body: async fn(),\n\
+                 syncBody: fn(),\n\
+                 argumentBody: async fn(Int),\n\
+                 valueBody: async fn(): Int,\n\
+                 number: Int,\n\
+             ) { console.print(text) }\n";
+        let cases = [
+            (
+                MirBootstrapHostFunction::TestingRunLeaf,
+                &[0, 1][..],
+                ScalarType::Unit,
+                true,
+            ),
+            (
+                MirBootstrapHostFunction::TestingRunSuite,
+                &[0, 1][..],
+                ScalarType::Unit,
+                true,
+            ),
+            (
+                MirBootstrapHostFunction::TestingBeginSuiteCleanup,
+                &[][..],
+                ScalarType::Unit,
+                true,
+            ),
+            (
+                MirBootstrapHostFunction::TestingRunLeaf,
+                &[0][..],
+                ScalarType::Unit,
+                false,
+            ),
+            (
+                MirBootstrapHostFunction::TestingRunLeaf,
+                &[5, 1][..],
+                ScalarType::Unit,
+                false,
+            ),
+            (
+                MirBootstrapHostFunction::TestingRunLeaf,
+                &[0, 2][..],
+                ScalarType::Unit,
+                false,
+            ),
+            (
+                MirBootstrapHostFunction::TestingRunLeaf,
+                &[0, 3][..],
+                ScalarType::Unit,
+                false,
+            ),
+            (
+                MirBootstrapHostFunction::TestingRunLeaf,
+                &[0, 4][..],
+                ScalarType::Unit,
+                false,
+            ),
+            (
+                MirBootstrapHostFunction::TestingRunLeaf,
+                &[0, 1][..],
+                ScalarType::Int,
+                false,
+            ),
+            (
+                MirBootstrapHostFunction::TestingBeginSuiteCleanup,
+                &[0][..],
+                ScalarType::Unit,
+                false,
+            ),
+            (
+                MirBootstrapHostFunction::TestingBeginSuiteCleanup,
+                &[][..],
+                ScalarType::Int,
+                false,
+            ),
+        ];
+
+        for (index, (host_function, argument_parameters, outcome, valid)) in
+            cases.into_iter().enumerate()
+        {
+            let (resolved, hir, mut mir) = checked_mir(SOURCE);
+            let operations = MirFunctionId::Callable(callable_named(&resolved, "operations"));
+            let parameters = mir.functions[&operations].parameters.clone();
+            let arguments = argument_parameters
+                .iter()
+                .map(|parameter| {
+                    let local = parameters[*parameter];
+                    let ty = mir.functions[&operations].locals[local.0 as usize].ty;
+                    MirOperand {
+                        ty,
+                        kind: MirOperandKind::Copy(MirPlace {
+                            local,
+                            ty,
+                            projections: Vec::new(),
+                            source_loan: None,
+                        }),
+                    }
+                })
+                .collect();
+            let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
+                matches!(kind, MirOperationKind::BootstrapHostCall { .. })
+            });
+            operation.ty = hir.interner().scalar(outcome);
+            operation.kind = MirOperationKind::BootstrapHostCall {
+                function: host_function,
+                arguments,
+            };
+
+            let result = verify_mir(&resolved, &hir, &mir);
+            if valid {
+                result.unwrap_or_else(|error| panic!("valid suite boundary case {index}: {error}"));
+            } else {
+                let error = result.unwrap_err();
+                assert!(
+                    error
+                        .message()
+                        .contains("bootstrap host operation does not match its closed contract"),
+                    "invalid suite boundary case {index}: {error}"
+                );
+            }
         }
     }
 

@@ -36,7 +36,8 @@ impl RetryCause {
             | RuntimeStatus::Skipped
             | RuntimeStatus::ResourceLimit
             | RuntimeStatus::Infrastructure
-            | RuntimeStatus::BlockedSetup => None,
+            | RuntimeStatus::BlockedSetup
+            | RuntimeStatus::BlockedSkip => None,
         }
     }
 }
@@ -602,6 +603,10 @@ impl RetryCampaign {
     }
 
     pub fn run(&self, programs: Vec<LeafProgram>) -> Result<RetryReport, RetryError> {
+        let execution_order = programs
+            .iter()
+            .map(|program| program.id().to_owned())
+            .collect::<Vec<_>>();
         let by_id = programs
             .iter()
             .map(|program| (program.id().to_owned(), program.clone()))
@@ -632,9 +637,24 @@ impl RetryCampaign {
             .collect::<Vec<_>>();
         let mut rounds = 0;
         for round in 1..=self.policy.max_additional_rounds {
-            let ids = statuses
+            let failed = statuses
                 .iter()
                 .filter_map(|(id, status)| RetryCause::from_status(*status).map(|_| id.clone()))
+                .collect::<BTreeSet<_>>();
+            let failed_groups = failed
+                .iter()
+                .filter_map(|id| by_id.get(id).and_then(LeafProgram::retry_group))
+                .collect::<BTreeSet<_>>();
+            let ids = execution_order
+                .iter()
+                .filter(|id| {
+                    failed.contains(*id)
+                        || by_id
+                            .get(*id)
+                            .and_then(LeafProgram::retry_group)
+                            .is_some_and(|group| failed_groups.contains(group))
+                })
+                .cloned()
                 .collect::<Vec<_>>();
             if ids.is_empty() {
                 break;
@@ -1004,6 +1024,7 @@ mod tests {
             RuntimeStatus::ResourceLimit,
             RuntimeStatus::Infrastructure,
             RuntimeStatus::BlockedSetup,
+            RuntimeStatus::BlockedSkip,
         ] {
             assert!(RetryCause::from_status(status).is_none());
         }

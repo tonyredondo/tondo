@@ -1,16 +1,24 @@
 import std.process
 import std.testing
 
-test deterministicFlaky {
-    match await process
-        .cmd(
-            "sh",
-            "-c",
-            "if test -f dogfood-retry.marker; then rm dogfood-retry.marker; exit 0; else : > dogfood-retry.marker; exit 7; fi",
-        )
-        .check() {
-        ok(_) => testing.log("isolated retry passed")
-        err(process.ProcessExitError(_)) => testing.failNow("controlled first attempt")
-        err(process.ProcessError(_)) => testing.failNow("retry fixture could not start")
+suite retry_group {
+    testing.log("suite participation")
+
+    test deterministicFlaky {
+        match await process
+            .cmd(
+                "sh",
+                "-c",
+                "if test -f dogfood-retry.marker; then rm dogfood-retry.marker; exit 0; else : > dogfood-retry.marker; exit 7; fi",
+            )
+            .check() {
+            ok(_) => testing.log("isolated retry passed")
+            err(process.ProcessExitError(_)) => testing.failNow("controlled first attempt")
+            err(process.ProcessError(_)) => testing.failNow("retry fixture could not start")
+        }
+    }
+
+    test stableSibling {
+        testing.log("stable sibling")
     }
 }

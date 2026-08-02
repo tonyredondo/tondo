@@ -13466,6 +13466,8 @@ impl<'a> ExpressionChecker<'a> {
             return Ok(None);
         }
         let function_name = function_token.token().normalized_identifier();
+        let generated_testing =
+            self.sources.get(file)?.origin() == crate::source::SourceOrigin::GeneratedTesting;
         if module.path().as_str() == "bytes" && function_name == Some("Bytes") {
             // `bytes.Bytes(value)` is a type conversion, not a stdlib function
             // call. Leave it for the nominal-constructor checker below.
@@ -13490,6 +13492,15 @@ impl<'a> ExpressionChecker<'a> {
             ("testing", Some("skip")) => HirBootstrapHostFunction::TestingSkip,
             ("testing", Some("attach")) => HirBootstrapHostFunction::TestingAttach,
             ("testing", Some("snapshot")) => HirBootstrapHostFunction::TestingSnapshot,
+            ("testing", Some("__runLeaf")) if generated_testing => {
+                HirBootstrapHostFunction::TestingRunLeaf
+            }
+            ("testing", Some("__runSuite")) if generated_testing => {
+                HirBootstrapHostFunction::TestingRunSuite
+            }
+            ("testing", Some("__beginSuiteCleanup")) if generated_testing => {
+                HirBootstrapHostFunction::TestingBeginSuiteCleanup
+            }
             ("process", Some(name))
             | ("bytes", Some(name))
             | ("env", Some(name))

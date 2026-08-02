@@ -17,8 +17,8 @@ mod value;
 pub mod conformance;
 
 pub use execute::{
-    RejectingHost, VmExecution, VmHost, VmOutcome, execute, execute_with_limits,
-    execute_with_limits_and_copy_strategy,
+    RejectingHost, VmExecution, VmHost, VmOutcome, VmTestNodeKind, VmTestNodeOutcome, execute,
+    execute_with_limits, execute_with_limits_and_copy_strategy,
 };
 
 /// Physical strategy used to realize source-level logical value copies.

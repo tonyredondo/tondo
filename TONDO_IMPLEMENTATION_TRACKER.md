@@ -2922,9 +2922,13 @@ reporters.
   lifecycle debe admitir una participación posterior en un worker de retry sin
   reutilizar el entorno ni sus snapshots. Conducir `defer await` hasta completar
   dentro de teardown, sin bloquear el worker ni inventar `afterAll`. Evidencia:
-  `docs/contracts/test-suite.md` y ocho tests unitarios sobre participación,
-  orden exterior-interior, cleanup LIFO, bloqueo causal, skip, continuidad de
-  hermanos, teardown y retry con contexto fresco.
+  `docs/contracts/test-suite.md`; el lowerer de participación, HIR/MIR/bytecode,
+  verifiers y VM ejecutan el árbol público compilado en un único worker con
+  envelopes sellados por nodo. Tests de compiler y CLI acceptance cubren scope
+  compartido, orden exterior-interior, cleanup LIFO, pánico aislado de hoja,
+  bloqueo por el ancestro causal más cercano, skip/`blocked-skip`, continuidad
+  de hermanos, fases setup/teardown y retry de suite completa con contexto
+  fresco.
 
 - [x] **UTEST-LIMIT-001 — Hacer límites y timeout terminales reales.** Publicar
   defaults finitos, aplicar `--timeout` por hoja y por fase setup/teardown sin

@@ -66,6 +66,42 @@ pub trait VmHost {
     fn cleanup(&mut self, _value: &RuntimeValue) -> Result<(), VmError> {
         Ok(())
     }
+
+    /// Enters a compiler-owned test node boundary. Normal hosts never expose
+    /// this operation; it is used only by verified test artifacts.
+    fn begin_test_node(&mut self, _kind: VmTestNodeKind, id: &str) -> Result<(), VmError> {
+        Err(VmError::UnsupportedHostCall(format!("test node `{id}`")))
+    }
+
+    /// Completes the active compiler-owned test node after all language
+    /// cleanup has run.
+    fn finish_test_node(
+        &mut self,
+        _kind: VmTestNodeKind,
+        id: &str,
+        _outcome: VmTestNodeOutcome,
+    ) -> Result<(), VmError> {
+        Err(VmError::UnsupportedHostCall(format!("test node `{id}`")))
+    }
+
+    /// Marks the transition from selected descendants to suite cleanup.
+    fn begin_test_suite_cleanup(&mut self) -> Result<(), VmError> {
+        Err(VmError::UnsupportedHostCall(
+            "test suite cleanup".to_owned(),
+        ))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VmTestNodeKind {
+    Leaf,
+    Suite,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VmTestNodeOutcome {
+    Passed,
+    Panicked(VmPanic),
 }
 
 #[derive(Debug, Default)]
@@ -192,6 +228,13 @@ struct CallContinuation {
     target: Option<BytecodeBlockId>,
     unwind: BytecodeBlockId,
     call_span: BytecodeSpan,
+    test_boundary: Option<TestBoundary>,
+}
+
+#[derive(Debug, Clone)]
+struct TestBoundary {
+    kind: VmTestNodeKind,
+    id: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -2636,6 +2679,21 @@ impl<'program, 'host> Engine<'program, 'host> {
                             target: *target,
                             unwind: *unwind,
                             call_span: span,
+                            test_boundary: None,
+                        };
+                        self.push_frame(function, arguments, Some(continuation))?;
+                    }
+                    OperationResult::TestBoundaryCall {
+                        function,
+                        arguments,
+                        boundary,
+                    } => {
+                        let continuation = CallContinuation {
+                            destination: destination.clone(),
+                            target: *target,
+                            unwind: *unwind,
+                            call_span: span,
+                            test_boundary: Some(boundary),
                         };
                         self.push_frame(function, arguments, Some(continuation))?;
                     }
@@ -2681,6 +2739,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                         target: Some(*target),
                                         unwind: *unwind,
                                         call_span: span,
+                                        test_boundary: None,
                                     }),
                                 )?;
                             }
@@ -2704,6 +2763,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                             }
                             OperationResult::Panic(code, message) => {
                                 self.begin_panic(frame, code, message, span, *unwind)?;
+                            }
+                            OperationResult::TestBoundaryCall { .. } => {
+                                return Err(VmError::invariant(
+                                    "an internal test boundary was awaited",
+                                ));
                             }
                         }
                     }
@@ -2813,6 +2877,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                         return Err(VmError::invariant(
                             "spawn operation did not produce an async child call",
                         ));
+                    }
+                    OperationResult::TestBoundaryCall { .. } => {
+                        return Err(VmError::invariant("an internal test boundary was spawned"));
                     }
                 }
             }
@@ -2959,6 +3026,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                         target: Some(continuation),
                                         unwind: continuation,
                                         call_span: span,
+                                        test_boundary: None,
                                     }),
                                 )?;
                             }
@@ -2985,6 +3053,11 @@ impl<'program, 'host> Engine<'program, 'host> {
                             }
                             OperationResult::Panic(code, message) => {
                                 self.begin_panic(frame, code, message, span, continuation)?;
+                            }
+                            OperationResult::TestBoundaryCall { .. } => {
+                                return Err(VmError::invariant(
+                                    "an internal test boundary was deferred",
+                                ));
                             }
                         }
                     }
@@ -3028,6 +3101,18 @@ impl<'program, 'host> Engine<'program, 'host> {
                     let caller = self.frames.len().checked_sub(1).ok_or_else(|| {
                         VmError::invariant("callee returned without its caller frame")
                     })?;
+                    if let Some(boundary) = &continuation.test_boundary {
+                        if value != Value::Unit {
+                            return Err(VmError::invariant(
+                                "internal test boundary returned a non-Unit value",
+                            ));
+                        }
+                        self.host.finish_test_node(
+                            boundary.kind,
+                            &boundary.id,
+                            VmTestNodeOutcome::Passed,
+                        )?;
+                    }
                     if let Some(destination) = &continuation.destination {
                         self.write_place(caller, destination, value)?;
                     }
@@ -3059,6 +3144,32 @@ impl<'program, 'host> Engine<'program, 'host> {
                         VmError::invariant("panicking callee has no caller frame")
                     })?;
                     self.frames[caller].loans.fill(None);
+                    if let Some(boundary) = &continuation.test_boundary {
+                        let unwind = self
+                            .pending_unwind
+                            .take()
+                            .ok_or_else(|| VmError::invariant("test boundary panic disappeared"))?;
+                        match unwind {
+                            RuntimeUnwind::Panic(panic) => {
+                                self.host.finish_test_node(
+                                    boundary.kind,
+                                    &boundary.id,
+                                    VmTestNodeOutcome::Panicked(panic),
+                                )?;
+                                if let Some(destination) = &continuation.destination {
+                                    self.write_place(caller, destination, Value::Unit)?;
+                                }
+                                let target = continuation.target.ok_or_else(|| {
+                                    VmError::invariant("test boundary call has no normal successor")
+                                })?;
+                                self.jump(caller, target);
+                                return Ok(None);
+                            }
+                            RuntimeUnwind::Cancelled => {
+                                self.pending_unwind = Some(RuntimeUnwind::Cancelled);
+                            }
+                        }
+                    }
                     self.jump(caller, continuation.unwind);
                 } else {
                     let unwind = self.pending_unwind.take().ok_or_else(|| {
@@ -3116,6 +3227,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                             target: Some(continuation),
                             unwind: continuation,
                             call_span: span,
+                            test_boundary: None,
                         }),
                     )?;
                 }
@@ -3142,6 +3254,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
                 OperationResult::Panic(code, message) => {
                     self.begin_panic(frame, code, message, span, continuation)?;
+                }
+                OperationResult::TestBoundaryCall { .. } => {
+                    return Err(VmError::invariant("an internal test boundary was deferred"));
                 }
             }
         } else if self.pending_unwind.is_some() {
@@ -3494,6 +3609,11 @@ enum OperationResult {
     Call {
         function: BytecodeFunctionId,
         arguments: Vec<Value>,
+    },
+    TestBoundaryCall {
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        boundary: TestBoundary,
     },
     HostAsync {
         name: String,
@@ -6137,6 +6257,47 @@ impl Engine<'_, '_> {
                 arguments,
             } => {
                 let values = self.evaluate_operands(frame, arguments)?;
+                if matches!(
+                    function,
+                    BytecodeBootstrapHostFunction::TestingRunLeaf
+                        | BytecodeBootstrapHostFunction::TestingRunSuite
+                ) {
+                    let [id, body] = values.as_slice() else {
+                        return Err(VmError::invariant(
+                            "test boundary does not have id and body operands",
+                        ));
+                    };
+                    let id = self.string_value(id)?.to_owned();
+                    let kind = if matches!(function, BytecodeBootstrapHostFunction::TestingRunLeaf)
+                    {
+                        VmTestNodeKind::Leaf
+                    } else {
+                        VmTestNodeKind::Suite
+                    };
+                    let call = self.prepare_evaluated_call(body.clone(), Vec::new())?;
+                    let OperationResult::Call {
+                        function,
+                        arguments,
+                    } = call
+                    else {
+                        return Err(VmError::invariant(
+                            "test boundary body is not a source closure",
+                        ));
+                    };
+                    self.host.begin_test_node(kind, &id)?;
+                    return Ok(OperationResult::TestBoundaryCall {
+                        function,
+                        arguments,
+                        boundary: TestBoundary { kind, id },
+                    });
+                }
+                if matches!(
+                    function,
+                    BytecodeBootstrapHostFunction::TestingBeginSuiteCleanup
+                ) {
+                    self.host.begin_test_suite_cleanup()?;
+                    return Ok(OperationResult::Value(Value::Unit));
+                }
                 let snapshots = values
                     .iter()
                     .map(|value| {
@@ -7230,6 +7391,47 @@ impl Engine<'_, '_> {
                 if metadata.closure.is_some() {
                     return Err(VmError::invariant("closure callable has no implementation"));
                 }
+                if matches!(
+                    metadata.name.as_str(),
+                    "std.testing.__runLeaf" | "std.testing.__runSuite"
+                ) {
+                    let [id, body] = values.as_slice() else {
+                        return Err(VmError::invariant(
+                            "test boundary callable does not have id and body operands",
+                        ));
+                    };
+                    let id = self.string_value(id)?.to_owned();
+                    let kind = if metadata.name == "std.testing.__runLeaf" {
+                        VmTestNodeKind::Leaf
+                    } else {
+                        VmTestNodeKind::Suite
+                    };
+                    let call = self.prepare_evaluated_call(body.clone(), Vec::new())?;
+                    let OperationResult::Call {
+                        function,
+                        arguments,
+                    } = call
+                    else {
+                        return Err(VmError::invariant(
+                            "test boundary body is not a source closure",
+                        ));
+                    };
+                    self.host.begin_test_node(kind, &id)?;
+                    return Ok(OperationResult::TestBoundaryCall {
+                        function,
+                        arguments,
+                        boundary: TestBoundary { kind, id },
+                    });
+                }
+                if metadata.name == "std.testing.__beginSuiteCleanup" {
+                    if !values.is_empty() {
+                        return Err(VmError::invariant(
+                            "suite cleanup boundary received arguments",
+                        ));
+                    }
+                    self.host.begin_test_suite_cleanup()?;
+                    return Ok(OperationResult::Value(Value::Unit));
+                }
                 let values = values
                     .into_iter()
                     .map(|value| match value {
@@ -8311,11 +8513,12 @@ mod tests {
         PlaceComponent, PlaceFailure, RejectingHost, ResolvedPlacePath, RuntimeCleanup,
         RuntimeDefer, RuntimeFallback, RuntimeHostValueKind, RuntimeJoin, RuntimeLoan, RuntimeType,
         RuntimeValue, SlotState, TaskCompletion, TaskRecord, TaskStatus, TaskWait, Value,
-        ValueCopyStrategy, VmError, VmHost, VmLimits, clone_field, clone_index, clone_present,
-        collection_length_fits_int, convert_numeric, integer_bounds, integer_shape,
-        next_unicode_scalar, operand_materialized_slot, operation_access_place, paths_overlap,
-        present, queue_object_equality, queue_payload_equality, runtime_host_kind, set_field,
-        set_index, slice_indices, snapshot_value, take_field, take_index, take_option,
+        ValueCopyStrategy, VmError, VmHost, VmLimits, VmTestNodeKind, VmTestNodeOutcome,
+        clone_field, clone_index, clone_present, collection_length_fits_int, convert_numeric,
+        integer_bounds, integer_shape, next_unicode_scalar, operand_materialized_slot,
+        operation_access_place, paths_overlap, present, queue_object_equality,
+        queue_payload_equality, runtime_host_kind, set_field, set_index, slice_indices,
+        snapshot_value, take_field, take_index, take_option,
     };
 
     fn root_pressure_program() -> BytecodeProgram {
@@ -9302,6 +9505,22 @@ mod tests {
         ));
         host.cancel_async(7).unwrap();
         host.cleanup(&RuntimeValue::Unit).unwrap();
+        assert!(matches!(
+            host.begin_test_node(VmTestNodeKind::Leaf, "unit::leaf"),
+            Err(VmError::UnsupportedHostCall(name)) if name == "test node `unit::leaf`"
+        ));
+        assert!(matches!(
+            host.finish_test_node(
+                VmTestNodeKind::Suite,
+                "unit::suite",
+                VmTestNodeOutcome::Passed,
+            ),
+            Err(VmError::UnsupportedHostCall(name)) if name == "test node `unit::suite`"
+        ));
+        assert!(matches!(
+            host.begin_test_suite_cleanup(),
+            Err(VmError::UnsupportedHostCall(name)) if name == "test suite cleanup"
+        ));
 
         let mut rejecting = RejectingHost;
         assert!(matches!(

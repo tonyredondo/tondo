@@ -3706,6 +3706,15 @@ fn lower_operation(
                 crate::mir::MirBootstrapHostFunction::TestingSnapshot => {
                     bc::BytecodeBootstrapHostFunction::TestingSnapshot
                 }
+                crate::mir::MirBootstrapHostFunction::TestingRunLeaf => {
+                    bc::BytecodeBootstrapHostFunction::TestingRunLeaf
+                }
+                crate::mir::MirBootstrapHostFunction::TestingRunSuite => {
+                    bc::BytecodeBootstrapHostFunction::TestingRunSuite
+                }
+                crate::mir::MirBootstrapHostFunction::TestingBeginSuiteCleanup => {
+                    bc::BytecodeBootstrapHostFunction::TestingBeginSuiteCleanup
+                }
             },
             arguments: arguments
                 .iter()

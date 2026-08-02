@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tondo_compiler::test_report::{TestList, TestReport};
-use tondo_compiler::test_result::{AggregateStatus, SnapshotStatus};
+use tondo_compiler::test_result::{AggregateStatus, AttemptPhase, SnapshotStatus};
 
 static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -91,6 +91,7 @@ fn acceptance_project_is_relocatable_and_reports_canonical_observations() {
     let second_report = TestReport::parse(&second_output.stdout).unwrap();
 
     assert_eq!(first_report.tests().len(), 5);
+    assert_eq!(first_report.suites().len(), 3);
     assert_eq!(
         first_report.canonical_bytes().unwrap(),
         second_report.canonical_bytes().unwrap()
@@ -121,14 +122,23 @@ fn acceptance_project_is_relocatable_and_reports_canonical_observations() {
     );
     for test in first_report.tests() {
         assert_eq!(test.attempts.len(), 1);
-        if test.id.contains("managed_service::responds") {
-            assert_eq!(test.attempts[0].logs.len(), 2);
-            assert_eq!(test.attempts[0].logs[1], "service cleanup");
-        } else {
-            assert_eq!(test.attempts[0].logs.len(), 1);
-        }
+        assert_eq!(test.attempts[0].logs.len(), 1);
         assert!(test.attempts[0].tags.contains_key("kind"));
     }
+    let shared = first_report
+        .suites()
+        .iter()
+        .find(|suite| suite.id.ends_with("::shared_service"))
+        .unwrap();
+    assert_eq!(shared.owners, ["@tondo/testing"]);
+    assert_eq!(shared.attempts.len(), 1);
+    assert_eq!(shared.attempts[0].logs, ["shared setup"]);
+    let managed = first_report
+        .suites()
+        .iter()
+        .find(|suite| suite.id.ends_with("::managed_service"))
+        .unwrap();
+    assert_eq!(managed.attempts[0].logs, ["service cleanup"]);
     fs::remove_dir_all(first).unwrap();
     fs::remove_dir_all(second).unwrap();
 }
@@ -213,6 +223,53 @@ fn acceptance_control_project_publishes_source_attachments_and_snapshots() {
         SnapshotStatus::Matched
     );
 
+    let control_source = project.join("tests/control.to");
+    let mut source = fs::read(&control_source).unwrap();
+    source.extend_from_slice(
+        b"\nsuite suiteEvidence {\n recordEvidence()\n testing.snapshot(\"setup\", \"shared value\")\n test leaf { assert(true) }\n}\n",
+    );
+    fs::write(&control_source, source).unwrap();
+    let suite_update = successful(
+        &project,
+        &[
+            "--exact",
+            "testingControl::integration::tests::suiteEvidence",
+            "--update-snapshots",
+            "--artifacts",
+            "target/suite-artifacts",
+            "--test-format",
+            "json",
+        ],
+    );
+    let suite_update = TestReport::parse(&suite_update.stdout).unwrap();
+    let suite_attempt = &suite_update.suites()[0].attempts[0];
+    assert_eq!(suite_attempt.artifacts.len(), 1);
+    assert_eq!(suite_attempt.snapshots.len(), 2);
+    assert!(
+        suite_attempt
+            .snapshots
+            .iter()
+            .all(|snapshot| snapshot.status == SnapshotStatus::Created)
+    );
+    let suite_check = successful(
+        &project,
+        &[
+            "--exact",
+            "testingControl::integration::tests::suiteEvidence",
+            "--artifacts",
+            "target/suite-check-artifacts",
+            "--test-format",
+            "json",
+        ],
+    );
+    let suite_check = TestReport::parse(&suite_check.stdout).unwrap();
+    assert!(
+        suite_check.suites()[0].attempts[0]
+            .snapshots
+            .iter()
+            .all(|snapshot| snapshot.status == SnapshotStatus::Matched)
+    );
+
     fs::remove_dir_all(project).unwrap();
 }
 
@@ -234,6 +291,120 @@ fn testing_module_is_not_available_to_production_entries() {
     assert_eq!(output.status.code(), Some(1));
     let diagnostic = String::from_utf8_lossy(&output.stderr);
     assert!(diagnostic.contains("E1008") && diagnostic.contains("::testing"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn suite_setup_failure_blocks_only_its_subtree_and_reports_the_suite() {
+    let root = temporary_root("suite-setup-failure");
+    fs::create_dir_all(root.join("tests")).unwrap();
+    fs::write(
+        root.join("tondo.toml"),
+        b"[package]\nname = \"suite_failure\"\nedition = \"0.1\"\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("tests/lifecycle.to"),
+        b"import std.testing\n\nsuite broken {\n assert(false)\n test child { assert(true) }\n}\nsuite broken_cleanup {\n defer assert(false)\n test child { assert(true) }\n}\nsuite nested {\n suite skipped {\n  testing.skip(\"not available\")\n  suite grandchild {\n   test child { assert(true) }\n  }\n }\n test sibling { assert(true) }\n}\ntest sibling { assert(true) }\n",
+    )
+    .unwrap();
+
+    let output = tondo_test(&root, &["--test-format", "json"]);
+    assert_eq!(output.status.code(), Some(1));
+    let report = TestReport::parse(&output.stdout).unwrap();
+    let suite = report
+        .suites()
+        .iter()
+        .find(|suite| suite.id.ends_with("::broken"))
+        .unwrap();
+    assert_eq!(suite.status, AggregateStatus::FailedPanic);
+    assert_eq!(
+        suite.attempts[0].phase,
+        Some(tondo_compiler::test_result::AttemptPhase::Setup)
+    );
+    let child = report
+        .tests()
+        .iter()
+        .find(|test| test.id.ends_with("::broken::child"))
+        .unwrap();
+    assert_eq!(child.status, AggregateStatus::BlockedSetup);
+    assert_eq!(
+        child.attempts[0]
+            .blocked_by
+            .as_ref()
+            .map(|blocked| blocked.id.as_str()),
+        Some(suite.id.as_str())
+    );
+    let cleanup_suite = report
+        .suites()
+        .iter()
+        .find(|suite| suite.id.ends_with("::broken_cleanup"))
+        .unwrap();
+    assert_eq!(cleanup_suite.status, AggregateStatus::FailedPanic);
+    assert_eq!(
+        cleanup_suite.attempts[0].phase,
+        Some(tondo_compiler::test_result::AttemptPhase::Teardown)
+    );
+    assert_eq!(
+        report
+            .tests()
+            .iter()
+            .find(|test| test.id.ends_with("::broken_cleanup::child"))
+            .unwrap()
+            .status,
+        AggregateStatus::Passed
+    );
+    let skipped_suite = report
+        .suites()
+        .iter()
+        .find(|suite| suite.id.ends_with("::nested::skipped"))
+        .unwrap();
+    assert_eq!(skipped_suite.status, AggregateStatus::Skipped);
+    assert_eq!(skipped_suite.attempts[0].phase, Some(AttemptPhase::Setup));
+    let skipped_child = report
+        .tests()
+        .iter()
+        .find(|test| test.id.ends_with("::nested::skipped::grandchild::child"))
+        .unwrap();
+    assert_eq!(skipped_child.status, AggregateStatus::BlockedSkip);
+    assert_eq!(
+        skipped_child.attempts[0]
+            .blocked_by
+            .as_ref()
+            .map(|blocked| blocked.id.as_str()),
+        Some(skipped_suite.id.as_str())
+    );
+    let blocked_suite = report
+        .suites()
+        .iter()
+        .find(|suite| suite.id.ends_with("::nested::skipped::grandchild"))
+        .unwrap();
+    assert_eq!(blocked_suite.status, AggregateStatus::BlockedSkip);
+    assert_eq!(
+        blocked_suite.attempts[0]
+            .blocked_by
+            .as_ref()
+            .map(|blocked| blocked.id.as_str()),
+        Some(skipped_suite.id.as_str())
+    );
+    assert_eq!(
+        report
+            .tests()
+            .iter()
+            .find(|test| test.id.ends_with("::nested::sibling"))
+            .unwrap()
+            .status,
+        AggregateStatus::Passed
+    );
+    assert_eq!(
+        report
+            .tests()
+            .iter()
+            .find(|test| test.id.ends_with("::sibling"))
+            .unwrap()
+            .status,
+        AggregateStatus::Passed
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -382,12 +553,36 @@ fn acceptance_project_dogfoods_an_isolated_deterministic_retry() {
         &["--retry", "1", "--allow-flaky", "--test-format", "json"],
     );
     let report = TestReport::parse(&output.stdout).unwrap();
-    let test = &report.tests()[0];
+    let test = report
+        .tests()
+        .iter()
+        .find(|test| test.id.ends_with("::deterministicFlaky"))
+        .unwrap();
     assert_eq!(test.status, AggregateStatus::FlakyPass);
     assert_eq!(test.attempts.len(), 2);
     assert_eq!(test.attempts[0].round, 0);
     assert_eq!(test.attempts[1].round, 1);
     assert_eq!(test.attempts[1].logs, ["isolated retry passed"]);
+    let sibling = report
+        .tests()
+        .iter()
+        .find(|test| test.id.ends_with("::stableSibling"))
+        .unwrap();
+    assert_eq!(sibling.attempts.len(), 2);
+    assert!(
+        sibling
+            .attempts
+            .iter()
+            .all(|attempt| attempt.logs == ["stable sibling"])
+    );
+    let suite = report.suites().first().unwrap();
+    assert_eq!(suite.attempts.len(), 2);
+    assert!(
+        suite
+            .attempts
+            .iter()
+            .all(|attempt| attempt.logs == ["suite participation"])
+    );
     assert!(!project.join("dogfood-retry.marker").exists());
     fs::remove_dir_all(project).unwrap();
 }

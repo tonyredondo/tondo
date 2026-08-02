@@ -5,7 +5,7 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitCode, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -19,9 +19,7 @@ use tondo_compiler::project::ProjectPlan;
 use tondo_compiler::source::{
     LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput, SourceOrigin,
 };
-use tondo_compiler::test_control::{
-    EnvelopeHandle, EnvelopeLimits, EnvelopeReport, ExecutionPhase, SnapshotOutcome, Terminal,
-};
+use tondo_compiler::test_control::{EnvelopeLimits, EnvelopeReport, SnapshotOutcome, Terminal};
 use tondo_compiler::test_glob::GlobPattern;
 use tondo_compiler::test_plan::{
     CodeownersMode, TestOrder as ProjectTestOrder, TestProjectPlan,
@@ -33,9 +31,9 @@ use tondo_compiler::test_report::{
     SelectionKind, SnapshotMode, SnapshotStoreIdentity, TestList, TestReport,
 };
 use tondo_compiler::test_result::{
-    AggregateStatus, ArtifactRecord, AttemptStatus, FailureRecord, ResultNodeKind, RetryUnit,
-    RetryUnitKind, SkipRecord, SnapshotRecord, SnapshotStatus, TestAttempt, TestNode,
-    VirtualTimeRecord,
+    AggregateStatus, ArtifactRecord, AttemptPhase, AttemptStatus, BlockedBy, FailureRecord,
+    ResultNodeKind, RetryUnit, RetryUnitKind, SkipRecord, SnapshotRecord, SnapshotStatus,
+    TestAttempt, TestNode, VirtualTimeRecord,
 };
 use tondo_compiler::test_retry::{RetryCampaign, RetryContext, RetryPolicy};
 use tondo_compiler::test_runtime::{
@@ -790,20 +788,54 @@ fn execute_test_plan_at(
     let worker_test_plan = test_plan_path.clone();
     let worker_timeout = execution_plan.timeout_ms;
     let worker_update_snapshots = execution_plan.update_snapshots;
+    let mut grouped_entries = BTreeMap::<(u32, String), Vec<String>>::new();
+    for entry in &ordered {
+        let root = entry
+            .suites()
+            .first()
+            .cloned()
+            .unwrap_or_else(|| entry.id().to_owned());
+        grouped_entries
+            .entry((entry.file().index(), root))
+            .or_default()
+            .push(entry.id().to_owned());
+    }
+    let worker_groups = grouped_entries
+        .into_iter()
+        .map(|(key, entries)| {
+            let has_suites = entries.iter().any(|id| id != &key.1);
+            (
+                key,
+                Arc::new(SharedWorkerGroup {
+                    project: worker_project.clone(),
+                    entries,
+                    timeout_ms: worker_timeout,
+                    update_snapshots: worker_update_snapshots,
+                    test_plan: worker_test_plan.clone(),
+                    has_suites,
+                    invocations: Mutex::new(BTreeMap::new()),
+                }),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     let programs = ordered
         .iter()
         .map(|entry| {
             let id = entry.id().to_owned();
-            let worker_project = worker_project.clone();
-            let worker_test_plan = worker_test_plan.clone();
+            let root = entry
+                .suites()
+                .first()
+                .cloned()
+                .unwrap_or_else(|| entry.id().to_owned());
+            let retry_group = format!("{}::{root}", entry.file().index());
+            let group = worker_groups
+                .get(&(entry.file().index(), root))
+                .cloned()
+                .ok_or_else(|| {
+                    TestCommandError::Internal("scheduler lost a suite participation".into())
+                })?;
             Ok(LeafProgram::new(id.clone(), move |context| {
-                let response = spawn_test_worker(
-                    &worker_project,
-                    &id,
-                    worker_timeout,
-                    worker_update_snapshots,
-                    worker_test_plan.as_deref(),
-                )?;
+                let response = group.response(context.worker().invocation_id(), &id)?;
                 let report = EnvelopeReport::decode_process(&response.report)
                     .map_err(|message| RunError::Infrastructure { message })?;
                 let updates = response
@@ -824,7 +856,8 @@ fn execute_test_plan_at(
                     },
                     WorkerError::into_run_error,
                 )
-            }))
+            })
+            .with_retry_group(retry_group))
         })
         .collect::<Result<Vec<_>, TestCommandError>>()?;
     let runtime = RuntimeRunner::new(
@@ -840,19 +873,33 @@ fn execute_test_plan_at(
     )
     .map_err(|error| TestCommandError::Internal(error.to_string()))?;
     let attempts = execute_campaign(&request, &execution_plan, &ordered, programs, runtime)?;
+    let suite_attempts = collect_suite_attempts(&worker_groups, &execution_plan)?;
+    let mut node_attempts = attempts.clone();
+    node_attempts.extend(suite_attempts.iter().map(|attempt| CliAttempt {
+        id: attempt.id.clone(),
+        iteration: attempt.iteration,
+        round: attempt.round,
+        unit: (attempt.round > 0).then_some(1),
+        status: attempt.status,
+        report: attempt.report.clone(),
+        error: attempt.error.clone(),
+        snapshot_updates: attempt.snapshot_updates.clone(),
+    }));
     publish_attempt_artifacts(
         base,
         &execution_plan,
         Some(test_project_plan.artifact_store()),
-        &attempts,
+        &node_attempts,
     )?;
-    let snapshot_mutation = snapshot_inputs.stage_and_publish(base, &execution_plan, &attempts)?;
+    let snapshot_mutation =
+        snapshot_inputs.stage_and_publish(base, &execution_plan, &node_attempts)?;
     let report = build_test_report(
         &request,
         &execution_plan,
         &ordered,
         &ownership,
         &attempts,
+        &suite_attempts,
         &snapshot_inputs,
         &snapshot_mutation,
     )?;
@@ -912,9 +959,104 @@ struct WorkerResponse {
     error: Option<WorkerError>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerBatchResponse {
+    format: String,
+    responses: Vec<(String, WorkerResponse)>,
+    suites: Vec<WorkerSuiteResponse>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkerSuiteResponse {
+    id: String,
+    status: String,
+    phase: Option<String>,
+    report: Vec<u8>,
+    updates: Vec<WorkerSnapshotUpdate>,
+    error: Option<WorkerError>,
+}
+
+#[derive(Debug, Clone)]
+struct WorkerGroupResult {
+    leaves: BTreeMap<String, WorkerResponse>,
+    suites: Vec<WorkerSuiteResponse>,
+}
+
+type WorkerInvocation = Arc<std::sync::OnceLock<Result<WorkerGroupResult, RunError>>>;
+
 const WORKER_RESPONSE_FORMAT: &str = "tondo-test-worker-process/1";
+const WORKER_BATCH_RESPONSE_FORMAT: &str = "tondo-test-worker-batch/1";
+
+struct SharedWorkerGroup {
+    project: PathBuf,
+    entries: Vec<String>,
+    timeout_ms: Option<u64>,
+    update_snapshots: bool,
+    test_plan: Option<PathBuf>,
+    has_suites: bool,
+    invocations: Mutex<BTreeMap<u64, WorkerInvocation>>,
+}
+
+impl SharedWorkerGroup {
+    fn response(&self, invocation: u64, id: &str) -> Result<WorkerResponse, RunError> {
+        let slot = self
+            .invocations
+            .lock()
+            .map_err(|_| RunError::Infrastructure {
+                message: "test participation cache is poisoned".into(),
+            })?
+            .entry(invocation)
+            .or_default()
+            .clone();
+        let responses = slot.get_or_init(|| {
+            spawn_test_worker(
+                &self.project,
+                &self.entries,
+                self.timeout_ms,
+                self.update_snapshots,
+                self.test_plan.as_deref(),
+            )
+        });
+        responses
+            .as_ref()
+            .map_err(Clone::clone)?
+            .leaves
+            .get(id)
+            .cloned()
+            .ok_or_else(|| RunError::Infrastructure {
+                message: format!("test participation omitted leaf `{id}`"),
+            })
+    }
+
+    fn suite_responses(&self) -> Result<Vec<(u64, WorkerSuiteResponse)>, RunError> {
+        let invocations = self
+            .invocations
+            .lock()
+            .map_err(|_| RunError::Infrastructure {
+                message: "test participation cache is poisoned".into(),
+            })?;
+        let mut suites = Vec::new();
+        for (invocation, slot) in invocations.iter() {
+            let Some(result) = slot.get() else {
+                continue;
+            };
+            let result = match result {
+                Ok(result) => result,
+                Err(_) if !self.has_suites => continue,
+                Err(error) => return Err(error.clone()),
+            };
+            for suite in &result.suites {
+                suites.push((*invocation, suite.clone()));
+            }
+        }
+        Ok(suites)
+    }
+}
 
 impl WorkerError {
+    #[cfg(test)]
     fn from_run_error(error: &RunError) -> Self {
         let kind = match error {
             RunError::Error { .. } => "error",
@@ -922,6 +1064,8 @@ impl WorkerError {
             RunError::ResourceLimit { .. } => "resource-limit",
             RunError::Timeout | RunError::ForcedTermination { .. } => "timeout",
             RunError::Infrastructure { .. } => "infrastructure",
+            RunError::BlockedSetup { .. } => "blocked-setup",
+            RunError::BlockedSkip { .. } => "blocked-skip",
             RunError::Skip { .. } => "skip",
         };
         Self {
@@ -941,10 +1085,27 @@ impl WorkerError {
             "timeout" => RunError::Timeout,
             "skip" => RunError::Skip { reason: message },
             "infrastructure" => RunError::Infrastructure { message },
+            "blocked-setup" => RunError::BlockedSetup { suite: message },
+            "blocked-skip" => RunError::BlockedSkip { suite: message },
             other => RunError::Infrastructure {
                 message: format!("unknown worker error kind `{other}`: {message}"),
             },
         })
+    }
+}
+
+#[cfg(test)]
+fn runtime_status_wire(status: RuntimeStatus) -> &'static str {
+    match status {
+        RuntimeStatus::Passed => "passed",
+        RuntimeStatus::Skipped => "skipped",
+        RuntimeStatus::FailedError => "failed-error",
+        RuntimeStatus::FailedPanic => "failed-panic",
+        RuntimeStatus::ResourceLimit => "resource-limit",
+        RuntimeStatus::Timeout => "timeout",
+        RuntimeStatus::Infrastructure => "infrastructure",
+        RuntimeStatus::BlockedSetup => "blocked-setup",
+        RuntimeStatus::BlockedSkip => "blocked-skip",
     }
 }
 
@@ -977,11 +1138,11 @@ fn infrastructure_worker_response(error: impl Into<String>) -> WorkerResponse {
 
 fn spawn_test_worker(
     project: &Path,
-    entry: &str,
+    entries: &[String],
     timeout_ms: Option<u64>,
     update_snapshots: bool,
     test_plan: Option<&Path>,
-) -> Result<WorkerResponse, RunError> {
+) -> Result<WorkerGroupResult, RunError> {
     let mut command =
         Command::new(
             worker_executable().map_err(|error| RunError::Infrastructure {
@@ -989,7 +1150,9 @@ fn spawn_test_worker(
             })?,
         );
     command.arg("__test-worker").arg("--project").arg(project);
-    command.arg("--entry").arg(entry);
+    for entry in entries {
+        command.arg("--entry").arg(entry);
+    }
     if let Some(test_plan) = test_plan {
         command.arg("--test-plan").arg(test_plan);
     }
@@ -1014,11 +1177,11 @@ fn spawn_test_worker(
             ),
         });
     }
-    let response: WorkerResponse =
+    let response: WorkerBatchResponse =
         serde_json::from_slice(&stdout).map_err(|error| RunError::Infrastructure {
             message: format!("invalid isolated test worker response: {error}"),
         })?;
-    if response.format != WORKER_RESPONSE_FORMAT {
+    if response.format != WORKER_BATCH_RESPONSE_FORMAT {
         return Err(RunError::Infrastructure {
             message: format!(
                 "unexpected isolated test worker format `{}`",
@@ -1026,7 +1189,16 @@ fn spawn_test_worker(
             ),
         });
     }
-    Ok(response)
+    let responses = response.responses.into_iter().collect::<BTreeMap<_, _>>();
+    if responses.len() != entries.len() {
+        return Err(RunError::Infrastructure {
+            message: "isolated test worker returned a duplicate or missing leaf response".into(),
+        });
+    }
+    Ok(WorkerGroupResult {
+        leaves: responses,
+        suites: response.suites,
+    })
 }
 
 fn worker_executable() -> Result<PathBuf, io::Error> {
@@ -1115,7 +1287,7 @@ fn join_worker_pipe(
 fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
     let mut project = None;
     let mut test_plan = None;
-    let mut entry = None;
+    let mut entries = Vec::new();
     let mut update_snapshots = false;
     let mut index = 0;
     while index < arguments.len() {
@@ -1134,7 +1306,7 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
             }
             "--entry" => {
                 index += 1;
-                entry = Some(
+                entries.push(
                     arguments
                         .get(index)
                         .and_then(|value| value.to_str())
@@ -1157,12 +1329,35 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
         index += 1;
     }
     let project = project.ok_or_else(|| "worker project is required".to_owned())?;
-    let entry = entry.ok_or_else(|| "worker entry is required".to_owned())?;
-    let response =
-        match execute_test_worker(&project, test_plan.as_deref(), &entry, update_snapshots) {
-            Ok(response) => response,
-            Err(error) => infrastructure_worker_response(error),
+    if entries.is_empty() {
+        return Err("at least one worker entry is required".to_owned());
+    }
+    let result =
+        match execute_test_worker(&project, test_plan.as_deref(), &entries, update_snapshots) {
+            Ok(responses) => responses,
+            Err(error) => WorkerGroupResult {
+                leaves: entries
+                    .iter()
+                    .map(|entry| (entry.clone(), infrastructure_worker_response(error.clone())))
+                    .collect(),
+                suites: Vec::new(),
+            },
         };
+    let response = WorkerBatchResponse {
+        format: WORKER_BATCH_RESPONSE_FORMAT.into(),
+        responses: entries
+            .into_iter()
+            .map(|entry| {
+                let response = result
+                    .leaves
+                    .get(&entry)
+                    .cloned()
+                    .unwrap_or_else(|| infrastructure_worker_response("worker omitted leaf"));
+                (entry, response)
+            })
+            .collect(),
+        suites: result.suites,
+    };
     let bytes = serde_json::to_vec(&response).map_err(|error| error.to_string())?;
     io::stdout()
         .write_all(&bytes)
@@ -1176,9 +1371,9 @@ fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
 fn execute_test_worker(
     project_path: &Path,
     test_plan_path: Option<&Path>,
-    entry_id: &str,
+    entry_ids: &[String],
     update_snapshots: bool,
-) -> Result<WorkerResponse, String> {
+) -> Result<WorkerGroupResult, String> {
     let location = ProjectLocation::Directory(project_path.to_owned());
     let loaded = location.load().map_err(format_test_command_error)?;
     let base = loaded.base.as_path();
@@ -1206,112 +1401,253 @@ fn execute_test_worker(
     let snapshot_inputs = load_snapshot_inputs(base, &request, &test_plan, update_snapshots)
         .map_err(format_test_command_error)?;
     let entries = discover_tests(&request).map_err(|error| error.to_string())?;
-    let entry = entries
+    let by_id = entries
         .into_iter()
-        .find(|entry| entry.id() == entry_id)
-        .ok_or_else(|| format!("test entry `{entry_id}` was not found"))?;
-    let expected = snapshot_inputs
-        .expected_for(entry.id())
-        .map_err(format_test_command_error)?;
+        .map(|entry| (entry.id().to_owned(), entry))
+        .collect::<BTreeMap<_, _>>();
+    let selected = entry_ids
+        .iter()
+        .map(|id| {
+            by_id
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("test entry `{id}` was not found"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let limits = test_plan.limits();
     let envelope_limits = EnvelopeLimits::new(
         limits.output_bytes(),
         limits.artifact_bytes(),
         limits.snapshot_bytes(),
     );
-    let base_request = Arc::clone(&request);
-    let body_entry = entry.clone();
-    let body_expected = expected.clone();
-    let program = LeafProgram::new(entry.id().to_owned(), move |context| {
-        let envelope = EnvelopeHandle::new(body_entry.id(), envelope_limits);
-        envelope
-            .with_expected_snapshots(body_expected.clone())
-            .map_err(RunError::Control)?;
-        envelope
-            .with_snapshot_update(update_snapshots)
-            .map_err(RunError::Control)?;
-        envelope
-            .set_phase(ExecutionPhase::Body)
-            .map_err(RunError::Control)?;
-        let request = base_request
-            .for_test_entry(&body_entry)
-            .map_err(|error| RunError::Infrastructure {
-                message: error.to_string(),
-            })?
-            .with_test_envelope(envelope.clone());
-        let output = execute(request).map_err(|error| RunError::Infrastructure {
-            message: error.to_string(),
-        })?;
-        envelope.close().map_err(RunError::Control)?;
-        let evidence = envelope.report().map_err(RunError::Control)?;
-        let updates = envelope.snapshot_updates().map_err(RunError::Control)?;
-        context.merge_worker_report(&evidence, &updates)?;
-        if evidence.terminal().is_some() {
-            return Ok(());
-        }
-        if !output.stdout().is_empty() {
-            context.stdout(String::from_utf8_lossy(output.stdout()).into_owned())?;
-        }
-        if output.status() == CompilationStatus::Success {
-            Ok(())
-        } else {
-            let diagnostic = output.diagnostics().human();
-            let message = if diagnostic.is_empty() {
-                "test body failed".to_owned()
-            } else {
-                diagnostic
-            };
-            context.stderr(message.clone())?;
-            Err(RunError::Error {
-                code: "T3001".into(),
-                message,
-            })
-        }
-    })
-    .with_expected_snapshots(expected)
-    .with_snapshot_update(update_snapshots);
-    let runtime = RuntimeRunner::new(
-        RuntimeConfig::new(1, envelope_limits).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    let report = runtime
-        .run(vec![program])
+    let mut node_ids = selected
+        .iter()
+        .map(|entry| entry.id().to_owned())
+        .collect::<BTreeSet<_>>();
+    node_ids.extend(selected.iter().flat_map(|entry| {
+        (1..=entry.suites().len()).map(move |depth| {
+            let mut parts = entry.id().split("::").collect::<Vec<_>>();
+            parts.truncate(parts.len() - 1 - (entry.suites().len() - depth));
+            parts.join("::")
+        })
+    }));
+    let expected = node_ids
+        .into_iter()
+        .map(|id| {
+            snapshot_inputs
+                .expected_for(&id)
+                .map(|snapshots| (id, snapshots))
+                .map_err(format_test_command_error)
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let participation = tondo_compiler::test_backend::TestParticipation::new(
+        envelope_limits,
+        expected,
+        update_snapshots,
+    );
+    let test_request = request
+        .for_test_participation(&selected, participation.clone())
         .map_err(|error| error.to_string())?;
-    let leaf = report
-        .leaves()
-        .first()
-        .ok_or_else(|| "worker runtime returned no leaf".to_owned())?;
-    let report_bytes = leaf
-        .report()
-        .encode_process()
-        .map_err(|error| format!("cannot encode worker report: {error}"))?;
-    Ok(WorkerResponse {
-        format: WORKER_RESPONSE_FORMAT.into(),
-        status: runtime_status_wire(leaf.status()).into(),
-        report: report_bytes,
-        updates: leaf
-            .snapshot_updates()
-            .iter()
-            .map(|(name, value)| WorkerSnapshotUpdate {
-                name: name.clone(),
-                value: value.clone(),
-            })
-            .collect(),
-        error: leaf.error().map(WorkerError::from_run_error),
-    })
-}
-
-fn runtime_status_wire(status: RuntimeStatus) -> &'static str {
-    match status {
-        RuntimeStatus::Passed => "passed",
-        RuntimeStatus::Skipped => "skipped",
-        RuntimeStatus::FailedError => "failed-error",
-        RuntimeStatus::FailedPanic => "failed-panic",
-        RuntimeStatus::ResourceLimit => "resource-limit",
-        RuntimeStatus::Timeout => "timeout",
-        RuntimeStatus::Infrastructure => "infrastructure",
-        RuntimeStatus::BlockedSetup => "blocked-setup",
+    let output = execute(test_request).map_err(|error| error.to_string())?;
+    if output.status() != CompilationStatus::Success {
+        let diagnostics = output.diagnostics().human();
+        return Err(if diagnostics.is_empty() {
+            "test participation failed without a diagnostic".into()
+        } else {
+            diagnostics
+        });
     }
+
+    let executions = participation.executions()?;
+    let mut responses = BTreeMap::new();
+    for entry in &selected {
+        let response = if let Some(execution) = executions.iter().find(|execution| {
+            execution.kind == tondo_compiler::test_backend::TestExecutionKind::Leaf
+                && execution.id == entry.id()
+        }) {
+            let error = execution
+                .report
+                .terminal()
+                .is_none()
+                .then_some(execution.panic.as_ref())
+                .flatten()
+                .map(|panic| WorkerError {
+                    kind: "panic".into(),
+                    code: Some(panic.code.code().into()),
+                    message: panic.message.clone(),
+                });
+            let status = if error.is_some() {
+                "failed-panic"
+            } else if matches!(execution.report.terminal(), Some(Terminal::Skipped { .. })) {
+                "skipped"
+            } else if execution.report.terminal().is_some() {
+                "failed-panic"
+            } else {
+                "passed"
+            };
+            WorkerResponse {
+                format: WORKER_RESPONSE_FORMAT.into(),
+                status: status.into(),
+                report: execution
+                    .report
+                    .encode_process()
+                    .map_err(|error| format!("cannot encode worker report: {error}"))?,
+                updates: execution
+                    .snapshot_updates
+                    .iter()
+                    .map(|(name, value)| WorkerSnapshotUpdate {
+                        name: name.clone(),
+                        value: value.clone(),
+                    })
+                    .collect(),
+                error,
+            }
+        } else if let Some(suite) = executions
+            .iter()
+            .filter(|execution| {
+                execution.kind == tondo_compiler::test_backend::TestExecutionKind::Suite
+                    && (execution.panic.is_some() || execution.report.terminal().is_some())
+                    && entry
+                        .id()
+                        .strip_prefix(&execution.id)
+                        .is_some_and(|suffix| suffix.starts_with("::"))
+            })
+            .max_by_key(|execution| execution.id.len())
+        {
+            let skipped = matches!(suite.report.terminal(), Some(Terminal::Skipped { .. }));
+            WorkerResponse {
+                format: WORKER_RESPONSE_FORMAT.into(),
+                status: if skipped {
+                    "blocked-skip".into()
+                } else {
+                    "blocked-setup".into()
+                },
+                report: empty_worker_report(),
+                updates: Vec::new(),
+                error: Some(WorkerError {
+                    kind: if skipped {
+                        "blocked-skip".into()
+                    } else {
+                        "blocked-setup".into()
+                    },
+                    code: None,
+                    message: suite.id.clone(),
+                }),
+            }
+        } else {
+            infrastructure_worker_response(format!(
+                "test participation omitted leaf `{}`",
+                entry.id()
+            ))
+        };
+        responses.insert(entry.id().to_owned(), response);
+    }
+    let mut suites = executions
+        .iter()
+        .filter(|execution| {
+            execution.kind == tondo_compiler::test_backend::TestExecutionKind::Suite
+        })
+        .map(|execution| {
+            let error = execution
+                .report
+                .terminal()
+                .is_none()
+                .then_some(execution.panic.as_ref())
+                .flatten()
+                .map(|panic| WorkerError {
+                    kind: "panic".into(),
+                    code: Some(panic.code.code().into()),
+                    message: panic.message.clone(),
+                });
+            let status = match execution.report.terminal() {
+                Some(Terminal::Skipped { .. }) => "skipped",
+                Some(Terminal::ResourceLimit { .. }) => "resource-limit",
+                Some(Terminal::FailNow { .. }) | Some(Terminal::CleanupFailure { .. }) => {
+                    "failed-panic"
+                }
+                None if error.is_some() => "failed-panic",
+                None => "passed",
+            };
+            let phase = (status != "passed").then(|| match execution.phase {
+                tondo_compiler::test_control::ExecutionPhase::Setup => "setup".to_owned(),
+                tondo_compiler::test_control::ExecutionPhase::Body => "body".to_owned(),
+                tondo_compiler::test_control::ExecutionPhase::Cleanup
+                | tondo_compiler::test_control::ExecutionPhase::Closed => "teardown".to_owned(),
+            });
+            Ok(WorkerSuiteResponse {
+                id: execution.id.clone(),
+                status: status.into(),
+                phase,
+                report: execution
+                    .report
+                    .encode_process()
+                    .map_err(|error| format!("cannot encode suite report: {error}"))?,
+                updates: execution
+                    .snapshot_updates
+                    .iter()
+                    .map(|(name, value)| WorkerSnapshotUpdate {
+                        name: name.clone(),
+                        value: value.clone(),
+                    })
+                    .collect(),
+                error,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let selected_suite_ids = selected
+        .iter()
+        .flat_map(|entry| {
+            (1..=entry.suites().len()).map(move |depth| {
+                let mut parts = entry.id().split("::").collect::<Vec<_>>();
+                parts.truncate(parts.len() - 1 - (entry.suites().len() - depth));
+                parts.join("::")
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    for id in selected_suite_ids {
+        if suites.iter().any(|suite| suite.id == id) {
+            continue;
+        }
+        let Some(blocker) = executions
+            .iter()
+            .filter(|execution| {
+                execution.kind == tondo_compiler::test_backend::TestExecutionKind::Suite
+                    && (execution.panic.is_some() || execution.report.terminal().is_some())
+                    && id
+                        .strip_prefix(&execution.id)
+                        .is_some_and(|suffix| suffix.starts_with("::"))
+            })
+            .max_by_key(|execution| execution.id.len())
+        else {
+            return Err(format!("test participation omitted suite `{id}`"));
+        };
+        let skipped = matches!(blocker.report.terminal(), Some(Terminal::Skipped { .. }));
+        suites.push(WorkerSuiteResponse {
+            id,
+            status: if skipped {
+                "blocked-skip".into()
+            } else {
+                "blocked-setup".into()
+            },
+            phase: None,
+            report: empty_worker_report(),
+            updates: Vec::new(),
+            error: Some(WorkerError {
+                kind: if skipped {
+                    "blocked-skip".into()
+                } else {
+                    "blocked-setup".into()
+                },
+                code: None,
+                message: blocker.id.clone(),
+            }),
+        });
+    }
+    suites.sort_by(|left, right| left.id.as_bytes().cmp(right.id.as_bytes()));
+    Ok(WorkerGroupResult {
+        leaves: responses,
+        suites,
+    })
 }
 
 fn format_test_command_error(error: TestCommandError) -> String {
@@ -1365,11 +1701,23 @@ fn order_test_entries(
             seed: Seed::from_u64(seed.unwrap_or(0)),
         },
     };
-    let nodes = entries
-        .iter()
-        .map(|entry| ScheduleNode::test(entry.id().to_owned(), None::<String>))
-        .collect::<Vec<_>>();
-    let schedule = SchedulePlan::new(nodes, mode, plan.jobs)
+    let mut nodes = BTreeMap::<String, ScheduleNode>::new();
+    for entry in &entries {
+        let suites = suite_ids(entry);
+        for (index, id) in suites.iter().enumerate() {
+            nodes.entry(id.clone()).or_insert_with(|| {
+                ScheduleNode::suite(
+                    id.clone(),
+                    index.checked_sub(1).map(|parent| suites[parent].clone()),
+                )
+            });
+        }
+        nodes.insert(
+            entry.id().to_owned(),
+            ScheduleNode::test(entry.id().to_owned(), suites.last().cloned()),
+        );
+    }
+    let schedule = SchedulePlan::new(nodes.into_values(), mode, plan.jobs)
         .map_err(|error| TestCommandError::Internal(error.to_string()))?;
     let by_id = entries
         .into_iter()
@@ -1387,6 +1735,16 @@ fn order_test_entries(
         .collect()
 }
 
+fn suite_ids(entry: &tondo_compiler::test_backend::TestEntry) -> Vec<String> {
+    (1..=entry.suites().len())
+        .map(|depth| {
+            let mut parts = entry.id().split("::").collect::<Vec<_>>();
+            parts.truncate(parts.len() - 1 - (entry.suites().len() - depth));
+            parts.join("::")
+        })
+        .collect()
+}
+
 #[derive(Debug, Clone)]
 struct CliAttempt {
     id: String,
@@ -1397,6 +1755,88 @@ struct CliAttempt {
     report: EnvelopeReport,
     error: Option<RunError>,
     snapshot_updates: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone)]
+struct CliSuiteAttempt {
+    id: String,
+    iteration: u32,
+    round: u32,
+    status: RuntimeStatus,
+    phase: Option<AttemptPhase>,
+    report: EnvelopeReport,
+    error: Option<RunError>,
+    snapshot_updates: Vec<(String, String)>,
+}
+
+fn collect_suite_attempts(
+    groups: &BTreeMap<(u32, String), Arc<SharedWorkerGroup>>,
+    plan: &test_cli::TestCliPlan,
+) -> Result<Vec<CliSuiteAttempt>, TestCommandError> {
+    let mut attempts = Vec::new();
+    for group in groups.values() {
+        for (invocation, suite) in group
+            .suite_responses()
+            .map_err(|error| TestCommandError::Internal(error.to_string()))?
+        {
+            let report = EnvelopeReport::decode_process(&suite.report)
+                .map_err(TestCommandError::Internal)?;
+            let status = match suite.status.as_str() {
+                "passed" => RuntimeStatus::Passed,
+                "skipped" => RuntimeStatus::Skipped,
+                "failed-panic" => RuntimeStatus::FailedPanic,
+                "failed-error" => RuntimeStatus::FailedError,
+                "resource-limit" => RuntimeStatus::ResourceLimit,
+                "timeout" => RuntimeStatus::Timeout,
+                "infrastructure" => RuntimeStatus::Infrastructure,
+                "blocked-setup" => RuntimeStatus::BlockedSetup,
+                "blocked-skip" => RuntimeStatus::BlockedSkip,
+                other => {
+                    return Err(TestCommandError::Internal(format!(
+                        "unknown suite worker status `{other}`"
+                    )));
+                }
+            };
+            let phase = match suite.phase.as_deref() {
+                None => None,
+                Some("setup") => Some(AttemptPhase::Setup),
+                Some("teardown") => Some(AttemptPhase::Teardown),
+                Some(other) => {
+                    return Err(TestCommandError::Internal(format!(
+                        "unknown suite worker phase `{other}`"
+                    )));
+                }
+            };
+            let error = suite.error.map(|error| error.into_run_error().unwrap_err());
+            attempts.push(CliSuiteAttempt {
+                id: suite.id,
+                iteration: if plan.repeat > 1 {
+                    u32::try_from(invocation).map_err(|_| {
+                        TestCommandError::Internal("suite iteration overflows u32".into())
+                    })?
+                } else {
+                    1
+                },
+                round: if plan.retry > 0 {
+                    u32::try_from(invocation.saturating_sub(1)).map_err(|_| {
+                        TestCommandError::Internal("suite retry round overflows u32".into())
+                    })?
+                } else {
+                    0
+                },
+                status,
+                phase,
+                report,
+                error,
+                snapshot_updates: suite
+                    .updates
+                    .into_iter()
+                    .map(|update| (update.name, update.value))
+                    .collect(),
+            });
+        }
+    }
+    Ok(attempts)
 }
 
 fn execute_campaign(
@@ -1647,12 +2087,14 @@ fn report_metadata(
     Ok(metadata)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_test_report(
     request: &CompilationRequest,
     plan: &test_cli::TestCliPlan,
     entries: &[tondo_compiler::test_backend::TestEntry],
     ownership: &OwnershipInfo,
     attempts: &[CliAttempt],
+    suite_attempts: &[CliSuiteAttempt],
     snapshots: &SnapshotInputs,
     mutation: &SnapshotMutation,
 ) -> Result<TestReport, TestCommandError> {
@@ -1698,10 +2140,95 @@ fn build_test_report(
             Ok(node)
         })
         .collect::<Result<Vec<_>, TestCommandError>>()?;
+    let mut suite_ids = entries
+        .iter()
+        .flat_map(|entry| {
+            (1..=entry.suites().len()).map(move |depth| {
+                let mut parts = entry.id().split("::").collect::<Vec<_>>();
+                parts.truncate(parts.len() - 1 - (entry.suites().len() - depth));
+                parts.join("::")
+            })
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    suite_ids.sort_by(|left, right| {
+        (left.matches("::").count(), left.as_bytes())
+            .cmp(&(right.matches("::").count(), right.as_bytes()))
+    });
+    let suites = suite_ids
+        .iter()
+        .map(|id| {
+            let mut selected = suite_attempts
+                .iter()
+                .filter(|attempt| attempt.id == *id)
+                .collect::<Vec<_>>();
+            selected.sort_by_key(|attempt| (attempt.iteration, attempt.round));
+            if selected.is_empty() {
+                return Err(TestCommandError::Internal(format!(
+                    "runtime did not return suite `{id}`"
+                )));
+            }
+            let attempts = selected
+                .iter()
+                .enumerate()
+                .map(|(index, source)| {
+                    let source_attempt = CliAttempt {
+                        id: source.id.clone(),
+                        iteration: source.iteration,
+                        round: source.round,
+                        unit: (source.round > 0).then_some(1),
+                        status: source.status,
+                        report: source.report.clone(),
+                        error: source.error.clone(),
+                        snapshot_updates: source.snapshot_updates.clone(),
+                    };
+                    let mut attempt = make_test_attempt(index as u32 + 1, &source_attempt)?;
+                    attempt.phase = source.phase;
+                    Ok(attempt)
+                })
+                .collect::<Result<Vec<_>, TestCommandError>>()?;
+            let (package, module, path) = identity_parts(id);
+            let parent = id.rsplit_once("::").and_then(|(candidate, _)| {
+                suite_ids
+                    .iter()
+                    .any(|suite| suite == candidate)
+                    .then(|| candidate.to_owned())
+            });
+            let name = id.rsplit("::").next().unwrap_or(id).to_owned();
+            let mut node = TestNode::new(
+                id.clone(),
+                parent,
+                package,
+                ResultNodeKind::Suite,
+                module,
+                name,
+                attempts,
+            );
+            node.path = path;
+            let logical_path = entries
+                .iter()
+                .find(|entry| {
+                    entry
+                        .id()
+                        .strip_prefix(id)
+                        .is_some_and(|suffix| suffix.starts_with("::"))
+                })
+                .ok_or_else(|| {
+                    TestCommandError::Internal(format!("suite `{id}` has no selected descendant"))
+                })?
+                .logical_path();
+            node.owners = ownership
+                .resolution
+                .owners_for(Some(logical_path))
+                .map_err(|error| TestCommandError::Internal(error.to_string()))?;
+            Ok(node)
+        })
+        .collect::<Result<Vec<_>, TestCommandError>>()?;
     TestReport::assemble(
         metadata,
         entries.iter().map(|entry| entry.id().to_owned()).collect(),
-        Vec::new(),
+        suites,
         tests,
     )
     .map_err(|error| TestCommandError::Internal(error.to_string()))
@@ -1717,21 +2244,39 @@ fn retry_rounds(
     }
     let mut rounds = Vec::new();
     for round in 1..=plan.retry {
-        let units = entries
-            .iter()
-            .enumerate()
-            .filter_map(|(index, entry)| {
-                attempts
-                    .iter()
-                    .any(|attempt| attempt.id == entry.id() && attempt.round == round)
-                    .then(|| RetryUnit {
-                        kind: RetryUnitKind::Test,
-                        id: entry.id().to_owned(),
-                        execution_plan: vec![entry.id().to_owned()],
-                    })
-                    .map(|unit| (index, unit))
+        let mut grouped = BTreeMap::<String, (usize, RetryUnitKind, Vec<String>)>::new();
+        for (index, entry) in entries.iter().enumerate() {
+            if !attempts
+                .iter()
+                .any(|attempt| attempt.id == entry.id() && attempt.round == round)
+            {
+                continue;
+            }
+            let (id, kind) = if entry.suites().is_empty() {
+                (entry.id().to_owned(), RetryUnitKind::Test)
+            } else {
+                let components = entry.id().split("::").collect::<Vec<_>>();
+                (components[..4].join("::"), RetryUnitKind::Suite)
+            };
+            grouped
+                .entry(id)
+                .and_modify(|(_, _, leaves)| leaves.push(entry.id().to_owned()))
+                .or_insert((index, kind, vec![entry.id().to_owned()]));
+        }
+        let mut units = grouped
+            .into_iter()
+            .map(|(id, (index, kind, execution_plan))| {
+                (
+                    index,
+                    RetryUnit {
+                        kind,
+                        id,
+                        execution_plan,
+                    },
+                )
             })
             .collect::<Vec<_>>();
+        units.sort_by_key(|(index, _)| *index);
         if !units.is_empty() {
             rounds.push(tondo_compiler::test_report::ReportRetryRound {
                 round,
@@ -1866,6 +2411,18 @@ fn make_test_attempt(index: u32, source: &CliAttempt) -> Result<TestAttempt, Tes
             source: None,
         });
     }
+    if matches!(
+        status,
+        AttemptStatus::BlockedSetup | AttemptStatus::BlockedSkip
+    ) && let Some(suite) = source.error.as_ref().and_then(|error| match error {
+        RunError::BlockedSetup { suite } | RunError::BlockedSkip { suite } => Some(suite),
+        _ => None,
+    }) {
+        attempt.blocked_by = Some(BlockedBy {
+            id: suite.clone(),
+            attempt: index,
+        });
+    }
     Ok(attempt)
 }
 
@@ -1879,6 +2436,7 @@ fn attempt_status(status: RuntimeStatus) -> AttemptStatus {
         RuntimeStatus::Timeout => AttemptStatus::Timeout,
         RuntimeStatus::Infrastructure => AttemptStatus::Infrastructure,
         RuntimeStatus::BlockedSetup => AttemptStatus::BlockedSetup,
+        RuntimeStatus::BlockedSkip => AttemptStatus::BlockedSkip,
     }
 }
 
@@ -1902,6 +2460,8 @@ fn failure_record(source: &CliAttempt) -> Option<FailureRecord> {
             RunError::Timeout | RunError::ForcedTermination { .. } => "timeout",
             RunError::Infrastructure { .. } => "infrastructure",
             RunError::Skip { .. } => "skip",
+            RunError::BlockedSetup { .. } => "blocked-setup",
+            RunError::BlockedSkip { .. } => "blocked-skip",
         };
         return Some(FailureRecord {
             kind: kind.into(),
@@ -2753,6 +3313,7 @@ mod tests {
             (RuntimeStatus::Timeout, AttemptStatus::Timeout),
             (RuntimeStatus::Infrastructure, AttemptStatus::Infrastructure),
             (RuntimeStatus::BlockedSetup, AttemptStatus::BlockedSetup),
+            (RuntimeStatus::BlockedSkip, AttemptStatus::BlockedSkip),
         ] {
             assert_eq!(attempt_status(runtime), result);
         }
@@ -3094,6 +3655,7 @@ mod tests {
             RuntimeStatus::Timeout,
             RuntimeStatus::Infrastructure,
             RuntimeStatus::BlockedSetup,
+            RuntimeStatus::BlockedSkip,
         ] {
             assert!(!runtime_status_wire(status).is_empty());
         }

@@ -5321,6 +5321,11 @@ fn bootstrap_host_function(
         HirBootstrapHostFunction::TestingSkip => MirBootstrapHostFunction::TestingSkip,
         HirBootstrapHostFunction::TestingAttach => MirBootstrapHostFunction::TestingAttach,
         HirBootstrapHostFunction::TestingSnapshot => MirBootstrapHostFunction::TestingSnapshot,
+        HirBootstrapHostFunction::TestingRunLeaf => MirBootstrapHostFunction::TestingRunLeaf,
+        HirBootstrapHostFunction::TestingRunSuite => MirBootstrapHostFunction::TestingRunSuite,
+        HirBootstrapHostFunction::TestingBeginSuiteCleanup => {
+            MirBootstrapHostFunction::TestingBeginSuiteCleanup
+        }
         function => {
             return Err(MirError::Construction {
                 span,
