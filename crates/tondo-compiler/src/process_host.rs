@@ -1945,8 +1945,13 @@ mod tests {
 
     #[test]
     fn identical_time_contract_corpus_passes_on_real_and_virtual_providers() {
+        let real_started = StdInstant::now();
         let mut real = BootstrapHost::default();
         run_time_contract_corpus(&mut real, None);
+        assert!(
+            real_started.elapsed() <= Duration::from_secs(30),
+            "the real provider conformance corpus exceeded its operational tolerance"
+        );
 
         let mut virtual_host = BootstrapHost::with_virtual_time(Vec::new(), 10).unwrap();
         run_time_contract_corpus(&mut virtual_host, Some(10));
@@ -2004,7 +2009,9 @@ mod tests {
         assert!(host.poll_async(first_wait).unwrap().is_none());
         assert!(host.poll_async(second_wait).unwrap().is_none());
         host.advance_virtual_time(100).unwrap();
-        assert!(host.poll_async(first_wait).unwrap().is_some());
+        let (completed, result) = host.wait_async(&[first_wait, second_wait]).unwrap();
+        assert_eq!(completed, first_wait, "tied timers use creation order");
+        assert_eq!(result, RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)));
         assert!(host.poll_async(second_wait).unwrap().is_some());
         assert!(source.advance_virtual_time(1).is_ok());
     }
@@ -2214,6 +2221,151 @@ mod tests {
             RuntimeValue::ResultErr(value)
                 if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::ClockError, .. })
         ));
+    }
+
+    #[test]
+    fn time_base_matches_checked_duration_and_instant_models() {
+        let mut host = BootstrapHost::with_virtual_time(Vec::new(), 1).unwrap();
+        let duration_values = [INT_MIN, -3, -1, 0, 1, 3, INT_MAX];
+        for left in duration_values {
+            assert_eq!(
+                host.invoke("std.time.Duration.isZero", &[RuntimeValue::Integer(left)])
+                    .unwrap(),
+                RuntimeValue::Bool(left == 0)
+            );
+            assert_eq!(
+                host.invoke(
+                    "std.time.Duration.isNegative",
+                    &[RuntimeValue::Integer(left)]
+                )
+                .unwrap(),
+                RuntimeValue::Bool(left < 0)
+            );
+            let negated = left
+                .checked_neg()
+                .filter(|value| (INT_MIN..=INT_MAX).contains(value));
+            let actual = host
+                .invoke("std.time.Duration.negate", &[RuntimeValue::Integer(left)])
+                .unwrap();
+            match negated {
+                Some(expected) => assert_eq!(
+                    actual,
+                    RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(expected)))
+                ),
+                None => assert!(matches!(
+                    actual,
+                    RuntimeValue::ResultErr(value)
+                        if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::DurationError, .. })
+                )),
+            }
+
+            for right in duration_values {
+                assert_eq!(
+                    host.invoke(
+                        "std.time.Duration.isLessThan",
+                        &[RuntimeValue::Integer(left), RuntimeValue::Integer(right)]
+                    )
+                    .unwrap(),
+                    RuntimeValue::Bool(left < right)
+                );
+                for (operation, expected) in [
+                    ("std.time.Duration.add", left.checked_add(right)),
+                    ("std.time.Duration.subtract", left.checked_sub(right)),
+                    ("std.time.Duration.multiply", left.checked_mul(right)),
+                ] {
+                    let expected = expected.filter(|value| (INT_MIN..=INT_MAX).contains(value));
+                    let actual = host
+                        .invoke(
+                            operation,
+                            &[RuntimeValue::Integer(left), RuntimeValue::Integer(right)],
+                        )
+                        .unwrap();
+                    match expected {
+                        Some(expected) => assert_eq!(
+                            actual,
+                            RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(expected))),
+                            "{operation}({left}, {right})"
+                        ),
+                        None => assert!(
+                            matches!(
+                                actual,
+                                RuntimeValue::ResultErr(value)
+                                    if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::DurationError, .. })
+                            ),
+                            "{operation}({left}, {right}) must overflow"
+                        ),
+                    }
+                }
+            }
+        }
+
+        let instant_values = [i128::MIN, INT_MIN, -1, 0, 1, INT_MAX, i128::MAX];
+        for left in instant_values {
+            for right in instant_values {
+                let left_value = host.allocate_instant(left);
+                let right_value = host.allocate_instant(right);
+                for (operation, expected) in [
+                    ("std.time.Instant.isBefore", left < right),
+                    ("std.time.Instant.isAfter", left > right),
+                ] {
+                    assert_eq!(
+                        ok(host
+                            .invoke(operation, &[left_value.clone(), right_value.clone()])
+                            .unwrap()),
+                        RuntimeValue::Bool(expected),
+                        "{operation}({left}, {right})"
+                    );
+                }
+                let expected = left
+                    .checked_sub(right)
+                    .filter(|value| (INT_MIN..=INT_MAX).contains(value));
+                let actual = host
+                    .invoke("std.time.Instant.durationSince", &[left_value, right_value])
+                    .unwrap();
+                match expected {
+                    Some(expected) => assert_eq!(
+                        actual,
+                        RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(expected)))
+                    ),
+                    None => assert!(matches!(
+                        actual,
+                        RuntimeValue::ResultErr(value)
+                            if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::ClockError, .. })
+                    )),
+                }
+            }
+        }
+
+        for instant in instant_values {
+            for duration in duration_values {
+                for (operation, expected) in [
+                    ("std.time.Instant.add", instant.checked_add(duration)),
+                    ("std.time.Instant.subtract", instant.checked_sub(duration)),
+                ] {
+                    let receiver = host.allocate_instant(instant);
+                    let actual = host
+                        .invoke(operation, &[receiver, RuntimeValue::Integer(duration)])
+                        .unwrap();
+                    match expected {
+                        Some(expected) => {
+                            let value = ok(actual);
+                            assert_eq!(host.instant(&value).unwrap().1, expected);
+                        }
+                        None => assert!(matches!(
+                            actual,
+                            RuntimeValue::ResultErr(value)
+                                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::ClockError, .. })
+                        )),
+                    }
+                }
+            }
+        }
+
+        assert!(BootstrapHost::with_virtual_time(Vec::new(), 0).is_err());
+        assert!(BootstrapHost::with_virtual_time(Vec::new(), -1).is_err());
+        let mut overflowing = BootstrapHost::with_virtual_time(Vec::new(), 1).unwrap();
+        overflowing.advance_virtual_time(i128::MAX).unwrap();
+        assert!(overflowing.advance_virtual_time(1).is_err());
     }
 
     #[test]

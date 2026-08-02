@@ -3826,7 +3826,7 @@ layer pueden avanzar en paralelo.
   filtraciones pertenecen a `UTEST-DEPS-001`, `UTEST-INPUTS-001` y Gate T0, no
   a este micro-gate previo al runner.
 
-- [ ] **STD-TIME-BASE-CONF-001 — Cerrar la evidencia del sustrato temporal.**
+- [x] **STD-TIME-BASE-CONF-001 — Cerrar la evidencia del sustrato temporal.**
   Añadir modelos de suma/comparación/overflow de `Duration` e `Instant`, tests de
   identidad/mismatch de proveedor, suspensión, deadline, cancelación, empates de
   timers y disponibilidad por capability. Ejecutar el mismo corpus contra
