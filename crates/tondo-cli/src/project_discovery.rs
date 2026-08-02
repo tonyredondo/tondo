@@ -474,16 +474,20 @@ fn slash_path(path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::*;
+
+    static TEMPORARY_ID: AtomicU64 = AtomicU64::new(0);
 
     fn temporary_project() -> PathBuf {
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock must be after epoch")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!("tondo-discovery-{nonce}"));
+        let id = TEMPORARY_ID.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("tondo-discovery-{nonce}-{id}"));
         fs::create_dir_all(root.join("src/models")).unwrap();
         fs::create_dir_all(root.join("tests")).unwrap();
         fs::write(root.join("src/main.to"), b"fn main() {}\n").unwrap();
