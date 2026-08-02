@@ -1,0 +1,23 @@
+pub type Limits = {
+    steps: UInt64
+    memoryBytes: UInt64
+    outputBytes: UInt64
+}
+
+pub type Output = {
+    path: String
+    module: String
+    source: String
+}
+
+pub fn api(): String {
+    "tondo-std-meta-0.1/1"
+}
+
+pub fn target(): String {
+    "tondo-meta"
+}
+
+pub fn profile(): String {
+    "meta"
+}

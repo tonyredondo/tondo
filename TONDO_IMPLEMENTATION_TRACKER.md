@@ -3781,7 +3781,7 @@ layer pueden avanzar en paralelo.
 
 ### 19.4 Implementación y evidencia
 
-- [ ] **STD-META-IMPL-001 — Implementar `std.meta` sobre el target cerrado.**
+- [x] **STD-META-IMPL-001 — Implementar `std.meta` sobre el target cerrado.**
   Después de `META-VM-001`, materializar el companion meta dentro de la
   distribución candidata, implementar requests, recorrido, renderizado y
   builder en Tondo cuando sea posible y validar su descriptor/content hash. No

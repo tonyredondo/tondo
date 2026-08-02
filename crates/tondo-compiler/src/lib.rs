@@ -14,6 +14,7 @@ pub mod project;
 pub mod resolve;
 pub mod semantic;
 pub mod source;
+pub mod std_meta;
 pub mod syntax;
 pub mod test_artifacts;
 pub mod test_backend;

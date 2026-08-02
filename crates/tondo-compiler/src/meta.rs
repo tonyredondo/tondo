@@ -894,6 +894,29 @@ impl MetaRequest {
         self.limits
     }
 
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, MetaContractError> {
+        let canonical = self.clone().canonicalize()?;
+        serde_json::to_vec(&canonical)
+            .map_err(|error| MetaContractError::Serialization(error.to_string()))
+    }
+
+    pub fn hash(&self) -> Result<String, MetaContractError> {
+        Ok(crate::artifact::sha256(&self.canonical_bytes()?))
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, MetaContractError> {
+        let request: Self = serde_json::from_slice(bytes)
+            .map_err(|error| MetaContractError::Serialization(error.to_string()))?;
+        let canonical = request.canonicalize()?;
+        if serde_json::to_vec(&canonical)
+            .map_err(|error| MetaContractError::Serialization(error.to_string()))?
+            != bytes
+        {
+            return Err(MetaContractError::NonCanonicalEncoding);
+        }
+        Ok(canonical)
+    }
+
     /// Transfer ownership to the only output construction API.
     pub fn into_source_builder(self) -> MetaSourceBuilder {
         MetaSourceBuilder {
@@ -905,6 +928,37 @@ impl MetaRequest {
             limits: self.limits,
             outputs: BTreeMap::new(),
         }
+    }
+
+    fn canonicalize(self) -> Result<Self, MetaContractError> {
+        if self.api != META_API {
+            return Err(MetaContractError::UnsupportedApi(self.api));
+        }
+        MetaLimits::new(
+            self.limits.steps,
+            self.limits.memory_bytes,
+            self.limits.output_bytes,
+        )?;
+        let snapshot_bytes = self
+            .snapshot
+            .canonical_bytes()
+            .map_err(|error| MetaContractError::InvalidSnapshot(error.to_string()))?;
+        let snapshot = MetaSnapshot::decode(&snapshot_bytes)
+            .map_err(|error| MetaContractError::InvalidSnapshot(error.to_string()))?;
+        let mut inputs = Vec::with_capacity(self.inputs.len());
+        for input in self.inputs {
+            let canonical = MetaInput::new(input.name, input.bytes)?;
+            if canonical.hash != input.hash {
+                return Err(MetaContractError::InputHashMismatch(canonical.name));
+            }
+            inputs.push(canonical);
+        }
+        let outputs = self
+            .outputs
+            .into_iter()
+            .map(|output| MetaOutputSpec::new(output.path, output.module))
+            .collect::<Result<Vec<_>, _>>()?;
+        Self::new(snapshot, inputs, outputs, self.limits)
     }
 }
 
@@ -993,13 +1047,58 @@ impl MetaResponse {
     pub fn output(&self, path: &str) -> Option<&MetaSource> {
         self.outputs.iter().find(|source| source.path == path)
     }
+
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, MetaContractError> {
+        let canonical = self.clone().canonicalize()?;
+        serde_json::to_vec(&canonical)
+            .map_err(|error| MetaContractError::Serialization(error.to_string()))
+    }
+
+    pub fn hash(&self) -> Result<String, MetaContractError> {
+        Ok(crate::artifact::sha256(&self.canonical_bytes()?))
+    }
+
+    pub fn decode(bytes: &[u8]) -> Result<Self, MetaContractError> {
+        let response: Self = serde_json::from_slice(bytes)
+            .map_err(|error| MetaContractError::Serialization(error.to_string()))?;
+        let canonical = response.canonicalize()?;
+        if serde_json::to_vec(&canonical)
+            .map_err(|error| MetaContractError::Serialization(error.to_string()))?
+            != bytes
+        {
+            return Err(MetaContractError::NonCanonicalEncoding);
+        }
+        Ok(canonical)
+    }
+
+    fn canonicalize(self) -> Result<Self, MetaContractError> {
+        let limits = MetaLimits::new(u64::MAX, u64::MAX, u64::MAX)?;
+        let outputs = self.outputs;
+        let specs = outputs
+            .iter()
+            .map(|source| MetaOutputSpec::new(source.path.clone(), source.module.clone()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let snapshot = MetaSnapshot::new([], [], [])
+            .map_err(|error| MetaContractError::InvalidSnapshot(error.to_string()))?;
+        let mut builder = MetaRequest::new(snapshot, [], specs, limits)?.into_source_builder();
+        for source in outputs {
+            let actual_hash = crate::artifact::sha256(&source.bytes);
+            if actual_hash != source.hash {
+                return Err(MetaContractError::SourceHashMismatch(source.path));
+            }
+            builder.add_source(source.path, source.module, source.bytes)?;
+        }
+        builder.finish()
+    }
 }
 
 /// Closed request/response boundary errors. There is intentionally no variant
 /// for invoking a callback or acquiring a host capability.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MetaContractError {
+    UnsupportedApi(String),
     InvalidLimit,
+    InvalidSnapshot(String),
     InvalidText { field: String },
     InvalidPath(String),
     DuplicateInput(String),
@@ -1009,12 +1108,18 @@ pub enum MetaContractError {
     InvalidSourceUtf8(String),
     OutputLimit { limit: u64 },
     MissingOutput(String),
+    InputHashMismatch(String),
+    SourceHashMismatch(String),
+    NonCanonicalEncoding,
+    Serialization(String),
 }
 
 impl fmt::Display for MetaContractError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnsupportedApi(api) => write!(formatter, "unsupported std.meta API `{api}`"),
             Self::InvalidLimit => formatter.write_str("meta limits must be positive"),
+            Self::InvalidSnapshot(error) => write!(formatter, "invalid meta snapshot: {error}"),
             Self::InvalidText { field } => write!(formatter, "invalid meta text `{field}`"),
             Self::InvalidPath(path) => write!(formatter, "invalid meta output path `{path}`"),
             Self::DuplicateInput(name) => write!(formatter, "duplicate meta input `{name}`"),
@@ -1028,6 +1133,12 @@ impl fmt::Display for MetaContractError {
                 write!(formatter, "meta output limit exceeded ({limit} bytes)")
             }
             Self::MissingOutput(path) => write!(formatter, "missing declared meta output `{path}`"),
+            Self::InputHashMismatch(name) => write!(formatter, "meta input hash mismatch `{name}`"),
+            Self::SourceHashMismatch(path) => {
+                write!(formatter, "meta source hash mismatch `{path}`")
+            }
+            Self::NonCanonicalEncoding => formatter.write_str("meta value is not canonical"),
+            Self::Serialization(error) => write!(formatter, "meta encoding failed: {error}"),
         }
     }
 }
