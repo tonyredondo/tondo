@@ -5846,6 +5846,22 @@ impl Engine<'_, '_> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let returned = self.host.invoke(function.name(), &snapshots)?;
+                if matches!(
+                    function,
+                    BytecodeBootstrapHostFunction::TestingFailNow
+                        | BytecodeBootstrapHostFunction::TestingSkip
+                ) {
+                    let RuntimeValue::Unit = returned else {
+                        return Err(VmError::Host(format!(
+                            "{} returned a non-Unit terminal acknowledgement",
+                            function.name()
+                        )));
+                    };
+                    return Ok(OperationResult::Panic(
+                        PanicCode::ExplicitPanic,
+                        format!("{} terminated the test", function.name()),
+                    ));
+                }
                 match (function, returned) {
                     (
                         BytecodeBootstrapHostFunction::ConsolePrint
@@ -6128,6 +6144,22 @@ impl Engine<'_, '_> {
                     })
                     .collect::<Result<Vec<_>, _>>()?;
                 let returned = self.host.invoke(function.name(), &snapshots)?;
+                if matches!(
+                    function,
+                    BytecodeBootstrapHostFunction::TestingFailNow
+                        | BytecodeBootstrapHostFunction::TestingSkip
+                ) {
+                    let RuntimeValue::Unit = returned else {
+                        return Err(VmError::Host(format!(
+                            "{} returned a non-Unit terminal acknowledgement",
+                            function.name()
+                        )));
+                    };
+                    return Ok(OperationResult::Panic(
+                        PanicCode::ExplicitPanic,
+                        format!("{} terminated the test", function.name()),
+                    ));
+                }
                 match (*function, returned) {
                     (BytecodeBootstrapHostFunction::ConsolePrint, RuntimeValue::Unit) => {
                         Ok(OperationResult::Value(Value::Unit))
@@ -7230,6 +7262,21 @@ impl Engine<'_, '_> {
                     })
                 } else {
                     let returned = self.host.invoke(&metadata.name, &snapshots)?;
+                    if matches!(
+                        metadata.name.as_str(),
+                        "std.testing.failNow" | "std.testing.skip"
+                    ) {
+                        let RuntimeValue::Unit = returned else {
+                            return Err(VmError::Host(format!(
+                                "{} returned a non-Unit terminal acknowledgement",
+                                metadata.name
+                            )));
+                        };
+                        return Ok(OperationResult::Panic(
+                            PanicCode::ExplicitPanic,
+                            format!("{} terminated the test", metadata.name),
+                        ));
+                    }
                     Ok(OperationResult::Value(
                         self.materialize_host_value(metadata.outcome, returned)?,
                     ))

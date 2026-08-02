@@ -5363,12 +5363,16 @@ impl Verifier<'_> {
                             && self.is_scalar(arguments[0].ty, BytecodeScalarType::UInt64)
                             && pointer_element(operation.ty)?.is_some()
                     }
-                    BytecodeBootstrapHostFunction::TestingLog
-                    | BytecodeBootstrapHostFunction::TestingFailNow
-                    | BytecodeBootstrapHostFunction::TestingSkip => {
+                    BytecodeBootstrapHostFunction::TestingLog => {
                         arguments.len() == 1
                             && self.is_scalar(arguments[0].ty, BytecodeScalarType::String)
                             && self.is_scalar(operation.ty, BytecodeScalarType::Unit)
+                    }
+                    BytecodeBootstrapHostFunction::TestingFailNow
+                    | BytecodeBootstrapHostFunction::TestingSkip => {
+                        arguments.len() == 1
+                            && self.is_scalar(arguments[0].ty, BytecodeScalarType::String)
+                            && self.is_scalar(operation.ty, BytecodeScalarType::Never)
                     }
                     BytecodeBootstrapHostFunction::TestingTags => {
                         arguments.len() == 1
@@ -12810,12 +12814,12 @@ mod tests {
             ),
             host(
                 BytecodeBootstrapHostFunction::TestingFailNow,
-                ids.unit,
+                ids.never,
                 vec![string()],
             ),
             host(
                 BytecodeBootstrapHostFunction::TestingSkip,
-                ids.unit,
+                ids.never,
                 vec![string()],
             ),
             host(

@@ -5,6 +5,21 @@ fn recordIntegration() {
     testing.tags(["kind": "integration"])
 }
 
+async fn serviceValue(): Int {
+    42
+}
+
+async fn startService(): Int {
+    scope {
+        let service = spawn serviceValue()
+        await service
+    }
+}
+
+async fn stopService() {
+    testing.log("service cleanup")
+}
+
 test integration_root {
     recordIntegration()
     assert(true)
@@ -25,5 +40,16 @@ suite shared_service {
             recordIntegration()
             assert(response == 8081)
         }
+    }
+}
+
+suite managed_service {
+    let serviceResponse = await startService()
+    defer await stopService()
+
+    test responds {
+        testing.log("managed service response")
+        testing.tags(["kind": "integration"])
+        assert(serviceResponse == 42)
     }
 }

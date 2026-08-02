@@ -17,6 +17,10 @@ fn control_fixture() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../acceptance/projects/testing-control")
 }
 
+fn flaky_fixture() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../acceptance/projects/testing-flaky")
+}
+
 fn temporary_root(label: &str) -> PathBuf {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -86,7 +90,7 @@ fn acceptance_project_is_relocatable_and_reports_canonical_observations() {
     let first_report = TestReport::parse(&first_output.stdout).unwrap();
     let second_report = TestReport::parse(&second_output.stdout).unwrap();
 
-    assert_eq!(first_report.tests().len(), 4);
+    assert_eq!(first_report.tests().len(), 5);
     assert_eq!(
         first_report.canonical_bytes().unwrap(),
         second_report.canonical_bytes().unwrap()
@@ -117,7 +121,12 @@ fn acceptance_project_is_relocatable_and_reports_canonical_observations() {
     );
     for test in first_report.tests() {
         assert_eq!(test.attempts.len(), 1);
-        assert_eq!(test.attempts[0].logs.len(), 1);
+        if test.id.contains("managed_service::responds") {
+            assert_eq!(test.attempts[0].logs.len(), 2);
+            assert_eq!(test.attempts[0].logs[1], "service cleanup");
+        } else {
+            assert_eq!(test.attempts[0].logs.len(), 1);
+        }
         assert!(test.attempts[0].tags.contains_key("kind"));
     }
     fs::remove_dir_all(first).unwrap();
@@ -145,6 +154,7 @@ fn acceptance_control_project_exposes_fail_now_and_skip_without_visible_context(
             .as_deref(),
         Some("P0007")
     );
+    assert!(failure.tests()[0].attempts[0].logs.is_empty());
 
     let skipped = successful(
         &project,
@@ -156,6 +166,7 @@ fn acceptance_control_project_exposes_fail_now_and_skip_without_visible_context(
         skipped.tests()[0].attempts[0].skip.as_ref().unwrap().reason,
         "controlled skip"
     );
+    assert!(skipped.tests()[0].attempts[0].logs.is_empty());
 
     fs::remove_dir_all(project).unwrap();
 }
@@ -182,7 +193,25 @@ fn acceptance_control_project_publishes_source_attachments_and_snapshots() {
     assert_eq!(attempt.artifacts[0].media_type, "text/plain");
     assert_eq!(attempt.snapshots.len(), 1);
     assert_eq!(attempt.snapshots[0].name, "greeting");
-    assert_eq!(attempt.snapshots[0].status, SnapshotStatus::Missing);
+    assert_eq!(attempt.snapshots[0].status, SnapshotStatus::Created);
+    assert!(project.join("tests/snapshots.json").is_file());
+
+    let checked = successful(
+        &project,
+        &[
+            "--exact",
+            "controlledEvidence",
+            "--artifacts",
+            "target/check-artifacts",
+            "--test-format",
+            "json",
+        ],
+    );
+    let checked = TestReport::parse(&checked.stdout).unwrap();
+    assert_eq!(
+        checked.tests()[0].attempts[0].snapshots[0].status,
+        SnapshotStatus::Matched
+    );
 
     fs::remove_dir_all(project).unwrap();
 }
@@ -263,7 +292,20 @@ fn acceptance_project_exercises_public_selection_and_sharding_contracts() {
         .collect::<Vec<_>>();
     partition.sort();
     partition.dedup();
-    assert_eq!(partition.len(), 4);
+    assert_eq!(partition.len(), 5);
+
+    let left_run = successful(&project, &["--shard", "1/2", "--test-format", "json"]);
+    let right_run = successful(&project, &["--shard", "2/2", "--test-format", "json"]);
+    let left_run = TestReport::parse(&left_run.stdout).unwrap();
+    let right_run = TestReport::parse(&right_run.stdout).unwrap();
+    assert!(
+        left_run
+            .tests()
+            .iter()
+            .chain(right_run.tests())
+            .all(|test| test.status == AggregateStatus::Passed)
+    );
+    assert_eq!(left_run.tests().len() + right_run.tests().len(), 5);
 
     let empty = tondo_test(
         &project,
@@ -298,10 +340,54 @@ fn acceptance_project_publishes_equivalent_json_and_junit_results() {
     );
 
     let junit = fs::read_to_string(project.join("target/acceptance.xml")).unwrap();
-    assert!(junit.contains("tests=\"4\""));
+    assert!(junit.contains("tests=\"5\""));
     for test in stdout.tests() {
         assert!(junit.contains(&test.id));
     }
 
+    fs::remove_dir_all(project).unwrap();
+}
+
+#[test]
+fn acceptance_project_dogfoods_repeat_with_fresh_attempts() {
+    let project = project("repeat");
+    let output = successful(
+        &project,
+        &["--repeat", "3", "--jobs", "2", "--test-format", "json"],
+    );
+    let report = TestReport::parse(&output.stdout).unwrap();
+    assert_eq!(report.metadata().repeat.count, 3);
+    for test in report.tests() {
+        assert_eq!(test.status, AggregateStatus::Passed);
+        assert_eq!(test.attempts.len(), 3);
+        assert_eq!(
+            test.attempts
+                .iter()
+                .map(|attempt| attempt.iteration)
+                .collect::<Vec<_>>(),
+            [1, 2, 3]
+        );
+        assert!(test.attempts.iter().all(|attempt| attempt.round == 0));
+    }
+    fs::remove_dir_all(project).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn acceptance_project_dogfoods_an_isolated_deterministic_retry() {
+    let project = temporary_root("retry");
+    copy_tree(&flaky_fixture(), &project);
+    let output = successful(
+        &project,
+        &["--retry", "1", "--allow-flaky", "--test-format", "json"],
+    );
+    let report = TestReport::parse(&output.stdout).unwrap();
+    let test = &report.tests()[0];
+    assert_eq!(test.status, AggregateStatus::FlakyPass);
+    assert_eq!(test.attempts.len(), 2);
+    assert_eq!(test.attempts[0].round, 0);
+    assert_eq!(test.attempts[1].round, 1);
+    assert_eq!(test.attempts[1].logs, ["isolated retry passed"]);
+    assert!(!project.join("dogfood-retry.marker").exists());
     fs::remove_dir_all(project).unwrap();
 }

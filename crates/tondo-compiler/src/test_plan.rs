@@ -408,6 +408,7 @@ pub struct TestProjectPlan {
     reporters: Vec<String>,
     artifact_store: TestArtifactStore,
     snapshot_stores: Vec<TestSnapshotStore>,
+    snapshot_stores_implicit: bool,
     target: TestTarget,
     time_catalog: TimeCatalog,
     limits: TestLimits,
@@ -477,7 +478,13 @@ impl TestProjectPlan {
                 path: "target/test-artifacts".into(),
                 max_bytes: 16 * 1024 * 1024,
             },
-            snapshot_stores: Vec::new(),
+            snapshot_stores: vec![TestSnapshotStore {
+                name: "default".into(),
+                path: "tests/snapshots.json".into(),
+                update: false,
+                max_bytes: 16 * 1024 * 1024,
+            }],
+            snapshot_stores_implicit: true,
             target: TestTarget {
                 name: project.target_name().into(),
                 profile: project.profile().as_str().into(),
@@ -577,6 +584,7 @@ impl TestProjectPlan {
             reporters,
             artifact_store,
             snapshot_stores,
+            snapshot_stores_implicit: false,
             target,
             time_catalog,
             limits,
@@ -644,6 +652,12 @@ impl TestProjectPlan {
 
     pub fn snapshot_stores(&self) -> &[TestSnapshotStore] {
         &self.snapshot_stores
+    }
+
+    /// Whether the conventional snapshot store came from the opinionated
+    /// plan rather than from a user-maintained sidecar.
+    pub const fn snapshot_stores_implicit(&self) -> bool {
+        self.snapshot_stores_implicit
     }
 
     pub fn target(&self) -> &TestTarget {
@@ -1714,6 +1728,7 @@ mod tests {
         assert_eq!(plan.snapshot_stores().len(), 1);
         assert_eq!(plan.snapshot_stores()[0].name(), "default");
         assert_eq!(plan.snapshot_stores()[0].path(), "tests/snapshots");
+        assert!(!plan.snapshot_stores_implicit());
         assert!(!plan.snapshot_stores()[0].update());
         assert_eq!(plan.snapshot_stores()[0].max_bytes(), 1_048_576);
         assert_eq!(plan.target().name(), "tondo-vm-hosted");
@@ -1757,6 +1772,10 @@ mod tests {
         assert_eq!(plan.policy().repeat(), 1);
         assert_eq!(plan.limits().timeout_ms(), 30_000);
         assert_eq!(plan.artifact_store().max_bytes(), 16 * 1024 * 1024);
+        assert_eq!(plan.snapshot_stores().len(), 1);
+        assert_eq!(plan.snapshot_stores()[0].name(), "default");
+        assert_eq!(plan.snapshot_stores()[0].path(), "tests/snapshots.json");
+        assert!(plan.snapshot_stores_implicit());
         assert!(
             project
                 .parse_test_plan(&plan.canonical_bytes().unwrap())

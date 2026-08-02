@@ -558,7 +558,7 @@ fn load_snapshot_inputs(
     for descriptor in test_plan.snapshot_stores() {
         let relative = PathBuf::from(descriptor.path());
         let path = base.join(&relative);
-        let store = if update && !path.exists() {
+        let store = if !path.exists() && (update || test_plan.snapshot_stores_implicit()) {
             SnapshotStore::empty(package)
                 .map_err(|error| TestCommandError::Usage(error.to_string()))?
         } else {
@@ -1246,6 +1246,9 @@ fn execute_test_worker(
         let evidence = envelope.report().map_err(RunError::Control)?;
         let updates = envelope.snapshot_updates().map_err(RunError::Control)?;
         context.merge_worker_report(&evidence, &updates)?;
+        if evidence.terminal().is_some() {
+            return Ok(());
+        }
         if !output.stdout().is_empty() {
             context.stdout(String::from_utf8_lossy(output.stdout()).into_owned())?;
         }
@@ -1805,14 +1808,32 @@ fn make_test_attempt(index: u32, source: &CliAttempt) -> Result<TestAttempt, Tes
                     Some(expected_sha256),
                     actual_sha256,
                 ),
-                SnapshotOutcome::Missing { actual_sha256 } => {
-                    (SnapshotStatus::Missing, None, actual_sha256)
-                }
+                SnapshotOutcome::Missing { actual_sha256 } => (
+                    if source
+                        .snapshot_updates
+                        .iter()
+                        .any(|(name, _)| name == snapshot.name())
+                    {
+                        SnapshotStatus::Created
+                    } else {
+                        SnapshotStatus::Missing
+                    },
+                    None,
+                    actual_sha256,
+                ),
                 SnapshotOutcome::Mismatched {
                     expected_sha256,
                     actual_sha256,
                 } => (
-                    SnapshotStatus::Mismatched,
+                    if source
+                        .snapshot_updates
+                        .iter()
+                        .any(|(name, _)| name == snapshot.name())
+                    {
+                        SnapshotStatus::Updated
+                    } else {
+                        SnapshotStatus::Mismatched
+                    },
                     Some(expected_sha256),
                     actual_sha256,
                 ),
@@ -2430,6 +2451,15 @@ mod tests {
         let discovered = project_discovery::discover(&root).unwrap();
         let project =
             ProjectPlan::parse(&discovered.manifest_bytes, &discovered.lockfile_bytes).unwrap();
+        let package = project.selected_source_records().next().unwrap().0;
+        fs::write(
+            root.join("tests/snapshots.json"),
+            SnapshotStore::empty(package)
+                .unwrap()
+                .canonical_bytes()
+                .unwrap(),
+        )
+        .unwrap();
         let mut test_plan: serde_json::Value = serde_json::from_slice(
             &TestProjectPlan::defaults(&project, 1)
                 .canonical_bytes()

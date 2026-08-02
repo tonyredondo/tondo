@@ -209,6 +209,14 @@ fn test_project(source: &[u8]) -> std::path::PathBuf {
     )
     .unwrap();
     let project = ProjectPlan::parse(&manifest, &normalized_lock).unwrap();
+    fs::write(
+        directory.join("tests/snapshots.json"),
+        SnapshotStore::empty(package_id)
+            .unwrap()
+            .canonical_bytes()
+            .unwrap(),
+    )
+    .unwrap();
     let test_plan = TestProjectPlan::defaults(&project, 1)
         .canonical_bytes()
         .unwrap();
@@ -411,6 +419,7 @@ fn snapshot_store_inputs_are_validated_before_worker_execution() {
             "max_bytes": 1_048_576
         }]);
     });
+    fs::remove_file(directory.join("tests/snapshots.json")).unwrap();
     let missing = Command::new(env!("CARGO_BIN_EXE_tondo"))
         .current_dir(&directory)
         .args(["test", "--project"])

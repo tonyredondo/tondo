@@ -254,6 +254,7 @@ impl<'a> TypeLowerer<'a> {
         let bool_type = self.interner.scalar(ScalarType::Bool);
         let int = self.interner.scalar(ScalarType::Int);
         let unit = self.interner.scalar(ScalarType::Unit);
+        let never = self.interner.scalar(ScalarType::Never);
         let command = self
             .interner
             .intrinsic(IntrinsicType::Command, Vec::new())?;
@@ -303,8 +304,14 @@ impl<'a> TypeLowerer<'a> {
         let string_from_bytes_outcome = self.interner.result(string, utf8_error)?;
 
         if testing_referenced {
-            for function in [
+            self.push_bootstrap_host_callable(
+                span,
                 HirBootstrapHostFunction::TestingLog,
+                vec![(string, false)],
+                None,
+                unit,
+            )?;
+            for function in [
                 HirBootstrapHostFunction::TestingFailNow,
                 HirBootstrapHostFunction::TestingSkip,
             ] {
@@ -313,7 +320,7 @@ impl<'a> TypeLowerer<'a> {
                     function,
                     vec![(string, false)],
                     None,
-                    unit,
+                    never,
                 )?;
             }
             self.push_bootstrap_host_callable(

@@ -9,14 +9,28 @@ fn recordEvidence() {
     testing.snapshot("greeting", "hello from Tondo")
 }
 
+fn requireValue(valid: Bool): Int {
+    if valid {
+        42
+    } else {
+        testing.failNow("value unavailable")
+    }
+}
+
 test controlledFailure {
     testing.failNow("controlled failure")
+    testing.log("unreachable after failNow")
 }
 
 test controlledSkip {
     testing.skip("controlled skip")
+    testing.log("unreachable after skip")
 }
 
 test controlledEvidence {
     recordEvidence()
+}
+
+test terminalIsNever {
+    assert(requireValue(true) == 42)
 }

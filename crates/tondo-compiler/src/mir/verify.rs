@@ -2821,12 +2821,16 @@ impl Verifier<'_> {
                             && arguments[0].ty == self.hir.interner().scalar(ScalarType::UInt64)
                             && pointer_element(operation.ty)?.is_some()
                     }
-                    super::MirBootstrapHostFunction::TestingLog
-                    | super::MirBootstrapHostFunction::TestingFailNow
-                    | super::MirBootstrapHostFunction::TestingSkip => {
+                    super::MirBootstrapHostFunction::TestingLog => {
                         arguments.len() == 1
                             && arguments[0].ty == self.hir.interner().scalar(ScalarType::String)
                             && operation.ty == self.hir.interner().scalar(ScalarType::Unit)
+                    }
+                    super::MirBootstrapHostFunction::TestingFailNow
+                    | super::MirBootstrapHostFunction::TestingSkip => {
+                        arguments.len() == 1
+                            && arguments[0].ty == self.hir.interner().scalar(ScalarType::String)
+                            && operation.ty == self.hir.interner().scalar(ScalarType::Never)
                     }
                     super::MirBootstrapHostFunction::TestingTags => {
                         arguments.len() == 1
@@ -12356,7 +12360,14 @@ mod tests {
             let operations = MirFunctionId::Callable(callable_named(&resolved, "operations"));
             let parameters = mir.functions[&operations].parameters.clone();
             let string = hir.interner().scalar(ScalarType::String);
-            let unit = hir.interner().scalar(ScalarType::Unit);
+            let outcome = if matches!(
+                function,
+                MirBootstrapHostFunction::TestingFailNow | MirBootstrapHostFunction::TestingSkip
+            ) {
+                hir.interner().scalar(ScalarType::Never)
+            } else {
+                hir.interner().scalar(ScalarType::Unit)
+            };
             let string_operand = || MirOperand {
                 ty: string,
                 kind: MirOperandKind::Constant(MirConstant::String("text".into())),
@@ -12390,11 +12401,46 @@ mod tests {
             let operation = operation_mut(mir.functions.get_mut(&operations).unwrap(), |kind| {
                 matches!(kind, MirOperationKind::BootstrapHostCall { .. })
             });
-            operation.ty = unit;
+            operation.ty = outcome;
             operation.kind = MirOperationKind::BootstrapHostCall {
                 function,
                 arguments,
             };
+            if outcome == hir.interner().scalar(ScalarType::Never) {
+                let block = mir
+                    .functions
+                    .get_mut(&operations)
+                    .unwrap()
+                    .blocks
+                    .iter_mut()
+                    .find(|block| {
+                        matches!(block.terminator.kind, MirTerminatorKind::Invoke {
+                        operation: MirOperation {
+                            kind: MirOperationKind::BootstrapHostCall { function: actual, .. },
+                            ..
+                        },
+                        ..
+                    } if actual == function)
+                    })
+                    .unwrap();
+                let MirTerminatorKind::Invoke {
+                    destination,
+                    target,
+                    ..
+                } = &mut block.terminator.kind
+                else {
+                    unreachable!()
+                };
+                let abandoned = *target;
+                *destination = None;
+                *target = None;
+                if let Some(abandoned) = abandoned {
+                    let block = &mut mir.functions.get_mut(&operations).unwrap().blocks
+                        [abandoned.0 as usize];
+                    block.statements.clear();
+                    block.terminator.kind = MirTerminatorKind::Unreachable;
+                }
+            }
             verify_mir(&resolved, &hir, &mir).unwrap();
         }
     }

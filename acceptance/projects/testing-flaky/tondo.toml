@@ -1,0 +1,6 @@
+[package]
+name = "testingFlaky"
+edition = "0.1"
+
+[target]
+capabilities = ["process"]
