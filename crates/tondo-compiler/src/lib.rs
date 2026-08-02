@@ -6,6 +6,7 @@ pub mod diagnostics;
 pub mod driver;
 pub mod hir;
 pub mod meta;
+pub mod meta_atomic;
 pub mod meta_derive;
 pub mod meta_generate;
 #[cfg(test)]

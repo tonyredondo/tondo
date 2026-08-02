@@ -3457,7 +3457,7 @@ vez los errores de los slices anteriores.
   todos y solo los outputs cerrados, impedir lectura ambiental, generación
   multi-round y observación de outputs hermanos.
 
-- [ ] **META-ATOMIC-001 — Integrar identidad, cache y productos.** Incluir
+- [x] **META-ATOMIC-001 — Integrar identidad, cache y productos.** Incluir
   model/provider/request/output hashes en interfaces y artifacts; reutilizar
   cache solo con identidad completa y no publicar fuente, interface o artifact
   parcial ante fallo.
