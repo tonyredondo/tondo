@@ -3452,7 +3452,7 @@ vez los errores de los slices anteriores.
   limitar outputs al impl autorizado, validar y formatear fuente, y fusionarla
   solo cuando todos los providers terminan correctamente.
 
-- [ ] **META-GEN-001 — Ejecutar generators de manifest.** Entregar únicamente
+- [x] **META-GEN-001 — Ejecutar generators de manifest.** Entregar únicamente
   inputs declarados por valor y la clausura pública de roots explícitos, exigir
   todos y solo los outputs cerrados, impedir lectura ambiental, generación
   multi-round y observación de outputs hermanos.

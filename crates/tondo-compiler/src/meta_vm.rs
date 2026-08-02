@@ -17,6 +17,32 @@ use tondo_vm::runtime::{
 };
 
 use crate::driver::{BuildTarget, CapabilityName, HostProfile};
+use crate::meta::MetaLimits;
+
+/// Untrusted compiled provider payload. Loading revalidates the complete
+/// bytecode program under the orchestrator-owned target and limits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MetaVmArtifact {
+    program: BytecodeProgram,
+    entry: BytecodeFunctionId,
+}
+
+impl MetaVmArtifact {
+    pub fn new(program: BytecodeProgram, entry: BytecodeFunctionId) -> Self {
+        Self { program, entry }
+    }
+
+    pub fn load(self, limits: MetaVmLimits) -> Result<MetaVmProgram, MetaVmError> {
+        MetaVmProgram::load(
+            &BuildTarget::tondo_meta(),
+            HostProfile::Meta,
+            &BTreeSet::new(),
+            self.program,
+            self.entry,
+            limits,
+        )
+    }
+}
 
 /// Defensive budgets for one hermetic compile-time execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +71,17 @@ impl Default for MetaVmLimits {
 }
 
 impl MetaVmLimits {
+    /// Apply the request's normative budgets while retaining closed structural
+    /// VM limits that have no source-level representation.
+    pub fn for_request(limits: MetaLimits) -> Self {
+        Self {
+            max_steps: limits.steps(),
+            max_live_bytes: limits.memory_bytes(),
+            max_output_bytes: limits.output_bytes(),
+            ..Self::default()
+        }
+    }
+
     fn vm(self) -> VmLimits {
         VmLimits {
             max_verification_steps: self.max_verification_steps,
@@ -113,10 +150,19 @@ impl MetaVmProgram {
 
     /// Runs with a fresh VM and a host that rejects every external operation.
     pub fn run(&self) -> Result<MetaVmExecution, MetaVmError> {
+        self.run_with_output_meter(outcome_payload_bytes)
+    }
+
+    /// Runs hermetically while allowing the trusted orchestrator to measure a
+    /// structured result by its semantic payload rather than wire overhead.
+    pub fn run_with_output_meter(
+        &self,
+        meter: impl FnOnce(&VmOutcome) -> Result<u64, MetaVmError>,
+    ) -> Result<MetaVmExecution, MetaVmError> {
         let mut host = RejectingHost;
         let execution =
             execute_with_limits(&self.program, self.entry, &mut host, self.limits.vm())?;
-        let output_bytes = outcome_payload_bytes(&execution.outcome)?;
+        let output_bytes = meter(&execution.outcome)?;
         if output_bytes > self.limits.max_output_bytes {
             return Err(MetaVmError::OutputLimit {
                 limit: self.limits.max_output_bytes,
@@ -149,6 +195,7 @@ pub enum MetaVmError {
     UnknownEntry(u32),
     HostValue,
     OutputSizeOverflow,
+    StructuredOutput(String),
     OutputLimit {
         limit: u64,
         actual: u64,
@@ -183,6 +230,9 @@ impl fmt::Display for MetaVmError {
             Self::HostValue => formatter.write_str("tondo-meta returned an opaque host value"),
             Self::OutputSizeOverflow => {
                 formatter.write_str("meta output size is not representable")
+            }
+            Self::StructuredOutput(error) => {
+                write!(formatter, "invalid structured meta output: {error}")
             }
             Self::OutputLimit { limit, actual } => write!(
                 formatter,
@@ -530,6 +580,23 @@ mod tests {
         assert!(first.counters.steps > 0);
         assert_eq!(first.counters.peak_live_bytes, 0);
         assert_eq!(first.counters.output_bytes, 0);
+    }
+
+    #[test]
+    fn artifacts_reload_with_orchestrator_owned_limits_and_semantic_metering() {
+        let request_limits = MetaLimits::new(123, 4_096, 17).unwrap();
+        let limits = MetaVmLimits::for_request(request_limits);
+        assert_eq!(limits.max_steps, 123);
+        assert_eq!(limits.max_live_bytes, 4_096);
+        assert_eq!(limits.max_output_bytes, 17);
+        let artifact = MetaVmArtifact::new(unit_program(), BytecodeFunctionId::new(0));
+        let program = artifact.load(limits).unwrap();
+        let execution = program.run_with_output_meter(|_| Ok(7)).unwrap();
+        assert_eq!(execution.counters.output_bytes, 7);
+        assert_eq!(
+            MetaVmError::StructuredOutput("bad response".into()).to_string(),
+            "invalid structured meta output: bad response"
+        );
     }
 
     #[test]

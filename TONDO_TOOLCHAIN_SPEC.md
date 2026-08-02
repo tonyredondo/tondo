@@ -253,7 +253,7 @@ crear o pasar a `tondo`; la configuración humana es exclusivamente TOML.
         "package": "toolchain:std-meta:draft",
         "entry": "schema.generateModels"
       },
-      "meta_model": "tondo-meta-model-draft",
+      "meta_model": "tondo-meta-model-0.1/1",
       "inputs": ["schema"],
       "model_roots": [],
       "outputs": [
@@ -322,7 +322,7 @@ Su forma es:
     "package": "workspace:domain-meta@1",
     "entry": "validation.expand"
   },
-  "meta_model": "tondo-meta-model-draft",
+  "meta_model": "tondo-meta-model-0.1/1",
   "limits": {
     "steps": 1000000,
     "memory_bytes": 16777216,
@@ -761,7 +761,7 @@ La materialización, revocación y aislamiento de valores pertenecen a
       "owner_package": "workspace:app@1",
       "provider_package": "toolchain:std-meta:draft",
       "entry": "schema.generateModels",
-      "meta_model": "tondo-meta-model-draft",
+      "meta_model": "tondo-meta-model-0.1/1",
       "provider_hash": "sha256:...",
       "inputs": ["schema"],
       "model_roots": [],
@@ -786,7 +786,7 @@ La materialización, revocación y aislamiento de valores pertenecen a
       "trait_name": "Serialize",
       "provider_package": "toolchain:std-meta:draft",
       "entry": "serialization.deriveSerialize",
-      "meta_model": "tondo-meta-model-draft",
+      "meta_model": "tondo-meta-model-0.1/1",
       "provider_hash": "sha256:...",
       "limits": {
         "steps": 1000000,
@@ -801,7 +801,7 @@ La materialización, revocación y aislamiento de valores pertenecen a
       "trait_name": "Deserialize",
       "provider_package": "toolchain:std-meta:draft",
       "entry": "serialization.deriveDeserialize",
-      "meta_model": "tondo-meta-model-draft",
+      "meta_model": "tondo-meta-model-0.1/1",
       "provider_hash": "sha256:...",
       "limits": {
         "steps": 1000000,
@@ -953,7 +953,7 @@ fn expandDerive(request: meta.DeriveRequest): meta.DeriveResponse ! meta.Error
 ~~~
 
 `GenerateRequest` contiene la clausura pública de `model_roots` codificada como
-`tondo-meta-model-draft`, los inputs declarados por nombre, la lista cerrada de
+`tondo-meta-model-0.1/1`, los inputs declarados por nombre, la lista cerrada de
 outputs y los límites. Una lista de roots vacía no incluye declaraciones.
 `DeriveRequest` contiene los roots implícitos del trait y target, la declaración
 `derive` y la vista privada limitada del único target autorizado. Los tipos son
@@ -1048,7 +1048,7 @@ layout, no fija name mangling y no promete una ABI.
   "capability_registry": "tondo-capabilities-draft",
   "capabilities": ["console", "process"],
   "features": ["fast"],
-  "meta_model": "tondo-meta-model-draft",
+  "meta_model": "tondo-meta-model-0.1/1",
   "source_sets": ["@30:registry:util@2#sha256-content#common"],
   "modules": ["util"],
   "generation_hash": "sha256:...",
@@ -1118,7 +1118,7 @@ Una discrepancia nunca intenta enlazar “por parecido” ni cae a búsqueda nom
   "capability_registry": "tondo-capabilities-draft",
   "capabilities": ["console", "process"],
   "features": ["fast"],
-  "meta_model": "tondo-meta-model-draft",
+  "meta_model": "tondo-meta-model-0.1/1",
   "source_sets": [
     "@15:workspace:app@1#common"
   ],

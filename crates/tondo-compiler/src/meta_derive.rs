@@ -11,7 +11,7 @@ use crate::meta::{
     MetaContractError, MetaLimits, MetaOutputSpec, MetaRequest, MetaResponse, MetaSnapshot,
     ValidatedDerive,
 };
-use crate::meta_vm::{MetaVmError, MetaVmProgram};
+use crate::meta_vm::{MetaVmArtifact, MetaVmError, MetaVmLimits};
 use crate::source::{LogicalPath, ModulePath, SourceDatabase, SourceId, SourceInput};
 use crate::syntax::{
     LexLimits, LexMode, ParseLimits, ParseMode, SyntaxKind, format_parsed, lex_with_limits, parse,
@@ -58,7 +58,7 @@ impl<'a> DeriveProviderRequest<'a> {
 /// The compiler receives immutable typed input, but provider code itself runs
 /// only through the returned hermetic `tondo-meta` program.
 pub trait DeriveProviderCompiler: Send + Sync {
-    fn compile(&self, request: DeriveProviderRequest<'_>) -> Result<MetaVmProgram, String>;
+    fn compile(&self, request: DeriveProviderRequest<'_>) -> Result<MetaVmArtifact, String>;
 }
 
 #[derive(Default)]
@@ -166,6 +166,11 @@ pub fn execute_derive_plan(
                 message,
             })?;
         let execution = program
+            .load(MetaVmLimits::for_request(limits))
+            .map_err(|source| DeriveExecutionError::ProviderVm {
+                provider: validated_trait.provider().into(),
+                source,
+            })?
             .run()
             .map_err(|source| DeriveExecutionError::ProviderVm {
                 provider: validated_trait.provider().into(),
@@ -306,145 +311,32 @@ impl From<MetaContractError> for DeriveExecutionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::driver::{BuildTarget, HostProfile};
     use crate::meta::{
         DeriveContext, DeriveProvider, DeriveRequest, DeriveTarget, DeriveTargetKind,
         validate_derive_requests,
     };
-    use crate::meta_vm::MetaVmLimits;
-    use tondo_vm::bytecode::{
-        BytecodeBlock, BytecodeBlockId, BytecodeBlockKind, BytecodeCallable, BytecodeCallableId,
-        BytecodeConstant, BytecodeFunction, BytecodeFunctionId, BytecodeFunctionType,
-        BytecodeInstruction, BytecodeInstructionKind, BytecodeOperand, BytecodeOperandKind,
-        BytecodePlace, BytecodeProgram, BytecodeRvalue, BytecodeRvalueKind, BytecodeScalarType,
-        BytecodeSlot, BytecodeSlotId, BytecodeSlotKind, BytecodeSpan, BytecodeSpanId,
-        BytecodeTerminator, BytecodeTerminatorKind, BytecodeType, BytecodeTypeId, BytecodeTypeKind,
-    };
+    use crate::meta_test_support::string_artifact;
 
     struct Body(&'static [u8]);
 
     impl DeriveProviderCompiler for Body {
-        fn compile(&self, request: DeriveProviderRequest<'_>) -> Result<MetaVmProgram, String> {
+        fn compile(&self, request: DeriveProviderRequest<'_>) -> Result<MetaVmArtifact, String> {
             assert_eq!(request.target(), "User");
             assert_eq!(request.module(), "app");
             assert_eq!(request.trait_identity(), "Display");
             assert_eq!(request.provider_identity(), "std.derive.Display");
             assert_eq!(request.introduced_bounds(), &["T"]);
             assert_eq!(request.snapshot().format(), crate::meta::META_MODEL);
-            string_program(std::str::from_utf8(self.0).unwrap())
+            Ok(string_artifact(std::str::from_utf8(self.0).unwrap()))
         }
     }
 
     struct Failure;
 
     impl DeriveProviderCompiler for Failure {
-        fn compile(&self, _request: DeriveProviderRequest<'_>) -> Result<MetaVmProgram, String> {
+        fn compile(&self, _request: DeriveProviderRequest<'_>) -> Result<MetaVmArtifact, String> {
             Err("rejected".into())
         }
-    }
-
-    fn string_program(value: &str) -> Result<MetaVmProgram, String> {
-        let string = BytecodeTypeId::new(0);
-        let function_type = BytecodeTypeId::new(1);
-        let span = BytecodeSpan {
-            file: 0,
-            start: 0,
-            end: 1,
-        };
-        let place = BytecodePlace {
-            slot: BytecodeSlotId::new(0),
-            ty: string,
-            projections: Vec::new(),
-            source_loan: None,
-        };
-        let program = BytecodeProgram {
-            types: vec![
-                BytecodeType {
-                    name: "String".into(),
-                    kind: BytecodeTypeKind::Scalar(BytecodeScalarType::String),
-                },
-                BytecodeType {
-                    name: "fn(): String".into(),
-                    kind: BytecodeTypeKind::Function(BytecodeFunctionType {
-                        is_async: false,
-                        is_unsafe: false,
-                        parameters: Vec::new(),
-                        variadic: None,
-                        outcome: string,
-                    }),
-                },
-            ],
-            nominals: Vec::new(),
-            callables: vec![BytecodeCallable {
-                name: "derive_provider".into(),
-                generic_arity: 0,
-                parameters: Vec::new(),
-                outcome: string,
-                function_type,
-                implementation: Some(BytecodeFunctionId::new(0)),
-                closure: None,
-            }],
-            constants: Vec::new(),
-            functions: vec![BytecodeFunction {
-                callable: BytecodeCallableId::new(0),
-                source: span,
-                types: vec![string, function_type],
-                spans: vec![span],
-                slots: vec![BytecodeSlot {
-                    ty: string,
-                    span: BytecodeSpanId::new(0),
-                    kind: BytecodeSlotKind::Return,
-                }],
-                loans: Vec::new(),
-                parameters: Vec::new(),
-                return_slot: BytecodeSlotId::new(0),
-                entry: BytecodeBlockId::new(0),
-                unwind: BytecodeBlockId::new(1),
-                blocks: vec![
-                    BytecodeBlock {
-                        kind: BytecodeBlockKind::Normal,
-                        instructions: vec![BytecodeInstruction {
-                            span: BytecodeSpanId::new(0),
-                            kind: BytecodeInstructionKind::Store {
-                                destination: place,
-                                value: BytecodeRvalue {
-                                    ty: string,
-                                    kind: BytecodeRvalueKind::Use(BytecodeOperand {
-                                        ty: string,
-                                        kind: BytecodeOperandKind::Constant(
-                                            BytecodeConstant::String(
-                                                crate::std_meta::MetaRenderer::string(value),
-                                            ),
-                                        ),
-                                    }),
-                                },
-                            },
-                        }],
-                        terminator: BytecodeTerminator {
-                            span: BytecodeSpanId::new(0),
-                            kind: BytecodeTerminatorKind::Return,
-                        },
-                    },
-                    BytecodeBlock {
-                        kind: BytecodeBlockKind::Cleanup,
-                        instructions: Vec::new(),
-                        terminator: BytecodeTerminator {
-                            span: BytecodeSpanId::new(0),
-                            kind: BytecodeTerminatorKind::ResumePanic,
-                        },
-                    },
-                ],
-            }],
-        };
-        MetaVmProgram::load(
-            &BuildTarget::tondo_meta(),
-            HostProfile::Meta,
-            &BTreeSet::new(),
-            program,
-            BytecodeFunctionId::new(0),
-            MetaVmLimits::default(),
-        )
-        .map_err(|error| error.to_string())
     }
 
     fn plan() -> Vec<ValidatedDerive> {

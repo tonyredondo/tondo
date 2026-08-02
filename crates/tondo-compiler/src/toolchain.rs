@@ -23,7 +23,7 @@ pub const INTERFACE_FORMAT: &str = "tondo-interface-draft";
 pub const ARTIFACT_FORMAT: &str = "tondo-artifact-draft";
 pub const STANDARD_DESCRIPTOR_FORMAT: &str = "tondo-standard-descriptor-draft";
 pub const PRIVILEGED_UNIT_FORMAT: &str = "tondo-privileged-unit-draft";
-pub const META_MODEL: &str = "tondo-meta-model-draft";
+pub const META_MODEL: &str = crate::meta::META_MODEL;
 pub const META_TARGET: &str = "tondo-meta";
 pub const META_PROFILE: &str = "meta";
 
@@ -1352,7 +1352,7 @@ pub struct LockedNamedInput {
 }
 
 impl LockedNamedInput {
-    fn validate(&self, field: &str) -> Result<(), FormatError> {
+    pub(crate) fn validate(&self, field: &str) -> Result<(), FormatError> {
         require_nonempty(&format!("{field}.name"), &self.name)?;
         require_hash(&self.sha256, &format!("{field}.sha256"))
     }
@@ -1376,7 +1376,7 @@ pub struct LockedGenerator {
 }
 
 impl LockedGenerator {
-    fn validate(&self) -> Result<(), FormatError> {
+    pub(crate) fn validate(&self) -> Result<(), FormatError> {
         require_kebab("locked generator.id", &self.id)?;
         require_package_id("locked generator.owner_package", &self.owner_package)?;
         require_package_id("locked generator.provider_package", &self.provider_package)?;
