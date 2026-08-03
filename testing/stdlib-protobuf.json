@@ -1,0 +1,411 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.protobuf",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "draft-contract",
+  "scope": {
+    "syntax": "proto3",
+    "input_extension": ".proto",
+    "schema_first": true,
+    "build_time_generator": true,
+    "runtime_codegen": false,
+    "runtime_reflection": false,
+    "unsupported": [
+      "proto2",
+      "editions",
+      "services",
+      "grpc",
+      "protojson",
+      "text-format"
+    ],
+    "imports": "declared-closed-graph",
+    "well_known_types": "declared-input-only",
+    "baseline_format": "toolchain-toml",
+    "ambient_inputs": false
+  },
+  "wire": {
+    "spec": "Protocol Buffers",
+    "tag_formula": "(field_number << 3) | wire_type",
+    "field_number_min": 1,
+    "field_number_max": 536870911,
+    "reserved_field_number_range": [19000, 19999],
+    "known_wire_types": [0, 1, 2, 5],
+    "unknown_group_wire_types": [3, 4],
+    "varint_max_bytes": 10,
+    "length_prefix": "uint32-varint",
+    "length_max_bytes": 2147483647,
+    "ordinary_accepts_non_minimal_varints": true,
+    "ordinary_preserves_unknown_records": true,
+    "ordinary_known_field_order": "field-number",
+    "string_encoding": "utf-8",
+    "bytes_encoding": "arbitrary-octets"
+  },
+  "generated": {
+    "traits": ["Serialize", "Deserialize"],
+    "dispatch": "compile-time-static",
+    "message_kind": "nominal-record",
+    "unknown_type": "UnknownFields",
+    "unknown_representation": "owned-raw-record-sequence",
+    "unknown_default": "preserve",
+    "unknown_discard": "explicit-discardUnknown",
+    "descriptor": "explicit-root-only",
+    "api_hash": "generated-output",
+    "output_identity": ["package", "logical-path", "fully-qualified-name", "field-number"],
+    "dynamic_dom": false
+  },
+  "scalar_mapping": [
+    {"proto": "int32", "tondo": "Int32", "wire": "varint-twos-complement"},
+    {"proto": "int64", "tondo": "Int64", "wire": "varint-twos-complement"},
+    {"proto": "uint32", "tondo": "UInt32", "wire": "varint-unsigned"},
+    {"proto": "uint64", "tondo": "UInt64", "wire": "varint-unsigned"},
+    {"proto": "sint32", "tondo": "Int32", "wire": "zigzag-varint"},
+    {"proto": "sint64", "tondo": "Int64", "wire": "zigzag-varint"},
+    {"proto": "fixed32", "tondo": "UInt32", "wire": "i32-little-endian"},
+    {"proto": "sfixed32", "tondo": "Int32", "wire": "i32-little-endian"},
+    {"proto": "fixed64", "tondo": "UInt64", "wire": "i64-little-endian"},
+    {"proto": "sfixed64", "tondo": "Int64", "wire": "i64-little-endian"},
+    {"proto": "float", "tondo": "Float32", "wire": "i32-ieee754"},
+    {"proto": "double", "tondo": "Float64", "wire": "i64-ieee754"},
+    {"proto": "bool", "tondo": "Bool", "wire": "varint-01"},
+    {"proto": "string", "tondo": "String", "wire": "length-delimited-utf8"},
+    {"proto": "bytes", "tondo": "Bytes", "wire": "length-delimited-bytes"},
+    {"proto": "enum", "tondo": "open-enum-nominal", "wire": "varint-int32"},
+    {"proto": "message", "tondo": "generated-message", "wire": "length-delimited"}
+  ],
+  "presence": {
+    "implicit_scalar": "value-default-and-omit-default",
+    "optional_scalar": "T?",
+    "message": "Message?",
+    "repeated": "Array[T]-empty-not-none",
+    "map": "Map[K,V]-empty-not-none",
+    "oneof": "generated-enum-with-None",
+    "optional_message_same_as_implicit_message": true
+  },
+  "repeated": {
+    "generated_type": "Array[T]",
+    "order": "preserve",
+    "numeric_packed_default": true,
+    "decode_accepts": ["packed", "unpacked"],
+    "multiple_packed_records": "concatenate",
+    "packed_payload": "whole-elements-only"
+  },
+  "maps": {
+    "generated_type": "Map[K,V]",
+    "key_types": [
+      "Bool",
+      "Int32",
+      "Int64",
+      "UInt32",
+      "UInt64",
+      "String"
+    ],
+    "key_restrictions": ["no-float", "no-bytes", "no-enum", "no-message", "no-map"],
+    "wire_shape": "repeated-length-delimited-entry",
+    "entry_key_field": 1,
+    "entry_value_field": 2,
+    "duplicate_policy": "last-wins",
+    "ordinary_order": "not-guaranteed",
+    "deterministic_order": "canonical-key-order"
+  },
+  "oneof": {
+    "generated_type": "nominal-enum-with-None",
+    "repeated_allowed": false,
+    "map_allowed": false,
+    "setter_policy": "clear-previous",
+    "decode_policy": "last-member-wins",
+    "message_merge": "merge-same-member-before-publish",
+    "default_value_is_present": true
+  },
+  "enums": {
+    "mode": "open",
+    "wire_type": "Int32",
+    "unknown_representation": "preserve-number",
+    "known_projection": "known-returns-option",
+    "repeated_unknowns": "remain-in-array",
+    "map_value_unknowns": "remain-in-map-value"
+  },
+  "unknown_fields": {
+    "record": "field-number-wire-type-tag-bytes-payload-bytes",
+    "order": "capture-order",
+    "groups": "preserve-matching-raw-group",
+    "ordinary_encode": "known-fields-then-captured-unknowns",
+    "deterministic_encode": "sort-after-known-fields",
+    "payload": "exact-bytes",
+    "drop": "explicit-only"
+  },
+  "streaming": {
+    "schema_bound": true,
+    "frame_required": true,
+    "reader_inputs": ["Bytes", "Reader"],
+    "writer_outputs": ["BytesBuilder", "Writer"],
+    "event_kinds": [
+      "start-message",
+      "end-message",
+      "field",
+      "varint",
+      "fixed32",
+      "fixed64",
+      "start-length-delimited",
+      "end-length-delimited",
+      "start-packed",
+      "end-packed",
+      "unknown-record"
+    ],
+    "payload_lifetime": "until-next-event",
+    "materialization": "explicit-own",
+    "reader_state": "bounded-explicit-stack",
+    "writer_state": "bounded-explicit-stack",
+    "typed_mode": "direct-schema-dispatch-no-dom",
+    "partial_failure": "terminal-error-no-partial-success",
+    "fragmentation_classes": [
+      "one-byte",
+      "tag-boundary",
+      "varint-boundary",
+      "length-boundary",
+      "payload-boundary",
+      "large-chunk"
+    ]
+  },
+  "policies": {
+    "wire_type_mismatch": {
+      "default": "preserve-unknown",
+      "allowed": ["preserve-unknown", "reject"]
+    },
+    "non_minimal_varint": {
+      "default": "accept",
+      "allowed": ["accept", "reject"]
+    },
+    "unknown_fields": {
+      "default": "preserve",
+      "allowed": ["preserve", "discard"]
+    },
+    "unknown_groups": {
+      "default": "preserve",
+      "allowed": ["preserve", "reject"]
+    },
+    "duplicate_singular": "last-wins",
+    "duplicate_messages": "merge",
+    "duplicate_oneof": "last-member-wins",
+    "duplicate_maps": "last-wins",
+    "bool_values": {
+      "allowed": [0, 1],
+      "invalid_policy": "error"
+    }
+  },
+  "deterministic": {
+    "operation": "encodeDeterministic",
+    "universal_canonical": false,
+    "field_order": "ascending-field-number",
+    "varints": "shortest-valid",
+    "lengths": "shortest-valid",
+    "repeated_order": "preserve",
+    "packed_policy": "schema-policy",
+    "map_key_order": {
+      "bool": "false-before-true",
+      "signed": "numeric-ascending",
+      "unsigned": "numeric-ascending",
+      "string": "utf8-byte-lexicographic"
+    },
+    "oneof": "selected-field-number",
+    "float_bits": "preserve-ieee-bits",
+    "unknown_order": "field-number-wire-type-raw-bytes",
+    "nested_messages": "recursive",
+    "streaming_input": "schema-ordered-fields-and-sorted-maps"
+  },
+  "evolution": {
+    "baseline": "declared-locked-toml",
+    "safe": [
+      "add-field",
+      "add-enum-value",
+      "add-optional",
+      "reserve-deleted-field",
+      "toggle-packed-compatible-repeated-numeric"
+    ],
+    "conditional": [
+      "same-wire-family-type-change",
+      "map-and-repeated-entry-equivalence",
+      "enum-and-integer-wire-equivalence"
+    ],
+    "unsafe": [
+      "change-field-number",
+      "reuse-field-number",
+      "remove-reservation",
+      "change-wire-family",
+      "reuse-reserved-name",
+      "change-map-key-type",
+      "incompatible-repeated-change",
+      "split-oneof",
+      "merge-oneof",
+      "change-oneof-membership"
+    ],
+    "conditional_requires": "explicit-waiver",
+    "unsafe_result": "build-error",
+    "baseline_input": "no-ambient-descriptor"
+  },
+  "limits": [
+    {"id": "max_schema_bytes", "unit": "bytes", "scope": "one-schema", "check": "before-parse-growth"},
+    {"id": "max_imports", "unit": "imports", "scope": "schema-graph", "check": "before-resolve"},
+    {"id": "max_generated_types", "unit": "types", "scope": "one-generation", "check": "before-publish"},
+    {"id": "max_generated_bytes", "unit": "bytes", "scope": "one-generation", "check": "before-write-growth"},
+    {"id": "max_message_bytes", "unit": "bytes", "scope": "one-message", "check": "before-read-growth"},
+    {"id": "max_depth", "unit": "containers", "scope": "parser-stack", "check": "before-push"},
+    {"id": "max_fields", "unit": "fields", "scope": "one-message", "check": "before-next-field"},
+    {"id": "max_repeated_items", "unit": "items", "scope": "one-repeated", "check": "before-append"},
+    {"id": "max_map_entries", "unit": "entries", "scope": "one-map", "check": "before-append"},
+    {"id": "max_string_bytes", "unit": "bytes", "scope": "one-string", "check": "before-materialization"},
+    {"id": "max_bytes_field_bytes", "unit": "bytes", "scope": "one-bytes-field", "check": "before-materialization"},
+    {"id": "max_packed_bytes", "unit": "bytes", "scope": "one-packed-field", "check": "before-read-growth"},
+    {"id": "max_unknown_bytes", "unit": "bytes", "scope": "one-message", "check": "before-unknown-append"},
+    {"id": "max_varint_bytes", "unit": "bytes", "scope": "one-varint", "check": "before-next-byte"},
+    {"id": "max_events", "unit": "events", "scope": "one-frame", "check": "before-next-event"},
+    {"id": "max_output_bytes", "unit": "bytes", "scope": "one-encode", "check": "before-write-growth"}
+  ],
+  "errors": {
+    "wire": [
+      "UnexpectedEof",
+      "InvalidTag",
+      "InvalidWireType",
+      "InvalidVarint",
+      "InvalidLength",
+      "InvalidUtf8",
+      "TypeMismatch",
+      "InvalidPacked",
+      "NumberRange",
+      "InvalidFieldNumber",
+      "InvalidGroup",
+      "LimitExceeded",
+      "IoError",
+      "TrailingData",
+      "SchemaMismatch"
+    ],
+    "build": [
+      "ProtoSyntaxUnsupported",
+      "ProtoImportNotDeclared",
+      "ProtoNameCollision",
+      "ProtoFieldNumberConflict",
+      "ProtoReservedReuse",
+      "ProtoSchemaDrift",
+      "ProtoWireIncompatible",
+      "ProtoGeneratorOutputCollision",
+      "ProtoGenerationLimit"
+    ]
+  },
+  "paths": {
+    "root": "$",
+    "segments": [
+      "message",
+      "field-number",
+      "repeated-index",
+      "map-key",
+      "map-value",
+      "oneof-case",
+      "unknown-field"
+    ],
+    "position": "byte-offset-and-schema-location",
+    "secret_policy": "no-payload-snippet"
+  },
+  "corpora": [
+    {
+      "id": "protobuf-official-encoding",
+      "source": "https://protobuf.dev/programming-guides/encoding/",
+      "required": true,
+      "focus": ["tags", "varints", "i32", "i64", "length-delimited", "groups"]
+    },
+    {
+      "id": "protobuf-official-proto3",
+      "source": "https://protobuf.dev/programming-guides/proto3/",
+      "required": true,
+      "focus": ["presence", "repeated", "packed", "oneof", "maps", "evolution"]
+    },
+    {
+      "id": "protobuf-official-enums",
+      "source": "https://protobuf.dev/programming-guides/enum/",
+      "required": true,
+      "focus": ["open-enum", "unknown-values", "repeated-enum", "map-enum-value"]
+    },
+    {
+      "id": "scalar-wire-boundaries",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["signed-minima", "unsigned-maxima", "zigzag", "fixed-width", "float-bits"]
+    },
+    {
+      "id": "presence-and-oneof",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["implicit-default", "optional-default", "oneof-default", "last-member"]
+    },
+    {
+      "id": "repeated-packed-and-maps",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["packed", "unpacked", "multiple-packed", "map-duplicates", "map-key-order"]
+    },
+    {
+      "id": "unknown-fields-and-groups",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["unknown-record", "raw-payload", "group", "discard", "round-trip"]
+    },
+    {
+      "id": "stream-fragments-and-limits",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["tag-boundary", "varint-boundary", "length-boundary", "truncation", "depth"]
+    },
+    {
+      "id": "schema-evolution",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["safe", "conditional-waiver", "unsafe", "reserved-reuse", "field-number-drift"]
+    },
+    {
+      "id": "deterministic-output",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["field-order", "map-order", "unknown-order", "float-bits", "layout-independence"]
+    }
+  ],
+  "test_matrix": [
+    {"id": "schema-inputs", "required": true, "observables": ["proto3-only", "closed-imports", "canonical-output", "collision-errors"]},
+    {"id": "wire-model", "required": true, "observables": ["tag", "wire-type", "varint", "fixed", "length-delimited", "groups"]},
+    {"id": "scalar-mapping", "required": true, "observables": ["signedness", "zigzag", "range", "float-bits", "utf8", "bytes"]},
+    {"id": "presence", "required": true, "observables": ["implicit-default", "optional", "message-presence", "oneof-case"]},
+    {"id": "repeated-and-packed", "required": true, "observables": ["order", "packed", "unpacked", "multiple-packed", "whole-elements"]},
+    {"id": "maps", "required": true, "observables": ["key-domain", "last-wins", "ordinary-order", "deterministic-order"]},
+    {"id": "open-enums", "required": true, "observables": ["known", "unknown-number", "repeated", "map-value"]},
+    {"id": "unknown-fields", "required": true, "observables": ["raw-record", "groups", "capture-order", "discard", "nested"]},
+    {"id": "typed-direct", "required": true, "observables": ["static-dispatch", "no-dom", "schema-mismatch", "atomic-failure"]},
+    {"id": "streaming", "required": true, "observables": ["frame", "events", "payload-lifetime", "chunk-independence", "terminal-error"]},
+    {"id": "limits", "required": true, "observables": ["finite-resource", "preflight", "host-stack-safety", "limit-error"]},
+    {"id": "evolution", "required": true, "observables": ["safe", "conditional-waiver", "unsafe", "diagnostic-location"]},
+    {"id": "deterministic", "required": true, "observables": ["field-order", "map-order", "unknown-order", "nested", "layout-independence"]},
+    {"id": "interoperability", "required": true, "observables": ["external-parse", "external-encode", "unknown-preservation", "wire-rejection"]}
+  ],
+  "promotion": {
+    "gates": [
+      {
+        "id": "design",
+        "requires": ["proto3-model", "scalar-mapping", "presence-policy", "unknown-policy", "schema-identity"]
+      },
+      {
+        "id": "implementation",
+        "requires": ["deterministic-generator", "typed-no-dom", "explicit-parser-stack", "bounded-reader-writer", "direct-schema-dispatch"]
+      },
+      {
+        "id": "conformance",
+        "requires": ["official-wire-corpus", "packed-unpacked-equivalence", "unknown-enum-vectors", "interop-independent-implementations"]
+      },
+      {
+        "id": "evolution",
+        "requires": ["safe-schema-vectors", "unsafe-schema-rejection", "reserved-number-proof", "unknown-field-round-trip"]
+      },
+      {
+        "id": "promote",
+        "requires": ["generated-output-stability", "wire-compatibility", "finite-limits", "STD-PERF-001-report"]
+      }
+    ],
+    "next_coordination": "STD-CODEC-CONF-001"
+  }
+}

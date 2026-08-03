@@ -6,7 +6,7 @@ runner público de testing, tiempo virtual y sus proyectos de aceptación forman
 parte del candidato de conformidad inmutable. Tondo 0.1 sigue en desarrollo:
 el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 
-**Versión del tracker:** 1.40
+**Versión del tracker:** 1.41
 
 **Última actualización:** 2026-08-03
 
@@ -17,10 +17,11 @@ el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 - [Contrato operativo de rendimiento de Standard Library 0.1](./docs/contracts/stdlib-performance.md)
 - [Contrato de owner de `std.json`](./docs/contracts/stdlib-json.md)
 - [Contrato de owner de `std.messagepack`](./docs/contracts/stdlib-messagepack.md)
+- [Contrato de owner de `std.protobuf`](./docs/contracts/stdlib-protobuf.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
 **Objetivo inmediato:** completar STD-0.1A por layers, con `STD-PERF-001`,
-`STD-JSON-001` y `STD-MSGPACK-001` cerrados y continuando por los contratos de cada owner antes de
+`STD-JSON-001`, `STD-MSGPACK-001` y `STD-PROTOBUF-001` cerrados y continuando por los contratos de cada owner antes de
 su implementación. Gate
 G5 ya fija la revisión 7 en un candidato inmutable sin confundirlo con una
 publicación. Después se fijan antes del backend los contratos
@@ -3761,11 +3762,21 @@ layer pueden avanzar en paralelo.
   canonicalización universal. La interoperabilidad queda preparada para
   `STD-CODEC-CONF-001`.
 
-- [ ] **STD-PROTOBUF-001 — Especificar Protobuf schema-first.**
+- [x] **STD-PROTOBUF-001 — Especificar Protobuf schema-first.**
   Generar desde `.proto` declarado tipos/codecs para proto3, presence, repeated,
   packed, maps, open enums con `Int32` preservado, nested y oneof; preservar
   unknown fields, comprobar evolución y ofrecer encoding determinista sin
-  presentarlo como canonical universal. Services/gRPC quedan fuera.
+  presentarlo como canonical universal. Services/gRPC quedan fuera. Cerrado
+  como contrato del owner con
+  [`docs/contracts/stdlib-protobuf.md`](./docs/contracts/stdlib-protobuf.md),
+  el registro [`testing/stdlib-protobuf.json`](./testing/stdlib-protobuf.json) y
+  el check [`scripts/stdlib-protobuf-check.sh`](./scripts/stdlib-protobuf-check.sh),
+  integrado en `scripts/test-gate.sh`. El contrato fija proto3 schema-first,
+  mapping de presencia y escalares, open enums numéricos, maps last-wins,
+  packed/unpacked, unknown raw fields, parser streaming con frame, evolución
+  contra baseline TOML y `encodeDeterministic` propio de Tondo sin reflection
+  runtime. La conformidad wire e interoperabilidad quedan preparadas para
+  `STD-CODEC-CONF-001`.
 
 - [x] **STD-PERF-001 — Fijar contratos de rendimiento.** Cada hot path tiene
   oracle escalar, streaming/bytes-first, límites de allocation/memoria,
@@ -4486,8 +4497,8 @@ gates en una barrera artificial.
       CONF-SEAL-001 → G5`.
     Mini-gate: T0 y después G5 verdes sobre hashes actuales; la regresión
     bootstrap queda separada de la conformidad del draft.
-25. [ ] **Wave 5 — STD-0.1A por layers.** Con `STD-PERF-001`, `STD-JSON-001` y
-    `STD-MSGPACK-001`
+25. [ ] **Wave 5 — STD-0.1A por layers.** Con `STD-PERF-001`, `STD-JSON-001`,
+    `STD-MSGPACK-001` y `STD-PROTOBUF-001`
     cerrados, terminar el spec de cada owner antes de su implementación;
     ejecutar A1 valores/protocolos, A2 host, A3 serialization/codecs y A4
     helpers de testing, cerrando el
@@ -4536,6 +4547,24 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.41 — 2026-08-03
+
+- Se completa `STD-PROTOBUF-001` como contrato del owner `std.protobuf`.
+  Se fija la entrada schema-first `proto3`, generación build-time cerrada,
+  mapping de escalares y presencia, repeated packed/unpacked, maps con
+  `last-wins`, nested/oneof y enums abiertos que conservan siempre su `Int32`.
+- El contrato preserva unknown fields como records raw poseídos, acepta grupos
+  desconocidos acotados, define reader/writer schema-bound con frames, límites
+  finitos, errores estables y evolución contra baseline TOML. También fija
+  `encodeDeterministic` por field number, maps y unknown records sin afirmar
+  una canonicalización universal de Protobuf.
+- El registro `testing/stdlib-protobuf.json` y el validador
+  `scripts/stdlib-protobuf-check.sh` quedan integrados en
+  `scripts/test-gate.sh`. La interoperabilidad oficial y con al menos dos
+  implementaciones independientes queda para `STD-CODEC-CONF-001`; el contrato
+  no altera el candidato sellado ni publica todavía el generator.
+- Wave 5 avanza al siguiente owner de STD-0.1A.
 
 ### 1.40 — 2026-08-03
 
