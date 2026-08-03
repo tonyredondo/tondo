@@ -3,8 +3,10 @@
 //! The VM owns capabilities and resource accounting; this crate deliberately
 //! contains only deterministic, allocation-bounded value transformations.
 
+pub mod format;
 pub mod io;
 pub mod json;
+pub mod math;
 pub mod messagepack;
 pub mod path;
 pub mod protobuf;
