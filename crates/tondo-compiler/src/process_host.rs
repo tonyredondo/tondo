@@ -14,7 +14,7 @@ use std::os::unix::ffi::OsStringExt;
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 use tondo_stdlib::testing::{FloatTolerance, diff_text};
-use tondo_stdlib::{json, messagepack, path, protobuf};
+use tondo_stdlib::{json, math, messagepack, path, protobuf};
 use tondo_vm::runtime::{
     RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
 };
@@ -1104,18 +1104,20 @@ impl VmHost for BootstrapHost {
                 Ok(RuntimeValue::Unit)
             }
             ("std.math.floor", [RuntimeValue::Float(value)]) => {
-                Ok(RuntimeValue::Float(value.floor()))
+                Ok(RuntimeValue::Float(math::floor(*value)))
             }
             ("std.math.ceil", [RuntimeValue::Float(value)]) => {
-                Ok(RuntimeValue::Float(value.ceil()))
+                Ok(RuntimeValue::Float(math::ceil(*value)))
             }
             ("std.math.round", [RuntimeValue::Float(value)]) => {
-                Ok(RuntimeValue::Float(value.round()))
+                Ok(RuntimeValue::Float(math::round(*value)))
             }
             ("std.math.truncate", [RuntimeValue::Float(value)]) => {
-                Ok(RuntimeValue::Float(value.trunc()))
+                Ok(RuntimeValue::Float(math::truncate(*value)))
             }
-            ("std.math.abs", [RuntimeValue::Float(value)]) => Ok(RuntimeValue::Float(value.abs())),
+            ("std.math.abs", [RuntimeValue::Float(value)]) => {
+                Ok(RuntimeValue::Float(math::abs(*value)))
+            }
             ("std.math.sqrt", [RuntimeValue::Float(value)]) => {
                 match tondo_stdlib::math::sqrt(*value) {
                     Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Float(value)))),
@@ -1129,12 +1131,12 @@ impl VmHost for BootstrapHost {
                     RuntimeValue::Float(b),
                     RuntimeValue::Float(c),
                 ],
-            ) => Ok(RuntimeValue::Float(a.mul_add(*b, *c))),
+            ) => Ok(RuntimeValue::Float(math::fma(*a, *b, *c))),
             ("std.math.min", [RuntimeValue::Float(left), RuntimeValue::Float(right)]) => {
-                Ok(RuntimeValue::Float(left.min(*right)))
+                Ok(RuntimeValue::Float(math::min(*left, *right)))
             }
             ("std.math.max", [RuntimeValue::Float(left), RuntimeValue::Float(right)]) => {
-                Ok(RuntimeValue::Float(left.max(*right)))
+                Ok(RuntimeValue::Float(math::max(*left, *right)))
             }
             ("std.json.validate", [bytes]) => {
                 let input = self.bytes(bytes)?.to_vec();
