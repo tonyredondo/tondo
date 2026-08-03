@@ -527,7 +527,13 @@ fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), ArtifactError> {
         .open(path)
         .map_err(io_error)?;
     file.write_all(bytes).map_err(io_error)?;
-    file.sync_all().map_err(io_error)?;
+    // The store contract requires a complete file before the atomic rename;
+    // it does not promise durable media commits. `sync_all` maps to a
+    // platform-specific flush operation that is not available for every
+    // filesystem used by the Windows runners, so close the handle explicitly
+    // after the write and let the rename provide the publication boundary.
+    file.flush().map_err(io_error)?;
+    drop(file);
     Ok(())
 }
 

@@ -65,8 +65,10 @@ fn successful(project: &Path, arguments: &[&str]) -> Output {
     let output = tondo_test(project, arguments);
     assert!(
         output.status.success(),
-        "tondo test failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        "tondo test failed with status {:?}:\nstderr:\n{}\nstdout:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr),
+        String::from_utf8_lossy(&output.stdout),
     );
     output
 }
