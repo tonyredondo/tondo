@@ -124,6 +124,19 @@ enum HostValue {
     GenerationError {
         _message: String,
     },
+    Reader {
+        stream: StreamKind,
+        offset: usize,
+    },
+    Writer {
+        stream: StreamKind,
+    },
+    IoError {
+        _message: String,
+    },
+    ConsoleError {
+        _message: String,
+    },
     Instant {
         domain: u64,
         nanos: i128,
@@ -147,6 +160,13 @@ enum HostValue {
     VirtualTime {
         domain: u64,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamKind {
+    Stdin,
+    Stdout,
+    Stderr,
 }
 
 enum ClockProvider {
@@ -240,6 +260,8 @@ enum TimeJobKind {
 
 pub(crate) struct BootstrapHost {
     pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+    stdin: Vec<u8>,
     arguments: Vec<String>,
     environment: BTreeMap<Vec<u8>, Vec<u8>>,
     environment_available: bool,
@@ -270,6 +292,13 @@ impl BootstrapHost {
         Self::with_limits(arguments, max_bytes, DEFAULT_MAX_TIME_RESOURCES)
     }
 
+    #[allow(dead_code)]
+    pub(crate) fn with_stdin(stdin: impl Into<Vec<u8>>) -> Self {
+        let mut host = Self::with_limits(Vec::new(), u64::MAX, DEFAULT_MAX_TIME_RESOURCES);
+        host.stdin = stdin.into();
+        host
+    }
+
     fn with_limits(arguments: Vec<String>, max_bytes: u64, max_time_resources: usize) -> Self {
         Self::with_environment_limits(
             arguments,
@@ -289,6 +318,8 @@ impl BootstrapHost {
     ) -> Self {
         Self {
             stdout: Vec::new(),
+            stderr: Vec::new(),
+            stdin: Vec::new(),
             arguments,
             environment,
             environment_available,
@@ -396,6 +427,11 @@ impl BootstrapHost {
 
     pub(crate) fn take_stdout(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.stdout)
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn take_stderr(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.stderr)
     }
 
     fn allocate(&mut self, kind: RuntimeHostValueKind, value: HostValue) -> RuntimeValue {
@@ -596,6 +632,60 @@ impl BootstrapHost {
 
     fn generation_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
         RuntimeValue::ResultErr(Box::new(self.generation_error(message)))
+    }
+
+    fn reader_state(&self, value: &RuntimeValue) -> Result<(u64, StreamKind, usize), VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Reader,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("Reader value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::Reader { stream, offset }) => Ok((*id, *stream, *offset)),
+            _ => Err(VmError::Host("Reader token is stale".into())),
+        }
+    }
+
+    fn writer_stream(&self, value: &RuntimeValue) -> Result<StreamKind, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Writer,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("Writer value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::Writer { stream }) => Ok(*stream),
+            _ => Err(VmError::Host("Writer token is stale".into())),
+        }
+    }
+
+    fn io_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::IoError,
+            HostValue::IoError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn io_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.io_error(message)))
+    }
+
+    fn console_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::ConsoleError,
+            HostValue::ConsoleError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn console_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.console_error(message)))
     }
 
     fn valid_temp_prefix(prefix: &str) -> bool {
@@ -1306,6 +1396,102 @@ impl VmHost for BootstrapHost {
                 Ok(RuntimeValue::Unit)
             }
             ("std.console.flush", []) => Ok(RuntimeValue::Unit),
+            ("std.console.stdin", []) => Ok(self.allocate(
+                RuntimeHostValueKind::Reader,
+                HostValue::Reader {
+                    stream: StreamKind::Stdin,
+                    offset: 0,
+                },
+            )),
+            ("std.console.stdout", []) => Ok(self.allocate(
+                RuntimeHostValueKind::Writer,
+                HostValue::Writer {
+                    stream: StreamKind::Stdout,
+                },
+            )),
+            ("std.console.stderr", []) => Ok(self.allocate(
+                RuntimeHostValueKind::Writer,
+                HostValue::Writer {
+                    stream: StreamKind::Stderr,
+                },
+            )),
+            ("std.console.readLine", [reader]) => {
+                let (id, stream, offset) = self.reader_state(reader)?;
+                if stream != StreamKind::Stdin {
+                    return Ok(self.console_result_error("readLine requires stdin"));
+                }
+                if offset >= self.stdin.len() {
+                    return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone)));
+                }
+                let remaining = &self.stdin[offset..];
+                let end = remaining
+                    .iter()
+                    .position(|byte| *byte == b'\n')
+                    .map_or(remaining.len(), |index| index + 1);
+                let line = &remaining[..end];
+                let value = line.strip_suffix(b"\n").unwrap_or(line);
+                let value = match std::str::from_utf8(value) {
+                    Ok(value) => value.to_owned(),
+                    Err(_) => return Ok(self.console_result_error("stdin is not UTF-8")),
+                };
+                if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
+                    *offset = offset.saturating_add(end);
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
+                    Box::new(RuntimeValue::String(value)),
+                ))))
+            }
+            ("std.io.Reader.read", [reader, RuntimeValue::Integer(maximum)]) => {
+                let Ok(maximum) = usize::try_from(*maximum) else {
+                    return Ok(self.io_result_error("read length is invalid"));
+                };
+                if maximum == 0 {
+                    return Ok(self.io_result_error("read length must be positive"));
+                }
+                let (id, stream, offset) = self.reader_state(reader)?;
+                if stream != StreamKind::Stdin {
+                    return Ok(self.io_result_error("reader is not readable"));
+                }
+                if offset >= self.stdin.len() {
+                    return Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone)));
+                }
+                let count = maximum.min(self.stdin.len() - offset);
+                if let Err(message) = self.ensure_bytes_len(count) {
+                    return Ok(self.io_result_error(message));
+                }
+                let bytes = self.stdin[offset..offset + count].to_vec();
+                if let Some(HostValue::Reader { offset, .. }) = self.values.get_mut(&id) {
+                    *offset = offset.saturating_add(count);
+                }
+                let bytes = self.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(bytes));
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(
+                    Box::new(bytes),
+                ))))
+            }
+            ("std.io.Writer.write", [writer, bytes]) => {
+                let stream = self.writer_stream(writer)?;
+                let bytes = self.bytes(bytes)?.to_vec();
+                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
+                    return Ok(self.io_result_error(message));
+                }
+                match stream {
+                    StreamKind::Stdout => self.stdout.extend_from_slice(&bytes),
+                    StreamKind::Stderr => self.stderr.extend_from_slice(&bytes),
+                    StreamKind::Stdin => return Ok(self.io_result_error("stdin is not writable")),
+                }
+                let count = i128::try_from(bytes.len())
+                    .map_err(|_| VmError::Host("write length does not fit in Int".into()))?;
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
+                    count,
+                ))))
+            }
+            ("std.io.Writer.flush", [writer]) => {
+                let stream = self.writer_stream(writer)?;
+                if stream == StreamKind::Stdin {
+                    return Ok(self.io_result_error("stdin is not writable"));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit)))
+            }
             ("std.math.floor", [RuntimeValue::Float(value)]) => {
                 Ok(RuntimeValue::Float(math::floor(*value)))
             }
@@ -3106,6 +3292,72 @@ mod tests {
             host.invoke("std.console.flush", &[]).unwrap(),
             RuntimeValue::Unit
         );
+    }
+
+    #[test]
+    fn console_streams_preserve_partial_reads_and_separate_output_channels() {
+        let mut host = BootstrapHost::with_stdin(b"uno\ndos\n".to_vec());
+        let reader = host.invoke("std.console.stdin", &[]).unwrap();
+        assert_eq!(
+            host.invoke("std.console.readLine", std::slice::from_ref(&reader))
+                .unwrap(),
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(Box::new(
+                RuntimeValue::String("uno".into()),
+            ))))
+        );
+        assert_eq!(
+            host.invoke("std.console.readLine", std::slice::from_ref(&reader))
+                .unwrap(),
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionSome(Box::new(
+                RuntimeValue::String("dos".into()),
+            ))))
+        );
+        assert_eq!(
+            host.invoke("std.console.readLine", std::slice::from_ref(&reader))
+                .unwrap(),
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::OptionNone))
+        );
+
+        let mut chunks = BootstrapHost::with_stdin(b"abcdef".to_vec());
+        let reader = chunks.invoke("std.console.stdin", &[]).unwrap();
+        let first = ok(chunks
+            .invoke(
+                "std.io.Reader.read",
+                &[reader.clone(), RuntimeValue::Integer(2)],
+            )
+            .unwrap());
+        let RuntimeValue::OptionSome(first) = first else {
+            panic!("bounded read must return data");
+        };
+        assert_eq!(chunks.bytes(&first).unwrap(), b"ab");
+        let second = ok(chunks
+            .invoke("std.io.Reader.read", &[reader, RuntimeValue::Integer(4)])
+            .unwrap());
+        let RuntimeValue::OptionSome(second) = second else {
+            panic!("bounded read must return data");
+        };
+        assert_eq!(chunks.bytes(&second).unwrap(), b"cdef");
+
+        let bytes = chunks.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(b"out".to_vec()),
+        );
+        let stdout = chunks.invoke("std.console.stdout", &[]).unwrap();
+        let stderr = chunks.invoke("std.console.stderr", &[]).unwrap();
+        assert_eq!(
+            ok(chunks
+                .invoke("std.io.Writer.write", &[stdout, bytes.clone()])
+                .unwrap()),
+            RuntimeValue::Integer(3)
+        );
+        assert_eq!(
+            ok(chunks
+                .invoke("std.io.Writer.write", &[stderr, bytes])
+                .unwrap()),
+            RuntimeValue::Integer(3)
+        );
+        assert_eq!(chunks.stdout, b"out");
+        assert_eq!(chunks.stderr, b"out");
     }
 
     #[test]

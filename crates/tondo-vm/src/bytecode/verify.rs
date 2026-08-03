@@ -466,6 +466,10 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::Generator
                 | BytecodeIntrinsicType::GenerationId
                 | BytecodeIntrinsicType::GenerationError
+                | BytecodeIntrinsicType::Reader
+                | BytecodeIntrinsicType::Writer
+                | BytecodeIntrinsicType::IoError
+                | BytecodeIntrinsicType::ConsoleError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -1069,6 +1073,12 @@ fn intrinsic_capability(
             capability,
             ClosedCapability::Discard | ClosedCapability::Send
         )),
+        BytecodeIntrinsicType::Reader | BytecodeIntrinsicType::Writer => {
+            fixed_capability(matches!(
+                capability,
+                ClosedCapability::Discard | ClosedCapability::Send
+            ))
+        }
         BytecodeIntrinsicType::Bytes
         | BytecodeIntrinsicType::BytesError
         | BytecodeIntrinsicType::ExitStatus
@@ -1082,7 +1092,9 @@ fn intrinsic_capability(
         | BytecodeIntrinsicType::TextDiff
         | BytecodeIntrinsicType::TempError
         | BytecodeIntrinsicType::GenerationId
-        | BytecodeIntrinsicType::GenerationError => fixed_capability(matches!(
+        | BytecodeIntrinsicType::GenerationError
+        | BytecodeIntrinsicType::IoError
+        | BytecodeIntrinsicType::ConsoleError => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
                 | ClosedCapability::Discard
@@ -1455,6 +1467,10 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::Generator
         | BytecodeIntrinsicType::GenerationId
         | BytecodeIntrinsicType::GenerationError
+        | BytecodeIntrinsicType::Reader
+        | BytecodeIntrinsicType::Writer
+        | BytecodeIntrinsicType::IoError
+        | BytecodeIntrinsicType::ConsoleError
         | BytecodeIntrinsicType::ExitStatus
         | BytecodeIntrinsicType::ProcessOutput
         | BytecodeIntrinsicType::ProcessError
@@ -1620,6 +1636,10 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::Generator
                 | BytecodeIntrinsicType::GenerationId
                 | BytecodeIntrinsicType::GenerationError
+                | BytecodeIntrinsicType::Reader
+                | BytecodeIntrinsicType::Writer
+                | BytecodeIntrinsicType::IoError
+                | BytecodeIntrinsicType::ConsoleError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle

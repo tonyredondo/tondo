@@ -2021,6 +2021,23 @@ mod tests {
     }
 
     #[test]
+    fn test_operation_checks_console_stream_protocol_through_the_hir() {
+        let request = operation_request(
+            Operation::Check,
+            b"import std.console\nimport std.io\nimport std.bytes\nfn acquire(): io.Writer ! console.ConsoleError {\n console.stdout()\n}\nfn emit(output: var io.Writer, data: bytes.Bytes): Int ! io.IoError {\n output.write(data)\n}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let output = execute(request).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+    }
+
+    #[test]
     fn test_operation_executes_generic_testing_assertions_and_wrapper_consumers() {
         let base = operation_request(
             Operation::Check,
@@ -2477,6 +2494,22 @@ mod tests {
         assert!(accepted.diagnostics().diagnostics().is_empty());
 
         assert!(CapabilityName::new("console").is_ok());
+        let stream_source = b"import std.console\nimport std.io\n\nfn acquire_input(): io.Reader ! console.ConsoleError {\n    console.stdin()\n}\n\nfn acquire_output(): io.Writer ! console.ConsoleError {\n    console.stdout()\n}\n";
+        let stream_checked = execute(operation_request(
+            Operation::Check,
+            stream_source,
+            SourceForm::Module,
+            ResourceLimits::default(),
+        ))
+        .unwrap();
+        assert_eq!(
+            stream_checked.status(),
+            CompilationStatus::Success,
+            "{}",
+            stream_checked.diagnostics().human()
+        );
+        assert!(stream_checked.diagnostics().diagnostics().is_empty());
+
         let process_source =
             b"import std.process\nfn main() {\n    let command = process.cmd(\"true\")\n}\n";
         let process_rejected = execute(operation_request_with_capabilities(

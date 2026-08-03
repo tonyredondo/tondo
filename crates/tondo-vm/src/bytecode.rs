@@ -251,6 +251,10 @@ pub enum BytecodeIntrinsicType {
     Generator,
     GenerationId,
     GenerationError,
+    Reader,
+    Writer,
+    IoError,
+    ConsoleError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -396,6 +400,10 @@ impl BytecodeIntrinsicType {
             | Self::Generator
             | Self::GenerationId
             | Self::GenerationError
+            | Self::Reader
+            | Self::Writer
+            | Self::IoError
+            | Self::ConsoleError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle
@@ -460,6 +468,10 @@ impl BytecodeIntrinsicType {
             | Self::Generator
             | Self::GenerationId
             | Self::GenerationError
+            | Self::Reader
+            | Self::Writer
+            | Self::IoError
+            | Self::ConsoleError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessError

@@ -385,7 +385,74 @@ impl<'a> TypeLowerer<'a> {
         let fs_bytes_outcome = self.interner.result(bytes, fs_error)?;
         let fs_unit_outcome = self.interner.result(unit, fs_error)?;
 
+        let reader = self.interner.intrinsic(IntrinsicType::Reader, Vec::new())?;
+        let writer = self.interner.intrinsic(IntrinsicType::Writer, Vec::new())?;
+        let io_error = self
+            .interner
+            .intrinsic(IntrinsicType::IoError, Vec::new())?;
+        let console_error = self
+            .interner
+            .intrinsic(IntrinsicType::ConsoleError, Vec::new())?;
+        let console_reader_outcome = self.interner.result(reader, console_error)?;
+        let console_writer_outcome = self.interner.result(writer, console_error)?;
+        let console_line = self.interner.option(string)?;
+        let console_line_outcome = self.interner.result(console_line, console_error)?;
+        let reader_bytes = self.interner.option(bytes)?;
+        let reader_bytes_outcome = self.interner.result(reader_bytes, io_error)?;
+        let writer_count_outcome = self.interner.result(int, io_error)?;
+        let writer_unit_outcome = self.interner.result(unit, io_error)?;
+
         if console_referenced {
+            for (function, outcome) in [
+                (
+                    HirBootstrapHostFunction::ConsoleStdin,
+                    console_reader_outcome,
+                ),
+                (
+                    HirBootstrapHostFunction::ConsoleStdout,
+                    console_writer_outcome,
+                ),
+                (
+                    HirBootstrapHostFunction::ConsoleStderr,
+                    console_writer_outcome,
+                ),
+            ] {
+                self.push_bootstrap_host_callable(span, function, Vec::new(), None, outcome)?;
+            }
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::ConsoleReadLine,
+                vec![(reader, ParameterMode::Var, true)],
+                None,
+                console_line_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::ReaderRead,
+                vec![
+                    (reader, ParameterMode::Var, true),
+                    (int, ParameterMode::Value, false),
+                ],
+                None,
+                reader_bytes_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::WriterWrite,
+                vec![
+                    (writer, ParameterMode::Var, true),
+                    (bytes, ParameterMode::Value, false),
+                ],
+                None,
+                writer_count_outcome,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::WriterFlush,
+                vec![(writer, ParameterMode::Var, true)],
+                None,
+                writer_unit_outcome,
+            )?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::ConsoleFlush,
@@ -4937,6 +5004,10 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::Generator
                         | IntrinsicType::GenerationId
                         | IntrinsicType::GenerationError
+                        | IntrinsicType::Reader
+                        | IntrinsicType::Writer
+                        | IntrinsicType::IoError
+                        | IntrinsicType::ConsoleError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle

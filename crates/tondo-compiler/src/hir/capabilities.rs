@@ -674,6 +674,13 @@ fn intrinsic_node(
                 fixed(HirCapabilityStatus::Unsatisfied)
             }
         }
+        IntrinsicType::Reader | IntrinsicType::Writer => {
+            if matches!(capability, HirCapability::Discard | HirCapability::Send) {
+                satisfied(Vec::new())
+            } else {
+                fixed(HirCapabilityStatus::Unsatisfied)
+            }
+        }
         IntrinsicType::Bytes
         | IntrinsicType::BytesError
         | IntrinsicType::ExitStatus
@@ -757,7 +764,9 @@ fn intrinsic_node(
         | IntrinsicType::FloatToleranceError
         | IntrinsicType::TextDiff
         | IntrinsicType::TempError
-        | IntrinsicType::GenerationError => {
+        | IntrinsicType::GenerationError
+        | IntrinsicType::IoError
+        | IntrinsicType::ConsoleError => {
             if matches!(
                 capability,
                 HirCapability::Copy

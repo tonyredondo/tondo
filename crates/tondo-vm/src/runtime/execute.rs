@@ -2118,6 +2118,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::Generator
                     | BytecodeIntrinsicType::GenerationId
                     | BytecodeIntrinsicType::GenerationError
+                    | BytecodeIntrinsicType::Reader
+                    | BytecodeIntrinsicType::Writer
+                    | BytecodeIntrinsicType::IoError
+                    | BytecodeIntrinsicType::ConsoleError
                     | BytecodeIntrinsicType::ExitStatus
                     | BytecodeIntrinsicType::ProcessOutput
                     | BytecodeIntrinsicType::ProcessError
@@ -3692,6 +3696,10 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::Generator => RuntimeHostValueKind::Generator,
         BytecodeIntrinsicType::GenerationId => RuntimeHostValueKind::GenerationId,
         BytecodeIntrinsicType::GenerationError => RuntimeHostValueKind::GenerationError,
+        BytecodeIntrinsicType::Reader => RuntimeHostValueKind::Reader,
+        BytecodeIntrinsicType::Writer => RuntimeHostValueKind::Writer,
+        BytecodeIntrinsicType::IoError => RuntimeHostValueKind::IoError,
+        BytecodeIntrinsicType::ConsoleError => RuntimeHostValueKind::ConsoleError,
         BytecodeIntrinsicType::ExitStatus => RuntimeHostValueKind::ExitStatus,
         BytecodeIntrinsicType::ProcessOutput => RuntimeHostValueKind::ProcessOutput,
         BytecodeIntrinsicType::ProcessHandle => RuntimeHostValueKind::ProcessHandle,

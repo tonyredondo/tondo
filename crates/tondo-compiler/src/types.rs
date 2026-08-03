@@ -128,6 +128,10 @@ pub enum IntrinsicType {
     Generator,
     GenerationId,
     GenerationError,
+    Reader,
+    Writer,
+    IoError,
+    ConsoleError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -174,6 +178,10 @@ impl IntrinsicType {
             Self::Generator => "Generator",
             Self::GenerationId => "GenerationId",
             Self::GenerationError => "GenerationError",
+            Self::Reader => "Reader",
+            Self::Writer => "Writer",
+            Self::IoError => "IoError",
+            Self::ConsoleError => "ConsoleError",
             Self::ExitStatus => "ExitStatus",
             Self::ProcessOutput => "ProcessOutput",
             Self::ProcessHandle => "ProcessHandle",
@@ -215,6 +223,10 @@ impl IntrinsicType {
             | Self::Generator
             | Self::GenerationId
             | Self::GenerationError
+            | Self::Reader
+            | Self::Writer
+            | Self::IoError
+            | Self::ConsoleError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle

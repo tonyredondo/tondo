@@ -112,6 +112,10 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::Generator
         | IntrinsicType::GenerationId
         | IntrinsicType::GenerationError
+        | IntrinsicType::Reader
+        | IntrinsicType::Writer
+        | IntrinsicType::IoError
+        | IntrinsicType::ConsoleError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
         | IntrinsicType::ProcessError
@@ -462,6 +466,10 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::Generator
         | IntrinsicType::GenerationId
         | IntrinsicType::GenerationError
+        | IntrinsicType::Reader
+        | IntrinsicType::Writer
+        | IntrinsicType::IoError
+        | IntrinsicType::ConsoleError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
         | IntrinsicType::ProcessError

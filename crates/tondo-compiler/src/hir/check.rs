@@ -836,6 +836,10 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::Generator
                         | IntrinsicType::GenerationId
                         | IntrinsicType::GenerationError
+                        | IntrinsicType::Reader
+                        | IntrinsicType::Writer
+                        | IntrinsicType::IoError
+                        | IntrinsicType::ConsoleError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle
@@ -13701,6 +13705,10 @@ impl<'a> ExpressionChecker<'a> {
                 ("console", Some("print")) => HirBootstrapHostFunction::ConsolePrint,
                 ("console", Some("println")) => HirBootstrapHostFunction::ConsolePrintln,
                 ("console", Some("flush")) => HirBootstrapHostFunction::ConsoleFlush,
+                ("console", Some("stdin")) => HirBootstrapHostFunction::ConsoleStdin,
+                ("console", Some("stdout")) => HirBootstrapHostFunction::ConsoleStdout,
+                ("console", Some("stderr")) => HirBootstrapHostFunction::ConsoleStderr,
+                ("console", Some("readLine")) => HirBootstrapHostFunction::ConsoleReadLine,
                 ("process", Some("args")) => HirBootstrapHostFunction::ProcessArgs,
                 ("process", Some("cmd")) => HirBootstrapHostFunction::ProcessCmd,
                 ("process", Some("shell")) => HirBootstrapHostFunction::ProcessShell,
@@ -13777,6 +13785,7 @@ impl<'a> ExpressionChecker<'a> {
                     HirBootstrapHostFunction::TestingBeginSuiteCleanup
                 }
                 ("process", Some(name))
+                | ("console", Some(name))
                 | ("bytes", Some(name))
                 | ("env", Some(name))
                 | ("math", Some(name))
@@ -16573,6 +16582,9 @@ impl<'a> ExpressionChecker<'a> {
                     HirBootstrapHostFunction::TestingGeneratorDrawCount
                 }
                 (IntrinsicType::Generator, "id") => HirBootstrapHostFunction::TestingGeneratorId,
+                (IntrinsicType::Reader, "read") => HirBootstrapHostFunction::ReaderRead,
+                (IntrinsicType::Writer, "write") => HirBootstrapHostFunction::WriterWrite,
+                (IntrinsicType::Writer, "flush") => HirBootstrapHostFunction::WriterFlush,
                 (IntrinsicType::EnvSnapshot, "arguments") => {
                     HirBootstrapHostFunction::EnvSnapshotArguments
                 }
@@ -16601,6 +16613,9 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::TestingGeneratorNextInt
                 | HirBootstrapHostFunction::TestingGeneratorNextBytes
                 | HirBootstrapHostFunction::TestingGeneratorNextText
+                | HirBootstrapHostFunction::ReaderRead
+                | HirBootstrapHostFunction::WriterWrite
+                | HirBootstrapHostFunction::WriterFlush
         ) {
             self.check_method_receiver(receiver, ParameterMode::Var, Some(receiver_type), context)?;
         }

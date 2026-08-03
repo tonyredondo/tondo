@@ -527,6 +527,10 @@ impl Verifier<'_> {
                         | IntrinsicType::Generator
                         | IntrinsicType::GenerationId
                         | IntrinsicType::GenerationError
+                        | IntrinsicType::Reader
+                        | IntrinsicType::Writer
+                        | IntrinsicType::IoError
+                        | IntrinsicType::ConsoleError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle
