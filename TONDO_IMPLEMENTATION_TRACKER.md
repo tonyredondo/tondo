@@ -6,18 +6,20 @@ runner público de testing, tiempo virtual y sus proyectos de aceptación forman
 parte del candidato de conformidad inmutable. Tondo 0.1 sigue en desarrollo:
 el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 
-**Versión del tracker:** 1.37
+**Versión del tracker:** 1.38
 
-**Última actualización:** 2026-08-02
+**Última actualización:** 2026-08-03
 
 **Especificaciones normativas:**
 
 - [Borrador normativo de Tondo 0.1](./TONDO_LANGUAGE_SPEC.md)
 - [Arquitectura base de Standard Library 0.1](./TONDO_STANDARD_LIBRARY_SPEC.md)
+- [Contrato operativo de rendimiento de Standard Library 0.1](./docs/contracts/stdlib-performance.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
-**Objetivo inmediato:** completar STD-0.1A por layers, empezando por
-`STD-PERF-001` y los contratos de cada owner antes de su implementación. Gate
+**Objetivo inmediato:** completar STD-0.1A por layers, con `STD-PERF-001`
+cerrado y continuando por los contratos de cada owner antes de su
+implementación. Gate
 G5 ya fija la revisión 7 en un candidato inmutable sin confundirlo con una
 publicación. Después se fijan antes del backend los contratos
 runtime-facing de STD-0.1B, comienza M11 y, tras Gate N1, se implementa el resto
@@ -3747,11 +3749,18 @@ layer pueden avanzar en paralelo.
   unknown fields, comprobar evolución y ofrecer encoding determinista sin
   presentarlo como canonical universal. Services/gRPC quedan fuera.
 
-- [ ] **STD-PERF-001 — Fijar contratos de rendimiento.** Cada hot path tiene
+- [x] **STD-PERF-001 — Fijar contratos de rendimiento.** Cada hot path tiene
   oracle escalar, streaming/bytes-first, límites de allocation/memoria,
   workloads y gates de throughput, latencia, startup, code size y compile time.
   SIMD, word-at-a-time y target multiversioning se permiten solo con
-  equivalencia exacta y fallback portable.
+  equivalencia exacta y fallback portable. Cerrado con
+  [`docs/contracts/stdlib-performance.md`](./docs/contracts/stdlib-performance.md),
+  el registro canónico [`testing/stdlib-performance.json`](./testing/stdlib-performance.json)
+  y el check determinista [`scripts/stdlib-performance-check.sh`](./scripts/stdlib-performance-check.sh),
+  integrado en `scripts/test-gate.sh`. El contrato fija identidad de workload,
+  protocolo de 27 muestras mínimas, observables exactos, presupuestos por
+  dimensión y la secuencia design → capture → compare → promote; no convierte
+  una cifra dependiente de máquina en semántica del lenguaje.
 
 - [ ] **STD-TESTING-SPEC-001 — Especificar `std.testing`.** Fijar assertions de
   igualdad, diffs de texto, comparación float con tolerancia, consumo explícito
@@ -4459,8 +4468,8 @@ gates en una barrera artificial.
       CONF-SEAL-001 → G5`.
     Mini-gate: T0 y después G5 verdes sobre hashes actuales; la regresión
     bootstrap queda separada de la conformidad del draft.
-25. [ ] **Wave 5 — STD-0.1A por layers.** Cerrar `STD-PERF-001` y el spec de
-    cada owner antes de su implementación; ejecutar A1 valores/protocolos, A2
+25. [ ] **Wave 5 — STD-0.1A por layers.** Con `STD-PERF-001` cerrado, terminar
+    el spec de cada owner antes de su implementación; ejecutar A1 valores/protocolos, A2
     host, A3 serialization/codecs y A4 helpers de testing, cerrando el
     micro-gate de cada owner antes de sus consumidores. Owners independientes
     avanzan en paralelo. `STD-SPEC-001`, `STD-TEST-001`,
@@ -4507,6 +4516,22 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.38 — 2026-08-03
+
+- Se completa `STD-PERF-001` como contrato operativo de STD-0.1A. El contrato
+  separa semántica de rendimiento, fija una identidad reproducible por
+  operación/workload/target/backend/toolchain, exige oracle escalar portable y
+  equivalencia exacta para kernels optimizados, y define workloads, dimensiones,
+  presupuestos y gates design/capture/compare/promote.
+- `testing/stdlib-performance.json` es el registro canónico de la política y
+  `scripts/stdlib-performance-check.sh` la valida de forma determinista. El
+  check queda integrado en `scripts/test-gate.sh`; no cambia el candidato de
+  conformidad sellado porque todavía no publica una implementación ni altera
+  la semántica del draft.
+- La cola de Wave 5 avanza a los contratos de los owners de STD-0.1A; la
+  revisión 7 de Gate G5 continúa siendo un candidato técnico inmutable y no una
+  publicación.
 
 ### 1.37 — 2026-08-02
 

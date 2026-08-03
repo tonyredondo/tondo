@@ -42,6 +42,8 @@ run_step conformance-build \
     cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
 run_step reliability \
     cargo run -p tondo-reliability --locked -- check --root .
+run_step stdlib-performance-contract \
+    scripts/stdlib-performance-check.sh
 run_step draft-lineage-validate \
     cargo run -p tondo-conformance --locked -- validate \
     --root . \

@@ -1,0 +1,320 @@
+{
+  "format": "tondo-stdlib-performance/1",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "draft-contract",
+  "measurement": {
+    "clock": "monotonic",
+    "warmup_iterations": 3,
+    "measurement_repetitions": 9,
+    "independent_processes": 3,
+    "summary": [
+      "median",
+      "p95",
+      "p99"
+    ],
+    "outliers": "report-not-delete",
+    "minimum_sample_count": 27,
+    "recorded_environment": [
+      "cpu_model",
+      "cpu_features",
+      "memory_bytes",
+      "os",
+      "kernel",
+      "target",
+      "backend",
+      "profile",
+      "rustc",
+      "llvm",
+      "cargo",
+      "flags",
+      "git_revision"
+    ]
+  },
+  "dimensions": [
+    {
+      "id": "allocations_per_operation",
+      "unit": "count",
+      "direction": "lower-is-better",
+      "max_regression_basis_points": 0
+    },
+    {
+      "id": "allocated_bytes_per_operation",
+      "unit": "bytes",
+      "direction": "lower-is-better",
+      "max_regression_basis_points": 1000
+    },
+    {
+      "id": "code_size",
+      "unit": "bytes",
+      "direction": "lower-is-better",
+      "max_regression_basis_points": 500
+    },
+    {
+      "id": "compile_time",
+      "unit": "milliseconds",
+      "direction": "lower-is-better",
+      "max_regression_basis_points": 1000
+    },
+    {
+      "id": "peak_memory",
+      "unit": "bytes",
+      "direction": "lower-is-better",
+      "max_regression_basis_points": 1000
+    },
+    {
+      "id": "startup",
+      "unit": "microseconds",
+      "direction": "lower-is-better",
+      "max_regression_basis_points": 1000
+    },
+    {
+      "id": "tail_latency",
+      "unit": "microseconds",
+      "direction": "lower-is-better",
+      "max_regression_basis_points": 1000
+    },
+    {
+      "id": "throughput",
+      "unit": "operations_per_second",
+      "direction": "higher-is-better",
+      "max_regression_basis_points": 500
+    }
+  ],
+  "workload_classes": [
+    {
+      "id": "adversarial",
+      "required": true,
+      "description": "Inputs near every published size, depth, overflow, timeout, and malformed-input limit."
+    },
+    {
+      "id": "empty",
+      "required": true,
+      "description": "The smallest valid input and the no-work path."
+    },
+    {
+      "id": "fragmented_stream",
+      "required": true,
+      "description": "The same logical input delivered in one-byte and boundary-splitting chunks."
+    },
+    {
+      "id": "large",
+      "required": true,
+      "description": "A bounded input large enough to expose allocation, cache, and backpressure behavior."
+    },
+    {
+      "id": "representative",
+      "required": true,
+      "description": "The module owner's documented production-shaped workload."
+    },
+    {
+      "id": "small",
+      "required": true,
+      "description": "A small input that exercises the ordinary fast path without setup dominating it."
+    }
+  ],
+  "oracle_policy": {
+    "required": true,
+    "implementation": "portable-scalar",
+    "comparison": "exact-observation",
+    "observables": [
+      "allocation-contract",
+      "bytes",
+      "error",
+      "error-path",
+      "ordering",
+      "overflow",
+      "ownership",
+      "value"
+    ],
+    "optimized_route": "must-fallback-to-oracle-compatible-portable-route"
+  },
+  "kernel_policy": {
+    "allowed": [
+      "automatic-vectorization",
+      "lookup-table",
+      "simd",
+      "specialization",
+      "target-multiversioning",
+      "word-at-a-time"
+    ],
+    "selection": "outside-public-api",
+    "dispatch": "at-most-once-per-operation-domain",
+    "fallback": "portable-scalar",
+    "forbidden": [
+      "different-error-order",
+      "semantic-difference",
+      "silent-overflow-change",
+      "target-required-without-fallback",
+      "unbounded-probing"
+    ]
+  },
+  "owner_groups": [
+    {
+      "id": "a0-foundation",
+      "owners": [
+        "std.bytes",
+        "std.env",
+        "std.meta",
+        "std.reflect",
+        "std.time"
+      ],
+      "required_dimensions": [
+        "allocations_per_operation",
+        "allocated_bytes_per_operation",
+        "compile_time",
+        "peak_memory",
+        "startup",
+        "tail_latency",
+        "throughput"
+      ],
+      "required_workloads": [
+        "adversarial",
+        "empty",
+        "fragmented_stream",
+        "large",
+        "representative",
+        "small"
+      ]
+    },
+    {
+      "id": "a1-values-protocols",
+      "owners": [
+        "std.collections",
+        "std.format",
+        "std.io",
+        "std.math",
+        "std.serialization",
+        "std.text"
+      ],
+      "required_dimensions": [
+        "allocations_per_operation",
+        "allocated_bytes_per_operation",
+        "code_size",
+        "compile_time",
+        "peak_memory",
+        "startup",
+        "tail_latency",
+        "throughput"
+      ],
+      "required_workloads": [
+        "adversarial",
+        "empty",
+        "fragmented_stream",
+        "large",
+        "representative",
+        "small"
+      ]
+    },
+    {
+      "id": "a2-host",
+      "owners": [
+        "std.console",
+        "std.fs",
+        "std.path",
+        "std.process"
+      ],
+      "required_dimensions": [
+        "allocations_per_operation",
+        "allocated_bytes_per_operation",
+        "code_size",
+        "compile_time",
+        "peak_memory",
+        "startup",
+        "tail_latency",
+        "throughput"
+      ],
+      "required_workloads": [
+        "adversarial",
+        "empty",
+        "fragmented_stream",
+        "large",
+        "representative",
+        "small"
+      ]
+    },
+    {
+      "id": "a3-codecs",
+      "owners": [
+        "std.json",
+        "std.messagepack",
+        "std.protobuf"
+      ],
+      "required_dimensions": [
+        "allocations_per_operation",
+        "allocated_bytes_per_operation",
+        "code_size",
+        "compile_time",
+        "peak_memory",
+        "startup",
+        "tail_latency",
+        "throughput"
+      ],
+      "required_workloads": [
+        "adversarial",
+        "empty",
+        "fragmented_stream",
+        "large",
+        "representative",
+        "small"
+      ]
+    },
+    {
+      "id": "a4-testing",
+      "owners": [
+        "std.testing"
+      ],
+      "required_dimensions": [
+        "allocations_per_operation",
+        "allocated_bytes_per_operation",
+        "compile_time",
+        "peak_memory",
+        "startup",
+        "tail_latency",
+        "throughput"
+      ],
+      "required_workloads": [
+        "adversarial",
+        "empty",
+        "large",
+        "representative",
+        "small"
+      ]
+    }
+  ],
+  "gate_sequence": [
+    {
+      "id": "design",
+      "requires": [
+        "owner-contract",
+        "scalar-oracle",
+        "workload-identities"
+      ]
+    },
+    {
+      "id": "capture",
+      "requires": [
+        "clean-workspace",
+        "pinned-toolchain",
+        "recorded-environment",
+        "repeated-samples"
+      ]
+    },
+    {
+      "id": "compare",
+      "requires": [
+        "all-applicable-targets",
+        "exact-oracle-equivalence",
+        "regression-budgets"
+      ]
+    },
+    {
+      "id": "promote",
+      "requires": [
+        "no-unexplained-regression",
+        "reproducible-report",
+        "reviewed-baseline"
+      ]
+    }
+  ]
+}
