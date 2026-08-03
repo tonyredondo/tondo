@@ -4,8 +4,8 @@
   "state": "candidate",
   "lineage": {
     "name": "tondo-draft",
-    "revision": 7,
-    "manifest_sha256": "3994ebd5e128307e953dade3bd92943fff2b7114a8521084b632a786546b90c8"
+    "revision": 8,
+    "manifest_sha256": "64b5866d36871f50cc8e4ca306201d94ccb7ad389739407407ec4979c8e238cb"
   },
   "target": {
     "name": "tondo-vm-hosted",
@@ -41,16 +41,16 @@
       "role": "adapter-source",
       "source_path": "crates/tondo-reference-adapter/src/document.rs",
       "object": {
-        "path": "objects/d2830cc75efe003e6ef73e19a5078e9cf4576dbadb1e0e6610b4a6ec2f9c1ad5",
-        "sha256": "d2830cc75efe003e6ef73e19a5078e9cf4576dbadb1e0e6610b4a6ec2f9c1ad5"
+        "path": "objects/2e0e831f62819bd526d88d1de6ad1972146c2631f260f0e6ce8dd43feae7211e",
+        "sha256": "2e0e831f62819bd526d88d1de6ad1972146c2631f260f0e6ce8dd43feae7211e"
       }
     },
     {
       "role": "adapter-source",
       "source_path": "crates/tondo-reference-adapter/src/lib.rs",
       "object": {
-        "path": "objects/805705bd622f711f95474512567212d3007dea717cd88f733d87fbd27d858ad1",
-        "sha256": "805705bd622f711f95474512567212d3007dea717cd88f733d87fbd27d858ad1"
+        "path": "objects/dada96418dcf993b554dd5736ce4b89f8321519ff167b0f84df7f00f63dc5b57",
+        "sha256": "dada96418dcf993b554dd5736ce4b89f8321519ff167b0f84df7f00f63dc5b57"
       }
     },
     {
@@ -65,16 +65,16 @@
       "role": "adapter-source",
       "source_path": "crates/tondo-reference-adapter/src/maintain.rs",
       "object": {
-        "path": "objects/f798b6ad1bd61e055d5940d6ad1665b215ca7cbe2ed713b4d804ebaeeadea545",
-        "sha256": "f798b6ad1bd61e055d5940d6ad1665b215ca7cbe2ed713b4d804ebaeeadea545"
+        "path": "objects/37974a95721e34f04739a8224cad7fb74e159b6fadef40565a168c3b5dd58e27",
+        "sha256": "37974a95721e34f04739a8224cad7fb74e159b6fadef40565a168c3b5dd58e27"
       }
     },
     {
       "role": "adapter-source",
       "source_path": "crates/tondo-reference-adapter/src/semantic.rs",
       "object": {
-        "path": "objects/bdf8c5f52d94f6f7f0b6428b96891b39a82eb603da832512eb6a5ffba9e6d20d",
-        "sha256": "bdf8c5f52d94f6f7f0b6428b96891b39a82eb603da832512eb6a5ffba9e6d20d"
+        "path": "objects/f9bf9f67f7ddec3de4dea215fdf5ab7efb6b0a742eff76e37aba055ba09e88f0",
+        "sha256": "f9bf9f67f7ddec3de4dea215fdf5ab7efb6b0a742eff76e37aba055ba09e88f0"
       }
     },
     {
@@ -129,16 +129,16 @@
       "role": "conformance-result",
       "source_path": "generated:tondo-reference-result",
       "object": {
-        "path": "objects/f07d818482f6d709c4281c2117d432db17019420e6421d81c9ba10c14f48d089",
-        "sha256": "f07d818482f6d709c4281c2117d432db17019420e6421d81c9ba10c14f48d089"
+        "path": "objects/d961855e7f4d402c5826d92584afb4563b58b8c5e79035fe0b187b160788bd40",
+        "sha256": "d961855e7f4d402c5826d92584afb4563b58b8c5e79035fe0b187b160788bd40"
       }
     },
     {
       "role": "draft-manifest",
       "source_path": "conformance/draft/manifest.json",
       "object": {
-        "path": "objects/3994ebd5e128307e953dade3bd92943fff2b7114a8521084b632a786546b90c8",
-        "sha256": "3994ebd5e128307e953dade3bd92943fff2b7114a8521084b632a786546b90c8"
+        "path": "objects/64b5866d36871f50cc8e4ca306201d94ccb7ad389739407407ec4979c8e238cb",
+        "sha256": "64b5866d36871f50cc8e4ca306201d94ccb7ad389739407407ec4979c8e238cb"
       }
     },
     {
@@ -169,8 +169,8 @@
       "role": "ratchet",
       "source_path": "testing/conformance-ratchet.json",
       "object": {
-        "path": "objects/7c00e4dc52aa6bc6274c12a286383b633f38e36efcb0f2f495c6d2783831608a",
-        "sha256": "7c00e4dc52aa6bc6274c12a286383b633f38e36efcb0f2f495c6d2783831608a"
+        "path": "objects/ae2be663976dd3b37822dccc7bfe22df3fa77961220ec2c7fdbc632ba0a57b6c",
+        "sha256": "ae2be663976dd3b37822dccc7bfe22df3fa77961220ec2c7fdbc632ba0a57b6c"
       }
     },
     {
@@ -201,8 +201,8 @@
       "role": "specification",
       "source_path": "TONDO_STANDARD_LIBRARY_SPEC.md",
       "object": {
-        "path": "objects/a3a8a01a2ea643efcf9c60903e4346a08b3418b9bab93a7553ce5c4b62596339",
-        "sha256": "a3a8a01a2ea643efcf9c60903e4346a08b3418b9bab93a7553ce5c4b62596339"
+        "path": "objects/ab8a314cf99bf467d8dd93151adc677da87561d7a57ec6dec404b41d97630199",
+        "sha256": "ab8a314cf99bf467d8dd93151adc677da87561d7a57ec6dec404b41d97630199"
       }
     },
     {
