@@ -3,7 +3,8 @@
 **Development status:** Tondo 0.1 is not published. There is one current draft;
 the bootstrap corpus is only a regression suite for implemented behavior.
 Static metaprogramming, `defer await` and first-class testing are specified but
-not implemented yet.
+not implemented yet. The compact Tondo LLM Form transport is specified but its
+codec and CLI are not implemented yet.
 
 **Draft conformance target:** `tondo-vm-hosted` / `hosted` /
 `[console, process]`
@@ -209,6 +210,8 @@ current draft, another backend, profile, or capability set.
   is promised before the first publication.
 - `TONDO_TESTING_SPEC.md` defines the Tondo 0.1 testing language, runner, and
   sealed `std.testing` boundary.
+- `TONDO_LLM_FORM_SPEC.md` defines the compact, reversible transport used by
+  LLM agents before ordinary Tondo parsing.
 - `docs/architecture.md` describes the compiler pipeline and phase invariants.
 - `docs/adr/` records accepted architectural decisions.
 - `docs/contracts/` records bootstrap interfaces that later milestones build on.
@@ -242,6 +245,8 @@ current draft, another backend, profile, or capability set.
 - `docs/contracts/reliability.md` defines the M10.5 inventory, traceability,
   CI tiers, generators, models, fuzzing, coverage, mutation, and regression
   gates.
+- `docs/measurements/tlf-token-study.md` records the tokenizer exploration that
+  selected the current TLF draft shape.
 - `docs/contracts/types.md` records the canonical semantic type representation.
 - `docs/releases/0.1.0.md` is retained as historical archaeology only; it is
   not a public release note or an active contract.

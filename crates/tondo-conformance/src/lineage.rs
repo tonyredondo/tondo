@@ -555,7 +555,7 @@ mod tests {
         );
         assert_eq!(
             sha256(first.specification("TONDO_LANGUAGE_SPEC.md").unwrap()),
-            "ccfb9628a9e15894d45848ec24d650eba48b833a47f95c6a2835bad10bd1e7f8"
+            "aa972af8334b837a545bfae4f536d950e207cf104f0aed51feeffe2b3151d637"
         );
         assert_ne!(
             first.baseline_specification(),
@@ -565,7 +565,7 @@ mod tests {
             first.baseline_suite().manifest_sha256(),
             "6bb8fe5b151ef73f1d49b3d432a51ec18c7a634cf4c9d014eea81d6a351c6ffb"
         );
-        assert_eq!(first.manifest().revision, 8);
+        assert_eq!(first.manifest().revision, 9);
         assert_eq!(first.case_layers().len(), 3);
         assert_eq!(first.case_layers()[0].layer, "finalization");
         assert_eq!(first.case_layers()[0].cases.len(), 5);

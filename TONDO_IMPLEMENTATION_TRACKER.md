@@ -3,13 +3,15 @@
 **Estado:** M0–M10.7 conservan su implementación y Gate H0 permanece cerrado
 para la infraestructura que valida. La auditoría 1.45 reabre los cierres de
 conformidad T0/G5 y STD-0.1A/S1A: existe un candidato content-addressed de la
-revisión 8 y existen kernels/bridges útiles, pero la evidencia actual no prueba
-todo el contrato normativo ni varias APIs públicas de la stdlib. Tondo 0.1
-sigue en desarrollo y no ha sido publicado.
+revisión 9 y existen kernels/bridges útiles, pero la evidencia actual no prueba
+todo el contrato normativo ni varias APIs públicas de la stdlib. La forma TLF
+para agentes ya tiene spec y estudio léxico, pero encoder, decoder, source maps,
+CLI y evaluación de generación permanecen pendientes. Tondo 0.1 sigue en
+desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.45
+**Versión del tracker:** 1.46
 
-**Última actualización:** 2026-08-03
+**Última actualización:** 2026-08-04
 
 **Especificaciones normativas:**
 
@@ -23,6 +25,7 @@ sigue en desarrollo y no ha sido publicado.
 - [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
 - [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
+- [Tondo LLM Form](./TONDO_LLM_FORM_SPEC.md)
 
 **Objetivo inmediato:** cerrar primero las dos lagunas verificadas por la
 auditoría: (1) completar las APIs públicas A1–A4 de STD-0.1A, en especial
@@ -32,7 +35,9 @@ aportar evidencia ejecutable antes de volver a cerrar T0/G5/S1A. Los contratos
 runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
 versión 0.1; los slices son orden de implementación, no versiones públicas. La
 VM permanece como implementación de referencia y oracle diferencial del
-backend nativo.
+backend nativo. La lane TLF puede avanzar en paralelo porque solo depende del
+frontend/formatter ya cerrados; no reemplaza esas prioridades y debe cerrar
+antes de `REL-0.1-RC-001`.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
 > fuente normativa. El tracker organiza el trabajo de implementación, registra
@@ -114,6 +119,7 @@ No es necesario para este primer gate:
 | **S1A — Standard Library 0.1 foundation** | Core + Hosted utilizable | Base necesaria para testing y backend nativo |
 | **N1 — Backend nativo conforme** | Segunda implementación de producción | Oracle diferencial, runtime nativo y targets verificados |
 | **S1 — Standard Library 0.1 completa** | Primera stdlib publicable | Foundation + Concurrency + Application conformes |
+| **L0 — Tondo LLM Form** | Transporte compacto, reversible y medido para agentes | Codec, source maps, CLI, properties, fuzzing y evaluación multi-modelo |
 
 ---
 
@@ -196,6 +202,8 @@ cantidad de infraestructura necesaria antes del primer programa ejecutable.
 | `ADR-014` | Sin formato serializado estable de bytecode durante bootstrap | El bytecode puede ser in-memory hasta que la semántica y el loader estén estabilizados |
 | `ADR-015` | Un subconjunto bootstrap es una limitación del toolchain, no una edición ni dialecto de fuente | Las construcciones no implementadas se rechazan; nunca reciben semántica provisional |
 | `ADR-016` | Metaprogramación estática mediante `derive` y una ronda hermética de generators Tondo | Elimina boilerplate sin macros textuales, reflection dinámica, plugins nativos ni ejecución ambiental dentro del frontend |
+| `ADR-017` | Trabajo de procesos bloqueante fuera del executor cooperativo | Conserva progreso async y cancelación estructurada sin fingir I/O no bloqueante |
+| `ADR-018` | TLF es un formato de transporte, no una segunda semántica | Conserva el pipeline `.to`, reutiliza formatter/diagnósticos y exige expansión explícita antes del lexer ordinario |
 
 ### 3.2 Decisiones que deben documentarse antes de su milestone
 
@@ -349,6 +357,7 @@ necesaria; la fragmentación del workspace no.
 | **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura/owners y slices tempranos cerrados; firmas A3 e implementación pública incompletas |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
+| **TLF — Forma para agentes** | Transporte compacto hacia Tondo canónico | Spec y estudio completados; implementación/evaluación pendientes |
 
 Estado observado del workspace:
 
@@ -434,7 +443,7 @@ M10.7 y M10.6 ratchetean evidencia al terminar cada wave, no únicamente en
 `META-CONF-001` o `UTEST-CONF-001`. La implementación funcional de testing ya
 existe, pero T0/G5 no vuelven a cerrarse hasta que la matriz cubra los cuatro
 specs, cada límite aplicable tenga caso ejecutable y `CONF-SEAL-FINAL-001`
-promueva exactamente ese cierre. El candidato revisión 8 demuestra el mecanismo
+promueva exactamente ese cierre. El candidato revisión 9 demuestra el mecanismo
 de sellado, no sustituye esa prueba normativa. El resultado existente de
 `tondo test` permite completar y probar la propia stdlib.
 
@@ -445,6 +454,11 @@ contratos —no necesariamente las implementaciones— de `std.channel`,
 memoria, atomics, wakeups, bloqueo y ABI runtime. M11 depende de T0, G5, S1A y
 esos contratos. La implementación de STD-0.1B continúa tras N1 y sigue siendo
 requisito de la primera publicación STD 0.1.0.
+
+TLF es una lane transversal independiente después de G0. No modifica `.to`, no
+condiciona el backend ni bloquea S1A; sí debe completar codec, mapas, CLI,
+properties, fuzzing y evaluación de generación/reparación antes del candidato
+de release. Su evidencia no cuenta como conformidad del lenguaje base.
 
 Los números M10.6 y M10.7 son IDs históricos estables, no prioridad
 cronológica. Este DAG y la cola de la sección 24 son la autoridad para ordenar
@@ -474,6 +488,7 @@ el trabajo.
 | `NATIVE-ABI-001` | `NATIVE-001`, `NATIVE-MEM-ADR-001` y contratos de sync/executor | ABI FFI pública |
 | ARC/runtime nativo | `NATIVE-ABI-001` y DEC-014 | Eliminación de retains, COW o escape analysis |
 | Gate S1 | N1 y todos los slices A/B conformes | Incrementalidad o LSP |
+| Gate L0 | Codec TLF, maps/diagnostics/CLI, properties/fuzz, evaluación y conformidad | Backend nativo o implementación de STD-0.1B |
 
 ### 4.1.2 Regla de integración por waves
 
@@ -514,6 +529,7 @@ entre dos subsistemas:
 | 26. Frontera con la stdlib | M6, M8, STD-0.1A y STD-0.1B | G3, G4, M10, S1A y S1 |
 | 27. Metaprogramación estática | M10.7; providers en STD-0.1A | G5 y S1A |
 | 28. Testing integrado Tondo 0.1 | Time-base de STD-0.1A + M10.6; helpers en STD-0.1A | T0, G5 y S1A |
+| Tondo LLM Form | Lane TLF sobre lexer/CST/formatter existentes | L0 y `REL-0.1-RC-001` |
 
 ---
 
@@ -3589,7 +3605,7 @@ vez los errores de los slices anteriores.
   `tondo-conformance-draft`, no de una edición o suite paralela.
 - [x] `CONF-SEAL-001` ha promovido exactamente el draft verificado, sin
   presentar la regresión bootstrap como requisitos nuevos. Este punto verifica
-  el mecanismo y el candidato revisión 8, no la suficiencia de su matriz.
+  el mecanismo y el candidato revisión 9, no la suficiencia de su matriz.
 - [x] La suite y sus manifests fijan el hash actual de la spec, no el snapshot
   bootstrap de regresión.
 - [x] No existe una ruta de ejecución ambiental dentro del frontend ni del VM
@@ -4528,6 +4544,78 @@ Orden recomendado:
 Los nombres ilustrativos del spec del lenguaje no deben implementarse como API
 pública definitiva hasta ser fijados por la especificación estándar.
 
+### 22.7 Tondo LLM Form
+
+TLF se implementa como codec puro delante del frontend ordinario. No añade
+tokens a `.to`, no crea otro AST y no puede consultar resolución o tipos para
+decodificar. La cadena de trabajo es:
+
+~~~text
+TLF-RESEARCH-001
+  -> TLF-SPEC-001
+  -> TLF-CODEC-001
+  -> {TLF-CANON-001 + TLF-MAP-001 + TLF-DIAG-001}
+  -> TLF-CLI-001
+  -> {TLF-PROP-001 + TLF-FUZZ-001 + TLF-EVAL-001}
+  -> TLF-CONF-001 -> Gate L0
+~~~
+
+- [x] **TLF-RESEARCH-001 — Medir shapes compactos con tokenizers reales.** El
+  estudio [`docs/measurements/tlf-token-study.md`](./docs/measurements/tlf-token-study.md)
+  deduplica 154 fuentes Tondo, usa el lexer real y compara cinco tokenizers. La
+  cinta léxica elegida reduce 16,18 % de tokens agregados sin aliases ni
+  diccionario; el spike conserva los códigos léxicos/sintácticos en 154/154
+  expansiones. No afirma todavía calidad de generación.
+
+- [x] **TLF-SPEC-001 — Cerrar el contrato del formato.** La especificación
+  [`TONDO_LLM_FORM_SPEC.md`](./TONDO_LLM_FORM_SPEC.md) fija identidad draft,
+  source forms, `;` como `NL` lógico, canonicalización, expansión, comentarios,
+  source maps, límites, CLI prevista y gates. ADR-018 conserva una sola
+  semántica Tondo.
+
+- [ ] **TLF-CODEC-001 — Implementar encoder y decoder puros.** Crear una
+  frontera propia en `tondo-compiler` sobre el lexer/CST sin duplicar el parser.
+  La expansión produce bytes `.to` solo al terminar y verifica los invariantes
+  `E(P(s))` y complejidad lineal bajo límites.
+
+- [ ] **TLF-CANON-001 — Implementar la forma canónica.** Emitir separadores
+  mínimos, omitir el `NL` opcional posterior a `{` y el terminal, conservar
+  docs/shebang y demostrar fixed point byte a byte. No aceptar configuración de
+  estilo ni perfiles por tokenizer.
+
+- [ ] **TLF-MAP-001 — Componer source maps.** Mapear tokens, `;`, whitespace
+  insertado y edits del formatter en offsets UTF-8; probar Unicode, strings,
+  interpolación, comments y spans generados sin fallback al archivo completo.
+
+- [ ] **TLF-DIAG-001 — Cerrar diagnósticos y patches.** Reservar `E22xx`, fijar
+  precedencia, limits, ubicación primaria TLF y fixes aplicables. Los errores
+  Tondo conservan su código normativo después de remapping.
+
+- [ ] **TLF-CLI-001 — Exponer `tondo llm`.** Implementar
+  `encode/decode/check/fmt`, source form explícito, streams y exits atómicos.
+  `check` reutiliza el frontend normal; ningún comando de proyecto descubre
+  `.tlf`.
+
+- [ ] **TLF-PROP-001 — Probar round-trip y equivalencia diferencial.** Añadir
+  goldens y properties sobre toda la gramática, comparar formatter, diagnostics,
+  MIR observable y ejecución original/expandida, y registrar regresiones
+  minimizadas.
+
+- [ ] **TLF-FUZZ-001 — Endurecer input hostil.** Fuzzear codec, strings,
+  comments, interpolaciones, UTF-8, separadores, nesting, límites y source maps;
+  ninguna entrada puede abortar, crecer sin cota o publicar output parcial.
+
+- [ ] **TLF-EVAL-001 — Medir programas correctos por token.** Ejecutar una
+  matriz reproducible multi-modelo que incluya coste de enseñar TLF, validez en
+  primer intento, typecheck, aceptación, reparaciones y tokens totales frente a
+  Tondo canónico/minificado. Un ahorro bruto sin mejora total no promociona el
+  formato.
+
+- [ ] **TLF-CONF-001 — Sellar Gate L0.** Publicar vectores independientes,
+  corpus adversario, hashes del formato/medición y evidencia portable de codec,
+  maps, CLI, properties, fuzzing y evaluación. Debe cerrar antes de
+  `REL-0.1-RC-001`, sin atribuir evidencia TLF a G5.
+
 ---
 
 ## 23. Registro de riesgos
@@ -4584,6 +4672,7 @@ pública definitiva hasta ser fijados por la especificación estándar.
 | `R-048` | Usar la recursión del host como pila del parser | Un input válido o malicioso aborta antes del límite tipado en targets con stacks pequeños | Guarda portable temporal; `PARSER-STACK-001` migra toda profundidad controlada por fuente a frames explícitos y conserva solo presupuestos configurables |
 | `R-049` | Tratar un path existente como prueba de implementación del owner | Un kernel parcial cierra decenas de firmas que ningún programa Tondo puede llamar | Matriz firma → HIR → lowering → runtime → caso público y `STD-PUBLIC-API-AUDIT-001` fail-closed |
 | `R-050` | Confundir bundle sellado con conformidad completa | El candidato fija bytes reproducibles pero omite requisitos sin evidencia o specs no inventariados | Matriz multi-spec, clasificación individual de límites y `CONF-SEAL-FINAL-001` como único cierre de G5 |
+| `R-051` | Optimizar TLF por caracteres o por un solo tokenizer | Aliases crípticos fragmentan tooling y el ahorro desaparece en errores/reparaciones | Tokens Tondo intactos, formato único, benchmark multi-tokenizer y Gate L0 por programas correctos y tokens totales |
 
 ---
 
@@ -4715,6 +4804,17 @@ gates en una barrera artificial.
     evidencia y no bloquean el candidato salvo que un presupuesto publicado lo
     exija.
 
+Lane transversal TLF, independiente del orden de Waves 5–8:
+
+- [x] `TLF-RESEARCH-001 → TLF-SPEC-001`.
+- [ ] `TLF-CODEC-001 → (TLF-CANON-001 + TLF-MAP-001 + TLF-DIAG-001) →
+  TLF-CLI-001 → (TLF-PROP-001 + TLF-FUZZ-001 + TLF-EVAL-001) →
+  TLF-CONF-001`.
+
+Puede avanzar mientras se cierran stdlib/conformidad porque solo consume el
+frontend estable. Gate L0 no es prerrequisito de S1A, G5 o N1, pero sí de
+`REL-0.1-RC-001`.
+
 Resumen topológico:
 
 ~~~text
@@ -4731,6 +4831,8 @@ CONF-DRAFT
   -> STD-0.1B runtime contracts
   -> native correctness / N1
   -> STD-0.1B implementation + REL-0.1-RC / S1
+
+G0 -> TLF spec -> codec/maps/CLI -> properties/fuzz/eval -> L0 -> REL-0.1-RC
 ~~~
 
 M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
@@ -4744,6 +4846,23 @@ públicas ausentes. La acción inmediata es ejecutar las tareas leaf de Wave 5 y
 ---
 
 ## 25. Historial del tracker
+
+### 1.46 — 2026-08-04
+
+- Se formaliza `tondo-llm-form-draft` como transporte textual explícito que
+  expande a Tondo canónico antes del frontend ordinario; ADR-018 impide que se
+  convierta en otra semántica o en fuente `.to` autodetectada.
+- `TLF-RESEARCH-001` mide 154 fuentes únicas y cinco tokenizers. La forma léxica
+  seleccionada ahorra 16,18 % de tokens agregados y conserva diagnósticos de
+  parser en el spike 154/154; aliases de keywords y diccionarios se rechazan por
+  beneficio marginal y mayor error surface.
+- `TLF-SPEC-001` fija canonicalización, expansión, comments/docs, source maps,
+  límites, CLI prevista y evaluación por programas correctos/tokens totales.
+  Codec, canonicalizer, diagnostics, maps, CLI, properties, fuzzing, evaluación
+  multi-modelo y conformidad permanecen pendientes y forman Gate L0.
+- La lane TLF puede avanzar sobre G0 en paralelo a stdlib/backend, pero no
+  desplaza Wave 5 ni cuenta como G5. Gate L0 se exige antes de
+  `REL-0.1-RC-001`.
 
 ### 1.45 — 2026-08-03
 

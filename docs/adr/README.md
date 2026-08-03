@@ -22,6 +22,7 @@ does not edit history silently: it adds a new ADR that supersedes the old one.
 | [015](015-bootstrap-is-not-a-dialect.md) | Bootstrap subset is not a source dialect | Accepted |
 | [016](016-verified-hir-mir-contract.md) | Verified HIR and explicit MIR effects | Accepted |
 | [017](017-hosted-process-workers.md) | Blocking process work outside the cooperative executor | Accepted |
+| [018](018-tlf-is-a-transport-format.md) | TLF is a transport format, not a second language | Accepted |
 
 The detailed implemented object and tracing model selected collectively by
 ADR-006 through ADR-011 is recorded in
