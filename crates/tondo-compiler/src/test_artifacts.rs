@@ -489,12 +489,21 @@ fn ensure_store_dirs(root: &Path) -> Result<(), ArtifactError> {
 fn ensure_safe_path(path: &Path, allow_missing: bool) -> Result<(), ArtifactError> {
     let mut current = PathBuf::new();
     for component in path.components() {
+        // Windows drive prefixes are not paths on their own (`C:` is a
+        // drive-relative spelling), and asking the filesystem for metadata
+        // on one returns ERROR_INVALID_FUNCTION. Keep the prefix while
+        // deferring the check until the root or first normal component has
+        // been appended (`C:\\` or `C:\\...`).
+        let check_component = !matches!(component, Component::Prefix(_));
         match component {
             Component::Prefix(prefix) => current.push(prefix.as_os_str()),
             Component::RootDir => current.push(component.as_os_str()),
             Component::CurDir => {}
             Component::ParentDir => return Err(ArtifactError::PathEscape),
             Component::Normal(value) => current.push(value),
+        }
+        if !check_component {
+            continue;
         }
         match fs::symlink_metadata(&current) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -764,6 +773,12 @@ mod tests {
             Err(ArtifactError::NonCanonicalManifest)
         ));
         assert_eq!(ArtifactError::DuplicateName("a".into()).code(), "P2006");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn absolute_drive_paths_skip_metadata_on_the_prefix_component() {
+        assert!(ensure_safe_path(&std::env::temp_dir(), true).is_ok());
     }
 
     #[cfg(unix)]
