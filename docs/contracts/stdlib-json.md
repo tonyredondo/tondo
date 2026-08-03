@@ -1,0 +1,148 @@
+# Contrato de `std.json`
+
+**Estado:** contrato de owner aceptado para `STD-0.1A`; todavía no publica el
+codec ni una implementación de la Standard Library.
+
+`std.json` implementa el modelo JSON de RFC 8259 sobre UTF-8 y reutiliza los
+traits estáticos de `std.serialization`. La política canónica y las invariantes
+de este documento están reflejadas en el registro machine-readable
+[`testing/stdlib-json.json`](../../testing/stdlib-json.json), que valida
+`scripts/test-gate.sh` mediante
+[`scripts/stdlib-json-check.sh`](../../scripts/stdlib-json-check.sh).
+
+La sección 14.8 de `TONDO_STANDARD_LIBRARY_SPEC.md` continúa siendo la fuente
+normativa de catálogo y compatibilidad. Este documento cierra las decisiones
+operativas que cada implementación del owner debe respetar.
+
+## Superficie única
+
+El owner tiene tres formas coordinadas, no tres parsers:
+
+1. **Typed:** `Serialize` y `Deserialize` generados o escritos de forma
+   estática codifican directamente un `T` a un `Writer` y decodifican desde un
+   `Reader`. La ruta de bytes materializada es una comodidad sobre el mismo
+   writer/reader y no pasa por un árbol dinámico.
+2. **Dynamic:** `JsonValue` representa `null`, boolean, `JsonNumber`, string,
+   array y object. `JsonNumber` conserva un token decimal validado y no lo
+   reduce a `Float64` al parsearlo. Un object es una secuencia ordenada de
+   miembros con claves únicas después de aplicar su política de duplicados.
+3. **Streaming:** `JsonReader` produce eventos incrementales y `JsonWriter`
+   consume una secuencia estructural válida. Los eventos son vistas UTF-8 y de
+   número válidas hasta el siguiente evento; materializar un valor es una
+   operación explícita. El reader y el writer conservan un stack explícito y
+   acotado por `max_depth`, no el stack de llamadas del host.
+
+El dispatch typed es compile-time y no usa reflection, registro global,
+lookup por nombre ni construcción dinámica. Un derive de `Serialize` o
+`Deserialize` genera una implementación estática; el codec no inspecciona
+metadata en runtime.
+
+## Sintaxis y Unicode
+
+El parser acepta exactamente la gramática de RFC 8259:
+
+- solo `space`, tab, line-feed y carriage-return son whitespace;
+- una operación consume un único documento y rechaza trailing data;
+- comentarios, trailing commas, `NaN`, `Infinity` y literales no estándar se
+  rechazan;
+- el input debe ser UTF-8 válido;
+- los escapes de string son los de RFC 8259; `\\uXXXX` combina pares surrogate
+  y rechaza un surrogate aislado o un scalar Unicode inválido; y
+- los caracteres de control deben estar escapados.
+
+Un reader puede recibir un documento en chunks arbitrarios. Cortar entre bytes
+UTF-8, escapes, dígitos o delimitadores nunca cambia el resultado: solo puede
+producir un estado pendiente hasta que llegue el siguiente chunk o un
+`UnexpectedEof` terminal.
+
+## Números
+
+`JsonNumber` almacena un token decimal validado con su signo, dígitos y
+exponente, sin conversión intermedia a `Float64`. Puede conservar el spelling
+de entrada para la ruta dinámica; el valor matemático se usa para conversiones
+typed. Una conversión a entero exige un valor matemáticamente integral y dentro
+del rango destino. Una conversión a float exige un valor finito y la política
+de redondeo explícita del tipo; overflow, underflow no representable y pérdida
+silenciosa producen `NumberRange`.
+
+El signo de cero se conserva en `JsonNumber` hasta una serialización que aplique
+RFC 8785. `encodeCanonical` usa exactamente la serialización JCS y puede
+normalizar el spelling o `-0` como exige esa norma; nunca redondea o cambia un
+valor para conseguir una salida canónica. Un número arbitrario que no pueda
+entrar en el dominio I-JSON de JCS produce `CanonicalizationError`.
+
+## Objects y políticas
+
+La configuración por defecto es deliberadamente estricta:
+
+- claves duplicadas producen `DuplicateKey`;
+- un field desconocido durante decode typed produce `UnknownField`;
+- un field desconocido solo puede ignorarse o capturarse si el caller pasa
+  `DecodeOptions` explícito; `capture` requiere un campo `extras` declarado por
+  el tipo; y
+- un field requerido ausente produce `MissingField`. Un field `Option[T]`
+  ausente se convierte en `none`; no se inventan defaults desde el codec.
+
+Las políticas explícitas de duplicados son `reject`, `first` y `last`. `last`
+reemplaza el valor pero conserva la posición del primer miembro, de modo que
+la ordenación observable no dependa del layout interno. No existe una política
+ambiental ni global y dos opciones incompatibles se rechazan antes de leer el
+documento.
+
+El encoder ordinario mantiene el orden declarativo de un record y el orden de
+inserción de un `JsonValue.Object`. El encoder canonical aplica RFC 8785: los
+nombres se ordenan según JCS, strings y números usan su representación JCS y
+no se emite whitespace. Un `JsonWriter` canonical de streaming exige que el
+caller entregue las claves en ese orden; si no puede hacerlo, falla antes de
+publicar el miembro fuera de orden. `encodeCanonical` para un valor dinámico
+puede ordenar una estructura acotada antes de escribirla.
+
+## Reader, writer y ownership
+
+`JsonReader` es incremental y no conserva todo el documento. Su estado contiene
+solo el stack de contenedores, el token pendiente, límites y el scratch acotado
+para un string o número. Una llamada a `next` invalida las vistas del evento
+anterior; `JsonEvent.own` crea un valor estable cuando el caller lo necesita.
+
+`JsonWriter` valida la máquina de estados (root, array, object/key/value),
+escapa strings estrictamente y escribe directamente al `std.io.Writer`. El
+writer no hace buffering ilimitado para completar un documento y, tras un error
+de I/O, límite o estado, queda terminal y no anuncia éxito posterior. La ruta
+typed puede escribir un campo y continuar sin construir `JsonValue` ni un DOM.
+
+El parser de valores y el decoder typed usan la misma máquina léxica y el mismo
+oráculo de errores. El decoder typed no materializa un DOM intermedio; un
+collector dinámico es el único que reserva el árbol. Todas las reservas
+comprueban el límite prospectivo antes de crecer y un fallo no publica un
+resultado parcial.
+
+## Límites y errores
+
+Cada perfil de ejecución proporciona límites finitos para documento de entrada,
+profundidad, miembros de object, elementos de array, bytes de string, bytes de
+número, eventos y bytes de salida. El límite se valida antes de leer o reservar
+la siguiente unidad. El parser usa un stack explícito, por lo que una entrada
+profunda falla con `LimitExceeded` y no con overflow del stack del host.
+
+Los errores estables son `InvalidUtf8`, `InvalidSyntax`, `UnexpectedEof`,
+`InvalidEscape`, `InvalidUnicodeScalar`, `InvalidNumber`, `DuplicateKey`,
+`UnknownField`, `MissingField`, `TypeMismatch`, `NumberRange`,
+`LimitExceeded`, `IoError`, `TrailingData` y `CanonicalizationError`. Cada error
+incluye clase, offset de byte, línea/columna calculables y un `JsonPath`
+estructural formado por segmentos de clave o índice. El texto de diagnóstico
+no copia automáticamente el input ni secretos potenciales.
+
+## Corpus y promoción
+
+Antes de implementar el owner deben existir identidades reproducibles para
+casos válidos e inválidos de RFC 8259, ejemplos RFC 8785, escapes Unicode,
+números de frontera, truncación, fragmentación, límites, policies typed y
+profundidad adversarial. `STD-CODEC-CONF-001` añadirá vectores oficiales y
+comparación con al menos dos implementaciones independientes cuando estén
+disponibles; ese gate no puede sustituirse por round-trips internos.
+
+La aceptación de `STD-JSON-001` exige que el contrato machine-readable pase,
+que cada clase de corpus tenga un owner y que una futura implementación
+demuestre equivalencia typed/dynamic en los observables declarados. La salida
+canónica, el orden, el path de error, los límites y la ausencia de DOM son
+parte del contrato; el rendimiento se mide además bajo `STD-PERF-001`.

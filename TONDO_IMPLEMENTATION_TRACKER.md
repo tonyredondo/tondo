@@ -6,7 +6,7 @@ runner público de testing, tiempo virtual y sus proyectos de aceptación forman
 parte del candidato de conformidad inmutable. Tondo 0.1 sigue en desarrollo:
 el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 
-**Versión del tracker:** 1.38
+**Versión del tracker:** 1.39
 
 **Última actualización:** 2026-08-03
 
@@ -15,11 +15,12 @@ el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 - [Borrador normativo de Tondo 0.1](./TONDO_LANGUAGE_SPEC.md)
 - [Arquitectura base de Standard Library 0.1](./TONDO_STANDARD_LIBRARY_SPEC.md)
 - [Contrato operativo de rendimiento de Standard Library 0.1](./docs/contracts/stdlib-performance.md)
+- [Contrato de owner de `std.json`](./docs/contracts/stdlib-json.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
-**Objetivo inmediato:** completar STD-0.1A por layers, con `STD-PERF-001`
-cerrado y continuando por los contratos de cada owner antes de su
-implementación. Gate
+**Objetivo inmediato:** completar STD-0.1A por layers, con `STD-PERF-001` y
+`STD-JSON-001` cerrados y continuando por los contratos de cada owner antes de
+su implementación. Gate
 G5 ya fija la revisión 7 en un candidato inmutable sin confundirlo con una
 publicación. Después se fijan antes del backend los contratos
 runtime-facing de STD-0.1B, comienza M11 y, tras Gate N1, se implementa el resto
@@ -3733,10 +3734,17 @@ layer pueden avanzar en paralelo.
   consume el request, valida UTF-8 y paths/módulos declarados, aplica límites y
   no publica respuestas parciales.
 
-- [ ] **STD-JSON-001 — Especificar JSON out of the box.** Ruta
+- [x] **STD-JSON-001 — Especificar JSON out of the box.** Ruta
   typed directa, `JsonValue`/`JsonNumber`, reader/writer/eventos incrementales,
   UTF-8, duplicados, unknown fields, orden/canonical output, límites, errors con
-  path y corpus interoperable; nunca materializar DOM para typed decode.
+  path y corpus interoperable; nunca materializar DOM para typed decode. Cerrado
+  con [`docs/contracts/stdlib-json.md`](./docs/contracts/stdlib-json.md), el
+  registro [`testing/stdlib-json.json`](./testing/stdlib-json.json) y el check
+  [`scripts/stdlib-json-check.sh`](./scripts/stdlib-json-check.sh), integrado en
+  `scripts/test-gate.sh`. El contrato exige dispatch estático, `JsonNumber`
+  decimal exacto, policies estrictas por defecto, reader/writer con stack
+  explícito y límites finitos; la conformidad RFC y la interoperabilidad quedan
+  preparadas para `STD-CODEC-CONF-001`.
 
 - [ ] **STD-MSGPACK-001 — Especificar MessagePack out of the
   box.** Cubrir todo el data model y extension values, representación mínima,
@@ -4468,9 +4476,10 @@ gates en una barrera artificial.
       CONF-SEAL-001 → G5`.
     Mini-gate: T0 y después G5 verdes sobre hashes actuales; la regresión
     bootstrap queda separada de la conformidad del draft.
-25. [ ] **Wave 5 — STD-0.1A por layers.** Con `STD-PERF-001` cerrado, terminar
-    el spec de cada owner antes de su implementación; ejecutar A1 valores/protocolos, A2
-    host, A3 serialization/codecs y A4 helpers de testing, cerrando el
+25. [ ] **Wave 5 — STD-0.1A por layers.** Con `STD-PERF-001` y `STD-JSON-001`
+    cerrados, terminar el spec de cada owner antes de su implementación;
+    ejecutar A1 valores/protocolos, A2 host, A3 serialization/codecs y A4
+    helpers de testing, cerrando el
     micro-gate de cada owner antes de sus consumidores. Owners independientes
     avanzan en paralelo. `STD-SPEC-001`, `STD-TEST-001`,
     `STD-CODEC-CONF-001`, `STD-PERF-CONF-001`, `STD-CONF-001` y
@@ -4516,6 +4525,22 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.39 — 2026-08-03
+
+- Se completa `STD-JSON-001` como contrato del owner `std.json`. Se fijan la
+  ruta typed directa sin DOM, `JsonValue`/`JsonNumber` decimal exacto,
+  reader/writer y eventos con vistas acotadas, policies estrictas de duplicados
+  y unknown fields, orden ordinario/JCS, límites finitos, paths estructurales y
+  errores estables.
+- `testing/stdlib-json.json` contiene el registro canónico de wire rules,
+  políticas, límites, corpus, matriz de tests y gates. El validador
+  `scripts/stdlib-json-check.sh` queda integrado en `scripts/test-gate.sh` y
+  rechaza drift de formato, configuración o requisitos de owner.
+- La interoperabilidad con RFC 8259/RFC 8785 y dos implementaciones externas se
+  deja explícitamente para `STD-CODEC-CONF-001`; el contrato no altera el
+  candidato de conformidad sellado ni publica todavía el codec.
+- Wave 5 avanza al siguiente contrato de owner (`STD-MSGPACK-001`).
 
 ### 1.38 — 2026-08-03
 

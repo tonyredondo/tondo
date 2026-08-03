@@ -1,0 +1,425 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.json",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "draft-contract",
+  "wire": {
+    "syntax": "RFC8259",
+    "text_encoding": "utf-8",
+    "whitespace": [
+      "space",
+      "tab",
+      "line-feed",
+      "carriage-return"
+    ],
+    "single_document": true,
+    "comments": false,
+    "trailing_commas": false,
+    "nan_infinity": false,
+    "canonicalization": "RFC8785"
+  },
+  "values": {
+    "kinds": [
+      "null",
+      "bool",
+      "number",
+      "string",
+      "array",
+      "object"
+    ],
+    "dynamic_type": "JsonValue",
+    "number_type": "JsonNumber",
+    "event_type": "JsonEvent",
+    "path_type": "JsonPath",
+    "object_representation": "ordered-unique-members",
+    "object_lookup": "key-equality-after-utf8-decoding"
+  },
+  "number": {
+    "grammar": "RFC8259",
+    "representation": "validated-decimal-token",
+    "preserve_lexeme": true,
+    "typed_conversion": "exact-mathematical-value-before-narrowing",
+    "float_policy": "finite-only",
+    "nonfinite_literals": "reject",
+    "negative_zero": "preserve-until-canonicalization",
+    "integer_conversion_intermediate": "never-float"
+  },
+  "typed": {
+    "traits": [
+      "Serialize",
+      "Deserialize"
+    ],
+    "dispatch": "compile-time-static",
+    "decode_requires_dom": false,
+    "encode_requires_dom": false,
+    "reflection": "forbidden",
+    "missing_option": "none",
+    "ordinary_field_order": "declaration-order",
+    "canonical_field_order": "RFC8785-property-order",
+    "unknown_capture": "declared-extras-only",
+    "parser_stack": "explicit-bounded-stack"
+  },
+  "streaming": {
+    "event_kinds": [
+      "start-array",
+      "end-array",
+      "start-object",
+      "end-object",
+      "key",
+      "null",
+      "bool",
+      "number",
+      "string"
+    ],
+    "reader_inputs": [
+      "Bytes",
+      "Reader"
+    ],
+    "writer_outputs": [
+      "BytesBuilder",
+      "Writer"
+    ],
+    "event_payload_lifetime": "until-next-event",
+    "event_string_representation": "utf8-view",
+    "event_number_representation": "validated-number-view",
+    "materialization": "explicit-own",
+    "reader_state": "bounded-explicit-stack",
+    "writer_state": "bounded-explicit-stack",
+    "typed_mode": "direct-events-no-dom",
+    "partial_failure": "terminal-error-no-partial-success",
+    "fragmentation_classes": [
+      "one-byte",
+      "token-boundary",
+      "utf8-boundary",
+      "large-chunk"
+    ]
+  },
+  "policies": {
+    "duplicate_keys": {
+      "default": "reject",
+      "allowed": [
+        "reject",
+        "first",
+        "last"
+      ],
+      "last_replacement_position": "retain-first-position"
+    },
+    "unknown_fields": {
+      "default": "reject",
+      "allowed": [
+        "reject",
+        "ignore",
+        "capture"
+      ],
+      "capture_requires": "declared-extras-field"
+    },
+    "missing_fields": {
+      "required": "error",
+      "option": "none",
+      "implicit_default": "forbidden"
+    },
+    "trailing_data": "reject",
+    "ordinary_order": "declaration-or-insertion",
+    "canonical_order": "RFC8785"
+  },
+  "limits": [
+    {
+      "id": "max_document_bytes",
+      "unit": "bytes",
+      "scope": "input",
+      "check": "before-read-growth"
+    },
+    {
+      "id": "max_depth",
+      "unit": "containers",
+      "scope": "parser-stack",
+      "check": "before-push"
+    },
+    {
+      "id": "max_array_items",
+      "unit": "items",
+      "scope": "one-array",
+      "check": "before-append"
+    },
+    {
+      "id": "max_object_members",
+      "unit": "members",
+      "scope": "one-object",
+      "check": "before-append"
+    },
+    {
+      "id": "max_string_bytes",
+      "unit": "decoded-utf8-bytes",
+      "scope": "one-string",
+      "check": "before-scratch-growth"
+    },
+    {
+      "id": "max_number_bytes",
+      "unit": "ascii-bytes",
+      "scope": "one-number",
+      "check": "before-token-growth"
+    },
+    {
+      "id": "max_events",
+      "unit": "events",
+      "scope": "one-document",
+      "check": "before-next-event"
+    },
+    {
+      "id": "max_output_bytes",
+      "unit": "bytes",
+      "scope": "one-encode",
+      "check": "before-write-growth"
+    }
+  ],
+  "errors": [
+    "InvalidUtf8",
+    "InvalidSyntax",
+    "UnexpectedEof",
+    "InvalidEscape",
+    "InvalidUnicodeScalar",
+    "InvalidNumber",
+    "DuplicateKey",
+    "UnknownField",
+    "MissingField",
+    "TypeMismatch",
+    "NumberRange",
+    "LimitExceeded",
+    "IoError",
+    "TrailingData",
+    "CanonicalizationError"
+  ],
+  "paths": {
+    "root": "$",
+    "segments": [
+      "object-key",
+      "array-index"
+    ],
+    "object_rendering": "[escaped-key]",
+    "array_rendering": "[decimal-index]",
+    "position": "byte-offset-and-line-column",
+    "secret_policy": "no-input-snippet"
+  },
+  "corpora": [
+    {
+      "id": "rfc8259-valid",
+      "source": "https://www.rfc-editor.org/rfc/rfc8259.html",
+      "required": true,
+      "focus": [
+        "values",
+        "whitespace",
+        "utf8",
+        "numbers"
+      ]
+    },
+    {
+      "id": "rfc8259-invalid",
+      "source": "https://www.rfc-editor.org/rfc/rfc8259.html",
+      "required": true,
+      "focus": [
+        "syntax",
+        "trailing-data",
+        "duplicate-policy",
+        "utf8"
+      ]
+    },
+    {
+      "id": "rfc8785-canonical",
+      "source": "https://www.rfc-editor.org/rfc/rfc8785.html",
+      "required": true,
+      "focus": [
+        "property-order",
+        "strings",
+        "numbers",
+        "non-ijson"
+      ]
+    },
+    {
+      "id": "unicode-escapes",
+      "source": "owner-generated",
+      "required": true,
+      "focus": [
+        "surrogate-pairs",
+        "lone-surrogates",
+        "control-characters",
+        "chunk-boundaries"
+      ]
+    },
+    {
+      "id": "number-boundaries",
+      "source": "owner-generated",
+      "required": true,
+      "focus": [
+        "integer-range",
+        "fraction",
+        "exponent",
+        "negative-zero"
+      ]
+    },
+    {
+      "id": "limits-and-truncation",
+      "source": "owner-generated",
+      "required": true,
+      "focus": [
+        "depth",
+        "document-size",
+        "event-count",
+        "unexpected-eof"
+      ]
+    },
+    {
+      "id": "typed-policies",
+      "source": "owner-generated",
+      "required": true,
+      "focus": [
+        "unknown-fields",
+        "missing-fields",
+        "duplicate-fields",
+        "error-paths"
+      ]
+    },
+    {
+      "id": "stream-fragments",
+      "source": "owner-generated",
+      "required": true,
+      "focus": [
+        "one-byte",
+        "token-boundary",
+        "utf8-boundary",
+        "large-chunk"
+      ]
+    }
+  ],
+  "test_matrix": [
+    {
+      "id": "syntax",
+      "required": true,
+      "observables": [
+        "value",
+        "error",
+        "offset"
+      ]
+    },
+    {
+      "id": "unicode",
+      "required": true,
+      "observables": [
+        "decoded-string",
+        "error",
+        "chunk-independence"
+      ]
+    },
+    {
+      "id": "numbers",
+      "required": true,
+      "observables": [
+        "lexeme",
+        "exact-value",
+        "range-error",
+        "negative-zero"
+      ]
+    },
+    {
+      "id": "dynamic-value",
+      "required": true,
+      "observables": [
+        "kind",
+        "ordering",
+        "duplicate-policy",
+        "ownership"
+      ]
+    },
+    {
+      "id": "typed-direct",
+      "required": true,
+      "observables": [
+        "typed-value",
+        "field-policy",
+        "error-path",
+        "no-dom"
+      ]
+    },
+    {
+      "id": "streaming",
+      "required": true,
+      "observables": [
+        "event-order",
+        "chunk-independence",
+        "view-lifetime",
+        "terminal-error"
+      ]
+    },
+    {
+      "id": "limits",
+      "required": true,
+      "observables": [
+        "finite-resource",
+        "atomic-failure",
+        "limit-error",
+        "host-stack-safety"
+      ]
+    },
+    {
+      "id": "canonical",
+      "required": true,
+      "observables": [
+        "RFC8785-bytes",
+        "property-order",
+        "number-policy",
+        "no-whitespace"
+      ]
+    },
+    {
+      "id": "interoperability",
+      "required": true,
+      "observables": [
+        "external-parse",
+        "external-encode",
+        "round-trip",
+        "rejection"
+      ]
+    }
+  ],
+  "promotion": {
+    "gates": [
+      {
+        "id": "design",
+        "requires": [
+          "wire-rules",
+          "type-model",
+          "policy-defaults",
+          "limit-identities"
+        ]
+      },
+      {
+        "id": "implementation",
+        "requires": [
+          "typed-no-dom",
+          "explicit-parser-stack",
+          "bounded-reader-writer",
+          "stable-errors"
+        ]
+      },
+      {
+        "id": "conformance",
+        "requires": [
+          "rfc-corpus",
+          "stream-fragment-equivalence",
+          "canonical-vectors",
+          "interop-independent-implementations"
+        ]
+      },
+      {
+        "id": "promote",
+        "requires": [
+          "no-dom-typed-proof",
+          "limits-proven-finite",
+          "reviewed-errors-and-paths",
+          "STD-PERF-001-report"
+        ]
+      }
+    ],
+    "next_coordination": "STD-CODEC-CONF-001"
+  }
+}
