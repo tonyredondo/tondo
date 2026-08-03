@@ -1,0 +1,45 @@
+{
+  "format": "tondo-stdlib-implementation-evidence/1",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "implemented-draft",
+  "public_release": false,
+  "contract_documents": [
+    "TONDO_STANDARD_LIBRARY_SPEC.md",
+    "docs/contracts/stdlib-core.md",
+    "docs/contracts/stdlib-hosted.md",
+    "docs/contracts/stdlib-testing.md"
+  ],
+  "owners": [
+    {"id":"std.core","layer":"A1","implementation":["crates/tondo-compiler/src/hir/lower.rs","crates/tondo-vm/src/runtime/execute.rs"],"tests":["tests/runtime/m11-std-core-001.to"],"proof":"static-dispatch-and-value-semantics"},
+    {"id":"std.text","layer":"A1","implementation":["crates/tondo-compiler/src/process_host.rs"],"tests":["tests/runtime/m11-std-text-001.to"],"proof":"utf8-scalar-indexing-and-bounded-transforms"},
+    {"id":"std.collections","layer":"A1","implementation":["crates/tondo-vm/src/runtime/execute.rs"],"tests":["tests/runtime/m11-std-core-001.to"],"proof":"ordered-map-set-and-array-value-semantics"},
+    {"id":"std.iter","layer":"A1","implementation":["crates/tondo-vm/src/runtime/execute.rs"],"tests":["tests/runtime/m11-std-core-001.to"],"proof":"lazy-range-consumption"},
+    {"id":"std.math","layer":"A1","implementation":["crates/tondo-stdlib/src/math.rs","crates/tondo-compiler/src/process_host.rs"],"tests":["crates/tondo-stdlib/src/math.rs","tests/runtime/m11-std-math-001.to"],"proof":"portable-ieee-kernels-and-typed-domain-errors"},
+    {"id":"std.format","layer":"A1","implementation":["crates/tondo-stdlib/src/format.rs"],"tests":["crates/tondo-stdlib/src/format.rs"],"proof":"bounded-builder-and-static-display"},
+    {"id":"std.io","layer":"A1","implementation":["crates/tondo-stdlib/src/io.rs","crates/tondo-compiler/src/process_host.rs"],"tests":["crates/tondo-stdlib/src/io.rs","crates/tondo-compiler/src/process_host.rs"],"proof":"partial-read-short-write-and-eof-contract"},
+    {"id":"std.serialization","layer":"A3","implementation":["crates/tondo-stdlib/src/serialization.rs"],"tests":["crates/tondo-stdlib/src/serialization.rs"],"proof":"event-balance-and-atomic-validation"},
+    {"id":"std.reflect","layer":"A0","implementation":["crates/tondo-compiler/src/reflect.rs"],"tests":["crates/tondo-compiler/src/reflect.rs"],"proof":"explicit-type-info-roots-without-value-reflection"},
+    {"id":"std.meta","layer":"A0","implementation":["crates/tondo-compiler/src/meta.rs","crates/tondo-compiler/src/std_meta.rs"],"tests":["crates/tondo-compiler/src/meta.rs","crates/tondo-compiler/tests/std_meta_conformance.rs"],"proof":"hermetic-build-time-source-generation"},
+    {"id":"std.json","layer":"A3","implementation":["crates/tondo-stdlib/src/json.rs","crates/tondo-compiler/src/process_host.rs"],"tests":["crates/tondo-stdlib/src/json.rs","tests/runtime/m11-std-codecs-001.to"],"proof":"strict-parse-duplicate-rejection-and-canonical-output"},
+    {"id":"std.messagepack","layer":"A3","implementation":["crates/tondo-stdlib/src/messagepack.rs","crates/tondo-compiler/src/process_host.rs"],"tests":["crates/tondo-stdlib/src/messagepack.rs","tests/runtime/m11-std-codecs-001.to"],"proof":"wire-round-trip-deterministic-map-order-and-limits"},
+    {"id":"std.protobuf","layer":"A3","implementation":["crates/tondo-stdlib/src/protobuf.rs","crates/tondo-compiler/src/process_host.rs"],"tests":["crates/tondo-stdlib/src/protobuf.rs","tests/runtime/m11-std-codecs-001.to"],"proof":"wire-fields-varints-and-unknown-record-preservation"},
+    {"id":"std.time","layer":"A0","implementation":["crates/tondo-compiler/src/process_host.rs"],"tests":["tests/runtime/m10-std-time-001.to"],"proof":"single-real-or-virtual-monotonic-provider"},
+    {"id":"std.env","layer":"A0","implementation":["crates/tondo-compiler/src/process_host.rs"],"tests":["tests/runtime/m10-std-env-001.to"],"proof":"sealed-explicit-snapshot-with-no-ambient-read"},
+    {"id":"std.path","layer":"A2","implementation":["crates/tondo-stdlib/src/path.rs","crates/tondo-compiler/src/process_host.rs"],"tests":["tests/runtime/m11-std-path-001.to"],"proof":"lexical-native-byte-preserving-paths"},
+    {"id":"std.console","layer":"A2","implementation":["crates/tondo-compiler/src/process_host.rs","crates/tondo-vm/src/runtime/execute.rs"],"tests":["tests/runtime/m11-std-console-001.to","crates/tondo-compiler/src/process_host.rs"],"proof":"separate-stdin-stdout-stderr-and-bounded-streams"},
+    {"id":"std.fs","layer":"A2","implementation":["crates/tondo-compiler/src/process_host.rs"],"tests":["tests/runtime/m11-std-fs-001.to"],"proof":"typed-errors-atomic-write-and-byte-ordered-listing"},
+    {"id":"std.process","layer":"A2","implementation":["crates/tondo-compiler/src/process_host.rs"],"tests":["tests/runtime/m8-process-001.to","tests/runtime/m8-process-cancel.to"],"proof":"argv-exact-pipes-cancellation-and-reaping"},
+    {"id":"std.testing","layer":"A4","implementation":["crates/tondo-stdlib/src/testing.rs","crates/tondo-compiler/src/test_runtime.rs","crates/tondo-compiler/src/process_host.rs"],"tests":["docs/contracts/stdlib-testing.md","crates/tondo-compiler/src/process_host.rs","crates/tondo-cli/tests/acceptance_projects.rs"],"proof":"runner-owned-control-temp-resources-generators-and-diagnostics"}
+  ],
+  "evidence_commands": [
+    "scripts/stdlib-implementation-check.sh",
+    "scripts/stdlib-codec-conformance.sh",
+    "scripts/stdlib-performance-report.sh",
+    "TONDO_TEST_TARGET=linux-x86_64 bash scripts/test-gate.sh"
+  ],
+  "conformance_lineage": "conformance/draft/manifest.json",
+  "historical_manifest_immutable": true,
+  "coverage_floor_basis_points": 9025,
+  "release_gate": "STD-0.1 publication checklist remains separate and open"
+}

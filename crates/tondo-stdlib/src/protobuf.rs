@@ -248,4 +248,39 @@ mod tests {
         *mismatched.last_mut().unwrap() = (12_u8 << 3) | 4;
         assert_eq!(decode_fields(&mismatched), Err(CodecError::InvalidWireType));
     }
+
+    #[test]
+    fn protobuf_wire_vectors_match_the_reference_encoding() {
+        // field 1 = 150 (varint), field 2 = "ok" (length-delimited)
+        let wire = [0x08, 0x96, 0x01, 0x12, 0x02, b'o', b'k'];
+        let fields = decode_fields(&wire).unwrap();
+        assert_eq!(fields[0].number, 1);
+        assert_eq!(fields[0].wire_type, 0);
+        assert_eq!(fields[0].payload, &[0x96, 0x01]);
+        assert_eq!(fields[1].number, 2);
+        assert_eq!(fields[1].wire_type, 2);
+        assert_eq!(fields[1].payload, b"ok");
+        let mut rebuilt = Vec::new();
+        for field in fields {
+            rebuilt.extend_from_slice(field.raw);
+        }
+        assert_eq!(rebuilt, wire);
+    }
+
+    #[test]
+    fn protobuf_rejects_noncanonical_boundaries_and_preserves_unknown_scalars() {
+        let mut wire = Vec::new();
+        encode_key(99, 0, &mut wire).unwrap();
+        encode_varint(u64::MAX, &mut wire);
+        let fields = decode_fields(&wire).unwrap();
+        assert_eq!(fields[0].number, 99);
+        assert_eq!(fields[0].raw, wire.as_slice());
+        assert_eq!(decode_fields(&[0x08, 0x80]), Err(CodecError::UnexpectedEof));
+        assert_eq!(
+            decode_fields(&[
+                0x08, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x02
+            ]),
+            Err(CodecError::VarintOverflow)
+        );
+    }
 }

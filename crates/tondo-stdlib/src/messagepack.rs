@@ -451,4 +451,35 @@ mod tests {
             Err(CodecError::LimitExceeded)
         );
     }
+
+    #[test]
+    fn specification_vectors_cover_unsigned_signed_string_binary_and_ext() {
+        let vectors = [
+            (vec![0xc0], Value::Nil),
+            (vec![0xc3], Value::Bool(true)),
+            (vec![0x2a], Value::UInt(42)),
+            (vec![0xd0, 0xd6], Value::Int(-42)),
+            (vec![0xa3, b'f', b'o', b'o'], Value::String("foo".into())),
+            (vec![0xc4, 0x02, 0x00, 0xff], Value::Binary(vec![0, 255])),
+            (vec![0xd4, 0x01, 0x7f], Value::Ext(1, vec![0x7f])),
+        ];
+        for (wire, expected) in vectors {
+            assert_eq!(decode(&wire).unwrap(), expected);
+            assert_eq!(encode(&expected), wire);
+        }
+    }
+
+    #[test]
+    fn malformed_corpus_never_publishes_a_partial_value() {
+        let valid = encode(&Value::Array(vec![
+            Value::Map(vec![(Value::String("x".into()), Value::UInt(1))]),
+            Value::Binary(vec![1, 2, 3]),
+        ]));
+        for cut in 0..valid.len() {
+            assert!(decode(&valid[..cut]).is_err(), "truncated input at {cut}");
+        }
+        for tag in [0xc1, 0xc7, 0xde, 0xdf] {
+            assert!(decode(&[tag]).is_err(), "accepted malformed tag {tag:#x}");
+        }
+    }
 }

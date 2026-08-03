@@ -56,6 +56,8 @@ run_step stdlib-core-contract \
     scripts/stdlib-core-check.sh
 run_step stdlib-hosted-contract \
     scripts/stdlib-hosted-check.sh
+run_step stdlib-implementation-evidence \
+    scripts/stdlib-implementation-check.sh
 run_step stdlib-codec-conformance \
     scripts/stdlib-codec-conformance.sh
 run_step stdlib-performance-report \

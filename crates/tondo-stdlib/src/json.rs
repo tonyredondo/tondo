@@ -233,4 +233,44 @@ mod tests {
         assert_eq!(parse(&encode(&value).unwrap()).unwrap(), value);
         validate(b"true").unwrap();
     }
+
+    #[test]
+    fn rfc_corpus_covers_whitespace_escapes_numbers_and_limits() {
+        for input in [
+            br#"null"#.as_slice(),
+            br#" true "#.as_slice(),
+            br#"[-1,0,1,1.25,1e3]"#.as_slice(),
+            br#"{"emoji":"\uD83D\uDE80","slash":"\\"}"#.as_slice(),
+            br#"[{"a":[]},{"b":{}}]"#.as_slice(),
+        ] {
+            validate(input).unwrap();
+        }
+        for input in [
+            br#"+1"#.as_slice(),
+            br#"01"#.as_slice(),
+            br#"{"a":1,}"#.as_slice(),
+            br#"[true false]"#.as_slice(),
+            br#""#.as_slice(),
+            br#"{"a":1} trailing"#.as_slice(),
+        ] {
+            assert!(parse(input).is_err(), "accepted invalid JSON: {input:?}");
+        }
+        let mut deeply_nested = Vec::new();
+        for _ in 0..=MAX_DEPTH {
+            deeply_nested.push(b'[');
+        }
+        deeply_nested.extend(std::iter::repeat_n(b']', MAX_DEPTH + 1));
+        assert!(matches!(
+            parse(&deeply_nested),
+            Err(CodecError::LimitExceeded | CodecError::InvalidSyntax)
+        ));
+    }
+
+    #[test]
+    fn canonical_order_is_utf8_byte_order_and_is_idempotent() {
+        let value = json!({"é": 1, "a": {"z": 2, "b": 3}});
+        let first = encode_canonical(&value).unwrap();
+        assert_eq!(first, r#"{"a":{"b":3,"z":2},"é":1}"#.as_bytes());
+        assert_eq!(encode_canonical(&parse(&first).unwrap()).unwrap(), first);
+    }
 }
