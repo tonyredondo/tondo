@@ -91,7 +91,7 @@ fn main() -> ExitCode {
 
 fn run(arguments: Vec<OsString>) -> Result<ExitCode, String> {
     if arguments.first().and_then(|argument| argument.to_str()) == Some("__test-worker") {
-        return run_test_worker(&arguments[1..]);
+        return run_test_worker_on_explicit_stack(arguments[1..].to_vec());
     }
     match arguments.as_slice() {
         [argument] if argument == "-h" || argument == "--help" => {
@@ -1282,6 +1282,25 @@ fn join_worker_pipe(
         .map_err(|error| RunError::Infrastructure {
             message: format!("cannot read isolated worker {stream}: {error}"),
         })
+}
+
+// The isolated worker is a process boundary, but its entry point still runs
+// on the platform's main thread. Windows reserves a substantially smaller
+// default stack than the Unix runners; compile/test code that is safe under
+// the VM's logical stack budget can therefore exhaust the native stack before
+// the VM can report its own resource limit. Keep the process boundary and run
+// the worker body on a portable, bounded stack instead.
+const TEST_WORKER_STACK_SIZE: usize = 8 * 1024 * 1024;
+
+fn run_test_worker_on_explicit_stack(arguments: Vec<OsString>) -> Result<ExitCode, String> {
+    let worker = std::thread::Builder::new()
+        .name("tondo-test-worker".into())
+        .stack_size(TEST_WORKER_STACK_SIZE)
+        .spawn(move || run_test_worker(&arguments))
+        .map_err(|error| format!("cannot create isolated worker stack: {error}"))?;
+    worker
+        .join()
+        .map_err(|_| "isolated test worker stack panicked".to_owned())?
 }
 
 fn run_test_worker(arguments: &[OsString]) -> Result<ExitCode, String> {
@@ -3900,6 +3919,7 @@ mod tests {
         assert!(resolve_ownership(&directory_plan, &base).is_err());
         let absent = read_codeowners_candidate(&base, "missing-CODEOWNERS").unwrap();
         assert!(!absent.is_present());
+        assert!(run_test_worker_on_explicit_stack(Vec::new()).is_err());
         assert!(run_test_worker(&[]).is_err());
         assert!(run_test_worker(&[OsString::from("--unknown")]).is_err());
         assert!(run_test_worker(&[OsString::from("--project")]).is_err());
