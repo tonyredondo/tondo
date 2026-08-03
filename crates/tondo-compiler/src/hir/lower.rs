@@ -196,6 +196,8 @@ impl<'a> TypeLowerer<'a> {
         let env_module = self.packages.module(self.packages.standard(), &env);
         let math = ModulePath::new("math")?;
         let math_module = self.packages.module(self.packages.standard(), &math);
+        let text = ModulePath::new("text")?;
+        let text_module = self.packages.module(self.packages.standard(), &text);
         let testing = ModulePath::new("testing")?;
         let testing_module = self.packages.module(self.packages.standard(), &testing);
         let bytes_referenced = bytes_module.as_ref().is_some_and(|bytes_module| {
@@ -238,6 +240,10 @@ impl<'a> TypeLowerer<'a> {
                 )
             })
         });
+        // String methods are selected from the scalar receiver (`String.foo`)
+        // rather than from a module-qualified path, so their host signatures
+        // must be present even when the source only uses the prelude type.
+        let text_referenced = text_module.is_some();
         let testing_referenced = testing_module.as_ref().is_some_and(|testing_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -251,6 +257,7 @@ impl<'a> TypeLowerer<'a> {
             && !time_referenced
             && !env_referenced
             && !math_referenced
+            && !text_referenced
             && !testing_referenced
         {
             return Ok(());
@@ -716,6 +723,61 @@ impl<'a> TypeLowerer<'a> {
                     float,
                 )?;
             }
+        }
+
+        if text_referenced {
+            let char_type = self.interner.scalar(ScalarType::Char);
+            let optional_char = self.interner.option(char_type)?;
+            let optional_int = self.interner.option(int)?;
+            for (function, outcome) in [
+                (HirBootstrapHostFunction::TextLength, int),
+                (HirBootstrapHostFunction::TextByteLength, int),
+                (HirBootstrapHostFunction::TextTrim, string),
+                (HirBootstrapHostFunction::TextLowerAscii, string),
+                (HirBootstrapHostFunction::TextUpperAscii, string),
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(string, true)],
+                    None,
+                    outcome,
+                )?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TextGet,
+                vec![(string, true), (int, false)],
+                None,
+                optional_char,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TextFind,
+                vec![(string, true), (string, false)],
+                None,
+                optional_int,
+            )?;
+            for (function, argument) in [
+                (HirBootstrapHostFunction::TextContains, string),
+                (HirBootstrapHostFunction::TextStartsWith, string),
+                (HirBootstrapHostFunction::TextEndsWith, string),
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(string, true), (argument, false)],
+                    None,
+                    bool_type,
+                )?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TextReplace,
+                vec![(string, true), (string, false), (string, false)],
+                None,
+                string,
+            )?;
         }
 
         if bytes_referenced {

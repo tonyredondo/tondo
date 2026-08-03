@@ -1,0 +1,31 @@
+import std.collections
+import std.iter
+import std.format
+import std.io
+import std.serialization
+import std.console
+
+fn main() {
+    let left = [1, 2]
+    let right = [3]
+    let joined = left.concat(right)
+    let repeated = joined.repeat(2)
+    assert(repeated == [1, 2, 3, 1, 2, 3])
+
+    var entries = ["one": 1, "two": 2]
+    assert(entries["one"] == some(1))
+    assert(entries["missing"] == none)
+    _ = entries.remove("two")
+    assert(entries["two"] == none)
+
+    let permissions = Set["read", "write"]
+    assert("read" in permissions)
+    assert(not ("admin" in permissions))
+
+    var sum = 0
+    for value in 1 ..= 4 {
+        sum = sum + value
+    }
+    assert(sum == 10)
+    console.print("core-ok\n")
+}

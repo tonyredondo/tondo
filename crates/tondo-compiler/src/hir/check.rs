@@ -16346,78 +16346,107 @@ impl<'a> ExpressionChecker<'a> {
         expected: Option<ExpressionExpectation>,
         context: &mut BodyContext,
     ) -> Result<Option<HirExpressionId>, HirError> {
-        let TypeKind::Intrinsic { constructor, .. } = self.program.interner.kind(receiver_type)?
-        else {
-            return Ok(None);
-        };
         let member = member_token
             .token()
             .normalized_identifier()
             .unwrap_or(self.token_text(file, member_token)?);
-        let function = match (*constructor, member) {
-            (IntrinsicType::Command, "start") => HirBootstrapHostFunction::CommandStart,
-            (IntrinsicType::Command, "status") => HirBootstrapHostFunction::CommandStatus,
-            (IntrinsicType::Command, "output") => HirBootstrapHostFunction::CommandOutput,
-            (IntrinsicType::Command, "run") => HirBootstrapHostFunction::CommandRun,
-            (IntrinsicType::Command, "check") => HirBootstrapHostFunction::CommandCheck,
-            (IntrinsicType::Pipeline, "start") => HirBootstrapHostFunction::PipelineStart,
-            (IntrinsicType::Pipeline, "status") => HirBootstrapHostFunction::PipelineStatus,
-            (IntrinsicType::Pipeline, "output") => HirBootstrapHostFunction::PipelineOutput,
-            (IntrinsicType::Pipeline, "run") => HirBootstrapHostFunction::PipelineRun,
-            (IntrinsicType::Pipeline, "check") => HirBootstrapHostFunction::PipelineCheck,
-            (IntrinsicType::ProcessHandle, "status") => {
-                HirBootstrapHostFunction::ProcessHandleStatus
-            }
-            (IntrinsicType::ProcessHandle, "output") => {
-                HirBootstrapHostFunction::ProcessHandleOutput
-            }
-            (IntrinsicType::ProcessHandle, "run") => HirBootstrapHostFunction::ProcessHandleRun,
-            (IntrinsicType::ProcessHandle, "check") => HirBootstrapHostFunction::ProcessHandleCheck,
-            (IntrinsicType::ProcessHandle, "cancel") => {
-                HirBootstrapHostFunction::ProcessHandleCancel
-            }
-            (IntrinsicType::Bytes, "length") => HirBootstrapHostFunction::BytesLen,
-            (IntrinsicType::Bytes, "get") => HirBootstrapHostFunction::BytesGet,
-            (IntrinsicType::Bytes, "slice") => HirBootstrapHostFunction::BytesSlice,
-            (IntrinsicType::Bytes, "toArray") => HirBootstrapHostFunction::BytesToArray,
-            (IntrinsicType::Bytes, "equal") => HirBootstrapHostFunction::BytesEqual,
-            (IntrinsicType::Bytes, "hash") => HirBootstrapHostFunction::BytesHash,
-            (IntrinsicType::BytesBuilder, "length") => HirBootstrapHostFunction::BytesBuilderLen,
-            (IntrinsicType::BytesBuilder, "appendByte") => {
-                HirBootstrapHostFunction::BytesBuilderAppendByte
-            }
-            (IntrinsicType::BytesBuilder, "append") => HirBootstrapHostFunction::BytesBuilderAppend,
-            (IntrinsicType::BytesBuilder, "appendArray") => {
-                HirBootstrapHostFunction::BytesBuilderAppendArray
-            }
-            (IntrinsicType::BytesBuilder, "finish") => HirBootstrapHostFunction::BytesBuilderFinish,
-            (IntrinsicType::Duration, "toNanoseconds") => {
-                HirBootstrapHostFunction::DurationToNanoseconds
-            }
-            (IntrinsicType::Duration, "add") => HirBootstrapHostFunction::DurationAdd,
-            (IntrinsicType::Duration, "subtract") => HirBootstrapHostFunction::DurationSubtract,
-            (IntrinsicType::Duration, "multiply") => HirBootstrapHostFunction::DurationMultiply,
-            (IntrinsicType::Duration, "negate") => HirBootstrapHostFunction::DurationNegate,
-            (IntrinsicType::Duration, "isZero") => HirBootstrapHostFunction::DurationIsZero,
-            (IntrinsicType::Duration, "isNegative") => HirBootstrapHostFunction::DurationIsNegative,
-            (IntrinsicType::Duration, "isLessThan") => HirBootstrapHostFunction::DurationIsLessThan,
-            (IntrinsicType::Instant, "add") => HirBootstrapHostFunction::InstantAdd,
-            (IntrinsicType::Instant, "subtract") => HirBootstrapHostFunction::InstantSubtract,
-            (IntrinsicType::Instant, "durationSince") => {
-                HirBootstrapHostFunction::InstantDurationSince
-            }
-            (IntrinsicType::Instant, "isBefore") => HirBootstrapHostFunction::InstantIsBefore,
-            (IntrinsicType::Instant, "isAfter") => HirBootstrapHostFunction::InstantIsAfter,
-            (IntrinsicType::Timer, "wait") => HirBootstrapHostFunction::TimerWait,
-            (IntrinsicType::Timer, "cancel") => HirBootstrapHostFunction::TimerCancel,
-            (IntrinsicType::VirtualTime, "settle") => HirBootstrapHostFunction::VirtualTimeSettle,
-            (IntrinsicType::VirtualTime, "advance") => HirBootstrapHostFunction::VirtualTimeAdvance,
-            (IntrinsicType::EnvSnapshot, "arguments") => {
-                HirBootstrapHostFunction::EnvSnapshotArguments
-            }
-            (IntrinsicType::EnvSnapshot, "get") => HirBootstrapHostFunction::EnvSnapshotGet,
-            (IntrinsicType::EnvValue, "asText") => HirBootstrapHostFunction::EnvValueAsText,
-            (IntrinsicType::EnvValue, "asBytes") => HirBootstrapHostFunction::EnvValueAsBytes,
+        let function = match self.program.interner.kind(receiver_type)? {
+            TypeKind::Scalar(ScalarType::String) => match member {
+                "length" => HirBootstrapHostFunction::TextLength,
+                "byteLength" => HirBootstrapHostFunction::TextByteLength,
+                "get" => HirBootstrapHostFunction::TextGet,
+                "contains" => HirBootstrapHostFunction::TextContains,
+                "startsWith" => HirBootstrapHostFunction::TextStartsWith,
+                "endsWith" => HirBootstrapHostFunction::TextEndsWith,
+                "find" => HirBootstrapHostFunction::TextFind,
+                "replace" => HirBootstrapHostFunction::TextReplace,
+                "trim" => HirBootstrapHostFunction::TextTrim,
+                "toLowerAscii" => HirBootstrapHostFunction::TextLowerAscii,
+                "toUpperAscii" => HirBootstrapHostFunction::TextUpperAscii,
+                _ => return Ok(None),
+            },
+            TypeKind::Intrinsic { constructor, .. } => match (*constructor, member) {
+                (IntrinsicType::Command, "start") => HirBootstrapHostFunction::CommandStart,
+                (IntrinsicType::Command, "status") => HirBootstrapHostFunction::CommandStatus,
+                (IntrinsicType::Command, "output") => HirBootstrapHostFunction::CommandOutput,
+                (IntrinsicType::Command, "run") => HirBootstrapHostFunction::CommandRun,
+                (IntrinsicType::Command, "check") => HirBootstrapHostFunction::CommandCheck,
+                (IntrinsicType::Pipeline, "start") => HirBootstrapHostFunction::PipelineStart,
+                (IntrinsicType::Pipeline, "status") => HirBootstrapHostFunction::PipelineStatus,
+                (IntrinsicType::Pipeline, "output") => HirBootstrapHostFunction::PipelineOutput,
+                (IntrinsicType::Pipeline, "run") => HirBootstrapHostFunction::PipelineRun,
+                (IntrinsicType::Pipeline, "check") => HirBootstrapHostFunction::PipelineCheck,
+                (IntrinsicType::ProcessHandle, "status") => {
+                    HirBootstrapHostFunction::ProcessHandleStatus
+                }
+                (IntrinsicType::ProcessHandle, "output") => {
+                    HirBootstrapHostFunction::ProcessHandleOutput
+                }
+                (IntrinsicType::ProcessHandle, "run") => HirBootstrapHostFunction::ProcessHandleRun,
+                (IntrinsicType::ProcessHandle, "check") => {
+                    HirBootstrapHostFunction::ProcessHandleCheck
+                }
+                (IntrinsicType::ProcessHandle, "cancel") => {
+                    HirBootstrapHostFunction::ProcessHandleCancel
+                }
+                (IntrinsicType::Bytes, "length") => HirBootstrapHostFunction::BytesLen,
+                (IntrinsicType::Bytes, "get") => HirBootstrapHostFunction::BytesGet,
+                (IntrinsicType::Bytes, "slice") => HirBootstrapHostFunction::BytesSlice,
+                (IntrinsicType::Bytes, "toArray") => HirBootstrapHostFunction::BytesToArray,
+                (IntrinsicType::Bytes, "equal") => HirBootstrapHostFunction::BytesEqual,
+                (IntrinsicType::Bytes, "hash") => HirBootstrapHostFunction::BytesHash,
+                (IntrinsicType::BytesBuilder, "length") => {
+                    HirBootstrapHostFunction::BytesBuilderLen
+                }
+                (IntrinsicType::BytesBuilder, "appendByte") => {
+                    HirBootstrapHostFunction::BytesBuilderAppendByte
+                }
+                (IntrinsicType::BytesBuilder, "append") => {
+                    HirBootstrapHostFunction::BytesBuilderAppend
+                }
+                (IntrinsicType::BytesBuilder, "appendArray") => {
+                    HirBootstrapHostFunction::BytesBuilderAppendArray
+                }
+                (IntrinsicType::BytesBuilder, "finish") => {
+                    HirBootstrapHostFunction::BytesBuilderFinish
+                }
+                (IntrinsicType::Duration, "toNanoseconds") => {
+                    HirBootstrapHostFunction::DurationToNanoseconds
+                }
+                (IntrinsicType::Duration, "add") => HirBootstrapHostFunction::DurationAdd,
+                (IntrinsicType::Duration, "subtract") => HirBootstrapHostFunction::DurationSubtract,
+                (IntrinsicType::Duration, "multiply") => HirBootstrapHostFunction::DurationMultiply,
+                (IntrinsicType::Duration, "negate") => HirBootstrapHostFunction::DurationNegate,
+                (IntrinsicType::Duration, "isZero") => HirBootstrapHostFunction::DurationIsZero,
+                (IntrinsicType::Duration, "isNegative") => {
+                    HirBootstrapHostFunction::DurationIsNegative
+                }
+                (IntrinsicType::Duration, "isLessThan") => {
+                    HirBootstrapHostFunction::DurationIsLessThan
+                }
+                (IntrinsicType::Instant, "add") => HirBootstrapHostFunction::InstantAdd,
+                (IntrinsicType::Instant, "subtract") => HirBootstrapHostFunction::InstantSubtract,
+                (IntrinsicType::Instant, "durationSince") => {
+                    HirBootstrapHostFunction::InstantDurationSince
+                }
+                (IntrinsicType::Instant, "isBefore") => HirBootstrapHostFunction::InstantIsBefore,
+                (IntrinsicType::Instant, "isAfter") => HirBootstrapHostFunction::InstantIsAfter,
+                (IntrinsicType::Timer, "wait") => HirBootstrapHostFunction::TimerWait,
+                (IntrinsicType::Timer, "cancel") => HirBootstrapHostFunction::TimerCancel,
+                (IntrinsicType::VirtualTime, "settle") => {
+                    HirBootstrapHostFunction::VirtualTimeSettle
+                }
+                (IntrinsicType::VirtualTime, "advance") => {
+                    HirBootstrapHostFunction::VirtualTimeAdvance
+                }
+                (IntrinsicType::EnvSnapshot, "arguments") => {
+                    HirBootstrapHostFunction::EnvSnapshotArguments
+                }
+                (IntrinsicType::EnvSnapshot, "get") => HirBootstrapHostFunction::EnvSnapshotGet,
+                (IntrinsicType::EnvValue, "asText") => HirBootstrapHostFunction::EnvValueAsText,
+                (IntrinsicType::EnvValue, "asBytes") => HirBootstrapHostFunction::EnvValueAsBytes,
+                _ => return Ok(None),
+            },
             _ => return Ok(None),
         };
         if self

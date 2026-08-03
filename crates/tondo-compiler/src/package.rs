@@ -459,6 +459,12 @@ impl PackageGraph {
                 ModulePath::new("time")?,
                 ModulePath::new("env")?,
                 ModulePath::new("math")?,
+                ModulePath::new("text")?,
+                ModulePath::new("collections")?,
+                ModulePath::new("iter")?,
+                ModulePath::new("format")?,
+                ModulePath::new("io")?,
+                ModulePath::new("serialization")?,
             ],
             [],
         )?);

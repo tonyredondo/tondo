@@ -1,0 +1,19 @@
+import std.console
+import std.text
+
+fn main() {
+    let value = " Héllo, Tondo! "
+    assert(value.length() == 15)
+    assert(value.byteLength() == 16)
+    assert(value.get(1) == some('H'))
+    assert(value.get(-1) == none)
+    assert(value.contains("Tondo"))
+    assert(value.startsWith(" Hé"))
+    assert(value.endsWith("! "))
+    assert(value.find("Tondo") == some(8))
+    assert(value.replace("Tondo", "world") == " Héllo, world! ")
+    assert(value.trim() == "Héllo, Tondo!")
+    assert("AbC".toLowerAscii() == "abc")
+    assert("aBc".toUpperAscii() == "ABC")
+    console.print("text-ok\n")
+}

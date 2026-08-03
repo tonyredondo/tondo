@@ -1050,6 +1050,60 @@ impl VmHost for BootstrapHost {
             ("std.math.max", [RuntimeValue::Float(left), RuntimeValue::Float(right)]) => {
                 Ok(RuntimeValue::Float(left.max(*right)))
             }
+            ("std.text.String.length", [RuntimeValue::String(text)]) => {
+                Ok(RuntimeValue::Integer(text.chars().count() as i128))
+            }
+            ("std.text.String.byteLength", [RuntimeValue::String(text)]) => {
+                Ok(RuntimeValue::Integer(text.len() as i128))
+            }
+            ("std.text.String.get", [RuntimeValue::String(text), RuntimeValue::Integer(index)]) => {
+                let value = usize::try_from(*index)
+                    .ok()
+                    .and_then(|index| text.chars().nth(index))
+                    .map(|value| RuntimeValue::OptionSome(Box::new(RuntimeValue::Char(value))))
+                    .unwrap_or(RuntimeValue::OptionNone);
+                Ok(value)
+            }
+            (
+                "std.text.String.contains",
+                [RuntimeValue::String(text), RuntimeValue::String(needle)],
+            ) => Ok(RuntimeValue::Bool(text.contains(needle))),
+            (
+                "std.text.String.startsWith",
+                [RuntimeValue::String(text), RuntimeValue::String(prefix)],
+            ) => Ok(RuntimeValue::Bool(text.starts_with(prefix))),
+            (
+                "std.text.String.endsWith",
+                [RuntimeValue::String(text), RuntimeValue::String(suffix)],
+            ) => Ok(RuntimeValue::Bool(text.ends_with(suffix))),
+            (
+                "std.text.String.find",
+                [RuntimeValue::String(text), RuntimeValue::String(needle)],
+            ) => {
+                let value = text.find(needle).map(|byte_offset| {
+                    RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(
+                        text[..byte_offset].chars().count() as i128,
+                    )))
+                });
+                Ok(value.unwrap_or(RuntimeValue::OptionNone))
+            }
+            (
+                "std.text.String.replace",
+                [
+                    RuntimeValue::String(text),
+                    RuntimeValue::String(old),
+                    RuntimeValue::String(new),
+                ],
+            ) => Ok(RuntimeValue::String(text.replace(old, new))),
+            ("std.text.String.trim", [RuntimeValue::String(text)]) => {
+                Ok(RuntimeValue::String(text.trim().to_owned()))
+            }
+            ("std.text.String.toLowerAscii", [RuntimeValue::String(text)]) => {
+                Ok(RuntimeValue::String(text.to_ascii_lowercase()))
+            }
+            ("std.text.String.toUpperAscii", [RuntimeValue::String(text)]) => {
+                Ok(RuntimeValue::String(text.to_ascii_uppercase()))
+            }
             ("std.testing.log", [RuntimeValue::String(message)]) => {
                 let envelope = self.testing_envelope()?;
                 Self::testing_result(&envelope, envelope.log(message.clone()))
