@@ -37,7 +37,7 @@ impl Path {
             return Err(PathError::EmptyComponent);
         }
         let component = Self::from_string(component)?;
-        if component.bytes.iter().any(|byte| *byte == b'/') {
+        if component.bytes.contains(&b'/') {
             return Err(PathError::EmptyComponent);
         }
         let mut bytes = self.bytes.clone();

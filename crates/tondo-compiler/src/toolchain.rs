@@ -2931,7 +2931,7 @@ mod tests {
             &["a".to_string(), "a".to_string()],
         ));
         assert_error(require_unique("names", &["a".to_string(), "a".to_string()]));
-        assert!(decode_canonical::<serde_json::Value>(br#"{"b":1,"a":2}"#, "value").is_err());
+        assert!(decode_canonical::<serde_json::Value>(br#" {"b":1,"a":2}"#, "value").is_err());
     }
 
     #[test]

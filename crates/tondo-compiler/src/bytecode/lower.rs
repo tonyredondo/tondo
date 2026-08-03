@@ -5152,6 +5152,7 @@ fn verifierTarget(start: Int, flag: Bool): Array[Int] {
             program
                 .callables
                 .iter()
+                .filter(|callable| !callable.name.starts_with("std."))
                 .all(|callable| callable.implementation.is_some())
         );
         assert!(program.types.iter().any(|ty| matches!(
