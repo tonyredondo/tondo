@@ -194,6 +194,8 @@ impl<'a> TypeLowerer<'a> {
         let time_module = self.packages.module(self.packages.standard(), &time);
         let env = ModulePath::new("env")?;
         let env_module = self.packages.module(self.packages.standard(), &env);
+        let math = ModulePath::new("math")?;
+        let math_module = self.packages.module(self.packages.standard(), &math);
         let testing = ModulePath::new("testing")?;
         let testing_module = self.packages.module(self.packages.standard(), &testing);
         let bytes_referenced = bytes_module.as_ref().is_some_and(|bytes_module| {
@@ -228,6 +230,14 @@ impl<'a> TypeLowerer<'a> {
                 )
             })
         });
+        let math_referenced = math_module.as_ref().is_some_and(|math_module| {
+            self.resolved.references().any(|reference| {
+                matches!(
+                    reference.entity(),
+                    ResolvedEntity::Module(module) if module == math_module
+                )
+            })
+        });
         let testing_referenced = testing_module.as_ref().is_some_and(|testing_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -240,6 +250,7 @@ impl<'a> TypeLowerer<'a> {
             && !process_referenced
             && !time_referenced
             && !env_referenced
+            && !math_referenced
             && !testing_referenced
         {
             return Ok(());
@@ -667,6 +678,44 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 bytes,
             )?;
+        }
+
+        if math_referenced {
+            let float = self.interner.scalar(ScalarType::Float);
+            for function in [
+                HirBootstrapHostFunction::MathFloor,
+                HirBootstrapHostFunction::MathCeil,
+                HirBootstrapHostFunction::MathRound,
+                HirBootstrapHostFunction::MathTruncate,
+                HirBootstrapHostFunction::MathAbs,
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(float, false)],
+                    None,
+                    float,
+                )?;
+            }
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MathFma,
+                vec![(float, false), (float, false), (float, false)],
+                None,
+                float,
+            )?;
+            for function in [
+                HirBootstrapHostFunction::MathMin,
+                HirBootstrapHostFunction::MathMax,
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(float, false), (float, false)],
+                    None,
+                    float,
+                )?;
+            }
         }
 
         if bytes_referenced {

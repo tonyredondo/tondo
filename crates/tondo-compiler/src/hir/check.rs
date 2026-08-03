@@ -13661,6 +13661,14 @@ impl<'a> ExpressionChecker<'a> {
             ("time", Some("deadline")) => HirBootstrapHostFunction::TimeDeadline,
             ("time", Some("sleep")) => HirBootstrapHostFunction::TimeSleep,
             ("env", Some("snapshot")) => HirBootstrapHostFunction::EnvSnapshot,
+            ("math", Some("floor")) => HirBootstrapHostFunction::MathFloor,
+            ("math", Some("ceil")) => HirBootstrapHostFunction::MathCeil,
+            ("math", Some("round")) => HirBootstrapHostFunction::MathRound,
+            ("math", Some("truncate")) => HirBootstrapHostFunction::MathTruncate,
+            ("math", Some("fma")) => HirBootstrapHostFunction::MathFma,
+            ("math", Some("abs")) => HirBootstrapHostFunction::MathAbs,
+            ("math", Some("min")) => HirBootstrapHostFunction::MathMin,
+            ("math", Some("max")) => HirBootstrapHostFunction::MathMax,
             ("testing", Some("log")) => HirBootstrapHostFunction::TestingLog,
             ("testing", Some("tags")) => HirBootstrapHostFunction::TestingTags,
             ("testing", Some("failNow")) => HirBootstrapHostFunction::TestingFailNow,
@@ -13682,6 +13690,7 @@ impl<'a> ExpressionChecker<'a> {
             ("process", Some(name))
             | ("bytes", Some(name))
             | ("env", Some(name))
+            | ("math", Some(name))
             | ("testing", Some(name)) => {
                 let module_name = module.path().as_str();
                 self.emit(

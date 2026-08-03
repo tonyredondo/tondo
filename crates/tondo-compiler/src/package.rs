@@ -458,6 +458,7 @@ impl PackageGraph {
                 ModulePath::new("process")?,
                 ModulePath::new("time")?,
                 ModulePath::new("env")?,
+                ModulePath::new("math")?,
             ],
             [],
         )?);

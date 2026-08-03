@@ -1023,6 +1023,33 @@ impl VmHost for BootstrapHost {
                 self.stdout.extend_from_slice(text.as_bytes());
                 Ok(RuntimeValue::Unit)
             }
+            ("std.math.floor", [RuntimeValue::Float(value)]) => {
+                Ok(RuntimeValue::Float(value.floor()))
+            }
+            ("std.math.ceil", [RuntimeValue::Float(value)]) => {
+                Ok(RuntimeValue::Float(value.ceil()))
+            }
+            ("std.math.round", [RuntimeValue::Float(value)]) => {
+                Ok(RuntimeValue::Float(value.round()))
+            }
+            ("std.math.truncate", [RuntimeValue::Float(value)]) => {
+                Ok(RuntimeValue::Float(value.trunc()))
+            }
+            ("std.math.abs", [RuntimeValue::Float(value)]) => Ok(RuntimeValue::Float(value.abs())),
+            (
+                "std.math.fma",
+                [
+                    RuntimeValue::Float(a),
+                    RuntimeValue::Float(b),
+                    RuntimeValue::Float(c),
+                ],
+            ) => Ok(RuntimeValue::Float(a.mul_add(*b, *c))),
+            ("std.math.min", [RuntimeValue::Float(left), RuntimeValue::Float(right)]) => {
+                Ok(RuntimeValue::Float(left.min(*right)))
+            }
+            ("std.math.max", [RuntimeValue::Float(left), RuntimeValue::Float(right)]) => {
+                Ok(RuntimeValue::Float(left.max(*right)))
+            }
             ("std.testing.log", [RuntimeValue::String(message)]) => {
                 let envelope = self.testing_envelope()?;
                 Self::testing_result(&envelope, envelope.log(message.clone()))
