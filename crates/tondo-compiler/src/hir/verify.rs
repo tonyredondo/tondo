@@ -522,6 +522,10 @@ impl Verifier<'_> {
                         | IntrinsicType::FloatTolerance
                         | IntrinsicType::FloatToleranceError
                         | IntrinsicType::TextDiff
+                        | IntrinsicType::TempDirectory
+                        | IntrinsicType::TempError
+                        | IntrinsicType::Generator
+                        | IntrinsicType::GenerationError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle

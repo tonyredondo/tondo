@@ -123,6 +123,10 @@ pub enum IntrinsicType {
     FloatTolerance,
     FloatToleranceError,
     TextDiff,
+    TempDirectory,
+    TempError,
+    Generator,
+    GenerationError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -164,6 +168,10 @@ impl IntrinsicType {
             Self::FloatTolerance => "FloatTolerance",
             Self::FloatToleranceError => "FloatToleranceError",
             Self::TextDiff => "TextDiff",
+            Self::TempDirectory => "TempDirectory",
+            Self::TempError => "TempError",
+            Self::Generator => "Generator",
+            Self::GenerationError => "GenerationError",
             Self::ExitStatus => "ExitStatus",
             Self::ProcessOutput => "ProcessOutput",
             Self::ProcessHandle => "ProcessHandle",
@@ -200,6 +208,10 @@ impl IntrinsicType {
             | Self::FloatTolerance
             | Self::FloatToleranceError
             | Self::TextDiff
+            | Self::TempDirectory
+            | Self::TempError
+            | Self::Generator
+            | Self::GenerationError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle

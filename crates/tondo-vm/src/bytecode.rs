@@ -246,6 +246,10 @@ pub enum BytecodeIntrinsicType {
     FloatTolerance,
     FloatToleranceError,
     TextDiff,
+    TempDirectory,
+    TempError,
+    Generator,
+    GenerationError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -386,6 +390,10 @@ impl BytecodeIntrinsicType {
             | Self::FloatTolerance
             | Self::FloatToleranceError
             | Self::TextDiff
+            | Self::TempDirectory
+            | Self::TempError
+            | Self::Generator
+            | Self::GenerationError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle
@@ -445,6 +453,10 @@ impl BytecodeIntrinsicType {
             | Self::FloatTolerance
             | Self::FloatToleranceError
             | Self::TextDiff
+            | Self::TempDirectory
+            | Self::TempError
+            | Self::Generator
+            | Self::GenerationError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessError

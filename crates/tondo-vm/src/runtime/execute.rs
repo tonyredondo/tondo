@@ -2113,6 +2113,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::FloatTolerance
                     | BytecodeIntrinsicType::FloatToleranceError
                     | BytecodeIntrinsicType::TextDiff
+                    | BytecodeIntrinsicType::TempDirectory
+                    | BytecodeIntrinsicType::TempError
+                    | BytecodeIntrinsicType::Generator
+                    | BytecodeIntrinsicType::GenerationError
                     | BytecodeIntrinsicType::ExitStatus
                     | BytecodeIntrinsicType::ProcessOutput
                     | BytecodeIntrinsicType::ProcessError
@@ -3682,6 +3686,10 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::FloatTolerance => RuntimeHostValueKind::FloatTolerance,
         BytecodeIntrinsicType::FloatToleranceError => RuntimeHostValueKind::FloatToleranceError,
         BytecodeIntrinsicType::TextDiff => RuntimeHostValueKind::TextDiff,
+        BytecodeIntrinsicType::TempDirectory => RuntimeHostValueKind::TempDirectory,
+        BytecodeIntrinsicType::TempError => RuntimeHostValueKind::TempError,
+        BytecodeIntrinsicType::Generator => RuntimeHostValueKind::Generator,
+        BytecodeIntrinsicType::GenerationError => RuntimeHostValueKind::GenerationError,
         BytecodeIntrinsicType::ExitStatus => RuntimeHostValueKind::ExitStatus,
         BytecodeIntrinsicType::ProcessOutput => RuntimeHostValueKind::ProcessOutput,
         BytecodeIntrinsicType::ProcessHandle => RuntimeHostValueKind::ProcessHandle,

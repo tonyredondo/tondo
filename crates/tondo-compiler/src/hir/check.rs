@@ -831,6 +831,10 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::FloatTolerance
                         | IntrinsicType::FloatToleranceError
                         | IntrinsicType::TextDiff
+                        | IntrinsicType::TempDirectory
+                        | IntrinsicType::TempError
+                        | IntrinsicType::Generator
+                        | IntrinsicType::GenerationError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle
@@ -13635,12 +13639,22 @@ impl<'a> ExpressionChecker<'a> {
             .child_tokens()
             .filter(|token| token.kind() == TokenKind::Identifier)
             .collect::<Vec<_>>();
-        let (module_token, function_token, static_float_tolerance) = match identifiers.as_slice() {
-            [module_token, function_token] => (module_token, function_token, false),
+        let (module_token, function_token, static_type) = match identifiers.as_slice() {
+            [module_token, function_token] => (module_token, function_token, 0_u8),
             [module_token, type_token, function_token]
                 if type_token.token().normalized_identifier() == Some("FloatTolerance") =>
             {
-                (module_token, function_token, true)
+                (module_token, function_token, 1_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("TempDirectory") =>
+            {
+                (module_token, function_token, 2_u8)
+            }
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("Generator") =>
+            {
+                (module_token, function_token, 3_u8)
             }
             _ => return Ok(None),
         };
@@ -13661,11 +13675,25 @@ impl<'a> ExpressionChecker<'a> {
             // call. Leave it for the nominal-constructor checker below.
             return Ok(None);
         }
-        let host_function = if static_float_tolerance {
+        let host_function = if static_type == 1 {
             if module.path().as_str() == "testing" && function_name == Some("from") {
                 HirBootstrapHostFunction::TestingFloatToleranceFrom
             } else {
                 return Ok(None);
+            }
+        } else if static_type == 2 {
+            match (module.path().as_str(), function_name) {
+                ("testing", Some("path")) => HirBootstrapHostFunction::TestingTempDirectoryPath,
+                ("testing", Some("cleanup")) => {
+                    HirBootstrapHostFunction::TestingTempDirectoryCleanup
+                }
+                _ => return Ok(None),
+            }
+        } else if static_type == 3 {
+            match (module.path().as_str(), function_name) {
+                ("testing", Some("new")) => HirBootstrapHostFunction::TestingGeneratorNew,
+                ("testing", Some("forCase")) => HirBootstrapHostFunction::TestingGeneratorForCase,
+                _ => return Ok(None),
             }
         } else {
             match (module.path().as_str(), function_name) {
@@ -13717,6 +13745,9 @@ impl<'a> ExpressionChecker<'a> {
                     HirBootstrapHostFunction::TestingAssertTextEqual
                 }
                 ("testing", Some("diffText")) => HirBootstrapHostFunction::TestingDiffText,
+                ("testing", Some("tempDirectory")) => {
+                    HirBootstrapHostFunction::TestingTempDirectory
+                }
                 ("testing", Some("assertFloatNear")) => {
                     HirBootstrapHostFunction::TestingAssertFloatNear
                 }
@@ -13790,7 +13821,7 @@ impl<'a> ExpressionChecker<'a> {
                 ),
                 _ => false,
             });
-        if !external_value && !static_float_tolerance {
+        if !external_value && static_type == 0 {
             return Ok(None);
         }
         if !matches!(
@@ -16516,6 +16547,30 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::TextDiff, "render") => {
                     HirBootstrapHostFunction::TestingTextDiffRender
                 }
+                (IntrinsicType::TempDirectory, "path") => {
+                    HirBootstrapHostFunction::TestingTempDirectoryPath
+                }
+                (IntrinsicType::TempDirectory, "cleanup") => {
+                    HirBootstrapHostFunction::TestingTempDirectoryCleanup
+                }
+                (IntrinsicType::Generator, "nextUInt") => {
+                    HirBootstrapHostFunction::TestingGeneratorNextUInt
+                }
+                (IntrinsicType::Generator, "nextBool") => {
+                    HirBootstrapHostFunction::TestingGeneratorNextBool
+                }
+                (IntrinsicType::Generator, "nextInt") => {
+                    HirBootstrapHostFunction::TestingGeneratorNextInt
+                }
+                (IntrinsicType::Generator, "nextBytes") => {
+                    HirBootstrapHostFunction::TestingGeneratorNextBytes
+                }
+                (IntrinsicType::Generator, "nextText") => {
+                    HirBootstrapHostFunction::TestingGeneratorNextText
+                }
+                (IntrinsicType::Generator, "drawCount") => {
+                    HirBootstrapHostFunction::TestingGeneratorDrawCount
+                }
                 (IntrinsicType::EnvSnapshot, "arguments") => {
                     HirBootstrapHostFunction::EnvSnapshotArguments
                 }
@@ -16539,6 +16594,11 @@ impl<'a> ExpressionChecker<'a> {
                 | HirBootstrapHostFunction::BytesBuilderAppend
                 | HirBootstrapHostFunction::BytesBuilderAppendArray
                 | HirBootstrapHostFunction::BytesBuilderFinish
+                | HirBootstrapHostFunction::TestingGeneratorNextUInt
+                | HirBootstrapHostFunction::TestingGeneratorNextBool
+                | HirBootstrapHostFunction::TestingGeneratorNextInt
+                | HirBootstrapHostFunction::TestingGeneratorNextBytes
+                | HirBootstrapHostFunction::TestingGeneratorNextText
         ) {
             self.check_method_receiver(receiver, ParameterMode::Var, Some(receiver_type), context)?;
         }

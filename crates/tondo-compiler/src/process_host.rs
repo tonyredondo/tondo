@@ -13,7 +13,7 @@ use std::os::unix::ffi::OsStringExt;
 #[cfg(unix)]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
-use tondo_stdlib::testing::{FloatTolerance, TextDiff, diff_text};
+use tondo_stdlib::testing::{FloatTolerance, Generator, TextDiff, diff_text};
 use tondo_stdlib::{json, math, messagepack, path, protobuf};
 use tondo_vm::runtime::{
     RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
@@ -30,6 +30,8 @@ const NANOS_PER_SECOND: i128 = 1_000_000_000;
 const DEFAULT_MAX_TIME_RESOURCES: usize = 1_048_576;
 static NEXT_CLOCK_DOMAIN: AtomicU64 = AtomicU64::new(1);
 static NEXT_ATOMIC_TEMP: AtomicU64 = AtomicU64::new(1);
+static NEXT_TEMP_DIRECTORY: AtomicU64 = AtomicU64::new(1);
+const MAX_TEMP_DIRECTORY_ENTRIES: usize = 1_048_576;
 
 fn testing_value_text(value: &RuntimeValue) -> String {
     const MAX_BYTES: usize = 1_024;
@@ -91,6 +93,10 @@ enum HostValue {
     FloatTolerance(FloatTolerance),
     FloatToleranceError { _message: String },
     TextDiff(TextDiff),
+    TempDirectory { path: PathBuf },
+    TempError { _message: String },
+    Generator(Generator),
+    GenerationError { _message: String },
     Instant { domain: u64, nanos: i128 },
     Timer { domain: u64, deadline: i128 },
     DurationError { _message: String },
@@ -494,6 +500,92 @@ impl BootstrapHost {
         match self.values.get(id) {
             Some(HostValue::TextDiff(diff)) => Ok(diff),
             _ => Err(VmError::Host("TextDiff token is stale".into())),
+        }
+    }
+
+    fn temp_directory(&self, value: &RuntimeValue) -> Result<PathBuf, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::TempDirectory,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("TempDirectory value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::TempDirectory { path }) => Ok(path.clone()),
+            _ => Err(VmError::Host("TempDirectory token is stale".into())),
+        }
+    }
+
+    fn temp_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::TempError,
+            HostValue::TempError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn temp_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.temp_error(message)))
+    }
+
+    fn generator_mut(&mut self, value: &RuntimeValue) -> Result<&mut Generator, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Generator,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("Generator value is invalid".into()));
+        };
+        match self.values.get_mut(id) {
+            Some(HostValue::Generator(generator)) => Ok(generator),
+            _ => Err(VmError::Host("Generator token is stale".into())),
+        }
+    }
+
+    fn generation_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::GenerationError,
+            HostValue::GenerationError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn generation_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.generation_error(message)))
+    }
+
+    fn valid_temp_prefix(prefix: &str) -> bool {
+        prefix.len() <= 32
+            && prefix
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+    }
+
+    fn remove_temp_tree(path: &std::path::Path, entries: &mut usize) -> io::Result<()> {
+        let metadata = std::fs::symlink_metadata(path)?;
+        if metadata.file_type().is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "temporary tree contains a symlink",
+            ));
+        }
+        if metadata.is_dir() {
+            for entry in std::fs::read_dir(path)? {
+                *entries = entries.saturating_add(1);
+                if *entries > MAX_TEMP_DIRECTORY_ENTRIES {
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "temporary tree entry limit exceeded",
+                    ));
+                }
+                Self::remove_temp_tree(&entry?.path(), entries)?;
+            }
+            std::fs::remove_dir(path)
+        } else {
+            std::fs::remove_file(path)
         }
     }
 
@@ -1605,6 +1697,137 @@ impl VmHost for BootstrapHost {
                 }
                 Ok(RuntimeValue::String(rendered))
             }
+            ("std.testing.tempDirectory", [RuntimeValue::String(prefix)]) => {
+                if !Self::valid_temp_prefix(prefix) {
+                    return Ok(self.temp_result_error("temporary directory prefix is invalid"));
+                }
+                let root = PathBuf::from("target").join(".tondo-test-root");
+                if let Err(error) = std::fs::create_dir_all(&root) {
+                    return Ok(self.temp_result_error(error.to_string()));
+                }
+                let nonce = NEXT_TEMP_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+                let name = if prefix.is_empty() {
+                    format!("tondo-{}-{nonce}", std::process::id())
+                } else {
+                    format!("{prefix}-{}-{nonce}", std::process::id())
+                };
+                let directory = root.join(name);
+                match std::fs::create_dir(&directory) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                        RuntimeHostValueKind::TempDirectory,
+                        HostValue::TempDirectory { path: directory },
+                    )))),
+                    Err(error) => Ok(self.temp_result_error(error.to_string())),
+                }
+            }
+            ("std.testing.TempDirectory.path", [value]) => {
+                let directory = self.temp_directory(value)?;
+                let bytes = directory.to_string_lossy().as_bytes().to_vec();
+                let path = path::Path::from_bytes(&bytes).map_err(|error| {
+                    VmError::Host(format!("temporary path is invalid: {error:?}"))
+                })?;
+                Ok(self.allocate(RuntimeHostValueKind::Path, HostValue::Path(path)))
+            }
+            ("std.testing.TempDirectory.cleanup", [value]) => {
+                let RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::TempDirectory,
+                    id,
+                } = value
+                else {
+                    return Err(VmError::Host("TempDirectory value is invalid".into()));
+                };
+                let directory = self.temp_directory(value)?;
+                let mut entries = 0;
+                Self::remove_temp_tree(&directory, &mut entries).map_err(|error| {
+                    VmError::Host(format!("temporary directory cleanup failed: {error}"))
+                })?;
+                self.values.remove(id);
+                Ok(RuntimeValue::Unit)
+            }
+            ("std.testing.Generator.new", [RuntimeValue::Integer(seed)]) => {
+                let seed = match u64::try_from(*seed) {
+                    Ok(seed) => seed,
+                    Err(_) => return Ok(self.generation_result_error("seed is outside UInt64")),
+                };
+                Ok(self.allocate(
+                    RuntimeHostValueKind::Generator,
+                    HostValue::Generator(Generator::new(seed)),
+                ))
+            }
+            (
+                "std.testing.Generator.forCase",
+                [
+                    RuntimeValue::Integer(seed),
+                    RuntimeValue::Integer(case_index),
+                ],
+            ) => {
+                let (Ok(seed), Ok(case_index)) = (u64::try_from(*seed), u64::try_from(*case_index))
+                else {
+                    return Ok(self.generation_result_error("seed or case index is outside UInt64"));
+                };
+                Ok(self.allocate(
+                    RuntimeHostValueKind::Generator,
+                    HostValue::Generator(Generator::for_case(seed, case_index)),
+                ))
+            }
+            ("std.testing.Generator.nextUInt", [generator]) => {
+                match self.generator_mut(generator)?.next_u64() {
+                    Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
+                        i128::from(value),
+                    )))),
+                    Err(error) => Ok(self.generation_result_error(format!("{error:?}"))),
+                }
+            }
+            ("std.testing.Generator.nextBool", [generator]) => {
+                match self.generator_mut(generator)?.next_bool() {
+                    Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Bool(value)))),
+                    Err(error) => Ok(self.generation_result_error(format!("{error:?}"))),
+                }
+            }
+            (
+                "std.testing.Generator.nextInt",
+                [
+                    generator,
+                    RuntimeValue::Integer(minimum),
+                    RuntimeValue::Integer(maximum),
+                ],
+            ) => match self.generator_mut(generator)?.next_int(*minimum, *maximum) {
+                Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(
+                    value,
+                )))),
+                Err(error) => Ok(self.generation_result_error(format!("{error:?}"))),
+            },
+            ("std.testing.Generator.nextBytes", [generator, RuntimeValue::Integer(maximum)]) => {
+                let Ok(maximum) = usize::try_from(*maximum) else {
+                    return Ok(self.generation_result_error("maximum length is invalid"));
+                };
+                match self.generator_mut(generator)?.next_bytes(maximum) {
+                    Ok(value) => {
+                        if let Err(message) = self.ensure_bytes_len(value.len()) {
+                            return Ok(self.generation_result_error(message));
+                        }
+                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                            RuntimeHostValueKind::Bytes,
+                            HostValue::Bytes(value),
+                        ))))
+                    }
+                    Err(error) => Ok(self.generation_result_error(format!("{error:?}"))),
+                }
+            }
+            ("std.testing.Generator.nextText", [generator, RuntimeValue::Integer(maximum)]) => {
+                let Ok(maximum) = usize::try_from(*maximum) else {
+                    return Ok(self.generation_result_error("maximum length is invalid"));
+                };
+                match self.generator_mut(generator)?.next_text(maximum) {
+                    Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::String(
+                        value,
+                    )))),
+                    Err(error) => Ok(self.generation_result_error(format!("{error:?}"))),
+                }
+            }
+            ("std.testing.Generator.drawCount", [generator]) => Ok(RuntimeValue::Integer(
+                i128::from(self.generator_mut(generator)?.draw_count()),
+            )),
             ("std.testing.assertSome", [RuntimeValue::OptionSome(value)]) => Ok((**value).clone()),
             ("std.testing.assertSome", [RuntimeValue::OptionNone]) => {
                 let envelope = self.testing_envelope()?;
@@ -4248,6 +4471,115 @@ mod tests {
             host.invoke("std.testing.TextDiff.render", &[diff]).unwrap(),
             RuntimeValue::String("--- expected\n+++ actual\n-old\n+new\n".into())
         );
+    }
+
+    #[test]
+    fn testing_temp_directory_is_prefix_validated_and_cleanup_is_bounded() {
+        let mut host = BootstrapHost::default();
+        let invalid = host
+            .invoke(
+                "std.testing.tempDirectory",
+                &[RuntimeValue::String("bad/prefix".into())],
+            )
+            .unwrap();
+        assert!(matches!(
+            invalid,
+            RuntimeValue::ResultErr(value)
+                if matches!(
+                    value.as_ref(),
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::TempError,
+                        ..
+                    }
+                )
+        ));
+        let directory = match host
+            .invoke(
+                "std.testing.tempDirectory",
+                &[RuntimeValue::String("wave5".into())],
+            )
+            .unwrap()
+        {
+            RuntimeValue::ResultOk(value) => *value,
+            other => panic!("unexpected temporary directory result: {other:?}"),
+        };
+        let path = host
+            .invoke("std.testing.TempDirectory.path", &[directory.clone()])
+            .unwrap();
+        let physical = host.filesystem_path(&path).unwrap();
+        std::fs::write(physical.join("payload"), b"bounded").unwrap();
+        assert!(physical.exists());
+        host.invoke("std.testing.TempDirectory.cleanup", &[directory])
+            .unwrap();
+        assert!(!physical.exists());
+    }
+
+    #[test]
+    fn testing_generator_is_replayable_and_returns_typed_bounds_errors() {
+        let mut host = BootstrapHost::default();
+        let make = |host: &mut BootstrapHost| {
+            let result = host
+                .invoke(
+                    "std.testing.Generator.forCase",
+                    &[RuntimeValue::Integer(7), RuntimeValue::Integer(3)],
+                )
+                .unwrap();
+            assert!(matches!(
+                result,
+                RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::Generator,
+                    ..
+                }
+            ));
+            result
+        };
+        let left = make(&mut host);
+        let right = make(&mut host);
+        let left_first = host
+            .invoke("std.testing.Generator.nextUInt", &[left.clone()])
+            .unwrap();
+        let right_first = host
+            .invoke("std.testing.Generator.nextUInt", &[right.clone()])
+            .unwrap();
+        assert_eq!(left_first, right_first);
+        let invalid = host
+            .invoke(
+                "std.testing.Generator.nextInt",
+                &[
+                    left.clone(),
+                    RuntimeValue::Integer(4),
+                    RuntimeValue::Integer(3),
+                ],
+            )
+            .unwrap();
+        assert!(matches!(
+            invalid,
+            RuntimeValue::ResultErr(value)
+                if matches!(
+                    value.as_ref(),
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::GenerationError,
+                        ..
+                    }
+                )
+        ));
+        let too_long = host
+            .invoke(
+                "std.testing.Generator.nextBytes",
+                &[left, RuntimeValue::Integer(i128::MAX)],
+            )
+            .unwrap();
+        assert!(matches!(
+            too_long,
+            RuntimeValue::ResultErr(value)
+                if matches!(
+                    value.as_ref(),
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::GenerationError,
+                        ..
+                    }
+                )
+        ));
     }
 
     #[test]

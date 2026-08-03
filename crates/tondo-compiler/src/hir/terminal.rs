@@ -107,6 +107,10 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::FloatTolerance
         | IntrinsicType::FloatToleranceError
         | IntrinsicType::TextDiff
+        | IntrinsicType::TempDirectory
+        | IntrinsicType::TempError
+        | IntrinsicType::Generator
+        | IntrinsicType::GenerationError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
         | IntrinsicType::ProcessError
@@ -452,6 +456,10 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::FloatTolerance
         | IntrinsicType::FloatToleranceError
         | IntrinsicType::TextDiff
+        | IntrinsicType::TempDirectory
+        | IntrinsicType::TempError
+        | IntrinsicType::Generator
+        | IntrinsicType::GenerationError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
         | IntrinsicType::ProcessError

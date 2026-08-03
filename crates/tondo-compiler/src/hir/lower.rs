@@ -414,6 +414,25 @@ impl<'a> TypeLowerer<'a> {
             let text_diff = self
                 .interner
                 .intrinsic(IntrinsicType::TextDiff, Vec::new())?;
+            let temp_directory = self
+                .interner
+                .intrinsic(IntrinsicType::TempDirectory, Vec::new())?;
+            let temp_error = self
+                .interner
+                .intrinsic(IntrinsicType::TempError, Vec::new())?;
+            let temp_result = self.interner.result(temp_directory, temp_error)?;
+            let generator = self
+                .interner
+                .intrinsic(IntrinsicType::Generator, Vec::new())?;
+            let generation_error = self
+                .interner
+                .intrinsic(IntrinsicType::GenerationError, Vec::new())?;
+            let uint64 = self.interner.scalar(ScalarType::UInt64);
+            let generation_uint_result = self.interner.result(uint64, generation_error)?;
+            let generation_bool_result = self.interner.result(bool_type, generation_error)?;
+            let generation_int_result = self.interner.result(int, generation_error)?;
+            let generation_bytes_result = self.interner.result(bytes, generation_error)?;
+            let generation_string_result = self.interner.result(string, generation_error)?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::TestingLog,
@@ -504,6 +523,97 @@ impl<'a> TypeLowerer<'a> {
                 vec![(string, false), (string, false)],
                 None,
                 text_diff,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingTempDirectory,
+                vec![(string, false)],
+                None,
+                temp_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::TestingTempDirectoryPath,
+                vec![(temp_directory, ParameterMode::Ref, true)],
+                None,
+                path_type,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::TestingTempDirectoryCleanup,
+                vec![(temp_directory, ParameterMode::Value, true)],
+                None,
+                unit,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingGeneratorNew,
+                vec![(uint64, false)],
+                None,
+                generator,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingGeneratorForCase,
+                vec![(uint64, false), (uint64, false)],
+                None,
+                generator,
+            )?;
+            for (function, outcome) in [
+                (
+                    HirBootstrapHostFunction::TestingGeneratorNextUInt,
+                    generation_uint_result,
+                ),
+                (
+                    HirBootstrapHostFunction::TestingGeneratorNextBool,
+                    generation_bool_result,
+                ),
+            ] {
+                self.push_bootstrap_host_callable_with_modes(
+                    span,
+                    function,
+                    vec![(generator, ParameterMode::Var, true)],
+                    None,
+                    outcome,
+                )?;
+            }
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::TestingGeneratorNextInt,
+                vec![
+                    (generator, ParameterMode::Var, true),
+                    (int, ParameterMode::Value, false),
+                    (int, ParameterMode::Value, false),
+                ],
+                None,
+                generation_int_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::TestingGeneratorNextBytes,
+                vec![
+                    (generator, ParameterMode::Var, true),
+                    (int, ParameterMode::Value, false),
+                ],
+                None,
+                generation_bytes_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::TestingGeneratorNextText,
+                vec![
+                    (generator, ParameterMode::Var, true),
+                    (int, ParameterMode::Value, false),
+                ],
+                None,
+                generation_string_result,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::TestingGeneratorDrawCount,
+                vec![(generator, ParameterMode::Ref, true)],
+                None,
+                uint64,
             )?;
             self.push_bootstrap_host_callable_with_modes(
                 span,
@@ -4812,6 +4922,10 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::FloatTolerance
                         | IntrinsicType::FloatToleranceError
                         | IntrinsicType::TextDiff
+                        | IntrinsicType::TempDirectory
+                        | IntrinsicType::TempError
+                        | IntrinsicType::Generator
+                        | IntrinsicType::GenerationError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle

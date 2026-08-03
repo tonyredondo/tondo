@@ -461,6 +461,10 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::FloatTolerance
                 | BytecodeIntrinsicType::FloatToleranceError
                 | BytecodeIntrinsicType::TextDiff
+                | BytecodeIntrinsicType::TempDirectory
+                | BytecodeIntrinsicType::TempError
+                | BytecodeIntrinsicType::Generator
+                | BytecodeIntrinsicType::GenerationError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -1056,6 +1060,14 @@ fn intrinsic_capability(
         BytecodeIntrinsicType::ProcessHandle => {
             fixed_capability(capability == ClosedCapability::Send)
         }
+        BytecodeIntrinsicType::TempDirectory => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Discard | ClosedCapability::Send
+        )),
+        BytecodeIntrinsicType::Generator => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Discard | ClosedCapability::Send
+        )),
         BytecodeIntrinsicType::Bytes
         | BytecodeIntrinsicType::BytesError
         | BytecodeIntrinsicType::ExitStatus
@@ -1066,7 +1078,9 @@ fn intrinsic_capability(
         | BytecodeIntrinsicType::MathError
         | BytecodeIntrinsicType::FloatTolerance
         | BytecodeIntrinsicType::FloatToleranceError
-        | BytecodeIntrinsicType::TextDiff => fixed_capability(matches!(
+        | BytecodeIntrinsicType::TextDiff
+        | BytecodeIntrinsicType::TempError
+        | BytecodeIntrinsicType::GenerationError => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
                 | ClosedCapability::Discard
@@ -1434,6 +1448,10 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::FloatTolerance
         | BytecodeIntrinsicType::FloatToleranceError
         | BytecodeIntrinsicType::TextDiff
+        | BytecodeIntrinsicType::TempDirectory
+        | BytecodeIntrinsicType::TempError
+        | BytecodeIntrinsicType::Generator
+        | BytecodeIntrinsicType::GenerationError
         | BytecodeIntrinsicType::ExitStatus
         | BytecodeIntrinsicType::ProcessOutput
         | BytecodeIntrinsicType::ProcessError
@@ -1594,6 +1612,10 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::FloatTolerance
                 | BytecodeIntrinsicType::FloatToleranceError
                 | BytecodeIntrinsicType::TextDiff
+                | BytecodeIntrinsicType::TempDirectory
+                | BytecodeIntrinsicType::TempError
+                | BytecodeIntrinsicType::Generator
+                | BytecodeIntrinsicType::GenerationError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -2076,6 +2098,8 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.testing.assertFloatNear")
                 && !callable.name.starts_with("std.testing.assertFloat32Near")
                 && !callable.name.starts_with("std.testing.TextDiff.render")
+                && !callable.name.starts_with("std.testing.TempDirectory.path")
+                && !callable.name.starts_with("std.testing.Generator.")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,
