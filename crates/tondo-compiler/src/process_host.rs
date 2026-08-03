@@ -1108,6 +1108,7 @@ impl VmHost for BootstrapHost {
                 self.stdout.push(b'\n');
                 Ok(RuntimeValue::Unit)
             }
+            ("std.console.flush", []) => Ok(RuntimeValue::Unit),
             ("std.math.floor", [RuntimeValue::Float(value)]) => {
                 Ok(RuntimeValue::Float(math::floor(*value)))
             }
@@ -2027,6 +2028,9 @@ impl VmHost for BootstrapHost {
             ("std.console.println", _) => Err(VmError::Host(
                 "std.console.println received an invalid bootstrap argument list".into(),
             )),
+            ("std.console.flush", _) => Err(VmError::Host(
+                "std.console.flush received an invalid bootstrap argument list".into(),
+            )),
             _ => Err(VmError::UnsupportedHostCall(name.to_owned())),
         }
     }
@@ -2617,6 +2621,10 @@ mod tests {
         assert!(
             host.invoke("std.console.println", &[RuntimeValue::Integer(1)])
                 .is_err()
+        );
+        assert_eq!(
+            host.invoke("std.console.flush", &[]).unwrap(),
+            RuntimeValue::Unit
         );
     }
 

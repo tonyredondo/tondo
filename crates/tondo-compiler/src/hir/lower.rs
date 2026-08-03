@@ -184,7 +184,9 @@ struct TypeLowerer<'a> {
 
 impl<'a> TypeLowerer<'a> {
     fn lower_bootstrap_host_contracts(&mut self) -> Result<(), HirError> {
+        let console = ModulePath::new("console")?;
         let bytes_module = ModulePath::new("bytes")?;
+        let console_module = self.packages.module(self.packages.standard(), &console);
         let process = ModulePath::new("process")?;
         let bytes_module = self
             .packages
@@ -287,7 +289,16 @@ impl<'a> TypeLowerer<'a> {
                 matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
             })
         });
+        let console_referenced = console_module.as_ref().is_some_and(|module| {
+            self.resolved.references().any(|reference| {
+                matches!(
+                    reference.entity(),
+                    ResolvedEntity::Module(reference_module) if reference_module == module
+                )
+            })
+        });
         if !bytes_referenced
+            && !console_referenced
             && !process_referenced
             && !time_referenced
             && !env_referenced
@@ -373,6 +384,16 @@ impl<'a> TypeLowerer<'a> {
         let path_outcome = self.interner.result(path_type, path_error)?;
         let fs_bytes_outcome = self.interner.result(bytes, fs_error)?;
         let fs_unit_outcome = self.interner.result(unit, fs_error)?;
+
+        if console_referenced {
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::ConsoleFlush,
+                Vec::new(),
+                None,
+                unit,
+            )?;
+        }
 
         if testing_referenced {
             let virtual_time = self

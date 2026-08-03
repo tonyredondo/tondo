@@ -2044,6 +2044,7 @@ pub enum HirExpressionKind {
 pub enum HirBootstrapHostFunction {
     ConsolePrint,
     ConsolePrintln,
+    ConsoleFlush,
     ProcessArgs,
     ProcessCmd,
     ProcessShell,
@@ -2185,6 +2186,7 @@ impl HirBootstrapHostFunction {
         match self {
             Self::ConsolePrint => "std.console.print",
             Self::ConsolePrintln => "std.console.println",
+            Self::ConsoleFlush => "std.console.flush",
             Self::ProcessArgs => "std.process.args",
             Self::ProcessCmd => "std.process.cmd",
             Self::ProcessShell => "std.process.shell",

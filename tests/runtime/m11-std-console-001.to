@@ -3,4 +3,5 @@ import std.console
 fn main() {
     console.print("line-one")
     console.println("line-two")
+    console.flush()
 }

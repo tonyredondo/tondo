@@ -13655,6 +13655,7 @@ impl<'a> ExpressionChecker<'a> {
         let host_function = match (module.path().as_str(), function_name) {
             ("console", Some("print")) => HirBootstrapHostFunction::ConsolePrint,
             ("console", Some("println")) => HirBootstrapHostFunction::ConsolePrintln,
+            ("console", Some("flush")) => HirBootstrapHostFunction::ConsoleFlush,
             ("process", Some("args")) => HirBootstrapHostFunction::ProcessArgs,
             ("process", Some("cmd")) => HirBootstrapHostFunction::ProcessCmd,
             ("process", Some("shell")) => HirBootstrapHostFunction::ProcessShell,
