@@ -1,11 +1,15 @@
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::io::{self, Read};
+use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdout, Command as OsCommand, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant as StdInstant};
 
+#[cfg(unix)]
+use std::os::unix::ffi::OsStringExt;
 #[cfg(unix)]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
@@ -373,6 +377,22 @@ impl BootstrapHost {
         match self.values.get(id) {
             Some(HostValue::Path(path)) => Ok(path),
             _ => Err(VmError::Host("Path token is stale".into())),
+        }
+    }
+
+    fn filesystem_path(&self, value: &RuntimeValue) -> Result<PathBuf, String> {
+        let path = self
+            .path(value)
+            .map_err(|error| format!("invalid Path value: {error}"))?;
+        #[cfg(unix)]
+        {
+            Ok(PathBuf::from(OsString::from_vec(path.as_bytes().to_vec())))
+        }
+        #[cfg(not(unix))]
+        {
+            path.to_string()
+                .map(PathBuf::from)
+                .map_err(|error| format!("path is not representable on this target: {error:?}"))
         }
     }
 
@@ -1217,9 +1237,10 @@ impl VmHost for BootstrapHost {
                 HostValue::Bytes(self.path(receiver)?.as_bytes().to_vec()),
             )),
             ("std.fs.readAll", [receiver]) => {
-                let path = self.path(receiver)?.to_string().map_err(|error| {
-                    VmError::Host(format!("invalid filesystem path: {error:?}"))
-                })?;
+                let path = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
                 match std::fs::read(path) {
                     Ok(bytes) => {
                         if let Err(message) = self.ensure_bytes_len(bytes.len()) {
@@ -1234,9 +1255,10 @@ impl VmHost for BootstrapHost {
                 }
             }
             ("std.fs.writeAll", [receiver, bytes]) => {
-                let path = self.path(receiver)?.to_string().map_err(|error| {
-                    VmError::Host(format!("invalid filesystem path: {error:?}"))
-                })?;
+                let path = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
                 let bytes = self.bytes(bytes)?.to_vec();
                 if let Err(message) = self.ensure_bytes_len(bytes.len()) {
                     return Ok(self.fs_result_error(message));
@@ -2433,6 +2455,21 @@ mod tests {
             host.invoke("std.console.println", &[RuntimeValue::Integer(1)])
                 .is_err()
         );
+    }
+
+    #[test]
+    fn filesystem_preserves_native_path_bytes_and_returns_typed_errors() {
+        let mut host = BootstrapHost::default();
+        let native = host.allocate(
+            RuntimeHostValueKind::Path,
+            HostValue::Path(path::Path::from_bytes(&[0xff, b'/', b'n']).unwrap()),
+        );
+        let result = host.invoke("std.fs.readAll", &[native]).unwrap();
+        assert!(matches!(
+            result,
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::FsError, .. })
+        ));
     }
 
     fn command(host: &mut BootstrapHost, program: &str, arguments: &[&str]) -> RuntimeValue {
