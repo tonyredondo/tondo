@@ -1695,7 +1695,47 @@ el proveedor real/virtual y la frontera async descrita en
 reproducibles del plan cerrado, `STD-TIME-BASE-CONF-001` permanece pendiente y
 `std.time` no se anuncia como una superficie distribuida estable.
 
-### 14.4 Arquitectura común de serialización
+### 14.4 Contratos cerrados de los owners STD-0.1A
+
+Las firmas exhaustivas de los owners de valores y host están en
+[`docs/contracts/stdlib-core.md`](./docs/contracts/stdlib-core.md) y
+[`docs/contracts/stdlib-hosted.md`](./docs/contracts/stdlib-hosted.md). Esos
+documentos forman parte del mismo contrato, no una API alternativa: cada
+declaración que aparezca aquí o en un ejemplo debe coincidir byte a byte en
+nombre, visibilidad, parámetros, modo, outcome y capability. La distribución
+canónica incluye ambos source sets y sus hashes.
+
+La integración normativa de STD-0.1A queda así:
+
+| Owner | Source set | Estado | Dependencias directas |
+|---|---|---|---|
+| `std.core` (intrínsecos) | `stdlib-core` | cerrado | lenguaje |
+| `std.text` | `stdlib-core` | cerrado | `std.bytes` |
+| `std.collections` | `stdlib-core` | cerrado | `std.core` |
+| `std.iter` | `stdlib-core` | cerrado | colecciones |
+| `std.math` | `stdlib-core` | cerrado | numéricos intrínsecos |
+| `std.format` | `stdlib-core` | cerrado | `Display`, `std.bytes` |
+| `std.io` | `stdlib-core` | cerrado | `Bytes`, async |
+| `std.serialization` | `stdlib-core` | cerrado | `std.io`, `Display` |
+| `std.console` | `stdlib-hosted` | cerrado | `std.io`, capability `console` |
+| `std.path` | `stdlib-hosted` | cerrado | `String`, `Bytes` |
+| `std.fs` | `stdlib-hosted` | cerrado | `std.path`, `std.io`, `filesystem` |
+| `std.process` | `stdlib-hosted` | cerrado | `std.io`, `std.bytes`, `process` |
+
+Los contratos de JSON, MessagePack, Protobuf y `std.testing` mantienen sus
+registros de owner existentes y reutilizan exactamente `Serializer`,
+`Deserializer`, `Reader`, `Writer` y `Bytes` de estos source sets. `std.path`
+no adquiere `filesystem` por importar; `std.console`, `std.fs` y `std.process`
+solo comprueban su capability en el límite del adaptador. Ningún contrato
+introduce una segunda representación de error, stream o colección.
+
+La implementación hosted inicial puede residir en unidades privilegiadas
+mientras el compilador no sea capaz de compilar estos módulos en Tondo. Esa
+decisión es de bootstrap y no cambia el owner, la semántica ni la identidad de
+la API. Cada unidad debe publicar su source hash, modelo, tests, oracle escalar
+y conformance antes de cerrar S1A.
+
+### 14.5 Arquitectura común de serialización
 
 Hay dos rutas deliberadamente distintas:
 

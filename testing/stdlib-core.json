@@ -1,0 +1,38 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.core-group",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "draft-contract",
+  "contract": "docs/contracts/stdlib-core.md",
+  "owners": [
+    "std.core",
+    "std.text",
+    "std.collections",
+    "std.iter",
+    "std.math",
+    "std.format",
+    "std.io",
+    "std.serialization"
+  ],
+  "invariants": [
+    "static-dispatch",
+    "finite-limits",
+    "typed-errors",
+    "utf8-string",
+    "bytes-is-common-binary-owner",
+    "value-semantics",
+    "single-iterator-element",
+    "typed-serialization-no-dom"
+  ],
+  "test_matrix": [
+    "empty-values",
+    "limits",
+    "ownership",
+    "determinism",
+    "composition",
+    "error-priority",
+    "async-cancellation"
+  ],
+  "promotion_next": "STD-IMPL-001"
+}

@@ -1,0 +1,34 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.hosted-group",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "draft-contract",
+  "contract": "docs/contracts/stdlib-hosted.md",
+  "owners": ["std.console", "std.path", "std.fs", "std.process"],
+  "capabilities": {
+    "std.console": ["console"],
+    "std.path": [],
+    "std.fs": ["filesystem"],
+    "std.process": ["process"]
+  },
+  "invariants": [
+    "io-protocol-reuse",
+    "explicit-capability-boundary",
+    "bounded-resources",
+    "terminal-cleanup",
+    "argv-preserved",
+    "shell-explicit",
+    "deterministic-directory-order"
+  ],
+  "test_matrix": [
+    "capability-present",
+    "capability-absent",
+    "empty-input",
+    "partial-io",
+    "cancellation",
+    "cleanup-on-unwind",
+    "host-error-redaction"
+  ],
+  "promotion_next": "STD-IMPL-002"
+}

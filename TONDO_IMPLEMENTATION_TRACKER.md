@@ -6,7 +6,7 @@ runner público de testing, tiempo virtual y sus proyectos de aceptación forman
 parte del candidato de conformidad inmutable. Tondo 0.1 sigue en desarrollo:
 el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 
-**Versión del tracker:** 1.42
+**Versión del tracker:** 1.43
 
 **Última actualización:** 2026-08-03
 
@@ -19,6 +19,8 @@ el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 - [Contrato de owner de `std.messagepack`](./docs/contracts/stdlib-messagepack.md)
 - [Contrato de owner de `std.protobuf`](./docs/contracts/stdlib-protobuf.md)
 - [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
+- [Contrato de owners Core STD-0.1A](./docs/contracts/stdlib-core.md)
+- [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
 **Objetivo inmediato:** completar STD-0.1A por layers, con `STD-PERF-001`,
@@ -3646,7 +3648,7 @@ layer pueden avanzar en paralelo.
   conformidad permanecen pendientes y esta tarea habilita M10.6 sin anunciar
   disponibilidad en `tondo-vm-hosted`.
 
-- [ ] **STD-SPEC-001 — Cerrar la integración de
+- [x] **STD-SPEC-001 — Cerrar la integración de
   `TONDO_STANDARD_LIBRARY_SPEC.md`.** Después de los specs por owner, comprobar
   que todas las superficies de STD-0.1A forman un único contrato sin firmas
   duplicadas, huecos de capability ni ciclos. Esta tarea es un cierre agregado,
@@ -3678,11 +3680,11 @@ layer pueden avanzar en paralelo.
 
 ### 19.2 Core Standard Library
 
-- [ ] **STD-CORE-001 — Fijar protocolos y operaciones fundamentales.**
+- [x] **STD-CORE-001 — Fijar protocolos y operaciones fundamentales.**
   `Option`, `Result`, `Display`, comparación, `Key` y utilidades de
   error conservan las capacidades y efectos ya definidos por el lenguaje.
 
-- [ ] **STD-TEXT-001 — Especificar texto.** `String`, `Char`, `Byte` y
+- [x] **STD-TEXT-001 — Especificar texto.** `String`, `Char`, `Byte` y
   sus operaciones fijan construcción, búsqueda, transformación, Unicode,
   límites y costes sin confundir scalar, grapheme ni byte.
 
@@ -3693,30 +3695,30 @@ layer pueden avanzar en paralelo.
   filesystem, procesos y testing. Base64, hexadecimal y codecs wire-format
   permanecen bajo sus módulos propietarios posteriores.
 
-- [ ] **STD-IO-001 — Especificar `std.io`.** Fijar protocolos estáticos de
+- [x] **STD-IO-001 — Especificar `std.io`.** Fijar protocolos estáticos de
   lectura/escritura, buffers, EOF, partial I/O, errores portables, ownership,
   backpressure, suspensión y cancelación sin que importar los contratos conceda
   ninguna capability. Console, archivos y procesos reutilizan esta única
   frontera en vez de inventar streams incompatibles.
 
-- [ ] **STD-MATH-001 — Especificar `std.math`.** Fijar las operaciones escalares
+- [x] **STD-MATH-001 — Especificar `std.math`.** Fijar las operaciones escalares
   portables que completan los numéricos intrínsecos, incluidos floor, ceil,
   round, truncate, sqrt y FMA explícita, conservando IEEE, ausencia de fast-math
   observable, dominio, errores y casos límite.
 
-- [ ] **STD-COLL-001 — Especificar colecciones.** `Array`, `Map` y `Set` fijan
+- [x] **STD-COLL-001 — Especificar colecciones.** `Array`, `Map` y `Set` fijan
   consulta, construcción, actualización funcional, mutación explícita,
   capacidad, orden, combinación y complejidad preservando semántica de valor.
 
-- [ ] **STD-ITER-001 — Especificar ranges e iteración.** `Range`, iteradores y
+- [x] **STD-ITER-001 — Especificar ranges e iteración.** `Range`, iteradores y
   combinadores usan dispatch estático, un único elemento por target, evaluación
   lazy acotada y consumo/copia visibles.
 
-- [ ] **STD-FMT-001 — Especificar `std.format`.** Display de tipos compuestos,
+- [x] **STD-FMT-001 — Especificar `std.format`.** Display de tipos compuestos,
   builders y formato estructurado deben reutilizar el protocolo estático sin
   introducir reflection, vtables, lookup abierto ni una segunda interpolación.
 
-- [ ] **STD-SER-001 — Especificar `std.serialization`.** Cerrar las firmas de
+- [x] **STD-SER-001 — Especificar `std.serialization`.** Cerrar las firmas de
   `Serialize`, `Deserialize`, `Serializer[E]` y `Deserializer[E]`, su máquina
   de eventos, derive format-neutral, bounds genéricos, construcción atómica,
   ownership, errores y personalización mediante impl/DTO explícito.
@@ -3829,11 +3831,11 @@ layer pueden avanzar en paralelo.
   validan en `process_host` y `driver`; la evidencia de distribución y
   conformance queda en `STD-TIME-BASE-CONF-001`.
 
-- [ ] **STD-CONSOLE-001 — Consolidar consola sobre `std.io`.** Fijar stdout,
+- [x] **STD-CONSOLE-001 — Consolidar consola sobre `std.io`.** Fijar stdout,
   stderr, entrada, flushing, texto/binario, errores y comportamiento async sin
   asumir terminal interactiva ni duplicar los protocolos generales.
 
-- [ ] **STD-PATH-001 — Definir paths portables y nativos.** Separar operaciones
+- [x] **STD-PATH-001 — Definir paths portables y nativos.** Separar operaciones
   léxicas de acceso al host, preservar bytes no Unicode cuando el target lo
   admita y no prometer una representación común falsa.
 
@@ -3847,11 +3849,11 @@ layer pueden avanzar en paralelo.
   worker. El contrato vivo está en `docs/contracts/stdlib-env.md` y en la
   sección 14.3.5 de la especificación estándar.
 
-- [ ] **STD-FS-001 — Definir filesystem.** Archivos, directorios, metadata,
+- [x] **STD-FS-001 — Definir filesystem.** Archivos, directorios, metadata,
   enlaces, permisos, atomicidad, iteración y operaciones async declaran
   portabilidad, TOCTOU, cleanup y errores sin esconder bloqueo.
 
-- [ ] **STD-PROC-001 — Estabilizar procesos.** Promover el bridge provisional
+- [x] **STD-PROC-001 — Estabilizar procesos.** Promover el bridge provisional
   de `Command`, `Pipeline`, `ProcessHandle`, status, output, pipes, shell
   explícito y cancelación a una API versionada que preserve argv exacto.
 
@@ -4557,6 +4559,21 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.43 — 2026-08-03
+
+- Se cierran `STD-SPEC-001`, `STD-CORE-001`, `STD-TEXT-001`, `STD-IO-001`,
+  `STD-MATH-001`, `STD-COLL-001`, `STD-ITER-001`, `STD-FMT-001` y
+  `STD-SER-001` con el contrato canónico de owners Core en
+  `docs/contracts/stdlib-core.md` y `testing/stdlib-core.json`.
+- Se cierran `STD-CONSOLE-001`, `STD-PATH-001`, `STD-FS-001` y `STD-PROC-001`
+  con el contrato Hosted de `docs/contracts/stdlib-hosted.md` y
+  `testing/stdlib-hosted.json`. Ambos checks se ejecutan desde el gate estricto.
+- La integración normativa de `TONDO_STANDARD_LIBRARY_SPEC.md` fija source
+  sets, dependencias, capabilities y la frontera temporal de las unidades
+  privilegiadas; no se anuncia todavía una distribución publicada.
+- El siguiente owner ejecutable es `STD-IMPL-001` (Core) seguido de
+  `STD-IMPL-002` (Hosted).
 
 ### 1.42 — 2026-08-03
 
