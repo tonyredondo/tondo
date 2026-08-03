@@ -1674,17 +1674,17 @@ mod tests {
     fn semantic_protocol_rejects_internal_or_unstable_ids() {
         let observation = Observation {
             data: serde_json::json!({
-                "schema": "tondo-semantic-observation-0.1/1",
                 "expression_check_complete": true,
                 "queries": [{
-                    "query": "entities",
                     "entities": [{
                         "id": "symbol#7",
                         "kind": "symbol",
                         "name": "value",
                         "declaration": null
-                    }]
-                }]
+                    }],
+                    "query": "entities"
+                }],
+                "schema": "tondo-semantic-observation-0.1/1"
             }),
             ..Observation::empty()
         };
@@ -1741,18 +1741,18 @@ mod tests {
         let hash = "1".repeat(64);
         let record = |name: &str| {
             serde_json::json!({
-                "name": name,
-                "source_order": ["a.to", "z.to"],
-                "interface_sha256": hash,
                 "artifact_sha256": hash,
-                "diagnostics_sha256": hash
+                "diagnostics_sha256": hash,
+                "interface_sha256": hash,
+                "name": name,
+                "source_order": ["a.to", "z.to"]
             })
         };
         let observation = Observation {
             data: serde_json::json!({
-                "schema": "tondo-determinism-observation-0.1/1",
                 "identical": true,
-                "permutations": [record("canonical"), record("reverse")]
+                "permutations": [record("canonical"), record("reverse")],
+                "schema": "tondo-determinism-observation-0.1/1"
             }),
             ..Observation::empty()
         };
@@ -1782,8 +1782,8 @@ mod tests {
                 "module": "main",
                 "file": "case.to",
                 "range": {
-                    "start": {"byte": 15},
-                    "end": {"byte": 19}
+                    "end": {"byte": 19},
+                    "start": {"byte": 15}
                 },
                 "replacement": ""
             }]
@@ -1915,8 +1915,8 @@ mod tests {
 
         let mut overlapping_edit = edit.clone();
         overlapping_edit["range"]["start"] =
-            serde_json::json!({"byte": 22, "line": 1, "column": 6});
-        overlapping_edit["range"]["end"] = serde_json::json!({"byte": 26, "line": 1, "column": 10});
+            serde_json::json!({"byte": 22, "column": 6, "line": 1});
+        overlapping_edit["range"]["end"] = serde_json::json!({"byte": 26, "column": 10, "line": 1});
         let mut overlapping = fix;
         overlapping["edits"] = serde_json::json!([edit, overlapping_edit]);
         assert_error_contains(validate_fix(&overlapping), "edits overlap");
@@ -1924,8 +1924,8 @@ mod tests {
         assert_error_contains(
             validate_range(
                 &serde_json::json!({
-                    "start": {"byte": 2},
-                    "end": {"byte": 1}
+                    "end": {"byte": 1},
+                    "start": {"byte": 2}
                 }),
                 "range",
             ),
@@ -1933,7 +1933,7 @@ mod tests {
         );
         assert_error_contains(
             validate_position(
-                &serde_json::json!({"byte": 1, "line": 0, "column": null}),
+                &serde_json::json!({"byte": 1, "column": null, "line": 0}),
                 "position",
             ),
             "line and column must both be unsigned",
@@ -2036,73 +2036,73 @@ mod tests {
             ),
             (
                 file_query("entities"),
-                serde_json::json!({"query": "entities", "entities": []}),
+                serde_json::json!({"entities": [], "query": "entities"}),
             ),
             (
                 file_query("references"),
                 serde_json::json!({
-                    "query": "references",
                     "entity_id": null,
+                    "query": "references",
                     "references": []
                 }),
             ),
             (
                 file_query("signature"),
                 serde_json::json!({
-                    "query": "signature",
                     "entity_id": null,
+                    "query": "signature",
                     "signature": null
                 }),
             ),
             (
                 file_query("type-members"),
                 serde_json::json!({
+                    "members": null,
                     "query": "type-members",
-                    "type": null,
-                    "members": null
+                    "type": null
                 }),
             ),
             (
                 file_query("closed-call-errors"),
-                serde_json::json!({"query": "closed-call-errors", "errors": null}),
+                serde_json::json!({"errors": null, "query": "closed-call-errors"}),
             ),
             (
                 file_query("type-facts"),
-                serde_json::json!({"query": "type-facts", "facts": null}),
+                serde_json::json!({"facts": null, "query": "type-facts"}),
             ),
             (
                 file_query("expression-facts"),
-                serde_json::json!({"query": "expression-facts", "facts": null}),
+                serde_json::json!({"facts": null, "query": "expression-facts"}),
             ),
             (
                 SemanticQuery::SemanticSnapshot {
                     file: "case.to".into(),
                 },
                 serde_json::json!({
-                    "query": "semantic-snapshot",
-                    "schema": "tondo-semantic-snapshot-0.1/1",
-                    "file": "case.to",
-                    "declarations": [],
-                    "references": [],
-                    "expressions": [],
-                    "closures": [],
-                    "opaque_results": [],
-                    "public_types": [],
-                    "iterators": [],
                     "borrow_bindings": [],
+                    "closures": [],
+                    "declarations": [],
+                    "expressions": [],
+                    "file": "case.to",
+                    "iterators": [],
+                    "opaque_results": [],
                     "ownership": {
-                        "schema": "tondo-semantic-ownership-0.1/1",
-                        "functions": []
+                        "functions": [],
+                        "schema": "tondo-semantic-ownership-0.1/1"
                     },
+                    "public_types": [],
+                    "query": "semantic-snapshot",
+                    "references": [],
+                    "schema": "tondo-semantic-snapshot-0.1/1",
                     "unsafe": {}
                 }),
             ),
             (
                 SemanticQuery::FormattedAst,
                 serde_json::json!({
-                    "query": "formatted-ast",
                     "encoding": "utf-8",
                     "formatted_hex": "666e",
+                    "query": "formatted-ast",
                     "sha256": "a".repeat(64)
                 }),
             ),
@@ -2114,9 +2114,9 @@ mod tests {
         let requested = [queries[0].0.clone()];
         let valid_semantic = Observation {
             data: serde_json::json!({
-                "schema": "tondo-semantic-observation-0.1/1",
                 "expression_check_complete": true,
-                "queries": [queries[0].1.clone()]
+                "queries": [queries[0].1.clone()],
+                "schema": "tondo-semantic-observation-0.1/1"
             }),
             ..Observation::empty()
         };
@@ -2141,15 +2141,15 @@ mod tests {
             let retries = scenario == MemoryScenario::RetryBeforeOom;
             let observation = Observation {
                 data: serde_json::json!({
-                    "schema": "tondo-memory-observation-0.1/1",
-                    "scenario": name,
                     "collections": 1,
+                    "cycles_reclaimed": true,
                     "peak_live_objects": 1,
                     "reclaimed_objects": 1,
-                    "cycles_reclaimed": true,
-                    "roots_preserved": true,
                     "retry_before_oom": retries,
-                    "retry_before_success": retries
+                    "retry_before_success": retries,
+                    "roots_preserved": true,
+                    "scenario": name,
+                    "schema": "tondo-memory-observation-0.1/1"
                 }),
                 ..Observation::empty()
             };
@@ -2158,15 +2158,15 @@ mod tests {
 
         let base_memory = Observation {
             data: serde_json::json!({
-                "schema": "tondo-memory-observation-0.1/1",
-                "scenario": "reachable-roots",
                 "collections": 1,
+                "cycles_reclaimed": true,
                 "peak_live_objects": 1,
                 "reclaimed_objects": 1,
-                "cycles_reclaimed": true,
-                "roots_preserved": true,
                 "retry_before_oom": false,
-                "retry_before_success": false
+                "retry_before_success": false,
+                "roots_preserved": true,
+                "scenario": "reachable-roots",
+                "schema": "tondo-memory-observation-0.1/1"
             }),
             ..Observation::empty()
         };

@@ -10967,13 +10967,15 @@ impl<'a> ExpressionChecker<'a> {
         subject: &str,
         expected: TypeId,
     ) -> Result<(), HirError> {
+        let expected_name = self
+            .program
+            .interner
+            .canonical(expected)
+            .unwrap_or_else(|_| "<recovery>".to_owned());
         self.emit(
             self.sources.span(file, range)?,
             "E1202",
-            format!(
-                "{subject} is incompatible with `{}`",
-                self.program.interner.canonical(expected)?
-            ),
+            format!("{subject} is incompatible with `{expected_name}`"),
             Vec::new(),
             None,
         )
@@ -13795,6 +13797,24 @@ impl<'a> ExpressionChecker<'a> {
                 | ("path", Some(name))
                 | ("fs", Some(name))
                 | ("testing", Some(name)) => {
+                    // A documentation fixture may provide a source-level
+                    // declaration in a bootstrap module (for example the
+                    // hermetic `std.fs.read` used by the language guide).
+                    // Let normal callable checking consume that symbol; the
+                    // bootstrap diagnostic is only for genuinely unknown
+                    // compiler-owned names.
+                    if self
+                        .resolved
+                        .reference(file, function_token.range())
+                        .is_some_and(|reference| {
+                            matches!(
+                                reference.entity(),
+                                ResolvedEntity::Name(ResolvedName::Symbol(_))
+                            )
+                        })
+                    {
+                        return Ok(None);
+                    }
                     let module_name = module.path().as_str();
                     self.emit(
                         self.sources.span(file, function_token.range())?,

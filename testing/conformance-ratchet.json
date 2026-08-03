@@ -1,10 +1,10 @@
 {
   "format": "tondo-conformance-ratchet/1",
   "lineage": "tondo-draft",
-  "revision": 7,
+  "revision": 8,
   "manifest": {
     "path": "conformance/draft/manifest.json",
-    "sha256": "3994ebd5e128307e953dade3bd92943fff2b7114a8521084b632a786546b90c8"
+    "sha256": "64b5866d36871f50cc8e4ca306201d94ccb7ad389739407407ec4979c8e238cb"
   },
   "inventory": {
     "path": "testing/inventory.json",

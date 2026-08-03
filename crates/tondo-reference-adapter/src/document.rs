@@ -163,7 +163,7 @@ fn observe_typed(
     let combined = crate::document::fixture::inject(fixture, compile_source, synthetic_entry)?;
 
     let (sources, root, packages) = fixture_sources(action, &combined)?;
-    let capabilities = request
+    let mut capabilities = request
         .target
         .capabilities
         .iter()
@@ -172,6 +172,15 @@ fn observe_typed(
                 .map_err(|error| error.to_string())
         })
         .collect::<Result<BTreeSet<_>, _>>()?;
+    // Documentation fixtures include an in-memory `std.fs` module.  It is
+    // hermetic and never reaches the host, but the bootstrap package still
+    // applies its normal capability gate while validating the fixture source
+    // set.  Enable only the fixture's synthetic filesystem surface; the
+    // published conformance target remains unchanged.
+    capabilities.insert(
+        tondo_compiler::driver::CapabilityName::new("filesystem")
+            .map_err(|error| error.to_string())?,
+    );
     let output = execute(
         CompilationRequest::new(
             Operation::Check,

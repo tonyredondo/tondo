@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tondo_compiler::driver::{
     BuildTarget, CapabilityName, CompilationOutput, CompilationRequest, CompilationStatus,
     DiagnosticFormat, HostProfile, Operation, ResourceLimits, SourceForm, WarningProfile, execute,
@@ -28,7 +28,15 @@ pub struct ReferenceAdapter;
 impl ReferenceAdapter {
     pub fn handle(&mut self, request: &AdapterRequest) -> AdapterResponse {
         let result = match self.observe(request) {
-            Ok(observation) => AdapterResult::Ok { observation },
+            Ok(mut observation) => {
+                observation.data = canonical_json(observation.data);
+                observation.diagnostics = observation
+                    .diagnostics
+                    .into_iter()
+                    .map(canonical_json)
+                    .collect();
+                AdapterResult::Ok { observation }
+            }
             Err(message) => AdapterResult::Error { message },
         };
         AdapterResponse {
@@ -53,6 +61,29 @@ impl ReferenceAdapter {
                 crate::document::observe_document_fence(request, action)
             }
         }
+    }
+}
+
+/// Protocol observations use lexicographic UTF-8 object order so their wire
+/// bytes and hashes remain stable even though the workspace's dynamic JSON
+/// value type preserves insertion order for the standard-library codec.
+fn canonical_json(value: Value) -> Value {
+    match value {
+        Value::Object(object) => {
+            let mut keys = object.keys().cloned().collect::<Vec<_>>();
+            keys.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+            let mut canonical = Map::new();
+            for key in keys {
+                let child = object
+                    .get(&key)
+                    .expect("the key was copied from the source object")
+                    .clone();
+                canonical.insert(key, canonical_json(child));
+            }
+            Value::Object(canonical)
+        }
+        Value::Array(values) => Value::Array(values.into_iter().map(canonical_json).collect()),
+        scalar => scalar,
     }
 }
 
@@ -479,6 +510,33 @@ mod tests {
         assert_eq!(
             tondo_conformance::decode_hex(&observation.stdout_hex).unwrap(),
             b"ok\n"
+        );
+    }
+
+    #[test]
+    fn protocol_json_is_canonicalized_without_changing_array_order() {
+        let value = canonical_json(json!({
+            "schema": {"z": 0, "a": 1},
+            "items": [{"b": 2, "a": 3}]
+        }));
+        let object = value.as_object().unwrap();
+        assert_eq!(
+            object.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["items", "schema"]
+        );
+        let nested = object["schema"].as_object().unwrap();
+        assert_eq!(
+            nested.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["a", "z"]
+        );
+        assert_eq!(
+            object["items"][0]
+                .as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["a", "b"]
         );
     }
 

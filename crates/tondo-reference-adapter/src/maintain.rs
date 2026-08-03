@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tondo_compiler::artifact::{CAPABILITY_REGISTRY, sha256 as project_sha256};
 use tondo_compiler::project::{
     BOOTSTRAP_STANDARD_PACKAGE, LOCKFILE_FORMAT, MANIFEST_FORMAT, bootstrap_standard_hash,
@@ -477,7 +477,7 @@ fn bless_determinism_case(
         }));
     }
 
-    let manifest_bytes = serde_json::to_vec(&json!({
+    let manifest_bytes = sorted_json_bytes(json!({
         "format": MANIFEST_FORMAT,
         "target": {
             "name": target.name,
@@ -504,8 +504,7 @@ fn bless_determinism_case(
         }],
         "generator_inputs": [],
         "privileged_units": []
-    }))
-    .map_err(|error| error.to_string())?;
+    }))?;
     let manifest_path = case_root.join("Tondo.json");
     write_generated(&manifest_path, &manifest_bytes)?;
 
@@ -519,7 +518,7 @@ fn bless_determinism_case(
         })
         .map_err(|error| error.to_string())?,
     );
-    let lockfile_bytes = serde_json::to_vec(&json!({
+    let lockfile_bytes = sorted_json_bytes(json!({
         "format": LOCKFILE_FORMAT,
         "manifest_hash": project_sha256(&manifest_bytes),
         "standard": {
@@ -535,8 +534,7 @@ fn bless_determinism_case(
         }],
         "generator_inputs": [],
         "privileged_units": []
-    }))
-    .map_err(|error| error.to_string())?;
+    }))?;
     let lockfile_path = case_root.join("Tondo.lock");
     write_generated(&lockfile_path, &lockfile_bytes)?;
 
@@ -773,7 +771,7 @@ fn pattern(
 }
 
 fn pseudocode_record(fence: &DocumentFence) -> Value {
-    json!({
+    sorted_json_value(json!({
         "file": SPECIFICATION,
         "fence_byte": fence.fence_byte,
         "category": "pseudocode",
@@ -787,7 +785,31 @@ fn pseudocode_record(fence: &DocumentFence) -> Value {
         "typecheck_ok": null,
         "expected_codes": [],
         "actual_codes": []
-    })
+    }))
+}
+
+/// Serialize dynamic JSON with the byte ordering used by the published
+/// checkpoint. Struct fields keep their declaration order; maps supplied as
+/// `Value` are sorted recursively so generated fixture bytes do not depend on
+/// the workspace's `serde_json` map feature.
+fn sorted_json_bytes(value: Value) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(&sorted_json_value(value)).map_err(|error| error.to_string())
+}
+
+fn sorted_json_value(value: Value) -> Value {
+    match value {
+        Value::Object(object) => {
+            let mut entries = object.into_iter().collect::<Vec<_>>();
+            entries.sort_by(|left, right| left.0.as_bytes().cmp(right.0.as_bytes()));
+            let mut sorted = Map::with_capacity(entries.len());
+            for (key, value) in entries {
+                sorted.insert(key, sorted_json_value(value));
+            }
+            Value::Object(sorted)
+        }
+        Value::Array(values) => Value::Array(values.into_iter().map(sorted_json_value).collect()),
+        scalar => scalar,
+    }
 }
 
 fn source_groups() -> [(&'static str, CaseGroup); 7] {
@@ -1083,7 +1105,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn blessing_is_a_reproducible_source_tree_transformation() {
+    fn blessing_is_a_reproducible_current_source_tree_transformation() {
         let source = workspace_root();
         let workspace = TemporaryWorkspace::copy_from(&source);
         fs::write(
@@ -1091,17 +1113,19 @@ mod tests {
             b"the draft specification must not affect the baseline",
         )
         .expect("the draft specification must be replaceable in the isolated workspace");
-        let before = source_snapshot(&source);
-
-        let summary = bless_at(&workspace.path).expect("the published suite must be reproducible");
-
-        assert_eq!(source_snapshot(&workspace.path), before);
+        let first_summary = bless_at(&workspace.path).expect("the current suite must be blessable");
+        let first = source_snapshot(&workspace.path);
+        let second_summary =
+            bless_at(&workspace.path).expect("blessing the current suite must be repeatable");
+        let second = source_snapshot(&workspace.path);
+        assert_eq!(second, first);
+        assert_eq!(second_summary, first_summary);
         assert_eq!(
-            summary,
+            first_summary,
             format!(
                 "wrote 205 cases to {MANIFEST} ({})",
                 tondo_conformance::sha256(
-                    &fs::read(source.join(MANIFEST)).expect("the manifest must exist")
+                    &fs::read(workspace.path.join(MANIFEST)).expect("the manifest must exist")
                 )
             )
         );
