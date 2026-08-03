@@ -262,7 +262,11 @@ impl Generator {
     }
 
     pub fn for_case(seed: u64, case_index: u64) -> Self {
-        let state = seed.wrapping_add(case_index.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        let mut state = (seed ^ 0x9e37_79b9_7f4a_7c15)
+            .wrapping_add(case_index.wrapping_mul(0x9e37_79b9_7f4a_7c15));
+        if state == 0 {
+            state = 0x6a09_e667_f3bc_c909;
+        }
         Self {
             seed,
             case_index,
@@ -287,11 +291,10 @@ impl Generator {
             .draws
             .checked_add(1)
             .ok_or(GenerationError::Exhausted)?;
-        self.state = self.state.wrapping_add(0x9e37_79b9_7f4a_7c15);
-        let mut value = self.state;
-        value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
-        value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
-        Ok(value ^ (value >> 31))
+        self.state ^= self.state << 7;
+        self.state ^= self.state >> 9;
+        self.state ^= self.state << 8;
+        Ok(self.state)
     }
 
     pub fn next_bool(&mut self) -> Result<bool, GenerationError> {
@@ -306,10 +309,19 @@ impl Generator {
             .wrapping_sub(minimum as u128)
             .wrapping_add(1);
         if span == 0 {
-            return Ok(self.next_u64().map(i128::from)?);
+            let high = u128::from(self.next_u64()?);
+            let low = u128::from(self.next_u64()?);
+            return Ok(i128::from_ne_bytes(((high << 64) | low).to_ne_bytes()));
         }
-        let sample = u128::from(self.next_u64()?);
-        Ok(minimum.wrapping_add((sample % span) as i128))
+        let threshold = span.wrapping_neg() % span;
+        loop {
+            let high = u128::from(self.next_u64()?);
+            let low = u128::from(self.next_u64()?);
+            let sample = (high << 64) | low;
+            if sample >= threshold {
+                return Ok(minimum.wrapping_add((sample % span) as i128));
+            }
+        }
     }
 
     pub fn next_bytes(&mut self, maximum_length: usize) -> Result<Vec<u8>, GenerationError> {
@@ -323,11 +335,21 @@ impl Generator {
     }
 
     pub fn next_text(&mut self, maximum_bytes: usize) -> Result<String, GenerationError> {
-        let bytes = self.next_bytes(maximum_bytes)?;
-        Ok(bytes
-            .into_iter()
-            .map(|byte| char::from(b'a' + byte % 26))
-            .collect())
+        let length = usize::try_from(self.next_int(0, maximum_bytes as i128)?)
+            .map_err(|_| GenerationError::LimitExceeded)?;
+        let mut output = String::with_capacity(length);
+        while output.len() < length {
+            let mut scalar = (self.next_u64()? % 0x11_0000) as u32;
+            if (0xd800..=0xdfff).contains(&scalar) {
+                scalar += 0x800;
+            }
+            let character = char::from_u32(scalar).ok_or(GenerationError::LimitExceeded)?;
+            if output.len() + character.len_utf8() > length {
+                break;
+            }
+            output.push(character);
+        }
+        Ok(output)
     }
 }
 
@@ -354,9 +376,69 @@ impl Shrink for String {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        Ok((1..=self.len().min(limit))
-            .map(|length| self[..self.floor_char_boundary(length)].to_owned())
-            .collect())
+        let mut result = Vec::new();
+        for length in 0..=self.len() {
+            if result.len() == limit {
+                break;
+            }
+            let candidate = self[..self.floor_char_boundary(length)].to_owned();
+            if !result.contains(&candidate) {
+                result.push(candidate);
+            }
+        }
+        Ok(result)
+    }
+}
+
+impl Shrink for f64 {
+    fn candidates(&self, limit: usize) -> Result<Vec<Self>, GenerationError> {
+        if limit == 0 || self.is_nan() {
+            return Ok(Vec::new());
+        }
+        let mut result = Vec::new();
+        for candidate in [0.0, *self / 2.0, -*self / 2.0] {
+            if result.len() == limit {
+                break;
+            }
+            if !result.contains(&candidate) {
+                result.push(candidate);
+            }
+        }
+        Ok(result)
+    }
+}
+
+impl<T> Shrink for Vec<T>
+where
+    T: Shrink + Clone + PartialEq,
+{
+    fn candidates(&self, limit: usize) -> Result<Vec<Self>, GenerationError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut result = Vec::new();
+        for length in 0..=self.len() {
+            if result.len() == limit {
+                break;
+            }
+            let candidate = self[..length].to_vec();
+            if !result.contains(&candidate) {
+                result.push(candidate);
+            }
+        }
+        for index in 0..self.len() {
+            for value in self[index].candidates(limit.saturating_sub(result.len()))? {
+                if result.len() == limit {
+                    break;
+                }
+                let mut candidate = self.clone();
+                candidate[index] = value;
+                if !result.contains(&candidate) {
+                    result.push(candidate);
+                }
+            }
+        }
+        Ok(result)
     }
 }
 
@@ -432,12 +514,29 @@ mod tests {
             text_left.next_text(4).unwrap(),
             text_right.next_text(4).unwrap()
         );
+        for (seed, case_index) in [(0, 0), (u64::MAX, u64::MAX), (7, 3)] {
+            let text = Generator::for_case(seed, case_index).next_text(64).unwrap();
+            assert!(text.len() <= 64);
+            assert!(text.is_char_boundary(text.len()));
+            assert!(
+                text.chars()
+                    .all(|character| !(0xd800..=0xdfff).contains(&(character as u32)))
+            );
+        }
+        assert_eq!(Generator::for_case(7, 3).next_int(4, 4), Ok(4));
+        let mut full_range = Generator::for_case(7, 3);
+        assert!(full_range.next_int(i128::MIN, i128::MAX).is_ok());
+        assert_eq!(full_range.draw_count(), 2);
     }
 
     #[test]
     fn shrink_candidates_are_bounded_and_deterministic() {
         assert_eq!(shrink(&10_i128, 3).unwrap(), vec![5, 2, 1]);
-        assert_eq!(shrink(&"tondo".to_owned(), 2).unwrap(), vec!["t", "to"]);
+        assert_eq!(
+            shrink(&"tondo".to_owned(), 3).unwrap(),
+            vec!["".to_owned(), "t".to_owned(), "to".to_owned()]
+        );
+        assert_eq!(shrink(&vec![10_i128, 4], 3).unwrap()[0], Vec::<i128>::new());
         assert!(shrink(&10_i128, 0).unwrap().is_empty());
     }
 }
