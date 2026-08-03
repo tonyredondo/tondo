@@ -243,6 +243,8 @@ pub enum BytecodeIntrinsicType {
     PathError,
     FsError,
     MathError,
+    FloatTolerance,
+    FloatToleranceError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -380,6 +382,8 @@ impl BytecodeIntrinsicType {
             | Self::PathError
             | Self::FsError
             | Self::MathError
+            | Self::FloatTolerance
+            | Self::FloatToleranceError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle
@@ -436,6 +440,8 @@ impl BytecodeIntrinsicType {
             | Self::PathError
             | Self::FsError
             | Self::MathError
+            | Self::FloatTolerance
+            | Self::FloatToleranceError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessError

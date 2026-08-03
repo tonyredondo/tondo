@@ -120,6 +120,8 @@ pub enum IntrinsicType {
     PathError,
     FsError,
     MathError,
+    FloatTolerance,
+    FloatToleranceError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -158,6 +160,8 @@ impl IntrinsicType {
             Self::PathError => "PathError",
             Self::FsError => "FsError",
             Self::MathError => "MathError",
+            Self::FloatTolerance => "FloatTolerance",
+            Self::FloatToleranceError => "FloatToleranceError",
             Self::ExitStatus => "ExitStatus",
             Self::ProcessOutput => "ProcessOutput",
             Self::ProcessHandle => "ProcessHandle",
@@ -191,6 +195,8 @@ impl IntrinsicType {
             | Self::PathError
             | Self::FsError
             | Self::MathError
+            | Self::FloatTolerance
+            | Self::FloatToleranceError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle

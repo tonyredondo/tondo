@@ -402,6 +402,15 @@ impl<'a> TypeLowerer<'a> {
             let testing_duration = self
                 .interner
                 .intrinsic(IntrinsicType::Duration, Vec::new())?;
+            let float_tolerance = self
+                .interner
+                .intrinsic(IntrinsicType::FloatTolerance, Vec::new())?;
+            let float_tolerance_error = self
+                .interner
+                .intrinsic(IntrinsicType::FloatToleranceError, Vec::new())?;
+            let float_tolerance_result = self
+                .interner
+                .result(float_tolerance, float_tolerance_error)?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::TestingLog,
@@ -486,12 +495,53 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 unit,
             )?;
-            self.push_bootstrap_host_callable(
+            self.push_bootstrap_host_callable_with_modes(
                 span,
                 HirBootstrapHostFunction::TestingAssertFloatNear,
-                vec![(self.interner.scalar(ScalarType::Float), false); 4],
+                vec![
+                    (
+                        self.interner.scalar(ScalarType::Float),
+                        ParameterMode::Value,
+                        false,
+                    ),
+                    (
+                        self.interner.scalar(ScalarType::Float),
+                        ParameterMode::Value,
+                        false,
+                    ),
+                    (float_tolerance, ParameterMode::Ref, false),
+                ],
                 None,
                 unit,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::TestingAssertFloat32Near,
+                vec![
+                    (
+                        self.interner.scalar(ScalarType::Float32),
+                        ParameterMode::Value,
+                        false,
+                    ),
+                    (
+                        self.interner.scalar(ScalarType::Float32),
+                        ParameterMode::Value,
+                        false,
+                    ),
+                    (float_tolerance, ParameterMode::Ref, false),
+                ],
+                None,
+                unit,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingFloatToleranceFrom,
+                vec![
+                    (self.interner.scalar(ScalarType::Float), false),
+                    (self.interner.scalar(ScalarType::Float), false),
+                ],
+                None,
+                float_tolerance_result,
             )?;
             for function in [
                 HirBootstrapHostFunction::TestingFailNow,
@@ -4742,6 +4792,8 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::PathError
                         | IntrinsicType::FsError
                         | IntrinsicType::MathError
+                        | IntrinsicType::FloatTolerance
+                        | IntrinsicType::FloatToleranceError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle

@@ -88,6 +88,8 @@ enum HostValue {
     PathError { _message: String },
     FsError { _message: String },
     MathError { _message: String },
+    FloatTolerance(FloatTolerance),
+    FloatToleranceError { _message: String },
     Instant { domain: u64, nanos: i128 },
     Timer { domain: u64, deadline: i128 },
     DurationError { _message: String },
@@ -451,6 +453,33 @@ impl BootstrapHost {
                 _message: message.into(),
             },
         )))
+    }
+
+    fn float_tolerance(&self, value: &RuntimeValue) -> Result<FloatTolerance, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::FloatTolerance,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("FloatTolerance value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::FloatTolerance(tolerance)) => Ok(*tolerance),
+            _ => Err(VmError::Host("FloatTolerance token is stale".into())),
+        }
+    }
+
+    fn float_tolerance_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::FloatToleranceError,
+            HostValue::FloatToleranceError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn float_tolerance_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.float_tolerance_error(message)))
     }
 
     fn duration_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -1594,28 +1623,75 @@ impl VmHost for BootstrapHost {
                 )
             }
             (
+                "std.testing.FloatTolerance.from",
+                [RuntimeValue::Float(absolute), RuntimeValue::Float(relative)],
+            ) => match FloatTolerance::new(*absolute, *relative) {
+                Ok(tolerance) => Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                    RuntimeHostValueKind::FloatTolerance,
+                    HostValue::FloatTolerance(tolerance),
+                )))),
+                Err(error) => Ok(self.float_tolerance_result_error(format!("{error:?}"))),
+            },
+            (
                 "std.testing.assertFloatNear",
                 [
                     RuntimeValue::Float(expected),
                     RuntimeValue::Float(actual),
-                    RuntimeValue::Float(absolute),
-                    RuntimeValue::Float(relative),
+                    tolerance,
                 ],
             ) => {
                 let envelope = self.testing_envelope()?;
-                let result = match FloatTolerance::new(*absolute, *relative) {
-                    Ok(tolerance) if tolerance.is_near(*expected, *actual) => Ok(()),
-                    Ok(_) => Err(ControlError::FailNow {
+                let tolerance = self.float_tolerance(tolerance)?;
+                let result = if tolerance.is_near(*expected, *actual) {
+                    Ok(())
+                } else {
+                    Err(ControlError::FailNow {
                         message: format!(
-                            "float assertion failed: expected {expected}, actual {actual}, absolute {absolute}, relative {relative}"
+                            "float assertion failed: expected {expected}, actual {actual}, absolute {}, relative {}",
+                            tolerance.absolute, tolerance.relative
                         ),
-                    }),
-                    Err(error) => Err(ControlError::FailNow {
-                        message: format!("invalid float tolerance: {error:?}"),
-                    }),
+                    })
                 };
                 Self::testing_result(&envelope, result)
             }
+            (
+                "std.testing.assertFloat32Near",
+                [
+                    RuntimeValue::Float(expected),
+                    RuntimeValue::Float(actual),
+                    tolerance,
+                ],
+            ) => {
+                let envelope = self.testing_envelope()?;
+                let tolerance = self.float_tolerance(tolerance)?;
+                let result = if tolerance.is_near(*expected, *actual) {
+                    Ok(())
+                } else {
+                    Err(ControlError::FailNow {
+                        message: format!(
+                            "float32 assertion failed: expected {expected}, actual {actual}, absolute {}, relative {}",
+                            tolerance.absolute, tolerance.relative
+                        ),
+                    })
+                };
+                Self::testing_result(&envelope, result)
+            }
+            /*
+             * Keep this arm unreachable for older bytecode so a stale client
+             * fails with a host error instead of silently accepting the old
+             * four-float ABI.
+             */
+            (
+                "std.testing.assertFloatNear",
+                [
+                    RuntimeValue::Float(_),
+                    RuntimeValue::Float(_),
+                    RuntimeValue::Float(_),
+                    RuntimeValue::Float(_),
+                ],
+            ) => Err(VmError::Host(
+                "std.testing.assertFloatNear uses FloatTolerance.from".into(),
+            )),
             ("std.testing.tags", [RuntimeValue::Map(entries)]) => {
                 let envelope = self.testing_envelope()?;
                 let mut tags = BTreeMap::new();
@@ -4053,6 +4129,71 @@ mod tests {
     }
 
     #[test]
+    fn testing_float_tolerance_is_validated_once_and_used_by_float_widths() {
+        let envelope = EnvelopeHandle::new(
+            "float-tolerance",
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+        );
+        envelope
+            .set_phase(crate::test_control::ExecutionPhase::Body)
+            .unwrap();
+        let mut host = BootstrapHost::default();
+        host.install_testing_envelope(envelope.clone());
+        let tolerance = host
+            .invoke(
+                "std.testing.FloatTolerance.from",
+                &[RuntimeValue::Float(0.01), RuntimeValue::Float(0.1)],
+            )
+            .unwrap();
+        let RuntimeValue::ResultOk(value) = tolerance else {
+            panic!("valid tolerance must return Ok")
+        };
+        assert!(matches!(
+            value.as_ref(),
+            RuntimeValue::Host {
+                kind: RuntimeHostValueKind::FloatTolerance,
+                ..
+            }
+        ));
+        host.invoke(
+            "std.testing.assertFloatNear",
+            &[
+                RuntimeValue::Float(10.0),
+                RuntimeValue::Float(10.5),
+                (*value).clone(),
+            ],
+        )
+        .unwrap();
+        host.invoke(
+            "std.testing.assertFloat32Near",
+            &[
+                RuntimeValue::Float(10.0),
+                RuntimeValue::Float(10.5),
+                (*value).clone(),
+            ],
+        )
+        .unwrap();
+        let invalid = host
+            .invoke(
+                "std.testing.FloatTolerance.from",
+                &[RuntimeValue::Float(-1.0), RuntimeValue::Float(0.0)],
+            )
+            .unwrap();
+        assert!(matches!(
+            invalid,
+            RuntimeValue::ResultErr(value)
+                if matches!(
+                    value.as_ref(),
+                    RuntimeValue::Host {
+                        kind: RuntimeHostValueKind::FloatToleranceError,
+                        ..
+                    }
+                )
+        ));
+        assert!(envelope.report().unwrap().terminal().is_none());
+    }
+
+    #[test]
     fn testing_host_records_typed_evidence_in_the_installed_envelope() {
         let envelope = EnvelopeHandle::new(
             "hosted-test",
@@ -4090,14 +4231,23 @@ mod tests {
             .unwrap(),
             RuntimeValue::Unit
         );
+        let tolerance = match host
+            .invoke(
+                "std.testing.FloatTolerance.from",
+                &[RuntimeValue::Float(0.01), RuntimeValue::Float(0.1)],
+            )
+            .unwrap()
+        {
+            RuntimeValue::ResultOk(value) => *value,
+            other => panic!("unexpected tolerance result: {other:?}"),
+        };
         assert_eq!(
             host.invoke(
                 "std.testing.assertFloatNear",
                 &[
                     RuntimeValue::Float(10.0),
                     RuntimeValue::Float(10.5),
-                    RuntimeValue::Float(0.01),
-                    RuntimeValue::Float(0.1),
+                    tolerance,
                 ],
             )
             .unwrap(),

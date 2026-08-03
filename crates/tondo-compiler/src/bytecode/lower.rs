@@ -4105,6 +4105,8 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::PathError => bc::BytecodeIntrinsicType::PathError,
         IntrinsicType::FsError => bc::BytecodeIntrinsicType::FsError,
         IntrinsicType::MathError => bc::BytecodeIntrinsicType::MathError,
+        IntrinsicType::FloatTolerance => bc::BytecodeIntrinsicType::FloatTolerance,
+        IntrinsicType::FloatToleranceError => bc::BytecodeIntrinsicType::FloatToleranceError,
         IntrinsicType::ExitStatus => bc::BytecodeIntrinsicType::ExitStatus,
         IntrinsicType::ProcessOutput => bc::BytecodeIntrinsicType::ProcessOutput,
         IntrinsicType::ProcessHandle => bc::BytecodeIntrinsicType::ProcessHandle,

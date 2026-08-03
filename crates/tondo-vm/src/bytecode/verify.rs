@@ -458,6 +458,8 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::FsError
                 | BytecodeIntrinsicType::MathError
+                | BytecodeIntrinsicType::FloatTolerance
+                | BytecodeIntrinsicType::FloatToleranceError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -1060,7 +1062,9 @@ fn intrinsic_capability(
         | BytecodeIntrinsicType::ProcessError
         | BytecodeIntrinsicType::ProcessExitError
         | BytecodeIntrinsicType::Utf8Error
-        | BytecodeIntrinsicType::MathError => fixed_capability(matches!(
+        | BytecodeIntrinsicType::MathError
+        | BytecodeIntrinsicType::FloatTolerance
+        | BytecodeIntrinsicType::FloatToleranceError => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
                 | ClosedCapability::Discard
@@ -1425,6 +1429,8 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::PathError
         | BytecodeIntrinsicType::FsError
         | BytecodeIntrinsicType::MathError
+        | BytecodeIntrinsicType::FloatTolerance
+        | BytecodeIntrinsicType::FloatToleranceError
         | BytecodeIntrinsicType::ExitStatus
         | BytecodeIntrinsicType::ProcessOutput
         | BytecodeIntrinsicType::ProcessError
@@ -1582,6 +1588,8 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::FsError
                 | BytecodeIntrinsicType::MathError
+                | BytecodeIntrinsicType::FloatTolerance
+                | BytecodeIntrinsicType::FloatToleranceError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -2061,6 +2069,8 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.testing.VirtualTime.")
                 && !callable.name.starts_with("std.testing.assertEqual")
                 && !callable.name.starts_with("std.testing.assertNotEqual")
+                && !callable.name.starts_with("std.testing.assertFloatNear")
+                && !callable.name.starts_with("std.testing.assertFloat32Near")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,

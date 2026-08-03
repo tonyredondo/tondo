@@ -104,6 +104,8 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::PathError
         | IntrinsicType::FsError
         | IntrinsicType::MathError
+        | IntrinsicType::FloatTolerance
+        | IntrinsicType::FloatToleranceError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
         | IntrinsicType::ProcessError
@@ -446,6 +448,8 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::PathError
         | IntrinsicType::FsError
         | IntrinsicType::MathError
+        | IntrinsicType::FloatTolerance
+        | IntrinsicType::FloatToleranceError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
         | IntrinsicType::ProcessError

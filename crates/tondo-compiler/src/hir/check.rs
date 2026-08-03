@@ -828,6 +828,8 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::PathError
                         | IntrinsicType::FsError
                         | IntrinsicType::MathError
+                        | IntrinsicType::FloatTolerance
+                        | IntrinsicType::FloatToleranceError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle
@@ -13632,8 +13634,14 @@ impl<'a> ExpressionChecker<'a> {
             .child_tokens()
             .filter(|token| token.kind() == TokenKind::Identifier)
             .collect::<Vec<_>>();
-        let [module_token, function_token] = identifiers.as_slice() else {
-            return Ok(None);
+        let (module_token, function_token, static_float_tolerance) = match identifiers.as_slice() {
+            [module_token, function_token] => (module_token, function_token, false),
+            [module_token, type_token, function_token]
+                if type_token.token().normalized_identifier() == Some("FloatTolerance") =>
+            {
+                (module_token, function_token, true)
+            }
+            _ => return Ok(None),
         };
         let Some(module_reference) = self.resolved.reference(file, module_token.range()) else {
             return Ok(None);
@@ -13652,97 +13660,110 @@ impl<'a> ExpressionChecker<'a> {
             // call. Leave it for the nominal-constructor checker below.
             return Ok(None);
         }
-        let host_function = match (module.path().as_str(), function_name) {
-            ("console", Some("print")) => HirBootstrapHostFunction::ConsolePrint,
-            ("console", Some("println")) => HirBootstrapHostFunction::ConsolePrintln,
-            ("console", Some("flush")) => HirBootstrapHostFunction::ConsoleFlush,
-            ("process", Some("args")) => HirBootstrapHostFunction::ProcessArgs,
-            ("process", Some("cmd")) => HirBootstrapHostFunction::ProcessCmd,
-            ("process", Some("shell")) => HirBootstrapHostFunction::ProcessShell,
-            ("bytes", Some("empty")) => HirBootstrapHostFunction::BytesEmpty,
-            ("bytes", Some("fromArray")) => HirBootstrapHostFunction::BytesFromArray,
-            ("bytes", Some("builder")) => HirBootstrapHostFunction::BytesBuilder,
-            ("time", Some("now")) => HirBootstrapHostFunction::TimeNow,
-            ("time", Some("resolution")) => HirBootstrapHostFunction::TimeResolution,
-            ("time", Some("deadline")) => HirBootstrapHostFunction::TimeDeadline,
-            ("time", Some("sleep")) => HirBootstrapHostFunction::TimeSleep,
-            ("env", Some("snapshot")) => HirBootstrapHostFunction::EnvSnapshot,
-            ("math", Some("floor")) => HirBootstrapHostFunction::MathFloor,
-            ("math", Some("ceil")) => HirBootstrapHostFunction::MathCeil,
-            ("math", Some("round")) => HirBootstrapHostFunction::MathRound,
-            ("math", Some("truncate")) => HirBootstrapHostFunction::MathTruncate,
-            ("math", Some("sqrt")) => HirBootstrapHostFunction::MathSqrt,
-            ("math", Some("fma")) => HirBootstrapHostFunction::MathFma,
-            ("math", Some("abs")) => HirBootstrapHostFunction::MathAbs,
-            ("math", Some("min")) => HirBootstrapHostFunction::MathMin,
-            ("math", Some("max")) => HirBootstrapHostFunction::MathMax,
-            ("json", Some("validate")) => HirBootstrapHostFunction::JsonValidate,
-            ("json", Some("canonicalize")) => HirBootstrapHostFunction::JsonCanonicalize,
-            ("messagepack", Some("validate")) => HirBootstrapHostFunction::MessagePackValidate,
-            ("messagepack", Some("canonicalize")) => {
-                HirBootstrapHostFunction::MessagePackCanonicalize
+        let host_function = if static_float_tolerance {
+            if module.path().as_str() == "testing" && function_name == Some("from") {
+                HirBootstrapHostFunction::TestingFloatToleranceFrom
+            } else {
+                return Ok(None);
             }
-            ("protobuf", Some("validate")) => HirBootstrapHostFunction::ProtobufValidate,
-            ("path", Some("fromString")) => HirBootstrapHostFunction::PathFromString,
-            ("path", Some("fromBytes")) => HirBootstrapHostFunction::PathFromBytes,
-            ("fs", Some("readAll")) => HirBootstrapHostFunction::FsReadAll,
-            ("fs", Some("writeAll")) => HirBootstrapHostFunction::FsWriteAll,
-            ("fs", Some("createDirectory")) => HirBootstrapHostFunction::FsCreateDirectory,
-            ("fs", Some("remove")) => HirBootstrapHostFunction::FsRemove,
-            ("fs", Some("list")) => HirBootstrapHostFunction::FsList,
-            ("fs", Some("rename")) => HirBootstrapHostFunction::FsRename,
-            ("fs", Some("atomicWrite")) => HirBootstrapHostFunction::FsAtomicWrite,
-            ("testing", Some("log")) => HirBootstrapHostFunction::TestingLog,
-            ("testing", Some("assertEqual")) => HirBootstrapHostFunction::TestingAssertEqual,
-            ("testing", Some("assertNotEqual")) => HirBootstrapHostFunction::TestingAssertNotEqual,
-            ("testing", Some("assertTextEqual")) => {
-                HirBootstrapHostFunction::TestingAssertTextEqual
+        } else {
+            match (module.path().as_str(), function_name) {
+                ("console", Some("print")) => HirBootstrapHostFunction::ConsolePrint,
+                ("console", Some("println")) => HirBootstrapHostFunction::ConsolePrintln,
+                ("console", Some("flush")) => HirBootstrapHostFunction::ConsoleFlush,
+                ("process", Some("args")) => HirBootstrapHostFunction::ProcessArgs,
+                ("process", Some("cmd")) => HirBootstrapHostFunction::ProcessCmd,
+                ("process", Some("shell")) => HirBootstrapHostFunction::ProcessShell,
+                ("bytes", Some("empty")) => HirBootstrapHostFunction::BytesEmpty,
+                ("bytes", Some("fromArray")) => HirBootstrapHostFunction::BytesFromArray,
+                ("bytes", Some("builder")) => HirBootstrapHostFunction::BytesBuilder,
+                ("time", Some("now")) => HirBootstrapHostFunction::TimeNow,
+                ("time", Some("resolution")) => HirBootstrapHostFunction::TimeResolution,
+                ("time", Some("deadline")) => HirBootstrapHostFunction::TimeDeadline,
+                ("time", Some("sleep")) => HirBootstrapHostFunction::TimeSleep,
+                ("env", Some("snapshot")) => HirBootstrapHostFunction::EnvSnapshot,
+                ("math", Some("floor")) => HirBootstrapHostFunction::MathFloor,
+                ("math", Some("ceil")) => HirBootstrapHostFunction::MathCeil,
+                ("math", Some("round")) => HirBootstrapHostFunction::MathRound,
+                ("math", Some("truncate")) => HirBootstrapHostFunction::MathTruncate,
+                ("math", Some("sqrt")) => HirBootstrapHostFunction::MathSqrt,
+                ("math", Some("fma")) => HirBootstrapHostFunction::MathFma,
+                ("math", Some("abs")) => HirBootstrapHostFunction::MathAbs,
+                ("math", Some("min")) => HirBootstrapHostFunction::MathMin,
+                ("math", Some("max")) => HirBootstrapHostFunction::MathMax,
+                ("json", Some("validate")) => HirBootstrapHostFunction::JsonValidate,
+                ("json", Some("canonicalize")) => HirBootstrapHostFunction::JsonCanonicalize,
+                ("messagepack", Some("validate")) => HirBootstrapHostFunction::MessagePackValidate,
+                ("messagepack", Some("canonicalize")) => {
+                    HirBootstrapHostFunction::MessagePackCanonicalize
+                }
+                ("protobuf", Some("validate")) => HirBootstrapHostFunction::ProtobufValidate,
+                ("path", Some("fromString")) => HirBootstrapHostFunction::PathFromString,
+                ("path", Some("fromBytes")) => HirBootstrapHostFunction::PathFromBytes,
+                ("fs", Some("readAll")) => HirBootstrapHostFunction::FsReadAll,
+                ("fs", Some("writeAll")) => HirBootstrapHostFunction::FsWriteAll,
+                ("fs", Some("createDirectory")) => HirBootstrapHostFunction::FsCreateDirectory,
+                ("fs", Some("remove")) => HirBootstrapHostFunction::FsRemove,
+                ("fs", Some("list")) => HirBootstrapHostFunction::FsList,
+                ("fs", Some("rename")) => HirBootstrapHostFunction::FsRename,
+                ("fs", Some("atomicWrite")) => HirBootstrapHostFunction::FsAtomicWrite,
+                ("testing", Some("log")) => HirBootstrapHostFunction::TestingLog,
+                ("testing", Some("assertEqual")) => HirBootstrapHostFunction::TestingAssertEqual,
+                ("testing", Some("assertNotEqual")) => {
+                    HirBootstrapHostFunction::TestingAssertNotEqual
+                }
+                ("testing", Some("assertTextEqual")) => {
+                    HirBootstrapHostFunction::TestingAssertTextEqual
+                }
+                ("testing", Some("assertFloatNear")) => {
+                    HirBootstrapHostFunction::TestingAssertFloatNear
+                }
+                ("testing", Some("assertFloat32Near")) => {
+                    HirBootstrapHostFunction::TestingAssertFloat32Near
+                }
+                ("testing", Some("assertSome")) => HirBootstrapHostFunction::TestingAssertSome,
+                ("testing", Some("assertNone")) => HirBootstrapHostFunction::TestingAssertNone,
+                ("testing", Some("assertOk")) => HirBootstrapHostFunction::TestingAssertOk,
+                ("testing", Some("assertErr")) => HirBootstrapHostFunction::TestingAssertErr,
+                ("testing", Some("tags")) => HirBootstrapHostFunction::TestingTags,
+                ("testing", Some("failNow")) => HirBootstrapHostFunction::TestingFailNow,
+                ("testing", Some("skip")) => HirBootstrapHostFunction::TestingSkip,
+                ("testing", Some("attach")) => HirBootstrapHostFunction::TestingAttach,
+                ("testing", Some("snapshot")) => HirBootstrapHostFunction::TestingSnapshot,
+                ("testing", Some("withVirtualTime")) => {
+                    HirBootstrapHostFunction::TestingWithVirtualTime
+                }
+                ("testing", Some("__runLeaf")) if generated_testing => {
+                    HirBootstrapHostFunction::TestingRunLeaf
+                }
+                ("testing", Some("__runSuite")) if generated_testing => {
+                    HirBootstrapHostFunction::TestingRunSuite
+                }
+                ("testing", Some("__beginSuiteCleanup")) if generated_testing => {
+                    HirBootstrapHostFunction::TestingBeginSuiteCleanup
+                }
+                ("process", Some(name))
+                | ("bytes", Some(name))
+                | ("env", Some(name))
+                | ("math", Some(name))
+                | ("json", Some(name))
+                | ("messagepack", Some(name))
+                | ("protobuf", Some(name))
+                | ("path", Some(name))
+                | ("fs", Some(name))
+                | ("testing", Some(name)) => {
+                    let module_name = module.path().as_str();
+                    self.emit(
+                        self.sources.span(file, function_token.range())?,
+                        "E1102",
+                        format!("`std.{module_name}` has no function named `{name}`"),
+                        Vec::new(),
+                        None,
+                    )?;
+                    return self.recovery_expression(file, range).map(Some);
+                }
+                _ => return Ok(None),
             }
-            ("testing", Some("assertFloatNear")) => {
-                HirBootstrapHostFunction::TestingAssertFloatNear
-            }
-            ("testing", Some("assertSome")) => HirBootstrapHostFunction::TestingAssertSome,
-            ("testing", Some("assertNone")) => HirBootstrapHostFunction::TestingAssertNone,
-            ("testing", Some("assertOk")) => HirBootstrapHostFunction::TestingAssertOk,
-            ("testing", Some("assertErr")) => HirBootstrapHostFunction::TestingAssertErr,
-            ("testing", Some("tags")) => HirBootstrapHostFunction::TestingTags,
-            ("testing", Some("failNow")) => HirBootstrapHostFunction::TestingFailNow,
-            ("testing", Some("skip")) => HirBootstrapHostFunction::TestingSkip,
-            ("testing", Some("attach")) => HirBootstrapHostFunction::TestingAttach,
-            ("testing", Some("snapshot")) => HirBootstrapHostFunction::TestingSnapshot,
-            ("testing", Some("withVirtualTime")) => {
-                HirBootstrapHostFunction::TestingWithVirtualTime
-            }
-            ("testing", Some("__runLeaf")) if generated_testing => {
-                HirBootstrapHostFunction::TestingRunLeaf
-            }
-            ("testing", Some("__runSuite")) if generated_testing => {
-                HirBootstrapHostFunction::TestingRunSuite
-            }
-            ("testing", Some("__beginSuiteCleanup")) if generated_testing => {
-                HirBootstrapHostFunction::TestingBeginSuiteCleanup
-            }
-            ("process", Some(name))
-            | ("bytes", Some(name))
-            | ("env", Some(name))
-            | ("math", Some(name))
-            | ("json", Some(name))
-            | ("messagepack", Some(name))
-            | ("protobuf", Some(name))
-            | ("path", Some(name))
-            | ("fs", Some(name))
-            | ("testing", Some(name)) => {
-                let module_name = module.path().as_str();
-                self.emit(
-                    self.sources.span(file, function_token.range())?,
-                    "E1102",
-                    format!("`std.{module_name}` has no function named `{name}`"),
-                    Vec::new(),
-                    None,
-                )?;
-                return self.recovery_expression(file, range).map(Some);
-            }
-            _ => return Ok(None),
         };
         let external_value = self
             .resolved
@@ -13767,7 +13788,7 @@ impl<'a> ExpressionChecker<'a> {
                 ),
                 _ => false,
             });
-        if !external_value {
+        if !external_value && !static_float_tolerance {
             return Ok(None);
         }
         if !matches!(
