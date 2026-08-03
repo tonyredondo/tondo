@@ -125,6 +125,18 @@ fn acceptance_project_is_relocatable_and_reports_canonical_observations() {
         assert_eq!(test.attempts[0].logs.len(), 1);
         assert!(test.attempts[0].tags.contains_key("kind"));
     }
+    let integration_root = first_report
+        .tests()
+        .iter()
+        .find(|test| test.id.ends_with("::integration_root"))
+        .unwrap();
+    assert_eq!(integration_root.attempts[0].virtual_time.len(), 1);
+    let virtual_time = &integration_root.attempts[0].virtual_time[0];
+    assert_eq!(virtual_time.index, 1);
+    assert_eq!(virtual_time.elapsed_ns, "25");
+    assert_eq!(virtual_time.automatic_advances, 1);
+    assert_eq!(virtual_time.explicit_advances, 0);
+    assert_eq!(virtual_time.settles, 1);
     let shared = first_report
         .suites()
         .iter()
@@ -512,6 +524,9 @@ fn acceptance_project_publishes_equivalent_json_and_junit_results() {
 
     let junit = fs::read_to_string(project.join("target/acceptance.xml")).unwrap();
     assert!(junit.contains("tests=\"5\""));
+    assert!(junit.contains("name=\"tondo.virtual_time\""));
+    assert!(junit.contains("&quot;elapsed_ns&quot;:&quot;25&quot;"));
+    assert!(junit.contains("&quot;automatic_advances&quot;:1"));
     for test in stdout.tests() {
         assert!(junit.contains(&test.id));
     }

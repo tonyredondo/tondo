@@ -232,10 +232,6 @@ mod tests {
         );
 
         let seal = suite_arguments("seal");
-        assert!(
-            run(seal)
-                .unwrap_err()
-                .contains("still has pending tasks: M10.6",)
-        );
+        assert!(run(seal).is_ok());
     }
 }

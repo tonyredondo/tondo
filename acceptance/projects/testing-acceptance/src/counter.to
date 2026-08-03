@@ -1,7 +1,13 @@
 import std.testing
+import std.time
 
 fn answer(): Int {
     42
+}
+
+pub async fn answerAfterBackoff(delay: time.Duration): Int ! time.ClockError {
+    await time.sleep(delay)?
+    answer()
 }
 
 test production_api {

@@ -1,4 +1,6 @@
+import acceptance.main as counter
 import std.testing
+import std.time
 
 fn recordIntegration() {
     testing.log("integration service")
@@ -22,7 +24,19 @@ async fn stopService() {
 
 test integration_root {
     recordIntegration()
-    assert(true)
+    match await testing.withVirtualTime(async (clock) {
+        let before = time.now()?
+        scope {
+            let response = spawn counter.answerAfterBackoff(time.Duration.fromNanoseconds(25))
+            await clock.settle()
+            assert(await response? == 42)
+        }
+        let after = time.now()?
+        assert(after.durationSince(before)?.toNanoseconds() == 25)
+    }) {
+        ok(_) => ()
+        err(_) => testing.failNow("virtual backoff failed")
+    }
 }
 
 suite shared_service {

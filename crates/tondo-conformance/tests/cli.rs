@@ -30,7 +30,7 @@ fn validate_command_reports_the_single_draft_identity() {
     assert!(output.stderr.is_empty());
     assert_eq!(
         String::from_utf8(output.stdout).expect("identity must be UTF-8"),
-        "tondo-draft 0.1 open 5 e8dcea866c52c17e18e709fb090a80036aac825363119b38631dd601f8a08b1e\n"
+        "tondo-draft 0.1 open 6 1d60f8109d77345c22e1464ec916508de415b3269f9239906def71eeddc469d2\n"
     );
 }
 
@@ -60,7 +60,7 @@ fn validate_command_rejects_a_second_lineage_name() {
 }
 
 #[test]
-fn seal_is_a_non_mutating_preflight_and_rejects_pending_work() {
+fn seal_is_a_non_mutating_preflight_for_the_complete_draft() {
     let output = Command::new(executable())
         .args([
             "seal",
@@ -76,10 +76,12 @@ fn seal_is_a_non_mutating_preflight_and_rejects_pending_work() {
         .output()
         .expect("the conformance runner must execute");
 
-    assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
-    let stderr = String::from_utf8(output.stderr).expect("error must be UTF-8");
-    assert!(stderr.contains("draft still has pending tasks: M10.6"));
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("identity must be UTF-8"),
+        "tondo-draft revision 6 satisfies the non-mutating seal preflight\n"
+    );
 }
 
 #[test]

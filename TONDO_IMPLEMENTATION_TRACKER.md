@@ -1,23 +1,15 @@
 # Tondo: tracker de implementación
 
-**Estado:** M10.5b, Gate H0, `META-FORMAT-001`, `PARSER-STACK-001`, los slices
-tempranos `std.bytes`, el time-base de `std.time`, el contrato/implementación
-read-only de `std.env`, `ASYNC-DEFER-IMPL-001`, `UTEST-PLAN-001`,
-`UTEST-INPUTS-PLAN-001`, `UTEST-RESULT-MODEL-001`, `UTEST-CLI-PARSE-001` y
-`UTEST-DISC-001`, `UTEST-OWNERS-001`, `UTEST-DEPS-001`, `UTEST-LEX-001`,
-`UTEST-CST-001`, `UTEST-FMT-001`, `UTEST-ID-001`, `UTEST-CAPTURE-001` y
-`UTEST-OVERLAY-001`, `UTEST-INTEG-001`, `UTEST-CHECK-001`, `UTEST-LOWER-001` y
-`UTEST-CONTROL-001`, `UTEST-RUNTIME-001`, `UTEST-SUITE-001`,
-`UTEST-LIMIT-001`, `UTEST-INPUTS-001`, `UTEST-GLOB-001`, `UTEST-SHARD-001` y
-`UTEST-SCHED-001` y `TOOLCHAIN-PROJECT-001` están
-cerrados sobre el
-draft actual; Tondo 0.1 sigue en desarrollo y las superficies consolidadas de
-metaprogramación, testing y Standard Library deben implementarse y añadirse a
-la conformidad del mismo draft antes de publicar la primera versión
+**Estado:** M10.5b, Gate H0, M10.7, M10.6 y Gate T0 están cerrados sobre el
+draft actual. Metaprogramación, reflection metadata-only, `defer await`, el
+runner público de testing, tiempo virtual y sus proyectos de aceptación forman
+parte de la conformidad viva. Tondo 0.1 sigue en desarrollo: el siguiente
+cierre es `CONF-SEAL-001`/Gate G5 y después comienza STD-0.1A; nada de ello
+afirma todavía una publicación.
 
-**Versión del tracker:** 1.35
+**Versión del tracker:** 1.36
 
-**Última actualización:** 2026-08-01
+**Última actualización:** 2026-08-02
 
 **Especificaciones normativas:**
 
@@ -25,16 +17,9 @@ la conformidad del mismo draft antes de publicar la primera versión
 - [Arquitectura base de Standard Library 0.1](./TONDO_STANDARD_LIBRARY_SPEC.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
-**Objetivo inmediato:** ejecutar las lanes restantes de Wave 2 después de cerrar
-`PARSER-STACK-001`, el prerrequisito portable de sintaxis. `META-FORMAT-001` ya consolidó los formatos del toolchain
-con el marcador único `draft`; no existe una lane `/1` frente a otra `/2`.
-A partir de aquí avanzan dos lanes:
-M10.7 sobre los slices tempranos de `std.meta`/`std.reflect`, y M10.6 sobre
-`defer await` y el runner de testing; el slice read-only de `std.env` ya está
-implementado;
-los slices de `std.bytes` y el contrato de `std.time` ya están cerrados. Gate
-G5 solo vuelve a cerrarse cuando ambas lanes forman parte de la conformidad
-vigente. Después se completa STD-0.1A, se fijan antes del backend los contratos
+**Objetivo inmediato:** ejecutar `CONF-SEAL-001` sobre la revisión 6 del linaje
+draft, ya sin tareas pendientes, y cerrar Gate G5 sin confundir un candidato
+inmutable con una publicación. Después se completa STD-0.1A, se fijan antes del backend los contratos
 runtime-facing de STD-0.1B, comienza M11 y, tras Gate N1, se implementa el resto
 de STD-0.1B y se cierra S1. Todo ello pertenece a la primera Standard Library
 0.1; los slices y fases son orden de implementación, no versiones públicas.
@@ -3287,7 +3272,7 @@ reporters.
   se validan como no vacíos y se retienen como artifacts identificados por
   target; el mismo binario debe superar además `--version` y Hello World.
 
-- [ ] **UTEST-DOGFOOD-001 — Probar componentes Tondo mediante `tondo test`.**
+- [x] **UTEST-DOGFOOD-001 — Probar componentes Tondo mediante `tondo test`.**
   Antes de Gate T0, mantener una pequeña biblioteca de aceptación escrita en
   Tondo con unit/integration tests y al menos una suite que comparta un recurso
   real. Debe usar `testing.log` y `testing.tags` desde helpers, probar
@@ -3305,70 +3290,75 @@ reporters.
   con backoff o deadline mediante `withVirtualTime`, sin pausas reales, y
   producir reportes JSON/JUnit con inputs, stores y tiempo virtual separado de
   duración operacional. No sustituye los tests Rust ni la conformidad;
-  demuestra que la experiencia pública funciona sin harness privado.
+  demuestra que la experiencia pública funciona sin harness privado. Cerrado
+  con los tres proyectos bajo `acceptance/projects/`: el corpus real recorre
+  unit e integration tests, suites, control, evidence, shards, retry, repeat y
+  reporters a través del binario; `integration_root` prueba la API pública de
+  producción `answerAfterBackoff` con `withVirtualTime`, `settle` y 25 ns
+  virtuales, y la aceptación exige esa evidencia tanto en JSON como en JUnit.
 
 ### Gate T0 — Testing first-class conforme
 
-- [ ] El corpus bootstrap, sus manifests, hashes y observations permanece
+- [x] El corpus bootstrap, sus manifests, hashes y observations permanece
   verificable como regresión histórica, fuera de los requisitos nuevos.
-- [ ] El borrador consolidado Tondo 0.1 incorpora el contrato de testing,
+- [x] El borrador consolidado Tondo 0.1 incorpora el contrato de testing,
   reserva `suite` y `test` y define `defer await` como cleanup general,
   infallible y verificable sin añadir hooks de testing ni un segundo dialecto.
-- [ ] Lexer, CST, parser, formatter, HIR, MIR, bytecode y VM recorren la ruta
+- [x] Lexer, CST, parser, formatter, HIR, MIR, bytecode y VM recorren la ruta
   común y sus verifiers aceptan o rechazan árboles suite/test con diagnostics
   exactos.
-- [ ] Unit overlays ven privados sin alterar producción; integration roots solo
+- [x] Unit overlays ven privados sin alterar producción; integration roots solo
   ven API pública; `std.testing`, dev-dependencies y operaciones test-only nunca
   entran en productos publicables.
-- [ ] Cada entrada recibe un envelope no observable ni falsificable que sigue
+- [x] Cada entrada recibe un envelope no observable ni falsificable que sigue
   frames/tasks y nunca se deriva de un thread-local del host; tags, logs y
   terminales se atribuyen al nodo exacto sin `TestContext` ni `currentTest()`.
-- [ ] Suites ejecutan setup una vez por participación solo para subárboles
+- [x] Suites ejecutan setup una vez por participación solo para subárboles
   seleccionados, permiten únicamente capturas `let: Copy + Send + Share`,
   hacen teardown tras todos los descendientes y reportan setup, teardown,
   `blocked-setup`, skip y `blocked-skip` sin duplicar causas.
-- [ ] Retorno, error, `assert`, `failNow`, skip, pánico, async, cancelación,
+- [x] Retorno, error, `assert`, `failNow`, skip, pánico, async, cancelación,
   ownership, `defer` y `defer await` conservan cleanup y precedencia; `P2001`,
   resource limits, timeout e interrupción no esconden cleanup observado ni
   rompen aislamiento.
-- [ ] Inputs públicos se fijan por bytes/hash y secretos solo por descriptor;
+- [x] Inputs públicos se fijan por bytes/hash y secretos solo por descriptor;
   ningún valor secreto entra en productos, cache keys, reportes o stores
   implícitos, y cada worker materializa y revoca únicamente lo declarado.
-- [ ] `Duration`, `Instant`, suspensión, timers y deadlines usan el sustrato
+- [x] `Duration`, `Instant`, suspensión, timers y deadlines usan el sustrato
   monotónico de producción; `withVirtualTime` lo sustituye solo dentro de su
   closure, presta un controlador no escapable y conserva el timeout real.
-- [ ] Quiescencia durable, `settle`, avance explícito/automático, cola y ties de
+- [x] Quiescencia durable, `settle`, avance explícito/automático, cola y ties de
   timers son deterministas; esperas externas no se virtualizan y `P2003`,
   `P2004` y `P2005` conservan sus condiciones exactas.
-- [ ] `tondo test` implementa discovery, compilación completa, selección,
+- [x] `tondo test` implementa discovery, compilación completa, selección,
   substring/glob/exact de suite/test, CODEOWNERS, sharding estable, orden/seed,
   ejecución serial/paralela, retries aislados por rondas, repeat aislado por
   iteraciones, captura, artifacts, snapshots, reporters, interrupción y exit
   codes deny-skips/allow-flaky/empty según contrato; no inventa regex, filtrado
   por tags, retries/repeat implícitos ni fail-fast.
-- [ ] Cada retry reutiliza solo el artefacto inmutable, arranca un worker nuevo,
+- [x] Cada retry reutiliza solo el artefacto inmutable, arranca un worker nuevo,
   conserva shard/configuración, respeta el máximo global de jobs y deja
   procesos, recursos rastreados, heap, roots, tasks, handles, envelopes y
   buffers sin supervivientes; cada dominio virtual vuelve al mismo cero.
-- [ ] Cada iteración repeat ejecuta el plan completo en worker nuevo, no se
+- [x] Cada iteración repeat ejecuta el plan completo en worker nuevo, no se
   solapa con otra iteración y, con count mayor que uno, mantiene exit rojo ante
   cualquier non-pass aunque otra oportunidad del mismo nodo pase; count uno
   conserva la policy ordinaria.
-- [ ] Attachments y snapshots pertenecen al intento exacto; los stores `/1`
+- [x] Attachments y snapshots pertenecen al intento exacto; los stores `/1`
   son canónicos, acotados y atómicos, y snapshot update nunca se activa ni
   elimina entries de forma implícita.
-- [ ] Una interrupción deja de despachar, intenta cleanup/revocación y usa exit
+- [x] Una interrupción deja de despachar, intenta cleanup/revocación y usa exit
   `4` o `3` según aislamiento; nunca publica reportes, manifests o updates
   parciales como completos.
-- [ ] El reporte JSON `/7` es canónico y reproducible, conserva todos los
+- [x] El reporte JSON `/7` es canónico y reproducible, conserva todos los
   intentos, iteraciones, dominios y descriptors sin material secreto añadido
   por el runner ni payloads externos embebidos; JUnit `/4` proyecta la misma
   ejecución y policy con duración operacional real y tiempo virtual separado.
   La salida humana no intercala suites/tests o intentos y muestra owners, tags,
   evidence, tiempo virtual, logs, razones y fallos accionables.
-- [ ] El grupo de testing de `tondo-conformance-draft` pasa en la VM y la matriz
+- [x] El grupo de testing de `tondo-conformance-draft` pasa en la VM y la matriz
   de plataformas aplicable está verde.
-- [ ] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
+- [x] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
   registration APIs, `TestContext`, annotations, reflection, subtests dinámicos
   ni hooks ocultos.
 
@@ -4414,7 +4404,7 @@ gates en una barrera artificial.
     parse/canonicalización/round-trip y rechazo de records no draft. El mini-gate
     queda cerrado: manifest, lockfile, interface, artifact y descriptor estándar
     usan una única forma draft; el corpus bootstrap permanece como regresión.
-22. [ ] **Wave 2 — Prerrequisitos y frontends, en paralelo.**
+22. [x] **Wave 2 — Prerrequisitos y frontends, en paralelo.**
     - [x] Base portable: cerrar `PARSER-STACK-001`; lexer y planes que no modifican
       descenso sintáctico pueden avanzar en paralelo, y
       `META-SYNTAX-001` y `UTEST-CST-001` esperan la pila explícita.
@@ -4441,7 +4431,7 @@ gates en una barrera artificial.
       `ASYNC-DEFER-IMPL-001` avanza en paralelo y se une antes del lowering.
     Mini-gate: cada frontend baja hasta su primer IR verificable, los cinco
     slices tempranos tienen owner definitivo y la conformidad viva ratchetea.
-23. [ ] **Wave 3 — Vertical slices ejecutables.**
+23. [x] **Wave 3 — Vertical slices ejecutables.**
     - Meta: `META-DERIVE-001 + META-GEN-001 → META-ATOMIC-001`, seguido de
       `META-QUERY-001` y `REFLECT-IMPL-001`.
     - Testing core: `UTEST-CHECK-001 → UTEST-LOWER-001` y
@@ -4453,7 +4443,7 @@ gates en una barrera artificial.
       UTEST-SCHED-001`, después de plan e identidad.
     Mini-gate: derive y un test mínimo recorren rutas públicas end-to-end; no
     existen shims, productos parciales ni estado cruzado entre workers.
-24. [ ] **Wave 4 — Features y cierre del lenguaje.**
+24. [x] **Wave 4 — Features y cierre del lenguaje.**
     - Meta: diagnostics, reproducibilidad, robustez y `META-CONF-001`.
     - Testing sobre worker estable: `UTEST-VTIME-001`, `UTEST-RETRY-001`,
       `UTEST-REPEAT-001`, `UTEST-ARTIFACT-001` y `UTEST-SNAPSHOT-001`
@@ -4504,16 +4494,28 @@ CONF-DRAFT
 ~~~
 
 M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
-quedan cerrados. Gate G5 está abierto únicamente por M10.7 y M10.6 dentro del
-draft no publicado. `CONF-DRAFT-001` y `CONF-RATCHET-001` están cerrados; la
-acción inmediata es completar las lanes pendientes de Wave 2. `PARSER-STACK-001`
-ya está cerrado antes de añadir formas sintácticas. Ninguna tarea posterior necesita
+quedan cerrados. M10.7, M10.6 y Gate T0 también están cerrados dentro del draft
+no publicado. `CONF-DRAFT-001` y `CONF-RATCHET-001` están cerrados; la acción
+inmediata es `CONF-SEAL-001` y Gate G5. Ninguna tarea posterior necesita
 volver a decidir el orden global: sus prerequisitos están en 4.1.1 y en la wave
 correspondiente.
 
 ---
 
 ## 25. Historial del tracker
+
+### 1.36 — 2026-08-02
+
+- Se completa `UTEST-DOGFOOD-001`: el proyecto de aceptación prueba una API
+  pública de producción con backoff mediante el reloj monotónico virtualizado,
+  sin espera real, y fija la misma evidencia en JSON y JUnit.
+- El grafo cerrado de proyectos convencionales admite todos los módulos
+  bootstrap seleccionables por capability (`bytes`, `console`, `env`,
+  `process`, `time`) sin alterar la identidad de la regresión histórica.
+- Gate T0 queda cerrado; la revisión 6 del draft incorpora las tareas finales
+  de aceptación testing y ya no mantiene M10.6 como pendiente.
+- La acción siguiente es `CONF-SEAL-001`/Gate G5; Tondo 0.1 continúa sin
+  publicación.
 
 ### 1.28 — 2026-07-31
 

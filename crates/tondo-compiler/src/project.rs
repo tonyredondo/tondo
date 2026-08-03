@@ -510,7 +510,9 @@ impl ProjectPlan {
             [
                 ModulePath::new("bytes")?,
                 ModulePath::new("console")?,
+                ModulePath::new("env")?,
                 ModulePath::new("process")?,
+                ModulePath::new("time")?,
             ],
             [],
         )?);
@@ -1838,6 +1840,36 @@ mod tests {
         );
         assert_eq!(output.artifact().unwrap().features(), ["fast"]);
         assert!(output.artifact().unwrap().reproducible());
+    }
+
+    #[test]
+    fn closed_project_graph_exposes_all_capability_selected_bootstrap_modules() {
+        let source = b"import std.env\nimport std.time\nfn main() {}\n";
+        let (manifest, lockfile, supplied) = root_project(source, b"unused");
+        let mut manifest: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+        manifest["target"]["capabilities"] = json!(["clock", "console", "environment", "process"]);
+        let manifest = serde_json::to_vec(&manifest).unwrap();
+        let mut lockfile: serde_json::Value = serde_json::from_slice(&lockfile).unwrap();
+        lockfile["manifest_hash"] = json!(sha256(&manifest));
+        let lockfile = serde_json::to_vec(&lockfile).unwrap();
+
+        let request = ProjectPlan::parse(&manifest, &lockfile)
+            .unwrap()
+            .resolve(&supplied)
+            .unwrap()
+            .into_compilation_request(
+                Operation::Check,
+                DiagnosticFormat::Json,
+                ResourceLimits::default(),
+            )
+            .unwrap();
+        let output = execute(request).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{:#?}",
+            output.diagnostics().diagnostics()
+        );
     }
 
     #[test]

@@ -2,11 +2,11 @@
   "format": "tondo-conformance-draft-lineage",
   "lineage": "tondo-draft",
   "edition": "0.1",
-  "revision": 6,
+  "revision": 5,
   "state": "open",
   "parent": {
-    "path": "conformance/draft/history/e8dcea866c52c17e18e709fb090a80036aac825363119b38631dd601f8a08b1e.json",
-    "sha256": "e8dcea866c52c17e18e709fb090a80036aac825363119b38631dd601f8a08b1e"
+    "path": "conformance/draft/history/037727f511dc77f7c947d2681c4d37a545534cace2cff06cfc89215c4c1ddbe2.json",
+    "sha256": "037727f511dc77f7c947d2681c4d37a545534cace2cff06cfc89215c4c1ddbe2"
   },
   "baseline": {
     "manifest": {
@@ -80,7 +80,7 @@
       "id": "testing",
       "manifest": {
         "path": "conformance/draft/layers/testing.json",
-        "sha256": "3b3de9e5bed304d1677b82b2047cfd2665cb46e3bbe704dc167d495fb6a8b59c"
+        "sha256": "f6672866f7b2cbe331995c2c16643992f353a679ea68d7e7013b3bad498c79ed"
       },
       "tasks": [
         "UTEST-ARTIFACT-001",
@@ -95,7 +95,6 @@
         "UTEST-CST-001",
         "UTEST-DEPS-001",
         "UTEST-DISC-001",
-        "UTEST-DOGFOOD-001",
         "UTEST-EDITION-001",
         "UTEST-FMT-001",
         "UTEST-GLOB-001",
@@ -111,8 +110,6 @@
         "UTEST-OVERLAY-001",
         "UTEST-OWNERS-001",
         "UTEST-PLAN-001",
-        "UTEST-PLATFORM-001",
-        "UTEST-PROJECTS-001",
         "UTEST-REPEAT-001",
         "UTEST-REPORT-001",
         "UTEST-RESULT-MODEL-001",
@@ -133,5 +130,7 @@
       ]
     }
   ],
-  "pending_tasks": []
+  "pending_tasks": [
+    "M10.6"
+  ]
 }
