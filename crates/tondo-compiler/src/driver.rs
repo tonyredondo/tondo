@@ -1988,6 +1988,37 @@ mod tests {
     }
 
     #[test]
+    fn test_operation_executes_std_testing_value_helpers_through_the_vm() {
+        let base = operation_request(
+            Operation::Check,
+            b"import std.testing\ntest helpers {\n testing.assertTextEqual(\"same\", \"same\")\n testing.assertFloatNear(10.0, 10.5, 0.01, 0.1)\n}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let entries = discover_tests(&base).unwrap();
+        let envelope = crate::test_control::EnvelopeHandle::new(
+            "helpers",
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+        );
+        envelope
+            .set_phase(crate::test_control::ExecutionPhase::Body)
+            .unwrap();
+        let request = base
+            .for_test_entry(&entries[0])
+            .unwrap()
+            .with_test_envelope(envelope.clone());
+        let output = execute(request).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+        assert!(envelope.report().unwrap().terminal().is_none());
+    }
+
+    #[test]
     fn test_operation_virtualizes_the_production_monotonic_clock() {
         let base = operation_request(
             Operation::Check,

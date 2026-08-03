@@ -13677,6 +13677,12 @@ impl<'a> ExpressionChecker<'a> {
             }
             ("protobuf", Some("validate")) => HirBootstrapHostFunction::ProtobufValidate,
             ("testing", Some("log")) => HirBootstrapHostFunction::TestingLog,
+            ("testing", Some("assertTextEqual")) => {
+                HirBootstrapHostFunction::TestingAssertTextEqual
+            }
+            ("testing", Some("assertFloatNear")) => {
+                HirBootstrapHostFunction::TestingAssertFloatNear
+            }
             ("testing", Some("tags")) => HirBootstrapHostFunction::TestingTags,
             ("testing", Some("failNow")) => HirBootstrapHostFunction::TestingFailNow,
             ("testing", Some("skip")) => HirBootstrapHostFunction::TestingSkip,

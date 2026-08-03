@@ -9,6 +9,7 @@ use std::time::{Duration, Instant as StdInstant};
 #[cfg(unix)]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
+use tondo_stdlib::testing::{FloatTolerance, diff_text};
 use tondo_stdlib::{json, messagepack, protobuf};
 use tondo_vm::runtime::{
     RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
@@ -1162,6 +1163,46 @@ impl VmHost for BootstrapHost {
             ("std.testing.log", [RuntimeValue::String(message)]) => {
                 let envelope = self.testing_envelope()?;
                 Self::testing_result(&envelope, envelope.log(message.clone()))
+            }
+            (
+                "std.testing.assertTextEqual",
+                [RuntimeValue::String(expected), RuntimeValue::String(actual)],
+            ) => {
+                let envelope = self.testing_envelope()?;
+                let result = if expected == actual {
+                    Ok(())
+                } else {
+                    Err(ControlError::FailNow {
+                        message: format!(
+                            "text assertion failed\n{}",
+                            diff_text(expected, actual).render()
+                        ),
+                    })
+                };
+                Self::testing_result(&envelope, result)
+            }
+            (
+                "std.testing.assertFloatNear",
+                [
+                    RuntimeValue::Float(expected),
+                    RuntimeValue::Float(actual),
+                    RuntimeValue::Float(absolute),
+                    RuntimeValue::Float(relative),
+                ],
+            ) => {
+                let envelope = self.testing_envelope()?;
+                let result = match FloatTolerance::new(*absolute, *relative) {
+                    Ok(tolerance) if tolerance.is_near(*expected, *actual) => Ok(()),
+                    Ok(_) => Err(ControlError::FailNow {
+                        message: format!(
+                            "float assertion failed: expected {expected}, actual {actual}, absolute {absolute}, relative {relative}"
+                        ),
+                    }),
+                    Err(error) => Err(ControlError::FailNow {
+                        message: format!("invalid float tolerance: {error:?}"),
+                    }),
+                };
+                Self::testing_result(&envelope, result)
             }
             ("std.testing.tags", [RuntimeValue::Map(entries)]) => {
                 let envelope = self.testing_envelope()?;
@@ -3486,6 +3527,30 @@ mod tests {
             host.invoke(
                 "std.testing.log",
                 &[RuntimeValue::String("from Tondo".into())]
+            )
+            .unwrap(),
+            RuntimeValue::Unit
+        );
+        assert_eq!(
+            host.invoke(
+                "std.testing.assertTextEqual",
+                &[
+                    RuntimeValue::String("same\n".into()),
+                    RuntimeValue::String("same\n".into()),
+                ],
+            )
+            .unwrap(),
+            RuntimeValue::Unit
+        );
+        assert_eq!(
+            host.invoke(
+                "std.testing.assertFloatNear",
+                &[
+                    RuntimeValue::Float(10.0),
+                    RuntimeValue::Float(10.5),
+                    RuntimeValue::Float(0.01),
+                    RuntimeValue::Float(0.1),
+                ],
             )
             .unwrap(),
             RuntimeValue::Unit

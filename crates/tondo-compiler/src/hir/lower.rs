@@ -359,6 +359,20 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 unit,
             )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingAssertTextEqual,
+                vec![(string, false), (string, false)],
+                None,
+                unit,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingAssertFloatNear,
+                vec![(self.interner.scalar(ScalarType::Float), false); 4],
+                None,
+                unit,
+            )?;
             for function in [
                 HirBootstrapHostFunction::TestingFailNow,
                 HirBootstrapHostFunction::TestingSkip,

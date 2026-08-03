@@ -6,6 +6,7 @@
 pub mod json;
 pub mod messagepack;
 pub mod protobuf;
+pub mod testing;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CodecError {
