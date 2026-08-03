@@ -6,7 +6,7 @@ runner público de testing, tiempo virtual y sus proyectos de aceptación forman
 parte del candidato de conformidad inmutable. Tondo 0.1 sigue en desarrollo:
 el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 
-**Versión del tracker:** 1.39
+**Versión del tracker:** 1.40
 
 **Última actualización:** 2026-08-03
 
@@ -16,10 +16,11 @@ el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 - [Arquitectura base de Standard Library 0.1](./TONDO_STANDARD_LIBRARY_SPEC.md)
 - [Contrato operativo de rendimiento de Standard Library 0.1](./docs/contracts/stdlib-performance.md)
 - [Contrato de owner de `std.json`](./docs/contracts/stdlib-json.md)
+- [Contrato de owner de `std.messagepack`](./docs/contracts/stdlib-messagepack.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
-**Objetivo inmediato:** completar STD-0.1A por layers, con `STD-PERF-001` y
-`STD-JSON-001` cerrados y continuando por los contratos de cada owner antes de
+**Objetivo inmediato:** completar STD-0.1A por layers, con `STD-PERF-001`,
+`STD-JSON-001` y `STD-MSGPACK-001` cerrados y continuando por los contratos de cada owner antes de
 su implementación. Gate
 G5 ya fija la revisión 7 en un candidato inmutable sin confundirlo con una
 publicación. Después se fijan antes del backend los contratos
@@ -3746,10 +3747,19 @@ layer pueden avanzar en paralelo.
   explícito y límites finitos; la conformidad RFC y la interoperabilidad quedan
   preparadas para `STD-CODEC-CONF-001`.
 
-- [ ] **STD-MSGPACK-001 — Especificar MessagePack out of the
+- [x] **STD-MSGPACK-001 — Especificar MessagePack out of the
   box.** Cubrir todo el data model y extension values, representación mínima,
   maps con keys arbitrarias, streaming, canonical mode, límites y
-  interoperabilidad sin reflection.
+  interoperabilidad sin reflection. Cerrado como contrato del owner con
+  [`docs/contracts/stdlib-messagepack.md`](./docs/contracts/stdlib-messagepack.md),
+  el registro [`testing/stdlib-messagepack.json`](./testing/stdlib-messagepack.json)
+  y el check [`scripts/stdlib-messagepack-check.sh`](./scripts/stdlib-messagepack-check.sh),
+  integrado en `scripts/test-gate.sh`. El contrato fija `MessagePackValue` con
+  maps de pares ordenados y claves arbitrarias, `Ext`/timestamp explícitos,
+  typed dispatch sin DOM, reader/writer con stack acotado, policies de
+  duplicados y extensiones, y `encodeDeterministic` sin afirmar una
+  canonicalización universal. La interoperabilidad queda preparada para
+  `STD-CODEC-CONF-001`.
 
 - [ ] **STD-PROTOBUF-001 — Especificar Protobuf schema-first.**
   Generar desde `.proto` declarado tipos/codecs para proto3, presence, repeated,
@@ -4476,7 +4486,8 @@ gates en una barrera artificial.
       CONF-SEAL-001 → G5`.
     Mini-gate: T0 y después G5 verdes sobre hashes actuales; la regresión
     bootstrap queda separada de la conformidad del draft.
-25. [ ] **Wave 5 — STD-0.1A por layers.** Con `STD-PERF-001` y `STD-JSON-001`
+25. [ ] **Wave 5 — STD-0.1A por layers.** Con `STD-PERF-001`, `STD-JSON-001` y
+    `STD-MSGPACK-001`
     cerrados, terminar el spec de cada owner antes de su implementación;
     ejecutar A1 valores/protocolos, A2 host, A3 serialization/codecs y A4
     helpers de testing, cerrando el
@@ -4525,6 +4536,25 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.40 — 2026-08-03
+
+- Se completa `STD-MSGPACK-001` como contrato del owner `std.messagepack`.
+  Se fijan el data model completo, `MessagePackValue` con maps de pares
+  ordenados y claves arbitrarias, `Ext` y timestamp explícitos, preservación
+  de extensiones desconocidas, representación ordinaria no mínima y el modo
+  `encodeDeterministic` de Tondo con colisiones rechazadas.
+- El contrato también fija typed dispatch sin DOM, reader/writer con stack
+  explícito acotado, payloads con ownership explícito, políticas de duplicados,
+  límites finitos, errores con path y corpus/matriz de interoperabilidad. El
+  registro `testing/stdlib-messagepack.json` y su validador
+  `scripts/stdlib-messagepack-check.sh` quedan integrados en
+  `scripts/test-gate.sh`.
+- La interoperabilidad con la especificación MessagePack y al menos dos
+  implementaciones independientes queda explícitamente para
+  `STD-CODEC-CONF-001`; el contrato no altera el candidato de conformidad
+  sellado ni publica todavía el codec.
+- Wave 5 avanza al siguiente contrato de owner (`STD-PROTOBUF-001`).
 
 ### 1.39 — 2026-08-03
 

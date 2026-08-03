@@ -1,0 +1,376 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.messagepack",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "draft-contract",
+  "wire": {
+    "spec": "MessagePack",
+    "data_model": [
+      "nil",
+      "bool",
+      "int",
+      "uint",
+      "float32",
+      "float64",
+      "str",
+      "bin",
+      "array",
+      "map",
+      "ext"
+    ],
+    "text_encoding": "utf-8",
+    "ordinary_accepts_non_minimal": true,
+    "ordinary_preserves_order": true,
+    "unknown_ext": "preserve",
+    "timestamp_type_code": -1
+  },
+  "values": {
+    "dynamic_type": "MessagePackValue",
+    "ext_type": "Ext",
+    "timestamp_type": "MessagePackTimestamp",
+    "map_representation": "ordered-pairs-arbitrary-keys",
+    "integer_kinds": ["Int", "UInt"],
+    "float_kinds": ["Float32", "Float64"],
+    "string_type": "utf8-str",
+    "binary_type": "bin-bytes"
+  },
+  "ext": {
+    "type_code": "signed-int8",
+    "payload": "Bytes",
+    "fixed_lengths": [1, 2, 4, 8, 16],
+    "variable_forms": ["ext8", "ext16", "ext32"],
+    "unknown_policy": {
+      "default": "preserve",
+      "allowed": ["preserve", "reject"]
+    },
+    "timestamp_conversion": "explicit-only",
+    "reflection": "forbidden"
+  },
+  "typed": {
+    "traits": ["Serialize", "Deserialize"],
+    "dispatch": "compile-time-static",
+    "decode_requires_dynamic_dom": false,
+    "encode_requires_dynamic_dom": false,
+    "map_duplicate_default": "reject",
+    "integer_conversion": "exact-before-narrowing",
+    "parser_stack": "explicit-bounded-stack"
+  },
+  "streaming": {
+    "event_kinds": [
+      "nil",
+      "bool",
+      "int",
+      "uint",
+      "float32",
+      "float64",
+      "string",
+      "binary",
+      "start-array",
+      "end-array",
+      "start-map",
+      "map-key",
+      "end-map",
+      "ext"
+    ],
+    "reader_inputs": ["Bytes", "Reader"],
+    "writer_outputs": ["BytesBuilder", "Writer"],
+    "payload_lifetime": "until-next-event",
+    "materialization": "explicit-own",
+    "reader_state": "bounded-explicit-stack",
+    "writer_state": "bounded-explicit-stack",
+    "typed_mode": "direct-events-no-dynamic-dom",
+    "partial_failure": "terminal-error-no-partial-success",
+    "fragmentation_classes": [
+      "one-byte",
+      "tag-boundary",
+      "payload-boundary",
+      "large-chunk"
+    ]
+  },
+  "policies": {
+    "dynamic_map_duplicates": {
+      "default": "preserve",
+      "allowed": ["preserve", "reject", "first", "last"],
+      "last_replacement_position": "retain-first-position"
+    },
+    "typed_map_duplicates": {
+      "default": "reject",
+      "allowed": ["reject", "first", "last"]
+    },
+    "non_minimal_decode": {
+      "default": "accept",
+      "allowed": ["accept", "reject"]
+    },
+    "unknown_extensions": {
+      "default": "preserve",
+      "allowed": ["preserve", "reject"]
+    },
+    "deterministic_map": {
+      "rule": "sort-by-deterministic-key-bytes",
+      "collision": "reject"
+    },
+    "nan": {
+      "ordinary": "preserve-bits",
+      "deterministic": "one-quiet-nan"
+    },
+    "zero_sign": {
+      "ordinary": "preserve",
+      "deterministic": "preserve"
+    }
+  },
+  "deterministic": {
+    "operation": "encodeDeterministic",
+    "universal_canonical": false,
+    "integer_lengths": "shortest-valid",
+    "float32_rule": "exact-and-sign-preserving-else-float64",
+    "nan_rule": "one-quiet-nan",
+    "array_order": "preserve",
+    "extension_order": "preserve-type-and-payload",
+    "map_order": "deterministic-key-encoding-bytes",
+    "key_collision": "reject",
+    "streaming_input": "already-sorted-keys"
+  },
+  "limits": [
+    {
+      "id": "max_document_bytes",
+      "unit": "bytes",
+      "scope": "input",
+      "check": "before-read-growth"
+    },
+    {
+      "id": "max_depth",
+      "unit": "containers",
+      "scope": "parser-stack",
+      "check": "before-push"
+    },
+    {
+      "id": "max_array_items",
+      "unit": "items",
+      "scope": "one-array",
+      "check": "before-append"
+    },
+    {
+      "id": "max_map_pairs",
+      "unit": "pairs",
+      "scope": "one-map",
+      "check": "before-append"
+    },
+    {
+      "id": "max_string_bytes",
+      "unit": "decoded-utf8-bytes",
+      "scope": "one-string",
+      "check": "before-scratch-growth"
+    },
+    {
+      "id": "max_binary_bytes",
+      "unit": "bytes",
+      "scope": "one-binary",
+      "check": "before-materialization"
+    },
+    {
+      "id": "max_ext_bytes",
+      "unit": "bytes",
+      "scope": "one-extension",
+      "check": "before-materialization"
+    },
+    {
+      "id": "max_events",
+      "unit": "events",
+      "scope": "one-document",
+      "check": "before-next-event"
+    },
+    {
+      "id": "max_output_bytes",
+      "unit": "bytes",
+      "scope": "one-encode",
+      "check": "before-write-growth"
+    }
+  ],
+  "errors": [
+    "UnexpectedEof",
+    "InvalidTag",
+    "InvalidUtf8",
+    "InvalidLength",
+    "NonMinimalEncoding",
+    "InvalidExtension",
+    "TypeMismatch",
+    "DuplicateKey",
+    "NumberRange",
+    "DeterministicKeyCollision",
+    "OutOfOrderKey",
+    "LimitExceeded",
+    "IoError",
+    "TrailingData"
+  ],
+  "paths": {
+    "root": "$",
+    "segments": ["array-index", "map-entry", "map-key", "map-value"],
+    "position": "byte-offset",
+    "secret_policy": "no-payload-snippet"
+  },
+  "corpora": [
+    {
+      "id": "msgpack-spec-model",
+      "source": "https://github.com/msgpack/msgpack/blob/master/spec.md",
+      "required": true,
+      "focus": [
+        "nil",
+        "bool",
+        "integers",
+        "floats",
+        "str",
+        "bin",
+        "array",
+        "map",
+        "ext"
+      ]
+    },
+    {
+      "id": "minimal-encodings",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["integers", "lengths", "non-minimal-decode"]
+    },
+    {
+      "id": "float-bits",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["float32", "float64", "nan", "negative-zero"]
+    },
+    {
+      "id": "utf8-and-binary",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["valid-utf8", "invalid-utf8", "arbitrary-bin"]
+    },
+    {
+      "id": "arbitrary-map-keys",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["nested-keys", "binary-keys", "ext-keys", "duplicates"]
+    },
+    {
+      "id": "extensions-and-timestamp",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["fixed-ext", "variable-ext", "unknown-ext", "timestamp"]
+    },
+    {
+      "id": "stream-fragments",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["one-byte", "tag-boundary", "payload-boundary", "large-chunk"]
+    },
+    {
+      "id": "limits-and-truncation",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["depth", "length", "payload", "unexpected-eof"]
+    },
+    {
+      "id": "deterministic-encoding",
+      "source": "owner-generated",
+      "required": true,
+      "focus": ["shortest-forms", "map-order", "key-collision", "layout-independence"]
+    }
+  ],
+  "test_matrix": [
+    {
+      "id": "wire-model",
+      "required": true,
+      "observables": ["value-kind", "wire-round-trip", "unknown-ext"]
+    },
+    {
+      "id": "minimal-forms",
+      "required": true,
+      "observables": ["shortest-int", "shortest-length", "non-minimal-policy"]
+    },
+    {
+      "id": "numeric-bits",
+      "required": true,
+      "observables": ["signedness", "float-width", "nan-bits", "zero-sign", "range"]
+    },
+    {
+      "id": "text-and-binary",
+      "required": true,
+      "observables": ["utf8", "invalid-utf8", "binary-identity", "chunk-independence"]
+    },
+    {
+      "id": "maps",
+      "required": true,
+      "observables": ["arbitrary-key", "pair-order", "duplicate-policy", "key-path"]
+    },
+    {
+      "id": "typed-direct",
+      "required": true,
+      "observables": ["typed-value", "no-dynamic-dom", "type-error", "ownership"]
+    },
+    {
+      "id": "streaming",
+      "required": true,
+      "observables": ["event-order", "payload-lifetime", "chunk-independence", "terminal-error"]
+    },
+    {
+      "id": "extensions",
+      "required": true,
+      "observables": ["type-code", "payload", "timestamp", "unknown-preservation"]
+    },
+    {
+      "id": "limits",
+      "required": true,
+      "observables": ["finite-resource", "atomic-failure", "limit-error", "host-stack-safety"]
+    },
+    {
+      "id": "deterministic",
+      "required": true,
+      "observables": ["shortest-bytes", "map-order", "key-collision", "layout-independence"]
+    },
+    {
+      "id": "interoperability",
+      "required": true,
+      "observables": ["external-parse", "external-encode", "round-trip", "rejection"]
+    }
+  ],
+  "promotion": {
+    "gates": [
+      {
+        "id": "design",
+        "requires": [
+          "wire-model",
+          "dynamic-map-policy",
+          "deterministic-rule",
+          "limit-identities"
+        ]
+      },
+      {
+        "id": "implementation",
+        "requires": [
+          "typed-no-dom",
+          "explicit-parser-stack",
+          "bounded-reader-writer",
+          "stable-ext-policy"
+        ]
+      },
+      {
+        "id": "conformance",
+        "requires": [
+          "spec-corpus",
+          "fragment-equivalence",
+          "deterministic-vectors",
+          "interop-independent-implementations"
+        ]
+      },
+      {
+        "id": "promote",
+        "requires": [
+          "arbitrary-key-proof",
+          "unknown-ext-preservation",
+          "limits-proven-finite",
+          "STD-PERF-001-report"
+        ]
+      }
+    ],
+    "next_coordination": "STD-CODEC-CONF-001"
+  }
+}
