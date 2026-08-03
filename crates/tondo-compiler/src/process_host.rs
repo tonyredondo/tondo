@@ -4871,7 +4871,10 @@ mod tests {
             other => panic!("unexpected temporary directory result: {other:?}"),
         };
         let path = host
-            .invoke("std.testing.TempDirectory.path", &[directory.clone()])
+            .invoke(
+                "std.testing.TempDirectory.path",
+                std::slice::from_ref(&directory),
+            )
             .unwrap();
         let physical = host.filesystem_path(&path).unwrap();
         std::fs::write(physical.join("payload"), b"bounded").unwrap();
@@ -4929,10 +4932,16 @@ mod tests {
         };
         assert_eq!((left_seed, left_case), (right_seed, right_case));
         let left_first = host
-            .invoke("std.testing.Generator.nextUInt", &[left.clone()])
+            .invoke(
+                "std.testing.Generator.nextUInt",
+                std::slice::from_ref(&left),
+            )
             .unwrap();
         let right_first = host
-            .invoke("std.testing.Generator.nextUInt", &[right.clone()])
+            .invoke(
+                "std.testing.Generator.nextUInt",
+                std::slice::from_ref(&right),
+            )
             .unwrap();
         assert_eq!(left_first, right_first);
         let invalid = host
