@@ -1,12 +1,13 @@
 # Tondo: tracker de implementación
 
-**Estado:** M10.5b, Gate H0, M10.7, M10.6, Gate T0 y Gate G5 están cerrados sobre el
-draft actual. Metaprogramación, reflection metadata-only, `defer await`, el
-runner público de testing, tiempo virtual y sus proyectos de aceptación forman
-parte del candidato de conformidad inmutable. Tondo 0.1 sigue en desarrollo:
-el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
+**Estado:** M0–M10.7 conservan su implementación y Gate H0 permanece cerrado
+para la infraestructura que valida. La auditoría 1.45 reabre los cierres de
+conformidad T0/G5 y STD-0.1A/S1A: existe un candidato content-addressed de la
+revisión 8 y existen kernels/bridges útiles, pero la evidencia actual no prueba
+todo el contrato normativo ni varias APIs públicas de la stdlib. Tondo 0.1
+sigue en desarrollo y no ha sido publicado.
 
-**Versión del tracker:** 1.43
+**Versión del tracker:** 1.45
 
 **Última actualización:** 2026-08-03
 
@@ -23,15 +24,14 @@ el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 - [Contrato de owners Hosted STD-0.1A](./docs/contracts/stdlib-hosted.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
-**Objetivo inmediato:** completar STD-0.1A por layers, con `STD-PERF-001`,
-`STD-JSON-001`, `STD-MSGPACK-001`, `STD-PROTOBUF-001` y `STD-TESTING-SPEC-001` cerrados y continuando por los contratos de cada owner antes de
-su implementación. Gate
-G5 ya fija la revisión 7 en un candidato inmutable sin confundirlo con una
-publicación. Después se fijan antes del backend los contratos
-runtime-facing de STD-0.1B, comienza M11 y, tras Gate N1, se implementa el resto
-de STD-0.1B y se cierra S1. Todo ello pertenece a la primera Standard Library
-0.1; los slices y fases son orden de implementación, no versiones públicas.
-La VM permanece como implementación de referencia y oracle diferencial del
+**Objetivo inmediato:** cerrar primero las dos lagunas verificadas por la
+auditoría: (1) completar las APIs públicas A1–A4 de STD-0.1A, en especial
+serialization tipada, derives, streaming y generación Protobuf schema-first;
+y (2) ampliar la matriz normativa a los cuatro specs, clasificar cada límite y
+aportar evidencia ejecutable antes de volver a cerrar T0/G5/S1A. Los contratos
+runtime-facing de STD-0.1B y M11 esperan esos gates. Todo pertenece a la primera
+versión 0.1; los slices son orden de implementación, no versiones públicas. La
+VM permanece como implementación de referencia y oracle diferencial del
 backend nativo.
 
 > Este documento no define semántica del lenguaje. La especificación es la única
@@ -343,10 +343,10 @@ necesaria; la fragmentación del workspace no.
 | **M9 — Unsafe, targets y toolchain** | Gate G4: preview 0.1 | Completado |
 | **M10 — Bootstrap regression corpus** | Baseline ejecutable pre-`derive` | Completado |
 | **M10.5 — Reliability y testing** | Infraestructura y hardening continuo de evidencia | Completado |
-| **M10.5c — Conformidad del draft** | Una línea de draft, ratchet y candidato inmutable | Completado; Gate G5 cerrado |
+| **M10.5c — Infraestructura de conformidad** | Una línea de draft, ratchet y candidato inmutable | Mecanismo completado; cierre normativo pendiente |
 | **M10.7 — Metaprogramación estática** | `derive`, generators, meta VM y contribución a G5 | Completado |
-| **M10.6 — Testing de usuario Tondo 0.1** | Gate T0 y contribución testing a G5 | Completado |
-| **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura base cerrada; slices tempranos y APIs pendientes |
+| **M10.6 — Testing de usuario Tondo 0.1** | Implementación de `tondo test` y contribución a G5 | Implementación completada; cierre evidencial T0 pendiente |
+| **STD-0.1A — Foundation + Hosted** | Base estándar necesaria para meta, testing y backend | Arquitectura/owners y slices tempranos cerrados; firmas A3 e implementación pública incompletas |
 | **M11 — Backend nativo y optimización** | Implementación de producción | Futuro |
 | **STD-0.1B — Concurrency + Application** | Contratos runtime antes de M11; implementación tras N1 | Arquitectura base cerrada; contratos y código pendientes |
 
@@ -356,17 +356,19 @@ Estado observado del workspace:
   upstream en
   `github.com/tonyredondo/tondo`.
 - Workspace: `tondo-cli`, `tondo-compiler`, `tondo-conformance`,
-  `tondo-reference-adapter`, `tondo-reliability` y `tondo-vm`.
+  `tondo-reference-adapter`, `tondo-reliability`, `tondo-stdlib` y `tondo-vm`.
 - Toolchain utilizado para la validación: Rust 1.93.0 y Cargo 1.93.0; la versión
   mínima soportada queda fijada en Rust 1.93.
-- La evidencia actual registra 2.106 tests lógicos y 2.325 repeticiones:
-  2.056 ejecutables, 38 contratos de stdlib aún documentales, tres campañas y
-  nueve fences no ejecutables. La suite bootstrap conserva sus 205 casos y 424
+- La evidencia actual registra 2.170 tests lógicos y 2.389 repeticiones:
+  2.120 ejecutables, 38 contratos del spec de testing aún documentales, tres
+  campañas y nueve fences no ejecutables. La suite bootstrap conserva sus 205 casos y 424
   repeticiones byte-estables como regresión explícita.
 - La matriz única contiene 316 requisitos: 46 tienen evidencia ejecutable, tres
   pertenecen a la stdlib pendiente, siete no aplican al target y 260 conservan
-  límites de evidencia del toolchain bootstrap. No queda ningún requisito
-  `draft-pending`. La cobertura limpia es 90,60 % de líneas y mutation mantiene
+  límites de evidencia del toolchain bootstrap. Además, la matriz solo indexa
+  `TONDO_LANGUAGE_SPEC.md`; testing, toolchain y stdlib todavía no tienen una
+  matriz normativa equivalente. La cobertura ratcheteada es 90,25 % de líneas
+  y mutation mantiene
   100 % sobre los mutantes ejecutables seleccionados.
 
 ### 4.1 Grafo de dependencias y ruta crítica
@@ -387,14 +389,16 @@ M0 -> M1 -> M2 -> M3 -> M4 -> M5 -> M6 -> M7 -> M8 -> M9 -> M10
           M10.7/meta                  M10.6/defer-await + testing
              |                                    |
              v                                    v
-         META-CONF                                T0
+         META-CONF                    T0 implementation
              +-----------------+------------------+
                                v
-                       CONF-SEAL -> Gate G5
-                               |
+       +-----------------------+------------------------+
+       |                                                |
+       v                                                v
+ matrix all specs -> gap audit -> final seal -> G5   STD-0.1A APIs -> S1A
+       |                                                |
+       +-----------------------+------------------------+
                                v
-                  resto STD-0.1A -> Gate S1A
-                               |
                contratos runtime STD-0.1B
                                |
                                v
@@ -427,9 +431,12 @@ terminar esos slices; solo el typecheck que consume sus APIs, materialización d
 inputs, virtual time, lifecycle completo y Gate T0 los esperan.
 
 M10.7 y M10.6 ratchetean evidencia al terminar cada wave, no únicamente en
-`META-CONF-001` o `UTEST-CONF-001`. T0 cierra testing; G5 espera además toda la
-lane meta, ejecuta `CONF-SEAL-001` y vuelve a verificar el corpus consolidado.
-El resultado proporciona `tondo test` para completar y probar la propia stdlib.
+`META-CONF-001` o `UTEST-CONF-001`. La implementación funcional de testing ya
+existe, pero T0/G5 no vuelven a cerrarse hasta que la matriz cubra los cuatro
+specs, cada límite aplicable tenga caso ejecutable y `CONF-SEAL-FINAL-001`
+promueva exactamente ese cierre. El candidato revisión 8 demuestra el mecanismo
+de sellado, no sustituye esa prueba normativa. El resultado existente de
+`tondo test` permite completar y probar la propia stdlib.
 
 Cada API posterior de STD-0.1A se implementa como slice vertical y amplía
 matriz, conformidad y dogfooding. Antes de `NATIVE-001` deben estar cerrados los
@@ -460,8 +467,9 @@ el trabajo.
 | `UTEST-INPUTS-001` | `UTEST-INPUTS-PLAN-001`, `UTEST-RUNTIME-001` y `STD-ENV-CONF-001` | Mutación de environment |
 | `UTEST-VTIME-001` y Gate T0 | spec + implementación + evidencia del time-base | Calendario civil |
 | Lifecycle de suites | `ASYNC-DEFER-IMPL-001`, lowering y worker aislado | Retry, JUnit o snapshot update |
-| `CONF-SEAL-001` | `META-CONF-001`, `UTEST-CONF-001`, Gate T0 y hashes actuales | STD-0.1A completa |
-| Gate G5 vivo | `CONF-SEAL-001` | STD-0.1A completa |
+| Mecanismo `CONF-SEAL-001` | `META-CONF-001`, `UTEST-CONF-001` y hashes actuales | Cierre evidencial T0 y STD-0.1A completa |
+| Gate T0 evidencial | `UTEST-SPEC-EVIDENCE-001` y matriz multi-spec sin huecos de testing aplicables | STD-0.1A completa |
+| Gate G5 vivo | `CONF-MATRIX-ALL-001`, `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001` y `CONF-SEAL-FINAL-001` | STD-0.1A completa |
 | `NATIVE-001` | Gates G5/S1A y contratos runtime-facing de STD-0.1B | Implementación de STD-0.1B |
 | `NATIVE-ABI-001` | `NATIVE-001`, `NATIVE-MEM-ADR-001` y contratos de sync/executor | ABI FFI pública |
 | ARC/runtime nativo | `NATIVE-ABI-001` y DEC-014 | Eliminación de retains, COW o escape analysis |
@@ -2548,6 +2556,40 @@ Antes de ampliar la gramática de M10.7 o M10.6:
   tampering, paths y cierre exacto; Gate G5 verifica este resultado sin afirmar
   una publicación.
 
+La auditoría 1.45 conserva `CONF-SEAL-001` como implementación verificada del
+mecanismo de promoción: `conformance/candidate/manifest.json` fija la revisión
+8. No lo interpreta como prueba de cobertura completa. El draft puede declarar
+`pending_tasks: []` aunque la matriz conserve requisitos `toolchain-limit`, y
+el inventario puede conservar contratos `draft-pending`; el sellado final debe
+cerrar también esos ejes.
+
+- [ ] **CONF-MATRIX-ALL-001 — Extender la matriz normativa a los cuatro
+  specs.** Inventariar requisitos estables de lenguaje, testing, toolchain y
+  stdlib con identidad, riesgo y seis dimensiones de evidencia. Un documento
+  incluido en el candidato no cuenta como cubierto solo por estar fijado por
+  hash, y un fence no se considera test por ser parseable.
+
+- [ ] **CONF-GAP-AUDIT-001 — Clasificar todos los límites existentes.** Revisar
+  individualmente los 260 `toolchain-limit` y los 38 `draft-pending` actuales y
+  asignar una de tres salidas verificables: implementación existente sin
+  trazabilidad, requisito no aplicable con razón normativa, o funcionalidad
+  realmente ausente. No se permiten waivers agregadas por sección ni usar un
+  ejemplo vecino como prueba implícita.
+
+- [ ] **CONF-GAP-IMPL-001 — Cerrar las ausencias descubiertas por la
+  auditoría.** Cada ausencia genera una tarea leaf enlazada al requisito, una
+  ruta pública real y tests positivos, negativos, de borde y composición. Los
+  casos ya implementados solo requieren añadir identidad/evidencia, no
+  reescribir código que ya funciona.
+
+- [ ] **CONF-SEAL-FINAL-001 — Promover el candidato normativamente completo.**
+  Exigir que los requisitos aplicables a lenguaje, testing y toolchain no
+  conserven `toolchain-limit`, `draft-pending` ni ausencias; ejecutar resultados
+  frescos, coverage/mutation y Gate T0; después crear un nuevo bundle
+  content-addressed y comprobarlo sin consultar el draft vivo. La matriz de
+  stdlib puede conservar tareas S1A explícitas y no se presenta como verde.
+  Solo esta tarea habilita el cierre final de G5; S1A usa su propio gate.
+
 ---
 
 ## 17. M10.6 — Testing de usuario Tondo 0.1
@@ -3309,6 +3351,14 @@ reporters.
   producción `answerAfterBackoff` con `withVirtualTime`, `settle` y 25 ns
   virtuales, y la aceptación exige esa evidencia tanto en JSON como en JUnit.
 
+- [ ] **UTEST-SPEC-EVIDENCE-001 — Cerrar la trazabilidad completa del spec de
+  testing.** Los 38 fences que el inventario clasifica hoy como
+  `draft-contract` deben mapearse a casos públicos existentes, convertirse en
+  aceptación ejecutable o declararse ilustrativos/no normativos con una razón
+  individual. La matriz multi-spec debe demostrar cada contrato aplicable de
+  `TONDO_TESTING_SPEC.md`; el número de grupos del manifest no sustituye esa
+  correspondencia.
+
 ### Gate T0 — Testing first-class conforme
 
 - [x] El corpus bootstrap, sus manifests, hashes y observations permanece
@@ -3368,13 +3418,16 @@ reporters.
   ejecución y policy con duración operacional real y tiempo virtual separado.
   La salida humana no intercala suites/tests o intentos y muestra owners, tags,
   evidence, tiempo virtual, logs, razones y fallos accionables.
-- [x] El grupo de testing de `tondo-conformance-draft` pasa en la VM y la matriz
-  de plataformas aplicable está verde.
+- [ ] El grupo de testing de `tondo-conformance-draft` pasa en la VM, la matriz
+  de plataformas aplicable está verde y `UTEST-SPEC-EVIDENCE-001` demuestra
+  todos los contratos normativos de testing sin `draft-pending`.
 - [x] Existe dogfooding escrito en Tondo que usa la superficie pública, sin
   registration APIs, `TestContext`, annotations, reflection, subtests dinámicos
   ni hooks ocultos.
 
-Al cerrar T0 se vuelve a ejecutar la suite completa —incluida
+La implementación funcional de T0 está completa; el cierre de conformidad se
+reabre únicamente por la trazabilidad normativa anterior. Al cerrar T0 se
+vuelve a ejecutar la suite completa —incluida
 metaprogramación—, `CONF-SEAL-001` promueve el draft verificado y solo
 entonces puede cerrarse Gate G5 para el draft consolidado Tondo 0.1.
 
@@ -3529,18 +3582,21 @@ vez los errores de los slices anteriores.
 
 ### Gate G5 — Candidato completo del lenguaje
 
-- [x] Todo el draft Tondo 0.1, incluidos M10.7 y M10.6, está implementado y
-  tiene conformidad aplicable sobre `tondo-vm-hosted`.
-- [x] Gate T0 está cerrado y el grupo de testing forma parte de
+- [ ] Todo el draft Tondo 0.1, incluidos M10.7 y M10.6, está implementado y
+  tiene conformidad aplicable sobre `tondo-vm-hosted`; la matriz multi-spec no
+  conserva límites aplicables ni contratos pendientes.
+- [ ] Gate T0 está cerrado y el grupo de testing forma parte de
   `tondo-conformance-draft`, no de una edición o suite paralela.
 - [x] `CONF-SEAL-001` ha promovido exactamente el draft verificado, sin
-  presentar la regresión bootstrap como requisitos nuevos ni dejar pendientes.
+  presentar la regresión bootstrap como requisitos nuevos. Este punto verifica
+  el mecanismo y el candidato revisión 8, no la suficiencia de su matriz.
 - [x] La suite y sus manifests fijan el hash actual de la spec, no el snapshot
   bootstrap de regresión.
 - [x] No existe una ruta de ejecución ambiental dentro del frontend ni del VM
   meta.
-- [x] La distribución puede describirse como candidata a publicación; este gate
-  por sí solo no realiza ni afirma una publicación.
+- [ ] `CONF-GAP-AUDIT-001`, cualquier leaf de `CONF-GAP-IMPL-001` y
+  `CONF-SEAL-FINAL-001` están cerrados; solo entonces la distribución puede
+  describirse como candidata a publicación. El gate no publica por sí solo.
 
 ---
 
@@ -3648,11 +3704,13 @@ layer pueden avanzar en paralelo.
   conformidad permanecen pendientes y esta tarea habilita M10.6 sin anunciar
   disponibilidad en `tondo-vm-hosted`.
 
-- [x] **STD-SPEC-001 — Cerrar la integración de
+- [ ] **STD-SPEC-001 — Cerrar la integración de
   `TONDO_STANDARD_LIBRARY_SPEC.md`.** Después de los specs por owner, comprobar
   que todas las superficies de STD-0.1A forman un único contrato sin firmas
-  duplicadas, huecos de capability ni ciclos. Esta tarea es un cierre agregado,
-  no el lugar donde se inventan por primera vez las APIs de cada módulo.
+  duplicadas, huecos de capability ni ciclos. La auditoría 1.45 la reabre porque
+  serialization y los tres formatos todavía describen operaciones sin fijar
+  todas sus firmas fuente. Esta tarea es un cierre agregado, no el lugar donde
+  se inventan por primera vez las APIs de cada módulo.
 
 - [x] **STD-MOD-001 — Definir módulos y prelude mínimo.** El contrato base fija
   el catálogo cerrado, un propietario canónico por declaración, `std` único y
@@ -3718,10 +3776,13 @@ layer pueden avanzar en paralelo.
   builders y formato estructurado deben reutilizar el protocolo estático sin
   introducir reflection, vtables, lookup abierto ni una segunda interpolación.
 
-- [x] **STD-SER-001 — Especificar `std.serialization`.** Cerrar las firmas de
+- [ ] **STD-SER-001 — Completar la especificación de
+  `std.serialization`.** Cerrar las firmas de
   `Serialize`, `Deserialize`, `Serializer[E]` y `Deserializer[E]`, su máquina
   de eventos, derive format-neutral, bounds genéricos, construcción atómica,
-  ownership, errores y personalización mediante impl/DTO explícito.
+  ownership, errores y personalización mediante impl/DTO explícito. El contrato
+  actual fija los traits principales, pero aún declara pendiente el protocolo
+  exhaustivo y no incluye eventos de records, fields, enums y variants.
 
 - [x] **STD-REFLECT-001 — Especificar el contrato exacto de `std.reflect`.**
   Cerrar antes de `REFLECT-IMPL-001` `TypeInfo`, `TypeId`, kinds,
@@ -3831,7 +3892,7 @@ layer pueden avanzar en paralelo.
   validan en `process_host` y `driver`; la evidencia de distribución y
   conformance queda en `STD-TIME-BASE-CONF-001`.
 
-- [x] **STD-CONSOLE-001 — Consolidar consola sobre `std.io`.** Fijar stdout,
+- [x] **STD-CONSOLE-001 — Especificar consola sobre `std.io`.** Fijar stdout,
   stderr, entrada, flushing, texto/binario, errores y comportamiento async sin
   asumir terminal interactiva ni duplicar los protocolos generales.
 
@@ -3853,9 +3914,10 @@ layer pueden avanzar en paralelo.
   enlaces, permisos, atomicidad, iteración y operaciones async declaran
   portabilidad, TOCTOU, cleanup y errores sin esconder bloqueo.
 
-- [x] **STD-PROC-001 — Estabilizar procesos.** Promover el bridge provisional
-  de `Command`, `Pipeline`, `ProcessHandle`, status, output, pipes, shell
-  explícito y cancelación a una API versionada que preserve argv exacto.
+- [x] **STD-PROC-001 — Especificar procesos.** Fijar `Command`, `Pipeline`,
+  `ProcessHandle`, status, output, pipes, shell explícito y cancelación como una
+  API versionada que preserve argv exacto. La promoción completa del bridge
+  pertenece a `STD-PROC-IMPL-001`.
 
 ### 19.4 Implementación y evidencia
 
@@ -3913,81 +3975,194 @@ layer pueden avanzar en paralelo.
   Antes de T0 usa el harness/adaptador público existente; después se vuelve a
   ejecutar mediante `tondo test` como parte de S1A. Debe pasar antes de Gate T0.
 
-- [x] **STD-IMPL-001 — Coordinar implementación Core por owner.** Cerrado por
-  owner en `testing/stdlib-implementation.json`: los kernels portables viven
-  en `tondo-stdlib`, las operaciones intrínsecas permanecen en el compilador/VM
-  y cada owner tiene fixture y prueba ejecutable. Las unidades privilegiadas
-  quedan limitadas a lowering/runtime, sin una ABI pública adicional.
+#### 19.4.1 Tareas leaf reabiertas por la auditoría 1.45
 
-- [x] **STD-IMPL-002 — Coordinar Hosted por owner.** Cerrado por owner en
-  `testing/stdlib-implementation.json`: path, console, filesystem y process
-  usan bridges tipados y capability-gated. La VM valida cada operación antes
-  del host; los streams de consola reutilizan `Reader`/`Writer` y los handles
-  conservan cleanup terminal.
+Estas tareas no invalidan los kernels ni los bridges existentes. Cierran la
+diferencia entre “hay código Rust que prueba una operación” y “la API Tondo
+completa del owner existe por la ruta pública”. Cada una debe actualizar la
+matriz de owner por firma, no limitarse a citar un archivo que contiene alguna
+parte del módulo.
 
-- [x] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** Cerrado
-  sobre `tondo-stdlib/src/testing.rs`, el runtime de tests y el bridge sellado
-  de T0. Temp resources, generadores, diffs, tolerancias y consumo de
-  `Option`/`Result` reutilizan el control del runner; attach, snapshot y tiempo
-  virtual no crean formatos ni registros paralelos.
+- [ ] **STD-JSON-API-001 — Fijar la API fuente exacta de JSON.** Declarar tipos,
+  constructores y firmas typed/dynamic/streaming, options, limits, events y
+  errors; resolver ownership y estado terminal de reader/writer sin crear
+  sobrecargas equivalentes ni defaults ambientales.
 
-- [x] **STD-TEST-001 — Coordinar modelos y properties por owner.** Cerrado con
-  la matriz de owners, los fixtures `m10`/`m11`, los tests de límites y
-  determinismo, los vectores wire oficiales y las campañas de truncación
-  acotada. Los ejemplos representativos recorren las APIs públicas mediante
-  el adaptador del draft.
+- [ ] **STD-MSGPACK-API-001 — Fijar la API fuente exacta de MessagePack.**
+  Declarar tipos y firmas para typed/dynamic/streaming, maps de pares, ext,
+  timestamp, options, limits, events y errors, conservando un solo owner de
+  serialization e I/O.
 
-- [x] **STD-CODEC-CONF-001 — Cerrar evidencia de serialization y formatos.**
-  `scripts/stdlib-codec-conformance.sh` ejecuta los kernels JSON, MessagePack
-  y Protobuf, el bridge hosted y los vectores oficiales, incluyendo round trips,
-  truncación, límites, duplicate policies y unknown fields. La evidencia usa
-  el linaje `conformance/draft` y no muta el manifest histórico.
+- [ ] **STD-PROTOBUF-API-001 — Fijar la API fuente y de build de Protobuf.**
+  Declarar schemas en el manifest TOML, mapping de módulos/tipos, baseline de
+  evolución, descriptor, generated APIs, reader/writer, options, limits y
+  errors con una única forma opinionada y hermética.
 
-- [x] **STD-PERF-CONF-001 — Coordinar performance por owner.** Cerrado con el
-  probe reproducible de nueve muestras por proceso, tres procesos y cinco
-  módulos, con identidad de revisión, target, CPU y toolchain. El informe y el
-  gate escalar quedan bajo `target/reliability/evidence`; las regresiones se
-  comparan contra el protocolo fijado por `STD-PERF-001`.
+- [ ] **STD-CORE-IMPL-001 — Publicar los protocolos Core completos.** Conectar
+  por dispatch estático las operaciones cerradas de `Option` y `Result`, junto
+  con `Display`, `Equatable` y `Key`, incluyendo genéricos, ownership y errores.
+  Los constructores intrínsecos existentes no sustituyen `map`, `mapErr` y
+  `unwrapOr` ni sus pruebas de composición.
 
-- [x] **STD-CONF-001 — Coordinar conformidad por owner.** Cerrado mediante el
-  gate estricto, `stdlib-implementation.json`, el adapter público y la
-  selección explícita de `conformance/draft/manifest.json`. El cierre distingue
-  los casos de stdlib de la regresión histórica del lenguaje.
+- [ ] **STD-TEXT-IMPL-001 — Completar la API pública de texto.** Añadir
+  `String.empty`, `fromChars`, `slice` y `chars`, además de validar todas las
+  operaciones ya conectadas contra scalars Unicode, UTF-8 inválido, límites y
+  costes. El bridge actual de búsqueda/transformación no constituye por sí solo
+  el owner completo.
 
-- [x] **STD-DOC-001 — Cerrar documentación por owner y programas
-  representativos.** Cerrado con `docs/contracts/stdlib-s1a.md`, el manifiesto
-  de evidencia y los fixtures de texto, colecciones, codecs, filesystem,
-  console y procesos. La documentación conserva la frontera draft y no afirma
-  una publicación de STD-0.1.
+- [ ] **STD-COLL-IMPL-001 — Completar constructores y operaciones de
+  colecciones.** Publicar `Array.new/withCapacity/push/pop`, las operaciones
+  cerradas de `Map` y `Set`, y sus iteradores con semántica de valor, orden y
+  errores exactos. Reutilizar los intrinsics del lenguaje sin crear dos APIs ni
+  dos representaciones.
+
+- [ ] **STD-ITER-IMPL-001 — Implementar los combinadores estáticos.** Conectar
+  `map`, `filter`, `take` y `collect` sobre un único `Iterator[T]`, con lazy
+  evaluation, consumo visible, límites y errores de colección. Un `for` sobre
+  ranges demuestra el protocolo base, no estos combinadores.
+
+- [ ] **STD-FMT-IMPL-001 — Exponer `std.format` a programas Tondo.** Conectar
+  `Builder`, `format` y `join` a `Display`, con crecimiento acotado, error
+  atómico y tests end-to-end. El kernel Rust de builder no cuenta como API
+  pública hasta atravesar HIR, bytecode y VM.
+
+- [ ] **STD-IO-IMPL-001 — Completar protocolos y helpers de I/O.** Mantener los
+  handles `Reader`/`Writer` existentes y añadir `readAll`/`IoLimits`, partial
+  I/O, EOF, cancelación, límite prospectivo y cleanup por la ruta pública.
+
+- [ ] **STD-FS-IMPL-001 — Completar filesystem hosted.** Añadir `open`,
+  `metadata` y los handles afines `File`/`Directory` definidos por el contrato,
+  además de validar las operaciones materializadas existentes. Las funciones
+  `readAll/writeAll/list/...` no cierran el owner mientras falten firmas y
+  cleanup de handles.
+
+- [ ] **STD-PROC-IMPL-001 — Alinear procesos con el contrato público.** Exponer
+  exactamente `command/shell/pipe`, `Command.run/output/check/start` y
+  `ProcessHandle.wait/cancel`, eliminando aliases bootstrap contradictorios o
+  documentándolos como internos. Probar backpressure, cancelación, reaping y
+  errores nominales mediante programas Tondo.
+
+- [ ] **STD-SER-IMPL-001 — Implementar `std.serialization` tipada.** Publicar
+  `Serialize`, `Deserialize`, `Serializer[E]`, `Deserializer[E]` y la máquina
+  completa de eventos con dispatch estático, construcción atómica, streaming y
+  errores con path después de cerrar `STD-SER-001`. El validador Rust de balance
+  de eventos es solo un kernel.
+
+- [ ] **STD-DERIVE-SER-001 — Implementar providers de derive de
+  serialization.** Registrar providers build-only reales para `Serialize` y
+  `Deserialize`, generar impls Tondo deterministas para records/enums/genéricos
+  y probar diagnósticos, source maps, límites, campos privados/policies y
+  ausencia de reflection runtime.
+
+- [ ] **STD-JSON-IMPL-001 — Implementar las tres rutas de JSON.** Publicar
+  typed encode/decode directo, `JsonValue`/`JsonNumber` decimal exacto y
+  `JsonReader`/`JsonWriter` incrementales con stack explícito. Cubrir chunking,
+  Unicode, paths, policies, RFC 8259/JCS, límites y ausencia de DOM obligatorio;
+  `validate/canonicalize` sobre `serde_json::Value` queda como kernel provisional.
+  Requiere `STD-JSON-API-001` y `STD-DERIVE-SER-001`.
+
+- [ ] **STD-MSGPACK-IMPL-001 — Implementar MessagePack completo.** Publicar
+  typed, dynamic y streaming para todo el modelo wire, claves arbitrarias,
+  ext/timestamp, floats bit-exact, policies y encoding determinista. El codec
+  dinámico materializado actual no sustituye reader/writer ni dispatch typed.
+  Requiere `STD-MSGPACK-API-001` y `STD-DERIVE-SER-001`.
+
+- [ ] **STD-PROTOBUF-IMPL-001 — Implementar Protobuf schema-first.** Añadir el
+  parser/checker de `.proto`, imports declarados, evolución contra baseline,
+  generator hermético, tipos/impls generados, `ProtoReader[T]`/`ProtoWriter[T]`
+  y modelo completo de presence, repeated/packed, maps, oneof, open enums y
+  unknown fields. El validador wire sin schema queda como kernel reutilizable.
+  Requiere `STD-PROTOBUF-API-001` y `STD-DERIVE-SER-001`.
+
+- [ ] **STD-TESTING-SHRINK-001 — Completar generación y shrinking público.**
+  Conectar el trait `Shrink` y `shrink[T]` al runner ya existente, con orden
+  determinista, límite, replay y composición con `Generator`; no crear un
+  segundo mecanismo de generated cases.
+
+- [ ] **STD-PUBLIC-API-AUDIT-001 — Verificar firma por firma todos los owners
+  A.** Generar una matriz contract signature → símbolo HIR → lowering → host/VM
+  → caso público. Debe fallar si solo existe un path Rust, un fixture que llama
+  otra operación, una prueba documental o un alias bootstrap no normativo.
+
+- [ ] **STD-IMPL-001 — Coordinar implementación Core por owner.** Cierra cuando
+  `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
+  `STD-ITER-IMPL-001`, `STD-FMT-IMPL-001`, `STD-IO-IMPL-001`,
+  `STD-SER-IMPL-001`, los owners Core ya completos y
+  `STD-PUBLIC-API-AUDIT-001` no dejan ninguna firma sin ruta pública. El
+  registro actual `testing/stdlib-implementation.json` solo demuestra archivos
+  y pruebas por owner, no cobertura por firma.
+
+- [ ] **STD-IMPL-002 — Coordinar Hosted por owner.** Cierra tras
+  `STD-FS-IMPL-001`, `STD-PROC-IMPL-001` y la auditoría pública, conservando los
+  bridges correctos de path/console y capabilities. Las operaciones parciales
+  existentes no prueban los handles y firmas ausentes.
+
+- [ ] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** El runtime,
+  temp resources, generators, diffs, tolerancias y control sellado se conservan;
+  cierra al añadir `STD-TESTING-SHRINK-001` y demostrar toda la superficie del
+  contrato mediante el runner público.
+
+- [ ] **STD-TEST-001 — Coordinar modelos y properties por owner.** Reejecutar y
+  completar la evidencia después de las tareas leaf. Cada modelo debe cubrir la
+  API pública del owner, no solo su kernel Rust o una operación de validación.
+
+- [x] **STD-CODEC-KERNEL-001 — Validar los kernels de formatos existentes.**
+  `scripts/stdlib-codec-conformance.sh` prueba los kernels materializados y el
+  bridge `validate/canonicalize`; esta evidencia se conserva como oracle parcial.
+
+- [ ] **STD-CODEC-CONF-001 — Cerrar evidencia de serialization y formatos.**
+  Después de las cinco tareas A3, ejecutar typed/dynamic/streaming, derives y
+  schema-first con interoperabilidad externa, fragmentación, fuzzing, límites,
+  paths, preservación y ausencia de DOM/reflection donde lo prohíbe el contrato.
+
+- [x] **STD-PERF-KERNEL-001 — Conservar el probe escalar inicial.** Nueve
+  muestras por proceso, tres procesos y cinco kernels proporcionan una baseline
+  reproducible para el código ya existente.
+
+- [ ] **STD-PERF-CONF-001 — Coordinar performance por owner.** Ampliar el gate
+  a todos los hot paths públicos tras su implementación, incluyendo throughput,
+  tail latency, allocations/memoria, startup, code size y compile time; exigir
+  equivalencia exacta de cualquier SIMD/multiversioning con fallback portable.
+
+- [ ] **STD-CONF-001 — Coordinar conformidad por owner.** Cierra solo cuando la
+  matriz multi-spec contiene cada requisito A aplicable con evidencia pública y
+  todos los micro-gates `SPEC → IMPL/HOST → MODEL/TEST/FUZZ → PERF → CONF → DOC`.
+
+- [ ] **STD-DOC-001 — Cerrar documentación por owner y programas
+  representativos.** Corregir `docs/contracts/stdlib-s1a.md` y el manifiesto de
+  evidencia para distinguir kernel, bridge parcial y API completa; después
+  añadir ejemplos ejecutables de cada owner sin afirmar una publicación.
 
 ### Gate S1A — Standard Library 0.1 foundation
 
-- [x] La spec estándar fija todas las firmas de su catálogo Core + Hosted
+- [ ] La spec estándar fija todas las firmas de su catálogo Core + Hosted
   incluidas en STD-0.1A y mantiene cerrado el catálogo posterior de STD-0.1B.
 - [x] Los slices tempranos de meta, reflect, bytes, time-base y env read-only
   conservan las mismas identidades y contratos usados por M10.7/M10.6; S1A no
   sustituye un shim ni mantiene dos propietarios públicos.
-- [x] Cada owner A registra por separado spec, implementación/host, tests/model,
+- [ ] Cada owner A registra por separado spec, implementación/host, tests/model,
   performance aplicable, conformidad y docs; ninguna tarea umbrella oculta una
   celda pendiente.
 - [x] El sustrato monotónico de `Duration`, `Instant`, suspensión, timers y
   deadlines es único para producción/testing, está modelado y funciona con
   proveedor real o virtual sin cambiar bytecode de usuario.
-- [x] Core se ejecuta sobre la VM sin depender de una ABI nativa.
-- [x] Cada API hosted exige la capability correcta y conserva los claims del
+- [ ] Toda la superficie Core se ejecuta sobre la VM sin depender de una ABI
+  nativa; no basta con intrinsics y kernels parciales.
+- [ ] Cada API hosted exige la capability correcta y conserva los claims del
   target candidato Tondo 0.1.
-- [x] `derive` de serialization, JSON, MessagePack y Protobuf schema-first se
+- [ ] `derive` de serialization, JSON, MessagePack y Protobuf schema-first se
   ejecutan sin reflection runtime, DOM intermedio obligatorio ni inputs
   ambientales.
-- [x] Los codecs pasan interoperabilidad, fuzzing, streaming, límites,
+- [ ] Los codecs pasan interoperabilidad, fuzzing, streaming, límites,
   preservación y gates de rendimiento sobre oracle escalar y kernels
   optimizados.
-- [x] Modelos, properties, ejemplos y conformidad estándar cubren sus contratos
+- [ ] Modelos, properties, ejemplos y conformidad estándar cubren sus contratos
   positivos, negativos, límites y composición.
-- [x] La distribución es reproducible, cerrada y versionada.
-- [x] Los programas representativos pasan el gate estricto y proporcionan el
+- [ ] La distribución de STD-0.1A es reproducible, cerrada y versionada con
+  firmas, units y providers realmente implementados.
+- [ ] Los programas representativos pasan el gate estricto y proporcionan el
   corpus funcional inicial para NATIVE-001 y PERF-001.
-- [x] `std.testing` está especificado, implementado y probado con su propio
+- [ ] `std.testing` está especificado, implementado y probado con su propio
   runner público; un proyecto puede escribir tests útiles usando solo
   `assert` y enriquecerlos mediante imports explícitos, sin crear un segundo
   formato de snapshots, artifacts o generated cases.
@@ -4407,6 +4582,8 @@ pública definitiva hasta ser fijados por la especificación estándar.
 | `R-046` | Usar el manifest bootstrap como evidencia del draft | El gate queda roto durante meses o se atribuyen casos antiguos a reglas nuevas | `CONF-DRAFT-001`, selección explícita del linaje draft, requisitos pendientes honestos, ratchet por wave y `CONF-SEAL-001` después de T0/meta |
 | `R-047` | Cerrar bloques enormes con una sola tarea umbrella | No se conoce el estado real por módulo y los fallos aparecen al final | Micro-gates verticales, modelo único de resultados y estado SPEC/IMPL/TEST/PERF/CONF/DOC por owner |
 | `R-048` | Usar la recursión del host como pila del parser | Un input válido o malicioso aborta antes del límite tipado en targets con stacks pequeños | Guarda portable temporal; `PARSER-STACK-001` migra toda profundidad controlada por fuente a frames explícitos y conserva solo presupuestos configurables |
+| `R-049` | Tratar un path existente como prueba de implementación del owner | Un kernel parcial cierra decenas de firmas que ningún programa Tondo puede llamar | Matriz firma → HIR → lowering → runtime → caso público y `STD-PUBLIC-API-AUDIT-001` fail-closed |
+| `R-050` | Confundir bundle sellado con conformidad completa | El candidato fija bytes reproducibles pero omite requisitos sin evidencia o specs no inventariados | Matriz multi-spec, clasificación individual de límites y `CONF-SEAL-FINAL-001` como único cierre de G5 |
 
 ---
 
@@ -4501,19 +4678,29 @@ gates en una barrera artificial.
       UTEST-JUNIT-001 → UTEST-INTERRUPT-001 → UTEST-CLI-001`.
     - Aceptación testing: `UTEST-CONF-001`, `UTEST-PROJECTS-001`,
       `UTEST-PLATFORM-001` y `UTEST-DOGFOOD-001`; después se cierra T0.
-    - Unión final: `(META-CONF-001 + UTEST-CONF-001 + T0) →
-      CONF-SEAL-001 → G5`.
-    Mini-gate: T0 y después G5 verdes sobre hashes actuales; la regresión
-    bootstrap queda separada de la conformidad del draft.
-25. [x] **Wave 5 — STD-0.1A por layers.** Con `STD-PERF-001`, `STD-JSON-001`,
-    `STD-MSGPACK-001`, `STD-PROTOBUF-001` y `STD-TESTING-SPEC-001`
-    cerrados, terminar el spec de cada owner antes de su implementación;
-    ejecutar A1 valores/protocolos, A2 host, A3 serialization/codecs y A4
-    helpers de testing, cerrando el
-    micro-gate de cada owner antes de sus consumidores. Owners independientes
-    avanzan en paralelo. `STD-SPEC-001`, `STD-TEST-001`,
-    `STD-CODEC-CONF-001`, `STD-PERF-CONF-001`, `STD-CONF-001` y
-    `STD-DOC-001` cierran A5 y Gate S1A.
+    - Unión de implementación: `META-CONF-001 + UTEST-CONF-001 →
+      CONF-SEAL-001`, que demuestra la promoción content-addressed.
+    Mini-gate observado: meta/testing ejecutan sus rutas públicas y la regresión
+    bootstrap queda separada. El cierre evidencial de T0/G5 se trasladó a
+    `UTEST-SPEC-EVIDENCE-001`, `CONF-MATRIX-ALL-001`,
+    `CONF-GAP-AUDIT-001`, `CONF-GAP-IMPL-001` y `CONF-SEAL-FINAL-001` tras
+    detectar que el candidato no exigía cobertura normativa completa.
+25. [ ] **Wave 5 — STD-0.1A por layers.** Los contratos, slices A0 y kernels
+    iniciales están cerrados; la auditoría 1.45 reabre el resto. El orden de
+    cierre es:
+    - A1: `STD-CORE-IMPL-001`, `STD-TEXT-IMPL-001`, `STD-COLL-IMPL-001`,
+      `STD-ITER-IMPL-001`, `STD-FMT-IMPL-001` y `STD-IO-IMPL-001`;
+    - A2: `STD-FS-IMPL-001` y `STD-PROC-IMPL-001`, preservando path/console;
+    - A3 spec: `STD-SER-001` y
+      `STD-JSON-API-001 / STD-MSGPACK-API-001 / STD-PROTOBUF-API-001 →
+      STD-SPEC-001`;
+    - A3 implementation: `STD-SER-IMPL-001 → STD-DERIVE-SER-001 →
+      STD-JSON-IMPL-001 / STD-MSGPACK-IMPL-001 / STD-PROTOBUF-IMPL-001`;
+    - A4: `STD-TESTING-SHRINK-001 → STD-TESTING-IMPL-001`; y
+    - A5: `STD-PUBLIC-API-AUDIT-001 → STD-TEST-001 →
+      STD-CODEC-CONF-001 / STD-PERF-CONF-001 → STD-CONF-001 → STD-DOC-001`.
+    Los owners independientes pueden avanzar en paralelo, pero S1A no cierra
+    hasta que cada firma contractual atraviese una ruta pública real.
 26. [ ] **Wave 6 — Contratos que condicionan el backend.** Cerrar
     `STD-CONC-001`, `STD-SYNC-001`, `STD-EXEC-001` y la frontera runtime de
     `STD-NET-001`. Mini-gate: DEC-013/014 reciben requisitos completos sin
@@ -4538,24 +4725,55 @@ CONF-DRAFT
       bytes + env + time + test plan/frontend + defer-await}
   -> {meta runtime
       test runtime + algorithms}
-  -> {META-CONF + T0} -> CONF-SEAL -> G5
-  -> STD-0.1A / S1A
+  -> {META-CONF + testing implementation}
+  -> {matrix all specs + gap audit + final seal -> T0/G5
+      STD-0.1A leaf implementations + public API audit -> S1A}
   -> STD-0.1B runtime contracts
   -> native correctness / N1
   -> STD-0.1B implementation + REL-0.1-RC / S1
 ~~~
 
 M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
-quedan cerrados. M10.7, M10.6 y Gate T0 también están cerrados dentro del draft
-no publicado. `CONF-DRAFT-001`, `CONF-RATCHET-001`, `CONF-SEAL-001` y Gate G5
-están cerrados y Wave 5/S1A queda cerrado por la evidencia de
-`docs/contracts/stdlib-s1a.md`; la acción inmediata es Wave 6. Ninguna tarea posterior necesita
-volver a decidir el orden global: sus prerequisitos están en 4.1.1 y en la wave
-correspondiente.
+quedan cerrados como implementación/infraestructura. M10.7 y la implementación
+funcional de M10.6 permanecen cerradas. `CONF-DRAFT-001`,
+`CONF-RATCHET-001` y el mecanismo `CONF-SEAL-001` también permanecen cerrados.
+La auditoría reabre T0/G5 por trazabilidad normativa y Wave 5/S1A por APIs
+públicas ausentes. La acción inmediata es ejecutar las tareas leaf de Wave 5 y
+`CONF-MATRIX-ALL-001`; Wave 6 no se declara iniciada antes de esos cierres.
 
 ---
 
 ## 25. Historial del tracker
+
+### 1.45 — 2026-08-03
+
+- Se realiza una auditoría en dos pasadas: implementación/rutas públicas y
+  evidencia/gates. No se reabren tareas de especificación ni kernels que sí
+  cumplen íntegramente su alcance; se corrigen únicamente cierres que atribuían
+  una superficie mayor que la observada.
+- Se detecta que `testing/stdlib-implementation.json` valida existencia de paths
+  por owner, pero no firmas. Los contratos Core/Hosted contienen operaciones
+  públicas ausentes y A3 solo dispone de validador de eventos, codecs dinámicos
+  materializados y bridge `validate/canonicalize`; no existen todavía derives
+  de serialization, typed/streaming completo ni generator Protobuf schema-first.
+- Se reabren `STD-SER-001` y `STD-SPEC-001`: el propio spec deja pendiente el
+  protocolo exhaustivo de serialization y los contratos de codecs no publican
+  aún todas las firmas fuente. `STD-JSON-API-001`, `STD-MSGPACK-API-001` y
+  `STD-PROTOBUF-API-001` cierran esa forma antes de implementar los owners.
+- Wave 5/S1A y sus umbrellas se reabren con tareas leaf A1–A4, auditoría pública
+  por firma y gates A5. Los probes de codecs/performance se conservan como
+  `STD-CODEC-KERNEL-001` y `STD-PERF-KERNEL-001`, sin llamarlos conformidad del
+  owner completo.
+- Se detecta que la matriz vigente solo cubre `TONDO_LANGUAGE_SPEC.md`: 46/316
+  requisitos tienen evidencia ejecutable, 260 son `toolchain-limit`, y el
+  inventario mantiene 38 fences de testing como `draft-pending`. El candidato
+  revisión 8 verifica el mecanismo content-addressed, pero no basta para cerrar
+  T0/G5. Se añaden matriz multi-spec, triage individual, implementación de gaps
+  y sellado final fail-closed.
+- Se corrigen versión, dashboard, DAG, cola inmediata, riesgos y cifras de
+  evidencia. Los cierres históricos de 1.44 se conservan como registro y quedan
+  explícitamente sustituidos por esta auditoría; no se modifica ningún manifest
+  histórico ni el candidato.
 
 ### 1.44 — 2026-08-03
 
