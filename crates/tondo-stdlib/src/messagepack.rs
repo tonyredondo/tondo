@@ -25,6 +25,47 @@ pub fn encode(value: &Value) -> Vec<u8> {
     output
 }
 
+/// Encode using Tondo's deterministic map ordering. The ordering key is the
+/// deterministic wire encoding of each key, which also works for arbitrary
+/// MessagePack values instead of assuming string keys.
+pub fn encode_deterministic(value: &Value) -> Result<Vec<u8>, CodecError> {
+    let canonical = deterministic_value(value)?;
+    Ok(encode(&canonical))
+}
+
+fn deterministic_value(value: &Value) -> Result<Value, CodecError> {
+    Ok(match value {
+        Value::Array(values) => Value::Array(
+            values
+                .iter()
+                .map(deterministic_value)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        Value::Map(entries) => {
+            let mut ordered = entries
+                .iter()
+                .map(|(key, value)| {
+                    let key = deterministic_value(key)?;
+                    let value = deterministic_value(value)?;
+                    let encoded_key = encode(&key);
+                    Ok((encoded_key, key, value))
+                })
+                .collect::<Result<Vec<_>, CodecError>>()?;
+            ordered.sort_by(|left, right| left.0.cmp(&right.0));
+            if ordered.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+                return Err(CodecError::DuplicateKey);
+            }
+            Value::Map(
+                ordered
+                    .into_iter()
+                    .map(|(_, key, value)| (key, value))
+                    .collect(),
+            )
+        }
+        _ => value.clone(),
+    })
+}
+
 pub fn decode(input: &[u8]) -> Result<Value, CodecError> {
     let (value, offset) = read_value(input, 0, 0)?;
     if offset != input.len() {
@@ -376,5 +417,38 @@ mod tests {
             Err(CodecError::UnexpectedEof)
         );
         assert_eq!(decode(&[0xc1]), Err(CodecError::InvalidTag));
+    }
+
+    #[test]
+    fn deterministic_maps_sort_arbitrary_keys_and_reject_collisions() {
+        let value = Value::Map(vec![
+            (Value::String("z".into()), Value::UInt(1)),
+            (Value::String("a".into()), Value::UInt(2)),
+        ]);
+        let encoded = encode_deterministic(&value).unwrap();
+        let expected = Value::Map(vec![
+            (Value::String("a".into()), Value::UInt(2)),
+            (Value::String("z".into()), Value::UInt(1)),
+        ]);
+        assert_eq!(decode(&encoded).unwrap(), expected);
+        let duplicate = Value::Map(vec![
+            (Value::UInt(1), Value::Nil),
+            (Value::UInt(1), Value::Nil),
+        ]);
+        assert_eq!(
+            encode_deterministic(&duplicate),
+            Err(CodecError::DuplicateKey)
+        );
+    }
+
+    #[test]
+    fn depth_and_collection_limits_fail_before_allocation() {
+        let mut nested = vec![0x91; 258];
+        nested.extend(std::iter::repeat_n(0xc0, 258));
+        assert_eq!(decode(&nested), Err(CodecError::LimitExceeded));
+        assert_eq!(
+            decode(&[0xdd, 0xff, 0xff, 0xff, 0xff]),
+            Err(CodecError::LimitExceeded)
+        );
     }
 }

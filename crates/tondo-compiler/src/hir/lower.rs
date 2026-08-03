@@ -200,6 +200,12 @@ impl<'a> TypeLowerer<'a> {
         let text_module = self.packages.module(self.packages.standard(), &text);
         let testing = ModulePath::new("testing")?;
         let testing_module = self.packages.module(self.packages.standard(), &testing);
+        let json = ModulePath::new("json")?;
+        let json_module = self.packages.module(self.packages.standard(), &json);
+        let messagepack = ModulePath::new("messagepack")?;
+        let messagepack_module = self.packages.module(self.packages.standard(), &messagepack);
+        let protobuf = ModulePath::new("protobuf")?;
+        let protobuf_module = self.packages.module(self.packages.standard(), &protobuf);
         let bytes_referenced = bytes_module.as_ref().is_some_and(|bytes_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -252,6 +258,21 @@ impl<'a> TypeLowerer<'a> {
                 )
             })
         });
+        let json_referenced = json_module.as_ref().is_some_and(|module| {
+            self.resolved.references().any(|reference| {
+                matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
+            })
+        });
+        let messagepack_referenced = messagepack_module.as_ref().is_some_and(|module| {
+            self.resolved.references().any(|reference| {
+                matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
+            })
+        });
+        let protobuf_referenced = protobuf_module.as_ref().is_some_and(|module| {
+            self.resolved.references().any(|reference| {
+                matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
+            })
+        });
         if !bytes_referenced
             && !process_referenced
             && !time_referenced
@@ -259,6 +280,9 @@ impl<'a> TypeLowerer<'a> {
             && !math_referenced
             && !text_referenced
             && !testing_referenced
+            && !json_referenced
+            && !messagepack_referenced
+            && !protobuf_referenced
         {
             return Ok(());
         }
@@ -723,6 +747,50 @@ impl<'a> TypeLowerer<'a> {
                     float,
                 )?;
             }
+        }
+
+        let codec_bytes = self.interner.result(bytes, bytes_error)?;
+        let codec_unit = self.interner.result(unit, bytes_error)?;
+        if json_referenced {
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonValidate,
+                vec![(bytes, false)],
+                None,
+                codec_unit,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::JsonCanonicalize,
+                vec![(bytes, false)],
+                None,
+                codec_bytes,
+            )?;
+        }
+        if messagepack_referenced {
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackValidate,
+                vec![(bytes, false)],
+                None,
+                codec_unit,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MessagePackCanonicalize,
+                vec![(bytes, false)],
+                None,
+                codec_bytes,
+            )?;
+        }
+        if protobuf_referenced {
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::ProtobufValidate,
+                vec![(bytes, false)],
+                None,
+                codec_unit,
+            )?;
         }
 
         if text_referenced {

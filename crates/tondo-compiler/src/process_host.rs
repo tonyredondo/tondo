@@ -9,6 +9,7 @@ use std::time::{Duration, Instant as StdInstant};
 #[cfg(unix)]
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
+use tondo_stdlib::{json, messagepack, protobuf};
 use tondo_vm::runtime::{
     RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
 };
@@ -1049,6 +1050,60 @@ impl VmHost for BootstrapHost {
             }
             ("std.math.max", [RuntimeValue::Float(left), RuntimeValue::Float(right)]) => {
                 Ok(RuntimeValue::Float(left.max(*right)))
+            }
+            ("std.json.validate", [bytes]) => {
+                let input = self.bytes(bytes)?.to_vec();
+                match json::validate(&input) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.bytes_result_error(error.to_string())),
+                }
+            }
+            ("std.json.canonicalize", [bytes]) => {
+                let input = self.bytes(bytes)?.to_vec();
+                match json::parse(&input).and_then(|value| json::encode_canonical(&value)) {
+                    Ok(output) => {
+                        if let Err(message) = self.ensure_bytes_len(output.len()) {
+                            return Ok(self.bytes_result_error(message));
+                        }
+                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                            RuntimeHostValueKind::Bytes,
+                            HostValue::Bytes(output),
+                        ))))
+                    }
+                    Err(error) => Ok(self.bytes_result_error(error.to_string())),
+                }
+            }
+            ("std.messagepack.validate", [bytes]) => {
+                let input = self.bytes(bytes)?.to_vec();
+                match messagepack::decode(&input) {
+                    Ok(_) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.bytes_result_error(error.to_string())),
+                }
+            }
+            ("std.messagepack.canonicalize", [bytes]) => {
+                let input = self.bytes(bytes)?.to_vec();
+                match messagepack::decode(&input) {
+                    Ok(value) => match messagepack::encode_deterministic(&value) {
+                        Ok(output) => {
+                            if let Err(message) = self.ensure_bytes_len(output.len()) {
+                                return Ok(self.bytes_result_error(message));
+                            }
+                            Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                                RuntimeHostValueKind::Bytes,
+                                HostValue::Bytes(output),
+                            ))))
+                        }
+                        Err(error) => Ok(self.bytes_result_error(error.to_string())),
+                    },
+                    Err(error) => Ok(self.bytes_result_error(error.to_string())),
+                }
+            }
+            ("std.protobuf.validate", [bytes]) => {
+                let input = self.bytes(bytes)?.to_vec();
+                match protobuf::decode_fields(&input) {
+                    Ok(_) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.bytes_result_error(error.to_string())),
+                }
             }
             ("std.text.String.length", [RuntimeValue::String(text)]) => {
                 Ok(RuntimeValue::Integer(text.chars().count() as i128))

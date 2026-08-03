@@ -12,6 +12,7 @@ conformance = []
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tondo-stdlib = { path = "../tondo-stdlib" }
 tondo-vm = { path = "../tondo-vm" }
 unicode-ident.workspace = true
 unicode-normalization.workspace = true

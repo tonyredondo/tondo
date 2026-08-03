@@ -13669,6 +13669,13 @@ impl<'a> ExpressionChecker<'a> {
             ("math", Some("abs")) => HirBootstrapHostFunction::MathAbs,
             ("math", Some("min")) => HirBootstrapHostFunction::MathMin,
             ("math", Some("max")) => HirBootstrapHostFunction::MathMax,
+            ("json", Some("validate")) => HirBootstrapHostFunction::JsonValidate,
+            ("json", Some("canonicalize")) => HirBootstrapHostFunction::JsonCanonicalize,
+            ("messagepack", Some("validate")) => HirBootstrapHostFunction::MessagePackValidate,
+            ("messagepack", Some("canonicalize")) => {
+                HirBootstrapHostFunction::MessagePackCanonicalize
+            }
+            ("protobuf", Some("validate")) => HirBootstrapHostFunction::ProtobufValidate,
             ("testing", Some("log")) => HirBootstrapHostFunction::TestingLog,
             ("testing", Some("tags")) => HirBootstrapHostFunction::TestingTags,
             ("testing", Some("failNow")) => HirBootstrapHostFunction::TestingFailNow,
@@ -13691,6 +13698,9 @@ impl<'a> ExpressionChecker<'a> {
             | ("bytes", Some(name))
             | ("env", Some(name))
             | ("math", Some(name))
+            | ("json", Some(name))
+            | ("messagepack", Some(name))
+            | ("protobuf", Some(name))
             | ("testing", Some(name)) => {
                 let module_name = module.path().as_str();
                 self.emit(

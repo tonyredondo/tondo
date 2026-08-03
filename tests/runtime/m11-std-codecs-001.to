@@ -1,0 +1,36 @@
+import std.console
+import std.bytes
+import std.json
+import std.messagepack
+import std.protobuf
+
+fn main(): !(bytes.BytesError | bytes.Utf8Error) {
+    let json_input = bytes.Bytes(r"""{"z":1,"a":2}""")?
+    json.validate(json_input)?
+    let json_canonical = json.canonicalize(json_input)?
+    assert(String(json_canonical)? == r"""{"a":2,"z":1}""")
+
+    let duplicate = bytes.Bytes(r"""{"a":1,"a":2}""")?
+    match json.validate(duplicate) {
+        ok(_) => assert(false)
+        err(_) => ()
+    }
+
+    let messagepack_input = bytes.fromArray([
+        Byte(0x82u8), Byte(0xa1u8), Byte(0x7au8), Byte(1u8),
+        Byte(0xa1u8), Byte(0x61u8), Byte(2u8)
+    ])?
+    messagepack.validate(messagepack_input)?
+    let messagepack_canonical = messagepack.canonicalize(messagepack_input)?
+    assert(messagepack_canonical.equal(bytes.fromArray([
+        Byte(0x82u8), Byte(0xa1u8), Byte(0x61u8), Byte(2u8),
+        Byte(0xa1u8), Byte(0x7au8), Byte(1u8)
+    ])?))
+
+    let protobuf_input = bytes.fromArray([
+        Byte(0x08u8), Byte(0x96u8), Byte(0x01u8),
+        Byte(0x12u8), Byte(0x02u8), Byte(0x6fu8), Byte(0x6bu8)
+    ])?
+    protobuf.validate(protobuf_input)?
+    console.print("codecs-ok\n")
+}

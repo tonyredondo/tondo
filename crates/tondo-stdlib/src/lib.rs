@@ -20,3 +20,22 @@ pub enum CodecError {
     InvalidWireType,
     VarintOverflow,
 }
+
+impl std::fmt::Display for CodecError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::UnexpectedEof => "unexpected end of input",
+            Self::InvalidSyntax => "invalid syntax",
+            Self::InvalidUtf8 => "invalid UTF-8",
+            Self::DuplicateKey => "duplicate key",
+            Self::TrailingData => "trailing data",
+            Self::LimitExceeded => "codec limit exceeded",
+            Self::InvalidTag => "invalid tag",
+            Self::InvalidLength => "invalid length",
+            Self::InvalidWireType => "invalid wire type",
+            Self::VarintOverflow => "varint overflow",
+        })
+    }
+}
+
+impl std::error::Error for CodecError {}

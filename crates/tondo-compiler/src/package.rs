@@ -465,6 +465,9 @@ impl PackageGraph {
                 ModulePath::new("format")?,
                 ModulePath::new("io")?,
                 ModulePath::new("serialization")?,
+                ModulePath::new("json")?,
+                ModulePath::new("messagepack")?,
+                ModulePath::new("protobuf")?,
             ],
             [],
         )?);
