@@ -13693,12 +13693,18 @@ impl<'a> ExpressionChecker<'a> {
             ("fs", Some("rename")) => HirBootstrapHostFunction::FsRename,
             ("fs", Some("atomicWrite")) => HirBootstrapHostFunction::FsAtomicWrite,
             ("testing", Some("log")) => HirBootstrapHostFunction::TestingLog,
+            ("testing", Some("assertEqual")) => HirBootstrapHostFunction::TestingAssertEqual,
+            ("testing", Some("assertNotEqual")) => HirBootstrapHostFunction::TestingAssertNotEqual,
             ("testing", Some("assertTextEqual")) => {
                 HirBootstrapHostFunction::TestingAssertTextEqual
             }
             ("testing", Some("assertFloatNear")) => {
                 HirBootstrapHostFunction::TestingAssertFloatNear
             }
+            ("testing", Some("assertSome")) => HirBootstrapHostFunction::TestingAssertSome,
+            ("testing", Some("assertNone")) => HirBootstrapHostFunction::TestingAssertNone,
+            ("testing", Some("assertOk")) => HirBootstrapHostFunction::TestingAssertOk,
+            ("testing", Some("assertErr")) => HirBootstrapHostFunction::TestingAssertErr,
             ("testing", Some("tags")) => HirBootstrapHostFunction::TestingTags,
             ("testing", Some("failNow")) => HirBootstrapHostFunction::TestingFailNow,
             ("testing", Some("skip")) => HirBootstrapHostFunction::TestingSkip,

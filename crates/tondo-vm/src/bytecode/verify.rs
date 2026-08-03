@@ -2058,10 +2058,9 @@ impl Verifier<'_> {
                     .any(|parameter| parameter.mode != BytecodeParameterMode::Value)
                 && !callable.name.starts_with("std.bytes.BytesBuilder.")
                 && !callable.name.starts_with("std.env.")
-                && !matches!(
-                    callable.name.as_str(),
-                    "std.testing.VirtualTime.settle" | "std.testing.VirtualTime.advance"
-                )
+                && !callable.name.starts_with("std.testing.VirtualTime.")
+                && !callable.name.starts_with("std.testing.assertEqual")
+                && !callable.name.starts_with("std.testing.assertNotEqual")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,

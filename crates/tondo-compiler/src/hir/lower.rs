@@ -409,6 +409,76 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 unit,
             )?;
+            let testing_value = self.interner.generic_parameter(0)?;
+            let testing_error = self.interner.generic_parameter(1)?;
+            let testing_option = self.interner.option(testing_value)?;
+            let testing_result = self.interner.result(testing_value, testing_error)?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingAssertEqual,
+                vec![
+                    (testing_value, ParameterMode::Ref, false),
+                    (testing_value, ParameterMode::Ref, false),
+                ],
+                unit,
+                1,
+                vec![(
+                    0,
+                    vec![
+                        self.prelude_trait_bound("Equatable"),
+                        self.prelude_trait_bound("Display"),
+                    ],
+                )],
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingAssertNotEqual,
+                vec![
+                    (testing_value, ParameterMode::Ref, false),
+                    (testing_value, ParameterMode::Ref, false),
+                ],
+                unit,
+                1,
+                vec![(
+                    0,
+                    vec![
+                        self.prelude_trait_bound("Equatable"),
+                        self.prelude_trait_bound("Display"),
+                    ],
+                )],
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingAssertSome,
+                vec![(testing_option, ParameterMode::Value, false)],
+                testing_value,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingAssertNone,
+                vec![(testing_option, ParameterMode::Value, false)],
+                unit,
+                1,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingAssertOk,
+                vec![(testing_result, ParameterMode::Value, false)],
+                testing_value,
+                2,
+                Vec::new(),
+            )?;
+            self.push_bootstrap_generic_host_callable(
+                span,
+                HirBootstrapHostFunction::TestingAssertErr,
+                vec![(testing_result, ParameterMode::Value, false)],
+                testing_error,
+                2,
+                vec![(1, vec![self.prelude_trait_bound("Display")])],
+            )?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::TestingAssertTextEqual,
@@ -1268,6 +1338,70 @@ impl<'a> TypeLowerer<'a> {
             .map(|(ty, receiver)| (ty, ParameterMode::Value, receiver))
             .collect();
         self.push_bootstrap_host_callable_with_modes(span, function, fixed, variadic, outcome)
+    }
+
+    fn prelude_trait_bound(&self, name: &str) -> HirTraitReference {
+        HirTraitReference {
+            constructor: HirTraitConstructor::Prelude(
+                Name::new(name).expect("prelude trait names are valid"),
+            ),
+            arguments: Vec::new(),
+        }
+    }
+
+    fn push_bootstrap_generic_host_callable(
+        &mut self,
+        span: Span,
+        function: HirBootstrapHostFunction,
+        fixed: Vec<(TypeId, ParameterMode, bool)>,
+        outcome: TypeId,
+        generic_arity: u32,
+        bounds: Vec<(u32, Vec<HirTraitReference>)>,
+    ) -> Result<(), HirError> {
+        let function_parameters = fixed
+            .iter()
+            .map(|(ty, mode, _)| FunctionParameter::new(*mode, *ty))
+            .collect::<Vec<_>>();
+        let parameters = fixed
+            .into_iter()
+            .map(|(ty, mode, receiver)| HirParameter {
+                span,
+                local: None,
+                mode,
+                ty,
+                variadic_element: None,
+                receiver,
+                discard: false,
+            })
+            .collect::<Vec<_>>();
+        let bounds = bounds.into_iter().collect::<BTreeMap<_, _>>();
+        let generics = (0..generic_arity)
+            .map(|position| HirGenericParameter {
+                local: LocalId::synthetic_host_generic(position),
+                position,
+                bounds: bounds.get(&position).cloned().unwrap_or_default(),
+            })
+            .collect::<Vec<_>>();
+        let function_type = self.interner.function(FunctionType::new(
+            function.is_async(),
+            false,
+            function_parameters,
+            None,
+            outcome,
+        ))?;
+        self.callables.push(HirCallableSignature {
+            id: HirCallableId::Host(function),
+            span,
+            parameters,
+            generics,
+            generic_arity,
+            outcome,
+            function_type,
+            opaque_result: None,
+            body_source: None,
+            implicit_script: false,
+        });
+        Ok(())
     }
 
     fn push_bootstrap_virtual_time_callable(

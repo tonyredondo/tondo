@@ -2021,6 +2021,55 @@ mod tests {
     }
 
     #[test]
+    fn test_operation_executes_generic_testing_assertions_and_wrapper_consumers() {
+        let base = operation_request(
+            Operation::Check,
+            b"import std.testing\n\
+             test helpers {\n\
+              let value = testing.assertSome(some(42))\n\
+              let expectedValue = 42\n\
+              let differentValue = 41\n\
+              testing.assertEqual(ref value, ref expectedValue)\n\
+              testing.assertNotEqual(ref value, ref differentValue)\n\
+              let absent: Int? = none\n\
+              testing.assertNone(absent)\n\
+              let success: Int ! String = ok(7)\n\
+              let failure: Int ! String = err(\"bad\")\n\
+              let successValue = testing.assertOk(success)\n\
+              let failureValue = testing.assertErr(failure)\n\
+              let expectedSuccess = 7\n\
+              let expectedFailure = \"bad\"\n\
+              testing.assertEqual(ref successValue, ref expectedSuccess)\n\
+              testing.assertEqual(ref failureValue, ref expectedFailure)\n\
+             }\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let entries = discover_tests(&base).unwrap();
+        let envelope = crate::test_control::EnvelopeHandle::new(
+            "helpers",
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+        );
+        envelope
+            .set_phase(crate::test_control::ExecutionPhase::Body)
+            .unwrap();
+        let output = execute(
+            base.for_test_entry(&entries[0])
+                .unwrap()
+                .with_test_envelope(envelope.clone()),
+        )
+        .unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+        assert!(envelope.report().unwrap().terminal().is_none());
+    }
+
+    #[test]
     fn test_operation_virtualizes_the_production_monotonic_clock() {
         let base = operation_request(
             Operation::Check,

@@ -31,6 +31,16 @@ const DEFAULT_MAX_TIME_RESOURCES: usize = 1_048_576;
 static NEXT_CLOCK_DOMAIN: AtomicU64 = AtomicU64::new(1);
 static NEXT_ATOMIC_TEMP: AtomicU64 = AtomicU64::new(1);
 
+fn testing_value_text(value: &RuntimeValue) -> String {
+    const MAX_BYTES: usize = 1_024;
+    let mut text = format!("{value:?}");
+    if text.len() > MAX_BYTES {
+        text.truncate(MAX_BYTES);
+        text.push_str("...<truncated>");
+    }
+    text
+}
+
 #[derive(Clone)]
 struct ProcessStage {
     program: String,
@@ -270,7 +280,13 @@ impl BootstrapHost {
         result: Result<(), ControlError>,
     ) -> Result<RuntimeValue, VmError> {
         match result {
-            Ok(()) | Err(ControlError::FailNow { .. } | ControlError::Skip { .. }) => {
+            Ok(()) => Ok(RuntimeValue::Unit),
+            Err(ControlError::FailNow { message }) => {
+                let _ = envelope.fail_now(message);
+                Ok(RuntimeValue::Unit)
+            }
+            Err(ControlError::Skip { reason }) => {
+                let _ = envelope.skip(reason);
                 Ok(RuntimeValue::Unit)
             }
             Err(error) => {
@@ -1098,6 +1114,10 @@ impl VmHost for BootstrapHost {
     }
 
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
+        // Generic host callables are monomorphized in bytecode and carry their
+        // type arguments in brackets (for example `assertSome[Int]`). The
+        // host contract is owned by the unspecialized function name.
+        let name = name.split_once('[').map_or(name, |(base, _)| base);
         match (name, arguments) {
             ("std.console.print", [RuntimeValue::String(text)]) => {
                 self.stdout.extend_from_slice(text.as_bytes());
@@ -1478,6 +1498,35 @@ impl VmHost for BootstrapHost {
                 let envelope = self.testing_envelope()?;
                 Self::testing_result(&envelope, envelope.log(message.clone()))
             }
+            ("std.testing.assertEqual", [expected, actual]) => {
+                let envelope = self.testing_envelope()?;
+                let result = if expected == actual {
+                    Ok(())
+                } else {
+                    Err(ControlError::FailNow {
+                        message: format!(
+                            "assertion failed: expected {}, actual {}",
+                            testing_value_text(expected),
+                            testing_value_text(actual)
+                        ),
+                    })
+                };
+                Self::testing_result(&envelope, result)
+            }
+            ("std.testing.assertNotEqual", [expected, actual]) => {
+                let envelope = self.testing_envelope()?;
+                let result = if expected != actual {
+                    Ok(())
+                } else {
+                    Err(ControlError::FailNow {
+                        message: format!(
+                            "assertion failed: values are equal ({})",
+                            testing_value_text(expected)
+                        ),
+                    })
+                };
+                Self::testing_result(&envelope, result)
+            }
             (
                 "std.testing.assertTextEqual",
                 [RuntimeValue::String(expected), RuntimeValue::String(actual)],
@@ -1494,6 +1543,55 @@ impl VmHost for BootstrapHost {
                     })
                 };
                 Self::testing_result(&envelope, result)
+            }
+            ("std.testing.assertSome", [RuntimeValue::OptionSome(value)]) => Ok((**value).clone()),
+            ("std.testing.assertSome", [RuntimeValue::OptionNone]) => {
+                let envelope = self.testing_envelope()?;
+                Self::testing_result(
+                    &envelope,
+                    Err(ControlError::FailNow {
+                        message: "assertion failed: expected Some, got None".into(),
+                    }),
+                )
+            }
+            ("std.testing.assertNone", [RuntimeValue::OptionNone]) => Ok(RuntimeValue::Unit),
+            ("std.testing.assertNone", [RuntimeValue::OptionSome(value)]) => {
+                let envelope = self.testing_envelope()?;
+                Self::testing_result(
+                    &envelope,
+                    Err(ControlError::FailNow {
+                        message: format!(
+                            "assertion failed: expected None, got Some({})",
+                            testing_value_text(value)
+                        ),
+                    }),
+                )
+            }
+            ("std.testing.assertOk", [RuntimeValue::ResultOk(value)]) => Ok((**value).clone()),
+            ("std.testing.assertOk", [RuntimeValue::ResultErr(error)]) => {
+                let envelope = self.testing_envelope()?;
+                Self::testing_result(
+                    &envelope,
+                    Err(ControlError::FailNow {
+                        message: format!(
+                            "assertion failed: expected Ok, got Err({})",
+                            testing_value_text(error)
+                        ),
+                    }),
+                )
+            }
+            ("std.testing.assertErr", [RuntimeValue::ResultErr(error)]) => Ok((**error).clone()),
+            ("std.testing.assertErr", [RuntimeValue::ResultOk(value)]) => {
+                let envelope = self.testing_envelope()?;
+                Self::testing_result(
+                    &envelope,
+                    Err(ControlError::FailNow {
+                        message: format!(
+                            "assertion failed: expected Err, got Ok({})",
+                            testing_value_text(value)
+                        ),
+                    }),
+                )
             }
             (
                 "std.testing.assertFloatNear",
@@ -4048,6 +4146,79 @@ mod tests {
             BootstrapHost::default()
                 .invoke("std.testing.log", &[RuntimeValue::String("outside".into())]),
             Err(VmError::Host(_))
+        ));
+    }
+
+    #[test]
+    fn testing_host_assertions_cover_structural_values_and_terminal_failures() {
+        let envelope = EnvelopeHandle::new(
+            "assertions",
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+        );
+        envelope
+            .set_phase(crate::test_control::ExecutionPhase::Body)
+            .unwrap();
+        let mut host = BootstrapHost::default();
+        host.install_testing_envelope(envelope.clone());
+
+        assert_eq!(
+            host.invoke(
+                "std.testing.assertEqual[Int]",
+                &[RuntimeValue::Integer(7), RuntimeValue::Integer(7)],
+            )
+            .unwrap(),
+            RuntimeValue::Unit
+        );
+        assert_eq!(
+            host.invoke(
+                "std.testing.assertNotEqual[Int]",
+                &[RuntimeValue::Integer(7), RuntimeValue::Integer(8)],
+            )
+            .unwrap(),
+            RuntimeValue::Unit
+        );
+        assert_eq!(
+            host.invoke(
+                "std.testing.assertSome[Int]",
+                &[RuntimeValue::OptionSome(Box::new(RuntimeValue::Integer(9)))],
+            )
+            .unwrap(),
+            RuntimeValue::Integer(9)
+        );
+        assert_eq!(
+            host.invoke("std.testing.assertNone[Int]", &[RuntimeValue::OptionNone])
+                .unwrap(),
+            RuntimeValue::Unit
+        );
+        assert_eq!(
+            host.invoke(
+                "std.testing.assertOk[Int, String]",
+                &[RuntimeValue::ResultOk(Box::new(RuntimeValue::Integer(11)))],
+            )
+            .unwrap(),
+            RuntimeValue::Integer(11)
+        );
+        assert_eq!(
+            host.invoke(
+                "std.testing.assertErr[Int, String]",
+                &[RuntimeValue::ResultErr(Box::new(RuntimeValue::String(
+                    "bad".into(),
+                )))],
+            )
+            .unwrap(),
+            RuntimeValue::String("bad".into())
+        );
+
+        host.invoke(
+            "std.testing.assertEqual[Int]",
+            &[RuntimeValue::Integer(1), RuntimeValue::Integer(2)],
+        )
+        .unwrap();
+        envelope.close().unwrap();
+        let report = envelope.report().unwrap();
+        assert!(matches!(
+            report.terminal(),
+            Some(crate::test_control::Terminal::FailNow { .. })
         ));
     }
 
