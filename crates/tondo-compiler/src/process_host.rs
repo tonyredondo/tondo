@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStderr, ChildStdout, Command as OsCommand, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -29,6 +29,7 @@ const NANOS_PER_MILLISECOND: i128 = 1_000_000;
 const NANOS_PER_SECOND: i128 = 1_000_000_000;
 const DEFAULT_MAX_TIME_RESOURCES: usize = 1_048_576;
 static NEXT_CLOCK_DOMAIN: AtomicU64 = AtomicU64::new(1);
+static NEXT_ATOMIC_TEMP: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone)]
 struct ProcessStage {
@@ -395,6 +396,10 @@ impl BootstrapHost {
                 .map(PathBuf::from)
                 .map_err(|error| format!("path is not representable on this target: {error:?}"))
         }
+    }
+
+    fn path_bytes(&self, value: &RuntimeValue) -> Result<Vec<u8>, VmError> {
+        Ok(self.path(value)?.as_bytes().to_vec())
     }
 
     fn path_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -1282,6 +1287,134 @@ impl VmHost for BootstrapHost {
                     return Ok(self.fs_result_error(message));
                 }
                 match std::fs::write(path, bytes) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.fs_result_error(error.to_string())),
+                }
+            }
+            ("std.fs.createDirectory", [receiver, RuntimeValue::Bool(parents)]) => {
+                let path = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                let result = if *parents {
+                    std::fs::create_dir_all(path)
+                } else {
+                    std::fs::create_dir(path)
+                };
+                match result {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.fs_result_error(error.to_string())),
+                }
+            }
+            ("std.fs.remove", [receiver]) => {
+                let path = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                let result = match std::fs::symlink_metadata(&path) {
+                    Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(path),
+                    Ok(_) => std::fs::remove_file(path),
+                    Err(error) => Err(error),
+                };
+                match result {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.fs_result_error(error.to_string())),
+                }
+            }
+            ("std.fs.list", [receiver]) => {
+                let base = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                let mut entries = match std::fs::read_dir(&base) {
+                    Ok(entries) => entries.collect::<Result<Vec<_>, _>>(),
+                    Err(error) => Err(error),
+                };
+                let entries = match entries.as_mut() {
+                    Ok(entries) => entries,
+                    Err(error) => return Ok(self.fs_result_error(error.to_string())),
+                };
+                entries.sort_by(|left, right| {
+                    native_file_name_bytes(left).cmp(&native_file_name_bytes(right))
+                });
+                if entries.len() > 1_048_576 {
+                    return Ok(self.fs_result_error("directory entry limit exceeded"));
+                }
+                let base_bytes = self.path_bytes(receiver)?;
+                let mut output = Vec::with_capacity(entries.len());
+                let mut total_bytes = 0usize;
+                for entry in entries.iter() {
+                    let name = native_file_name_bytes(entry);
+                    let separator =
+                        usize::from(!base_bytes.is_empty() && !base_bytes.ends_with(b"/"));
+                    let length = base_bytes
+                        .len()
+                        .checked_add(separator)
+                        .and_then(|length| length.checked_add(name.len()))
+                        .ok_or_else(|| {
+                            VmError::Host("directory path length overflow".to_owned())
+                        })?;
+                    total_bytes = total_bytes.checked_add(length).ok_or_else(|| {
+                        VmError::Host("directory listing length overflow".to_owned())
+                    })?;
+                    if let Err(message) = self.ensure_bytes_len(total_bytes) {
+                        return Ok(self.fs_result_error(message));
+                    }
+                    let mut child = base_bytes.clone();
+                    if separator != 0 {
+                        child.push(b'/');
+                    }
+                    child.extend_from_slice(&name);
+                    let child = match path::Path::from_bytes(&child) {
+                        Ok(path) => path,
+                        Err(error) => return Ok(self.fs_result_error(format!("{error:?}"))),
+                    };
+                    output.push(self.allocate(RuntimeHostValueKind::Path, HostValue::Path(child)));
+                }
+                Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Array(
+                    output,
+                ))))
+            }
+            ("std.fs.rename", [from, to]) => {
+                let from = match self.filesystem_path(from) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                let to = match self.filesystem_path(to) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                match std::fs::rename(from, to) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.fs_result_error(error.to_string())),
+                }
+            }
+            ("std.fs.atomicWrite", [receiver, bytes]) => {
+                let target = match self.filesystem_path(receiver) {
+                    Ok(path) => path,
+                    Err(error) => return Ok(self.fs_result_error(error)),
+                };
+                let bytes = self.bytes(bytes)?.to_vec();
+                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
+                    return Ok(self.fs_result_error(message));
+                }
+                let suffix = NEXT_ATOMIC_TEMP.fetch_add(1, Ordering::Relaxed);
+                let temporary =
+                    target.with_file_name(format!(".tondo-atomic-{}-{suffix}", std::process::id()));
+                let result = (|| -> io::Result<()> {
+                    let mut file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&temporary)?;
+                    file.write_all(&bytes)?;
+                    file.flush()?;
+                    drop(file);
+                    std::fs::rename(&temporary, &target)
+                })();
+                if result.is_err() {
+                    let _ = std::fs::remove_file(&temporary);
+                }
+                match result {
                     Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
                     Err(error) => Ok(self.fs_result_error(error.to_string())),
                 }
@@ -2392,6 +2525,18 @@ fn shell_stage(text: &str) -> ProcessStage {
     }
 }
 
+fn native_file_name_bytes(entry: &std::fs::DirEntry) -> Vec<u8> {
+    let name = entry.file_name();
+    #[cfg(unix)]
+    {
+        name.into_vec()
+    }
+    #[cfg(not(unix))]
+    {
+        name.to_string_lossy().into_owned().into_bytes()
+    }
+}
+
 fn check_succeeded(statuses: &[ExitStatus]) -> bool {
     let mut has_satisfactory_downstream = false;
     for status in statuses.iter().rev() {
@@ -2487,6 +2632,71 @@ mod tests {
             result,
             RuntimeValue::ResultErr(value)
                 if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::FsError, .. })
+        ));
+    }
+
+    #[test]
+    fn filesystem_directory_operations_are_atomic_and_ordered() {
+        let mut host = BootstrapHost::default();
+        let root = host.allocate(
+            RuntimeHostValueKind::Path,
+            HostValue::Path(
+                path::Path::from_string(&format!("target/tondo-fs-host-{}", std::process::id()))
+                    .unwrap(),
+            ),
+        );
+        let _ = host.invoke("std.fs.remove", std::slice::from_ref(&root));
+        assert!(matches!(
+            host.invoke(
+                "std.fs.createDirectory",
+                &[root.clone(), RuntimeValue::Bool(true)]
+            )
+            .unwrap(),
+            RuntimeValue::ResultOk(_)
+        ));
+        let file = ok(host
+            .invoke(
+                "std.path.Path.join",
+                &[root.clone(), RuntimeValue::String("one.bin".into())],
+            )
+            .unwrap());
+        let bytes = bytes_ok(
+            host.invoke(
+                "intrinsic.Bytes.fromString",
+                &[RuntimeValue::String("ok".into())],
+            )
+            .unwrap(),
+        );
+        assert!(matches!(
+            host.invoke("std.fs.atomicWrite", &[file.clone(), bytes])
+                .unwrap(),
+            RuntimeValue::ResultOk(_)
+        ));
+        let listed = ok(host
+            .invoke("std.fs.list", std::slice::from_ref(&root))
+            .unwrap());
+        let RuntimeValue::Array(listed) = listed else {
+            panic!("filesystem list did not return an array");
+        };
+        assert_eq!(listed.len(), 1);
+        let renamed = ok(host
+            .invoke(
+                "std.path.Path.join",
+                &[root.clone(), RuntimeValue::String("two.bin".into())],
+            )
+            .unwrap());
+        assert!(matches!(
+            host.invoke("std.fs.rename", &[file, renamed.clone()])
+                .unwrap(),
+            RuntimeValue::ResultOk(_)
+        ));
+        assert!(matches!(
+            host.invoke("std.fs.remove", &[renamed]).unwrap(),
+            RuntimeValue::ResultOk(_)
+        ));
+        assert!(matches!(
+            host.invoke("std.fs.remove", &[root]).unwrap(),
+            RuntimeValue::ResultOk(_)
         ));
     }
 

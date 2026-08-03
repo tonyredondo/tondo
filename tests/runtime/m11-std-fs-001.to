@@ -3,14 +3,24 @@ import std.path
 import std.fs
 import std.bytes
 
-fn main(): !(path.PathError | fs.FsError) {
+fn main(): !(path.PathError | fs.FsError | bytes.BytesError | bytes.Utf8Error) {
     let existing = path.fromString("Cargo.toml")?
     let _contents = fs.readAll(existing)?
 
     let missing = path.fromString("tondo-no-such-file")?
     match fs.readAll(missing) {
         ok(_) => assert(false)
-        err(_) => ()
+          err(_) => ()
     }
+    let workspace = path.fromString("target/tondo-wave5-fs")?
+    fs.createDirectory(workspace, true)?
+    let file = workspace.join("data.bin")?
+    fs.atomicWrite(file, bytes.Bytes("ok")?)?
+    let _entries = fs.list(workspace)?
+    let moved = workspace.join("renamed.bin")?
+    fs.rename(file, moved)?
+    assert(String(fs.readAll(moved)?)? == "ok")
+    fs.remove(moved)?
+    fs.remove(workspace)?
     console.print("fs-ok\n")
 }

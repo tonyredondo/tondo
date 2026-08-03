@@ -900,6 +900,9 @@ impl<'a> TypeLowerer<'a> {
             }
         }
         if fs_referenced {
+            let path_array = self
+                .interner
+                .intrinsic(IntrinsicType::Array, vec![path_type])?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::FsReadAll,
@@ -910,6 +913,42 @@ impl<'a> TypeLowerer<'a> {
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::FsWriteAll,
+                vec![(path_type, false), (bytes, false)],
+                None,
+                fs_unit_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::FsCreateDirectory,
+                vec![(path_type, false), (bool_type, false)],
+                None,
+                fs_unit_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::FsRemove,
+                vec![(path_type, false)],
+                None,
+                fs_unit_outcome,
+            )?;
+            let fs_list_outcome = self.interner.result(path_array, fs_error)?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::FsList,
+                vec![(path_type, false)],
+                None,
+                fs_list_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::FsRename,
+                vec![(path_type, false), (path_type, false)],
+                None,
+                fs_unit_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::FsAtomicWrite,
                 vec![(path_type, false), (bytes, false)],
                 None,
                 fs_unit_outcome,

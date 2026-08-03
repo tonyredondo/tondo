@@ -13686,6 +13686,11 @@ impl<'a> ExpressionChecker<'a> {
             ("path", Some("fromBytes")) => HirBootstrapHostFunction::PathFromBytes,
             ("fs", Some("readAll")) => HirBootstrapHostFunction::FsReadAll,
             ("fs", Some("writeAll")) => HirBootstrapHostFunction::FsWriteAll,
+            ("fs", Some("createDirectory")) => HirBootstrapHostFunction::FsCreateDirectory,
+            ("fs", Some("remove")) => HirBootstrapHostFunction::FsRemove,
+            ("fs", Some("list")) => HirBootstrapHostFunction::FsList,
+            ("fs", Some("rename")) => HirBootstrapHostFunction::FsRename,
+            ("fs", Some("atomicWrite")) => HirBootstrapHostFunction::FsAtomicWrite,
             ("testing", Some("log")) => HirBootstrapHostFunction::TestingLog,
             ("testing", Some("assertTextEqual")) => {
                 HirBootstrapHostFunction::TestingAssertTextEqual
