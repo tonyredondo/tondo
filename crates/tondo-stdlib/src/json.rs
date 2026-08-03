@@ -255,10 +255,7 @@ mod tests {
         ] {
             assert!(parse(input).is_err(), "accepted invalid JSON: {input:?}");
         }
-        let mut deeply_nested = Vec::new();
-        for _ in 0..=MAX_DEPTH {
-            deeply_nested.push(b'[');
-        }
+        let mut deeply_nested = vec![b'['; MAX_DEPTH + 1];
         deeply_nested.extend(std::iter::repeat_n(b']', MAX_DEPTH + 1));
         assert!(matches!(
             parse(&deeply_nested),
