@@ -300,7 +300,8 @@ impl ArtifactStore {
         }
         let temp = temp_path(manifest_path.parent().unwrap_or(&self.root), "manifest");
         write_new_file(&temp, &bytes)?;
-        fs::rename(&temp, &manifest_path).map_err(io_error)?;
+        fs::rename(&temp, &manifest_path)
+            .map_err(|error| io_error_at("rename artifact manifest", error))?;
         self.published = true;
         Ok(manifest)
     }
@@ -382,11 +383,12 @@ impl ArtifactStore {
             return Err(ArtifactError::ObjectCollision(digest.into()));
         }
         let parent = path.parent().ok_or(ArtifactError::PathEscape)?;
-        fs::create_dir_all(parent).map_err(io_error)?;
+        fs::create_dir_all(parent)
+            .map_err(|error| io_error_at("create artifact object directory", error))?;
         ensure_safe_path(parent, false)?;
         let temp = temp_path(parent, "object");
         write_new_file(&temp, bytes)?;
-        fs::rename(&temp, &path).map_err(io_error)?;
+        fs::rename(&temp, &path).map_err(|error| io_error_at("rename artifact object", error))?;
         Ok(())
     }
 
@@ -471,13 +473,14 @@ fn validate_hash(value: &str) -> Result<(), ArtifactError> {
 
 fn ensure_store_dirs(root: &Path) -> Result<(), ArtifactError> {
     ensure_safe_path(root, true)?;
-    fs::create_dir_all(root).map_err(io_error)?;
+    fs::create_dir_all(root).map_err(|error| io_error_at("create artifact store root", error))?;
     ensure_safe_path(root, false)?;
     let objects = root.join("objects");
     let manifests = root.join("manifests");
     for path in [&objects, &manifests] {
         ensure_safe_path(path, true)?;
-        fs::create_dir_all(path).map_err(io_error)?;
+        fs::create_dir_all(path)
+            .map_err(|error| io_error_at("create artifact store directory", error))?;
         ensure_safe_path(path, false)?;
     }
     Ok(())
@@ -499,7 +502,7 @@ fn ensure_safe_path(path: &Path, allow_missing: bool) -> Result<(), ArtifactErro
             }
             Ok(_) => {}
             Err(error) if allow_missing && error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(io_error(error)),
+            Err(error) => return Err(io_error_at("inspect artifact path", error)),
         }
     }
     Ok(())
@@ -511,7 +514,7 @@ fn reject_symlink(path: &Path) -> Result<(), ArtifactError> {
             Err(ArtifactError::Symlink(path.into()))
         }
         Ok(_) => Ok(()),
-        Err(error) => Err(io_error(error)),
+        Err(error) => Err(io_error_at("inspect artifact path", error)),
     }
 }
 
@@ -525,8 +528,9 @@ fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), ArtifactError> {
         .write(true)
         .create_new(true)
         .open(path)
-        .map_err(io_error)?;
-    file.write_all(bytes).map_err(io_error)?;
+        .map_err(|error| io_error_at("create artifact temporary file", error))?;
+    file.write_all(bytes)
+        .map_err(|error| io_error_at("write artifact temporary file", error))?;
     // The store contract requires a complete file before the atomic rename;
     // it does not promise durable media commits. `File` has no user-space
     // buffer, so `write_all` completes the file contents; close the handle
@@ -560,6 +564,10 @@ fn referenced_objects(root: &Path) -> Result<BTreeSet<String>, ArtifactError> {
 
 fn io_error(error: io::Error) -> ArtifactError {
     ArtifactError::Io(error.to_string())
+}
+
+fn io_error_at(operation: &str, error: io::Error) -> ArtifactError {
+    ArtifactError::Io(format!("{operation}: {error}"))
 }
 
 #[cfg(test)]
