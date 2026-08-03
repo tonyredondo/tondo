@@ -424,6 +424,9 @@ impl<'a> TypeLowerer<'a> {
             let generator = self
                 .interner
                 .intrinsic(IntrinsicType::Generator, Vec::new())?;
+            let generation_id = self
+                .interner
+                .intrinsic(IntrinsicType::GenerationId, Vec::new())?;
             let generation_error = self
                 .interner
                 .intrinsic(IntrinsicType::GenerationError, Vec::new())?;
@@ -558,6 +561,13 @@ impl<'a> TypeLowerer<'a> {
                 vec![(uint64, false), (uint64, false)],
                 None,
                 generator,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::TestingGeneratorId,
+                vec![(generator, ParameterMode::Ref, true)],
+                None,
+                generation_id,
             )?;
             for (function, outcome) in [
                 (
@@ -4925,6 +4935,7 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::TempDirectory
                         | IntrinsicType::TempError
                         | IntrinsicType::Generator
+                        | IntrinsicType::GenerationId
                         | IntrinsicType::GenerationError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput

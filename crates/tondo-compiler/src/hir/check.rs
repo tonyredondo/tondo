@@ -834,6 +834,7 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::TempDirectory
                         | IntrinsicType::TempError
                         | IntrinsicType::Generator
+                        | IntrinsicType::GenerationId
                         | IntrinsicType::GenerationError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
@@ -16571,6 +16572,7 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::Generator, "drawCount") => {
                     HirBootstrapHostFunction::TestingGeneratorDrawCount
                 }
+                (IntrinsicType::Generator, "id") => HirBootstrapHostFunction::TestingGeneratorId,
                 (IntrinsicType::EnvSnapshot, "arguments") => {
                     HirBootstrapHostFunction::EnvSnapshotArguments
                 }

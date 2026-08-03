@@ -126,6 +126,7 @@ pub enum IntrinsicType {
     TempDirectory,
     TempError,
     Generator,
+    GenerationId,
     GenerationError,
     ExitStatus,
     ProcessOutput,
@@ -171,6 +172,7 @@ impl IntrinsicType {
             Self::TempDirectory => "TempDirectory",
             Self::TempError => "TempError",
             Self::Generator => "Generator",
+            Self::GenerationId => "GenerationId",
             Self::GenerationError => "GenerationError",
             Self::ExitStatus => "ExitStatus",
             Self::ProcessOutput => "ProcessOutput",
@@ -211,6 +213,7 @@ impl IntrinsicType {
             | Self::TempDirectory
             | Self::TempError
             | Self::Generator
+            | Self::GenerationId
             | Self::GenerationError
             | Self::ExitStatus
             | Self::ProcessOutput

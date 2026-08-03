@@ -81,31 +81,72 @@ enum HostValue {
     ExitStatus(ExitStatus),
     ProcessOutput(ProcessOutput),
     ProcessHandle(ProcessGroup),
-    ProcessError { _message: String },
-    ProcessExitError { _output: ProcessOutput },
-    Utf8Error { _message: String },
+    ProcessError {
+        _message: String,
+    },
+    ProcessExitError {
+        _output: ProcessOutput,
+    },
+    Utf8Error {
+        _message: String,
+    },
     BytesBuilder(Vec<u8>),
-    BytesError { _message: String },
+    BytesError {
+        _message: String,
+    },
     Path(path::Path),
-    PathError { _message: String },
-    FsError { _message: String },
-    MathError { _message: String },
+    PathError {
+        _message: String,
+    },
+    FsError {
+        _message: String,
+    },
+    MathError {
+        _message: String,
+    },
     FloatTolerance(FloatTolerance),
-    FloatToleranceError { _message: String },
+    FloatToleranceError {
+        _message: String,
+    },
     TextDiff(TextDiff),
-    TempDirectory { path: PathBuf },
-    TempError { _message: String },
+    TempDirectory {
+        path: PathBuf,
+    },
+    TempError {
+        _message: String,
+    },
     Generator(Generator),
-    GenerationError { _message: String },
-    Instant { domain: u64, nanos: i128 },
-    Timer { domain: u64, deadline: i128 },
-    DurationError { _message: String },
-    ClockError { _message: String },
+    #[allow(dead_code)]
+    GenerationId {
+        seed: u64,
+        case_index: u64,
+    },
+    GenerationError {
+        _message: String,
+    },
+    Instant {
+        domain: u64,
+        nanos: i128,
+    },
+    Timer {
+        domain: u64,
+        deadline: i128,
+    },
+    DurationError {
+        _message: String,
+    },
+    ClockError {
+        _message: String,
+    },
     EnvSnapshot(EnvSnapshot),
     EnvName(Vec<u8>),
     EnvValue(Vec<u8>),
-    EnvError { _message: String },
-    VirtualTime { domain: u64 },
+    EnvError {
+        _message: String,
+    },
+    VirtualTime {
+        domain: u64,
+    },
 }
 
 enum ClockProvider {
@@ -1768,6 +1809,16 @@ impl VmHost for BootstrapHost {
                 Ok(self.allocate(
                     RuntimeHostValueKind::Generator,
                     HostValue::Generator(Generator::for_case(seed, case_index)),
+                ))
+            }
+            ("std.testing.Generator.id", [generator]) => {
+                let id = self.generator_mut(generator)?.id();
+                Ok(self.allocate(
+                    RuntimeHostValueKind::GenerationId,
+                    HostValue::GenerationId {
+                        seed: id.seed,
+                        case_index: id.case_index,
+                    },
                 ))
             }
             ("std.testing.Generator.nextUInt", [generator]) => {
@@ -4535,6 +4586,32 @@ mod tests {
         };
         let left = make(&mut host);
         let right = make(&mut host);
+        let left_id = host
+            .invoke("std.testing.Generator.id", std::slice::from_ref(&left))
+            .unwrap();
+        let right_id = host
+            .invoke("std.testing.Generator.id", std::slice::from_ref(&right))
+            .unwrap();
+        let (RuntimeValue::Host { id: left_id, .. }, RuntimeValue::Host { id: right_id, .. }) =
+            (&left_id, &right_id)
+        else {
+            panic!("generator id must be an opaque host value");
+        };
+        let Some(HostValue::GenerationId {
+            seed: left_seed,
+            case_index: left_case,
+        }) = host.values.get(left_id)
+        else {
+            panic!("left generator id payload is missing");
+        };
+        let Some(HostValue::GenerationId {
+            seed: right_seed,
+            case_index: right_case,
+        }) = host.values.get(right_id)
+        else {
+            panic!("right generator id payload is missing");
+        };
+        assert_eq!((left_seed, left_case), (right_seed, right_case));
         let left_first = host
             .invoke("std.testing.Generator.nextUInt", &[left.clone()])
             .unwrap();

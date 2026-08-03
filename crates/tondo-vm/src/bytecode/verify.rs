@@ -464,6 +464,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::TempDirectory
                 | BytecodeIntrinsicType::TempError
                 | BytecodeIntrinsicType::Generator
+                | BytecodeIntrinsicType::GenerationId
                 | BytecodeIntrinsicType::GenerationError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
@@ -1080,6 +1081,7 @@ fn intrinsic_capability(
         | BytecodeIntrinsicType::FloatToleranceError
         | BytecodeIntrinsicType::TextDiff
         | BytecodeIntrinsicType::TempError
+        | BytecodeIntrinsicType::GenerationId
         | BytecodeIntrinsicType::GenerationError => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
@@ -1451,6 +1453,7 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::TempDirectory
         | BytecodeIntrinsicType::TempError
         | BytecodeIntrinsicType::Generator
+        | BytecodeIntrinsicType::GenerationId
         | BytecodeIntrinsicType::GenerationError
         | BytecodeIntrinsicType::ExitStatus
         | BytecodeIntrinsicType::ProcessOutput
@@ -1615,6 +1618,7 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::TempDirectory
                 | BytecodeIntrinsicType::TempError
                 | BytecodeIntrinsicType::Generator
+                | BytecodeIntrinsicType::GenerationId
                 | BytecodeIntrinsicType::GenerationError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput

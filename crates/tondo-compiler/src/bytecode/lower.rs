@@ -4111,6 +4111,7 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::TempDirectory => bc::BytecodeIntrinsicType::TempDirectory,
         IntrinsicType::TempError => bc::BytecodeIntrinsicType::TempError,
         IntrinsicType::Generator => bc::BytecodeIntrinsicType::Generator,
+        IntrinsicType::GenerationId => bc::BytecodeIntrinsicType::GenerationId,
         IntrinsicType::GenerationError => bc::BytecodeIntrinsicType::GenerationError,
         IntrinsicType::ExitStatus => bc::BytecodeIntrinsicType::ExitStatus,
         IntrinsicType::ProcessOutput => bc::BytecodeIntrinsicType::ProcessOutput,

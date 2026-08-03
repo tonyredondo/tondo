@@ -748,6 +748,7 @@ fn intrinsic_node(
         }
         IntrinsicType::EnvName
         | IntrinsicType::EnvError
+        | IntrinsicType::GenerationId
         | IntrinsicType::Path
         | IntrinsicType::PathError
         | IntrinsicType::FsError

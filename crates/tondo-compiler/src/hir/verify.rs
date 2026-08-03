@@ -525,6 +525,7 @@ impl Verifier<'_> {
                         | IntrinsicType::TempDirectory
                         | IntrinsicType::TempError
                         | IntrinsicType::Generator
+                        | IntrinsicType::GenerationId
                         | IntrinsicType::GenerationError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput

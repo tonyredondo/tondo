@@ -132,6 +132,7 @@ pub enum RuntimeHostValueKind {
     TempDirectory,
     TempError,
     Generator,
+    GenerationId,
     GenerationError,
     ExitStatus,
     ProcessOutput,

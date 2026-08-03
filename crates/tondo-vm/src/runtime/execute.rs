@@ -2116,6 +2116,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::TempDirectory
                     | BytecodeIntrinsicType::TempError
                     | BytecodeIntrinsicType::Generator
+                    | BytecodeIntrinsicType::GenerationId
                     | BytecodeIntrinsicType::GenerationError
                     | BytecodeIntrinsicType::ExitStatus
                     | BytecodeIntrinsicType::ProcessOutput
@@ -3689,6 +3690,7 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::TempDirectory => RuntimeHostValueKind::TempDirectory,
         BytecodeIntrinsicType::TempError => RuntimeHostValueKind::TempError,
         BytecodeIntrinsicType::Generator => RuntimeHostValueKind::Generator,
+        BytecodeIntrinsicType::GenerationId => RuntimeHostValueKind::GenerationId,
         BytecodeIntrinsicType::GenerationError => RuntimeHostValueKind::GenerationError,
         BytecodeIntrinsicType::ExitStatus => RuntimeHostValueKind::ExitStatus,
         BytecodeIntrinsicType::ProcessOutput => RuntimeHostValueKind::ProcessOutput,

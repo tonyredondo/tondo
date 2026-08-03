@@ -249,6 +249,7 @@ pub enum BytecodeIntrinsicType {
     TempDirectory,
     TempError,
     Generator,
+    GenerationId,
     GenerationError,
     ExitStatus,
     ProcessOutput,
@@ -393,6 +394,7 @@ impl BytecodeIntrinsicType {
             | Self::TempDirectory
             | Self::TempError
             | Self::Generator
+            | Self::GenerationId
             | Self::GenerationError
             | Self::ExitStatus
             | Self::ProcessOutput
@@ -456,6 +458,7 @@ impl BytecodeIntrinsicType {
             | Self::TempDirectory
             | Self::TempError
             | Self::Generator
+            | Self::GenerationId
             | Self::GenerationError
             | Self::ExitStatus
             | Self::ProcessOutput

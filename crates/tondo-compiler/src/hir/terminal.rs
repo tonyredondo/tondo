@@ -110,6 +110,7 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::TempDirectory
         | IntrinsicType::TempError
         | IntrinsicType::Generator
+        | IntrinsicType::GenerationId
         | IntrinsicType::GenerationError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
@@ -459,6 +460,7 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::TempDirectory
         | IntrinsicType::TempError
         | IntrinsicType::Generator
+        | IntrinsicType::GenerationId
         | IntrinsicType::GenerationError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
