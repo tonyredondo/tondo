@@ -6,7 +6,7 @@ runner público de testing, tiempo virtual y sus proyectos de aceptación forman
 parte del candidato de conformidad inmutable. Tondo 0.1 sigue en desarrollo:
 el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 
-**Versión del tracker:** 1.41
+**Versión del tracker:** 1.42
 
 **Última actualización:** 2026-08-03
 
@@ -18,10 +18,11 @@ el siguiente bloque es STD-0.1A; Gate G5 no afirma una publicación.
 - [Contrato de owner de `std.json`](./docs/contracts/stdlib-json.md)
 - [Contrato de owner de `std.messagepack`](./docs/contracts/stdlib-messagepack.md)
 - [Contrato de owner de `std.protobuf`](./docs/contracts/stdlib-protobuf.md)
+- [Contrato de owner de `std.testing`](./docs/contracts/stdlib-testing.md)
 - [Contrato de testing para Tondo 0.1](./TONDO_TESTING_SPEC.md)
 
 **Objetivo inmediato:** completar STD-0.1A por layers, con `STD-PERF-001`,
-`STD-JSON-001`, `STD-MSGPACK-001` y `STD-PROTOBUF-001` cerrados y continuando por los contratos de cada owner antes de
+`STD-JSON-001`, `STD-MSGPACK-001`, `STD-PROTOBUF-001` y `STD-TESTING-SPEC-001` cerrados y continuando por los contratos de cada owner antes de
 su implementación. Gate
 G5 ya fija la revisión 7 en un candidato inmutable sin confundirlo con una
 publicación. Después se fijan antes del backend los contratos
@@ -3791,7 +3792,7 @@ layer pueden avanzar en paralelo.
   dimensión y la secuencia design → capture → compare → promote; no convierte
   una cifra dependiente de máquina en semántica del lenguaje.
 
-- [ ] **STD-TESTING-SPEC-001 — Especificar `std.testing`.** Fijar assertions de
+- [x] **STD-TESTING-SPEC-001 — Especificar `std.testing`.** Fijar assertions de
   igualdad, diffs de texto, comparación float con tolerancia, consumo explícito
   de Option/Result, recursos temporales y datos generados que entren realmente
   en 0.1. Cada API declara tipos, ownership, cleanup, formato, seed,
@@ -3800,7 +3801,16 @@ layer pueden avanzar en paralelo.
   `VirtualTime.settle/advance`, el snapshot textual/store/update ya normativos
   ni sus diagnósticos. Los helpers de diff o generación no crean un segundo
   snapshot format, no registran tests, no interpretan tags runtime como
-  selectores ni capturan pánicos como excepciones recuperables.
+  selectores ni capturan pánicos como excepciones recuperables. Cerrado como
+  contrato del owner con
+  [`docs/contracts/stdlib-testing.md`](./docs/contracts/stdlib-testing.md), el
+  registro [`testing/stdlib-testing.json`](./testing/stdlib-testing.json) y el
+  check [`scripts/stdlib-testing-check.sh`](./scripts/stdlib-testing-check.sh),
+  integrado en `scripts/test-gate.sh`. La superficie fija assertions estáticas,
+  `TextDiff` line-based acotado, tolerancias Float/Float32, consumo de
+  `Option`/`Result`, `TempDirectory` con cleanup terminal y `Generator`/`Shrink`
+  con replay por seed y caso; el núcleo sellado y los formatos de runner,
+  snapshots y artifacts no cambian. Wave 5 avanza a `STD-TESTING-IMPL-001`.
 
 ### 19.3 Hosted Standard Library
 
@@ -4498,7 +4508,7 @@ gates en una barrera artificial.
     Mini-gate: T0 y después G5 verdes sobre hashes actuales; la regresión
     bootstrap queda separada de la conformidad del draft.
 25. [ ] **Wave 5 — STD-0.1A por layers.** Con `STD-PERF-001`, `STD-JSON-001`,
-    `STD-MSGPACK-001` y `STD-PROTOBUF-001`
+    `STD-MSGPACK-001`, `STD-PROTOBUF-001` y `STD-TESTING-SPEC-001`
     cerrados, terminar el spec de cada owner antes de su implementación;
     ejecutar A1 valores/protocolos, A2 host, A3 serialization/codecs y A4
     helpers de testing, cerrando el
@@ -4547,6 +4557,23 @@ correspondiente.
 ---
 
 ## 25. Historial del tracker
+
+### 1.42 — 2026-08-03
+
+- Se completa `STD-TESTING-SPEC-001` como contrato del owner `std.testing`.
+  Se cierran las assertions de igualdad y texto, `TextDiff` con formato
+  diagnóstico propio, tolerancias de `Float`/`Float32`, y el consumo explícito
+  de `Option` y `Result` sin añadir propagación implícita.
+- El contrato define `TempDirectory` con capability `filesystem`, ownership
+  afín, cleanup terminal y root acotado al worker, además de `Generator` con
+  algoritmo `xorshift64-7-9-8-v1`, replay por `(seed, caseIndex)` y `Shrink`
+  acotado. No concede entropy/host implícito, no registra tests ni captura
+  pánicos como excepciones recuperables.
+- `testing/stdlib-testing.json` y `scripts/stdlib-testing-check.sh` quedan
+  integrados en `scripts/test-gate.sh`. Se reutilizan sin cambios el núcleo
+  sellado, los reportes JSON/JUnit y el snapshot/artifact store existentes; la
+  implementación queda para `STD-TESTING-IMPL-001`.
+- Wave 5 avanza al siguiente owner de implementación `STD-TESTING-IMPL-001`.
 
 ### 1.41 — 2026-08-03
 

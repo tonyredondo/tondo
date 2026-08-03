@@ -50,6 +50,8 @@ run_step stdlib-messagepack-contract \
     scripts/stdlib-messagepack-check.sh
 run_step stdlib-protobuf-contract \
     scripts/stdlib-protobuf-check.sh
+run_step stdlib-testing-contract \
+    scripts/stdlib-testing-check.sh
 run_step draft-lineage-validate \
     cargo run -p tondo-conformance --locked -- validate \
     --root . \

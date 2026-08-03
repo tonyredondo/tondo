@@ -1,0 +1,237 @@
+{
+  "format": "tondo-stdlib-owner-contract/1",
+  "owner": "std.testing",
+  "edition": "0.1",
+  "phase": "STD-0.1A",
+  "status": "draft-contract",
+  "base": {
+    "normative_document": "TONDO_TESTING_SPEC.md",
+    "sealed_core": [
+      "log", "tags", "failNow", "skip", "attach", "snapshot",
+      "withVirtualTime", "VirtualTime.settle", "VirtualTime.advance"
+    ],
+    "core_unchanged": true,
+    "test_only": true,
+    "production_import": false,
+    "runtime_registration": false,
+    "runtime_reflection": false,
+    "panic_recovery": false,
+    "tag_selector": false,
+    "lifecycle_hooks": false
+  },
+  "capabilities": {
+    "core": [],
+    "temporary": ["filesystem"],
+    "forbidden": [
+      "console", "environment", "clock", "entropy", "network", "process", "threads"
+    ]
+  },
+  "assertions": {
+    "failure": "P0007",
+    "value_observation": "ref-no-move",
+    "display": "static-Display-no-reflection",
+    "functions": [
+      {
+        "id": "assertEqual",
+        "signature": "[T: Equatable + Display](expected: ref T, actual: ref T): Unit",
+        "ownership": "borrow-both",
+        "capabilities": [],
+        "format": "tondo-test-assertion-0.1/1"
+      },
+      {
+        "id": "assertNotEqual",
+        "signature": "[T: Equatable + Display](expected: ref T, actual: ref T): Unit",
+        "ownership": "borrow-both",
+        "capabilities": [],
+        "format": "tondo-test-assertion-0.1/1"
+      },
+      {
+        "id": "assertTextEqual",
+        "signature": "(expected: String, actual: String): Unit",
+        "ownership": "copy-string",
+        "capabilities": [],
+        "format": "tondo-test-text-diff-0.1/1"
+      }
+    ]
+  },
+  "text_diff": {
+    "type": "TextDiff",
+    "hunk_type": "TextDiffHunk",
+    "hunk_kinds": ["Equal", "Delete", "Insert"],
+    "function": "diffText",
+    "render_method": "TextDiff.render",
+    "format": "tondo-test-text-diff-0.1/1",
+    "algorithm": "myers-shortest-edit-script-v1",
+    "granularity": "lines-preserve-lf-and-cr-bytes",
+    "tie_break": "expected-byte-offset-then-actual-byte-offset",
+    "normalization": "none",
+    "adjacent_hunks": "coalesce-same-kind",
+    "equal_result": "empty-hunks",
+    "truncation": "flag-prefix-no-partial-hunk",
+    "snapshot_store": false,
+    "snapshot_update": false,
+    "capabilities": [],
+    "fields": [
+      "equal", "hunks", "expectedBytes", "actualBytes", "truncated"
+    ]
+  },
+  "floats": {
+    "tolerance_type": "FloatTolerance",
+    "tolerance_opaque": true,
+    "constructor": "FloatTolerance.from",
+    "fields": ["absolute", "relative"],
+    "domain": "finite-non-negative",
+    "formula": "abs(actual-expected) <= max(absolute, relative*max(abs(expected),abs(actual)))",
+    "nan": "always-fails",
+    "infinity": "only-identical-sign-passes",
+    "signed_zero": "equal",
+    "float32": "exact-widen-to-Float",
+    "assertions": ["assertFloatNear", "assertFloat32Near"],
+    "failure": "P0007",
+    "errors": ["Negative", "NonFinite", "Overflow"],
+    "capabilities": []
+  },
+  "option_result": {
+    "functions": [
+      {
+        "id": "assertSome",
+        "signature": "[T](value: T?): T",
+        "consumes": "Option",
+        "mismatch": "P0007",
+        "requires_display": false
+      },
+      {
+        "id": "assertNone",
+        "signature": "[T](value: T?): Unit",
+        "consumes": "Option",
+        "mismatch": "P0007",
+        "requires_display": false
+      },
+      {
+        "id": "assertOk",
+        "signature": "[T, E: Display](value: T ! E): T",
+        "consumes": "Result",
+        "mismatch": "P0007",
+        "requires_display": "error"
+      },
+      {
+        "id": "assertErr",
+        "signature": "[T: Display, E](value: T ! E): E",
+        "consumes": "Result",
+        "mismatch": "P0007",
+        "requires_display": "success"
+      }
+    ],
+    "implicit_propagation": false,
+    "wrapper_reordering": false,
+    "ownership": "consume-wrapper-return-payload"
+  },
+  "temporary": {
+    "type": "TempDirectory",
+    "error_type": "TempError",
+    "create": "tempDirectory(prefix: String): TempDirectory ! TempError",
+    "path": "TempDirectory.path(ref self): Path",
+    "cleanup": "TempDirectory.cleanup(self): Unit",
+    "capabilities": ["filesystem"],
+    "ownership": "affine-terminal",
+    "send": true,
+    "share": false,
+    "prefix_alphabet": "ASCII-A-Za-z0-9._-",
+    "prefix_empty_allowed": true,
+    "prefix_max_bytes": 32,
+    "root": "worker-private-runner-root",
+    "host_nonce": true,
+    "ambient_temp_variables": false,
+    "report_path": false,
+    "cleanup_strategy": "recursive-root-bounded-no-symlinks",
+    "cleanup_failure": "infrastructure-terminal",
+    "forced_termination_cleanup": "runner-owned",
+    "error_values": ["InvalidPrefix", "Unavailable", "PermissionDenied", "LimitExceeded", "IoError"],
+    "duplicate_file_api": false
+  },
+  "generation": {
+    "types": ["Generator", "GenerationId"],
+    "constructor": "Generator.new(seed: UInt64)",
+    "replay_constructor": "Generator.forCase(seed: UInt64, caseIndex: UInt64)",
+    "id_fields": ["seed", "caseIndex"],
+    "case_index": "zero-based-UInt64",
+    "algorithm": "xorshift64-7-9-8-v1",
+    "state_initialization": "seed-xor-0x9e3779b97f4a7c15",
+    "case_derivation": "seed-plus-caseIndex-times-0x9e3779b97f4a7c15-mod-UInt64",
+    "zero_state": "0x6a09e667f3bcc909",
+    "draw_sequence": ["shift-left-7", "shift-right-9", "shift-left-8"],
+    "draws": ["nextUInt", "nextBool", "nextInt", "nextBytes", "nextText"],
+    "int_range": "inclusive-unbiased-rejection",
+    "bytes_length": "uniform-zero-through-maximum",
+    "text_encoding": "valid-unicode-scalars-canonical-utf8",
+    "shrink_trait": "Shrink",
+    "shrink_function": "shrink(ref value)",
+    "shrink_builtins": ["integers", "floats", "String", "Array[T]"],
+    "shrink_order": "lowest-complexity-first",
+    "shrink_duplicates": "remove-preserve-first",
+    "shrink_executes_predicate": false,
+    "panic_recovery": false,
+    "test_registration": false,
+    "security": "deterministic-non-cryptographic-no-secrets",
+    "format": "tondo-test-generation-0.1/1",
+    "capabilities": []
+  },
+  "limits": [
+    {"id": "max_assertion_message_bytes", "unit": "bytes", "scope": "one-assertion", "check": "before-display"},
+    {"id": "max_display_bytes", "unit": "bytes", "scope": "one-value", "check": "before-append"},
+    {"id": "max_diff_input_bytes", "unit": "bytes", "scope": "one-diff", "check": "before-line-scan"},
+    {"id": "max_diff_lines", "unit": "lines", "scope": "one-diff", "check": "before-edit-script"},
+    {"id": "max_diff_hunks", "unit": "hunks", "scope": "one-diff", "check": "before-hunk-publish"},
+    {"id": "max_diff_output_bytes", "unit": "bytes", "scope": "one-diff", "check": "before-render"},
+    {"id": "max_temp_prefix_bytes", "unit": "bytes", "scope": "one-temp-directory", "check": "before-create"},
+    {"id": "max_temp_tree_entries", "unit": "entries", "scope": "one-temp-directory", "check": "before-delete-step"},
+    {"id": "max_temp_bytes", "unit": "bytes", "scope": "one-temp-directory", "check": "before-write-or-delete"},
+    {"id": "max_generator_draws", "unit": "draws", "scope": "one-generator", "check": "before-state-advance"},
+    {"id": "max_generated_bytes", "unit": "bytes", "scope": "one-generator", "check": "before-materialize"},
+    {"id": "max_shrink_candidates", "unit": "candidates", "scope": "one-shrink", "check": "before-append"},
+    {"id": "max_shrink_depth", "unit": "depth", "scope": "nested-shrink", "check": "before-recurse"}
+  ],
+  "errors": {
+    "float_tolerance": ["Negative", "NonFinite", "Overflow"],
+    "temporary": ["InvalidPrefix", "Unavailable", "PermissionDenied", "LimitExceeded", "IoError"],
+    "generation": ["InvalidRange", "InvalidLength", "LimitExceeded", "OutputTooLarge"]
+  },
+  "formats": {
+    "assertion": "tondo-test-assertion-0.1/1",
+    "text_diff": "tondo-test-text-diff-0.1/1",
+    "generation": "tondo-test-generation-0.1/1",
+    "report_reuse": ["tondo-test-report-0.1/7", "tondo-junit-report-0.1/4"],
+    "new_snapshot_store": false,
+    "new_junit_schema": false
+  },
+  "corpora": [
+    {"id": "assertions-and-display", "source": "owner-generated", "required": true, "focus": ["equal", "not-equal", "display", "borrow-preservation", "P0007"]},
+    {"id": "text-diff", "source": "owner-generated", "required": true, "focus": ["empty", "equal", "insert", "delete", "replace", "crlf", "unicode", "truncation", "render"]},
+    {"id": "float-tolerance", "source": "owner-generated", "required": true, "focus": ["absolute", "relative", "NaN", "infinity", "signed-zero", "Float32", "invalid-config"]},
+    {"id": "option-result-consumption", "source": "owner-generated", "required": true, "focus": ["Some", "None", "Ok", "Err", "affine-payload", "nested-wrapper", "explicit-consume"]},
+    {"id": "temporary-resources", "source": "owner-generated", "required": true, "focus": ["prefix", "root-isolation", "path", "cleanup", "defer", "symlink-escape", "timeout-cleanup"]},
+    {"id": "generation-replay", "source": "owner-generated", "required": true, "focus": ["seed", "case-index", "algorithm", "draws", "range", "bytes", "utf8", "replay"]},
+    {"id": "generation-shrink", "source": "owner-generated", "required": true, "focus": ["builtins", "custom-trait", "order", "dedupe", "limits", "no-panic-capture"]},
+    {"id": "capability-and-boundary", "source": "owner-generated", "required": true, "focus": ["test-only", "production-reject", "filesystem-only-temp", "no-reflection", "no-registration", "sealed-core"]}
+  ],
+  "test_matrix": [
+    {"id": "assertions", "required": true, "observables": ["signature", "equality", "display", "P0007", "ownership"]},
+    {"id": "text-diff", "required": true, "observables": ["format", "line-bytes", "tie-break", "truncation", "no-snapshot-store"]},
+    {"id": "float-tolerance", "required": true, "observables": ["formula", "special-values", "Float32", "config-errors", "cross-backend"]},
+    {"id": "option-result", "required": true, "observables": ["consume", "payload-return", "mismatch", "affine-obligation", "no-propagation"]},
+    {"id": "temporary", "required": true, "observables": ["capability", "isolated-root", "cleanup", "failure-precedence", "forced-cleanup", "bounded-delete"]},
+    {"id": "generation", "required": true, "observables": ["algorithm", "seed", "replay", "draw-budget", "byte-budget", "no-entropy"]},
+    {"id": "shrinking", "required": true, "observables": ["trait", "builtins", "stable-order", "dedupe", "bounded", "no-predicate-execution"]},
+    {"id": "core-compatibility", "required": true, "observables": ["sealed-signatures", "report-reuse", "tags-not-selector", "no-runtime-registration", "no-panic-recovery"]}
+  ],
+  "promotion": {
+    "gates": [
+      {"id": "design", "requires": ["sealed-core-boundary", "exact-signatures", "ownership", "capabilities", "finite-limits"]},
+      {"id": "implementation", "requires": ["typed-assertions", "bounded-diff", "float-policy", "option-result-consumption", "temp-cleanup", "seeded-generator"]},
+      {"id": "conformance", "requires": ["owner-corpus", "cross-backend", "format-stability", "capability-rejection", "failure-precedence"]},
+      {"id": "security", "requires": ["no-host-entropy", "no-secret-generator", "root-bounded-cleanup", "no-reflection", "no-panic-capture"]},
+      {"id": "promote", "requires": ["all-required-matrix", "report-and-snapshot-compatibility", "coverage-baseline", "STD-PERF-001-report"]}
+    ],
+    "next_coordination": "STD-TESTING-IMPL-001"
+  }
+}
