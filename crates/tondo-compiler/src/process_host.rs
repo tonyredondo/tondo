@@ -4435,6 +4435,70 @@ mod tests {
     }
 
     #[test]
+    fn hosted_codecs_validate_and_canonicalize_without_partial_success() {
+        let mut host = BootstrapHost::default();
+        let json_input = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(br#"{"b":2,"a":1}"#.to_vec()),
+        );
+        assert!(matches!(
+            host.invoke("std.json.validate", std::slice::from_ref(&json_input))
+                .unwrap(),
+            RuntimeValue::ResultOk(value) if matches!(value.as_ref(), RuntimeValue::Unit)
+        ));
+        let json_canonical = ok(host
+            .invoke("std.json.canonicalize", std::slice::from_ref(&json_input))
+            .unwrap());
+        assert_eq!(host.bytes(&json_canonical).unwrap(), br#"{"a":1,"b":2}"#);
+
+        let messagepack_input = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(vec![0x82, 0xa1, b'b', 0x02, 0xa1, b'a', 0x01]),
+        );
+        assert!(matches!(
+            host.invoke(
+                "std.messagepack.validate",
+                std::slice::from_ref(&messagepack_input)
+            )
+            .unwrap(),
+            RuntimeValue::ResultOk(value) if matches!(value.as_ref(), RuntimeValue::Unit)
+        ));
+        let messagepack_canonical = ok(host
+            .invoke(
+                "std.messagepack.canonicalize",
+                std::slice::from_ref(&messagepack_input),
+            )
+            .unwrap());
+        assert_eq!(
+            host.bytes(&messagepack_canonical).unwrap(),
+            &[0x82, 0xa1, b'a', 0x01, 0xa1, b'b', 0x02]
+        );
+
+        let protobuf_input = host.allocate(
+            RuntimeHostValueKind::Bytes,
+            HostValue::Bytes(vec![0x08, 0x01]),
+        );
+        assert!(matches!(
+            host.invoke("std.protobuf.validate", std::slice::from_ref(&protobuf_input))
+                .unwrap(),
+            RuntimeValue::ResultOk(value) if matches!(value.as_ref(), RuntimeValue::Unit)
+        ));
+
+        for (operation, bytes) in [
+            ("std.json.validate", Vec::new()),
+            ("std.messagepack.validate", vec![0xc1]),
+            ("std.protobuf.validate", vec![0x00]),
+        ] {
+            let invalid = host.allocate(RuntimeHostValueKind::Bytes, HostValue::Bytes(bytes));
+            assert!(matches!(
+                host.invoke(operation, std::slice::from_ref(&invalid)).unwrap(),
+                RuntimeValue::ResultErr(value)
+                    if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::BytesError, .. })
+            ));
+        }
+    }
+
+    #[test]
     fn testing_float_tolerance_is_validated_once_and_used_by_float_widths() {
         let envelope = EnvelopeHandle::new(
             "float-tolerance",
