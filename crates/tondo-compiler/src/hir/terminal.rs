@@ -100,6 +100,8 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::Bytes
         | IntrinsicType::BytesBuilder
         | IntrinsicType::BytesError
+        | IntrinsicType::Path
+        | IntrinsicType::PathError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
         | IntrinsicType::ProcessError
@@ -438,6 +440,8 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::Bytes
         | IntrinsicType::BytesBuilder
         | IntrinsicType::BytesError
+        | IntrinsicType::Path
+        | IntrinsicType::PathError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
         | IntrinsicType::ProcessError
@@ -509,6 +513,8 @@ mod tests {
             IntrinsicType::Bytes,
             IntrinsicType::BytesBuilder,
             IntrinsicType::BytesError,
+            IntrinsicType::Path,
+            IntrinsicType::PathError,
             IntrinsicType::ExitStatus,
             IntrinsicType::ProcessOutput,
             IntrinsicType::ProcessHandle,

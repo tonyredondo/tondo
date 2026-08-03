@@ -239,6 +239,8 @@ pub enum BytecodeIntrinsicType {
     Bytes,
     BytesBuilder,
     BytesError,
+    Path,
+    PathError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -372,6 +374,8 @@ impl BytecodeIntrinsicType {
             | Self::Bytes
             | Self::BytesBuilder
             | Self::BytesError
+            | Self::Path
+            | Self::PathError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle
@@ -424,6 +428,8 @@ impl BytecodeIntrinsicType {
             | Self::Bytes
             | Self::BytesBuilder
             | Self::BytesError
+            | Self::Path
+            | Self::PathError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessError

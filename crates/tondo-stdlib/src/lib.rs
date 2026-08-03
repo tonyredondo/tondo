@@ -5,6 +5,7 @@
 
 pub mod json;
 pub mod messagepack;
+pub mod path;
 pub mod protobuf;
 pub mod testing;
 

@@ -206,6 +206,8 @@ impl<'a> TypeLowerer<'a> {
         let messagepack_module = self.packages.module(self.packages.standard(), &messagepack);
         let protobuf = ModulePath::new("protobuf")?;
         let protobuf_module = self.packages.module(self.packages.standard(), &protobuf);
+        let path = ModulePath::new("path")?;
+        let path_module = self.packages.module(self.packages.standard(), &path);
         let bytes_referenced = bytes_module.as_ref().is_some_and(|bytes_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -273,6 +275,11 @@ impl<'a> TypeLowerer<'a> {
                 matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
             })
         });
+        let path_referenced = path_module.as_ref().is_some_and(|module| {
+            self.resolved.references().any(|reference| {
+                matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
+            })
+        });
         if !bytes_referenced
             && !process_referenced
             && !time_referenced
@@ -283,6 +290,7 @@ impl<'a> TypeLowerer<'a> {
             && !json_referenced
             && !messagepack_referenced
             && !protobuf_referenced
+            && !path_referenced
         {
             return Ok(());
         }
@@ -310,6 +318,10 @@ impl<'a> TypeLowerer<'a> {
         let bytes_error = self
             .interner
             .intrinsic(IntrinsicType::BytesError, Vec::new())?;
+        let path_type = self.interner.intrinsic(IntrinsicType::Path, Vec::new())?;
+        let path_error = self
+            .interner
+            .intrinsic(IntrinsicType::PathError, Vec::new())?;
         let exit_status = self
             .interner
             .intrinsic(IntrinsicType::ExitStatus, Vec::new())?;
@@ -344,6 +356,7 @@ impl<'a> TypeLowerer<'a> {
         let check_error = self.interner.union([process_error, process_exit_error])?;
         let check_outcome = self.interner.result(output, check_error)?;
         let string_from_bytes_outcome = self.interner.result(string, utf8_error)?;
+        let path_outcome = self.interner.result(path_type, path_error)?;
 
         if testing_referenced {
             let virtual_time = self
@@ -805,6 +818,62 @@ impl<'a> TypeLowerer<'a> {
                 None,
                 codec_unit,
             )?;
+        }
+        if path_referenced {
+            let optional_path = self.interner.option(path_type)?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::PathFromString,
+                vec![(string, false)],
+                None,
+                path_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::PathFromBytes,
+                vec![(bytes, false)],
+                None,
+                path_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::PathJoin,
+                vec![(path_type, true), (string, false)],
+                None,
+                path_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::PathParent,
+                vec![(path_type, true)],
+                None,
+                optional_path,
+            )?;
+            for (function, outcome) in [
+                (
+                    HirBootstrapHostFunction::PathFileName,
+                    self.interner.option(string)?,
+                ),
+                (
+                    HirBootstrapHostFunction::PathExtension,
+                    self.interner.option(string)?,
+                ),
+                (HirBootstrapHostFunction::PathKind, bool_type),
+                (HirBootstrapHostFunction::PathIsEmpty, bool_type),
+                (
+                    HirBootstrapHostFunction::PathToString,
+                    self.interner.result(string, path_error)?,
+                ),
+                (HirBootstrapHostFunction::PathToBytes, bytes),
+            ] {
+                self.push_bootstrap_host_callable(
+                    span,
+                    function,
+                    vec![(path_type, true)],
+                    None,
+                    outcome,
+                )?;
+            }
         }
 
         if text_referenced {
@@ -4435,6 +4504,8 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::Bytes
                         | IntrinsicType::BytesBuilder
                         | IntrinsicType::BytesError
+                        | IntrinsicType::Path
+                        | IntrinsicType::PathError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle

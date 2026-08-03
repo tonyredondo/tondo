@@ -2106,6 +2106,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::Bytes
                     | BytecodeIntrinsicType::BytesBuilder
                     | BytecodeIntrinsicType::BytesError
+                    | BytecodeIntrinsicType::Path
+                    | BytecodeIntrinsicType::PathError
                     | BytecodeIntrinsicType::ExitStatus
                     | BytecodeIntrinsicType::ProcessOutput
                     | BytecodeIntrinsicType::ProcessError
@@ -3668,6 +3670,8 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::Bytes => RuntimeHostValueKind::Bytes,
         BytecodeIntrinsicType::BytesBuilder => RuntimeHostValueKind::BytesBuilder,
         BytecodeIntrinsicType::BytesError => RuntimeHostValueKind::BytesError,
+        BytecodeIntrinsicType::Path => RuntimeHostValueKind::Path,
+        BytecodeIntrinsicType::PathError => RuntimeHostValueKind::PathError,
         BytecodeIntrinsicType::ExitStatus => RuntimeHostValueKind::ExitStatus,
         BytecodeIntrinsicType::ProcessOutput => RuntimeHostValueKind::ProcessOutput,
         BytecodeIntrinsicType::ProcessHandle => RuntimeHostValueKind::ProcessHandle,

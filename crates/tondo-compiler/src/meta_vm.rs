@@ -291,6 +291,8 @@ fn validate_program(program: &BytecodeProgram) -> Result<(), MetaVmError> {
                         | BytecodeIntrinsicType::Bytes
                         | BytecodeIntrinsicType::BytesBuilder
                         | BytecodeIntrinsicType::BytesError
+                        | BytecodeIntrinsicType::Path
+                        | BytecodeIntrinsicType::PathError
                         | BytecodeIntrinsicType::Utf8Error
                         | BytecodeIntrinsicType::NumericConversionError
                         | BytecodeIntrinsicType::Duration

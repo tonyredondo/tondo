@@ -468,6 +468,7 @@ impl PackageGraph {
                 ModulePath::new("json")?,
                 ModulePath::new("messagepack")?,
                 ModulePath::new("protobuf")?,
+                ModulePath::new("path")?,
             ],
             [],
         )?);

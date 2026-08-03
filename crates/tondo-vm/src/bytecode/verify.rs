@@ -454,6 +454,8 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::Bytes
                 | BytecodeIntrinsicType::BytesBuilder
                 | BytecodeIntrinsicType::BytesError
+                | BytecodeIntrinsicType::Path
+                | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -1090,17 +1092,18 @@ fn intrinsic_capability(
             capability,
             ClosedCapability::Discard | ClosedCapability::Send | ClosedCapability::Share
         )),
-        BytecodeIntrinsicType::EnvName | BytecodeIntrinsicType::EnvError => {
-            fixed_capability(matches!(
-                capability,
-                ClosedCapability::Copy
-                    | ClosedCapability::Discard
-                    | ClosedCapability::Equatable
-                    | ClosedCapability::Key
-                    | ClosedCapability::Send
-                    | ClosedCapability::Share
-            ))
-        }
+        BytecodeIntrinsicType::EnvName
+        | BytecodeIntrinsicType::EnvError
+        | BytecodeIntrinsicType::Path
+        | BytecodeIntrinsicType::PathError => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Copy
+                | ClosedCapability::Discard
+                | ClosedCapability::Equatable
+                | ClosedCapability::Key
+                | ClosedCapability::Send
+                | ClosedCapability::Share
+        )),
         BytecodeIntrinsicType::EnvValue => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
@@ -1414,6 +1417,8 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::Bytes
         | BytecodeIntrinsicType::BytesBuilder
         | BytecodeIntrinsicType::BytesError
+        | BytecodeIntrinsicType::Path
+        | BytecodeIntrinsicType::PathError
         | BytecodeIntrinsicType::ExitStatus
         | BytecodeIntrinsicType::ProcessOutput
         | BytecodeIntrinsicType::ProcessError
@@ -1567,6 +1572,8 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::Bytes
                 | BytecodeIntrinsicType::BytesBuilder
                 | BytecodeIntrinsicType::BytesError
+                | BytecodeIntrinsicType::Path
+                | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -14078,6 +14085,8 @@ mod tests {
             BytecodeIntrinsicType::Bytes,
             BytecodeIntrinsicType::BytesBuilder,
             BytecodeIntrinsicType::BytesError,
+            BytecodeIntrinsicType::Path,
+            BytecodeIntrinsicType::PathError,
             BytecodeIntrinsicType::ExitStatus,
             BytecodeIntrinsicType::ProcessOutput,
             BytecodeIntrinsicType::ProcessHandle,
@@ -14152,6 +14161,8 @@ mod tests {
                 | BytecodeIntrinsicType::Pipeline
                 | BytecodeIntrinsicType::Bytes
                 | BytecodeIntrinsicType::BytesError
+                | BytecodeIntrinsicType::Path
+                | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessError
@@ -14166,7 +14177,10 @@ mod tests {
                 | BytecodeIntrinsicType::ClockError => all,
                 BytecodeIntrinsicType::Instant => [true, true, false, false, true, true],
                 BytecodeIntrinsicType::Timer => [false, false, false, false, true, false],
-                BytecodeIntrinsicType::EnvName | BytecodeIntrinsicType::EnvError => all,
+                BytecodeIntrinsicType::EnvName
+                | BytecodeIntrinsicType::EnvError
+                | BytecodeIntrinsicType::Path
+                | BytecodeIntrinsicType::PathError => all,
                 BytecodeIntrinsicType::EnvValue => [true, true, false, false, true, true],
                 BytecodeIntrinsicType::EnvSnapshot => [false, true, false, false, true, true],
             };

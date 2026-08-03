@@ -10,7 +10,7 @@ use std::time::{Duration, Instant as StdInstant};
 use std::os::unix::process::{CommandExt, ExitStatusExt};
 
 use tondo_stdlib::testing::{FloatTolerance, diff_text};
-use tondo_stdlib::{json, messagepack, protobuf};
+use tondo_stdlib::{json, messagepack, path, protobuf};
 use tondo_vm::runtime::{
     RuntimeHostValueKind, RuntimeValue, VmError, VmHost, VmTestNodeKind, VmTestNodeOutcome,
 };
@@ -69,6 +69,8 @@ enum HostValue {
     Utf8Error { _message: String },
     BytesBuilder(Vec<u8>),
     BytesError { _message: String },
+    Path(path::Path),
+    PathError { _message: String },
     Instant { domain: u64, nanos: i128 },
     Timer { domain: u64, deadline: i128 },
     DurationError { _message: String },
@@ -357,6 +359,33 @@ impl BootstrapHost {
 
     fn bytes_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
         RuntimeValue::ResultErr(Box::new(self.bytes_error(message)))
+    }
+
+    fn path(&self, value: &RuntimeValue) -> Result<&path::Path, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::Path,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("Path value is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::Path(path)) => Ok(path),
+            _ => Err(VmError::Host("Path token is stale".into())),
+        }
+    }
+
+    fn path_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::PathError,
+            HostValue::PathError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn path_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.path_error(message)))
     }
 
     fn duration_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -1106,6 +1135,68 @@ impl VmHost for BootstrapHost {
                     Err(error) => Ok(self.bytes_result_error(error.to_string())),
                 }
             }
+            ("std.path.Path.fromString", [RuntimeValue::String(value)]) => {
+                match path::Path::from_string(value) {
+                    Ok(path) => Ok(RuntimeValue::ResultOk(Box::new(
+                        self.allocate(RuntimeHostValueKind::Path, HostValue::Path(path)),
+                    ))),
+                    Err(error) => Ok(self.path_result_error(format!("{error:?}"))),
+                }
+            }
+            ("std.path.Path.fromBytes", [bytes]) => {
+                let input = self.bytes(bytes)?.to_vec();
+                match path::Path::from_bytes(&input) {
+                    Ok(path) => Ok(RuntimeValue::ResultOk(Box::new(
+                        self.allocate(RuntimeHostValueKind::Path, HostValue::Path(path)),
+                    ))),
+                    Err(error) => Ok(self.path_result_error(format!("{error:?}"))),
+                }
+            }
+            ("std.path.Path.join", [receiver, RuntimeValue::String(component)]) => {
+                let receiver = self.path(receiver)?.clone();
+                match receiver.join(component) {
+                    Ok(path) => Ok(RuntimeValue::ResultOk(Box::new(
+                        self.allocate(RuntimeHostValueKind::Path, HostValue::Path(path)),
+                    ))),
+                    Err(error) => Ok(self.path_result_error(format!("{error:?}"))),
+                }
+            }
+            ("std.path.Path.parent", [receiver]) => {
+                let parent = self.path(receiver)?.parent();
+                Ok(parent
+                    .map(|path| {
+                        RuntimeValue::OptionSome(Box::new(
+                            self.allocate(RuntimeHostValueKind::Path, HostValue::Path(path)),
+                        ))
+                    })
+                    .unwrap_or(RuntimeValue::OptionNone))
+            }
+            ("std.path.Path.fileName", [receiver]) => Ok(self
+                .path(receiver)?
+                .file_name()
+                .map(|value| RuntimeValue::OptionSome(Box::new(RuntimeValue::String(value.into()))))
+                .unwrap_or(RuntimeValue::OptionNone)),
+            ("std.path.Path.extension", [receiver]) => Ok(self
+                .path(receiver)?
+                .extension()
+                .map(|value| RuntimeValue::OptionSome(Box::new(RuntimeValue::String(value.into()))))
+                .unwrap_or(RuntimeValue::OptionNone)),
+            ("std.path.Path.kind", [receiver]) => {
+                Ok(RuntimeValue::Bool(self.path(receiver)?.is_absolute()))
+            }
+            ("std.path.Path.isEmpty", [receiver]) => {
+                Ok(RuntimeValue::Bool(self.path(receiver)?.is_empty()))
+            }
+            ("std.path.Path.toString", [receiver]) => match self.path(receiver)?.to_string() {
+                Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::String(
+                    value,
+                )))),
+                Err(error) => Ok(self.path_result_error(format!("{error:?}"))),
+            },
+            ("std.path.Path.toBytes", [receiver]) => Ok(self.allocate(
+                RuntimeHostValueKind::Bytes,
+                HostValue::Bytes(self.path(receiver)?.as_bytes().to_vec()),
+            )),
             ("std.text.String.length", [RuntimeValue::String(text)]) => {
                 Ok(RuntimeValue::Integer(text.chars().count() as i128))
             }

@@ -732,7 +732,10 @@ fn intrinsic_node(
                 fixed(HirCapabilityStatus::Unsatisfied)
             }
         }
-        IntrinsicType::EnvName | IntrinsicType::EnvError => {
+        IntrinsicType::EnvName
+        | IntrinsicType::EnvError
+        | IntrinsicType::Path
+        | IntrinsicType::PathError => {
             if matches!(
                 capability,
                 HirCapability::Copy

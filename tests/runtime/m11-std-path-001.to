@@ -1,0 +1,24 @@
+import std.console
+import std.path
+import std.bytes
+
+fn main(): !(path.PathError | bytes.BytesError | bytes.Utf8Error) {
+    let root = path.fromString("/tmp")?
+    assert(root.kind())
+    let file = root.join("tondo.txt")?
+    assert(file.fileName() == some("tondo.txt"))
+    assert(file.extension() == some("txt"))
+    match file.parent() {
+        some(parent) => assert(parent.toString()? == "/tmp")
+        none => assert(false)
+    }
+    assert(not file.isEmpty())
+    assert(String(file.toBytes())? == "/tmp/tondo.txt")
+
+    let native = path.fromBytes(bytes.fromArray([Byte(255u8), Byte(47u8), Byte(120u8)])?)?
+    match native.toString() {
+        ok(_) => assert(false)
+        err(_) => ()
+    }
+    console.print("path-ok\n")
+}

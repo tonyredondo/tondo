@@ -824,6 +824,8 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::Bytes
                         | IntrinsicType::BytesBuilder
                         | IntrinsicType::BytesError
+                        | IntrinsicType::Path
+                        | IntrinsicType::PathError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle
@@ -13676,6 +13678,8 @@ impl<'a> ExpressionChecker<'a> {
                 HirBootstrapHostFunction::MessagePackCanonicalize
             }
             ("protobuf", Some("validate")) => HirBootstrapHostFunction::ProtobufValidate,
+            ("path", Some("fromString")) => HirBootstrapHostFunction::PathFromString,
+            ("path", Some("fromBytes")) => HirBootstrapHostFunction::PathFromBytes,
             ("testing", Some("log")) => HirBootstrapHostFunction::TestingLog,
             ("testing", Some("assertTextEqual")) => {
                 HirBootstrapHostFunction::TestingAssertTextEqual
@@ -13707,6 +13711,7 @@ impl<'a> ExpressionChecker<'a> {
             | ("json", Some(name))
             | ("messagepack", Some(name))
             | ("protobuf", Some(name))
+            | ("path", Some(name))
             | ("testing", Some(name)) => {
                 let module_name = module.path().as_str();
                 self.emit(
@@ -16411,6 +16416,14 @@ impl<'a> ExpressionChecker<'a> {
                 (IntrinsicType::Bytes, "toArray") => HirBootstrapHostFunction::BytesToArray,
                 (IntrinsicType::Bytes, "equal") => HirBootstrapHostFunction::BytesEqual,
                 (IntrinsicType::Bytes, "hash") => HirBootstrapHostFunction::BytesHash,
+                (IntrinsicType::Path, "join") => HirBootstrapHostFunction::PathJoin,
+                (IntrinsicType::Path, "parent") => HirBootstrapHostFunction::PathParent,
+                (IntrinsicType::Path, "fileName") => HirBootstrapHostFunction::PathFileName,
+                (IntrinsicType::Path, "extension") => HirBootstrapHostFunction::PathExtension,
+                (IntrinsicType::Path, "kind") => HirBootstrapHostFunction::PathKind,
+                (IntrinsicType::Path, "isEmpty") => HirBootstrapHostFunction::PathIsEmpty,
+                (IntrinsicType::Path, "toString") => HirBootstrapHostFunction::PathToString,
+                (IntrinsicType::Path, "toBytes") => HirBootstrapHostFunction::PathToBytes,
                 (IntrinsicType::BytesBuilder, "length") => {
                     HirBootstrapHostFunction::BytesBuilderLen
                 }

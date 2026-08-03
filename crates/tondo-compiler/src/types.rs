@@ -116,6 +116,8 @@ pub enum IntrinsicType {
     Bytes,
     BytesBuilder,
     BytesError,
+    Path,
+    PathError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -150,6 +152,8 @@ impl IntrinsicType {
             Self::Bytes => "Bytes",
             Self::BytesBuilder => "BytesBuilder",
             Self::BytesError => "BytesError",
+            Self::Path => "Path",
+            Self::PathError => "PathError",
             Self::ExitStatus => "ExitStatus",
             Self::ProcessOutput => "ProcessOutput",
             Self::ProcessHandle => "ProcessHandle",
@@ -179,6 +183,8 @@ impl IntrinsicType {
             | Self::Bytes
             | Self::BytesBuilder
             | Self::BytesError
+            | Self::Path
+            | Self::PathError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle
