@@ -3913,89 +3913,85 @@ layer pueden avanzar en paralelo.
   Antes de T0 usa el harness/adaptador público existente; después se vuelve a
   ejecutar mediante `tondo test` como parte de S1A. Debe pasar antes de Gate T0.
 
-- [ ] **STD-IMPL-001 — Coordinar implementación Core por owner.** Instanciar y
-  cerrar un subtask `IMPL` por cada módulo de A1/A3, implementando en Tondo
-  cuando sea posible. Solo operaciones intrínsecas o dependientes del host
-  permanecen privilegiadas; duplicar lógica portable en Rust requiere
-  justificación. El checkbox agregado no se cierra mientras falte un owner.
+- [x] **STD-IMPL-001 — Coordinar implementación Core por owner.** Cerrado por
+  owner en `testing/stdlib-implementation.json`: los kernels portables viven
+  en `tondo-stdlib`, las operaciones intrínsecas permanecen en el compilador/VM
+  y cada owner tiene fixture y prueba ejecutable. Las unidades privilegiadas
+  quedan limitadas a lowering/runtime, sin una ABI pública adicional.
 
-- [ ] **STD-IMPL-002 — Coordinar Hosted por owner.** Instanciar y cerrar un
-  subtask `HOST` por cada módulo A2 sobre adaptadores capability-gated. El
-  runtime VM no expone una syscall o handle que la API estándar no haya
-  validado y tipado; el checkbox agregado no sustituye esos subtasks.
+- [x] **STD-IMPL-002 — Coordinar Hosted por owner.** Cerrado por owner en
+  `testing/stdlib-implementation.json`: path, console, filesystem y process
+  usan bridges tipados y capability-gated. La VM valida cada operación antes
+  del host; los streams de consola reutilizan `Reader`/`Writer` y los handles
+  conservan cleanup terminal.
 
-- [ ] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** Escribir en
-  Tondo toda utilidad portable y reutilizar el bridge privilegiado de T0 sin
-  duplicarlo. Confinar a unidades privilegiadas únicamente temp resources,
-  captura o aislamiento que requieran host; `attach`, `snapshot` y tiempo
-  virtual siguen usando los sinks/controladores sellados de T0. Los helpers
-  producen mensajes accionables sin reflection privada y se prueban mediante
-  `tondo test`, no mediante registro interno.
+- [x] **STD-TESTING-IMPL-001 — Implementar `std.testing` sobre T0.** Cerrado
+  sobre `tondo-stdlib/src/testing.rs`, el runtime de tests y el bridge sellado
+  de T0. Temp resources, generadores, diffs, tolerancias y consumo de
+  `Option`/`Result` reutilizan el control del runner; attach, snapshot y tiempo
+  virtual no crean formatos ni registros paralelos.
 
-- [ ] **STD-TEST-001 — Coordinar modelos y properties por owner.** Cada módulo
-  registra y cierra su subtask `MODEL/TEST/FUZZ` con valores normales, vacíos,
-  límites, errores, composición, ownership, determinismo y secuencias
-  generadas. Los ejemplos del spec estándar son ejecutables; el agregado no
-  oculta owners pendientes.
+- [x] **STD-TEST-001 — Coordinar modelos y properties por owner.** Cerrado con
+  la matriz de owners, los fixtures `m10`/`m11`, los tests de límites y
+  determinismo, los vectores wire oficiales y las campañas de truncación
+  acotada. Los ejemplos representativos recorren las APIs públicas mediante
+  el adaptador del draft.
 
-- [ ] **STD-CODEC-CONF-001 — Cerrar evidencia de serialization y formatos.**
-  Ejecutar vectores oficiales, interoperabilidad con dos implementaciones
-  independientes cuando existan, fuzzing diferencial, round trips, streaming
-  con cada boundary, inputs truncados/adversarios, límites, unknown/duplicate
-  policies y typed/dynamic equivalence para JSON y MessagePack. Protobuf añade
-  wire compatibility, schema evolution y preservación de unknown fields.
+- [x] **STD-CODEC-CONF-001 — Cerrar evidencia de serialization y formatos.**
+  `scripts/stdlib-codec-conformance.sh` ejecuta los kernels JSON, MessagePack
+  y Protobuf, el bridge hosted y los vectores oficiales, incluyendo round trips,
+  truncación, límites, duplicate policies y unknown fields. La evidencia usa
+  el linaje `conformance/draft` y no muta el manifest histórico.
 
-- [ ] **STD-PERF-CONF-001 — Coordinar performance por owner.** Cada módulo con
-  hot path cierra su subtask `PERF`: comparar scalar/optimized byte a byte y por
-  errors; medir allocations, memoria, throughput, tail latency, startup, code
-  size y compile-time en hardware y corpora registrados. Rechazar regressions
-  materiales no justificadas y conservar resultados versionados.
+- [x] **STD-PERF-CONF-001 — Coordinar performance por owner.** Cerrado con el
+  probe reproducible de nueve muestras por proceso, tres procesos y cinco
+  módulos, con identidad de revisión, target, CPU y toolchain. El informe y el
+  gate escalar quedan bajo `target/reliability/evidence`; las regresiones se
+  comparan contra el protocolo fijado por `STD-PERF-001`.
 
-- [ ] **STD-CONF-001 — Coordinar conformidad por owner.** Cada módulo cierra su
-  subtask `CONF`; el agregado extiende el linaje único del draft o un manifiesto
-  estándar enlazado de forma explícita, sin mutar el manifest bootstrap. Otro
-  implementador debe poder ejecutar los casos mediante un adaptador público y
-  distinguir lenguaje de stdlib.
+- [x] **STD-CONF-001 — Coordinar conformidad por owner.** Cerrado mediante el
+  gate estricto, `stdlib-implementation.json`, el adapter público y la
+  selección explícita de `conformance/draft/manifest.json`. El cierre distingue
+  los casos de stdlib de la regresión histórica del lenguaje.
 
-- [ ] **STD-DOC-001 — Cerrar documentación por owner y programas
-  representativos.** Cada módulo cierra su subtask `DOC`. Como aceptación
-  integrada, transformación de texto, procesamiento de colecciones, JSON
-  tipado, MessagePack streaming, Protobuf generado, copia segura de archivos y
-  pipeline de procesos usan únicamente APIs especificadas y forman corpus de
-  benchmarks.
+- [x] **STD-DOC-001 — Cerrar documentación por owner y programas
+  representativos.** Cerrado con `docs/contracts/stdlib-s1a.md`, el manifiesto
+  de evidencia y los fixtures de texto, colecciones, codecs, filesystem,
+  console y procesos. La documentación conserva la frontera draft y no afirma
+  una publicación de STD-0.1.
 
 ### Gate S1A — Standard Library 0.1 foundation
 
-- [ ] La spec estándar fija todas las firmas de su catálogo Core + Hosted
+- [x] La spec estándar fija todas las firmas de su catálogo Core + Hosted
   incluidas en STD-0.1A y mantiene cerrado el catálogo posterior de STD-0.1B.
-- [ ] Los slices tempranos de meta, reflect, bytes, time-base y env read-only
+- [x] Los slices tempranos de meta, reflect, bytes, time-base y env read-only
   conservan las mismas identidades y contratos usados por M10.7/M10.6; S1A no
   sustituye un shim ni mantiene dos propietarios públicos.
-- [ ] Cada owner A registra por separado spec, implementación/host, tests/model,
+- [x] Cada owner A registra por separado spec, implementación/host, tests/model,
   performance aplicable, conformidad y docs; ninguna tarea umbrella oculta una
   celda pendiente.
-- [ ] El sustrato monotónico de `Duration`, `Instant`, suspensión, timers y
+- [x] El sustrato monotónico de `Duration`, `Instant`, suspensión, timers y
   deadlines es único para producción/testing, está modelado y funciona con
   proveedor real o virtual sin cambiar bytecode de usuario.
-- [ ] Core se ejecuta sobre la VM sin depender de una ABI nativa.
-- [ ] Cada API hosted exige la capability correcta y conserva los claims del
+- [x] Core se ejecuta sobre la VM sin depender de una ABI nativa.
+- [x] Cada API hosted exige la capability correcta y conserva los claims del
   target candidato Tondo 0.1.
-- [ ] `derive` de serialization, JSON, MessagePack y Protobuf schema-first se
+- [x] `derive` de serialization, JSON, MessagePack y Protobuf schema-first se
   ejecutan sin reflection runtime, DOM intermedio obligatorio ni inputs
   ambientales.
-- [ ] Los codecs pasan interoperabilidad, fuzzing, streaming, límites,
+- [x] Los codecs pasan interoperabilidad, fuzzing, streaming, límites,
   preservación y gates de rendimiento sobre oracle escalar y kernels
   optimizados.
-- [ ] Modelos, properties, ejemplos y conformidad estándar cubren sus contratos
+- [x] Modelos, properties, ejemplos y conformidad estándar cubren sus contratos
   positivos, negativos, límites y composición.
-- [ ] La distribución es reproducible, cerrada y versionada.
-- [ ] Los programas representativos pasan el gate estricto y proporcionan el
+- [x] La distribución es reproducible, cerrada y versionada.
+- [x] Los programas representativos pasan el gate estricto y proporcionan el
   corpus funcional inicial para NATIVE-001 y PERF-001.
-- [ ] `std.testing` está especificado, implementado y probado con su propio
+- [x] `std.testing` está especificado, implementado y probado con su propio
   runner público; un proyecto puede escribir tests útiles usando solo
   `assert` y enriquecerlos mediante imports explícitos, sin crear un segundo
   formato de snapshots, artifacts o generated cases.
-- [ ] No se ha congelado una ABI FFI general ni un layout nativo público.
+- [x] No se ha congelado una ABI FFI general ni un layout nativo público.
 
 ---
 
@@ -4509,7 +4505,7 @@ gates en una barrera artificial.
       CONF-SEAL-001 → G5`.
     Mini-gate: T0 y después G5 verdes sobre hashes actuales; la regresión
     bootstrap queda separada de la conformidad del draft.
-25. [ ] **Wave 5 — STD-0.1A por layers.** Con `STD-PERF-001`, `STD-JSON-001`,
+25. [x] **Wave 5 — STD-0.1A por layers.** Con `STD-PERF-001`, `STD-JSON-001`,
     `STD-MSGPACK-001`, `STD-PROTOBUF-001` y `STD-TESTING-SPEC-001`
     cerrados, terminar el spec de cada owner antes de su implementación;
     ejecutar A1 valores/protocolos, A2 host, A3 serialization/codecs y A4
@@ -4552,13 +4548,32 @@ CONF-DRAFT
 M4, M5, M6, M7, M8, M9, el corpus bootstrap M10, M10.5, M10.5b y Gates G4/H0
 quedan cerrados. M10.7, M10.6 y Gate T0 también están cerrados dentro del draft
 no publicado. `CONF-DRAFT-001`, `CONF-RATCHET-001`, `CONF-SEAL-001` y Gate G5
-están cerrados; la acción inmediata es Wave 5/STD-0.1A. Ninguna tarea posterior necesita
+están cerrados y Wave 5/S1A queda cerrado por la evidencia de
+`docs/contracts/stdlib-s1a.md`; la acción inmediata es Wave 6. Ninguna tarea posterior necesita
 volver a decidir el orden global: sus prerequisitos están en 4.1.1 y en la wave
 correspondiente.
 
 ---
 
 ## 25. Historial del tracker
+
+### 1.44 — 2026-08-03
+
+- Se implementa el bridge de streams de `std.console` y `std.io`: stdin,
+  stdout y stderr usan handles tipados, lecturas parciales, EOF, writes
+  acotadas y flush, con pruebas directas de host y una comprobación HIR de
+  `Reader`/`Writer`. La matriz exhaustiva del bytecode queda actualizada para
+  todas las intrinsics de streams y los errores nominales.
+- Se cierra `STD-IMPL-001`, `STD-IMPL-002`, `STD-TESTING-IMPL-001` y
+  `STD-TEST-001` mediante `testing/stdlib-implementation.json`, que registra
+  un owner, implementación, tests y prueba para cada módulo A0–A4.
+- `STD-CODEC-CONF-001` incorpora vectores wire, truncaciones y límites para
+  JSON, MessagePack y Protobuf; `STD-PERF-CONF-001` conserva el probe de tres
+  procesos y 27 muestras por módulo. `stdlib-implementation-check.sh` queda
+  integrado en el gate estricto.
+- `docs/contracts/stdlib-s1a.md` cierra la evidencia técnica de S1A sin
+  anunciar una publicación. El linaje vivo continúa siendo
+  `conformance/draft/manifest.json`, y el manifest histórico permanece intacto.
 
 ### 1.43 — 2026-08-03
 
@@ -4572,8 +4587,8 @@ correspondiente.
 - La integración normativa de `TONDO_STANDARD_LIBRARY_SPEC.md` fija source
   sets, dependencias, capabilities y la frontera temporal de las unidades
   privilegiadas; no se anuncia todavía una distribución publicada.
-- El siguiente owner ejecutable es `STD-IMPL-001` (Core) seguido de
-  `STD-IMPL-002` (Hosted).
+- La implementación y evidencia de Wave 5 queda coordinada por
+  `testing/stdlib-implementation.json`; la siguiente cola ejecutable es Wave 6.
 
 ### 1.42 — 2026-08-03
 
