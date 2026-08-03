@@ -2124,6 +2124,9 @@ impl Verifier<'_> {
                 && !callable.name.starts_with("std.testing.TextDiff.render")
                 && !callable.name.starts_with("std.testing.TempDirectory.path")
                 && !callable.name.starts_with("std.testing.Generator.")
+                && !callable.name.starts_with("std.console.readLine")
+                && !callable.name.starts_with("std.io.Reader.read")
+                && !callable.name.starts_with("std.io.Writer.")
             {
                 return Err(BytecodeVerificationError::new(
                     &context,
@@ -14242,6 +14245,18 @@ mod tests {
                     [false, true, false, false, true, false]
                 }
                 BytecodeIntrinsicType::ProcessHandle => [false, false, false, false, true, false],
+                BytecodeIntrinsicType::FloatTolerance
+                | BytecodeIntrinsicType::FloatToleranceError
+                | BytecodeIntrinsicType::TextDiff
+                | BytecodeIntrinsicType::TempError
+                | BytecodeIntrinsicType::GenerationId
+                | BytecodeIntrinsicType::GenerationError
+                | BytecodeIntrinsicType::IoError
+                | BytecodeIntrinsicType::ConsoleError => all,
+                BytecodeIntrinsicType::TempDirectory
+                | BytecodeIntrinsicType::Generator
+                | BytecodeIntrinsicType::Reader
+                | BytecodeIntrinsicType::Writer => [false, true, false, false, true, false],
                 BytecodeIntrinsicType::Duration
                 | BytecodeIntrinsicType::DurationError
                 | BytecodeIntrinsicType::ClockError => all,
