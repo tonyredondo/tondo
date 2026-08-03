@@ -103,6 +103,7 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::Path
         | IntrinsicType::PathError
         | IntrinsicType::FsError
+        | IntrinsicType::MathError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
         | IntrinsicType::ProcessError
@@ -444,6 +445,7 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::Path
         | IntrinsicType::PathError
         | IntrinsicType::FsError
+        | IntrinsicType::MathError
         | IntrinsicType::ExitStatus
         | IntrinsicType::ProcessOutput
         | IntrinsicType::ProcessError
@@ -518,6 +520,7 @@ mod tests {
             IntrinsicType::Path,
             IntrinsicType::PathError,
             IntrinsicType::FsError,
+            IntrinsicType::MathError,
             IntrinsicType::ExitStatus,
             IntrinsicType::ProcessOutput,
             IntrinsicType::ProcessHandle,

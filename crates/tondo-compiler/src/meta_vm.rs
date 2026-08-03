@@ -297,6 +297,7 @@ fn validate_program(program: &BytecodeProgram) -> Result<(), MetaVmError> {
                         | BytecodeIntrinsicType::NumericConversionError
                         | BytecodeIntrinsicType::Duration
                         | BytecodeIntrinsicType::DurationError
+                        | BytecodeIntrinsicType::MathError
                 ) =>
             {
                 return Err(MetaVmError::ForbiddenType(intrinsic_name(*constructor)));

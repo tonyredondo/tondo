@@ -119,6 +119,7 @@ pub enum IntrinsicType {
     Path,
     PathError,
     FsError,
+    MathError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,
@@ -156,6 +157,7 @@ impl IntrinsicType {
             Self::Path => "Path",
             Self::PathError => "PathError",
             Self::FsError => "FsError",
+            Self::MathError => "MathError",
             Self::ExitStatus => "ExitStatus",
             Self::ProcessOutput => "ProcessOutput",
             Self::ProcessHandle => "ProcessHandle",
@@ -188,6 +190,7 @@ impl IntrinsicType {
             | Self::Path
             | Self::PathError
             | Self::FsError
+            | Self::MathError
             | Self::ExitStatus
             | Self::ProcessOutput
             | Self::ProcessHandle

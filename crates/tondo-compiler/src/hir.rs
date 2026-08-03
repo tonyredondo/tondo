@@ -66,6 +66,10 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
             "FsError" => IntrinsicType::FsError,
             _ => return None,
         }),
+        "math" => Some(match name.as_str() {
+            "MathError" => IntrinsicType::MathError,
+            _ => return None,
+        }),
         "process" => Some(match name.as_str() {
             "Command" => IntrinsicType::Command,
             "Pipeline" => IntrinsicType::Pipeline,
@@ -2122,6 +2126,7 @@ pub enum HirBootstrapHostFunction {
     MathCeil,
     MathRound,
     MathTruncate,
+    MathSqrt,
     MathFma,
     MathAbs,
     MathMin,
@@ -2257,6 +2262,7 @@ impl HirBootstrapHostFunction {
             Self::MathCeil => "std.math.ceil",
             Self::MathRound => "std.math.round",
             Self::MathTruncate => "std.math.truncate",
+            Self::MathSqrt => "std.math.sqrt",
             Self::MathFma => "std.math.fma",
             Self::MathAbs => "std.math.abs",
             Self::MathMin => "std.math.min",

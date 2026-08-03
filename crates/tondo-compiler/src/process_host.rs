@@ -76,6 +76,7 @@ enum HostValue {
     Path(path::Path),
     PathError { _message: String },
     FsError { _message: String },
+    MathError { _message: String },
     Instant { domain: u64, nanos: i128 },
     Timer { domain: u64, deadline: i128 },
     DurationError { _message: String },
@@ -420,6 +421,15 @@ impl BootstrapHost {
 
     fn fs_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
         RuntimeValue::ResultErr(Box::new(self.fs_error(message)))
+    }
+
+    fn math_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.allocate(
+            RuntimeHostValueKind::MathError,
+            HostValue::MathError {
+                _message: message.into(),
+            },
+        )))
     }
 
     fn duration_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -1106,6 +1116,12 @@ impl VmHost for BootstrapHost {
                 Ok(RuntimeValue::Float(value.trunc()))
             }
             ("std.math.abs", [RuntimeValue::Float(value)]) => Ok(RuntimeValue::Float(value.abs())),
+            ("std.math.sqrt", [RuntimeValue::Float(value)]) => {
+                match tondo_stdlib::math::sqrt(*value) {
+                    Ok(value) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Float(value)))),
+                    Err(error) => Ok(self.math_result_error(format!("{error:?}"))),
+                }
+            }
             (
                 "std.math.fma",
                 [
@@ -2469,6 +2485,22 @@ mod tests {
             result,
             RuntimeValue::ResultErr(value)
                 if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::FsError, .. })
+        ));
+    }
+
+    #[test]
+    fn math_sqrt_uses_the_nominal_error_boundary() {
+        let mut host = BootstrapHost::default();
+        assert_eq!(
+            host.invoke("std.math.sqrt", &[RuntimeValue::Float(9.0)])
+                .unwrap(),
+            RuntimeValue::ResultOk(Box::new(RuntimeValue::Float(3.0)))
+        );
+        assert!(matches!(
+            host.invoke("std.math.sqrt", &[RuntimeValue::Float(-1.0)])
+                .unwrap(),
+            RuntimeValue::ResultErr(value)
+                if matches!(value.as_ref(), RuntimeValue::Host { kind: RuntimeHostValueKind::MathError, .. })
         ));
     }
 

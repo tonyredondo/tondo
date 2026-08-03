@@ -457,6 +457,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::Path
                 | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::FsError
+                | BytecodeIntrinsicType::MathError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -1058,7 +1059,8 @@ fn intrinsic_capability(
         | BytecodeIntrinsicType::ProcessOutput
         | BytecodeIntrinsicType::ProcessError
         | BytecodeIntrinsicType::ProcessExitError
-        | BytecodeIntrinsicType::Utf8Error => fixed_capability(matches!(
+        | BytecodeIntrinsicType::Utf8Error
+        | BytecodeIntrinsicType::MathError => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
                 | ClosedCapability::Discard
@@ -1422,6 +1424,7 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::Path
         | BytecodeIntrinsicType::PathError
         | BytecodeIntrinsicType::FsError
+        | BytecodeIntrinsicType::MathError
         | BytecodeIntrinsicType::ExitStatus
         | BytecodeIntrinsicType::ProcessOutput
         | BytecodeIntrinsicType::ProcessError
@@ -1578,6 +1581,7 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::Path
                 | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::FsError
+                | BytecodeIntrinsicType::MathError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle

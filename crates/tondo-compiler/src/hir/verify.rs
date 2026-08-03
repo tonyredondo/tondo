@@ -518,6 +518,7 @@ impl Verifier<'_> {
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
                         | IntrinsicType::FsError
+                        | IntrinsicType::MathError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle

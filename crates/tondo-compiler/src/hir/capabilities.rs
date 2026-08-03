@@ -736,7 +736,8 @@ fn intrinsic_node(
         | IntrinsicType::EnvError
         | IntrinsicType::Path
         | IntrinsicType::PathError
-        | IntrinsicType::FsError => {
+        | IntrinsicType::FsError
+        | IntrinsicType::MathError => {
             if matches!(
                 capability,
                 HirCapability::Copy

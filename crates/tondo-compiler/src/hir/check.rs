@@ -827,6 +827,7 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
                         | IntrinsicType::FsError
+                        | IntrinsicType::MathError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle
@@ -13669,6 +13670,7 @@ impl<'a> ExpressionChecker<'a> {
             ("math", Some("ceil")) => HirBootstrapHostFunction::MathCeil,
             ("math", Some("round")) => HirBootstrapHostFunction::MathRound,
             ("math", Some("truncate")) => HirBootstrapHostFunction::MathTruncate,
+            ("math", Some("sqrt")) => HirBootstrapHostFunction::MathSqrt,
             ("math", Some("fma")) => HirBootstrapHostFunction::MathFma,
             ("math", Some("abs")) => HirBootstrapHostFunction::MathAbs,
             ("math", Some("min")) => HirBootstrapHostFunction::MathMin,

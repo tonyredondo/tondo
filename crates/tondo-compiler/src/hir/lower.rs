@@ -333,6 +333,9 @@ impl<'a> TypeLowerer<'a> {
         let fs_error = self
             .interner
             .intrinsic(IntrinsicType::FsError, Vec::new())?;
+        let math_error = self
+            .interner
+            .intrinsic(IntrinsicType::MathError, Vec::new())?;
         let exit_status = self
             .interner
             .intrinsic(IntrinsicType::ExitStatus, Vec::new())?;
@@ -768,6 +771,14 @@ impl<'a> TypeLowerer<'a> {
                     float,
                 )?;
             }
+            let sqrt_outcome = self.interner.result(float, math_error)?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::MathSqrt,
+                vec![(float, false)],
+                None,
+                sqrt_outcome,
+            )?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::MathFma,
@@ -4536,6 +4547,7 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
                         | IntrinsicType::FsError
+                        | IntrinsicType::MathError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle
