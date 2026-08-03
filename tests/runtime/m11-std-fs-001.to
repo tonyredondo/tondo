@@ -1,0 +1,17 @@
+import std.console
+import std.path
+import std.fs
+import std.bytes
+
+fn main(): !(path.PathError | fs.FsError | bytes.BytesError | bytes.Utf8Error) {
+    let existing = path.fromString("../../tests/runtime/m11-std-path-001.stdout")?
+    let contents = fs.readAll(existing)?
+    assert(String(contents)? == "path-ok\n")
+
+    let missing = path.fromString("../../tests/runtime/does-not-exist")?
+    match fs.readAll(missing) {
+        ok(_) => assert(false)
+        err(_) => ()
+    }
+    console.print("fs-ok\n")
+}

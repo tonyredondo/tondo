@@ -62,6 +62,10 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
             "PathError" => IntrinsicType::PathError,
             _ => return None,
         }),
+        "fs" => Some(match name.as_str() {
+            "FsError" => IntrinsicType::FsError,
+            _ => return None,
+        }),
         "process" => Some(match name.as_str() {
             "Command" => IntrinsicType::Command,
             "Pipeline" => IntrinsicType::Pipeline,
@@ -2131,6 +2135,8 @@ pub enum HirBootstrapHostFunction {
     PathIsEmpty,
     PathToString,
     PathToBytes,
+    FsReadAll,
+    FsWriteAll,
     JsonValidate,
     JsonCanonicalize,
     MessagePackValidate,
@@ -2263,6 +2269,8 @@ impl HirBootstrapHostFunction {
             Self::PathIsEmpty => "std.path.Path.isEmpty",
             Self::PathToString => "std.path.Path.toString",
             Self::PathToBytes => "std.path.Path.toBytes",
+            Self::FsReadAll => "std.fs.readAll",
+            Self::FsWriteAll => "std.fs.writeAll",
             Self::JsonValidate => "std.json.validate",
             Self::JsonCanonicalize => "std.json.canonicalize",
             Self::MessagePackValidate => "std.messagepack.validate",

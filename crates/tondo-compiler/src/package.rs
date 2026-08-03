@@ -469,6 +469,7 @@ impl PackageGraph {
                 ModulePath::new("messagepack")?,
                 ModulePath::new("protobuf")?,
                 ModulePath::new("path")?,
+                ModulePath::new("fs")?,
             ],
             [],
         )?);
@@ -499,6 +500,7 @@ impl PackageGraph {
             "process" => has_capability("process"),
             "time" => has_capability("clock"),
             "env" => has_capability("environment"),
+            "fs" => has_capability("filesystem"),
             // A custom pinned standard package may contain capability-free
             // modules in addition to the compiler-owned bootstrap pair.
             _ => true,

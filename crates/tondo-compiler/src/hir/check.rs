@@ -826,6 +826,7 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::BytesError
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
+                        | IntrinsicType::FsError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle
@@ -13680,6 +13681,8 @@ impl<'a> ExpressionChecker<'a> {
             ("protobuf", Some("validate")) => HirBootstrapHostFunction::ProtobufValidate,
             ("path", Some("fromString")) => HirBootstrapHostFunction::PathFromString,
             ("path", Some("fromBytes")) => HirBootstrapHostFunction::PathFromBytes,
+            ("fs", Some("readAll")) => HirBootstrapHostFunction::FsReadAll,
+            ("fs", Some("writeAll")) => HirBootstrapHostFunction::FsWriteAll,
             ("testing", Some("log")) => HirBootstrapHostFunction::TestingLog,
             ("testing", Some("assertTextEqual")) => {
                 HirBootstrapHostFunction::TestingAssertTextEqual
@@ -13712,6 +13715,7 @@ impl<'a> ExpressionChecker<'a> {
             | ("messagepack", Some(name))
             | ("protobuf", Some(name))
             | ("path", Some(name))
+            | ("fs", Some(name))
             | ("testing", Some(name)) => {
                 let module_name = module.path().as_str();
                 self.emit(

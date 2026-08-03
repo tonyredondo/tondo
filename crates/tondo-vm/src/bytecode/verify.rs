@@ -456,6 +456,7 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::BytesError
                 | BytecodeIntrinsicType::Path
                 | BytecodeIntrinsicType::PathError
+                | BytecodeIntrinsicType::FsError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -1095,7 +1096,8 @@ fn intrinsic_capability(
         BytecodeIntrinsicType::EnvName
         | BytecodeIntrinsicType::EnvError
         | BytecodeIntrinsicType::Path
-        | BytecodeIntrinsicType::PathError => fixed_capability(matches!(
+        | BytecodeIntrinsicType::PathError
+        | BytecodeIntrinsicType::FsError => fixed_capability(matches!(
             capability,
             ClosedCapability::Copy
                 | ClosedCapability::Discard
@@ -1419,6 +1421,7 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::BytesError
         | BytecodeIntrinsicType::Path
         | BytecodeIntrinsicType::PathError
+        | BytecodeIntrinsicType::FsError
         | BytecodeIntrinsicType::ExitStatus
         | BytecodeIntrinsicType::ProcessOutput
         | BytecodeIntrinsicType::ProcessError
@@ -1574,6 +1577,7 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::BytesError
                 | BytecodeIntrinsicType::Path
                 | BytecodeIntrinsicType::PathError
+                | BytecodeIntrinsicType::FsError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessHandle
@@ -14087,6 +14091,7 @@ mod tests {
             BytecodeIntrinsicType::BytesError,
             BytecodeIntrinsicType::Path,
             BytecodeIntrinsicType::PathError,
+            BytecodeIntrinsicType::FsError,
             BytecodeIntrinsicType::ExitStatus,
             BytecodeIntrinsicType::ProcessOutput,
             BytecodeIntrinsicType::ProcessHandle,
@@ -14161,8 +14166,6 @@ mod tests {
                 | BytecodeIntrinsicType::Pipeline
                 | BytecodeIntrinsicType::Bytes
                 | BytecodeIntrinsicType::BytesError
-                | BytecodeIntrinsicType::Path
-                | BytecodeIntrinsicType::PathError
                 | BytecodeIntrinsicType::ExitStatus
                 | BytecodeIntrinsicType::ProcessOutput
                 | BytecodeIntrinsicType::ProcessError
@@ -14180,7 +14183,8 @@ mod tests {
                 BytecodeIntrinsicType::EnvName
                 | BytecodeIntrinsicType::EnvError
                 | BytecodeIntrinsicType::Path
-                | BytecodeIntrinsicType::PathError => all,
+                | BytecodeIntrinsicType::PathError
+                | BytecodeIntrinsicType::FsError => all,
                 BytecodeIntrinsicType::EnvValue => [true, true, false, false, true, true],
                 BytecodeIntrinsicType::EnvSnapshot => [false, true, false, false, true, true],
             };

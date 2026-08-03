@@ -208,6 +208,8 @@ impl<'a> TypeLowerer<'a> {
         let protobuf_module = self.packages.module(self.packages.standard(), &protobuf);
         let path = ModulePath::new("path")?;
         let path_module = self.packages.module(self.packages.standard(), &path);
+        let fs = ModulePath::new("fs")?;
+        let fs_module = self.packages.module(self.packages.standard(), &fs);
         let bytes_referenced = bytes_module.as_ref().is_some_and(|bytes_module| {
             self.resolved.references().any(|reference| {
                 matches!(
@@ -280,6 +282,11 @@ impl<'a> TypeLowerer<'a> {
                 matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
             })
         });
+        let fs_referenced = fs_module.as_ref().is_some_and(|module| {
+            self.resolved.references().any(|reference| {
+                matches!(reference.entity(), ResolvedEntity::Module(reference_module) if reference_module == module)
+            })
+        });
         if !bytes_referenced
             && !process_referenced
             && !time_referenced
@@ -291,6 +298,7 @@ impl<'a> TypeLowerer<'a> {
             && !messagepack_referenced
             && !protobuf_referenced
             && !path_referenced
+            && !fs_referenced
         {
             return Ok(());
         }
@@ -322,6 +330,9 @@ impl<'a> TypeLowerer<'a> {
         let path_error = self
             .interner
             .intrinsic(IntrinsicType::PathError, Vec::new())?;
+        let fs_error = self
+            .interner
+            .intrinsic(IntrinsicType::FsError, Vec::new())?;
         let exit_status = self
             .interner
             .intrinsic(IntrinsicType::ExitStatus, Vec::new())?;
@@ -357,6 +368,8 @@ impl<'a> TypeLowerer<'a> {
         let check_outcome = self.interner.result(output, check_error)?;
         let string_from_bytes_outcome = self.interner.result(string, utf8_error)?;
         let path_outcome = self.interner.result(path_type, path_error)?;
+        let fs_bytes_outcome = self.interner.result(bytes, fs_error)?;
+        let fs_unit_outcome = self.interner.result(unit, fs_error)?;
 
         if testing_referenced {
             let virtual_time = self
@@ -874,6 +887,22 @@ impl<'a> TypeLowerer<'a> {
                     outcome,
                 )?;
             }
+        }
+        if fs_referenced {
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::FsReadAll,
+                vec![(path_type, false)],
+                None,
+                fs_bytes_outcome,
+            )?;
+            self.push_bootstrap_host_callable(
+                span,
+                HirBootstrapHostFunction::FsWriteAll,
+                vec![(path_type, false), (bytes, false)],
+                None,
+                fs_unit_outcome,
+            )?;
         }
 
         if text_referenced {
@@ -4506,6 +4535,7 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::BytesError
                         | IntrinsicType::Path
                         | IntrinsicType::PathError
+                        | IntrinsicType::FsError
                         | IntrinsicType::ExitStatus
                         | IntrinsicType::ProcessOutput
                         | IntrinsicType::ProcessHandle

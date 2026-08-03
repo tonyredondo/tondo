@@ -71,6 +71,7 @@ enum HostValue {
     BytesError { _message: String },
     Path(path::Path),
     PathError { _message: String },
+    FsError { _message: String },
     Instant { domain: u64, nanos: i128 },
     Timer { domain: u64, deadline: i128 },
     DurationError { _message: String },
@@ -386,6 +387,19 @@ impl BootstrapHost {
 
     fn path_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
         RuntimeValue::ResultErr(Box::new(self.path_error(message)))
+    }
+
+    fn fs_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        self.allocate(
+            RuntimeHostValueKind::FsError,
+            HostValue::FsError {
+                _message: message.into(),
+            },
+        )
+    }
+
+    fn fs_result_error(&mut self, message: impl Into<String>) -> RuntimeValue {
+        RuntimeValue::ResultErr(Box::new(self.fs_error(message)))
     }
 
     fn duration_error(&mut self, message: impl Into<String>) -> RuntimeValue {
@@ -1197,6 +1211,36 @@ impl VmHost for BootstrapHost {
                 RuntimeHostValueKind::Bytes,
                 HostValue::Bytes(self.path(receiver)?.as_bytes().to_vec()),
             )),
+            ("std.fs.readAll", [receiver]) => {
+                let path = self.path(receiver)?.to_string().map_err(|error| {
+                    VmError::Host(format!("invalid filesystem path: {error:?}"))
+                })?;
+                match std::fs::read(path) {
+                    Ok(bytes) => {
+                        if let Err(message) = self.ensure_bytes_len(bytes.len()) {
+                            return Ok(self.fs_result_error(message));
+                        }
+                        Ok(RuntimeValue::ResultOk(Box::new(self.allocate(
+                            RuntimeHostValueKind::Bytes,
+                            HostValue::Bytes(bytes),
+                        ))))
+                    }
+                    Err(error) => Ok(self.fs_result_error(error.to_string())),
+                }
+            }
+            ("std.fs.writeAll", [receiver, bytes]) => {
+                let path = self.path(receiver)?.to_string().map_err(|error| {
+                    VmError::Host(format!("invalid filesystem path: {error:?}"))
+                })?;
+                let bytes = self.bytes(bytes)?.to_vec();
+                if let Err(message) = self.ensure_bytes_len(bytes.len()) {
+                    return Ok(self.fs_result_error(message));
+                }
+                match std::fs::write(path, bytes) {
+                    Ok(()) => Ok(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))),
+                    Err(error) => Ok(self.fs_result_error(error.to_string())),
+                }
+            }
             ("std.text.String.length", [RuntimeValue::String(text)]) => {
                 Ok(RuntimeValue::Integer(text.chars().count() as i128))
             }

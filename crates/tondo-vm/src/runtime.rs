@@ -124,6 +124,7 @@ pub enum RuntimeHostValueKind {
     BytesError,
     Path,
     PathError,
+    FsError,
     ExitStatus,
     ProcessOutput,
     ProcessHandle,

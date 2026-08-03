@@ -198,6 +198,8 @@ impl BuildTarget {
             CapabilityName::new("clock").expect("clock is a registered Tondo target capability"),
             CapabilityName::new("environment")
                 .expect("environment is a registered Tondo target capability"),
+            CapabilityName::new("filesystem")
+                .expect("filesystem is a registered Tondo target capability"),
         ])
     }
 }
