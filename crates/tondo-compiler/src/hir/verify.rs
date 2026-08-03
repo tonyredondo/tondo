@@ -530,7 +530,8 @@ impl Verifier<'_> {
                         | IntrinsicType::EnvSnapshot
                         | IntrinsicType::EnvName
                         | IntrinsicType::EnvValue
-                        | IntrinsicType::EnvError => None,
+                        | IntrinsicType::EnvError
+                        | IntrinsicType::VirtualTime => None,
                     };
                     if let Some((required, capability, reason)) = requirement {
                         self.verify_capability_requirement(
@@ -678,6 +679,20 @@ impl Verifier<'_> {
                         "closure-to-function coercion",
                     )?;
                 }
+            }
+            HirExpressionKind::Coerce {
+                kind: crate::types::Assignability::CallableOnceErasure,
+                value,
+            } => {
+                let actual = self.expression(*value, context)?.ty;
+                self.verify_capability_requirement(
+                    analysis,
+                    actual,
+                    HirCapability::Send,
+                    assumptions,
+                    context,
+                    "CallOnce closure-to-function coercion",
+                )?;
             }
             HirExpressionKind::Binary {
                 operator: HirBinaryOperator::Equal | HirBinaryOperator::NotEqual,
@@ -3211,8 +3226,14 @@ impl Verifier<'_> {
                     ),
                 ));
             }
-            let local = self.verify_local(generic.local, context)?;
-            if local.kind() != LocalKind::GenericParameter {
+            let synthetic_host = context == "host callable std.testing.withVirtualTime"
+                && generic.local.index() == u32::MAX - generic.position;
+            let local = if synthetic_host {
+                None
+            } else {
+                Some(self.verify_local(generic.local, context)?)
+            };
+            if local.is_some_and(|local| local.kind() != LocalKind::GenericParameter) {
                 return Err(HirInvariantError::new(
                     context,
                     format!("local#{} is not a generic parameter", generic.local.index()),
@@ -4361,6 +4382,9 @@ impl Verifier<'_> {
                     crate::types::Assignability::CallableErasure => {
                         self.callable_erasure_matches(actual, expression.ty, context)?
                     }
+                    crate::types::Assignability::CallableOnceErasure => {
+                        self.callable_once_erasure_matches(actual, expression.ty, context)?
+                    }
                     _ => {
                         self.program
                             .interner
@@ -4466,6 +4490,42 @@ impl Verifier<'_> {
         ) {
             return Ok(false);
         }
+        let actual_kind = match self.program.interner.kind(actual) {
+            Ok(kind) => kind,
+            Err(error) => return Err(HirInvariantError::new(context, error.to_string())),
+        };
+        let TypeKind::Generated {
+            identity,
+            arguments,
+        } = actual_kind
+        else {
+            return Ok(false);
+        };
+        let Some(closure) = self.program.closure_by_identity(identity) else {
+            return Ok(false);
+        };
+        let mut interner = self.program.interner.clone();
+        let signature = match TypeSubstitution::new(arguments.clone())
+            .apply(&mut interner, closure.function_type)
+        {
+            Ok(signature) => signature,
+            Err(error) => return Err(HirInvariantError::new(context, error.to_string())),
+        };
+        Ok(signature == expected && closure.protocols.supports(super::HirCallProtocol::Call))
+    }
+
+    fn callable_once_erasure_matches(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+        context: &str,
+    ) -> Result<bool, HirInvariantError> {
+        if !matches!(
+            self.program.interner.kind(expected),
+            Ok(TypeKind::Function(_))
+        ) {
+            return Ok(false);
+        }
         let TypeKind::Generated {
             identity,
             arguments,
@@ -4484,7 +4544,7 @@ impl Verifier<'_> {
         let signature = TypeSubstitution::new(arguments.clone())
             .apply(&mut interner, closure.function_type)
             .map_err(|error| HirInvariantError::new(context, error.to_string()))?;
-        Ok(signature == expected && closure.protocols.supports(super::HirCallProtocol::Call))
+        Ok(signature == expected && closure.protocols.supports(super::HirCallProtocol::CallOnce))
     }
 
     fn verify_statement(

@@ -136,6 +136,7 @@ pub enum RuntimeHostValueKind {
     EnvName,
     EnvValue,
     EnvError,
+    VirtualTime,
 }
 
 /// Per-run counters useful for testing limits and collector behavior.

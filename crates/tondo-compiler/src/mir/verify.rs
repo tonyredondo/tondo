@@ -2316,6 +2316,9 @@ impl Verifier<'_> {
                     Assignability::CallableErasure => self
                         .callable_erasure_matches(operand.ty, value.ty, context)?
                         .then_some(Assignability::CallableErasure),
+                    Assignability::CallableOnceErasure => self
+                        .callable_once_erasure_matches(operand.ty, value.ty, context)?
+                        .then_some(Assignability::CallableOnceErasure),
                     _ => self
                         .hir
                         .interner()
@@ -3624,13 +3627,45 @@ impl Verifier<'_> {
             return Ok(false);
         };
         let mut interner = self.hir.interner().clone();
+        let signature = match TypeSubstitution::new(arguments.clone())
+            .apply(&mut interner, closure.function_type())
+        {
+            Ok(signature) => signature,
+            Err(error) => return Err(MirInvariantError::new(context, error.to_string())),
+        };
+        Ok(signature == expected
+            && closure
+                .protocols()
+                .supports(crate::hir::HirCallProtocol::Call))
+    }
+
+    fn callable_once_erasure_matches(
+        &self,
+        actual: TypeId,
+        expected: TypeId,
+        context: &str,
+    ) -> Result<bool, MirInvariantError> {
+        if !matches!(self.kind(expected, context)?, TypeKind::Function(_)) {
+            return Ok(false);
+        }
+        let TypeKind::Generated {
+            identity,
+            arguments,
+        } = self.kind(actual, context)?
+        else {
+            return Ok(false);
+        };
+        let Some(closure) = self.hir.closure_by_identity(identity) else {
+            return Ok(false);
+        };
+        let mut interner = self.hir.interner().clone();
         let signature = TypeSubstitution::new(arguments.clone())
             .apply(&mut interner, closure.function_type())
             .map_err(|error| MirInvariantError::new(context, error.to_string()))?;
         Ok(signature == expected
             && closure
                 .protocols()
-                .supports(crate::hir::HirCallProtocol::Call))
+                .supports(crate::hir::HirCallProtocol::CallOnce))
     }
 
     fn nominal_field_matches(

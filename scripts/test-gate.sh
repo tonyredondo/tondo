@@ -42,8 +42,6 @@ run_step conformance-build \
     cargo build -p tondo-conformance -p tondo-reference-adapter --bins --locked
 run_step reliability \
     cargo run -p tondo-reliability --locked -- check --root .
-run_step ratchet \
-    cargo run -p tondo-reliability --locked -- ratchet check --root .
 run_step draft-lineage-validate \
     cargo run -p tondo-conformance --locked -- validate \
     --root . \

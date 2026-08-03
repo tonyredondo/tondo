@@ -77,6 +77,10 @@ impl fmt::Display for MemberName {
 pub struct LocalId(u32);
 
 impl LocalId {
+    pub(crate) const fn synthetic_host_generic(position: u32) -> Self {
+        Self(u32::MAX - position)
+    }
+
     #[cfg(test)]
     pub(crate) const fn from_index(index: u32) -> Self {
         Self(index)

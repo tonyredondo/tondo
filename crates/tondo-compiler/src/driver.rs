@@ -1988,6 +1988,162 @@ mod tests {
     }
 
     #[test]
+    fn test_operation_virtualizes_the_production_monotonic_clock() {
+        let base = operation_request(
+            Operation::Check,
+            b"import std.testing\nimport std.time\ntest virtual_clock {\n match await testing.withVirtualTime(async (clock) {\n  let before = time.now()?\n  await clock.advance(time.Duration.fromNanoseconds(100))\n  let after = time.now()?\n  assert(after.durationSince(before)?.toNanoseconds() == 100)\n }) {\n  ok(_) => ()\n  err(_) => testing.failNow(\"virtual clock failed\")\n }\n}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let entries = discover_tests(&base).unwrap();
+        let envelope = crate::test_control::EnvelopeHandle::new(
+            "virtual_clock",
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+        );
+        let request = base
+            .for_test_entry(&entries[0])
+            .unwrap()
+            .with_test_envelope(envelope.clone());
+        let output = execute(request).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        assert_eq!(output.exit_code(), 0);
+        let report = envelope.report().unwrap();
+        assert_eq!(report.virtual_time().len(), 1);
+        assert_eq!(report.virtual_time()[0].index(), 1);
+        assert_eq!(report.virtual_time()[0].elapsed_ns(), 100);
+        assert_eq!(report.virtual_time()[0].automatic_advances(), 0);
+        assert_eq!(report.virtual_time()[0].advances(), 1);
+    }
+
+    #[test]
+    fn test_operation_accepts_affine_virtual_time_body_and_settles_spawned_timers() {
+        let base = operation_request(
+            Operation::Check,
+            b"import std.bytes\nimport std.testing\nimport std.time\nasync fn exerciseVirtualTime(): Unit ! (bytes.BytesError | time.ClockError) {\n var affine = bytes.builder()?\n await testing.withVirtualTime(async (clock) {\n  _ = affine.finish()?\n  let before = time.now()?\n  scope {\n   let sleeper = spawn time.sleep(time.Duration.fromNanoseconds(40))\n   await clock.settle()\n   await sleeper?\n  }\n  let after = time.now()?\n  assert(after.durationSince(before)?.toNanoseconds() == 40)\n })?\n await testing.withVirtualTime(async (clock) {\n  _ = time.now()?\n  await clock.advance(time.Duration.fromNanoseconds(5))\n })?\n}\ntest virtual_settle {\n match await exerciseVirtualTime() {\n  ok(_) => ()\n  err(_) => testing.failNow(\"virtual time failed\")\n }\n}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let entries = discover_tests(&base).unwrap();
+        let envelope = crate::test_control::EnvelopeHandle::new(
+            "virtual_settle",
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+        );
+        let request = base
+            .for_test_entry(&entries[0])
+            .unwrap()
+            .with_test_envelope(envelope.clone());
+        let output = execute(request).unwrap();
+        assert_eq!(
+            output.status(),
+            CompilationStatus::Success,
+            "{}",
+            output.diagnostics().human()
+        );
+        let report = envelope.report().unwrap();
+        assert_eq!(report.virtual_time().len(), 2);
+        assert_eq!(report.virtual_time()[0].index(), 1);
+        assert_eq!(report.virtual_time()[0].elapsed_ns(), 40);
+        assert_eq!(report.virtual_time()[0].automatic_advances(), 1);
+        assert_eq!(report.virtual_time()[0].settles(), 1);
+        assert_eq!(report.virtual_time()[1].index(), 2);
+        assert_eq!(report.virtual_time()[1].elapsed_ns(), 5);
+        assert_eq!(report.virtual_time()[1].advances(), 1);
+    }
+
+    #[test]
+    fn test_operation_rejects_spawning_the_virtual_time_boundary() {
+        let base = operation_request(
+            Operation::Check,
+            b"import std.testing\nimport std.time\ntest invalid_spawn {\n scope {\n  let task = spawn testing.withVirtualTime(async (clock) {\n   _ = time.now()?\n   await clock.settle()\n  })\n  _ = await task\n }\n}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let entries = discover_tests(&base).unwrap();
+        let request = base.for_test_entry(&entries[0]).unwrap();
+        let output = execute(request).unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert!(
+            output
+                .diagnostics()
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code() == "E1601"),
+            "{}",
+            output.diagnostics().human()
+        );
+        assert!(
+            output.diagnostics().diagnostics().iter().any(|diagnostic| {
+                diagnostic.code() == "E1601"
+                    && diagnostic
+                        .message()
+                        .contains("must be awaited directly and cannot be spawned")
+            }),
+            "{}",
+            output.diagnostics().human()
+        );
+    }
+
+    #[test]
+    fn test_operation_rejects_non_send_virtual_time_body() {
+        let base = operation_request(
+            Operation::Check,
+            b"import std.testing\nfn consumeUnit(value: Unit) {\n match value {\n  () => ()\n }\n}\nasync fn ready(): Unit {}\ntest invalid_capture {\n scope {\n  let task = spawn ready()\n  match await testing.withVirtualTime(async (clock) {\n   _ = clock\n   _ = await task\n  }) {\n   ok(_) => ()\n   err(_) => ()\n  }\n }\n}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let entries = discover_tests(&base).unwrap();
+        let request = base.for_test_entry(&entries[0]).unwrap();
+        let output = execute(request).unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert!(
+            output.diagnostics().diagnostics().iter().any(|diagnostic| {
+                diagnostic.code() == "E1108" && diagnostic.message().contains("Send")
+            }),
+            "{}",
+            output.diagnostics().human()
+        );
+    }
+
+    #[test]
+    fn test_operation_closes_virtual_time_when_the_body_panics() {
+        let base = operation_request(
+            Operation::Check,
+            b"import std.testing\nimport std.time\ntest virtual_panic {\n match await testing.withVirtualTime(async (clock) {\n  _ = time.now()?\n  await clock.advance(time.Duration.fromNanoseconds(7))\n  panic(\"inside virtual time\")\n }) {\n  ok(_) => ()\n  err(_) => testing.failNow(\"unexpected clock error\")\n }\n}\n",
+            SourceForm::Module,
+            ResourceLimits::default(),
+        );
+        let entries = discover_tests(&base).unwrap();
+        let envelope = crate::test_control::EnvelopeHandle::new(
+            "virtual_panic",
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+        );
+        let request = base
+            .for_test_entry(&entries[0])
+            .unwrap()
+            .with_test_envelope(envelope.clone());
+        let output = execute(request).unwrap();
+        assert_eq!(output.status(), CompilationStatus::Rejected);
+        assert!(
+            output
+                .diagnostics()
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.code() == "P0008"),
+            "{}",
+            output.diagnostics().human()
+        );
+        let report = envelope.report().unwrap();
+        assert_eq!(report.virtual_time().len(), 1);
+        assert_eq!(report.virtual_time()[0].elapsed_ns(), 7);
+        assert_eq!(report.virtual_time()[0].advances(), 1);
+    }
+
+    #[test]
     fn test_operation_reports_a_runtime_assertion_failure() {
         let request = operation_request(
             Operation::Test,

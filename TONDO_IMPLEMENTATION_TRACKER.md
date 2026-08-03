@@ -3010,7 +3010,19 @@ reporters.
   integrada en `test_control::VirtualTime`, con cola/timer deterministas,
   dominios aislados por envelope, deadlock/espera externa/livelock y rango
   `P2003/P2004/P2005`. Contrato y límites: `docs/contracts/test-virtual-time.md`;
-  cobertura ejercitada por los tests unitarios del módulo y del envelope.
+  cobertura ejercitada por los tests unitarios del módulo y del envelope. La
+  superficie pública está conectada de extremo a extremo mediante
+  `std.testing.withVirtualTime`, `VirtualTime.settle` y `advance`: el frontend
+  infiere closures async, conserva `Send + CallOnce` mediante una coerción
+  consumible verificada en HIR/MIR/bytecode, presta el controlador opaco y
+  rechaza `spawn withVirtualTime` con `E1601`. El VM sustituye y restaura la
+  pareja proveedor/dominio de `std.time`, conduce las mismas tasks y timers y
+  cierra la frontera también al desenrollar un pánico. Los tests públicos del
+  driver y del host prueban un `BytesBuilder` affine, `time.sleep` bajo
+  `settle` sin espera real, dos dominios secuenciales, evidencia one-based con
+  avance automático/explícito, restauración de instantes exteriores,
+  revocación, espera externa `P2003`, solapamiento `P2004`, rango/overflow
+  `P2005` y cleanup por `P0008`.
 
 - [x] **UTEST-RETRY-001 — Implementar retries explícitos y sin estado
   heredado.** Parsear `--retry N` con default cero y máximo finito; ejecutar la
@@ -4395,7 +4407,9 @@ gates en una barrera artificial.
     activa. El registro
     `testing/conformance-ratchet.json` fija hashes de manifest, inventario,
     matriz y quality baseline; no atribuye las capas pendientes como pass y el
-    gate estricto lo valida en cada ejecución.
+    gate de quality lo valida con reports frescos y hashes semánticos portables;
+    el gate estricto valida los registros deterministas sin exigir herramientas
+    de coverage/mutation.
 21. [x] **Wave 1 — Formatos draft.** Implementar `META-FORMAT-001` con
     parse/canonicalización/round-trip y rechazo de records no draft. El mini-gate
     queda cerrado: manifest, lockfile, interface, artifact y descriptor estándar

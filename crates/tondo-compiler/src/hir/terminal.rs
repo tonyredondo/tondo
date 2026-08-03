@@ -113,7 +113,8 @@ pub(crate) const fn intrinsic_terminal_contract(
         | IntrinsicType::EnvSnapshot
         | IntrinsicType::EnvName
         | IntrinsicType::EnvValue
-        | IntrinsicType::EnvError => None,
+        | IntrinsicType::EnvError
+        | IntrinsicType::VirtualTime => None,
     }
 }
 
@@ -450,7 +451,8 @@ fn intrinsic_node(constructor: IntrinsicType, arguments: Vec<TypeId>) -> Termina
         | IntrinsicType::EnvSnapshot
         | IntrinsicType::EnvName
         | IntrinsicType::EnvValue
-        | IntrinsicType::EnvError => fixed(HirTerminalStatus::Absent),
+        | IntrinsicType::EnvError
+        | IntrinsicType::VirtualTime => fixed(HirTerminalStatus::Absent),
         IntrinsicType::Join | IntrinsicType::ProcessHandle | IntrinsicType::Timer => {
             unreachable!("registered terminal roots return above")
         }

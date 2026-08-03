@@ -304,6 +304,12 @@ impl<'a> TypeLowerer<'a> {
         let string_from_bytes_outcome = self.interner.result(string, utf8_error)?;
 
         if testing_referenced {
+            let virtual_time = self
+                .interner
+                .intrinsic(IntrinsicType::VirtualTime, Vec::new())?;
+            let testing_duration = self
+                .interner
+                .intrinsic(IntrinsicType::Duration, Vec::new())?;
             self.push_bootstrap_host_callable(
                 span,
                 HirBootstrapHostFunction::TestingLog,
@@ -341,6 +347,24 @@ impl<'a> TypeLowerer<'a> {
                 span,
                 HirBootstrapHostFunction::TestingSnapshot,
                 vec![(string, false), (string, false)],
+                None,
+                unit,
+            )?;
+            self.push_bootstrap_virtual_time_callable(span, virtual_time, unit)?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::VirtualTimeSettle,
+                vec![(virtual_time, ParameterMode::Ref, true)],
+                None,
+                unit,
+            )?;
+            self.push_bootstrap_host_callable_with_modes(
+                span,
+                HirBootstrapHostFunction::VirtualTimeAdvance,
+                vec![
+                    (virtual_time, ParameterMode::Ref, true),
+                    (testing_duration, ParameterMode::Value, false),
+                ],
                 None,
                 unit,
             )?;
@@ -882,6 +906,55 @@ impl<'a> TypeLowerer<'a> {
             .map(|(ty, receiver)| (ty, ParameterMode::Value, receiver))
             .collect();
         self.push_bootstrap_host_callable_with_modes(span, function, fixed, variadic, outcome)
+    }
+
+    fn push_bootstrap_virtual_time_callable(
+        &mut self,
+        span: Span,
+        virtual_time: TypeId,
+        unit: TypeId,
+    ) -> Result<(), HirError> {
+        let error = self.interner.generic_parameter(0)?;
+        let outcome = self.interner.result(unit, error)?;
+        let body = self.interner.function(FunctionType::new(
+            true,
+            false,
+            vec![FunctionParameter::new(ParameterMode::Ref, virtual_time)],
+            None,
+            outcome,
+        ))?;
+        let function_type = self.interner.function(FunctionType::new(
+            true,
+            false,
+            vec![FunctionParameter::new(ParameterMode::Value, body)],
+            None,
+            outcome,
+        ))?;
+        self.callables.push(HirCallableSignature {
+            id: HirCallableId::Host(HirBootstrapHostFunction::TestingWithVirtualTime),
+            span,
+            parameters: vec![HirParameter {
+                span,
+                local: None,
+                mode: ParameterMode::Value,
+                ty: body,
+                variadic_element: None,
+                receiver: false,
+                discard: false,
+            }],
+            generics: vec![HirGenericParameter {
+                local: LocalId::synthetic_host_generic(0),
+                position: 0,
+                bounds: Vec::new(),
+            }],
+            generic_arity: 1,
+            outcome,
+            function_type,
+            opaque_result: None,
+            body_source: None,
+            implicit_script: false,
+        });
+        Ok(())
     }
 
     fn push_bootstrap_host_callable_with_modes(
@@ -4184,7 +4257,8 @@ impl<'a> TypeLowerer<'a> {
                         | IntrinsicType::EnvSnapshot
                         | IntrinsicType::EnvName
                         | IntrinsicType::EnvValue
-                        | IntrinsicType::EnvError => values.push(true),
+                        | IntrinsicType::EnvError
+                        | IntrinsicType::VirtualTime => values.push(true),
                     },
                 },
                 ProductivityTask::Nominal(symbol, arguments) => {

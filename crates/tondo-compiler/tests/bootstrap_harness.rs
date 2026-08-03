@@ -2,9 +2,11 @@ mod support;
 
 use std::collections::BTreeSet;
 
-use tondo_compiler::driver::{Operation, ResourceLimits, execute};
+use tondo_compiler::driver::{Operation, ResourceLimits, discover_tests, execute};
+use tondo_compiler::test_control::{EnvelopeHandle, EnvelopeLimits};
+use tondo_compiler::types::{IntrinsicType, TypeInterner};
 
-use support::{FixtureKind, discover, inline_request, workspace_test_root};
+use support::{FixtureKind, discover, inline_module_request, inline_request, workspace_test_root};
 
 #[test]
 fn all_fixture_classes_are_discoverable() {
@@ -48,7 +50,7 @@ fn inline_fixture_observes_structured_driver_output() {
     let request = inline_request(
         Operation::Check,
         "inline.to",
-        b"fn invalid(): Int { \"text\" }\n",
+        b"fn invalid(): Int { \"text\" - 1 }\n",
     );
     let output = execute(request).unwrap();
     let json = output.diagnostics().json_lines().unwrap();
@@ -56,6 +58,33 @@ fn inline_fixture_observes_structured_driver_output() {
     assert!(json.contains("\"code\":\"E1102\""));
     assert!(json.contains("\"source_id\":\"root:inline-test\""));
     assert!(json.contains("\"file\":\"inline.to\""));
+}
+
+#[test]
+fn public_driver_executes_a_fallible_virtual_time_callback() {
+    let base = inline_module_request(
+        Operation::Check,
+        "virtual-time.to",
+        b"import std.testing\nimport std.time\ntest virtualClock {\n match await testing.withVirtualTime(async (clock) {\n  scope {\n   let sleeper = spawn time.sleep(time.Duration.fromNanoseconds(3))\n   await clock.settle()\n   _ = await sleeper?\n  }\n }) {\n  ok(_) => ()\n  err(_) => testing.failNow(\"virtual time failed\")\n }\n}\n",
+    );
+    let entries = discover_tests(&base).unwrap();
+    let request = base
+        .for_test_entry(&entries[0])
+        .unwrap()
+        .with_test_envelope(EnvelopeHandle::new(
+            "public-virtual-time",
+            EnvelopeLimits::new(4096, 4096, 4096),
+        ));
+    let output = execute(request).unwrap();
+
+    assert_eq!(output.exit_code(), 0, "{}", output.diagnostics().human());
+    assert!(output.diagnostics().is_empty());
+}
+
+#[test]
+fn virtual_time_has_one_canonical_public_type_name() {
+    assert_eq!(IntrinsicType::VirtualTime.to_string(), "VirtualTime");
+    assert!(!TypeInterner::default().is_empty());
 }
 
 #[test]

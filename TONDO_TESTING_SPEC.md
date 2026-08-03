@@ -1298,7 +1298,10 @@ léxico y ninguna task puede sobrevivir a la closure. El cierre recibe
 esa región. La closure devuelve `Unit`, puede ser fallible y propaga su unión de
 error al body o fase exterior sin envolverla. Pánico, skip, cancelación y cleanup
 conservan sus reglas ordinarias y siempre desmontan el dominio antes de terminar
-el intento.
+el intento. La propia llamada a `withVirtualTime` debe iniciarse directamente
+con `await`; no puede iniciarse con `spawn`, porque el cambio de proveedor de
+reloj es una frontera léxica del intento y no una tarea concurrente. Las tareas
+que se quieran controlar se crean dentro de la closure y de un `scope`.
 
 Dentro del dominio:
 

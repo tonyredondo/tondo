@@ -839,7 +839,8 @@ impl<'a> ExpressionChecker<'a> {
                         | IntrinsicType::EnvSnapshot
                         | IntrinsicType::EnvName
                         | IntrinsicType::EnvValue
-                        | IntrinsicType::EnvError => None,
+                        | IntrinsicType::EnvError
+                        | IntrinsicType::VirtualTime => None,
                     };
                     if let Some((required, capability, context)) = requirement {
                         let _ = self.require_capability_with_generics(
@@ -1368,6 +1369,97 @@ impl<'a> ExpressionChecker<'a> {
             signature: signature.span,
         });
         Ok(root)
+    }
+
+    fn finish_inferred_error_region(
+        &mut self,
+        root: HirExpressionId,
+        expression_start: usize,
+        success: TypeId,
+        errors: Rc<RefCell<BTreeSet<TypeId>>>,
+        context: &mut BodyContext,
+    ) -> Result<(HirExpressionId, TypeId), HirError> {
+        let error_marker = self.program.interner.error();
+        let members = errors
+            .borrow()
+            .iter()
+            .copied()
+            .filter(|member| *member != error_marker)
+            .collect::<Vec<_>>();
+        let inferred_error = self.program.interner.union(members)?;
+        let provisional_outcome = self.program.interner.result(success, error_marker)?;
+        let final_outcome = self.program.interner.result(success, inferred_error)?;
+        let mut propagated = Vec::new();
+        let mut failed = Vec::new();
+        for index in expression_start..self.program.expressions.len() {
+            let expression = &mut self.program.expressions[index];
+            if expression.ty == provisional_outcome {
+                expression.ty = final_outcome;
+            }
+            match &expression.kind {
+                HirExpressionKind::PropagateResult { value, .. } => {
+                    propagated.push((index, *value));
+                }
+                HirExpressionKind::Fail { error } => failed.push(*error),
+                _ => {}
+            }
+        }
+        for (index, value) in propagated {
+            let TypeKind::Result {
+                error: produced_error,
+                ..
+            } = self.program.interner.kind(self.expression_type(value))?
+            else {
+                continue;
+            };
+            if *produced_error == error_marker {
+                continue;
+            }
+            let coercion = self
+                .error_assignability(*produced_error, inferred_error)?
+                .expect("an inferred closure error union accepts every collected member");
+            let HirExpressionKind::PropagateResult { error_coercion, .. } =
+                &mut self.program.expressions[index].kind
+            else {
+                unreachable!("the recorded propagation remains a propagation expression")
+            };
+            *error_coercion = coercion;
+        }
+        for placeholder in failed {
+            let HirExpressionKind::Coerce { value: error, .. } =
+                self.program.expressions[placeholder.0 as usize].kind
+            else {
+                return Err(HirError::TraitSelectionInvariant {
+                    message: "an inferred closure fail has no coercion placeholder".into(),
+                });
+            };
+            let actual = self.expression_type(error);
+            if actual == error_marker {
+                continue;
+            }
+            let coercion = if actual == inferred_error {
+                Assignability::Exact
+            } else {
+                self.error_assignability(actual, inferred_error)?
+                    .expect("an inferred closure error union accepts every collected member")
+            };
+            let expression = &mut self.program.expressions[placeholder.0 as usize];
+            expression.ty = inferred_error;
+            let HirExpressionKind::Coerce { kind, .. } = &mut expression.kind else {
+                unreachable!("the inferred closure error placeholder remains a coercion")
+            };
+            *kind = coercion;
+        }
+        context.callable = Some(CallableContext {
+            full: final_outcome,
+            success,
+            error: Some(inferred_error),
+            signature: context
+                .callable
+                .expect("inferred closure has callable context")
+                .signature,
+        });
+        Ok((root, final_outcome))
     }
 
     fn check_ownership_availability(&mut self) -> Result<(), HirError> {
@@ -2741,16 +2833,6 @@ impl<'a> ExpressionChecker<'a> {
                 }
                 (explicit_mode, source_type, explicit_variadic)
             } else if let Some((expected_mode, expected_type, expected_variadic)) = contextual {
-                if expected_mode != ParameterMode::Value {
-                    self.emit(
-                        parameter_span,
-                        "E1115",
-                        "a closure parameter using `ref`, `mut`, or `var` must spell its mode and type",
-                        Vec::new(),
-                        None,
-                    )?;
-                    signature_valid = false;
-                }
                 (expected_mode, expected_type, expected_variadic)
             } else {
                 self.emit(
@@ -2838,9 +2920,33 @@ impl<'a> ExpressionChecker<'a> {
                     .find(|child| child.kind() == SyntaxKind::TypeExpr)
             })
             .and_then(|ty| self.program.type_at(file, ty.range()));
-        let contextual_outcome = expected_function.as_ref().map(FunctionType::outcome);
+        let inferred_error_success = expected_function.as_ref().and_then(|function| {
+            let TypeKind::Result { success, error } =
+                self.program.interner.kind(function.outcome()).ok()?
+            else {
+                return None;
+            };
+            matches!(
+                self.program.interner.kind(*error),
+                Ok(TypeKind::Inference(_))
+            )
+            .then_some(*success)
+        });
+        let inferred_errors = inferred_error_success
+            .filter(|_| explicit_outcome.is_none())
+            .map(|_| Rc::new(RefCell::new(BTreeSet::new())));
+        let contextual_outcome = if let Some(success) = inferred_error_success {
+            Some(
+                self.program
+                    .interner
+                    .result(success, self.program.interner.error())?,
+            )
+        } else {
+            expected_function.as_ref().map(FunctionType::outcome)
+        };
         if let (Some(explicit), Some(contextual)) = (explicit_outcome, contextual_outcome)
             && explicit != contextual
+            && inferred_error_success.is_none()
         {
             self.emit(
                 span,
@@ -2883,7 +2989,7 @@ impl<'a> ExpressionChecker<'a> {
         let mut closure_context = context.clone();
         closure_context.loops.clear();
         closure_context.defer_control_boundary = false;
-        closure_context.script_errors = None;
+        closure_context.script_errors = inferred_errors.clone();
         closure_context.receiver = None;
         closure_context.receiver_permission = PlacePermission::Invalid;
         closure_context.callable = Some(CallableContext {
@@ -2914,6 +3020,7 @@ impl<'a> ExpressionChecker<'a> {
         let suspended_opaque = self.opaque_body.take();
         let suspended_closure = self.closure_body.take();
         self.closure_body = inferred;
+        let expression_start = self.program.expressions.len();
         let checked_body = (|| {
             let root = self.check_expression(
                 file,
@@ -2934,7 +3041,18 @@ impl<'a> ExpressionChecker<'a> {
         })();
         self.closure_body = suspended_closure;
         self.opaque_body = suspended_opaque;
-        let (body_root, outcome) = checked_body?;
+        let (mut body_root, mut outcome) = checked_body?;
+        if let (Some(success), Some(errors)) = (inferred_error_success, inferred_errors) {
+            let (root, inferred_outcome) = self.finish_inferred_error_region(
+                body_root,
+                expression_start,
+                success,
+                errors,
+                &mut closure_context,
+            )?;
+            body_root = root;
+            outcome = inferred_outcome;
+        }
 
         let function_type = self.program.interner.function(FunctionType::new(
             is_async,
@@ -2943,7 +3061,9 @@ impl<'a> ExpressionChecker<'a> {
             variadic,
             outcome,
         ))?;
-        if let Some(expected_function) = expected_function {
+        if let Some(expected_function) = expected_function
+            && inferred_error_success.is_none()
+        {
             let expected_type = self.program.interner.function(expected_function)?;
             if function_type != expected_type {
                 self.emit(
@@ -3054,7 +3174,15 @@ impl<'a> ExpressionChecker<'a> {
             .flatten();
         let defer_async_root = context.defer_async_root;
         context.defer_async_root = false;
-        let checked = self.check_expression(file, operand_node, operand_expected, context);
+        // The expectation belongs to the logical value produced by `await`.
+        // It may guide generic call inference, but applying it to the async
+        // call itself would wrap the call in a coercion and hide the awaitable
+        // operation from HIR and MIR lowering.
+        let checked = if operand_expected.is_some() {
+            self.check_expression_raw(file, operand_node, operand_expected, context)
+        } else {
+            self.check_expression(file, operand_node, None, context)
+        };
         context.defer_async_root = defer_async_root;
         context.async_initiation = previous;
         let operation = checked?;
@@ -12415,6 +12543,54 @@ impl<'a> ExpressionChecker<'a> {
         expected: TypeId,
         context: &BodyContext,
     ) -> Result<Option<HirExpressionId>, HirError> {
+        self.coerce_concrete_closure_to_function_contract(
+            span,
+            value,
+            actual,
+            expected,
+            HirCallProtocol::Call,
+            "Call",
+            &[
+                (HirCapability::Copy, "Copy"),
+                (HirCapability::Send, "Send"),
+                (HirCapability::Share, "Share"),
+            ],
+            context,
+        )
+    }
+
+    fn coerce_virtual_time_body_to_function(
+        &mut self,
+        span: Span,
+        value: HirExpressionId,
+        actual: TypeId,
+        expected: TypeId,
+        context: &BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
+        self.coerce_concrete_closure_to_function_contract(
+            span,
+            value,
+            actual,
+            expected,
+            HirCallProtocol::CallOnce,
+            "CallOnce",
+            &[(HirCapability::Send, "Send")],
+            context,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn coerce_concrete_closure_to_function_contract(
+        &mut self,
+        span: Span,
+        value: HirExpressionId,
+        actual: TypeId,
+        expected: TypeId,
+        required_protocol: HirCallProtocol,
+        protocol_name: &'static str,
+        required_capabilities: &[(HirCapability, &'static str)],
+        context: &BodyContext,
+    ) -> Result<Option<HirExpressionId>, HirError> {
         if !matches!(self.program.interner.kind(expected)?, TypeKind::Function(_)) {
             return Ok(None);
         }
@@ -12434,14 +12610,10 @@ impl<'a> ExpressionChecker<'a> {
         if signature != expected {
             missing.push("an exact call signature");
         }
-        if !closure.protocols().supports(HirCallProtocol::Call) {
-            missing.push("Call");
+        if !closure.protocols().supports(required_protocol) {
+            missing.push(protocol_name);
         }
-        for (capability, name) in [
-            (HirCapability::Copy, "Copy"),
-            (HirCapability::Send, "Send"),
-            (HirCapability::Share, "Share"),
-        ] {
+        for &(capability, name) in required_capabilities {
             if self.capability_status_with_generics(
                 actual,
                 capability,
@@ -12452,9 +12624,12 @@ impl<'a> ExpressionChecker<'a> {
             }
         }
         if missing.is_empty() {
-            return self
-                .coerce_with(value, expected, Assignability::CallableErasure)
-                .map(Some);
+            let coercion = if required_protocol == HirCallProtocol::CallOnce {
+                Assignability::CallableOnceErasure
+            } else {
+                Assignability::CallableErasure
+            };
+            return self.coerce_with(value, expected, coercion).map(Some);
         }
         self.emit(
             span,
@@ -13492,6 +13667,9 @@ impl<'a> ExpressionChecker<'a> {
             ("testing", Some("skip")) => HirBootstrapHostFunction::TestingSkip,
             ("testing", Some("attach")) => HirBootstrapHostFunction::TestingAttach,
             ("testing", Some("snapshot")) => HirBootstrapHostFunction::TestingSnapshot,
+            ("testing", Some("withVirtualTime")) => {
+                HirBootstrapHostFunction::TestingWithVirtualTime
+            }
             ("testing", Some("__runLeaf")) if generated_testing => {
                 HirBootstrapHostFunction::TestingRunLeaf
             }
@@ -16223,6 +16401,8 @@ impl<'a> ExpressionChecker<'a> {
             (IntrinsicType::Instant, "isAfter") => HirBootstrapHostFunction::InstantIsAfter,
             (IntrinsicType::Timer, "wait") => HirBootstrapHostFunction::TimerWait,
             (IntrinsicType::Timer, "cancel") => HirBootstrapHostFunction::TimerCancel,
+            (IntrinsicType::VirtualTime, "settle") => HirBootstrapHostFunction::VirtualTimeSettle,
+            (IntrinsicType::VirtualTime, "advance") => HirBootstrapHostFunction::VirtualTimeAdvance,
             (IntrinsicType::EnvSnapshot, "arguments") => {
                 HirBootstrapHostFunction::EnvSnapshotArguments
             }
@@ -17434,6 +17614,30 @@ impl<'a> ExpressionChecker<'a> {
             .expect("allocated callee expressions remain indexed")
             .kind()
             .clone();
+        let virtual_time_boundary = matches!(
+            &callee_kind,
+            HirExpressionKind::Function(HirCallableId::Host(
+                HirBootstrapHostFunction::TestingWithVirtualTime
+            ))
+        );
+        if virtual_time_boundary
+            && matches!(
+                async_initiation,
+                Some(AsyncInitiation {
+                    kind: AsyncInitiationKind::Spawn,
+                    ..
+                })
+            )
+        {
+            self.emit(
+                call_span,
+                "E1601",
+                "`testing.withVirtualTime` must be awaited directly and cannot be spawned",
+                Vec::new(),
+                None,
+            )?;
+            return self.recovery_expression(file, range);
+        }
         let generic_template = match callee_kind {
             HirExpressionKind::Function(id) => self.callable(id).and_then(|callable| {
                 (callable.generic_arity != 0).then_some((
@@ -17764,23 +17968,52 @@ impl<'a> ExpressionChecker<'a> {
             else {
                 continue;
             };
-            let contextual_expected =
+            let (contextual_expected, defer_contextual_coercion) =
                 if let (Some(inference), Some(expected_type)) = (&mut inference, expected_type) {
-                    self.resolve_inference_type(&inference.solver, expected_type)?
+                    let resolved = self.resolve_inference_type(&inference.solver, expected_type)?;
+                    let deferred = resolved.is_none()
+                        && matches!(
+                            self.program.interner.kind(expected_type),
+                            Ok(TypeKind::Function(_))
+                        );
+                    (
+                        resolved.or_else(|| {
+                            matches!(
+                                self.program.interner.kind(expected_type),
+                                Ok(TypeKind::Function(_))
+                            )
+                            .then_some(expected_type)
+                        }),
+                        deferred,
+                    )
                 } else {
-                    expected_type
+                    (expected_type, false)
                 };
-            let value = self.check_expression(
-                file,
-                expression,
-                contextual_expected.map(ExpressionExpectation::Direct),
-                context,
-            )?;
+            let expectation = contextual_expected.map(ExpressionExpectation::Direct);
+            let value = if defer_contextual_coercion {
+                self.check_expression_raw(file, expression, expectation, context)?
+            } else {
+                self.check_expression(file, expression, expectation, context)?
+            };
             if let (Some(inference), Some(expected_type)) = (&mut inference, expected_type) {
+                let mut source = value;
+                let actual_type = loop {
+                    match self.program.expression(source).map(HirExpression::kind) {
+                        Some(HirExpressionKind::Closure(closure)) => {
+                            break self
+                                .program
+                                .closure(*closure)
+                                .map(HirClosure::function_type)
+                                .unwrap_or_else(|| self.expression_type(value));
+                        }
+                        Some(HirExpressionKind::Coerce { value, .. }) => source = *value,
+                        _ => break self.expression_type(value),
+                    }
+                };
                 match self.constrain_inference_assignment(
                     &mut inference.solver,
                     expected_type,
-                    self.expression_type(value),
+                    actual_type,
                 )? {
                     InferenceAssignment::Mismatch => {
                         inference.contradiction = true;
@@ -17932,6 +18165,29 @@ impl<'a> ExpressionChecker<'a> {
                 };
                 let actual = self.expression_type(argument.value);
                 if actual == self.program.interner.error() {
+                    continue;
+                }
+                let coerced = if virtual_time_boundary
+                    && matches!(argument.target, HirCallArgumentTarget::Fixed(0))
+                {
+                    self.coerce_virtual_time_body_to_function(
+                        self.program.expressions[argument.value.0 as usize].span,
+                        argument.value,
+                        actual,
+                        final_expected,
+                        context,
+                    )?
+                } else {
+                    self.coerce_concrete_closure_to_function(
+                        self.program.expressions[argument.value.0 as usize].span,
+                        argument.value,
+                        actual,
+                        final_expected,
+                        context,
+                    )?
+                };
+                if let Some(coerced) = coerced {
+                    argument.value = coerced;
                     continue;
                 }
                 let Some(assignability) = self
@@ -20896,13 +21152,18 @@ mod tests {
         );
         assert_eq!(codes(&explicit_parameter), ["E1102"]);
 
-        let (_, _, implicit_borrowed_parameter) = check(
-            "fn invalid() {\n\
+        let (_, _, contextual_borrowed_parameter) = check(
+            "fn accepted() {\n\
                  let closure: fn(ref Int): Int = (value): Int { value }\n\
                  _ = closure\n\
              }\n",
         );
-        assert_eq!(codes(&implicit_borrowed_parameter), ["E1115"]);
+        assert!(
+            contextual_borrowed_parameter.diagnostics().is_empty(),
+            "{:#?}",
+            contextual_borrowed_parameter.diagnostics()
+        );
+        assert!(contextual_borrowed_parameter.is_complete());
 
         let (_, _, misplaced_variadic) = check(
             "fn invalid() {\n\

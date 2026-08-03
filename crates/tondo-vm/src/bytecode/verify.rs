@@ -468,7 +468,8 @@ impl<'a> TraceMetadataAnalysis<'a> {
                 | BytecodeIntrinsicType::EnvSnapshot
                 | BytecodeIntrinsicType::EnvName
                 | BytecodeIntrinsicType::EnvValue
-                | BytecodeIntrinsicType::EnvError => BytecodeTraceDescriptor::Inline,
+                | BytecodeIntrinsicType::EnvError
+                | BytecodeIntrinsicType::VirtualTime => BytecodeTraceDescriptor::Inline,
             },
             BytecodeTypeKind::OpaqueResult { witness, .. } => self.opaque_descriptor(witness)?,
             BytecodeTypeKind::Generated { .. } => self
@@ -1107,6 +1108,10 @@ fn intrinsic_capability(
                 | ClosedCapability::Send
                 | ClosedCapability::Share
         )),
+        BytecodeIntrinsicType::VirtualTime => fixed_capability(matches!(
+            capability,
+            ClosedCapability::Discard | ClosedCapability::Send
+        )),
     }
 }
 
@@ -1424,7 +1429,8 @@ fn intrinsic_terminal(
         | BytecodeIntrinsicType::EnvSnapshot
         | BytecodeIntrinsicType::EnvName
         | BytecodeIntrinsicType::EnvValue
-        | BytecodeIntrinsicType::EnvError => fixed_terminal(BytecodeTerminalStatus::Absent),
+        | BytecodeIntrinsicType::EnvError
+        | BytecodeIntrinsicType::VirtualTime => fixed_terminal(BytecodeTerminalStatus::Absent),
         BytecodeIntrinsicType::Timer => {
             unreachable!("registered bytecode terminal roots return above")
         }
@@ -1576,7 +1582,8 @@ impl Verifier<'_> {
                 | BytecodeIntrinsicType::EnvSnapshot
                 | BytecodeIntrinsicType::EnvName
                 | BytecodeIntrinsicType::EnvValue
-                | BytecodeIntrinsicType::EnvError => None,
+                | BytecodeIntrinsicType::EnvError
+                | BytecodeIntrinsicType::VirtualTime => None,
             };
             if let Some((required, capability, label)) = requirement {
                 let context = format!("type#{index}");
@@ -2036,6 +2043,10 @@ impl Verifier<'_> {
                     .any(|parameter| parameter.mode != BytecodeParameterMode::Value)
                 && !callable.name.starts_with("std.bytes.BytesBuilder.")
                 && !callable.name.starts_with("std.env.")
+                && !matches!(
+                    callable.name.as_str(),
+                    "std.testing.VirtualTime.settle" | "std.testing.VirtualTime.advance"
+                )
             {
                 return Err(BytecodeVerificationError::new(
                     &context,
@@ -3844,9 +3855,13 @@ impl Verifier<'_> {
                 value: operand,
             } => {
                 self.verify_operand(function, operand, context)?;
-                if self.assignability(operand.ty, value.ty, context)? != Some(*kind)
-                    || *kind == BytecodeCoercion::Exact
-                {
+                let assignability = if *kind == BytecodeCoercion::CallableOnceErasure {
+                    self.callable_once_erasure_matches(operand.ty, value.ty, context)?
+                        .then_some(BytecodeCoercion::CallableOnceErasure)
+                } else {
+                    self.assignability(operand.ty, value.ty, context)?
+                };
+                if assignability != Some(*kind) || *kind == BytecodeCoercion::Exact {
                     return Err(rvalue_error(context));
                 }
             }
@@ -4391,6 +4406,36 @@ impl Verifier<'_> {
                 if !self.capability(*capture, capability, context)? {
                     return Ok(false);
                 }
+            }
+        }
+        Ok(true)
+    }
+
+    fn callable_once_erasure_matches(
+        &self,
+        actual: BytecodeTypeId,
+        expected: BytecodeTypeId,
+        context: &str,
+    ) -> Result<bool, BytecodeVerificationError> {
+        if !matches!(
+            self.ty(expected, context)?.kind,
+            BytecodeTypeKind::Function(_)
+        ) {
+            return Ok(false);
+        }
+        let Some(callable) = self.closure_callable_for_type(actual, context)? else {
+            return Ok(false);
+        };
+        let closure = callable
+            .closure
+            .as_ref()
+            .expect("closure lookup only returns closure callables");
+        if callable.function_type != expected || !closure.protocols.call_once {
+            return Ok(false);
+        }
+        for capture in &closure.captures {
+            if !self.capability(*capture, ClosedCapability::Send, context)? {
+                return Ok(false);
             }
         }
         Ok(true)
@@ -14112,7 +14157,9 @@ mod tests {
                 | BytecodeIntrinsicType::ProcessError
                 | BytecodeIntrinsicType::ProcessExitError
                 | BytecodeIntrinsicType::Utf8Error => [true, true, false, false, true, true],
-                BytecodeIntrinsicType::BytesBuilder => [false, true, false, false, true, false],
+                BytecodeIntrinsicType::BytesBuilder | BytecodeIntrinsicType::VirtualTime => {
+                    [false, true, false, false, true, false]
+                }
                 BytecodeIntrinsicType::ProcessHandle => [false, false, false, false, true, false],
                 BytecodeIntrinsicType::Duration
                 | BytecodeIntrinsicType::DurationError

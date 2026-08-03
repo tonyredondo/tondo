@@ -562,7 +562,9 @@ fn evaluate_composite(
                 Assignability::UnionInjection | Assignability::UnionWidening => {
                     HirConstantValueKind::Converted(Box::new(inner))
                 }
-                Assignability::CallableErasure | Assignability::Diverging => {
+                Assignability::CallableErasure
+                | Assignability::CallableOnceErasure
+                | Assignability::Diverging => {
                     return Err(ConstantEvaluationError::Unavailable);
                 }
             }

@@ -86,6 +86,10 @@ fn bootstrap_process_intrinsic(module: &ModuleId, name: &Name) -> Option<Intrins
             "EnvError" => IntrinsicType::EnvError,
             _ => return None,
         }),
+        "testing" => Some(match name.as_str() {
+            "VirtualTime" => IntrinsicType::VirtualTime,
+            _ => return None,
+        }),
         _ => None,
     }
 }
@@ -2110,6 +2114,9 @@ pub enum HirBootstrapHostFunction {
     TestingSkip,
     TestingAttach,
     TestingSnapshot,
+    TestingWithVirtualTime,
+    VirtualTimeSettle,
+    VirtualTimeAdvance,
     TestingRunLeaf,
     TestingRunSuite,
     TestingBeginSuiteCleanup,
@@ -2203,6 +2210,9 @@ impl HirBootstrapHostFunction {
             Self::TestingSkip => "std.testing.skip",
             Self::TestingAttach => "std.testing.attach",
             Self::TestingSnapshot => "std.testing.snapshot",
+            Self::TestingWithVirtualTime => "std.testing.withVirtualTime",
+            Self::VirtualTimeSettle => "std.testing.VirtualTime.settle",
+            Self::VirtualTimeAdvance => "std.testing.VirtualTime.advance",
             Self::TestingRunLeaf => "std.testing.__runLeaf",
             Self::TestingRunSuite => "std.testing.__runSuite",
             Self::TestingBeginSuiteCleanup => "std.testing.__beginSuiteCleanup",
@@ -2227,6 +2237,9 @@ impl HirBootstrapHostFunction {
                 | Self::ProcessHandleCancel
                 | Self::TimeSleep
                 | Self::TimerWait
+                | Self::TestingWithVirtualTime
+                | Self::VirtualTimeSettle
+                | Self::VirtualTimeAdvance
         )
     }
 }

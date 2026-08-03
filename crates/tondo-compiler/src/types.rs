@@ -132,6 +132,7 @@ pub enum IntrinsicType {
     EnvName,
     EnvValue,
     EnvError,
+    VirtualTime,
 }
 
 impl IntrinsicType {
@@ -165,6 +166,7 @@ impl IntrinsicType {
             Self::EnvName => "Name",
             Self::EnvValue => "Value",
             Self::EnvError => "EnvError",
+            Self::VirtualTime => "VirtualTime",
         }
     }
 
@@ -192,7 +194,8 @@ impl IntrinsicType {
             | Self::EnvSnapshot
             | Self::EnvName
             | Self::EnvValue
-            | Self::EnvError => 0,
+            | Self::EnvError
+            | Self::VirtualTime => 0,
         }
     }
 }
@@ -216,6 +219,7 @@ pub enum Assignability {
     Exact,
     Opaque,
     CallableErasure,
+    CallableOnceErasure,
     UnionInjection,
     UnionWidening,
     OptionLift,

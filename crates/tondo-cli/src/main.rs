@@ -2315,7 +2315,7 @@ fn make_test_attempt(index: u32, source: &CliAttempt) -> Result<TestAttempt, Tes
         .map(|record| VirtualTimeRecord {
             index: record.index(),
             elapsed_ns: record.elapsed_ns().to_string(),
-            automatic_advances: 0,
+            automatic_advances: record.automatic_advances(),
             explicit_advances: record.advances(),
             settles: record.settles(),
         })

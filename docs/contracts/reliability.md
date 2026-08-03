@@ -32,9 +32,12 @@ canonical bytes, validates the quality baseline, and verifies the ratchet
 record hashes. A wave with draft case layers must also provide coverage and
 mutation reports that pass the baseline non-regression gates; a wave without
 executable draft layers records both scopes as not-applicable with an explicit
-reason. ratchet generate writes the canonical record only after all those
-checks pass. The record never contains physical paths or report contents, only
-portable logical paths and SHA-256 identities.
+reason. `ratchet generate` writes the canonical record only after all those
+checks pass. Report identities hash the parsed, canonical metrics rather than
+the host-specific raw tool output. The strict gate validates the deterministic
+repository records; the quality gate supplies fresh coverage and mutation
+reports to the ratchet. The record never contains physical paths or report
+contents, only portable logical paths and SHA-256 identities.
 
 ## Inventory semantics
 

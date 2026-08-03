@@ -4114,6 +4114,7 @@ fn intrinsic_type(value: IntrinsicType) -> bc::BytecodeIntrinsicType {
         IntrinsicType::EnvName => bc::BytecodeIntrinsicType::EnvName,
         IntrinsicType::EnvValue => bc::BytecodeIntrinsicType::EnvValue,
         IntrinsicType::EnvError => bc::BytecodeIntrinsicType::EnvError,
+        IntrinsicType::VirtualTime => bc::BytecodeIntrinsicType::VirtualTime,
     }
 }
 
@@ -4139,6 +4140,7 @@ fn coercion(value: Assignability) -> bc::BytecodeCoercion {
         Assignability::Exact => bc::BytecodeCoercion::Exact,
         Assignability::Opaque => bc::BytecodeCoercion::Opaque,
         Assignability::CallableErasure => bc::BytecodeCoercion::CallableErasure,
+        Assignability::CallableOnceErasure => bc::BytecodeCoercion::CallableOnceErasure,
         Assignability::UnionInjection => bc::BytecodeCoercion::UnionInjection,
         Assignability::UnionWidening => bc::BytecodeCoercion::UnionWidening,
         Assignability::OptionLift => bc::BytecodeCoercion::OptionLift,

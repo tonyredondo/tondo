@@ -42,3 +42,8 @@ cargo run -p tondo-reliability --locked -- quality verify \
     --root . \
     --coverage "$coverage" \
     --mutants "$mutation_report"
+
+cargo run -p tondo-reliability --locked -- ratchet check \
+    --root . \
+    --coverage "$coverage" \
+    --mutants "$mutation_report"

@@ -67,6 +67,27 @@ pub trait VmHost {
         Ok(())
     }
 
+    /// Enters the single deterministic clock domain owned by a test attempt.
+    fn begin_virtual_time(&mut self) -> Result<RuntimeValue, VmError> {
+        Err(VmError::UnsupportedHostCall(
+            "std.testing.withVirtualTime".to_owned(),
+        ))
+    }
+
+    /// Restores the production clock after the virtual-time closure completes
+    /// or unwinds.
+    fn finish_virtual_time(&mut self, _controller: &RuntimeValue) -> Result<(), VmError> {
+        Err(VmError::UnsupportedHostCall(
+            "std.testing.withVirtualTime".to_owned(),
+        ))
+    }
+
+    /// Identifies controller waits that may only complete after every runnable
+    /// language task has reached durable quiescence.
+    fn is_virtual_quiescence_call(&self, _call: u64) -> bool {
+        false
+    }
+
     /// Enters a compiler-owned test node boundary. Normal hosts never expose
     /// this operation; it is used only by verified test artifacts.
     fn begin_test_node(&mut self, _kind: VmTestNodeKind, id: &str) -> Result<(), VmError> {
@@ -229,6 +250,7 @@ struct CallContinuation {
     unwind: BytecodeBlockId,
     call_span: BytecodeSpan,
     test_boundary: Option<TestBoundary>,
+    virtual_time: Option<RuntimeValue>,
 }
 
 #[derive(Debug, Clone)]
@@ -814,6 +836,9 @@ impl<'program, 'host> Engine<'program, 'host> {
 
     fn poll_host_calls(&mut self) -> Result<(), VmError> {
         for call in self.pending_host_calls() {
+            if self.host.is_virtual_quiescence_call(call) && !self.runnable.is_empty() {
+                continue;
+            }
             if let Some(value) = self.host.poll_async(call)? {
                 self.complete_host_call(call, value)?;
             }
@@ -2094,7 +2119,8 @@ impl<'program, 'host> Engine<'program, 'host> {
                     | BytecodeIntrinsicType::EnvSnapshot
                     | BytecodeIntrinsicType::EnvName
                     | BytecodeIntrinsicType::EnvValue
-                    | BytecodeIntrinsicType::EnvError => {}
+                    | BytecodeIntrinsicType::EnvError
+                    | BytecodeIntrinsicType::VirtualTime => {}
                     BytecodeIntrinsicType::ProcessHandle => {
                         let Value::Host(value) = value else {
                             return Err(VmError::invariant(
@@ -2680,6 +2706,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                             unwind: *unwind,
                             call_span: span,
                             test_boundary: None,
+                            virtual_time: None,
                         };
                         self.push_frame(function, arguments, Some(continuation))?;
                     }
@@ -2694,12 +2721,18 @@ impl<'program, 'host> Engine<'program, 'host> {
                             unwind: *unwind,
                             call_span: span,
                             test_boundary: Some(boundary),
+                            virtual_time: None,
                         };
                         self.push_frame(function, arguments, Some(continuation))?;
                     }
                     OperationResult::HostAsync { .. } => {
                         return Err(VmError::invariant(
                             "an async host call appeared in a synchronous invocation",
+                        ));
+                    }
+                    OperationResult::VirtualTimeBoundaryCall { .. } => {
+                        return Err(VmError::invariant(
+                            "an async virtual-time boundary appeared in a synchronous invocation",
                         ));
                     }
                     OperationResult::Panic(code, message) => {
@@ -2740,6 +2773,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                         unwind: *unwind,
                                         call_span: span,
                                         test_boundary: None,
+                                        virtual_time: None,
                                     }),
                                 )?;
                             }
@@ -2768,6 +2802,24 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 return Err(VmError::invariant(
                                     "an internal test boundary was awaited",
                                 ));
+                            }
+                            OperationResult::VirtualTimeBoundaryCall {
+                                function,
+                                arguments,
+                                controller,
+                            } => {
+                                self.push_frame(
+                                    function,
+                                    arguments,
+                                    Some(CallContinuation {
+                                        destination: Some(destination.clone()),
+                                        target: Some(*target),
+                                        unwind: *unwind,
+                                        call_span: span,
+                                        test_boundary: None,
+                                        virtual_time: Some(controller),
+                                    }),
+                                )?;
                             }
                         }
                     }
@@ -2880,6 +2932,10 @@ impl<'program, 'host> Engine<'program, 'host> {
                     }
                     OperationResult::TestBoundaryCall { .. } => {
                         return Err(VmError::invariant("an internal test boundary was spawned"));
+                    }
+                    OperationResult::VirtualTimeBoundaryCall { controller, .. } => {
+                        self.host.finish_virtual_time(&controller)?;
+                        return Err(VmError::invariant("virtual time cannot be spawned"));
                     }
                 }
             }
@@ -3027,6 +3083,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                                         unwind: continuation,
                                         call_span: span,
                                         test_boundary: None,
+                                        virtual_time: None,
                                     }),
                                 )?;
                             }
@@ -3058,6 +3115,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                                 return Err(VmError::invariant(
                                     "an internal test boundary was deferred",
                                 ));
+                            }
+                            OperationResult::VirtualTimeBoundaryCall { .. } => {
+                                return Err(VmError::invariant("virtual time cannot be spawned"));
                             }
                         }
                     }
@@ -3113,6 +3173,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                             VmTestNodeOutcome::Passed,
                         )?;
                     }
+                    if let Some(controller) = &continuation.virtual_time {
+                        self.host.finish_virtual_time(controller)?;
+                    }
                     if let Some(destination) = &continuation.destination {
                         self.write_place(caller, destination, value)?;
                     }
@@ -3144,6 +3207,9 @@ impl<'program, 'host> Engine<'program, 'host> {
                         VmError::invariant("panicking callee has no caller frame")
                     })?;
                     self.frames[caller].loans.fill(None);
+                    if let Some(controller) = &continuation.virtual_time {
+                        self.host.finish_virtual_time(controller)?;
+                    }
                     if let Some(boundary) = &continuation.test_boundary {
                         let unwind = self
                             .pending_unwind
@@ -3228,6 +3294,7 @@ impl<'program, 'host> Engine<'program, 'host> {
                             unwind: continuation,
                             call_span: span,
                             test_boundary: None,
+                            virtual_time: None,
                         }),
                     )?;
                 }
@@ -3257,6 +3324,29 @@ impl<'program, 'host> Engine<'program, 'host> {
                 }
                 OperationResult::TestBoundaryCall { .. } => {
                     return Err(VmError::invariant("an internal test boundary was deferred"));
+                }
+                OperationResult::VirtualTimeBoundaryCall {
+                    function,
+                    arguments,
+                    controller,
+                } => {
+                    if !async_cleanup {
+                        return Err(VmError::invariant(
+                            "a synchronous defer attempted a virtual-time boundary",
+                        ));
+                    }
+                    self.push_frame(
+                        function,
+                        arguments,
+                        Some(CallContinuation {
+                            destination: None,
+                            target: Some(continuation),
+                            unwind: continuation,
+                            call_span: span,
+                            test_boundary: None,
+                            virtual_time: Some(controller),
+                        }),
+                    )?;
                 }
             }
         } else if self.pending_unwind.is_some() {
@@ -3592,6 +3682,7 @@ fn runtime_host_kind(constructor: BytecodeIntrinsicType) -> Option<RuntimeHostVa
         BytecodeIntrinsicType::EnvName => RuntimeHostValueKind::EnvName,
         BytecodeIntrinsicType::EnvValue => RuntimeHostValueKind::EnvValue,
         BytecodeIntrinsicType::EnvError => RuntimeHostValueKind::EnvError,
+        BytecodeIntrinsicType::VirtualTime => RuntimeHostValueKind::VirtualTime,
         BytecodeIntrinsicType::Array
         | BytecodeIntrinsicType::Map
         | BytecodeIntrinsicType::Set
@@ -3614,6 +3705,11 @@ enum OperationResult {
         function: BytecodeFunctionId,
         arguments: Vec<Value>,
         boundary: TestBoundary,
+    },
+    VirtualTimeBoundaryCall {
+        function: BytecodeFunctionId,
+        arguments: Vec<Value>,
+        controller: RuntimeValue,
     },
     HostAsync {
         name: String,
@@ -4223,7 +4319,8 @@ impl Engine<'_, '_> {
                 match kind {
                     BytecodeCoercion::Exact
                     | BytecodeCoercion::Opaque
-                    | BytecodeCoercion::CallableErasure => Ok(value_result),
+                    | BytecodeCoercion::CallableErasure
+                    | BytecodeCoercion::CallableOnceErasure => Ok(value_result),
                     BytecodeCoercion::UnionInjection => self.allocate(
                         rvalue.ty,
                         HeapObject::Union {
@@ -7391,6 +7488,49 @@ impl Engine<'_, '_> {
                 if metadata.closure.is_some() {
                     return Err(VmError::invariant("closure callable has no implementation"));
                 }
+                if metadata.name == "std.testing.withVirtualTime"
+                    || metadata.name.starts_with("std.testing.withVirtualTime[")
+                {
+                    let [body] = values.as_slice() else {
+                        return Err(VmError::invariant(
+                            "virtual-time boundary does not have one body operand",
+                        ));
+                    };
+                    let controller = self.host.begin_virtual_time()?;
+                    // This sealed host boundary initializes the callback's `ref`
+                    // parameter directly. The bytecode verifier only permits the
+                    // opaque controller as that borrowed receiver, so it never
+                    // becomes an addressable or escaping Tondo value.
+                    let call = self.prepare_evaluated_call(
+                        body.clone(),
+                        vec![(
+                            BytecodeCallArgumentTarget::Fixed(0),
+                            Value::Host(controller.clone()),
+                        )],
+                    );
+                    let call = match call {
+                        Ok(call) => call,
+                        Err(error) => {
+                            self.host.finish_virtual_time(&controller)?;
+                            return Err(error);
+                        }
+                    };
+                    let OperationResult::Call {
+                        function,
+                        arguments,
+                    } = call
+                    else {
+                        self.host.finish_virtual_time(&controller)?;
+                        return Err(VmError::invariant(
+                            "virtual-time body is not a source closure",
+                        ));
+                    };
+                    return Ok(OperationResult::VirtualTimeBoundaryCall {
+                        function,
+                        arguments,
+                        controller,
+                    });
+                }
                 if matches!(
                     metadata.name.as_str(),
                     "std.testing.__runLeaf" | "std.testing.__runSuite"
@@ -8494,14 +8634,15 @@ fn collection_length_fits_int(length: usize) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::bytecode::{
-        BytecodeAggregateKind, BytecodeBinaryOperator, BytecodeBlockId, BytecodeCallable,
-        BytecodeCallableId, BytecodeCapabilitySet, BytecodeClosure, BytecodeClosureProtocols,
-        BytecodeConstant, BytecodeConstantValue, BytecodeConstantValueKind,
-        BytecodeConstantVariantValue, BytecodeContainmentKind, BytecodeCursorMode, BytecodeField,
-        BytecodeFrameTraceDescriptor, BytecodeFunction, BytecodeFunctionId, BytecodeFunctionType,
-        BytecodeIndexAccess, BytecodeIntrinsicType, BytecodeLoanId, BytecodeNominal,
-        BytecodeNominalId, BytecodeNominalShape, BytecodeNumericConversionError, BytecodeOperand,
-        BytecodeOperandKind, BytecodeOperation, BytecodeOperationKind, BytecodeParameterMode,
+        BytecodeAggregateKind, BytecodeBinaryOperator, BytecodeBlockId, BytecodeCallArgumentTarget,
+        BytecodeCallable, BytecodeCallableId, BytecodeCapabilitySet, BytecodeClosure,
+        BytecodeClosureProtocols, BytecodeConstant, BytecodeConstantValue,
+        BytecodeConstantValueKind, BytecodeConstantVariantValue, BytecodeContainmentKind,
+        BytecodeCursorMode, BytecodeField, BytecodeFrameTraceDescriptor, BytecodeFunction,
+        BytecodeFunctionId, BytecodeFunctionParameter, BytecodeFunctionType, BytecodeIndexAccess,
+        BytecodeIntrinsicType, BytecodeLoanId, BytecodeNominal, BytecodeNominalId,
+        BytecodeNominalShape, BytecodeNumericConversionError, BytecodeOperand, BytecodeOperandKind,
+        BytecodeOperation, BytecodeOperationKind, BytecodeParameter, BytecodeParameterMode,
         BytecodePlace, BytecodePrefixOperator, BytecodeProgram, BytecodeRangeKind,
         BytecodeScalarType, BytecodeScopeId, BytecodeSliceBounds, BytecodeSlotId, BytecodeSpan,
         BytecodeTraceDescriptor, BytecodeType, BytecodeTypeId, BytecodeTypeKind, BytecodeVariant,
@@ -9506,6 +9647,15 @@ mod tests {
         host.cancel_async(7).unwrap();
         host.cleanup(&RuntimeValue::Unit).unwrap();
         assert!(matches!(
+            host.begin_virtual_time(),
+            Err(VmError::UnsupportedHostCall(name)) if name == "std.testing.withVirtualTime"
+        ));
+        assert!(matches!(
+            host.finish_virtual_time(&RuntimeValue::Unit),
+            Err(VmError::UnsupportedHostCall(name)) if name == "std.testing.withVirtualTime"
+        ));
+        assert!(!host.is_virtual_quiescence_call(7));
+        assert!(matches!(
             host.begin_test_node(VmTestNodeKind::Leaf, "unit::leaf"),
             Err(VmError::UnsupportedHostCall(name)) if name == "test node `unit::leaf`"
         ));
@@ -9628,6 +9778,158 @@ mod tests {
             failure,
             PlaceFailure::Vm(VmError::Invariant(message)) if message == "closed"
         ));
+    }
+
+    #[test]
+    fn virtual_time_boundary_restores_the_host_after_malformed_callback_values() {
+        #[derive(Default)]
+        struct BoundaryHost {
+            begun: usize,
+            finished: usize,
+            invoked: usize,
+        }
+
+        impl VmHost for BoundaryHost {
+            fn invoke(
+                &mut self,
+                _name: &str,
+                _arguments: &[RuntimeValue],
+            ) -> Result<RuntimeValue, VmError> {
+                self.invoked += 1;
+                Ok(RuntimeValue::Unit)
+            }
+
+            fn begin_virtual_time(&mut self) -> Result<RuntimeValue, VmError> {
+                self.begun += 1;
+                Ok(RuntimeValue::Host {
+                    kind: RuntimeHostValueKind::VirtualTime,
+                    id: 1,
+                })
+            }
+
+            fn finish_virtual_time(&mut self, _controller: &RuntimeValue) -> Result<(), VmError> {
+                self.finished += 1;
+                Ok(())
+            }
+        }
+
+        let mut program = root_pressure_program();
+        let int = BytecodeTypeId::new(5);
+        let unit = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "Unit".into(),
+            kind: BytecodeTypeKind::Scalar(BytecodeScalarType::Unit),
+        });
+        let virtual_time = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "VirtualTime".into(),
+            kind: BytecodeTypeKind::Intrinsic {
+                constructor: BytecodeIntrinsicType::VirtualTime,
+                arguments: Vec::new(),
+            },
+        });
+        let body_function = BytecodeTypeId::new(program.types.len() as u32);
+        program.types.push(BytecodeType {
+            name: "fn(ref VirtualTime): Unit".into(),
+            kind: BytecodeTypeKind::Function(BytecodeFunctionType {
+                is_async: false,
+                is_unsafe: false,
+                parameters: vec![BytecodeFunctionParameter {
+                    mode: BytecodeParameterMode::Ref,
+                    ty: virtual_time,
+                }],
+                variadic: None,
+                outcome: unit,
+            }),
+        });
+        let parameter = BytecodeParameter {
+            mode: BytecodeParameterMode::Value,
+            ty: int,
+            variadic_element: None,
+            receiver: false,
+        };
+        program.callables.extend([
+            BytecodeCallable {
+                name: "std.testing.withVirtualTime".into(),
+                generic_arity: 0,
+                parameters: vec![parameter],
+                outcome: int,
+                function_type: body_function,
+                implementation: None,
+                closure: None,
+            },
+            BytecodeCallable {
+                name: "host.body".into(),
+                generic_arity: 0,
+                parameters: vec![BytecodeParameter {
+                    mode: BytecodeParameterMode::Ref,
+                    ty: virtual_time,
+                    variadic_element: None,
+                    receiver: false,
+                }],
+                outcome: unit,
+                function_type: body_function,
+                implementation: None,
+                closure: None,
+            },
+        ]);
+        let trace = derive_trace_metadata(&program).unwrap();
+        let boundary = Value::Function {
+            callable: BytecodeCallableId::new(0),
+            arguments: Vec::new(),
+        };
+
+        for (body, invoked) in [
+            (Value::Integer(1), 0),
+            (
+                Value::Function {
+                    callable: BytecodeCallableId::new(1),
+                    arguments: Vec::new(),
+                },
+                1,
+            ),
+        ] {
+            let mut host = BoundaryHost::default();
+            let error = {
+                let mut engine = Engine::new(
+                    &program,
+                    &mut host,
+                    pressure_limits(),
+                    ValueCopyStrategy::default(),
+                    trace.clone(),
+                );
+                match engine.prepare_evaluated_call(
+                    boundary.clone(),
+                    vec![(BytecodeCallArgumentTarget::Fixed(0), body)],
+                ) {
+                    Err(error) => error,
+                    Ok(_) => panic!("malformed virtual-time callback was accepted"),
+                }
+            };
+            assert!(matches!(error, VmError::Invariant(_)));
+            assert_eq!((host.begun, host.finished, host.invoked), (1, 1, invoked));
+        }
+
+        let mut malformed = program.clone();
+        malformed.callables[0].parameters.clear();
+        let mut host = BoundaryHost::default();
+        let trace = derive_trace_metadata(&malformed).unwrap();
+        let result = Engine::new(
+            &malformed,
+            &mut host,
+            pressure_limits(),
+            ValueCopyStrategy::default(),
+            trace,
+        )
+        .prepare_evaluated_call(boundary, Vec::new());
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("malformed virtual-time boundary was accepted"),
+        };
+        assert!(
+            matches!(error, VmError::Invariant(message) if message.contains("one body operand"))
+        );
+        assert_eq!((host.begun, host.finished, host.invoked), (0, 0, 0));
     }
 
     #[test]

@@ -390,6 +390,23 @@ fn collect_tondo_sources(directory: &Path, sources: &mut Vec<PathBuf>) -> io::Re
 }
 
 pub fn inline_request(operation: Operation, source_name: &str, bytes: &[u8]) -> CompilationRequest {
+    inline_request_with_form(operation, source_name, bytes, SourceForm::Fragment)
+}
+
+pub fn inline_module_request(
+    operation: Operation,
+    source_name: &str,
+    bytes: &[u8],
+) -> CompilationRequest {
+    inline_request_with_form(operation, source_name, bytes, SourceForm::Module)
+}
+
+fn inline_request_with_form(
+    operation: Operation,
+    source_name: &str,
+    bytes: &[u8],
+    source_form: SourceForm,
+) -> CompilationRequest {
     let mut sources = SourceDatabase::new();
     let root = sources
         .add(SourceInput::virtual_file(
@@ -406,7 +423,7 @@ pub fn inline_request(operation: Operation, source_name: &str, bytes: &[u8]) -> 
         HostProfile::Hosted,
         BuildTarget::vm_hosted_capabilities(),
         DiagnosticFormat::Json,
-        SourceForm::Fragment,
+        source_form,
         ResourceLimits::default(),
         PackageGraph::loose(&sources, root).unwrap(),
         sources,

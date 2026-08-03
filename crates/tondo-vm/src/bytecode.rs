@@ -255,6 +255,7 @@ pub enum BytecodeIntrinsicType {
     EnvName,
     EnvValue,
     EnvError,
+    VirtualTime,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -386,7 +387,8 @@ impl BytecodeIntrinsicType {
             | Self::EnvSnapshot
             | Self::EnvName
             | Self::EnvValue
-            | Self::EnvError => 0,
+            | Self::EnvError
+            | Self::VirtualTime => 0,
         }
     }
 
@@ -435,7 +437,8 @@ impl BytecodeIntrinsicType {
             | Self::EnvSnapshot
             | Self::EnvName
             | Self::EnvValue
-            | Self::EnvError => None,
+            | Self::EnvError
+            | Self::VirtualTime => None,
         }
     }
 }
@@ -911,6 +914,7 @@ pub enum BytecodeCoercion {
     Exact,
     Opaque,
     CallableErasure,
+    CallableOnceErasure,
     UnionInjection,
     UnionWidening,
     OptionLift,

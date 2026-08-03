@@ -161,6 +161,7 @@ impl SnapshotEvidence {
 pub struct VirtualTimeRecord {
     index: u32,
     elapsed_ns: i128,
+    automatic_advances: u32,
     settles: u32,
     advances: u32,
 }
@@ -172,6 +173,10 @@ impl VirtualTimeRecord {
 
     pub const fn elapsed_ns(&self) -> i128 {
         self.elapsed_ns
+    }
+
+    pub const fn automatic_advances(&self) -> u32 {
+        self.automatic_advances
     }
 
     pub const fn settles(&self) -> u32 {
@@ -300,6 +305,7 @@ struct ProcessSnapshotWire {
 struct ProcessVirtualTimeWire {
     index: u32,
     elapsed_ns: i128,
+    automatic_advances: u32,
     settles: u32,
     advances: u32,
 }
@@ -350,6 +356,7 @@ impl ProcessReportWire {
                 .map(|record| ProcessVirtualTimeWire {
                     index: record.index,
                     elapsed_ns: record.elapsed_ns,
+                    automatic_advances: record.automatic_advances,
                     settles: record.settles,
                     advances: record.advances,
                 })
@@ -403,6 +410,7 @@ impl ProcessReportWire {
                 .map(|record| VirtualTimeRecord {
                     index: record.index,
                     elapsed_ns: record.elapsed_ns,
+                    automatic_advances: record.automatic_advances,
                     settles: record.settles,
                     advances: record.advances,
                 })
@@ -1092,10 +1100,15 @@ impl EnvelopeHandle {
         if state.virtual_time_active {
             return Err(ControlError::VirtualTimeActive);
         }
+        let index = u32::try_from(state.virtual_time.len())
+            .ok()
+            .and_then(|index| index.checked_add(1))
+            .ok_or(ControlError::VirtualOverflow)?;
         state.virtual_time_active = true;
         state.virtual_time.push(VirtualTimeRecord {
-            index: 0,
+            index,
             elapsed_ns: 0,
+            automatic_advances: 0,
             settles: 0,
             advances: 0,
         });
@@ -1104,6 +1117,88 @@ impl EnvelopeHandle {
             domain: RefCell::new(VirtualDomain::new()),
             closed: false,
         })
+    }
+
+    pub(crate) fn begin_runtime_virtual_time(&self) -> Result<(), ControlError> {
+        let mut state = self.lock()?;
+        ensure_open(&state)?;
+        if state.virtual_time_active {
+            return Err(ControlError::VirtualTimeActive);
+        }
+        let index = u32::try_from(state.virtual_time.len())
+            .ok()
+            .and_then(|index| index.checked_add(1))
+            .ok_or(ControlError::VirtualOverflow)?;
+        state.virtual_time_active = true;
+        state.virtual_time.push(VirtualTimeRecord {
+            index,
+            elapsed_ns: 0,
+            automatic_advances: 0,
+            settles: 0,
+            advances: 0,
+        });
+        Ok(())
+    }
+
+    pub(crate) fn record_runtime_virtual_settle(&self) -> Result<(), ControlError> {
+        let mut state = self.lock()?;
+        ensure_open(&state)?;
+        if !state.virtual_time_active {
+            return Err(ControlError::VirtualTimeMissing);
+        }
+        let Some(record) = state.virtual_time.last_mut() else {
+            return Err(ControlError::VirtualTimeMissing);
+        };
+        record.settles = record.settles.saturating_add(1);
+        Ok(())
+    }
+
+    pub(crate) fn record_runtime_virtual_advance(
+        &self,
+        elapsed_ns: i128,
+    ) -> Result<(), ControlError> {
+        let mut state = self.lock()?;
+        ensure_open(&state)?;
+        if !state.virtual_time_active {
+            return Err(ControlError::VirtualTimeMissing);
+        }
+        let Some(record) = state.virtual_time.last_mut() else {
+            return Err(ControlError::VirtualTimeMissing);
+        };
+        record.elapsed_ns = elapsed_ns;
+        record.advances = record.advances.saturating_add(1);
+        Ok(())
+    }
+
+    pub(crate) fn record_runtime_virtual_auto_advance(
+        &self,
+        elapsed_ns: i128,
+    ) -> Result<(), ControlError> {
+        let mut state = self.lock()?;
+        ensure_open(&state)?;
+        if !state.virtual_time_active {
+            return Err(ControlError::VirtualTimeMissing);
+        }
+        let Some(record) = state.virtual_time.last_mut() else {
+            return Err(ControlError::VirtualTimeMissing);
+        };
+        record.elapsed_ns = elapsed_ns;
+        record.automatic_advances = record.automatic_advances.saturating_add(1);
+        Ok(())
+    }
+
+    pub(crate) fn finish_runtime_virtual_time(&self, elapsed_ns: i128) -> Result<(), ControlError> {
+        let mut state = self.lock()?;
+        ensure_open(&state)?;
+        if !state.virtual_time_active {
+            return Err(ControlError::VirtualTimeMissing);
+        }
+        let Some(record) = state.virtual_time.last_mut() else {
+            return Err(ControlError::VirtualTimeMissing);
+        };
+        record.elapsed_ns = elapsed_ns;
+        state.virtual_time_active = false;
+        Ok(())
     }
 
     pub fn child(&self) -> Result<StructuredTask, ControlError> {
@@ -1261,10 +1356,21 @@ impl<'a> VirtualTime<'a> {
     }
 
     pub fn auto_advance(&self) -> Result<AutoAdvance, ControlError> {
-        self.domain
+        let outcome = self
+            .domain
             .borrow_mut()
             .auto_advance_once()
-            .map_err(control_virtual_error)
+            .map_err(control_virtual_error)?;
+        if let AutoAdvance::Advanced { to, .. } = &outcome {
+            let mut state = self.envelope.lock()?;
+            ensure_open(&state)?;
+            let Some(record) = state.virtual_time.last_mut() else {
+                return Err(ControlError::VirtualTimeMissing);
+            };
+            record.elapsed_ns = i128::from(*to);
+            record.automatic_advances = record.automatic_advances.saturating_add(1);
+        }
+        Ok(outcome)
     }
 
     fn close(mut self) -> Result<(), ControlError> {
@@ -1727,7 +1833,16 @@ mod tests {
                 Ok(())
             })
             .unwrap();
-        assert_eq!(envelope.report().unwrap().virtual_time().len(), 1);
+        envelope
+            .with_virtual_time(|time| {
+                time.settle()?;
+                Ok(())
+            })
+            .unwrap();
+        let report = envelope.report().unwrap();
+        assert_eq!(report.virtual_time().len(), 2);
+        assert_eq!(report.virtual_time()[0].index(), 1);
+        assert_eq!(report.virtual_time()[1].index(), 2);
         assert_eq!(
             envelope.with_virtual_time(|_| envelope.with_virtual_time(|_| Ok(()))),
             Err(ControlError::VirtualTimeActive)
@@ -1758,6 +1873,9 @@ mod tests {
                 Ok(())
             })
             .unwrap();
+        let report = envelope.report().unwrap();
+        assert_eq!(report.virtual_time()[0].elapsed_ns(), 5);
+        assert_eq!(report.virtual_time()[0].automatic_advances(), 1);
 
         let deadlock = EnvelopeHandle::new("deadlock", limits());
         assert_eq!(
@@ -1966,10 +2084,14 @@ mod tests {
             std::hint::black_box(report.snapshots())[0].outcome(),
             SnapshotOutcome::Missing { .. }
         ));
-        assert_eq!(std::hint::black_box(report.virtual_time())[0].index(), 0);
+        assert_eq!(std::hint::black_box(report.virtual_time())[0].index(), 1);
         assert_eq!(
             std::hint::black_box(report.virtual_time())[0].elapsed_ns(),
             2
+        );
+        assert_eq!(
+            std::hint::black_box(report.virtual_time())[0].automatic_advances(),
+            0
         );
         assert_eq!(std::hint::black_box(report.virtual_time())[0].settles(), 1);
         assert_eq!(std::hint::black_box(report.virtual_time())[0].advances(), 1);

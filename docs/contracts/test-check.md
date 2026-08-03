@@ -39,8 +39,9 @@ runtime.
 
 `withVirtualTime` requires an async `Send + CallOnce` closure accepting
 `ref VirtualTime`, returning `Unit`, and neither escaping nor sharing the
-controller. The controller is therefore opaque and cannot become a Tondo value
-or capability.
+controller. The boundary itself must be awaited directly rather than spawned;
+controlled tasks are spawned inside the callback's structured scope. The
+controller is therefore opaque and cannot become a Tondo value or capability.
 
 All test-only operations are rejected with `E2003` when presented by a
 production source. There is no friend flag or runtime context lookup in this

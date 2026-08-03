@@ -88,7 +88,8 @@ pub fn build(
         requires_reports,
         |bytes, baseline| {
             let report = parse_llvm_cov(bytes)?;
-            baseline.verify_coverage_report(&report)
+            baseline.verify_coverage_report(&report)?;
+            canonical_json(&report)
         },
     )?;
     let mutation = scope_evidence(
@@ -98,7 +99,8 @@ pub fn build(
         requires_reports,
         |bytes, baseline| {
             let report = parse_mutation_report(bytes)?;
-            baseline.verify_mutation_report(&report)
+            baseline.verify_mutation_report(&report)?;
+            canonical_json(&report)
         },
     )?;
 
@@ -172,7 +174,7 @@ fn scope_evidence(
     name: &str,
     report_path: Option<&Path>,
     required: bool,
-    verify: impl FnOnce(&[u8], &QualityBaseline) -> Result<(), String>,
+    verify: impl FnOnce(&[u8], &QualityBaseline) -> Result<Vec<u8>, String>,
 ) -> Result<ScopeEvidence, String> {
     let Some(path) = report_path else {
         if required {
@@ -190,12 +192,12 @@ fn scope_evidence(
         fs::read(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let baseline = QualityBaseline::load(&root.join(QUALITY_BASELINE_PATH))
         .map_err(|error| format!("cannot load quality baseline for {name}: {error}"))?;
-    verify(&bytes, &baseline)
+    let portable_evidence = verify(&bytes, &baseline)
         .map_err(|error| format!("{name} report failed the quality gate: {error}"))?;
     Ok(ScopeEvidence {
         status: "validated".into(),
         reason: format!("the supplied {name} report passed the quality non-regression gate"),
-        report_sha256: Some(sha256(&bytes)),
+        report_sha256: Some(sha256(&portable_evidence)),
     })
 }
 
@@ -232,8 +234,8 @@ mod tests {
         let root = repository_root();
         let lineage = DraftLineage::load(&root, DRAFT_LINEAGE_PATH).unwrap();
         assert_eq!(lineage.manifest().case_layers.len(), 2);
-        assert!(scope_evidence(&root, "coverage", None, true, |_, _| Ok(())).is_err());
-        assert!(scope_evidence(&root, "mutation", None, true, |_, _| Ok(())).is_err());
+        assert!(scope_evidence(&root, "coverage", None, true, |_, _| Ok(Vec::new())).is_err());
+        assert!(scope_evidence(&root, "mutation", None, true, |_, _| Ok(Vec::new())).is_err());
     }
 
     fn record() -> RatchetRecord {
@@ -326,8 +328,9 @@ mod tests {
     #[test]
     fn scope_evidence_distinguishes_required_and_optional_reports() {
         let root = repository_root();
-        assert!(scope_evidence(&root, "coverage", None, true, |_, _| Ok(())).is_err());
-        let evidence = scope_evidence(&root, "coverage", None, false, |_, _| Ok(())).unwrap();
+        assert!(scope_evidence(&root, "coverage", None, true, |_, _| Ok(Vec::new())).is_err());
+        let evidence =
+            scope_evidence(&root, "coverage", None, false, |_, _| Ok(Vec::new())).unwrap();
         assert_eq!(evidence.status, "not-applicable");
         assert!(evidence.report_sha256.is_none());
 
@@ -336,7 +339,7 @@ mod tests {
         std::fs::write(&report, b"validated report").unwrap();
         let evidence = scope_evidence(&root, "coverage", Some(&report), false, |bytes, _| {
             assert_eq!(bytes, b"validated report");
-            Ok(())
+            Ok(bytes.to_vec())
         })
         .unwrap();
         assert_eq!(evidence.status, "validated");

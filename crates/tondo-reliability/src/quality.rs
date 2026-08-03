@@ -249,13 +249,13 @@ impl QualityBaseline {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CoverageReport {
     pub global: CoverageMetrics,
     pub risk_scopes: Vec<CoverageScope>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct MutationReport {
     pub total: u64,
     pub caught: u64,

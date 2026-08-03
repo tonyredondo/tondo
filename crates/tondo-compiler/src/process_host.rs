@@ -75,6 +75,7 @@ enum HostValue {
     EnvName(Vec<u8>),
     EnvValue(Vec<u8>),
     EnvError { _message: String },
+    VirtualTime { domain: u64 },
 }
 
 enum ClockProvider {
@@ -122,9 +123,15 @@ impl ClockProvider {
         if delta < 0 {
             return Err(VmError::Host("virtual clock cannot move backwards".into()));
         }
-        *now = now
+        let next = now
             .checked_add(delta)
             .ok_or_else(|| VmError::Host("virtual clock value overflow".into()))?;
+        if next > INT_MAX {
+            return Err(VmError::Host(
+                "virtual clock value exceeds the Int domain".into(),
+            ));
+        }
+        *now = next;
         Ok(())
     }
 }
@@ -150,6 +157,14 @@ struct TimeJob {
     cancellation: bool,
     completion: Option<RuntimeValue>,
     counts_resource: bool,
+    kind: TimeJobKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TimeJobKind {
+    Ordinary,
+    Settle,
+    Advance { target: i128 },
 }
 
 pub(crate) struct BootstrapHost {
@@ -162,7 +177,9 @@ pub(crate) struct BootstrapHost {
     jobs: BTreeMap<u64, AsyncJob>,
     time_jobs: BTreeMap<u64, TimeJob>,
     clock: ClockProvider,
+    previous_clock: Option<(ClockProvider, u64)>,
     clock_domain: u64,
+    virtual_controller: Option<u64>,
     next_value: u64,
     next_job: u64,
     max_bytes: u64,
@@ -209,7 +226,9 @@ impl BootstrapHost {
             jobs: BTreeMap::new(),
             time_jobs: BTreeMap::new(),
             clock: ClockProvider::real(),
+            previous_clock: None,
             clock_domain: NEXT_CLOCK_DOMAIN.fetch_add(1, Ordering::Relaxed),
+            virtual_controller: None,
             next_value: 0,
             next_job: 0,
             max_bytes,
@@ -868,6 +887,7 @@ impl BootstrapHost {
                 cancellation: false,
                 completion,
                 counts_resource,
+                kind: TimeJobKind::Ordinary,
             },
         );
         Ok(id)
@@ -881,9 +901,55 @@ impl BootstrapHost {
         if job.counts_resource {
             self.release_time_resource();
         }
+        if !job.cancellation {
+            match job.kind {
+                TimeJobKind::Settle => self
+                    .testing_envelope()?
+                    .record_runtime_virtual_settle()
+                    .map_err(|error| VmError::Host(format!("{}: {error}", error.code())))?,
+                TimeJobKind::Advance { target } => self
+                    .testing_envelope()?
+                    .record_runtime_virtual_advance(target)
+                    .map_err(|error| VmError::Host(format!("{}: {error}", error.code())))?,
+                TimeJobKind::Ordinary => {}
+            }
+        }
         Ok(job
             .completion
             .unwrap_or(RuntimeValue::ResultOk(Box::new(RuntimeValue::Unit))))
+    }
+
+    fn start_virtual_control_job(&mut self, kind: TimeJobKind) -> Result<u64, VmError> {
+        let id = self.next_job_id()?;
+        self.time_jobs.insert(
+            id,
+            TimeJob {
+                deadline: self.clock.now()?,
+                cancellation: false,
+                completion: Some(RuntimeValue::Unit),
+                counts_resource: false,
+                kind,
+            },
+        );
+        Ok(id)
+    }
+
+    fn virtual_controller(&self, value: &RuntimeValue) -> Result<u64, VmError> {
+        let RuntimeValue::Host {
+            kind: RuntimeHostValueKind::VirtualTime,
+            id,
+        } = value
+        else {
+            return Err(VmError::Host("VirtualTime receiver is invalid".into()));
+        };
+        match self.values.get(id) {
+            Some(HostValue::VirtualTime { domain })
+                if self.virtual_controller == Some(*id) && *domain == self.clock_domain =>
+            {
+                Ok(*id)
+            }
+            _ => Err(VmError::Host("VirtualTime controller is stale".into())),
+        }
     }
 }
 
@@ -894,6 +960,63 @@ impl Default for BootstrapHost {
 }
 
 impl VmHost for BootstrapHost {
+    fn begin_virtual_time(&mut self) -> Result<RuntimeValue, VmError> {
+        if self.previous_clock.is_some() || self.virtual_controller.is_some() {
+            return Err(VmError::Host(
+                "P2004: virtual time domain is already active".into(),
+            ));
+        }
+        let envelope = self.testing_envelope()?;
+        envelope
+            .begin_runtime_virtual_time()
+            .map_err(|error| VmError::Host(format!("{}: {error}", error.code())))?;
+        let virtual_clock = ClockProvider::virtual_time(1)?;
+        self.previous_clock = Some((
+            std::mem::replace(&mut self.clock, virtual_clock),
+            self.clock_domain,
+        ));
+        self.clock_domain = NEXT_CLOCK_DOMAIN.fetch_add(1, Ordering::Relaxed);
+        let controller = self.allocate(
+            RuntimeHostValueKind::VirtualTime,
+            HostValue::VirtualTime {
+                domain: self.clock_domain,
+            },
+        );
+        let RuntimeValue::Host { id, .. } = controller else {
+            unreachable!("allocate always returns a host token")
+        };
+        self.virtual_controller = Some(id);
+        Ok(controller)
+    }
+
+    fn finish_virtual_time(&mut self, controller: &RuntimeValue) -> Result<(), VmError> {
+        let id = self.virtual_controller(controller)?;
+        let pending = (!self.time_jobs.is_empty())
+            .then(|| VmError::Host("P2003: virtual time closed with pending local timers".into()));
+        let elapsed_ns = self.clock.now()?;
+        self.values.remove(&id);
+        self.virtual_controller = None;
+        let (previous, previous_domain) = self.previous_clock.take().ok_or_else(|| {
+            VmError::Host("virtual time has no production clock to restore".into())
+        })?;
+        self.clock = previous;
+        self.clock_domain = previous_domain;
+        let envelope = self.testing_envelope()?;
+        envelope
+            .finish_runtime_virtual_time(elapsed_ns)
+            .map_err(|error| VmError::Host(format!("{}: {error}", error.code())))?;
+        if let Some(error) = pending {
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    fn is_virtual_quiescence_call(&self, call: u64) -> bool {
+        self.time_jobs.get(&call).is_some_and(|job| {
+            matches!(job.kind, TimeJobKind::Settle | TimeJobKind::Advance { .. })
+        })
+    }
+
     fn invoke(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<RuntimeValue, VmError> {
         match (name, arguments) {
             ("std.console.print", [RuntimeValue::String(text)]) => {
@@ -1416,6 +1539,34 @@ impl VmHost for BootstrapHost {
     }
 
     fn start_async(&mut self, name: &str, arguments: &[RuntimeValue]) -> Result<u64, VmError> {
+        if name == "std.testing.VirtualTime.settle" {
+            let [controller] = arguments else {
+                return Err(VmError::Host(
+                    "VirtualTime.settle received an invalid argument list".into(),
+                ));
+            };
+            self.virtual_controller(controller)?;
+            return self.start_virtual_control_job(TimeJobKind::Settle);
+        }
+        if name == "std.testing.VirtualTime.advance" {
+            let [controller, duration] = arguments else {
+                return Err(VmError::Host(
+                    "VirtualTime.advance received an invalid argument list".into(),
+                ));
+            };
+            self.virtual_controller(controller)?;
+            let duration = Self::duration(duration)?;
+            if duration < 0 {
+                return Err(VmError::Host(
+                    "P2005: virtual time duration cannot be negative".into(),
+                ));
+            }
+            self.clock
+                .advance_virtual(duration)
+                .map_err(|error| VmError::Host(format!("P2005: {error}")))?;
+            let target = self.clock.now()?;
+            return self.start_virtual_control_job(TimeJobKind::Advance { target });
+        }
         if name == "std.time.sleep" {
             let [delay] = arguments else {
                 return Err(VmError::Host(
@@ -1475,7 +1626,26 @@ impl VmHost for BootstrapHost {
                     .time_jobs
                     .get(&call)
                     .expect("time job presence was checked");
-                job.completion.is_some() || job.cancellation || self.clock.now()? >= job.deadline
+                job.cancellation
+                    || match job.kind {
+                        TimeJobKind::Ordinary => {
+                            job.completion.is_some() || self.clock.now()? >= job.deadline
+                        }
+                        TimeJobKind::Settle => {
+                            self.jobs.is_empty()
+                                && self.time_jobs.iter().all(|(id, candidate)| {
+                                    *id == call || !matches!(candidate.kind, TimeJobKind::Ordinary)
+                                })
+                        }
+                        TimeJobKind::Advance { target } => {
+                            self.jobs.is_empty()
+                                && self.time_jobs.iter().all(|(id, candidate)| {
+                                    *id == call
+                                        || !matches!(candidate.kind, TimeJobKind::Ordinary)
+                                        || candidate.deadline > target
+                                })
+                        }
+                    }
             };
             return ready.then(|| self.finish_time_job(call)).transpose();
         }
@@ -1505,6 +1675,51 @@ impl VmHost for BootstrapHost {
             for call in calls {
                 if let Some(value) = self.poll_async(*call)? {
                     return Ok((*call, value));
+                }
+            }
+            if matches!(self.clock, ClockProvider::Virtual { .. }) {
+                let controller = calls.iter().find_map(|call| {
+                    self.time_jobs.get(call).and_then(|job| match job.kind {
+                        TimeJobKind::Settle => Some((TimeJobKind::Settle, i128::MAX)),
+                        TimeJobKind::Advance { target } => {
+                            Some((TimeJobKind::Advance { target }, target))
+                        }
+                        TimeJobKind::Ordinary => None,
+                    })
+                });
+                if controller.is_some() && !self.jobs.is_empty() {
+                    return Err(VmError::Host(
+                        "P2003: virtual-time quiescence is blocked by an external wait".into(),
+                    ));
+                }
+                let limit = controller.map_or(i128::MAX, |(_, limit)| limit);
+                let next = calls
+                    .iter()
+                    .filter_map(|call| self.time_jobs.get(call))
+                    .filter(|job| {
+                        matches!(job.kind, TimeJobKind::Ordinary)
+                            && job.completion.is_none()
+                            && !job.cancellation
+                            && job.deadline <= limit
+                    })
+                    .map(|job| job.deadline)
+                    .min();
+                if let Some(deadline) = next {
+                    let now = self.clock.now()?;
+                    if deadline > now {
+                        self.clock.advance_virtual(deadline - now)?;
+                        if let Some(envelope) = &self.testing {
+                            envelope
+                                .record_runtime_virtual_auto_advance(deadline)
+                                .map_err(|error| {
+                                    VmError::Host(format!("{}: {error}", error.code()))
+                                })?;
+                        }
+                    }
+                    continue;
+                }
+                if controller.is_some() {
+                    continue;
                 }
             }
             thread::sleep(Duration::from_millis(2));
@@ -2505,7 +2720,7 @@ mod tests {
         assert!(BootstrapHost::with_virtual_time(Vec::new(), 0).is_err());
         assert!(BootstrapHost::with_virtual_time(Vec::new(), -1).is_err());
         let mut overflowing = BootstrapHost::with_virtual_time(Vec::new(), 1).unwrap();
-        overflowing.advance_virtual_time(i128::MAX).unwrap();
+        overflowing.advance_virtual_time(INT_MAX).unwrap();
         assert!(overflowing.advance_virtual_time(1).is_err());
     }
 
@@ -3183,6 +3398,187 @@ mod tests {
                 .invoke("std.testing.log", &[RuntimeValue::String("outside".into())]),
             Err(VmError::Host(_))
         ));
+    }
+
+    #[test]
+    fn testing_host_virtual_time_is_lexical_sequential_and_reports_advances() {
+        let envelope = EnvelopeHandle::new(
+            "virtual-host",
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+        );
+        envelope
+            .set_phase(crate::test_control::ExecutionPhase::Body)
+            .unwrap();
+        let mut host = BootstrapHost::default();
+        host.install_testing_envelope(envelope.clone());
+
+        assert!(matches!(
+            host.start_async("std.testing.VirtualTime.settle", &[]),
+            Err(VmError::Host(message)) if message.contains("invalid argument list")
+        ));
+        assert!(matches!(
+            host.start_async(
+                "std.testing.VirtualTime.advance",
+                &[RuntimeValue::Unit],
+            ),
+            Err(VmError::Host(message)) if message.contains("invalid argument list")
+        ));
+        assert!(matches!(
+            host.start_async(
+                "std.testing.VirtualTime.settle",
+                &[RuntimeValue::Unit],
+            ),
+            Err(VmError::Host(message)) if message.contains("receiver is invalid")
+        ));
+
+        let production = ok(host.invoke("std.time.now", &[]).unwrap());
+        let controller = host.begin_virtual_time().unwrap();
+        assert!(matches!(
+            host.begin_virtual_time(),
+            Err(VmError::Host(message)) if message.starts_with("P2004:")
+        ));
+        let virtual_start = ok(host.invoke("std.time.now", &[]).unwrap());
+        let sleep = host
+            .start_async("std.time.sleep", &[RuntimeValue::Integer(10)])
+            .unwrap();
+        let settle = host
+            .start_async(
+                "std.testing.VirtualTime.settle",
+                std::slice::from_ref(&controller),
+            )
+            .unwrap();
+        let (completed, _) = host.wait_async(&[settle, sleep]).unwrap();
+        assert_eq!(completed, sleep);
+        assert_eq!(host.wait_async(&[settle]).unwrap().0, settle);
+        let virtual_end = ok(host.invoke("std.time.now", &[]).unwrap());
+        assert_eq!(
+            ok(host
+                .invoke(
+                    "std.time.Instant.durationSince",
+                    &[virtual_end, virtual_start],
+                )
+                .unwrap()),
+            RuntimeValue::Integer(10)
+        );
+        host.finish_virtual_time(&controller).unwrap();
+        assert!(matches!(
+            host.start_async(
+                "std.testing.VirtualTime.settle",
+                std::slice::from_ref(&controller)
+            ),
+            Err(VmError::Host(message)) if message.contains("stale")
+        ));
+        let restored = ok(host.invoke("std.time.now", &[]).unwrap());
+        assert!(matches!(
+            host.invoke("std.time.Instant.durationSince", &[restored, production],)
+                .unwrap(),
+            RuntimeValue::ResultOk(_)
+        ));
+
+        let second = host.begin_virtual_time().unwrap();
+        assert!(matches!(
+            host.start_async(
+                "std.testing.VirtualTime.advance",
+                &[second.clone(), RuntimeValue::Integer(-1)]
+            ),
+            Err(VmError::Host(message)) if message.starts_with("P2005:")
+        ));
+        let maximal = host
+            .start_async(
+                "std.testing.VirtualTime.advance",
+                &[second.clone(), RuntimeValue::Integer(INT_MAX)],
+            )
+            .unwrap();
+        assert_eq!(host.poll_async(maximal).unwrap(), Some(RuntimeValue::Unit));
+        assert!(matches!(
+            host.start_async(
+                "std.testing.VirtualTime.advance",
+                &[second.clone(), RuntimeValue::Integer(1)]
+            ),
+            Err(VmError::Host(message)) if message.starts_with("P2005:")
+        ));
+        host.finish_virtual_time(&second).unwrap();
+
+        let third = host.begin_virtual_time().unwrap();
+        assert!(matches!(
+            host.start_async(
+                "std.testing.VirtualTime.advance",
+                &[third.clone(), RuntimeValue::String("invalid".into())],
+            ),
+            Err(VmError::Host(message)) if message.contains("represented by an Int")
+        ));
+        assert!(matches!(
+            host.start_async(
+                "std.testing.VirtualTime.advance",
+                &[third.clone(), RuntimeValue::Integer(INT_MAX + 1)],
+            ),
+            Err(VmError::Host(message)) if message.contains("outside the Int domain")
+        ));
+        let pending = host
+            .start_async("std.time.sleep", &[RuntimeValue::Integer(1)])
+            .unwrap();
+        assert!(matches!(
+            host.finish_virtual_time(&third),
+            Err(VmError::Host(message)) if message.starts_with("P2003:")
+        ));
+        host.cancel_async(pending).unwrap();
+        assert!(host.poll_async(pending).unwrap().is_some());
+
+        let report = envelope.report().unwrap();
+        assert_eq!(report.virtual_time().len(), 3);
+        assert_eq!(report.virtual_time()[0].index(), 1);
+        assert_eq!(report.virtual_time()[0].elapsed_ns(), 10);
+        assert_eq!(report.virtual_time()[0].automatic_advances(), 1);
+        assert_eq!(report.virtual_time()[0].settles(), 1);
+        assert_eq!(report.virtual_time()[1].index(), 2);
+        assert_eq!(report.virtual_time()[1].elapsed_ns(), INT_MAX);
+        assert_eq!(report.virtual_time()[1].advances(), 1);
+        assert_eq!(report.virtual_time()[2].index(), 3);
+        assert_eq!(report.virtual_time()[2].elapsed_ns(), 0);
+    }
+
+    #[test]
+    fn testing_host_virtual_settle_rejects_external_wait_without_sleeping() {
+        let envelope = EnvelopeHandle::new(
+            "virtual-external",
+            crate::test_control::EnvelopeLimits::new(4096, 4096, 4096),
+        );
+        envelope
+            .set_phase(crate::test_control::ExecutionPhase::Body)
+            .unwrap();
+        let mut host = BootstrapHost::default();
+        host.install_testing_envelope(envelope.clone());
+        let (sender, receiver) = mpsc::channel();
+        let external = host.next_job_id().unwrap();
+        host.jobs.insert(
+            external,
+            AsyncJob {
+                receiver,
+                cancellation: Arc::new(AtomicBool::new(false)),
+                worker: None,
+                mode: CompletionMode::Output,
+            },
+        );
+
+        let controller = host.begin_virtual_time().unwrap();
+        let settle = host
+            .start_async(
+                "std.testing.VirtualTime.settle",
+                std::slice::from_ref(&controller),
+            )
+            .unwrap();
+        assert!(matches!(
+            host.wait_async(&[settle]),
+            Err(VmError::Host(message)) if message.starts_with("P2003:")
+        ));
+
+        host.jobs.remove(&external);
+        drop(sender);
+        host.cancel_async(settle).unwrap();
+        assert_eq!(host.poll_async(settle).unwrap(), Some(RuntimeValue::Unit));
+        host.finish_virtual_time(&controller).unwrap();
+        let report = envelope.report().unwrap();
+        assert_eq!(report.virtual_time()[0].settles(), 0);
     }
 
     #[test]
