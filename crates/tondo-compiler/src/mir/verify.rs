@@ -2755,7 +2755,8 @@ impl Verifier<'_> {
                     })
                 };
                 let valid = match host_function {
-                    super::MirBootstrapHostFunction::ConsolePrint => {
+                    super::MirBootstrapHostFunction::ConsolePrint
+                    | super::MirBootstrapHostFunction::ConsolePrintln => {
                         arguments.len() == 1
                             && arguments[0].ty == self.hir.interner().scalar(ScalarType::String)
                             && operation.ty == self.hir.interner().scalar(ScalarType::Unit)

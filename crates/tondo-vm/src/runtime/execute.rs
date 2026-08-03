@@ -6088,6 +6088,7 @@ impl Engine<'_, '_> {
                 match (function, returned) {
                     (
                         BytecodeBootstrapHostFunction::ConsolePrint
+                        | BytecodeBootstrapHostFunction::ConsolePrintln
                         | BytecodeBootstrapHostFunction::TestingLog
                         | BytecodeBootstrapHostFunction::TestingTags
                         | BytecodeBootstrapHostFunction::TestingFailNow
@@ -6098,6 +6099,9 @@ impl Engine<'_, '_> {
                     ) => Ok(OperationResult::Value(Value::Unit)),
                     (BytecodeBootstrapHostFunction::ConsolePrint, _) => Err(VmError::Host(
                         "std.console.print returned a non-Unit value".into(),
+                    )),
+                    (BytecodeBootstrapHostFunction::ConsolePrintln, _) => Err(VmError::Host(
+                        "std.console.println returned a non-Unit value".into(),
                     )),
                     (function, _) => Err(VmError::invariant(format!(
                         "non-Unit bootstrap host operation `{}` was registered as defer",
@@ -6425,11 +6429,16 @@ impl Engine<'_, '_> {
                     ));
                 }
                 match (*function, returned) {
-                    (BytecodeBootstrapHostFunction::ConsolePrint, RuntimeValue::Unit) => {
-                        Ok(OperationResult::Value(Value::Unit))
-                    }
+                    (
+                        BytecodeBootstrapHostFunction::ConsolePrint
+                        | BytecodeBootstrapHostFunction::ConsolePrintln,
+                        RuntimeValue::Unit,
+                    ) => Ok(OperationResult::Value(Value::Unit)),
                     (BytecodeBootstrapHostFunction::ConsolePrint, _) => Err(VmError::Host(
                         "std.console.print returned a non-Unit value".into(),
+                    )),
+                    (BytecodeBootstrapHostFunction::ConsolePrintln, _) => Err(VmError::Host(
+                        "std.console.println returned a non-Unit value".into(),
                     )),
                     (_, returned) => Ok(OperationResult::Value(
                         self.materialize_host_value(operation.ty, returned)?,

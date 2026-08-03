@@ -4262,7 +4262,8 @@ impl Verifier<'_> {
                     _ => None,
                 };
                 let valid = match function {
-                    super::HirBootstrapHostFunction::ConsolePrint => {
+                    super::HirBootstrapHostFunction::ConsolePrint
+                    | super::HirBootstrapHostFunction::ConsolePrintln => {
                         argument_types.as_slice()
                             == [self.program.interner.scalar(ScalarType::String)]
                             && expression.ty == self.program.interner.scalar(ScalarType::Unit)

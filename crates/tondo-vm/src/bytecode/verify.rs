@@ -5351,7 +5351,8 @@ impl Verifier<'_> {
                         })
                     };
                 let valid = match host_function {
-                    BytecodeBootstrapHostFunction::ConsolePrint => {
+                    BytecodeBootstrapHostFunction::ConsolePrint
+                    | BytecodeBootstrapHostFunction::ConsolePrintln => {
                         arguments.len() == 1
                             && self.is_scalar(arguments[0].ty, BytecodeScalarType::String)
                             && self.is_scalar(operation.ty, BytecodeScalarType::Unit)

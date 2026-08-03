@@ -1098,6 +1098,7 @@ pub enum BytecodeCallProtocol {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BytecodeBootstrapHostFunction {
     ConsolePrint,
+    ConsolePrintln,
     ProcessPipe,
     ProcessOutputStdout,
     ProcessOutputStderr,
@@ -1125,6 +1126,7 @@ impl BytecodeBootstrapHostFunction {
     pub const fn name(self) -> &'static str {
         match self {
             Self::ConsolePrint => "std.console.print",
+            Self::ConsolePrintln => "std.console.println",
             Self::ProcessPipe => "std.process.pipe",
             Self::ProcessOutputStdout => "std.process.ProcessOutput.stdout",
             Self::ProcessOutputStderr => "std.process.ProcessOutput.stderr",

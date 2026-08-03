@@ -13653,6 +13653,7 @@ impl<'a> ExpressionChecker<'a> {
         }
         let host_function = match (module.path().as_str(), function_name) {
             ("console", Some("print")) => HirBootstrapHostFunction::ConsolePrint,
+            ("console", Some("println")) => HirBootstrapHostFunction::ConsolePrintln,
             ("process", Some("args")) => HirBootstrapHostFunction::ProcessArgs,
             ("process", Some("cmd")) => HirBootstrapHostFunction::ProcessCmd,
             ("process", Some("shell")) => HirBootstrapHostFunction::ProcessShell,
@@ -13755,7 +13756,10 @@ impl<'a> ExpressionChecker<'a> {
         if !external_value {
             return Ok(None);
         }
-        if host_function != HirBootstrapHostFunction::ConsolePrint {
+        if !matches!(
+            host_function,
+            HirBootstrapHostFunction::ConsolePrint | HirBootstrapHostFunction::ConsolePrintln
+        ) {
             let callee =
                 self.bootstrap_host_callee(host_function, self.sources.span(file, base.range())?)?;
             return self

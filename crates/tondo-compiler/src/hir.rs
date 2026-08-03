@@ -2039,6 +2039,7 @@ pub enum HirExpressionKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum HirBootstrapHostFunction {
     ConsolePrint,
+    ConsolePrintln,
     ProcessArgs,
     ProcessCmd,
     ProcessShell,
@@ -2173,6 +2174,7 @@ impl HirBootstrapHostFunction {
     pub const fn name(self) -> &'static str {
         match self {
             Self::ConsolePrint => "std.console.print",
+            Self::ConsolePrintln => "std.console.println",
             Self::ProcessArgs => "std.process.args",
             Self::ProcessCmd => "std.process.cmd",
             Self::ProcessShell => "std.process.shell",

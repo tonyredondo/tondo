@@ -5295,6 +5295,7 @@ fn bootstrap_host_function(
 ) -> Result<MirBootstrapHostFunction, MirError> {
     Ok(match function {
         HirBootstrapHostFunction::ConsolePrint => MirBootstrapHostFunction::ConsolePrint,
+        HirBootstrapHostFunction::ConsolePrintln => MirBootstrapHostFunction::ConsolePrintln,
         HirBootstrapHostFunction::ProcessPipe => MirBootstrapHostFunction::ProcessPipe,
         HirBootstrapHostFunction::ProcessOutputStdout => {
             MirBootstrapHostFunction::ProcessOutputStdout

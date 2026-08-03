@@ -1068,6 +1068,11 @@ impl VmHost for BootstrapHost {
                 self.stdout.extend_from_slice(text.as_bytes());
                 Ok(RuntimeValue::Unit)
             }
+            ("std.console.println", [RuntimeValue::String(text)]) => {
+                self.stdout.extend_from_slice(text.as_bytes());
+                self.stdout.push(b'\n');
+                Ok(RuntimeValue::Unit)
+            }
             ("std.math.floor", [RuntimeValue::Float(value)]) => {
                 Ok(RuntimeValue::Float(value.floor()))
             }
@@ -1846,6 +1851,9 @@ impl VmHost for BootstrapHost {
             ("std.console.print", _) => Err(VmError::Host(
                 "std.console.print received an invalid bootstrap argument list".into(),
             )),
+            ("std.console.println", _) => Err(VmError::Host(
+                "std.console.println received an invalid bootstrap argument list".into(),
+            )),
             _ => Err(VmError::UnsupportedHostCall(name.to_owned())),
         }
     }
@@ -2408,6 +2416,24 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::*;
+
+    #[test]
+    fn console_println_uses_a_stable_lf_newline() {
+        let mut host = BootstrapHost::default();
+        assert_eq!(
+            host.invoke(
+                "std.console.println",
+                &[RuntimeValue::String("hello".into())],
+            )
+            .unwrap(),
+            RuntimeValue::Unit
+        );
+        assert_eq!(host.take_stdout(), b"hello\n");
+        assert!(
+            host.invoke("std.console.println", &[RuntimeValue::Integer(1)])
+                .is_err()
+        );
+    }
 
     fn command(host: &mut BootstrapHost, program: &str, arguments: &[&str]) -> RuntimeValue {
         host.invoke(

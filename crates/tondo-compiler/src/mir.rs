@@ -669,6 +669,7 @@ impl MirSliceBounds {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MirBootstrapHostFunction {
     ConsolePrint,
+    ConsolePrintln,
     ProcessPipe,
     ProcessOutputStdout,
     ProcessOutputStderr,

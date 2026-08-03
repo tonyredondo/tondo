@@ -3652,6 +3652,9 @@ fn lower_operation(
                 crate::mir::MirBootstrapHostFunction::ConsolePrint => {
                     bc::BytecodeBootstrapHostFunction::ConsolePrint
                 }
+                crate::mir::MirBootstrapHostFunction::ConsolePrintln => {
+                    bc::BytecodeBootstrapHostFunction::ConsolePrintln
+                }
                 crate::mir::MirBootstrapHostFunction::ProcessPipe => {
                     bc::BytecodeBootstrapHostFunction::ProcessPipe
                 }
